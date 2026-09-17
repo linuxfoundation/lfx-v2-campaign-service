@@ -223,6 +223,18 @@ var (
 	// importing the orchestration layer.
 	ErrAccountsUnsupported = errors.New("account discovery is not supported for this platform")
 
+	// ErrAccountMetricsUnsupported indicates the platform has no account-scoped monitor
+	// capability wired (the AccountMetricsReader interface). The platform is never contacted.
+	//
+	// `Orchestrator.ReadAccountCampaignMetrics` returns it when the platform's dispatcher
+	// does not implement AccountMetricsReader, and the monitor handlers map it to 400 — a
+	// request for a platform this service cannot read account-wide metrics for is a caller
+	// error, not a transient upstream failure. Distinct from ErrAccountsUnsupported because
+	// the two capabilities are independent (a platform can enumerate accounts without this
+	// service having ported its monitor rule engine, and vice versa is possible in principle
+	// even if it does not occur among the four platforms this was added for).
+	ErrAccountMetricsUnsupported = errors.New("account campaign metrics are not supported for this platform")
+
 	// ErrKeywordInsightsUnsupported indicates the platform has no keyword/audience-insight
 	// capability wired. The platform is never contacted.
 	//

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -8015,6 +8016,668 @@ func EncodeCreateHubspotCampaignError(encoder func(context.Context, http.Respons
 	}
 }
 
+// EncodeMonitorGoogleAdsAccountResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// monitor-google-ads-account endpoint.
+func EncodeMonitorGoogleAdsAccountResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.AccountMonitor)
+		enc := encoder(ctx, w)
+		body := NewMonitorGoogleAdsAccountResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeMonitorGoogleAdsAccountRequest returns a decoder for requests sent to
+// the lfx-v2-campaign-service-connections monitor-google-ads-account endpoint.
+func DecodeMonitorGoogleAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload, error) {
+		var payload *lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload
+		var (
+			projectID   string
+			accountID   string
+			days        int
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		qp := r.URL.Query()
+		accountID = qp.Get("account_id")
+		if accountID == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "query string"))
+		}
+		{
+			daysRaw := qp.Get("days")
+			if daysRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("days", "query string"))
+			}
+			v, err2 := strconv.ParseInt(daysRaw, 10, strconv.IntSize)
+			if err2 != nil {
+				err = goa.MergeErrors(err, goa.InvalidFieldTypeError("days", daysRaw, "integer"))
+			}
+			days = int(v)
+		}
+		if days < 7 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 7, true))
+		}
+		if days > 90 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewMonitorGoogleAdsAccountPayload(projectID, accountID, days, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeMonitorGoogleAdsAccountError returns an encoder for errors returned by
+// the monitor-google-ads-account lfx-v2-campaign-service-connections endpoint.
+func EncodeMonitorGoogleAdsAccountError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorGoogleAdsAccountBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorGoogleAdsAccountServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorGoogleAdsAccountInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorGoogleAdsAccountNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorGoogleAdsAccountPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorGoogleAdsAccountUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeMonitorLinkedinAdsAccountResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// monitor-linkedin-ads-account endpoint.
+func EncodeMonitorLinkedinAdsAccountResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.AccountMonitor)
+		enc := encoder(ctx, w)
+		body := NewMonitorLinkedinAdsAccountResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeMonitorLinkedinAdsAccountRequest returns a decoder for requests sent
+// to the lfx-v2-campaign-service-connections monitor-linkedin-ads-account
+// endpoint.
+func DecodeMonitorLinkedinAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload, error) {
+		var payload *lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload
+		var (
+			projectID   string
+			accountID   string
+			days        int
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		qp := r.URL.Query()
+		accountID = qp.Get("account_id")
+		if accountID == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "query string"))
+		}
+		{
+			daysRaw := qp.Get("days")
+			if daysRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("days", "query string"))
+			}
+			v, err2 := strconv.ParseInt(daysRaw, 10, strconv.IntSize)
+			if err2 != nil {
+				err = goa.MergeErrors(err, goa.InvalidFieldTypeError("days", daysRaw, "integer"))
+			}
+			days = int(v)
+		}
+		if days < 7 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 7, true))
+		}
+		if days > 90 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewMonitorLinkedinAdsAccountPayload(projectID, accountID, days, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeMonitorLinkedinAdsAccountError returns an encoder for errors returned
+// by the monitor-linkedin-ads-account lfx-v2-campaign-service-connections
+// endpoint.
+func EncodeMonitorLinkedinAdsAccountError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorLinkedinAdsAccountBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorLinkedinAdsAccountServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorLinkedinAdsAccountInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorLinkedinAdsAccountNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorLinkedinAdsAccountPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorLinkedinAdsAccountUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeMonitorMetaAdsAccountResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-connections monitor-meta-ads-account
+// endpoint.
+func EncodeMonitorMetaAdsAccountResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.AccountMonitor)
+		enc := encoder(ctx, w)
+		body := NewMonitorMetaAdsAccountResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeMonitorMetaAdsAccountRequest returns a decoder for requests sent to
+// the lfx-v2-campaign-service-connections monitor-meta-ads-account endpoint.
+func DecodeMonitorMetaAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.MonitorMetaAdsAccountPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.MonitorMetaAdsAccountPayload, error) {
+		var payload *lfxv2campaignserviceconnections.MonitorMetaAdsAccountPayload
+		var (
+			projectID   string
+			accountID   string
+			days        int
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		qp := r.URL.Query()
+		accountID = qp.Get("account_id")
+		if accountID == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "query string"))
+		}
+		{
+			daysRaw := qp.Get("days")
+			if daysRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("days", "query string"))
+			}
+			v, err2 := strconv.ParseInt(daysRaw, 10, strconv.IntSize)
+			if err2 != nil {
+				err = goa.MergeErrors(err, goa.InvalidFieldTypeError("days", daysRaw, "integer"))
+			}
+			days = int(v)
+		}
+		if days < 7 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 7, true))
+		}
+		if days > 90 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewMonitorMetaAdsAccountPayload(projectID, accountID, days, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeMonitorMetaAdsAccountError returns an encoder for errors returned by
+// the monitor-meta-ads-account lfx-v2-campaign-service-connections endpoint.
+func EncodeMonitorMetaAdsAccountError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorMetaAdsAccountBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorMetaAdsAccountServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorMetaAdsAccountInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorMetaAdsAccountNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorMetaAdsAccountPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorMetaAdsAccountUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeMonitorRedditAdsAccountResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// monitor-reddit-ads-account endpoint.
+func EncodeMonitorRedditAdsAccountResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.AccountMonitor)
+		enc := encoder(ctx, w)
+		body := NewMonitorRedditAdsAccountResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeMonitorRedditAdsAccountRequest returns a decoder for requests sent to
+// the lfx-v2-campaign-service-connections monitor-reddit-ads-account endpoint.
+func DecodeMonitorRedditAdsAccountRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.MonitorRedditAdsAccountPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.MonitorRedditAdsAccountPayload, error) {
+		var payload *lfxv2campaignserviceconnections.MonitorRedditAdsAccountPayload
+		var (
+			projectID   string
+			accountID   string
+			days        int
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		qp := r.URL.Query()
+		accountID = qp.Get("account_id")
+		if accountID == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "query string"))
+		}
+		{
+			daysRaw := qp.Get("days")
+			if daysRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("days", "query string"))
+			}
+			v, err2 := strconv.ParseInt(daysRaw, 10, strconv.IntSize)
+			if err2 != nil {
+				err = goa.MergeErrors(err, goa.InvalidFieldTypeError("days", daysRaw, "integer"))
+			}
+			days = int(v)
+		}
+		if days < 7 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 7, true))
+		}
+		if days > 90 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewMonitorRedditAdsAccountPayload(projectID, accountID, days, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeMonitorRedditAdsAccountError returns an encoder for errors returned by
+// the monitor-reddit-ads-account lfx-v2-campaign-service-connections endpoint.
+func EncodeMonitorRedditAdsAccountError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorRedditAdsAccountBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorRedditAdsAccountServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorRedditAdsAccountInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorRedditAdsAccountNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorRedditAdsAccountPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorRedditAdsAccountUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // unmarshalGoogleAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsGoogleAdsConnectionConfig
 // builds a value of type
 // *lfxv2campaignserviceconnections.GoogleAdsConnectionConfig from a value of
@@ -8301,6 +8964,97 @@ func marshalLfxv2campaignserviceconnectionsHubspotCampaignToHubspotCampaignRespo
 		Name:      v.Name,
 		Utm:       v.Utm,
 		StartDate: v.StartDate,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsAccountMonitorCampaignToAccountMonitorCampaignResponseBody
+// builds a value of type *AccountMonitorCampaignResponseBody from a value of
+// type *lfxv2campaignserviceconnections.AccountMonitorCampaign.
+func marshalLfxv2campaignserviceconnectionsAccountMonitorCampaignToAccountMonitorCampaignResponseBody(v *lfxv2campaignserviceconnections.AccountMonitorCampaign) *AccountMonitorCampaignResponseBody {
+	res := &AccountMonitorCampaignResponseBody{
+		PlatformCampaignID: v.PlatformCampaignID,
+		Name:               v.Name,
+		Status:             v.Status,
+		Spend:              v.Spend,
+		Impressions:        v.Impressions,
+		Clicks:             v.Clicks,
+		Ctr:                v.Ctr,
+		Conversions:        v.Conversions,
+		BudgetDay:          v.BudgetDay,
+		TotalBudget:        v.TotalBudget,
+		StartDate:          v.StartDate,
+		EndDate:            v.EndDate,
+		PacingUnknown:      v.PacingUnknown,
+		IsSearchChannel:    v.IsSearchChannel,
+		FetchFailed:        v.FetchFailed,
+		PacingPct:          v.PacingPct,
+		PacingLabel:        v.PacingLabel,
+		CampaignURL:        v.CampaignURL,
+	}
+	if v.AdGroups != nil {
+		res.AdGroups = make([]*AccountMonitorAdGroupResponseBody, len(v.AdGroups))
+		for i, val := range v.AdGroups {
+			if val == nil {
+				res.AdGroups[i] = nil
+				continue
+			}
+			res.AdGroups[i] = marshalLfxv2campaignserviceconnectionsAccountMonitorAdGroupToAccountMonitorAdGroupResponseBody(val)
+		}
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsAccountMonitorAdGroupToAccountMonitorAdGroupResponseBody
+// builds a value of type *AccountMonitorAdGroupResponseBody from a value of
+// type *lfxv2campaignserviceconnections.AccountMonitorAdGroup.
+func marshalLfxv2campaignserviceconnectionsAccountMonitorAdGroupToAccountMonitorAdGroupResponseBody(v *lfxv2campaignserviceconnections.AccountMonitorAdGroup) *AccountMonitorAdGroupResponseBody {
+	if v == nil {
+		return nil
+	}
+	res := &AccountMonitorAdGroupResponseBody{
+		AdGroupID: v.AdGroupID,
+		Name:      v.Name,
+	}
+	if v.Keywords != nil {
+		res.Keywords = make([]string, len(v.Keywords))
+		for i, val := range v.Keywords {
+			res.Keywords[i] = val
+		}
+	} else {
+		res.Keywords = []string{}
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsAccountMonitorActionItemToAccountMonitorActionItemResponseBody
+// builds a value of type *AccountMonitorActionItemResponseBody from a value of
+// type *lfxv2campaignserviceconnections.AccountMonitorActionItem.
+func marshalLfxv2campaignserviceconnectionsAccountMonitorActionItemToAccountMonitorActionItemResponseBody(v *lfxv2campaignserviceconnections.AccountMonitorActionItem) *AccountMonitorActionItemResponseBody {
+	res := &AccountMonitorActionItemResponseBody{
+		CampaignID:   v.CampaignID,
+		CampaignName: v.CampaignName,
+		Priority:     v.Priority,
+		Issue:        v.Issue,
+		Action:       v.Action,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsAccountMonitorTotalsToAccountMonitorTotalsResponseBody
+// builds a value of type *AccountMonitorTotalsResponseBody from a value of
+// type *lfxv2campaignserviceconnections.AccountMonitorTotals.
+func marshalLfxv2campaignserviceconnectionsAccountMonitorTotalsToAccountMonitorTotalsResponseBody(v *lfxv2campaignserviceconnections.AccountMonitorTotals) *AccountMonitorTotalsResponseBody {
+	res := &AccountMonitorTotalsResponseBody{
+		Spend:         v.Spend,
+		Impressions:   v.Impressions,
+		Clicks:        v.Clicks,
+		Conversions:   v.Conversions,
+		CampaignCount: v.CampaignCount,
 	}
 
 	return res

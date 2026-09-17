@@ -820,6 +820,47 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 	), nil
 }
 
+// ListAccountCampaignMetrics implements service.AccountMetricsReader for Google Ads,
+// backing the account-monitor endpoint. It resolves the same credentials-only,
+// account-agnostic client resolveGoogleAdsDiscoveryClient builds for ListAccounts (a
+// monitor read names its own target accountID, distinct from whatever customer id the
+// project's connection currently points at), computes the [start, end] date window
+// campaign-metrics.service.ts's resolveDateRange derives from a day count (end = today,
+// start = today - (days-1)), then reads every campaign visible on that customer id via
+// googleads.Client.ListAccountCampaigns.
+func (d *GoogleAdsDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+	client, err := d.resolveGoogleAdsDiscoveryClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	end := time.Now().UTC()
+	start := end.AddDate(0, 0, -(days - 1))
+	rows, lerr := client.ListAccountCampaigns(ctx, accountID, start.Format("2006-01-02"), end.Format("2006-01-02"))
+	if lerr != nil {
+		return nil, lerr
+	}
+	out := make([]model.AccountCampaignMetrics, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, model.AccountCampaignMetrics{
+			PlatformCampaignID: r.CampaignID,
+			Name:               r.Name,
+			Status:             r.Status,
+			IsSearchChannel:    r.IsSearchChannel,
+			Spend:              r.SpendUSD,
+			Impressions:        r.Impressions,
+			Clicks:             r.Clicks,
+			Ctr:                r.Ctr,
+			Conversions:        r.Conversions,
+			BudgetDay:          r.BudgetDailyUSD,
+			// Google Ads campaigns read by this port are not schedule-bound the way
+			// LinkedIn/Meta/Reddit's are (see model.AccountCampaignMetrics.PacingUnknown's
+			// doc comment); StartDate/EndDate are left empty and PacingUnknown false —
+			// monitor_google.go's pacing formula does not consult flight dates at all.
+		})
+	}
+	return out, nil
+}
+
 // googleAdsRunStatus maps the service's run-state vocabulary to Google's campaign status.
 // Note Google spells the serving state ENABLED, not ACTIVE.
 func googleAdsRunStatus(status string) (string, error) {

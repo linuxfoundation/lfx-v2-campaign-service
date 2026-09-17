@@ -665,6 +665,47 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 	return accounts, nil
 }
 
+// ListAccountCampaignMetrics reads every ACTIVE/PAUSED campaign on accountID plus an
+// account-wide Ad Analytics pivot=CAMPAIGN read over the trailing `days` days, ported from
+// lfx-self-serve's linkedin-ads.service.ts (getLinkedInAnalytics). accountID is the bare
+// numeric LinkedIn ad account id (the same form ListAccounts returns and
+// AccountConfig.AccountID persists) — NOT a URN.
+//
+// It satisfies the service-side AccountMetricsReader interface, which Orchestrator
+// type-asserts on the dispatcher for the requested platform.
+func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+	res, creds, err := d.resolveLinkedInDiscoveryCredentials(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// RuntimeConfig is left ZERO, same rationale as ListAccounts: the monitor read is scoped
+	// to accountID by the platform-client call itself, not by the client's own AccountConfig.
+	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), linkedin.RuntimeConfig{}, d.opts...)
+	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
+	if lerr != nil {
+		return nil, res.systemScoped(linkedinExpiry(lerr))
+	}
+	out := make([]model.AccountCampaignMetrics, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, model.AccountCampaignMetrics{
+			PlatformCampaignID: r.CampaignID,
+			Name:               r.Name,
+			Status:             r.Status,
+			Spend:              r.SpendUSD,
+			Impressions:        r.Impressions,
+			Clicks:             r.Clicks,
+			Ctr:                r.Ctr,
+			Conversions:        r.Conversions,
+			BudgetDay:          r.DailyBudget,
+			TotalBudget:        r.TotalBudget,
+			StartDate:          r.StartDate,
+			EndDate:            r.EndDate,
+			FetchFailed:        r.FetchFailed,
+		})
+	}
+	return out, nil
+}
+
 // linkedInAccountLabel builds the string a picker shows for one ad account.
 //
 // It never returns "" for an account carrying any identifying information: an account with

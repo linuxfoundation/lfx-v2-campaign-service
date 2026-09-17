@@ -446,6 +446,92 @@ func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, pl
 	return metrics, nil
 }
 
+// ListAccountCampaignMetrics implements service.AccountMetricsReader for Reddit, porting
+// getRedditAnalytics' campaign fan-out (reddit-ads.service.ts). Reddit's client is bound to
+// exactly ONE ad account per connection (see the RedditDispatcher doc comment and the
+// package-level note on why Reddit, unlike every other platform's dispatcher, has no
+// ListAccounts: there is no second account to discover) — so accountID is validated against
+// the resolved connection's own account rather than used to build an account-agnostic client
+// the way Meta/GoogleAds/LinkedIn's monitor methods do.
+func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+	client, err := d.resolveMonitorClient(ctx, projectID, platform, accountID)
+	if err != nil {
+		return nil, err
+	}
+	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
+	if lerr != nil {
+		return nil, lerr
+	}
+	out := make([]model.AccountCampaignMetrics, 0, len(rows))
+	for _, r := range rows {
+		// Conversions is a non-nil &0 on every row, NOT nil — matching the BFF's own
+		// campaignMetrics[].conversions = 0 (reddit-ads.service.ts:300) and the KNOWN BUG
+		// this preserves in monitor_reddit.go's redditActionItems (the "0 conversions"
+		// alert can never be satisfied any other way, because conversions can never be
+		// observed as nonzero here). A nil would instead mean "cannot measure at all",
+		// which is Meta's gap, not Reddit's — see model.AccountCampaignMetrics.Conversions.
+		conv := 0.0
+		out = append(out, model.AccountCampaignMetrics{
+			PlatformCampaignID: r.CampaignID,
+			Name:               r.Name,
+			Status:             r.Status,
+			Spend:              r.SpendUSD,
+			Impressions:        r.Impressions,
+			Clicks:             r.Clicks,
+			Ctr:                r.Ctr,
+			Conversions:        &conv,
+			TotalBudget:        r.TotalBudget,
+			StartDate:          r.StartDate,
+			EndDate:            r.EndDate,
+			FetchFailed:        r.FetchFailed,
+		})
+	}
+	return out, nil
+}
+
+// ReadAccountTotals implements service.AccountTotalsReader for Reddit, porting
+// fetchAccountMetrics — a SEPARATE account-wide report call, independent of the per-campaign
+// rows ListAccountCampaignMetrics returns. See model.AccountMonitorTotals' doc comment for
+// why Reddit alone needs this second capability.
+func (d *RedditDispatcher) ReadAccountTotals(ctx context.Context, projectID string, platform model.Provider, accountID string, days, campaignCount int) (*model.AccountMonitorTotals, error) {
+	client, err := d.resolveMonitorClient(ctx, projectID, platform, accountID)
+	if err != nil {
+		return nil, err
+	}
+	totals, terr := client.FetchAccountTotals(ctx, accountID, days, campaignCount)
+	if terr != nil {
+		return nil, terr
+	}
+	return &model.AccountMonitorTotals{
+		Spend:         totals.SpendUSD,
+		Impressions:   totals.Impressions,
+		Clicks:        totals.Clicks,
+		Conversions:   0,
+		CampaignCount: totals.CampaignCount,
+	}, nil
+}
+
+// resolveMonitorClient resolves the project's Reddit connection and its client the same way
+// every other read-only Reddit path does (d.creds.resolve — the monitor read is not scoped
+// to a persisted campaign's creation account, so there is no existingResolver to defer to),
+// then confirms accountID names the SAME account the connection resolves to. A raw ad account
+// id that does not match is refused rather than silently served the connection's own account's
+// data under a different label, or silently ignored — either of which would misattribute
+// whichever account the caller thought it was reading.
+func (d *RedditDispatcher) resolveMonitorClient(ctx context.Context, projectID string, platform model.Provider, accountID string) (*reddit.Client, error) {
+	client, res, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.resolve)
+	if err != nil {
+		return nil, err
+	}
+	want := strings.TrimSpace(accountID)
+	got := strings.TrimSpace(res.accountID)
+	if want != "" && got != "" && want != got {
+		return nil, fmt.Errorf("%w: reddit connection for project %s resolves to account %s, not the requested account %s",
+			domain.ErrConnectionNotUsable, projectID, got, want)
+	}
+	return client, nil
+}
+
 // redditCreationAccountID reports the ad account the campaign was CREATED under, or "" when
 // the persisted result blob does not record it.
 //

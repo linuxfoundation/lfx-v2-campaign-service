@@ -868,6 +868,70 @@ type CreateHubspotCampaignResponseBody struct {
 	StartDate *string `form:"start_date,omitempty" json:"start_date,omitempty" xml:"start_date,omitempty"`
 }
 
+// MonitorGoogleAdsAccountResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint HTTP response body.
+type MonitorGoogleAdsAccountResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The trailing-days window this read covers, echoed back from the request.
+	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
+}
+
+// MonitorLinkedinAdsAccountResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
+// endpoint HTTP response body.
+type MonitorLinkedinAdsAccountResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The trailing-days window this read covers, echoed back from the request.
+	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
+}
+
+// MonitorMetaAdsAccountResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint HTTP response body.
+type MonitorMetaAdsAccountResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The trailing-days window this read covers, echoed back from the request.
+	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
+}
+
+// MonitorRedditAdsAccountResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint HTTP response body.
+type MonitorRedditAdsAccountResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The trailing-days window this read covers, echoed back from the request.
+	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
+}
+
 // CreateGoogleAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -4235,6 +4299,246 @@ type CreateHubspotCampaignUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// MonitorGoogleAdsAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint HTTP response body for the "BadRequest" error.
+type MonitorGoogleAdsAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorGoogleAdsAccountServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type MonitorGoogleAdsAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorGoogleAdsAccountInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint HTTP response body for the "InternalServerError" error.
+type MonitorGoogleAdsAccountInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorGoogleAdsAccountNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint HTTP response body for the "NotFound" error.
+type MonitorGoogleAdsAccountNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorGoogleAdsAccountPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type MonitorGoogleAdsAccountPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorGoogleAdsAccountUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint HTTP response body for the "Unauthorized" error.
+type MonitorGoogleAdsAccountUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorLinkedinAdsAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
+// endpoint HTTP response body for the "BadRequest" error.
+type MonitorLinkedinAdsAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorLinkedinAdsAccountServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type MonitorLinkedinAdsAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorLinkedinAdsAccountInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
+// endpoint HTTP response body for the "InternalServerError" error.
+type MonitorLinkedinAdsAccountInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorLinkedinAdsAccountNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
+// endpoint HTTP response body for the "NotFound" error.
+type MonitorLinkedinAdsAccountNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorLinkedinAdsAccountPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type MonitorLinkedinAdsAccountPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorLinkedinAdsAccountUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
+// endpoint HTTP response body for the "Unauthorized" error.
+type MonitorLinkedinAdsAccountUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorMetaAdsAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint HTTP response body for the "BadRequest" error.
+type MonitorMetaAdsAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorMetaAdsAccountServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type MonitorMetaAdsAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorMetaAdsAccountInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint HTTP response body for the "InternalServerError" error.
+type MonitorMetaAdsAccountInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorMetaAdsAccountNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint HTTP response body for the "NotFound" error.
+type MonitorMetaAdsAccountNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorMetaAdsAccountPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type MonitorMetaAdsAccountPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorMetaAdsAccountUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint HTTP response body for the "Unauthorized" error.
+type MonitorMetaAdsAccountUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorRedditAdsAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint HTTP response body for the "BadRequest" error.
+type MonitorRedditAdsAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorRedditAdsAccountServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type MonitorRedditAdsAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorRedditAdsAccountInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint HTTP response body for the "InternalServerError" error.
+type MonitorRedditAdsAccountInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorRedditAdsAccountNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint HTTP response body for the "NotFound" error.
+type MonitorRedditAdsAccountNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorRedditAdsAccountPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type MonitorRedditAdsAccountPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorRedditAdsAccountUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint HTTP response body for the "Unauthorized" error.
+type MonitorRedditAdsAccountUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GoogleAdsConnectionConfigRequestBody is used to define fields on request
 // body types.
 type GoogleAdsConnectionConfigRequestBody struct {
@@ -4540,6 +4844,101 @@ type HubspotCampaignResponseBody struct {
 	// The campaign's start date as HubSpot holds it, for disambiguating same-named
 	// campaigns. Not parsed or normalised here.
 	StartDate *string `form:"start_date,omitempty" json:"start_date,omitempty" xml:"start_date,omitempty"`
+}
+
+// AccountMonitorCampaignResponseBody is used to define fields on response body
+// types.
+type AccountMonitorCampaignResponseBody struct {
+	// The id the platform assigned to this campaign.
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// The campaign's platform-side name, unparsed.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// The platform's own status string, passed through verbatim (e.g.
+	// ENABLED/PAUSED on Google Ads, ACTIVE/PAUSED on LinkedIn/Meta/Reddit).
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Total cost in the account's currency over the requested window.
+	Spend *float64 `form:"spend,omitempty" json:"spend,omitempty" xml:"spend,omitempty"`
+	// Impressions over the window.
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window.
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Clicks/Impressions * 100, 0 when Impressions is 0.
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+	// Conversions over the window. ABSENT when this platform/row could not measure
+	// conversions — not a measured 0.
+	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
+	// Daily budget in the account's currency, 0 when the campaign has none (e.g. a
+	// LinkedIn/Meta campaign funded by total_budget instead).
+	BudgetDay *float64 `form:"budget_day,omitempty" json:"budget_day,omitempty" xml:"budget_day,omitempty"`
+	// Lifetime/total budget in the account's currency, 0 when the campaign is
+	// funded by budget_day instead.
+	TotalBudget *float64 `form:"total_budget,omitempty" json:"total_budget,omitempty" xml:"total_budget,omitempty"`
+	// The campaign's flight start date, RFC 3339 date-only (YYYY-MM-DD). Empty
+	// when the platform did not report one.
+	StartDate *string `form:"start_date,omitempty" json:"start_date,omitempty" xml:"start_date,omitempty"`
+	// The campaign's flight end date, RFC 3339 date-only (YYYY-MM-DD). Empty when
+	// the platform did not report one.
+	EndDate *string `form:"end_date,omitempty" json:"end_date,omitempty" xml:"end_date,omitempty"`
+	// True when the flight dates needed to compute pacing_pct were unavailable. A
+	// renderer MUST NOT treat pacing_pct as meaningful when this is true.
+	PacingUnknown *bool `form:"pacing_unknown,omitempty" json:"pacing_unknown,omitempty" xml:"pacing_unknown,omitempty"`
+	// Google Ads only: true when the campaign's advertising_channel_type is
+	// SEARCH. Always false for LinkedIn/Meta/Reddit rows.
+	IsSearchChannel *bool `form:"is_search_channel,omitempty" json:"is_search_channel,omitempty" xml:"is_search_channel,omitempty"`
+	// True when this row's per-campaign metrics fetch failed upstream. The numeric
+	// fields are left at their zero value in that case — a renderer MUST check
+	// this before treating zero metrics as a real reading.
+	FetchFailed *bool `form:"fetch_failed,omitempty" json:"fetch_failed,omitempty" xml:"fetch_failed,omitempty"`
+	// spend / expected-spend * 100. Meaningless when pacing_unknown is true.
+	PacingPct *float64 `form:"pacing_pct,omitempty" json:"pacing_pct,omitempty" xml:"pacing_pct,omitempty"`
+	// The pacing classification derived from pacing_pct.
+	PacingLabel *string `form:"pacing_label,omitempty" json:"pacing_label,omitempty" xml:"pacing_label,omitempty"`
+	// Google Ads only: direct link to the campaign in the Google Ads UI.
+	CampaignURL *string `form:"campaign_url,omitempty" json:"campaign_url,omitempty" xml:"campaign_url,omitempty"`
+	// Google Ads only: the ad-group/keyword nesting under this campaign.
+	AdGroups []*AccountMonitorAdGroupResponseBody `form:"ad_groups,omitempty" json:"ad_groups,omitempty" xml:"ad_groups,omitempty"`
+}
+
+// AccountMonitorAdGroupResponseBody is used to define fields on response body
+// types.
+type AccountMonitorAdGroupResponseBody struct {
+	// The ad group's platform id.
+	AdGroupID *string `form:"ad_group_id,omitempty" json:"ad_group_id,omitempty" xml:"ad_group_id,omitempty"`
+	// The ad group's display name.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// The keyword text served under this ad group.
+	Keywords []string `form:"keywords,omitempty" json:"keywords,omitempty" xml:"keywords,omitempty"`
+}
+
+// AccountMonitorActionItemResponseBody is used to define fields on response
+// body types.
+type AccountMonitorActionItemResponseBody struct {
+	// The platform campaign id this item is about. Empty for an account-wide item.
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The campaign's platform-side name, carried alongside campaign_id so a
+	// renderer never needs to re-join against the row list.
+	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
+	// The rule engine's priority band for this item.
+	Priority *string `form:"priority,omitempty" json:"priority,omitempty" xml:"priority,omitempty"`
+	// What the rule engine flagged.
+	Issue *string `form:"issue,omitempty" json:"issue,omitempty" xml:"issue,omitempty"`
+	// The suggested remedy.
+	Action *string `form:"action,omitempty" json:"action,omitempty" xml:"action,omitempty"`
+}
+
+// AccountMonitorTotalsResponseBody is used to define fields on response body
+// types.
+type AccountMonitorTotalsResponseBody struct {
+	// Account-wide spend over the window.
+	Spend *float64 `form:"spend,omitempty" json:"spend,omitempty" xml:"spend,omitempty"`
+	// Account-wide impressions over the window.
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Account-wide clicks over the window.
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Account-wide conversions over the window.
+	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
+	// How many campaigns the totals reflect.
+	CampaignCount *int `form:"campaign_count,omitempty" json:"campaign_count,omitempty" xml:"campaign_count,omitempty"`
 }
 
 // NewCreateGoogleAdsRequestBody builds the HTTP request body from the payload
@@ -9439,6 +9838,414 @@ func NewCreateHubspotCampaignUnauthorized(body *CreateHubspotCampaignUnauthorize
 	return v
 }
 
+// NewMonitorGoogleAdsAccountAccountMonitorOK builds a
+// "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
+// endpoint result from a HTTP "OK" response.
+func NewMonitorGoogleAdsAccountAccountMonitorOK(body *MonitorGoogleAdsAccountResponseBody) *lfxv2campaignserviceconnections.AccountMonitor {
+	v := &lfxv2campaignserviceconnections.AccountMonitor{
+		AccountID: *body.AccountID,
+		Days:      *body.Days,
+	}
+	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
+	for i, val := range body.Campaigns {
+		if val == nil {
+			v.Campaigns[i] = nil
+			continue
+		}
+		v.Campaigns[i] = unmarshalAccountMonitorCampaignResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorCampaign(val)
+	}
+	v.ActionItems = make([]*lfxv2campaignserviceconnections.AccountMonitorActionItem, len(body.ActionItems))
+	for i, val := range body.ActionItems {
+		if val == nil {
+			v.ActionItems[i] = nil
+			continue
+		}
+		v.ActionItems[i] = unmarshalAccountMonitorActionItemResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorActionItem(val)
+	}
+	v.Totals = unmarshalAccountMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorTotals(body.Totals)
+
+	return v
+}
+
+// NewMonitorGoogleAdsAccountBadRequest builds a
+// lfx-v2-campaign-service-connections service monitor-google-ads-account
+// endpoint BadRequest error.
+func NewMonitorGoogleAdsAccountBadRequest(body *MonitorGoogleAdsAccountBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorGoogleAdsAccountServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service monitor-google-ads-account
+// endpoint ServiceUnavailable error.
+func NewMonitorGoogleAdsAccountServiceUnavailable(body *MonitorGoogleAdsAccountServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorGoogleAdsAccountInternalServerError builds a
+// lfx-v2-campaign-service-connections service monitor-google-ads-account
+// endpoint InternalServerError error.
+func NewMonitorGoogleAdsAccountInternalServerError(body *MonitorGoogleAdsAccountInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorGoogleAdsAccountNotFound builds a
+// lfx-v2-campaign-service-connections service monitor-google-ads-account
+// endpoint NotFound error.
+func NewMonitorGoogleAdsAccountNotFound(body *MonitorGoogleAdsAccountNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorGoogleAdsAccountPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service monitor-google-ads-account
+// endpoint PayloadTooLarge error.
+func NewMonitorGoogleAdsAccountPayloadTooLarge(body *MonitorGoogleAdsAccountPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorGoogleAdsAccountUnauthorized builds a
+// lfx-v2-campaign-service-connections service monitor-google-ads-account
+// endpoint Unauthorized error.
+func NewMonitorGoogleAdsAccountUnauthorized(body *MonitorGoogleAdsAccountUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewMonitorLinkedinAdsAccountAccountMonitorOK builds a
+// "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
+// endpoint result from a HTTP "OK" response.
+func NewMonitorLinkedinAdsAccountAccountMonitorOK(body *MonitorLinkedinAdsAccountResponseBody) *lfxv2campaignserviceconnections.AccountMonitor {
+	v := &lfxv2campaignserviceconnections.AccountMonitor{
+		AccountID: *body.AccountID,
+		Days:      *body.Days,
+	}
+	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
+	for i, val := range body.Campaigns {
+		if val == nil {
+			v.Campaigns[i] = nil
+			continue
+		}
+		v.Campaigns[i] = unmarshalAccountMonitorCampaignResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorCampaign(val)
+	}
+	v.ActionItems = make([]*lfxv2campaignserviceconnections.AccountMonitorActionItem, len(body.ActionItems))
+	for i, val := range body.ActionItems {
+		if val == nil {
+			v.ActionItems[i] = nil
+			continue
+		}
+		v.ActionItems[i] = unmarshalAccountMonitorActionItemResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorActionItem(val)
+	}
+	v.Totals = unmarshalAccountMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorTotals(body.Totals)
+
+	return v
+}
+
+// NewMonitorLinkedinAdsAccountBadRequest builds a
+// lfx-v2-campaign-service-connections service monitor-linkedin-ads-account
+// endpoint BadRequest error.
+func NewMonitorLinkedinAdsAccountBadRequest(body *MonitorLinkedinAdsAccountBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorLinkedinAdsAccountServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service monitor-linkedin-ads-account
+// endpoint ServiceUnavailable error.
+func NewMonitorLinkedinAdsAccountServiceUnavailable(body *MonitorLinkedinAdsAccountServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorLinkedinAdsAccountInternalServerError builds a
+// lfx-v2-campaign-service-connections service monitor-linkedin-ads-account
+// endpoint InternalServerError error.
+func NewMonitorLinkedinAdsAccountInternalServerError(body *MonitorLinkedinAdsAccountInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorLinkedinAdsAccountNotFound builds a
+// lfx-v2-campaign-service-connections service monitor-linkedin-ads-account
+// endpoint NotFound error.
+func NewMonitorLinkedinAdsAccountNotFound(body *MonitorLinkedinAdsAccountNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorLinkedinAdsAccountPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service monitor-linkedin-ads-account
+// endpoint PayloadTooLarge error.
+func NewMonitorLinkedinAdsAccountPayloadTooLarge(body *MonitorLinkedinAdsAccountPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorLinkedinAdsAccountUnauthorized builds a
+// lfx-v2-campaign-service-connections service monitor-linkedin-ads-account
+// endpoint Unauthorized error.
+func NewMonitorLinkedinAdsAccountUnauthorized(body *MonitorLinkedinAdsAccountUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewMonitorMetaAdsAccountAccountMonitorOK builds a
+// "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
+// endpoint result from a HTTP "OK" response.
+func NewMonitorMetaAdsAccountAccountMonitorOK(body *MonitorMetaAdsAccountResponseBody) *lfxv2campaignserviceconnections.AccountMonitor {
+	v := &lfxv2campaignserviceconnections.AccountMonitor{
+		AccountID: *body.AccountID,
+		Days:      *body.Days,
+	}
+	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
+	for i, val := range body.Campaigns {
+		if val == nil {
+			v.Campaigns[i] = nil
+			continue
+		}
+		v.Campaigns[i] = unmarshalAccountMonitorCampaignResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorCampaign(val)
+	}
+	v.ActionItems = make([]*lfxv2campaignserviceconnections.AccountMonitorActionItem, len(body.ActionItems))
+	for i, val := range body.ActionItems {
+		if val == nil {
+			v.ActionItems[i] = nil
+			continue
+		}
+		v.ActionItems[i] = unmarshalAccountMonitorActionItemResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorActionItem(val)
+	}
+	v.Totals = unmarshalAccountMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorTotals(body.Totals)
+
+	return v
+}
+
+// NewMonitorMetaAdsAccountBadRequest builds a
+// lfx-v2-campaign-service-connections service monitor-meta-ads-account
+// endpoint BadRequest error.
+func NewMonitorMetaAdsAccountBadRequest(body *MonitorMetaAdsAccountBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorMetaAdsAccountServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service monitor-meta-ads-account
+// endpoint ServiceUnavailable error.
+func NewMonitorMetaAdsAccountServiceUnavailable(body *MonitorMetaAdsAccountServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorMetaAdsAccountInternalServerError builds a
+// lfx-v2-campaign-service-connections service monitor-meta-ads-account
+// endpoint InternalServerError error.
+func NewMonitorMetaAdsAccountInternalServerError(body *MonitorMetaAdsAccountInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorMetaAdsAccountNotFound builds a
+// lfx-v2-campaign-service-connections service monitor-meta-ads-account
+// endpoint NotFound error.
+func NewMonitorMetaAdsAccountNotFound(body *MonitorMetaAdsAccountNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorMetaAdsAccountPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service monitor-meta-ads-account
+// endpoint PayloadTooLarge error.
+func NewMonitorMetaAdsAccountPayloadTooLarge(body *MonitorMetaAdsAccountPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorMetaAdsAccountUnauthorized builds a
+// lfx-v2-campaign-service-connections service monitor-meta-ads-account
+// endpoint Unauthorized error.
+func NewMonitorMetaAdsAccountUnauthorized(body *MonitorMetaAdsAccountUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewMonitorRedditAdsAccountAccountMonitorOK builds a
+// "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
+// endpoint result from a HTTP "OK" response.
+func NewMonitorRedditAdsAccountAccountMonitorOK(body *MonitorRedditAdsAccountResponseBody) *lfxv2campaignserviceconnections.AccountMonitor {
+	v := &lfxv2campaignserviceconnections.AccountMonitor{
+		AccountID: *body.AccountID,
+		Days:      *body.Days,
+	}
+	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
+	for i, val := range body.Campaigns {
+		if val == nil {
+			v.Campaigns[i] = nil
+			continue
+		}
+		v.Campaigns[i] = unmarshalAccountMonitorCampaignResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorCampaign(val)
+	}
+	v.ActionItems = make([]*lfxv2campaignserviceconnections.AccountMonitorActionItem, len(body.ActionItems))
+	for i, val := range body.ActionItems {
+		if val == nil {
+			v.ActionItems[i] = nil
+			continue
+		}
+		v.ActionItems[i] = unmarshalAccountMonitorActionItemResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorActionItem(val)
+	}
+	v.Totals = unmarshalAccountMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorTotals(body.Totals)
+
+	return v
+}
+
+// NewMonitorRedditAdsAccountBadRequest builds a
+// lfx-v2-campaign-service-connections service monitor-reddit-ads-account
+// endpoint BadRequest error.
+func NewMonitorRedditAdsAccountBadRequest(body *MonitorRedditAdsAccountBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorRedditAdsAccountServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service monitor-reddit-ads-account
+// endpoint ServiceUnavailable error.
+func NewMonitorRedditAdsAccountServiceUnavailable(body *MonitorRedditAdsAccountServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorRedditAdsAccountInternalServerError builds a
+// lfx-v2-campaign-service-connections service monitor-reddit-ads-account
+// endpoint InternalServerError error.
+func NewMonitorRedditAdsAccountInternalServerError(body *MonitorRedditAdsAccountInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorRedditAdsAccountNotFound builds a
+// lfx-v2-campaign-service-connections service monitor-reddit-ads-account
+// endpoint NotFound error.
+func NewMonitorRedditAdsAccountNotFound(body *MonitorRedditAdsAccountNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorRedditAdsAccountPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service monitor-reddit-ads-account
+// endpoint PayloadTooLarge error.
+func NewMonitorRedditAdsAccountPayloadTooLarge(body *MonitorRedditAdsAccountPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorRedditAdsAccountUnauthorized builds a
+// lfx-v2-campaign-service-connections service monitor-reddit-ads-account
+// endpoint Unauthorized error.
+func NewMonitorRedditAdsAccountUnauthorized(body *MonitorRedditAdsAccountUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // ValidateCreateGoogleAdsResponseBody runs the validations defined on
 // Create-Google-AdsResponseBody
 func ValidateCreateGoogleAdsResponseBody(body *CreateGoogleAdsResponseBody) (err error) {
@@ -10313,6 +11120,166 @@ func ValidateCreateHubspotCampaignResponseBody(body *CreateHubspotCampaignRespon
 	}
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	return
+}
+
+// ValidateMonitorGoogleAdsAccountResponseBody runs the validations defined on
+// Monitor-Google-Ads-AccountResponseBody
+func ValidateMonitorGoogleAdsAccountResponseBody(body *MonitorGoogleAdsAccountResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", "body"))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", "body"))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", "body"))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := ValidateAccountMonitorCampaignResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := ValidateAccountMonitorActionItemResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := ValidateAccountMonitorTotalsResponseBody(body.Totals); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateMonitorLinkedinAdsAccountResponseBody runs the validations defined
+// on Monitor-Linkedin-Ads-AccountResponseBody
+func ValidateMonitorLinkedinAdsAccountResponseBody(body *MonitorLinkedinAdsAccountResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", "body"))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", "body"))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", "body"))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := ValidateAccountMonitorCampaignResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := ValidateAccountMonitorActionItemResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := ValidateAccountMonitorTotalsResponseBody(body.Totals); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateMonitorMetaAdsAccountResponseBody runs the validations defined on
+// Monitor-Meta-Ads-AccountResponseBody
+func ValidateMonitorMetaAdsAccountResponseBody(body *MonitorMetaAdsAccountResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", "body"))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", "body"))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", "body"))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := ValidateAccountMonitorCampaignResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := ValidateAccountMonitorActionItemResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := ValidateAccountMonitorTotalsResponseBody(body.Totals); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateMonitorRedditAdsAccountResponseBody runs the validations defined on
+// Monitor-Reddit-Ads-AccountResponseBody
+func ValidateMonitorRedditAdsAccountResponseBody(body *MonitorRedditAdsAccountResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", "body"))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", "body"))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", "body"))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := ValidateAccountMonitorCampaignResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := ValidateAccountMonitorActionItemResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := ValidateAccountMonitorTotalsResponseBody(body.Totals); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
 	}
 	return
 }
@@ -14415,6 +15382,306 @@ func ValidateCreateHubspotCampaignUnauthorizedResponseBody(body *CreateHubspotCa
 	return
 }
 
+// ValidateMonitorGoogleAdsAccountBadRequestResponseBody runs the validations
+// defined on monitor-google-ads-account_BadRequest_response_body
+func ValidateMonitorGoogleAdsAccountBadRequestResponseBody(body *MonitorGoogleAdsAccountBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorGoogleAdsAccountServiceUnavailableResponseBody runs the
+// validations defined on
+// monitor-google-ads-account_ServiceUnavailable_response_body
+func ValidateMonitorGoogleAdsAccountServiceUnavailableResponseBody(body *MonitorGoogleAdsAccountServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorGoogleAdsAccountInternalServerErrorResponseBody runs the
+// validations defined on
+// monitor-google-ads-account_InternalServerError_response_body
+func ValidateMonitorGoogleAdsAccountInternalServerErrorResponseBody(body *MonitorGoogleAdsAccountInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorGoogleAdsAccountNotFoundResponseBody runs the validations
+// defined on monitor-google-ads-account_NotFound_response_body
+func ValidateMonitorGoogleAdsAccountNotFoundResponseBody(body *MonitorGoogleAdsAccountNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorGoogleAdsAccountPayloadTooLargeResponseBody runs the
+// validations defined on
+// monitor-google-ads-account_PayloadTooLarge_response_body
+func ValidateMonitorGoogleAdsAccountPayloadTooLargeResponseBody(body *MonitorGoogleAdsAccountPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorGoogleAdsAccountUnauthorizedResponseBody runs the validations
+// defined on monitor-google-ads-account_Unauthorized_response_body
+func ValidateMonitorGoogleAdsAccountUnauthorizedResponseBody(body *MonitorGoogleAdsAccountUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorLinkedinAdsAccountBadRequestResponseBody runs the validations
+// defined on monitor-linkedin-ads-account_BadRequest_response_body
+func ValidateMonitorLinkedinAdsAccountBadRequestResponseBody(body *MonitorLinkedinAdsAccountBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorLinkedinAdsAccountServiceUnavailableResponseBody runs the
+// validations defined on
+// monitor-linkedin-ads-account_ServiceUnavailable_response_body
+func ValidateMonitorLinkedinAdsAccountServiceUnavailableResponseBody(body *MonitorLinkedinAdsAccountServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorLinkedinAdsAccountInternalServerErrorResponseBody runs the
+// validations defined on
+// monitor-linkedin-ads-account_InternalServerError_response_body
+func ValidateMonitorLinkedinAdsAccountInternalServerErrorResponseBody(body *MonitorLinkedinAdsAccountInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorLinkedinAdsAccountNotFoundResponseBody runs the validations
+// defined on monitor-linkedin-ads-account_NotFound_response_body
+func ValidateMonitorLinkedinAdsAccountNotFoundResponseBody(body *MonitorLinkedinAdsAccountNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorLinkedinAdsAccountPayloadTooLargeResponseBody runs the
+// validations defined on
+// monitor-linkedin-ads-account_PayloadTooLarge_response_body
+func ValidateMonitorLinkedinAdsAccountPayloadTooLargeResponseBody(body *MonitorLinkedinAdsAccountPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorLinkedinAdsAccountUnauthorizedResponseBody runs the
+// validations defined on
+// monitor-linkedin-ads-account_Unauthorized_response_body
+func ValidateMonitorLinkedinAdsAccountUnauthorizedResponseBody(body *MonitorLinkedinAdsAccountUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorMetaAdsAccountBadRequestResponseBody runs the validations
+// defined on monitor-meta-ads-account_BadRequest_response_body
+func ValidateMonitorMetaAdsAccountBadRequestResponseBody(body *MonitorMetaAdsAccountBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorMetaAdsAccountServiceUnavailableResponseBody runs the
+// validations defined on
+// monitor-meta-ads-account_ServiceUnavailable_response_body
+func ValidateMonitorMetaAdsAccountServiceUnavailableResponseBody(body *MonitorMetaAdsAccountServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorMetaAdsAccountInternalServerErrorResponseBody runs the
+// validations defined on
+// monitor-meta-ads-account_InternalServerError_response_body
+func ValidateMonitorMetaAdsAccountInternalServerErrorResponseBody(body *MonitorMetaAdsAccountInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorMetaAdsAccountNotFoundResponseBody runs the validations
+// defined on monitor-meta-ads-account_NotFound_response_body
+func ValidateMonitorMetaAdsAccountNotFoundResponseBody(body *MonitorMetaAdsAccountNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorMetaAdsAccountPayloadTooLargeResponseBody runs the
+// validations defined on monitor-meta-ads-account_PayloadTooLarge_response_body
+func ValidateMonitorMetaAdsAccountPayloadTooLargeResponseBody(body *MonitorMetaAdsAccountPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorMetaAdsAccountUnauthorizedResponseBody runs the validations
+// defined on monitor-meta-ads-account_Unauthorized_response_body
+func ValidateMonitorMetaAdsAccountUnauthorizedResponseBody(body *MonitorMetaAdsAccountUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorRedditAdsAccountBadRequestResponseBody runs the validations
+// defined on monitor-reddit-ads-account_BadRequest_response_body
+func ValidateMonitorRedditAdsAccountBadRequestResponseBody(body *MonitorRedditAdsAccountBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorRedditAdsAccountServiceUnavailableResponseBody runs the
+// validations defined on
+// monitor-reddit-ads-account_ServiceUnavailable_response_body
+func ValidateMonitorRedditAdsAccountServiceUnavailableResponseBody(body *MonitorRedditAdsAccountServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorRedditAdsAccountInternalServerErrorResponseBody runs the
+// validations defined on
+// monitor-reddit-ads-account_InternalServerError_response_body
+func ValidateMonitorRedditAdsAccountInternalServerErrorResponseBody(body *MonitorRedditAdsAccountInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorRedditAdsAccountNotFoundResponseBody runs the validations
+// defined on monitor-reddit-ads-account_NotFound_response_body
+func ValidateMonitorRedditAdsAccountNotFoundResponseBody(body *MonitorRedditAdsAccountNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorRedditAdsAccountPayloadTooLargeResponseBody runs the
+// validations defined on
+// monitor-reddit-ads-account_PayloadTooLarge_response_body
+func ValidateMonitorRedditAdsAccountPayloadTooLargeResponseBody(body *MonitorRedditAdsAccountPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorRedditAdsAccountUnauthorizedResponseBody runs the validations
+// defined on monitor-reddit-ads-account_Unauthorized_response_body
+func ValidateMonitorRedditAdsAccountUnauthorizedResponseBody(body *MonitorRedditAdsAccountUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateLinkedinAdsConnectionConfigRequestBody runs the validations defined
 // on linkedin-ads-connection-configRequestBody
 func ValidateLinkedinAdsConnectionConfigRequestBody(body *LinkedinAdsConnectionConfigRequestBody) (err error) {
@@ -14606,6 +15873,128 @@ func ValidateHubspotCampaignResponseBody(body *HubspotCampaignResponseBody) (err
 	}
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	return
+}
+
+// ValidateAccountMonitorCampaignResponseBody runs the validations defined on
+// account-monitor-campaignResponseBody
+func ValidateAccountMonitorCampaignResponseBody(body *AccountMonitorCampaignResponseBody) (err error) {
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.Spend == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("spend", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.BudgetDay == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("budget_day", "body"))
+	}
+	if body.TotalBudget == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("total_budget", "body"))
+	}
+	if body.StartDate == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("start_date", "body"))
+	}
+	if body.EndDate == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("end_date", "body"))
+	}
+	if body.PacingUnknown == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("pacing_unknown", "body"))
+	}
+	if body.IsSearchChannel == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("is_search_channel", "body"))
+	}
+	if body.FetchFailed == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fetch_failed", "body"))
+	}
+	if body.PacingPct == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("pacing_pct", "body"))
+	}
+	if body.PacingLabel == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("pacing_label", "body"))
+	}
+	if body.PacingLabel != nil {
+		if !(*body.PacingLabel == "normal" || *body.PacingLabel == "underspending" || *body.PacingLabel == "constrained" || *body.PacingLabel == "overspending") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.pacing_label", *body.PacingLabel, []any{"normal", "underspending", "constrained", "overspending"}))
+		}
+	}
+	for _, e := range body.AdGroups {
+		if e != nil {
+			if err2 := ValidateAccountMonitorAdGroupResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateAccountMonitorAdGroupResponseBody runs the validations defined on
+// account-monitor-ad-groupResponseBody
+func ValidateAccountMonitorAdGroupResponseBody(body *AccountMonitorAdGroupResponseBody) (err error) {
+	if body.AdGroupID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ad_group_id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.Keywords == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("keywords", "body"))
+	}
+	return
+}
+
+// ValidateAccountMonitorActionItemResponseBody runs the validations defined on
+// account-monitor-action-itemResponseBody
+func ValidateAccountMonitorActionItemResponseBody(body *AccountMonitorActionItemResponseBody) (err error) {
+	if body.Priority == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("priority", "body"))
+	}
+	if body.Issue == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("issue", "body"))
+	}
+	if body.Action == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action", "body"))
+	}
+	if body.Priority != nil {
+		if !(*body.Priority == "HIGH" || *body.Priority == "MED" || *body.Priority == "LOW") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.priority", *body.Priority, []any{"HIGH", "MED", "LOW"}))
+		}
+	}
+	return
+}
+
+// ValidateAccountMonitorTotalsResponseBody runs the validations defined on
+// account-monitor-totalsResponseBody
+func ValidateAccountMonitorTotalsResponseBody(body *AccountMonitorTotalsResponseBody) (err error) {
+	if body.Spend == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("spend", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.Conversions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("conversions", "body"))
+	}
+	if body.CampaignCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_count", "body"))
 	}
 	return
 }
