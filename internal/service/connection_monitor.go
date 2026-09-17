@@ -5,10 +5,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/rules"
 )
@@ -158,15 +160,27 @@ func (s *ConnectionService) monitorAccount(
 	// comment) is a secondary, derivable figure — summing the returned rows is not the
 	// platform's own number, but it is a strictly better answer than a 5xx that throws
 	// away campaign data the caller already has in hand.
+	//
+	// len(rows) is safe to pass as the row count only because no AccountTotalsReader
+	// implementation today filters rows the way the rule engines above do (see
+	// EvaluateGoogleMonitor's zz-prefix drop) — if one ever did, this count would need to
+	// come from whatever that implementation actually returned, not from rows.
 	totals, ok, terr := orch.ReadAccountTotals(ctx, projectID, platform, accountID, days, len(rows))
 	if terr != nil {
-		// terr can carry ErrConnectionNotUsable, whose detection path decodes a decrypted
-		// credential blob — neither the cause nor its text may leave this function (see
-		// classifyDiscoveryError's ErrConnectionNotUsable arm in connection.go). Log the
-		// fixed-vocabulary reason instead, and at Warn: this is a handled/recovered condition,
-		// not an error that aborts the request.
-		slog.WarnContext(ctx, "account totals read failed; serving the row-summed fallback",
-			"reason", unusableConnectionReason(terr), "project_id", projectID, "platform", platform)
+		if errors.Is(terr, domain.ErrConnectionNotUsable) {
+			// terr can carry ErrConnectionNotUsable, whose detection path decodes a decrypted
+			// credential blob — neither the cause nor its text may leave this function (see
+			// classifyDiscoveryError's ErrConnectionNotUsable arm in connection.go). Log the
+			// fixed-vocabulary reason instead.
+			slog.WarnContext(ctx, "account totals read failed; serving the row-summed fallback",
+				"reason", unusableConnectionReason(terr), "project_id", projectID, "platform", platform)
+		} else {
+			// Any other failure carries no credential-derived material, so the error itself is
+			// safe to log directly — a fixed-vocabulary reason would otherwise hide the actual
+			// upstream cause for an ordinary API/network failure.
+			slog.WarnContext(ctx, "account totals read failed; serving the row-summed fallback",
+				"error", terr, "project_id", projectID, "platform", platform)
+		}
 		ok = false
 	}
 	if !ok {

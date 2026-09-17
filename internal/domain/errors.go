@@ -653,14 +653,19 @@ var (
 	// ErrAccountIDMalformed indicates a caller-supplied account id is shape-invalid for its
 	// platform. Maps to 400.
 	//
-	// LinkedIn and Meta's account-monitor design attributes carry a Goa Pattern, so a
-	// malformed id there never reaches a dispatcher — Goa itself refuses the request at the
-	// HTTP boundary. Google Ads and Reddit have no established regex convention to reuse for
-	// their design attributes (see design/connection.go), so their dispatchers validate the
-	// shape themselves and wrap the failure in this sentinel, giving those two platforms the
-	// same clean 400 LinkedIn/Meta get for free — rather than falling through to
-	// classifyDiscoveryError's default arm, which would report an unrelated-looking 503 for
-	// what is really a caller error.
+	// All four account-monitor dispatchers (googleads.ValidateCustomerID,
+	// linkedin.ValidateAccountID, meta.ValidateAccountID, reddit.ValidateAccountID) validate
+	// the id's shape themselves, before resolving any credential, and wrap a failure in this
+	// sentinel — rather than falling through to classifyDiscoveryError's default arm, which
+	// would report an unrelated-looking 503 for what is really a caller error. LinkedIn and
+	// Meta's design attributes additionally carry a Goa Pattern, so an HTTP caller's malformed
+	// id never reaches their dispatcher at all; the dispatcher-level check exists for
+	// defense-in-depth against a non-HTTP caller that bypasses Goa. Google Ads and Reddit have
+	// no design-layer Pattern even though their own regexes (googleads.customerIDRE,
+	// reddit.accountIDRe) are exactly as established as LinkedIn's/Meta's — that is a deliberate
+	// ownership choice, not a gap: those regexes live inside their platform client packages, and
+	// duplicating them at the design layer would create two definitions of "valid account id"
+	// that could drift apart silently. See docs/knowledge/architecture/account-monitor-endpoints.md.
 	//
 	// Distinct from ErrConnectionNotUsable: that sentinel is about the STORED connection
 	// being unusable; this one is about the id the CALLER passed on this one request.
