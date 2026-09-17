@@ -30,89 +30,34 @@ jobs:
     permissions:
       packages: write
     steps:
-      # tag-selection and the fixed account/image-names below are intentionally
-      # not exposed as workflow_dispatch inputs. tag-selection is `both`:
-      # per-commit SHA-tagged versions from PR/main builds are now in scope
-      # (see the --image-tags note below for what still protects releases and
-      # the current main build), but reaching outside this package is still
-      # ruled out, so account/image-names stay fixed. keep-n-most-recent is
-      # left at its default (0, i.e. unused): the cut-off already excludes
-      # anything younger than the configured age, so an additional
-      # most-recent-N carve-out wouldn't protect anything cut-off doesn't.
-      # snok/container-retention-policy protects multi-arch child manifests
-      # still referenced by a retained parent automatically, with no input
-      # here overriding that behavior.
+      # tag-selection=both covers both untagged and tagged versions; account/
+      # image-names are fixed rather than exposed as inputs, to keep this job
+      # scoped to one package. keep-n-most-recent stays at its default (unused)
+      # since cut-off alone already governs what's eligible. Multi-arch child
+      # manifests still referenced by a retained parent are protected
+      # automatically by snok/container-retention-policy.
       - name: Delete stale image versions
         id: container-retention-policy
-        # Invoked as a direct container reference, pinned by digest, rather
-        # than via the `snok/container-retention-policy@<sha>` action alias:
-        # that alias only pins the action's metadata commit, while the
-        # metadata itself points at the mutable `v3.1.0` container tag it
-        # actually executes. Since this container now holds a token capable
-        # of deleting organization packages, pinning by digest closes the
-        # gap where retagging upstream could substitute a different image.
+        # Pinned by digest (not the `@<sha>` action alias, which only pins
+        # action metadata while still executing whatever container tag that
+        # metadata points at) since this container holds a token capable of
+        # deleting packages.
         uses: docker://ghcr.io/snok/container-retention-policy@sha256:884037f146d6ef574b61fbcc59bef490f887322e6b9dc2eefcf364cb4e9b4112  # v3.1.0
-        # A raw `docker://` reference has no action.yaml, so there is no
-        # `with:`-to-CLI-flag mapping to rely on: the image's entrypoint is a
-        # Rust CLI that only understands `--flag=value` arguments. Inputs are
-        # passed via `with.args`, GitHub's documented mechanism for a Docker
-        # container step's args (see "jobs.<job_id>.steps[*].with.args" in the
-        # workflow syntax reference), which forwards this string to the
-        # container's ENTRYPOINT. cut-off and image-tags are double-quoted
-        # because their values contain a space (e.g. "4w 2d", "!latest
-        # !development"). --shas-to-skip is passed empty rather than omitted:
-        # upstream's action.yaml always forwards it to the CLI (empty when its
-        # own input is unset), and the CLI's arg parser requires the flag to
-        # be present, even with an empty value — confirmed by a live dry-run
-        # failing with "the following required arguments were not provided:
-        # --image-tags <IMAGE_TAGS>, --shas-to-skip <SHAS_TO_SKIP>" when both
-        # flags were omitted outright. --image-tags carries three negative
-        # patterns: "!v*" is the one that actually protects every release
-        # (ko-build-tag.yaml tags each release with both a `vX.Y.Z` version
-        # string and `latest`, so `!v*` alone already covers them); "!latest"
-        # is kept anyway as defense in depth in case a future release build
-        # ever tags `latest` without a version string; "!development"
-        # protects the current main build (ko-build-main.yaml).
+        # A raw `docker://` reference has no action.yaml, so inputs are passed
+        # as a single CLI-args string via `with.args` rather than `with:` keys.
+        # --shas-to-skip is required by the CLI's arg parser even when empty.
+        # --image-tags is quoted because it's space-separated: negative
+        # patterns protect any version carrying a matching tag, so "!v*"
+        # protects release versions, "!latest" is kept as a defense-in-depth
+        # backstop, and "!development" protects the current default-branch
+        # build.
         env:
           RUST_LOG: container_retention_policy=INFO
         with:
-          # The default job GITHUB_TOKEN can delete package versions as long
-          # as `image-names` is an exact string (not a wildcard), which it is
-          # here — no separate PAT is needed. Requires the job-level
-          # `permissions: packages: write` above.
-          #
-          # --image-tags="!v* !latest !development" protects releases and the
-          # current main build without needing to enumerate every branch
-          # name: per snok/container-retention-policy's matcher semantics
-          # (src/core/select_package_versions.rs::filter_by_matchers), a
-          # negative pattern matching *any* tag on a package version protects
-          # that whole version, regardless of its other tags. Every release
-          # build (.github/workflows/ko-build-tag.yaml) tags with its version
-          # string (`vX.Y.Z`) plus `latest`, so `!v*` alone already protects
-          # every release; `!latest` is redundant today but kept as defense
-          # in depth in case a future release build ever tags `latest`
-          # without a version string. The current main build (ko-build-main.yaml)
-          # tags with `development` — neither workflow's tags ever share a
-          # digest with a plain PR/main SHA-tagged build, so this excludes
-          # exactly the versions that must survive and nothing else.
-          # Everything else tagged (per-commit SHA + a branch name from
-          # ko-build-branch.yaml, or a superseded SHA + `development` pairing
-          # from an older main build) is now a deletion candidate once past
-          # cut-off, which is the point of widening tag-selection to `both`:
-          # previously only fully-untagged versions were ever considered, so
-          # per-commit SHA-tagged versions accumulated indefinitely.
-          #
-          # Known tradeoff: a PR branch whose last push is older than
-          # cut-off still carries a live branch-name tag, so its current
-          # image is now a deletion candidate too (an idle/abandoned PR, not
-          # just superseded commits on an active one). Accepted as normal
-          # cleanup of stale PR images; dry-run below guards the rollout.
-          #
-          # dry-run defaults to true for now, for both triggers: this widens
-          # scope to tagged versions for the first time, on top of the
-          # existing ~15,000-version untagged backlog, so a maintainer should
-          # review a manual dry-run preview before flipping either fallback
-          # to 'false'.
+          # GITHUB_TOKEN can delete package versions when image-names is an
+          # exact match (not a wildcard); requires `permissions: packages:
+          # write` above. dry-run defaults to true so a maintainer can review
+          # a preview before the first real run against an existing backlog.
           args: >-
             --account=linuxfoundation
             --image-names=lfx-v2-campaign-service/campaign-service
