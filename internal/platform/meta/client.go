@@ -1822,8 +1822,7 @@ var accountIDRE = regexp.MustCompile(`^act_[0-9]+$`)
 // resolving (and decrypting) any stored credential — mirrors googleads.ValidateCustomerID's
 // ordering.
 func ValidateAccountID(accountID string) error {
-	id := strings.TrimSpace(accountID)
-	if !accountIDRE.MatchString(id) {
+	if !accountIDRE.MatchString(accountID) {
 		return fmt.Errorf("invalid Meta ad account id %q: must be act_<digits>", accountID)
 	}
 	return nil

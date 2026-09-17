@@ -1181,14 +1181,16 @@ func TestReddit_AuthorPostFailurePersistsCreatedDegraded(t *testing.T) {
 
 // TestReddit_ListAccountCampaignMetrics_RejectsMalformedAccountID pins the guard at
 // reddit.go:460: a shape-invalid account id must surface as domain.ErrAccountIDMalformed (a
-// clean 400), not fall through to the default 503 arm — this endpoint's design attribute has
-// no Pattern (see design/connection.go) the way LinkedIn/Meta's do, so a malformed-but-nonempty
-// id (unlike an empty one) reaches this dispatcher with no earlier, design-layer rejection.
+// clean 400), not fall through to the default 503 arm. This dispatcher-level check is
+// defense-in-depth for a non-HTTP caller that bypasses Goa — an ordinary HTTP request is
+// already refused by the design attribute's own Pattern (see design/connection.go) before this
+// method ever runs. Calling the dispatcher method directly, as this test does, is exactly how
+// that bypass happens.
 //
-// Deliberately nonempty and charset-invalid ("/" is outside reddit.accountIDRe): an empty id
-// is also rejected by the design layer's MinLength(1), so it would not exercise the gap this
-// test targets. reddit.ValidateAccountID rejects this shape before resolveMonitorClient or
-// ListAccountCampaigns ever run, so this exercises that dispatch-level guard directly, not
+// Deliberately nonempty and charset-invalid ("/" is outside reddit.accountIDRe), so it exercises
+// this dispatcher's own shape check rather than an emptiness guard. reddit.ValidateAccountID
+// rejects this shape before resolveMonitorClient or
+// ListAccountCampaigns ever run, exercising that dispatch-level guard directly, not
 // the inner reddit.ErrInvalidAccountID branch a few lines below it (kept only as defense in
 // depth against the platform client's own check ever diverging from ValidateAccountID's — see
 // that branch's comment). No token or API server is wired: the shape check runs first.

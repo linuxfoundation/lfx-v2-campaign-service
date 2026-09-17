@@ -2946,11 +2946,13 @@ func TestGoogleAds_ReadMetrics_ConversionsPointerSurvivesTheDispatcher(t *testin
 	}
 }
 
-// TestGoogleAds_ListAccountCampaignMetrics_RejectsMalformedAccountID pins the guard at
-// googleads.go:838: a non-digits account id must be rejected before any credential is
-// resolved, since this endpoint's design attribute has no Pattern (see design/connection.go)
-// the way LinkedIn/Meta's do — a malformed id would otherwise reach gaqlSearchForCustomer's
-// own unsentineled error, which classifyDiscoveryError's default arm maps to an opaque 503.
+// TestGoogleAds_ListAccountCampaignMetrics_RejectsMalformedAccountID pins the dispatcher-level
+// guard at googleads.go:838, which exists as defense-in-depth for a non-HTTP caller that
+// bypasses Goa — an ordinary HTTP request is already refused by the design attribute's own
+// Pattern (see design/connection.go) before this method ever runs. Calling the dispatcher
+// method directly, as this test does, is exactly how that bypass happens: without this guard, a
+// malformed id would reach gaqlSearchForCustomer's own unsentineled error, which
+// classifyDiscoveryError's default arm maps to an opaque 503.
 func TestGoogleAds_ListAccountCampaignMetrics_RejectsMalformedAccountID(t *testing.T) {
 	// No connection is wired at all: resolveGoogleAdsDiscoveryClient must never be reached,
 	// so a connection-lookup error here would prove nothing about this guard either way.

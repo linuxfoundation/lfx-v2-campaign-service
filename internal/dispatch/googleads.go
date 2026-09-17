@@ -830,12 +830,12 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 // start = today - (days-1)), then reads every campaign visible on that customer id via
 // googleads.Client.ListAccountCampaigns.
 func (d *GoogleAdsDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
-	// Validated up front, before any credential is resolved: the design attribute for this
-	// endpoint's account_id has no Pattern (see design/connection.go), so a malformed value
-	// otherwise reaches gaqlSearchForCustomer's own unsentineled error, which
-	// classifyDiscoveryError's default arm maps to an opaque 503 — this wraps the same shape
-	// check in domain.ErrAccountIDMalformed so it gets the clean 400 LinkedIn/Meta get from
-	// their design-layer Pattern for free.
+	// Validated up front, before any credential is resolved: this is defense-in-depth for a
+	// non-HTTP caller that bypasses Goa — an ordinary HTTP request already gets refused by the
+	// design attribute's own Pattern (see design/connection.go) before this method ever runs.
+	// Without this check, a malformed value reaching here would hit gaqlSearchForCustomer's
+	// own unsentineled error, which classifyDiscoveryError's default arm maps to an opaque
+	// 503 — this wraps the same shape check in domain.ErrAccountIDMalformed for the clean 400.
 	if err := googleads.ValidateCustomerID(accountID); err != nil {
 		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
 	}

@@ -657,15 +657,14 @@ var (
 	// linkedin.ValidateAccountID, meta.ValidateAccountID, reddit.ValidateAccountID) validate
 	// the id's shape themselves, before resolving any credential, and wrap a failure in this
 	// sentinel — rather than falling through to classifyDiscoveryError's default arm, which
-	// would report an unrelated-looking 503 for what is really a caller error. LinkedIn and
-	// Meta's design attributes additionally carry a Goa Pattern, so an HTTP caller's malformed
-	// id never reaches their dispatcher at all; the dispatcher-level check exists for
-	// defense-in-depth against a non-HTTP caller that bypasses Goa. Google Ads and Reddit have
-	// no design-layer Pattern even though their own regexes (googleads.customerIDRE,
-	// reddit.accountIDRe) are exactly as established as LinkedIn's/Meta's — that is a deliberate
-	// ownership choice, not a gap: those regexes live inside their platform client packages, and
-	// duplicating them at the design layer would create two definitions of "valid account id"
-	// that could drift apart silently. See docs/knowledge/architecture/account-monitor-endpoints.md.
+	// would report an unrelated-looking 503 for what is really a caller error. All four design
+	// attributes also carry a Goa Pattern, so an HTTP caller's malformed id never reaches the
+	// dispatcher at all; the dispatcher-level check exists for defense-in-depth against a
+	// non-HTTP caller that bypasses Goa entirely. The platform-package regexes
+	// (googleads.customerIDRE, reddit.accountIDRe, etc.) and the design Patterns are two
+	// independent copies of the same shape, guarded against drifting apart by
+	// internal/apivalidation/monitor_account_id_drift_test.go. See
+	// docs/knowledge/architecture/account-monitor-endpoints.md.
 	//
 	// Distinct from ErrConnectionNotUsable: that sentinel is about the STORED connection
 	// being unusable; this one is about the id the CALLER passed on this one request.

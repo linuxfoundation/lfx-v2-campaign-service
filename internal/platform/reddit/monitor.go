@@ -162,8 +162,7 @@ func (c *Client) fetchMonitorReport(ctx context.Context, path, startDate, endDat
 // before resolving (and decrypting) any stored credential — mirrors
 // googleads.ValidateCustomerID's ordering.
 func ValidateAccountID(accountID string) error {
-	id := strings.TrimSpace(accountID)
-	if id == "" || !accountIDRe.MatchString(id) {
+	if !accountIDRe.MatchString(accountID) {
 		return fmt.Errorf("validate account id: %w", ErrInvalidAccountID)
 	}
 	return nil

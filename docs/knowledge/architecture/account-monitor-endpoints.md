@@ -115,35 +115,25 @@ existing `*ConnectionConfig` types already enforce — the regex itself already
 rejects an empty string, so a separate `MinLength(1)` would be redundant
 there.
 
-Google and Reddit additionally get `MinLength(1)` rather than a design-layer
-`Pattern`, even though both already have an equally-established regex to
-reuse — Google's `customerIDRE` (`internal/platform/googleads/client.go`,
-`^[0-9]+$`) and Reddit's `accountIDRe` (`internal/platform/reddit/client.go`,
-`^[A-Za-z0-9_]+$`) are exactly as established as LinkedIn's/Meta's. The reason
-is ownership, not precedent: those two regexes are owned and enforced inside
-the platform client package itself, not duplicated at the Goa design layer —
-declaring a second copy of the same shape in `design/connection.go` would
-create two definitions of "valid Google/Reddit account id" that could drift
-apart silently (a client-side regex change would not fail any design-layer
-test). Enforcement instead happens one layer down, in the dispatcher,
-immediately before the credential-dependent client call — see below.
-
-Google and Reddit's `MinLength`/`MaxLength`-only attributes still admit a
+Google and Reddit initially got `MinLength(1)` rather than a design-layer
+`Pattern`, on the reasoning that their regexes — Google's `customerIDRE`
+(`internal/platform/googleads/client.go`, `^[0-9]+$`) and Reddit's
+`accountIDRe` (`internal/platform/reddit/client.go`, `^[A-Za-z0-9_]+$`) —
+were owned and enforced inside the platform client package itself, and that
+duplicating them at the Goa design layer would create two definitions of
+"valid Google/Reddit account id" that could drift apart silently. Under that
+design, their `MinLength`/`MaxLength`-only attributes still admitted a
 malformed-but-nonempty id (e.g. `"abc"` for Google, which is digits-only
-upstream) past Goa entirely, unlike LinkedIn/Meta's `Pattern`, which refuses
-it at the HTTP boundary. Rather than leave that id to reach
-`gaqlSearchForCustomer`'s or Reddit's own unsentineled shape error —
-which `classifyDiscoveryError`'s default arm maps to an opaque 503 — each
-dispatcher's `ListAccountCampaignMetrics` now validates the shape itself
-(`googleads.ValidateCustomerID`; Reddit's existing `accountIDRe` check inside
-`ListAccountCampaigns`) and wraps the failure in a new sentinel,
+upstream) past Goa entirely, unlike LinkedIn/Meta's `Pattern`. Rather than
+leave that id to reach `gaqlSearchForCustomer`'s or Reddit's own unsentineled
+shape error — which `classifyDiscoveryError`'s default arm maps to an opaque
+503 — each dispatcher's `ListAccountCampaignMetrics` validated the shape
+itself (`googleads.ValidateCustomerID`; Reddit's existing `accountIDRe` check
+inside `ListAccountCampaigns`) and wrapped the failure in a new sentinel,
 `domain.ErrAccountIDMalformed`, which `classifyDiscoveryError` maps to 400.
-Net effect: all four platforms now answer a malformed id with a clean 400 —
-LinkedIn and Meta at the design layer (Goa never calls the handler), Google
-and Reddit at the dispatcher layer (the handler runs, then refuses).
 
-A follow-up local review round closed the remaining gap for non-HTTP callers:
-`LinkedInDispatcher.ListAccountCampaignMetrics` and
+A follow-up local review round closed the equivalent gap for LinkedIn/Meta's
+non-HTTP callers: `LinkedInDispatcher.ListAccountCampaignMetrics` and
 `MetaDispatcher.ListAccountCampaignMetrics` previously relied entirely on
 Goa's `Pattern` and passed `account_id` straight to their platform clients
 with no dispatcher-level check, so a caller that bypasses the HTTP layer
@@ -152,7 +142,27 @@ Google/Reddit had. Both dispatchers now call a new exported
 `linkedin.ValidateAccountID` / `meta.ValidateAccountID` (each reusing that
 package's existing `accountIDRE`) before resolving any credential, wrapping
 a shape failure in `domain.ErrAccountIDMalformed` — the same defense-in-depth
-pattern Google/Reddit already had, now present on all four platforms.
+pattern Google/Reddit already had.
+
+A later round reversed the "ownership, not precedent" decision above: Google
+Ads and Reddit's `account_id` attributes now carry `Pattern(`^[0-9]+$`)` and
+`Pattern(`^[A-Za-z0-9_]+$`)` respectively, mirroring `customerIDRE`/
+`accountIDRe` exactly and dropping `MinLength(1)` (the pattern itself already
+rejects the empty string). The drift risk the original reasoning worried
+about is real, but the fix is a guard, not avoidance: none of the four
+attributes carries `MinLength` any more, and
+`internal/apivalidation/monitor_account_id_drift_test.go` asserts each design
+`Pattern` and its platform-package counterpart classify the same ids
+identically, so the two copies cannot silently separate.
+
+Net effect: all four platforms answer a malformed id with a clean 400 at the
+Goa design layer for an ordinary HTTP caller (Goa never calls the handler).
+Every dispatcher's own shape check — `googleads.ValidateCustomerID`,
+`linkedin.ValidateAccountID`, `meta.ValidateAccountID`,
+`reddit.ValidateAccountID` — still runs too, wrapping a failure in the same
+`domain.ErrAccountIDMalformed`; it is now uniform defense-in-depth for a
+non-HTTP caller that bypasses Goa entirely on any of the four platforms,
+not the primary gate for two of them.
 
 ## Correctness bugs found during PR review
 

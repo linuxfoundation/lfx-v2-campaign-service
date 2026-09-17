@@ -131,10 +131,11 @@ func TestMonitorAccount_ClassifiesDiscoveryError(t *testing.T) {
 		// this one falls through to the default 503 arm, which promises a retry that can
 		// never succeed for a platform with no monitor dispatcher wired.
 		{"account metrics unsupported maps to 400", domain.ErrAccountMetricsUnsupported, "400"},
-		// Google/Reddit have no design-layer Pattern on account_id (see
-		// docs/knowledge/architecture/account-monitor-endpoints.md), so a malformed id is
-		// caught by the dispatcher instead and must still land on a clean 400, not the
-		// default 503 arm a plain unsentineled dispatcher error would fall through to.
+		// Every dispatcher also validates account_id shape itself, as defense-in-depth for a
+		// non-HTTP caller that bypasses the design attribute's Goa Pattern (see
+		// docs/knowledge/architecture/account-monitor-endpoints.md); this classifier is what
+		// gives that dispatcher-level rejection a clean 400 instead of falling through to the
+		// default 503 arm a plain unsentineled dispatcher error would land on.
 		{"malformed account id maps to 400", domain.ErrAccountIDMalformed, "400"},
 	}
 	for _, tc := range tests {
