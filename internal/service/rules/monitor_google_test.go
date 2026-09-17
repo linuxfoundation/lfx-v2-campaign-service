@@ -208,6 +208,11 @@ func TestGoogleActionItems_UnderspendingTextUsesRequestedDays(t *testing.T) {
 // metrics fetch failed: its zero-value numeric fields must not be run through pacing/action-item
 // evaluation (which would fabricate a bogus "underspending" label and HIGH action item), but the
 // row itself must still appear in the returned campaigns list with FetchFailed intact.
+//
+// This branch is currently unreachable in production — Google's GAQL read has no per-campaign
+// partial-failure mode, so nothing in internal/platform/googleads ever sets FetchFailed=true on
+// a real row — the test constructs the state directly to pin the defensive-symmetry contract
+// ahead of the day Google's client gains a per-campaign failure signal (round-15 review).
 func TestEvaluateGoogleMonitor_SkipsFetchFailedRows(t *testing.T) {
 	rows := []model.AccountCampaignMetrics{
 		{PlatformCampaignID: "1", Name: "Failed Fetch", Status: "enabled", BudgetDay: 50, FetchFailed: true},

@@ -829,6 +829,18 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 // customer id via googleads.Client.ListAccountCampaigns, which itself derives the
 // campaign-metrics.service.ts resolveDateRange window (end = today, start = today -
 // (days-1)) from its own injected clock rather than the wall clock.
+//
+// Trust boundary (round-15 review, pre-existing since ListAccounts/`64141f23`, not introduced
+// by this method): accountID is caller-supplied and validated only for shape, never for
+// ownership. When the resolved credential falls back to the shared LF system connection
+// (resolveWithFallback -> systemConn, above), a project with no Google Ads connection of its
+// own can read spend/budget/campaign data for any customer id that system credential can see,
+// including one belonging to a different project. This mirrors the already-shipped
+// ListAccounts discovery endpoint's credential scope exactly, so it is not a new gap, but it
+// is not yet closed either — a caller that must not cross project boundaries should require
+// accountID to be one ListAccounts would itself return for this project, or refuse this read
+// entirely for system-fallback credentials. Same caveat applies to the LinkedIn/Meta/Reddit
+// siblings of this method.
 func (d *GoogleAdsDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
 	// Validated up front, before any credential is resolved: this is defense-in-depth for a
 	// non-HTTP caller that bypasses Goa — an ordinary HTTP request already gets refused by the

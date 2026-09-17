@@ -171,8 +171,11 @@ func monitorDaysDecoderChecker[P any](
 	mux := goahttp.NewMuxer()
 	decode := decodeFn(mux, goahttp.RequestDecoder)
 
-	// A digits-only id satisfies every platform's Pattern except Meta's act_<digits> and
-	// Reddit's t2_<base36>, so this checker takes the account_id to use rather than guessing.
+	// A digits-only id satisfies every platform's Pattern except Meta's `^act_[0-9]+$`, so the
+	// switch below only needs a real branch for Meta. Reddit's Pattern is `^[A-Za-z0-9_]+$`
+	// (design/connection.go) — a digits-only id already satisfies it, so its branch below is not
+	// load-bearing; kept only so the value read as intentionally Reddit-shaped rather than
+	// incidentally passing, not because a digits-only id would otherwise fail Reddit's Pattern.
 	accountID := "123456789"
 	switch path {
 	case "/connection-meta-ads/account-monitor":

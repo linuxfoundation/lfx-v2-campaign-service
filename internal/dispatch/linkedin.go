@@ -673,6 +673,11 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 //
 // It satisfies the service-side AccountMetricsReader interface, which Orchestrator
 // type-asserts on the dispatcher for the requested platform.
+//
+// Trust boundary: see the doc comment on GoogleAdsDispatcher.ListAccountCampaignMetrics
+// (internal/dispatch/googleads.go) — accountID is validated only for shape, never for
+// ownership, so a system-fallback credential can read another project's data. Same caveat
+// applies here (round-15 review).
 func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
 	// Validated up front, before any credential is resolved — mirrors googleads.ValidateCustomerID's
 	// ordering (internal/dispatch/googleads.go): an unauthenticated malformed-id caller should never

@@ -108,8 +108,12 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		}
 		// Campaign-list filter ported from getMetaAnalytics: `c.impressions>0 ||
 		// c.status==='ACTIVE'` — everything else (a PAUSED campaign that never delivered)
-		// is dropped from the monitor view entirely, exactly as upstream.
-		if row.Impressions > 0 || row.Status == StatusActive {
+		// is dropped from the monitor view entirely, exactly as upstream. A row marked
+		// FetchFailed is admitted regardless of that filter: round-15 review found the
+		// filter silently dropping a PAUSED campaign whose insights row failed to parse,
+		// making the fetch failure invisible instead of surfacing as unmeasured — the
+		// opposite of what FetchFailed exists to do.
+		if row.Impressions > 0 || row.Status == StatusActive || row.FetchFailed {
 			rows = append(rows, row)
 		}
 	}

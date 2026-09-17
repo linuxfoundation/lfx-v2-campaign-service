@@ -1155,6 +1155,11 @@ func (d *MetaDispatcher) ListAccounts(ctx context.Context, projectID string, pla
 // ListAccounts uses (a monitor read names its OWN target accountID, distinct from whatever
 // account the project's connection currently points at), then reads every campaign visible
 // on that account via meta.Client.ListAccountCampaigns.
+//
+// Trust boundary: see the doc comment on GoogleAdsDispatcher.ListAccountCampaignMetrics
+// (internal/dispatch/googleads.go) — accountID is validated only for shape, never for
+// ownership, so a system-fallback credential can read another project's data. Same caveat
+// applies here (round-15 review).
 func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
 	// Validated up front, before any credential is resolved — mirrors googleads.ValidateCustomerID's
 	// ordering (internal/dispatch/googleads.go): an unauthenticated malformed-id caller should never

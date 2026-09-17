@@ -204,6 +204,32 @@ func TestListAccountCampaigns_MalformedInsightsRow_MarksFetchFailed(t *testing.T
 	}
 }
 
+// TestListAccountCampaigns_PausedCampaignFetchFailed_IsNotDropped pins a real defect found in
+// round-15 review: the campaign-list filter ported from getMetaAnalytics
+// (`impressions>0 || status==='ACTIVE'`) silently dropped a PAUSED campaign whose insights row
+// failed to parse, since FetchFailed leaves Impressions at 0 and the campaign is not ACTIVE.
+// That made the fetch failure invisible instead of surfacing it — the opposite of what
+// FetchFailed exists to do. The filter now also admits a row with FetchFailed=true.
+func TestListAccountCampaigns_PausedCampaignFetchFailed_IsNotDropped(t *testing.T) {
+	malformedInsights := `{"data":[{"campaign_id":"111","impressions":"not-a-number","clicks":"50","spend":"12.50"}],"paging":{}}`
+	srv, _ := monitorPageResponses(t,
+		[]string{campaignPage("111", "Campaign One", StatusPaused, false)},
+		[]string{malformedInsights},
+	)
+	c := newMonitorClient(srv)
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 30)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1 (a PAUSED campaign with a failed fetch must still surface): %+v", len(rows), rows)
+	}
+	if !rows[0].FetchFailed {
+		t.Errorf("row for campaign 111 = %+v, want FetchFailed=true", rows[0])
+	}
+}
+
 func TestListAccountCampaigns_MissingCursor_IsAnError(t *testing.T) {
 	// paging.next present but no cursors.after: an unusable shape, not a truncated list.
 	badPage := `{"data":[{"id":"111","name":"Campaign One","status":"ACTIVE","daily_budget":"1000","lifetime_budget":"","start_time":"2026-01-01T00:00:00-0800","stop_time":""}],"paging":{"next":"https://graph.facebook.com/next"}}`
