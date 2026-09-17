@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/hubspot"
-description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def + marketing-campaign operations, and marketing-email statistics reads — a UTC calendar range selects which emails are in scope BY SEND DATE and the counters returned are that email's totals to date, behind fail-closed guards for a dishonoured filter, an unrecognized or partially renamed counter vocabulary, a negative counter, and an empty match set (no SENT email with that id in the span — a send outside it, a draft, and a nonexistent id are indistinguishable)."
+description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def + marketing-campaign operations, and marketing-email statistics reads — a UTC calendar range selects which emails are in scope BY SEND DATE and the counters returned are that email's totals to date, behind fail-closed guards for a dishonoured filter, an unrecognized or partially renamed counter vocabulary, a negative counter, and an empty match set (no SENT email with that id in the span — a send outside it, a draft, and a nonexistent id are indistinguishable). Also reads list MEMBERSHIPS (paged, with truncation reported rather than swallowed), the legacy v1 NAME of a list v3 can no longer see, and the lists a prior marketing email actually targeted."
 resource: "internal/platform/hubspot"
 tags:
   - platform-client
@@ -417,6 +417,38 @@ supplied, read back from the create response so the returned token is the one Hu
 assigned. A `2xx` carrying no id is an ERROR: the campaign may or may not exist and cannot be
 addressed either way, so the caller must check HubSpot rather than retry into a second copy.
 
+## Membership, legacy names, and what a prior send targeted (LFXV2-2770)
+
+`list_memberships.go` answers a question list SIZES cannot: how many DISTINCT people would this
+selection reach. Summing sizes over-counts, because registrant/speaker overlap is the normal case
+rather than the exception, so the caller needs ids to union. Only ids are collected — pulling
+contact properties for tens of thousands of records in order to COUNT them would move real
+personal data through this service for no reason.
+
+`ListMembershipIDs` returns `(ids, truncated, err)` and **`truncated` is the important half of
+that return.** Callers must not discard it: a truncated membership makes a union an UNDER-count,
+and understating how many people an email reaches is the one error direction that must never be
+presented as exact. Paging is the legacy endpoint's maximum 250 per page, bounded at 100 pages —
+25,000 records, matching the exact-count cap the caller reports as `25,000+` beyond.
+
+`LegacyListName` exists because a years-old list can still be REFERENCED by a current list's
+filters while being invisible to v3. A name this service cannot read is a suppression it cannot
+credit, which would turn a correctly-excluded audience into a QA finding about a missing
+exclusion. `IsNotFound` lets a caller tell "deleted" apart from "unreadable", which are
+different answers for an operator.
+
+`email_sendlists.go` reads the same `to.contactIlsLists` object `SetSendList` WRITES — otherwise
+the builder would report a precedent the sender never used. The legacy `to.contactLists`
+selection is read only here: it has been non-functional for sending since 2024-10-31, but a
+prior edition's email may predate that cut-off, and its ids resolve through a different API. They
+are therefore carried in separate fields (`LegacyInclude`/`LegacyExclude`); mixing them with the
+v3 ids would produce rows reported as deleted when they exist perfectly well under the legacy
+endpoint.
+
+`GetEmailSendLists` deliberately does NOT use `includedProperties`: `to` is a nested object
+rather than a property, so asking for it by name returns an email with an empty selection —
+indistinguishable from a send that targeted nothing.
+
 ## Scope
 
 Auth + request layer + the email/list/event-def operations above, plus marketing-email
@@ -424,6 +456,8 @@ statistics reads and authenticated portal resolution. Consumers: the audience-bu
 logic (LFXV2-2774, uses lists + event-defs) and the email staging dispatcher
 (LFXV2-2777, uses the marketing-email ops) and the metrics reader (LFXV2-3058, uses the
 statistics read plus `AuthenticatedPortalID` for the portal-provenance guard).
+
+The membership, legacy-name and prior-send reads above serve the audience EXPLORER (LFXV2-2770), which unions memberships for a preview count and reads a prior edition's targets as precedent.
 
 ## Dispatch adapter (internal/dispatch)
 

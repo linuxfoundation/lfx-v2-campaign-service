@@ -31,10 +31,29 @@ import (
 )
 
 const (
-	// DefaultModel is the Bedrock inference profile id the proxy routes on. Carried
-	// verbatim from lfx-one: the proxy matches this exact string, so a shorter
-	// "modernised" alias would not resolve.
-	DefaultModel = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+	// DefaultModel is the Bedrock inference profile id the proxy routes on, carrying the
+	// `bedrock/` PROVIDER PREFIX the v2 LiteLLM requires.
+	//
+	// The prefix is not cosmetic and the two instances disagree about it — measured, both
+	// directions, against a live key:
+	//
+	//	model                                          old (litellm.tools.lfx.dev)   v2 (*.v2.cluster)
+	//	us.anthropic.claude-sonnet-4-20250514-v1:0     200                   400
+	//	bedrock/us.anthropic.claude-sonnet-4-...       401                   200
+	//
+	// So this value is correct for exactly one of them, and every campaign-service
+	// environment is on v2 (values/{dev,staging,prod}/lfx-v2-campaign-service.yaml).
+	//
+	// The failure it caused is worth naming, because it does not look like a model problem:
+	// AUTH SUCCEEDS with an unresolvable model, so the key reads as healthy and only
+	// generation breaks, with a bare `400` the client cannot explain (the error body is
+	// discarded on purpose — it can echo the prompt). A key rotation and a pod restart were
+	// both tried before anyone suspected the model name.
+	//
+	// AI_MODEL overrides this when set, which is the escape hatch if a future instance
+	// disagrees again — but the DEFAULT has to be right for the hosts we actually run
+	// against, or the next person to add an environment inherits the same silent 400.
+	DefaultModel = "bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0"
 
 	// DefaultTemperature matches the lfx-one brief pipeline: regenerating after a
 	// result the operator disliked should not return the same words.

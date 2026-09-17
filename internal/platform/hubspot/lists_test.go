@@ -6,6 +6,8 @@ package hubspot
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -277,6 +279,29 @@ func TestCreateList_RejectsEmptyInput(t *testing.T) {
 	}
 	if _, err := c.CreateList(context.Background(), "N", nil); err == nil {
 		t.Error("empty filterBranch should be rejected")
+	}
+}
+
+// TestIsNotFound_OnlyMatchesADefinite404 pins the distinction IsNotFound's doc
+// comment argues for: a 404 means "no such list" (an answer a caller can show an
+// operator), while any other status -- including a nil or non-apiError err --
+// means the list's existence is still unknown and must not be reported as absent.
+func TestIsNotFound_OnlyMatchesADefinite404(t *testing.T) {
+	if IsNotFound(nil) {
+		t.Error("nil error must not be reported as not-found")
+	}
+	if IsNotFound(errors.New("boom")) {
+		t.Error("a non-apiError must not be reported as not-found")
+	}
+	if IsNotFound(&apiError{StatusCode: http.StatusBadRequest}) {
+		t.Error("a 400 is a malformed request, not 'no such list'")
+	}
+	if !IsNotFound(&apiError{StatusCode: http.StatusNotFound}) {
+		t.Error("a 404 apiError must be reported as not-found")
+	}
+	wrapped := fmt.Errorf("read list: %w", &apiError{StatusCode: http.StatusNotFound})
+	if !IsNotFound(wrapped) {
+		t.Error("a wrapped 404 apiError must still be reported as not-found")
 	}
 }
 

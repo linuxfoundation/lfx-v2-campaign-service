@@ -15,10 +15,12 @@ import (
 	"os"
 	"time"
 
+	exploresvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_audience_builder/server"
 	audiencesvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_audiences/server"
 	briefsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	connsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
 	svcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_svc/server"
+	exploresvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audience_builder"
 	audiencesvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -69,8 +71,12 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("container misconfigured: Audiences service is nil")
 	}
 	audienceEndpoints := audiencesvc.NewEndpoints(cont.Audiences)
+	if cont.Explore == nil {
+		return fmt.Errorf("container misconfigured: Explore service is nil")
+	}
+	exploreEndpoints := exploresvc.NewEndpoints(cont.Explore)
 
-	return handleHTTPServer(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, cont)
+	return handleHTTPServer(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, exploreEndpoints, cont)
 }
 
 // buildMux constructs the Goa muxer and mounts the campaign, connection, and
@@ -78,7 +84,7 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 // actually reachable (the bug this fixes — routes that compile but are never
 // mounted return 404) without standing up a full server. It returns an error
 // only for a programmer-level mis-wiring (nil endpoints).
-func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, promReg *metrics.Registry, wizardProgress http.Handler) (goahttp.Muxer, error) {
+func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, exploreEndpoints *exploresvc.Endpoints, promReg *metrics.Registry, wizardProgress http.Handler) (goahttp.Muxer, error) {
 	mux := goahttp.NewMuxer()
 	if cfg.Debug {
 		debug.MountPprofHandlers(debug.Adapt(mux))
@@ -147,6 +153,12 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 	audienceServer := audiencesvcsvr.New(audienceEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
 	audiencesvcsvr.Mount(mux, audienceServer)
 
+	if exploreEndpoints == nil {
+		return nil, fmt.Errorf("buildMux: exploreEndpoints is nil (audience-builder routes would be unmounted)")
+	}
+	exploreServer := exploresvcsvr.New(exploreEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	exploresvcsvr.Mount(mux, exploreServer)
+
 	// The email wizard's progress stream is the one route in this service that is not a Goa
 	// method, so it is mounted by hand here (see service/wizard_progress.go for why it cannot
 	// be expressed in the DSL). Mounted AFTER the generated routes and on a path no generated
@@ -163,7 +175,7 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 	return mux, nil
 }
 
-func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, cont *container.Container) error {
+func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, exploreEndpoints *exploresvc.Endpoints, cont *container.Container) error {
 	// Type-asserted rather than read off a typed field, so the no-database and cold-start
 	// containers — whose Briefs is the same generated interface either way — stay mountable
 	// without the wizard, and so this file does not depend on the concrete service type.
@@ -175,7 +187,7 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 		// its streams instead of holding graceful shutdown open on every attached browser.
 		wizardProgress = h.WizardProgressHandler(ctx)
 	}
-	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, cont.Metrics, wizardProgress)
+	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, exploreEndpoints, cont.Metrics, wizardProgress)
 	if err != nil {
 		return err
 	}
