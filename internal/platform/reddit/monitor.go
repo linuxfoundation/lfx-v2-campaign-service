@@ -145,10 +145,15 @@ func (c *Client) fetchMonitorReport(ctx context.Context, path, startDate, endDat
 	}
 	var env monitorReportEnvelope
 	if derr := json.Unmarshal(resp.Data, &env); derr != nil {
-		// A response that isn't the expected report shape is read as "no data" (0s),
-		// matching the BFF's optional-chaining `?.metrics ?? []`, which never throws on a
-		// decode mismatch either.
-		return 0, 0, 0, nil
+		// DIVERGES from the BFF here (round-21 review): the BFF's optional-chaining
+		// `?.metrics ?? []` also reads a malformed body as "no data" (0s), but that silently
+		// converts an upstream-data failure into a legitimate-looking zero-delivery
+		// measurement, indistinguishable from a campaign that genuinely had no activity. The
+		// caller (ListAccountCampaigns) already turns any non-nil error from this function
+		// into FetchFailed=true on that row rather than aborting the whole account read, so
+		// returning an error here — instead of a fabricated zero — costs nothing and fixes
+		// the false zero-delivery alert this could otherwise trigger.
+		return 0, 0, 0, fmt.Errorf("decode monitor report: malformed JSON (%d bytes)", len(resp.Data))
 	}
 	if len(env.Metrics) == 0 {
 		return 0, 0, 0, nil
