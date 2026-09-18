@@ -29,6 +29,38 @@ var redditAdsAccountDiscovery = accountDiscovery{
 	operation:       "account monitor",
 }
 
+// googleAdsMonitorDiscovery/linkedInAdsMonitorDiscovery/metaAdsMonitorDiscovery are this
+// endpoint's own descriptors, distinct from connection.go's googleAdsAccountDiscovery /
+// linkedInAdsAccountDiscovery / metaAdsAccountDiscovery, which the `/…/accounts` picker uses
+// with operation left empty (so accountDiscovery.label() defaults to "account discovery" —
+// correct for that route). Reusing those same vars here left operation empty for this route
+// too, so a monitor failure was reported as "account discovery could not be completed" instead
+// of naming the operation actually attempted — the gap redditAdsAccountDiscovery above already
+// closed for Reddit. remedy text is copied verbatim from each provider's *AccountDiscovery var.
+var googleAdsMonitorDiscovery = accountDiscovery{
+	provider:    model.ProviderGoogleAds,
+	displayName: "google ads",
+	notUsableRemedy: "check that it is active, that the stored credential is valid json with " +
+		"every field set, and that login_customer_id is digits only",
+	operation: "account monitor",
+}
+
+var linkedInAdsMonitorDiscovery = accountDiscovery{
+	provider:    model.ProviderLinkedInAds,
+	displayName: "linkedin ads",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with access_token set",
+	operation: "account monitor",
+}
+
+var metaAdsMonitorDiscovery = accountDiscovery{
+	provider:    model.ProviderMetaAds,
+	displayName: "meta ads",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with access_token set",
+	operation: "account monitor",
+}
+
 // validateMonitorDays enforces the 7..90 range the design layer also constrains with
 // Minimum/Maximum. Enforced here too for the same reason resolveInsightsWindow re-checks its
 // own enum: a runtime rejection with no matching design constraint (or the reverse) is the
@@ -245,7 +277,7 @@ func (s *ConnectionService) monitorAccount(
 // MonitorGoogleAdsAccount reads every campaign visible on a Google Ads account, live from the
 // platform, with pacing and action items derived by the ported rule engine.
 func (s *ConnectionService) MonitorGoogleAdsAccount(ctx context.Context, p *conn.MonitorGoogleAdsAccountPayload) (*conn.AccountMonitor, error) {
-	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderGoogleAds, googleAdsAccountDiscovery,
+	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderGoogleAds, googleAdsMonitorDiscovery,
 		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return rules.EvaluateGoogleMonitor(rows, p.Days)
 		})
@@ -255,7 +287,7 @@ func (s *ConnectionService) MonitorGoogleAdsAccount(ctx context.Context, p *conn
 // the platform, with pacing and action items derived by the ported rule engine.
 func (s *ConnectionService) MonitorLinkedinAdsAccount(ctx context.Context, p *conn.MonitorLinkedinAdsAccountPayload) (*conn.AccountMonitor, error) {
 	now := time.Now()
-	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderLinkedInAds, linkedInAdsAccountDiscovery,
+	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderLinkedInAds, linkedInAdsMonitorDiscovery,
 		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return rules.EvaluateLinkedInMonitor(rows, p.Days, now)
 		})
@@ -265,7 +297,7 @@ func (s *ConnectionService) MonitorLinkedinAdsAccount(ctx context.Context, p *co
 // platform, with pacing and action items derived by the ported rule engine.
 func (s *ConnectionService) MonitorMetaAdsAccount(ctx context.Context, p *conn.MonitorMetaAdsAccountPayload) (*conn.AccountMonitor, error) {
 	now := time.Now()
-	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderMetaAds, metaAdsAccountDiscovery,
+	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderMetaAds, metaAdsMonitorDiscovery,
 		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return rules.EvaluateMetaMonitor(rows, p.Days, now)
 		})

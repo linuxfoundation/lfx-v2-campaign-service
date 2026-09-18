@@ -6,6 +6,8 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -169,6 +171,59 @@ func TestMonitorAccount_ClassifiesDiscoveryError(t *testing.T) {
 				if br, ok := err.(*conn.BadRequestError); !ok || br.Code != "400" {
 					t.Fatalf("expected 400 BadRequest, got %T: %v", err, err)
 				}
+			}
+		})
+	}
+}
+
+// TestMonitorAccount_UpstreamFailureNamesAccountMonitor pins a round-22 review fix: Google,
+// LinkedIn and Meta's monitor handlers used to pass connection.go's plain
+// googleAdsAccountDiscovery/linkedInAdsAccountDiscovery/metaAdsAccountDiscovery — the same
+// descriptors the `/…/accounts` picker uses — into monitorAccount, leaving `operation` empty so
+// classifyDiscoveryError's default arm reported an upstream monitor failure as "account
+// discovery could not be completed", an operation this endpoint never performs. Reddit's own
+// redditAdsAccountDiscovery already set operation: "account monitor"; this pins the other three
+// dispatchers now doing the same via their own googleAdsMonitorDiscovery/
+// linkedInAdsMonitorDiscovery/metaAdsMonitorDiscovery descriptors.
+func TestMonitorAccount_UpstreamFailureNamesAccountMonitor(t *testing.T) {
+	unclassified := errors.New("boom")
+	tests := []struct {
+		name     string
+		provider model.Provider
+		call     func(svc *ConnectionService) error
+	}{
+		{"google ads", model.ProviderGoogleAds, func(svc *ConnectionService) error {
+			_, err := svc.MonitorGoogleAdsAccount(context.Background(),
+				&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+			return err
+		}},
+		{"linkedin ads", model.ProviderLinkedInAds, func(svc *ConnectionService) error {
+			_, err := svc.MonitorLinkedinAdsAccount(context.Background(),
+				&conn.MonitorLinkedinAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+			return err
+		}},
+		{"meta ads", model.ProviderMetaAds, func(svc *ConnectionService) error {
+			_, err := svc.MonitorMetaAdsAccount(context.Background(),
+				&conn.MonitorMetaAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+			return err
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+			svc.SetOrchestrator(&Orchestrator{
+				dispatchers: map[model.Provider]PlatformDispatcher{
+					tc.provider: &mockAccountMetricsReaderDispatcher{err: unclassified},
+				},
+			})
+
+			err := tc.call(svc)
+			svcErr, ok := err.(*conn.ConnServiceUnavailableError)
+			if !ok {
+				t.Fatalf("expected a 503 ConnServiceUnavailableError, got %T: %v", err, err)
+			}
+			if !strings.Contains(svcErr.Message, "account monitor") {
+				t.Errorf("message = %q, want it to name \"account monitor\", not the default \"account discovery\"", svcErr.Message)
 			}
 		})
 	}
