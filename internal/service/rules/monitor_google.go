@@ -28,14 +28,18 @@ import (
 // fetchFailedRow, used below, is a cross-platform helper shared with the other three
 // monitor_*.go files — see monitor_shared.go.
 
-// googlePacingUnderspending/Constrained/Overspending are campaign-metrics.service.ts's own
+// googlePacingUnderspending/ConstrainedFrom/Overspending are campaign-metrics.service.ts's own
 // local literals (50/90/100) — NOT this package's shared Thresholds{50,100,130}, and not the
 // same 50/90/100 Reddit happens to also hardcode (a coincidence of value, not a shared
 // constant on either side). Ported verbatim.
+//
+// Named for the branch each one gates, not for the number: googlePacingOverspending (100) is
+// the ">" cutoff for the overspending label, googlePacingConstrainedFrom (90) the ">" cutoff
+// for constrained — the reverse of what the pre-round-22-review names implied.
 const (
-	googlePacingUnderspending = 50
-	googlePacingConstrained   = 100
-	googlePacingOverspendFrom = 90
+	googlePacingUnderspending   = 50
+	googlePacingOverspending    = 100
+	googlePacingConstrainedFrom = 90
 )
 
 // EvaluateGoogleMonitor computes each row's pacing percentage/label and the account's action
@@ -76,9 +80,9 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 		switch {
 		case pacingPct < googlePacingUnderspending:
 			label = model.MonitorPacingUnderspending
-		case pacingPct > googlePacingConstrained:
+		case pacingPct > googlePacingOverspending:
 			label = model.MonitorPacingOverspending
-		case pacingPct > googlePacingOverspendFrom:
+		case pacingPct > googlePacingConstrainedFrom:
 			label = model.MonitorPacingConstrained
 		}
 
