@@ -20,7 +20,7 @@ func TestListAccountCampaigns_OversizedAnalyticsResponse_IsRejected(t *testing.T
 	padding := strings.Repeat(" ", maxResponseBytes+64)
 	srv, _ := adAccountsServer(t,
 		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"}],"metadata":{}}`,
-		`{"elements":[{"pivotValue":"urn:li:sponsoredCampaign:111","impressions":1000,"clicks":50,"costInUsd":"12.50"}]`+padding+`}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]`+padding+`}`,
 	)
 	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
 
@@ -55,7 +55,7 @@ func TestListAccountCampaigns_RejectsMalformedAccountID(t *testing.T) {
 func TestListAccountCampaigns_UsesInjectedClockNotWallClock(t *testing.T) {
 	srv, rec := adAccountsServer(t,
 		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"}],"metadata":{}}`,
-		`{"elements":[{"pivotValue":"urn:li:sponsoredCampaign:111","impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
 	)
 	// fixedNow's local calendar date (AEST, UTC+10) is 2026-09-18, one day ahead of its UTC
 	// calendar date, 2026-09-17. restLiDate (metrics.go:477) renders day/month/year in the
@@ -106,7 +106,7 @@ func TestListAccountCampaigns_UsesInjectedClockNotWallClock(t *testing.T) {
 func TestListAccountCampaigns_CampaignAbsentFromAnalytics_IsZeroNotFailed(t *testing.T) {
 	srv, _ := adAccountsServer(t,
 		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"},{"id":222,"name":"Campaign Two","status":"ACTIVE"}],"metadata":{}}`,
-		`{"elements":[{"pivotValue":"urn:li:sponsoredCampaign:111","impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
 	)
 	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
 
@@ -137,7 +137,7 @@ func TestListAccountCampaigns_CampaignAbsentFromAnalytics_IsZeroNotFailed(t *tes
 func TestListAccountCampaigns_MalformedCostInUsd_MarksFetchFailed(t *testing.T) {
 	srv, _ := adAccountsServer(t,
 		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"}],"metadata":{}}`,
-		`{"elements":[{"pivotValue":"urn:li:sponsoredCampaign:111","impressions":1000,"clicks":50,"costInUsd":"not-a-number"}]}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInUsd":"not-a-number"}]}`,
 	)
 	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
 

@@ -197,12 +197,16 @@ func (c *Client) fetchAccountCampaignAnalytics(ctx context.Context, accountID st
 	if err != nil {
 		return nil, fmt.Errorf("parse url: %w", err)
 	}
+	// pivotValue/pivotValues is NOT a projectable field on this schema (LinkedIn rejects it
+	// with a 400 "Projected field \"pivotValue\" not present in schema ...AdAnalyticsV8" the
+	// moment it's listed here) — it's returned automatically because `pivot=CAMPAIGN` is set,
+	// the same way the BFF's fields list (linkedin-ads.service.ts:894) never requests it either.
 	u.RawQuery = "q=analytics" +
 		"&pivot=CAMPAIGN" +
 		"&timeGranularity=ALL" +
 		"&dateRange=(start:" + restLiDate(start) + ",end:" + restLiDate(end) + ")" +
 		"&accounts=List(" + url.QueryEscape(accountURN) + ")" +
-		"&fields=pivotValue,impressions,clicks,costInUsd,externalWebsiteConversions"
+		"&fields=impressions,clicks,costInUsd,externalWebsiteConversions"
 
 	// AdAnalyticsElement/AdAnalyticsResponse (decoded by doAdAnalyticsAttempt) carry no
 	// pivotValue field — they were built for the single-campaign path, which filters by a
@@ -259,11 +263,14 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 
 	var parsed struct {
 		Elements []struct {
-			PivotValue  string  `json:"pivotValue"`
-			Impressions int64   `json:"impressions"`
-			Clicks      int64   `json:"clicks"`
-			CostInUsd   *string `json:"costInUsd"`
-			Conversions *int64  `json:"externalWebsiteConversions"`
+			// PivotValues arrives automatically once `pivot=CAMPAIGN` is set — it is not, and
+			// cannot be, requested via `fields` (see the RawQuery comment above). Mirrors the
+			// BFF's `pivotValues?: string[]` (linkedin-ads.service.ts:907).
+			PivotValues []string `json:"pivotValues"`
+			Impressions int64    `json:"impressions"`
+			Clicks      int64    `json:"clicks"`
+			CostInUsd   *string  `json:"costInUsd"`
+			Conversions *int64   `json:"externalWebsiteConversions"`
 		} `json:"elements"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
@@ -271,7 +278,10 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 	}
 	out := make(map[string]monitorMetricsRow, len(parsed.Elements))
 	for _, el := range parsed.Elements {
-		id := trailingID(el.PivotValue)
+		if len(el.PivotValues) == 0 {
+			continue
+		}
+		id := trailingID(el.PivotValues[0])
 		if id == "" {
 			continue
 		}
