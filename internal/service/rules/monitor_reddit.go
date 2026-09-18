@@ -54,6 +54,22 @@ func EvaluateRedditMonitor(rows []model.AccountCampaignMetrics, days int, now ti
 			continue
 		}
 
+		// m.StartDate is empty when Reddit reported no parseable start_time for this campaign
+		// (internal/platform/reddit/monitor.go, round-23 review) — a genuinely different case
+		// from FetchFailed: the metrics themselves are real, only the flight window is unknown.
+		// redditPacingPct cannot compute a percentage against a flight it doesn't have, so this
+		// mirrors fetchFailedRow's PacingUnknown convention rather than letting the pacingPct==0
+		// fallback below mislabel the row "underspending" against a fabricated 0% pace. The
+		// zero-delivery/CTR/no-conversion action items don't depend on the flight window, so they
+		// still run with pacingPct=0 (below the underspend action floor, so that item is
+		// correctly suppressed too).
+		if m.StartDate == "" {
+			m.PacingUnknown = true
+			out = append(out, model.AccountMonitorRow{Metrics: m, PacingLabel: model.MonitorPacingNormal})
+			items = append(items, redditActionItems(m, 0)...)
+			continue
+		}
+
 		pacingPct := redditPacingPct(m, days, now)
 		label := model.MonitorPacingNormal
 		switch {

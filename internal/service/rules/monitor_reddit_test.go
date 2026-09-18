@@ -172,3 +172,43 @@ func TestEvaluateRedditMonitor_SkipsFetchFailedRows(t *testing.T) {
 		t.Errorf("FetchFailed row produced action items, want none: %+v", items)
 	}
 }
+
+// TestEvaluateRedditMonitor_EmptyStartDate_SetsPacingUnknown pins the round-23 review fix: a row
+// whose StartDate is empty (Reddit reported no parseable start_time — see
+// internal/platform/reddit/monitor.go) is a genuinely different case from FetchFailed — the
+// metrics are real, only the flight window is unknown — so it must get PacingUnknown=true and the
+// placeholder MonitorPacingNormal label rather than falling through to redditPacingPct's
+// pacingPct==0 branch, which would mislabel it "underspending" against a fabricated 0% pace.
+// Zero-delivery/CTR action items must still fire since they don't depend on the flight window.
+func TestEvaluateRedditMonitor_EmptyStartDate_SetsPacingUnknown(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	rows := []model.AccountCampaignMetrics{
+		{
+			PlatformCampaignID: "1", Name: "No Flight Window", Status: "ACTIVE",
+			TotalBudget: 500, StartDate: "", Impressions: 0, Clicks: 0,
+		},
+	}
+	out, items := EvaluateRedditMonitor(rows, 30, now)
+	if len(out) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(out), out)
+	}
+	if !out[0].Metrics.PacingUnknown {
+		t.Errorf("row = %+v, want PacingUnknown=true for an empty StartDate", out[0])
+	}
+	if out[0].Metrics.FetchFailed {
+		t.Errorf("row = %+v, want FetchFailed=false — an empty StartDate is not a fetch failure", out[0])
+	}
+	if out[0].PacingLabel != model.MonitorPacingNormal {
+		t.Errorf("PacingLabel = %q, want the documented placeholder %q", out[0].PacingLabel, model.MonitorPacingNormal)
+	}
+	if out[0].PacingPct != 0 {
+		t.Errorf("PacingPct = %v, want 0 (unset) since it was never computed against a flight", out[0].PacingPct)
+	}
+	// Zero impressions/clicks on an ACTIVE campaign must still fire — it doesn't depend on StartDate.
+	if len(items) != 1 {
+		t.Fatalf("got %d action items, want 1 (the zero-delivery item): %+v", len(items), items)
+	}
+	if items[0].Priority != model.MonitorPriorityHigh {
+		t.Errorf("action item priority = %q, want %q", items[0].Priority, model.MonitorPriorityHigh)
+	}
+}

@@ -225,8 +225,14 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 				CampaignID: e.ID,
 				Name:       e.Name,
 				Status:     e.ConfiguredStatus,
-				StartDate:  startDate,
-				EndDate:    endDate,
+				// StartDate/EndDate are left empty unless Reddit's own start_time/end_time
+				// parses below — NOT seeded with the report window. round-23 review: an
+				// unreported flight start previously defaulted to the report window itself,
+				// which redditPacingPct then read as a real flight (start == rangeStart, end ==
+				// now), fabricating a plausible-looking pacing percentage — e.g. "3% of budget
+				// spent" — against a schedule the campaign never had. An empty StartDate now
+				// signals "no known flight" to EvaluateRedditMonitor, which sets PacingUnknown
+				// instead of computing a pacing verdict against it.
 			}
 			if e.GoalValue != nil {
 				row.TotalBudget = float64(*e.GoalValue) / 1_000_000
@@ -240,6 +246,19 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 				if t, perr := time.Parse(time.RFC3339, e.EndTime); perr == nil {
 					row.EndDate = t.UTC().Format("2006-01-02")
 				}
+			}
+
+			// e.ID is Reddit's own campaign id, returned by the account-level campaign-list
+			// call above — not the caller-supplied account_id, which is already validated by
+			// this method's own caller. round-23 review: every sibling path that interpolates a
+			// Reddit-supplied id into a request path (updateEntityStatus, GetCampaignMetrics)
+			// rejects one that fails accountIDRe first; this fan-out was the one path that
+			// skipped that guard, letting a malformed upstream id retarget this project's live
+			// bearer token at an arbitrary Reddit path.
+			if !accountIDRe.MatchString(e.ID) {
+				row.FetchFailed = true
+				rows[i] = row
+				return nil
 			}
 
 			impressions, clicks, spendUSD, ferr := c.fetchMonitorReport(gctx,

@@ -28,7 +28,7 @@ func manyActiveCampaignsBody(n int) string {
 	elements := make([]map[string]any, 0, n)
 	for i := 0; i < n; i++ {
 		elements = append(elements, map[string]any{
-			"id":                fmt.Sprintf("camp-%d", i),
+			"id":                fmt.Sprintf("camp%d", i),
 			"name":              fmt.Sprintf("Campaign %d", i),
 			"configured_status": StatusActive,
 		})
@@ -104,7 +104,7 @@ func TestListAccountCampaigns_BoundsReportConcurrency(t *testing.T) {
 // or degrades the other campaigns' in-flight reads — the reason ListAccountCampaigns's fan-out
 // never propagates a per-item error out of errgroup.Go.
 func TestListAccountCampaigns_PerCampaignReportFailure_MarksOnlyThatRowFailed(t *testing.T) {
-	const failingCampaignID = "camp-1"
+	const failingCampaignID = "camp1"
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/ad_accounts/t2_test/campaigns":
@@ -146,13 +146,105 @@ func TestListAccountCampaigns_PerCampaignReportFailure_MarksOnlyThatRowFailed(t 
 	}
 }
 
+// TestListAccountCampaigns_MalformedCampaignID_MarksFetchFailedWithoutRequest pins the round-23
+// review fix: a Reddit-returned campaign id that fails accountIDRe (the same safe-charset guard
+// every sibling path already applies to a caller- or Reddit-supplied id before interpolating it
+// into a request path) must mark that row FetchFailed and never reach fetchMonitorReport — a
+// malformed id must not retarget this project's live bearer token at an arbitrary Reddit path.
+func TestListAccountCampaigns_MalformedCampaignID_MarksFetchFailedWithoutRequest(t *testing.T) {
+	const malformedID = "../t2_other/campaigns"
+	body := `{"data":[
+		{"id":"` + malformedID + `","name":"Malformed","configured_status":"ACTIVE"},
+		{"id":"campOK","name":"OK","configured_status":"ACTIVE"}
+	]}`
+
+	var reportRequested atomic.Bool
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/ad_accounts/t2_test/campaigns":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		case r.URL.Path == "/api/v3/ad_accounts/t2_test/campaigns/"+malformedID+"/reports":
+			reportRequested.Store(true)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"metrics":[{"impressions":100,"clicks":10,"spend":5000000}]}}`))
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"metrics":[{"impressions":100,"clicks":10,"spend":5000000}]}}`))
+		}
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(tokenHandlerReturning("tok"))
+	defer tokenSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), testAccount.AccountID, 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2: %+v", len(rows), rows)
+	}
+	for _, row := range rows {
+		if row.CampaignID == malformedID {
+			if !row.FetchFailed {
+				t.Errorf("row %+v: want FetchFailed=true for a campaign id that fails accountIDRe", row)
+			}
+			continue
+		}
+		if row.FetchFailed {
+			t.Errorf("row %+v: a sibling campaign's malformed id must not mark this healthy row FetchFailed", row)
+		}
+	}
+	if reportRequested.Load() {
+		t.Error("fetchMonitorReport was called for a campaign id that fails accountIDRe — the malformed id must never reach a request path")
+	}
+}
+
+// TestListAccountCampaigns_NoStartTime_LeavesStartDateEmpty pins the other half of the round-23
+// review fix: a campaign whose start_time Reddit never reported must NOT have its StartDate
+// seeded from the report window. An empty StartDate is EvaluateRedditMonitor's signal to set
+// PacingUnknown instead of computing a pacing verdict against a flight the campaign never had.
+func TestListAccountCampaigns_NoStartTime_LeavesStartDateEmpty(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/ad_accounts/t2_test/campaigns":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":` + manyActiveCampaignsBody(1) + `}`))
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"metrics":[{"impressions":100,"clicks":10,"spend":5000000}]}}`))
+		}
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(tokenHandlerReturning("tok"))
+	defer tokenSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), testAccount.AccountID, 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if rows[0].StartDate != "" {
+		t.Errorf("StartDate = %q, want empty — manyActiveCampaignsBody sends no start_time, so it must not be seeded from the report window", rows[0].StartDate)
+	}
+	if rows[0].EndDate != "" {
+		t.Errorf("EndDate = %q, want empty for the same reason", rows[0].EndDate)
+	}
+}
+
 // TestListAccountCampaigns_MalformedReportJSON_MarksFetchFailed pins the round-21 review fix:
 // a /reports response that isn't the expected report shape must mark that row FetchFailed
 // rather than being read as a legitimate zero-delivery measurement, which is what the BFF's
 // optional-chaining `?.metrics ?? []` did and this port deliberately diverges from (see
 // fetchMonitorReport's doc comment).
 func TestListAccountCampaigns_MalformedReportJSON_MarksFetchFailed(t *testing.T) {
-	const malformedCampaignID = "camp-1"
+	const malformedCampaignID = "camp1"
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/ad_accounts/t2_test/campaigns":
