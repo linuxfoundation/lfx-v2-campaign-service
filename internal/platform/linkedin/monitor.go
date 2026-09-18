@@ -242,6 +242,14 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 	if err != nil {
 		return nil, &transportError{Method: "GET", Path: "adAnalytics", Err: redactBodyReadError(err)}
 	}
+	// A body at exactly maxResponseBytes+1 must be REJECTED, not decoded from its first
+	// maxResponseBytes bytes: io.LimitReader returns EOF (not an error) at the cap, so an
+	// oversized response whose truncated prefix happens to be valid JSON would otherwise be
+	// silently accepted as a complete read (client.go:1128, metrics.go:626, token.go:412 all
+	// apply this same check).
+	if int64(len(body)) > maxResponseBytes {
+		return nil, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if ce := c.expiredCredentialsError(resp.StatusCode, string(body), http.MethodGet); ce != nil {
 			return nil, ce
@@ -341,6 +349,11 @@ func (c *Client) doMonitorGET(ctx context.Context, path string, query map[string
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return &transportError{Method: "GET", Path: path, Err: redactBodyReadError(err)}
+	}
+	// See fetchAccountCampaignAnalyticsRaw's identical check above for why the +1 sentinel
+	// must be rejected here rather than silently decoded from its truncated prefix.
+	if int64(len(body)) > maxResponseBytes {
+		return &transportError{Method: "GET", Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if ce := c.expiredCredentialsError(resp.StatusCode, string(body), http.MethodGet); ce != nil {

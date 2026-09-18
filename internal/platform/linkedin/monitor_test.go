@@ -11,6 +11,28 @@ import (
 	"time"
 )
 
+// TestListAccountCampaigns_OversizedAnalyticsResponse_IsRejected pins a round-22 review fix:
+// fetchAccountCampaignAnalyticsRaw used to read maxResponseBytes+1 (the boundary sentinel) but
+// never check the result against the cap, so an oversized adAnalytics response was silently
+// decoded from its truncated-but-valid-JSON prefix instead of rejected — matching the same
+// defect client.go:1128, metrics.go:626 and token.go:412 already guard against.
+func TestListAccountCampaigns_OversizedAnalyticsResponse_IsRejected(t *testing.T) {
+	padding := strings.Repeat(" ", maxResponseBytes+64)
+	srv, _ := adAccountsServer(t,
+		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"}],"metadata":{}}`,
+		`{"elements":[{"pivotValue":"urn:li:sponsoredCampaign:111","impressions":1000,"clicks":50,"costInUsd":"12.50"}]`+padding+`}`,
+	)
+	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
+
+	_, err := c.ListAccountCampaigns(context.Background(), "512345678", 7)
+	if err == nil {
+		t.Fatal("an oversized adAnalytics response was accepted")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error = %v, want it to report the size cap was exceeded", err)
+	}
+}
+
 // TestListAccountCampaigns_RejectsMalformedAccountID pins the guard at monitor.go:60: a
 // non-digits account id must be rejected before any request reaches LinkedIn, since this
 // dispatcher method is reachable directly (not only through the Goa design layer's own
