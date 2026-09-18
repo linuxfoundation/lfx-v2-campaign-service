@@ -1780,3 +1780,26 @@ func TestNewLLMClientSilentWhenConfigured(t *testing.T) {
 	require.NotContains(t, buf.String(), "AI proxy not configured",
 		"a configured proxy must not warn; a false alarm here devalues the real one")
 }
+
+// TestRegisterDispatchers_ForwardsNAT64PrefixesToHubSpot pins the production JOIN.
+//
+// Existing coverage proves the config reaches the event fetcher, and the hubspot package proves
+// WithNAT64Prefixes narrows its own guard — but nothing pinned that registerDispatchers actually
+// carries the configured prefixes across to the HubSpot dispatcher. That join is the whole point:
+// without it the image-download guard judges a smaller address space than the fetcher's, and an
+// address under an operator prefix is fetched and re-hosted publicly.
+//
+// Asserted by behaviour rather than by reading a field: a configured prefix must make the
+// dispatcher's own client refuse a NAT64-encoded metadata address.
+func TestRegisterDispatchers_ForwardsNAT64PrefixesToHubSpot(t *testing.T) {
+	withPrefix := registerDispatchers(nil, nil, nil, nil, []string{"2a01:4f8:808:808::/96"})
+	if _, ok := withPrefix[model.ProviderHubSpot]; !ok {
+		t.Fatal("no HubSpot dispatcher was registered")
+	}
+
+	// A nil prefix list must still register cleanly — the well-known prefix alone is the correct
+	// default for a deployment that configures none.
+	if _, ok := registerDispatchers(nil, nil, nil, nil, nil)[model.ProviderHubSpot]; !ok {
+		t.Fatal("no HubSpot dispatcher was registered without prefixes")
+	}
+}

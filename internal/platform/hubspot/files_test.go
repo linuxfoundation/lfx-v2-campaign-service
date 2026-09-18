@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"mime"
@@ -77,8 +78,10 @@ func TestUploadImage_HappyPathReturnsHostedURL(t *testing.T) {
 	if gotAuth != "Bearer pat-test-token" {
 		t.Errorf("Authorization = %q", gotAuth)
 	}
-	if gotFilename != "hero-source.png" {
-		t.Errorf("filename = %q, want hero-source.png", gotFilename)
+	// The source basename survives for recognisability, with a content hash appended so two
+	// campaigns uploading different "hero.png"s cannot overwrite each other in the shared folder.
+	if !strings.HasPrefix(gotFilename, "hero-source-") || !strings.HasSuffix(gotFilename, ".png") {
+		t.Errorf("filename = %q, want hero-source-<hash>.png", gotFilename)
 	}
 	if gotFolderPath != "/email-staging" {
 		t.Errorf("folderPath = %q, want /email-staging", gotFolderPath)
@@ -140,20 +143,45 @@ func TestUploadImage_NonSuccessUploadStatusIsAnAPIError(t *testing.T) {
 }
 
 func TestDeriveImageFilename(t *testing.T) {
+	body := []byte("some-image-bytes")
 	cases := []struct {
-		url, ext, want string
+		url, ext, wantPrefix, wantSuffix string
 	}{
-		{"https://cdn.example.com/path/hero-banner.jpg", "jpg", "hero-banner.jpg"},
-		{"https://cdn.example.com/path/", "png", "email_img.png"},
-		{"https://cdn.example.com/no-extension", "jpg", "no-extension.jpg"},
+		{"https://cdn.example.com/path/hero-banner.jpg", "jpg", "hero-banner-", ".jpg"},
+		{"https://cdn.example.com/path/", "png", "email_img-", ".png"},
+		{"https://cdn.example.com/no-extension", "jpg", "no-extension-", ".jpg"},
 		// The URL's extension never survives: the sniffed format decides it, so a payload
 		// served as HTML cannot be re-hosted under a name that invites a browser to render it.
-		{"https://cdn.example.com/payload.html", "png", "payload.png"},
+		{"https://cdn.example.com/payload.html", "png", "payload-", ".png"},
 	}
 	for _, tc := range cases {
-		if got := deriveImageFilename(tc.url, tc.ext); got != tc.want {
-			t.Errorf("deriveImageFilename(%q, %q) = %q, want %q", tc.url, tc.ext, got, tc.want)
+		got := deriveImageFilename(tc.url, tc.ext, body)
+		if !strings.HasPrefix(got, tc.wantPrefix) || !strings.HasSuffix(got, tc.wantSuffix) {
+			t.Errorf("deriveImageFilename(%q, %q) = %q, want %q...%q", tc.url, tc.ext, got, tc.wantPrefix, tc.wantSuffix)
 		}
+	}
+}
+
+// TestDeriveImageFilename_DifferentBytesNeverShareAName pins the collision property.
+//
+// Uploads land in one shared /email-staging folder with overwrite:true, and source basenames
+// collide constantly -- "hero.png" is the common case. Without disambiguation two campaigns
+// uploading different images under the same name overwrite each other, and both emails render
+// whichever landed last.
+func TestDeriveImageFilename_DifferentBytesNeverShareAName(t *testing.T) {
+	const url = "https://cdn.example.com/hero.png"
+
+	a := deriveImageFilename(url, "png", []byte("campaign-a-image"))
+	b := deriveImageFilename(url, "png", []byte("campaign-b-image"))
+	if a == b {
+		t.Fatalf("two different images share the upload name %q", a)
+	}
+
+	// The same bytes must still collapse to one file, so a re-upload is idempotent rather than
+	// littering the folder with duplicates.
+	again := deriveImageFilename(url, "png", []byte("campaign-a-image"))
+	if again != a {
+		t.Errorf("the same image produced two names: %q and %q", a, again)
 	}
 }
 
@@ -415,5 +443,33 @@ func TestDownloadImage_RefusesHTMLServedAsAnImage(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "decodable image") {
 		t.Fatalf("expected a decode refusal, got %v", err)
+	}
+}
+
+// TestSniffImageFormat_UsesRegisteredMIMETypes pins that the MIME type is not derived from the
+// extension. `image/jpeg` is the registered type while `.jpg` is the conventional extension, so
+// building one from the other yields the invalid `image/jpg` that some consumers reject.
+func TestSniffImageFormat_UsesRegisteredMIMETypes(t *testing.T) {
+	ext, mime, err := sniffImageFormat(tinyPNG(t))
+	if err != nil {
+		t.Fatalf("sniffImageFormat: %v", err)
+	}
+	if ext != "png" || mime != "image/png" {
+		t.Errorf("png: ext=%q mime=%q", ext, mime)
+	}
+
+	var jbuf bytes.Buffer
+	if err := jpeg.Encode(&jbuf, image.NewRGBA(image.Rect(0, 0, 1, 1)), nil); err != nil {
+		t.Fatalf("encode fixture jpeg: %v", err)
+	}
+	ext, mime, err = sniffImageFormat(jbuf.Bytes())
+	if err != nil {
+		t.Fatalf("sniffImageFormat(jpeg): %v", err)
+	}
+	if ext != "jpg" {
+		t.Errorf("jpeg extension = %q, want jpg", ext)
+	}
+	if mime != "image/jpeg" {
+		t.Errorf("jpeg mime = %q, want image/jpeg (image/jpg is not a registered type)", mime)
 	}
 }

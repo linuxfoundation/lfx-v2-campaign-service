@@ -1637,3 +1637,33 @@ func TestHubSpot_AContentRevertIsLoggedAsAnErrorNotAWarning(t *testing.T) {
 		t.Errorf("a silently reverted content write was not raised as a named ERROR:\n%s", logged)
 	}
 }
+
+// TestHubSpot_APreheaderOnlyConfigStillRebuilds pins that previewText counts as content.
+//
+// The no-content guard listed body, hero, button and sponsors, so a config changing only the
+// preheader returned early and wrote nothing — silently, because applyEmailContentWithHero is
+// best-effort. It became reachable when the UI started sending preheader as `previewText`: the
+// operator edits it, staging reports success, and the draft keeps the clone's own preview text.
+func TestHubSpot_APreheaderOnlyConfigStillRebuilds(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	// No body, no hero, no button, no sponsors — only a preview text.
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","previewText":"Three days in Amsterdam"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	// The fake seeds preview_text as "See you there"; a rebuild replaces it. If the guard
+	// returned early, the seeded value survives and nothing was written.
+	rec.mu.Lock()
+	pt := rec.widgets["preview_text"]
+	body, _ := pt["body"].(map[string]any)
+	value, _ := body["value"].(string)
+	rec.mu.Unlock()
+
+	if value == "See you there" {
+		t.Error("a preheader-only config was treated as nothing to rebuild, so the draft kept the template's preview text")
+	}
+}

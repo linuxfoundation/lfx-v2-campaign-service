@@ -575,7 +575,14 @@ func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emai
 	bodyHTML = strings.TrimSpace(bodyHTML)
 	hostedHeroURL = strings.TrimSpace(hostedHeroURL)
 	buttonURL = strings.TrimSpace(buttonURL)
-	if bodyHTML == "" && hostedHeroURL == "" && buttonURL == "" && len(sponsors) == 0 {
+	// previewText and sentByOrg COUNT as content. Both are written by the same rebuild, so
+	// omitting them from this guard meant a config that changed only the preheader (or only the
+	// footer org) returned here and did nothing — silently, because this function is
+	// best-effort. That became reachable the moment the UI started sending preheader as
+	// `previewText`: the operator edits it, staging reports success, and the draft keeps the
+	// clone's own preview text.
+	if bodyHTML == "" && hostedHeroURL == "" && buttonURL == "" && len(sponsors) == 0 &&
+		strings.TrimSpace(previewText) == "" && strings.TrimSpace(sentByOrg) == "" {
 		// Nothing to rebuild: every campaign that predates LFXV2-2775 (and any caller that only
 		// wants the subject updated) reaches here with no generated content at all, and a full
 		// rebuild with an empty body would wipe the clone's template content for nothing.

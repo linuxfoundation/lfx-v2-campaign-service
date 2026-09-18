@@ -6,6 +6,7 @@ package hubspot
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -143,39 +144,43 @@ func (c *Client) downloadImage(ctx context.Context, imageURL string) (data []byt
 	// That matters here beyond the usual, because the bytes are re-hosted in the LF portal as a
 	// PUBLIC_INDEXABLE file — so an unvalidated payload becomes publicly served content under an
 	// LF domain. image.DecodeConfig reads only the header, so this is cheap.
-	format, sniffErr := sniffImageFormat(body)
+	ext, mime, sniffErr := sniffImageFormat(body)
 	if sniffErr != nil {
 		return nil, "", "", sniffErr
 	}
 
-	return body, "image/" + format, deriveImageFilename(imageURL, format), nil
+	return body, mime, deriveImageFilename(imageURL, ext, body), nil
 }
 
 // allowedImageFormats are the formats this service will re-host, keyed by the name
 // image.DecodeConfig reports. GIF is included because event pages use animated banners; SVG is
 // absent deliberately — it is a document format that can carry script, and re-hosting one as a
 // public LF-served asset is exactly the thing the sniff exists to prevent.
-var allowedImageFormats = map[string]string{
-	"jpeg": "jpg",
-	"png":  "png",
-	"gif":  "gif",
+var allowedImageFormats = map[string]struct{ ext, mime string }{
+	// The extension and the MIME type are NOT the same string: image/jpeg is the registered
+	// type while .jpg is the conventional extension, so deriving one from the other produces
+	// the invalid "image/jpg" that some consumers reject.
+	"jpeg": {ext: "jpg", mime: "image/jpeg"},
+	"png":  {ext: "png", mime: "image/png"},
+	"gif":  {ext: "gif", mime: "image/gif"},
 }
 
 // WebP is absent because the standard library has no decoder for it and this service does not
 // take golang.org/x/image for one. The consequence is a REFUSAL, not a bypass: a WebP hero is
 // rejected with "not one this service re-hosts" rather than silently re-hosted unvalidated.
 
-// sniffImageFormat decodes just the image header and returns the canonical extension.
-func sniffImageFormat(body []byte) (string, error) {
+// sniffImageFormat decodes just the image header and returns the canonical extension and the
+// registered MIME type for the format the BYTES are in.
+func sniffImageFormat(body []byte) (ext, mime string, err error) {
 	_, format, derr := image.DecodeConfig(bytes.NewReader(body))
 	if derr != nil {
-		return "", fmt.Errorf("hubspot: source URL did not return a decodable image: %w", derr)
+		return "", "", fmt.Errorf("hubspot: source URL did not return a decodable image: %w", derr)
 	}
-	ext, ok := allowedImageFormats[format]
+	allowed, ok := allowedImageFormats[format]
 	if !ok {
-		return "", fmt.Errorf("hubspot: image format %q is not one this service re-hosts", format)
+		return "", "", fmt.Errorf("hubspot: image format %q is not one this service re-hosts", format)
 	}
-	return ext, nil
+	return allowed.ext, allowed.mime, nil
 }
 
 // deriveImageFilename keeps the source URL's basename for recognisability, but the EXTENSION
@@ -184,7 +189,7 @@ func sniffImageFormat(body []byte) (string, error) {
 // The URL's own extension is caller-controlled and the upload is PUBLIC_INDEXABLE, so carrying
 // it through is what would let `payload.html` be re-hosted under an LF domain with an extension
 // that invites a browser to render it. The bytes decoded as an image; the name must say so too.
-func deriveImageFilename(imageURL, ext string) string {
+func deriveImageFilename(imageURL, ext string, body []byte) string {
 	stem := "email_img"
 	if u, perr := url.Parse(imageURL); perr == nil {
 		base := path.Base(u.Path)
@@ -214,7 +219,15 @@ func deriveImageFilename(imageURL, ext string) string {
 			}
 		}
 	}
-	return stem + "." + ext
+	// A content hash disambiguates the shared /email-staging folder, which uploads with
+	// overwrite:true. Source basenames collide constantly -- "hero.png" is the common case, not
+	// the exotic one -- so without this, two campaigns uploading different images under the same
+	// name silently overwrite each other and both emails render whichever landed last.
+	//
+	// Keyed on the BYTES, so the same image re-uploaded keeps one file (the overwrite is then
+	// harmless and idempotent) while different bytes can never share a name.
+	sum := sha256.Sum256(body)
+	return fmt.Sprintf("%s-%x.%s", stem, sum[:6], ext)
 }
 
 type fileUploadResponse struct {
