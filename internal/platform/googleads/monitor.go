@@ -105,6 +105,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 	}
 
 	byID := make(map[string]*AccountCampaignRow)
+	budgetTrusted := make(map[string]bool)
 	order := make([]string, 0, len(raw))
 	for _, r := range raw {
 		var row monitorGaqlRow
@@ -131,6 +132,16 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 			}
 			byID[id] = existing
 			order = append(order, id)
+			budgetTrusted[id] = budgetOK
+		} else if budgetOK && !budgetTrusted[id] {
+			// The first-sighting row's budget failed to parse but this later row's parsed
+			// fine — recover the real value instead of leaving BudgetDailyUSD stuck at 0
+			// forever (round-29 review: the previous code only ever assigned BudgetDailyUSD
+			// on first sighting, so a good later value was silently discarded even though it
+			// was available; the campaign still reads FetchFailed=true below either way, so
+			// no caller is misled about trust, only about the number itself).
+			existing.BudgetDailyUSD = budgetUSD
+			budgetTrusted[id] = true
 		}
 		if !budgetOK {
 			// A present but unparseable amount_micros is malformed upstream data, not a
@@ -139,8 +150,8 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 			// this row's budget as unknown rather than a real $0 (round-24 review). Checked on
 			// EVERY row, not only the first sighting: segments.date makes this query multi-row
 			// per campaign (see the doc comment above), so a malformed amount_micros on an
-			// intermediate row must still mark the campaign FetchFailed even though the first
-			// row's budget already parsed and was assigned to BudgetDailyUSD.
+			// intermediate row must still mark the campaign FetchFailed even though some row's
+			// budget parsed fine and was assigned to BudgetDailyUSD.
 			existing.FetchFailed = true
 		}
 		impressions, errI := parseMetricInt(row.Metrics.Impressions)

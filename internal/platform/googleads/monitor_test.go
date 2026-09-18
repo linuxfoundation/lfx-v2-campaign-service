@@ -180,6 +180,53 @@ func TestListAccountCampaigns_MalformedBudgetOnLaterRow_MarksFetchFailed(t *test
 	}
 }
 
+// TestListAccountCampaigns_MalformedBudgetOnFirstRow_LaterRowRecovers pins a round-29 review
+// fix: BudgetDailyUSD used to be assigned only on first sighting, so a malformed amount_micros on
+// the FIRST row for a campaign left BudgetDailyUSD stuck at 0 forever even when a later row for
+// the same campaign carried a parseable value — the mirror image of
+// TestListAccountCampaigns_MalformedBudgetOnLaterRow_MarksFetchFailed above. FetchFailed=true
+// still tells the caller the budget was inconsistent across rows, but the recovered numeric
+// value should no longer be discarded once a good one is seen.
+func TestListAccountCampaigns_MalformedBudgetOnFirstRow_LaterRowRecovers(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[
+			{
+				"campaign":{"id":"333","name":"Campaign Three","status":"ENABLED","advertisingChannelType":"SEARCH"},
+				"campaignBudget":{"amountMicros":"not-a-number"},
+				"metrics":{"impressions":"50","clicks":"2","costMicros":"1000000"}
+			},
+			{
+				"campaign":{"id":"333","name":"Campaign Three","status":"ENABLED","advertisingChannelType":"SEARCH"},
+				"campaignBudget":{"amountMicros":"5000000"},
+				"metrics":{"impressions":"100","clicks":"5","costMicros":"2500000"}
+			}
+		]}`)
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "1234567890", 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if !rows[0].FetchFailed {
+		t.Errorf("row for campaign 333 = %+v, want FetchFailed=true — the first row's budget failed to parse", rows[0])
+	}
+	if rows[0].BudgetDailyUSD != 5 {
+		t.Errorf("row for campaign 333 = %+v, want BudgetDailyUSD=5 (recovered from the second row, not stuck at 0)", rows[0])
+	}
+	if rows[0].Impressions != 150 || rows[0].Clicks != 7 {
+		t.Errorf("row for campaign 333 = %+v, want metrics from both rows accumulated (150 impressions, 7 clicks)", rows[0])
+	}
+}
+
 // TestMicrosToUSD_EmptyAndSentinelAreNotFailures pins the legitimate-zero-budget cases that
 // must NOT set FetchFailed, so a future edit can't collapse them into the malformed-input case
 // above.

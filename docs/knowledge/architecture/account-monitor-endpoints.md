@@ -353,3 +353,17 @@ differential diff, since fixed:
    dozen other pre-existing files elsewhere in the repo, redacting here
    needed no wider sweep to keep the range clean). See
    [2026-09-19-215-monitor-account-endpoints-round28-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round28-fixes.md).
+9. Round 25's later-row budget check (item 5) only ever *marked* a
+   later-row budget parse failure; it never let a later-row parse
+   *success* overwrite a first row's failed one, so `BudgetDailyUSD` stayed
+   stuck at `0` even when a good value was available on a later row for the
+   same campaign — the mirror image of the bug item 5 fixed. `FetchFailed`
+   is still set whenever any row's budget fails to parse, but the numeric
+   value is no longer discarded once a good one is seen. Also: item 8's
+   tip-tree redaction of the reviewer-handle privacy issue never reached the
+   *history* that would be pushed — the original commit still carried the
+   handle twice in its patch and once in its own message. Since this branch
+   had never been pushed, an interactive rebase rewrote that commit in place
+   (same "a human reviewer" phrasing item 8 already used forward) and
+   replayed the later commits on top unchanged; only their SHAs moved. See
+   [2026-09-19-215-monitor-account-endpoints-round29-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round29-fixes.md).
