@@ -59,7 +59,7 @@ func EvaluateMetaMonitor(rows []model.AccountCampaignMetrics, days int, now time
 		}
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)
-		items = append(items, metaActionItems(m, pacingPct, label)...)
+		items = append(items, metaActionItems(m, pacingPct, label, days)...)
 	}
 
 	sortByPriority(items, metaPriorityRank)
@@ -96,7 +96,7 @@ func metaPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (flo
 	return 0, false
 }
 
-func metaActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel) []model.AccountMonitorActionItem {
+func metaActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel, days int) []model.AccountMonitorActionItem {
 	var items []model.AccountMonitorActionItem
 	add := func(priority model.MonitorPriority, issue, action string) {
 		items = append(items, model.AccountMonitorActionItem{
@@ -121,8 +121,17 @@ func metaActionItems(m model.AccountCampaignMetrics, pacingPct float64, label mo
 			"Verify Meta Pixel / Conversions API is firing; check landing page and CTA alignment")
 	}
 	if label == model.MonitorPacingUnderspending && m.Status == "ACTIVE" {
+		// m.TotalBudget is 0 whenever pacingPct was computed from the flat BudgetDay*days
+		// branch (metaPacingPct) instead of the schedule-based one — using it unconditionally
+		// as the denominator produced a self-contradicting "$X of $0.00" message for every
+		// daily-budget-funded campaign. Fall back to the same budgetDay*days expectation
+		// metaPacingPct itself used to derive pacingPct in that branch.
+		denominator := m.TotalBudget
+		if denominator <= 0 {
+			denominator = m.BudgetDay * float64(days)
+		}
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Underspending: %.0f%% of budget used ($%.2f of $%.2f)", pacingPct, m.Spend, m.TotalBudget),
+			fmt.Sprintf("Underspending: %.0f%% of budget used ($%.2f of $%.2f)", pacingPct, m.Spend, denominator),
 			"Broaden audience targeting or increase bid cap to improve delivery")
 	}
 	if (label == model.MonitorPacingConstrained || label == model.MonitorPacingOverspending) && m.Status == "ACTIVE" {

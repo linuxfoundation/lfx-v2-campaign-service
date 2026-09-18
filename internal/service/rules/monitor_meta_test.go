@@ -92,39 +92,62 @@ func TestMetaActionItems(t *testing.T) {
 	t.Run("active with zero impressions and zero spend is HIGH", func(t *testing.T) {
 		row := base
 		row.Status = "ACTIVE"
-		items := metaActionItems(row, 0, model.MonitorPacingNormal)
+		items := metaActionItems(row, 0, model.MonitorPacingNormal, 30)
 		mustContainIssue(t, items, "no delivery", model.MonitorPriorityHigh)
 	})
 	t.Run("low CTR above min impressions is MED", func(t *testing.T) {
 		row := base
 		row.Ctr = 0.1
 		row.Impressions = 501
-		items := metaActionItems(row, 0, model.MonitorPacingNormal)
+		items := metaActionItems(row, 0, model.MonitorPacingNormal, 30)
 		mustContainIssue(t, items, "Low CTR", model.MonitorPriorityMed)
 	})
 	t.Run("clicks above floor with 0 conversions is MED", func(t *testing.T) {
 		row := base
 		row.Clicks = 21
 		row.Conversions = floatPtr(0)
-		items := metaActionItems(row, 0, model.MonitorPacingNormal)
+		items := metaActionItems(row, 0, model.MonitorPacingNormal, 30)
 		mustContainIssue(t, items, "0 conversions", model.MonitorPriorityMed)
 	})
 	t.Run("active underspending is MED", func(t *testing.T) {
 		row := base
 		row.Status = "ACTIVE"
-		items := metaActionItems(row, 30, model.MonitorPacingUnderspending)
+		items := metaActionItems(row, 30, model.MonitorPacingUnderspending, 30)
 		mustContainIssue(t, items, "Underspending", model.MonitorPriorityMed)
+	})
+	t.Run("active underspending funded by BudgetDay uses budgetDay*days as the denominator", func(t *testing.T) {
+		// Pins a round-22 review fix: the message used to hardcode m.TotalBudget as the
+		// denominator, which is 0 for a campaign funded by BudgetDay instead — producing a
+		// self-contradicting "$X.XX of $0.00" message.
+		row := base
+		row.Status = "ACTIVE"
+		row.BudgetDay = 10
+		row.Spend = 60
+		items := metaActionItems(row, 30, model.MonitorPacingUnderspending, 30)
+		mustContainIssue(t, items, "Underspending", model.MonitorPriorityMed)
+		found := false
+		for _, it := range items {
+			if strContains(it.Issue, "Underspending") {
+				found = true
+				if !strContains(it.Issue, "$300.00") {
+					t.Errorf("issue = %q, want it to report $300.00 (budgetDay=10 * days=30), not $0.00", it.Issue)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("no Underspending issue found in %+v", items)
+		}
 	})
 	t.Run("active constrained is MED", func(t *testing.T) {
 		row := base
 		row.Status = "ACTIVE"
-		items := metaActionItems(row, 95, model.MonitorPacingConstrained)
+		items := metaActionItems(row, 95, model.MonitorPacingConstrained, 30)
 		mustContainIssue(t, items, "Budget constrained", model.MonitorPriorityMed)
 	})
 	t.Run("paused underspending does not fire (status-gated)", func(t *testing.T) {
 		row := base
 		row.Status = "PAUSED"
-		items := metaActionItems(row, 30, model.MonitorPacingUnderspending)
+		items := metaActionItems(row, 30, model.MonitorPacingUnderspending, 30)
 		for _, it := range items {
 			if it.Issue == "" {
 				continue
