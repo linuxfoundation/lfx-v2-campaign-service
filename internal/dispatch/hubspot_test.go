@@ -1669,3 +1669,46 @@ func TestHubSpot_APreheaderOnlyConfigLeavesTheDraftAlone(t *testing.T) {
 		t.Error("a preheader-only config triggered a full rebuild, replacing the whole widget tree and losing the clone's content")
 	}
 }
+
+// TestHubSpot_NAT64PrefixesReachTheHeroFetch pins that a hubspot.Option given to
+// NewHubSpotDispatcher reaches the image-download guard.
+//
+// This is the assertion the container test kept claiming and could not make: from
+// internal/container the dispatcher's client is unexported and registerDispatchers needs a live
+// *postgres.ConnectionRepo, so the option's EFFECT is unobservable there. Here a fake connection
+// lets Dispatch run far enough to attempt the hero fetch, which is where the guard applies.
+//
+// 2a01:4f8:808:808::a9fe:a9fe decodes to 169.254.169.254 at /96 — the metadata endpoint. Without
+// the prefix the address cannot be decoded and the guard never sees the IPv4 it encodes.
+func TestHubSpot_NAT64PrefixesReachTheHeroFetch(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(
+		fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud,
+		hubspot.WithBaseURL(srv.URL),
+		hubspot.WithNAT64Prefixes("2a01:4f8:808:808::/96"),
+	)
+
+	started := time.Now()
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","bodyHtml":"<p>b</p>","heroImageUrl":"http://[2a01:4f8:808:808::a9fe:a9fe]/hero.png"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch should stay best-effort on a refused hero: %v", err)
+	}
+
+	// The upload is best-effort, so the refusal surfaces as the hero simply not being hosted.
+	rec.mu.Lock()
+	_, heroWritten := rec.widgets["staging_hero"]
+	rec.mu.Unlock()
+	if heroWritten {
+		t.Error("a NAT64-encoded metadata address was fetched and re-hosted as the hero")
+	}
+
+	// And it must be REFUSED, not merely slow. Without the prefix the address cannot be decoded,
+	// so the dial is attempted and the fetch times out — the hero is unwritten either way, and a
+	// test asserting only the outcome passes with the option deleted. Verified: that mutation
+	// took 10s (the download timeout) and still went green. The elapsed time is the tell.
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Errorf("the address was dialled rather than refused (%s elapsed): the NAT64 prefix did not reach the guard", elapsed)
+	}
+}

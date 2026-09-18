@@ -1788,8 +1788,14 @@ func TestNewLLMClientSilentWhenConfigured(t *testing.T) {
 // from this package the option's effect cannot be seen — two earlier versions of this test
 // claimed otherwise and both stayed green with the option deleted, once by asserting only that a
 // dispatcher existed and once by constructing a client directly, bypassing the join. The guard
-// itself is pinned end to end by hubspot's TestDownloadImage_NAT64PrefixesReachTheDownloadGuard,
-// and that is the test to change if this wiring ever moves.
+// itself is pinned by hubspot's TestDownloadImage_NAT64PrefixesReachTheDownloadGuard and, for
+// the dispatcher wiring specifically, by dispatch.TestHubSpot_NAT64PrefixesReachTheHeroFetch --
+// which drives a dispatcher built with this option against a NAT64-encoded metadata address and
+// fails if it is DIALLED rather than refused. Those are the tests to change if the wiring moves.
+//
+// The timing assertion in that test matters: without the prefix the address cannot be decoded,
+// so the dial is attempted and times out, leaving the hero unwritten either way. An assertion on
+// the outcome alone passed with the option deleted.
 func TestRegisterDispatchers_AcceptsNAT64Prefixes(t *testing.T) {
 	const prefix = "2a01:4f8:808:808::/96"
 

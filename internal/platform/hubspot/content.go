@@ -120,14 +120,21 @@ func (c *Client) RebuildEmailContent(ctx context.Context, id string, in RebuildE
 		addHeroSection(widgets, &sections, in.HeroImageURL, in.HeroLinkURL)
 	}
 
-	// The body is PRESERVED when the caller supplies none, not skipped and not blanked.
+	// Conditional, and the clone's body is NOT carried forward — it is dropped from the tree.
 	//
-	// This rebuild replaces the entire widget tree, so both earlier shapes lost the clone's body:
-	// calling addBodySection unconditionally wrote an empty staging_body over it, and merely
-	// skipping the call dropped it from the tree altogether — the same data loss, one step
-	// quieter. A metadata-only request (a preheader or footer-org change) must leave the body
-	// exactly as the clone had it, which means carrying the existing widget forward and keeping
-	// its section in the layout, the same way preview_text is carried below.
+	// Stated plainly because an earlier version of this comment claimed the opposite and the code
+	// never did it. This rebuild replaces the entire widget tree, and both shapes lose the body
+	// when the caller supplies none: an unconditional call writes an empty staging_body over it,
+	// and this conditional omits the section entirely. Carrying it forward the way preview_text
+	// is carried below does not work either, because a cloned template's body lives under its own
+	// widget keys (module_1, module_hdr, ...), not under the staging_body key this rebuild
+	// invents — so there is no single key to copy.
+	//
+	// Reachable today whenever a hero-only, button-only or sponsors-only change is dispatched:
+	// applyEmailContentWithHero skips the call only when body, hero, button AND sponsors are all
+	// empty, so those requests do reach here with an empty body and lose the clone's body.
+	// Closing that needs a content path that edits widgets in place rather than replacing them;
+	// tracked with the rest of LFXV2-2775.
 	if strings.TrimSpace(in.BodyHTML) != "" {
 		addBodySection(widgets, &sections, in.BodyHTML)
 	}

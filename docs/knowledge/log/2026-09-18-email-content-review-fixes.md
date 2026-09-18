@@ -1,6 +1,6 @@
 # 2026-09-18 Email content: privacy leak, destructive rebuild, and verification gaps
 
-**Fixes** — six issues found reviewing the email-content branch, the first blocking.
+**Fix** — six issues found reviewing the email-content branch, the first blocking.
 
 **Cross-tenant read (privacy).** `BuildReferenceBlock` searched the HubSpot portal
 with an empty needle, which matches every email the portal returns, while
