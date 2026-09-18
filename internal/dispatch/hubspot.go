@@ -575,14 +575,21 @@ func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emai
 	bodyHTML = strings.TrimSpace(bodyHTML)
 	hostedHeroURL = strings.TrimSpace(hostedHeroURL)
 	buttonURL = strings.TrimSpace(buttonURL)
-	// previewText and sentByOrg COUNT as content. Both are written by the same rebuild, so
-	// omitting them from this guard meant a config that changed only the preheader (or only the
-	// footer org) returned here and did nothing — silently, because this function is
-	// best-effort. That became reachable the moment the UI started sending preheader as
-	// `previewText`: the operator edits it, staging reports success, and the draft keeps the
-	// clone's own preview text.
-	if bodyHTML == "" && hostedHeroURL == "" && buttonURL == "" && len(sponsors) == 0 &&
-		strings.TrimSpace(previewText) == "" && strings.TrimSpace(sentByOrg) == "" {
+	// previewText and sentByOrg are deliberately NOT in this guard, and that is a real gap rather
+	// than an oversight -- I widened it to include them and had to put it back.
+	//
+	// They are only settable through the content tree (see hubspot.EmailSettings: the Marketing
+	// Emails v3 object exposes no preheader field), and RebuildEmailContent REPLACES the whole
+	// widget tree by design -- that wholesale wipe is what stops the clone source's stale content
+	// leaking into the new draft. So a rebuild carrying no body cannot preserve the clone's body:
+	// writing an empty staging_body blanks it, and omitting the section drops it from the tree.
+	// Both are data loss, and the second only looks quieter.
+	//
+	// The consequence, stated so nobody re-widens this: a config that changes ONLY the preheader
+	// or the footer org is silently not applied. That is strictly better than destroying the
+	// body, and fixing it properly needs a content path that can edit widgets in place rather
+	// than replace them. Tracked with the rest of LFXV2-2775.
+	if bodyHTML == "" && hostedHeroURL == "" && buttonURL == "" && len(sponsors) == 0 {
 		// Nothing to rebuild: every campaign that predates LFXV2-2775 (and any caller that only
 		// wants the subject updated) reaches here with no generated content at all, and a full
 		// rebuild with an empty body would wipe the clone's template content for nothing.

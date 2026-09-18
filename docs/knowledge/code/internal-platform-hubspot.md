@@ -449,6 +449,35 @@ endpoint.
 rather than a property, so asking for it by name returns an email with an empty selection —
 indistinguishable from a send that targeted nothing.
 
+## Content rebuild and image re-hosting (LFXV2-2775)
+
+`RebuildEmailContent` REPLACES the draft's whole widget tree rather than patching into it. That
+wholesale wipe is deliberate: it is what stops the clone source's stale hero, CTA, sponsor logos
+and preview text leaking into the new draft. The consequence is that a rebuild carrying no body
+cannot preserve the clone's body — writing an empty `staging_body` blanks it, omitting the
+section drops it — so the dispatcher does not call this at all when it has no content to write,
+and a preheader-only change is silently not applied. Preview text has no first-class field on the
+Marketing Emails v3 object, so there is no narrower path for it today.
+
+`verifyContentSaved` re-reads the draft afterwards, because HubSpot has in practice accepted a
+content PATCH with a 2xx and silently reverted it. It requires EVERY widget it wrote to be
+referenced from `flexAreas`, not merely one: the keys are fixed, so a single surviving key from
+an earlier generation used to confirm a rebuild whose new content was lost. It distinguishes two
+outcomes — a proven revert (`ErrContentNotPersisted`, unrecoverable, logged at ERROR by the
+dispatcher as needing manual repair) and a failed verification read (`errVerifyReadFailed`,
+retryable, because the write's outcome is unknown rather than known-bad).
+
+`UploadImage` fetches a CALLER-SUPPLIED URL and re-hosts the bytes in the portal as a
+`PUBLIC_INDEXABLE` file, which makes it both an SSRF sink and a publication channel. It therefore
+uses `eventurl`'s dial-time address guard (shared, not reimplemented), follows redirects only
+through a bounded policy with the guard judging every hop, and decides the format by DECODING the
+bytes rather than trusting `Content-Type` — the responding server chooses that header, so HTML
+served as `image/png` would otherwise be re-hosted under a caller-chosen extension. The stored
+filename takes its extension from the decoded format and carries a content hash, because uploads
+share one folder with `overwrite:true` and source basenames (`hero.png`) collide constantly.
+Error paths never render the source URL verbatim: hero URLs are frequently signed, and both
+`url.Parse` and `http.Client.Do` embed the complete input in their error text.
+
 ## Scope
 
 Auth + request layer + the email/list/event-def operations above, plus marketing-email

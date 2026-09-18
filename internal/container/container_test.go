@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -1782,34 +1781,20 @@ func TestNewLLMClientSilentWhenConfigured(t *testing.T) {
 		"a configured proxy must not warn; a false alarm here devalues the real one")
 }
 
-// TestRegisterDispatchers_ForwardsNAT64PrefixesToHubSpot pins the production JOIN by OBSERVING
-// the option, not by checking a dispatcher exists.
+// TestRegisterDispatchers_AcceptsNAT64Prefixes covers what is observable HERE: the join accepts
+// the configured prefixes and registers cleanly, with and without them.
 //
-// The first version of this test asserted only that a HubSpot dispatcher was registered, which
-// stayed green with the WithNAT64Prefixes argument deleted -- it named the property in its title
-// and verified none of it. The guard is only meaningful if the configured prefixes actually reach
-// the image-download client, so that is what is asserted: a NAT64-encoded metadata address must
-// be refused by a client built the way the container builds it.
-func TestRegisterDispatchers_ForwardsNAT64PrefixesToHubSpot(t *testing.T) {
-	// 2a01:4f8:808:808::a9fe:a9fe decodes to 169.254.169.254 at /96.
-	const encoded = "http://[2a01:4f8:808:808::a9fe:a9fe]/hero.png"
+// It deliberately does NOT claim to verify the guard. The dispatcher's client is unexported, so
+// from this package the option's effect cannot be seen — two earlier versions of this test
+// claimed otherwise and both stayed green with the option deleted, once by asserting only that a
+// dispatcher existed and once by constructing a client directly, bypassing the join. The guard
+// itself is pinned end to end by hubspot's TestDownloadImage_NAT64PrefixesReachTheDownloadGuard,
+// and that is the test to change if this wiring ever moves.
+func TestRegisterDispatchers_AcceptsNAT64Prefixes(t *testing.T) {
 	const prefix = "2a01:4f8:808:808::/96"
 
-	// The same construction registerDispatchers performs, exercised directly: the option is the
-	// unit under test, and a dispatcher's internal client is not reachable from here.
-	guarded := hubspot.NewClient(
-		hubspot.Credentials{PrivateAppToken: "pat-test"},
-		hubspot.AccountConfig{PortalID: "1"},
-		hubspot.WithNAT64Prefixes(prefix),
-	)
-	if _, err := guarded.UploadImage(context.Background(), encoded); err == nil ||
-		!strings.Contains(err.Error(), "169.254.169.254") {
-		t.Fatalf("a configured NAT64 prefix did not reach the image guard: %v", err)
-	}
-
-	// And the join itself still registers cleanly, with and without prefixes configured.
 	if _, ok := registerDispatchers(nil, nil, nil, nil, []string{prefix})[model.ProviderHubSpot]; !ok {
-		t.Fatal("no HubSpot dispatcher was registered with prefixes")
+		t.Fatal("no HubSpot dispatcher was registered with prefixes configured")
 	}
 	if _, ok := registerDispatchers(nil, nil, nil, nil, nil)[model.ProviderHubSpot]; !ok {
 		t.Fatal("no HubSpot dispatcher was registered without prefixes")
