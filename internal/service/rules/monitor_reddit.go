@@ -64,9 +64,9 @@ func EvaluateRedditMonitor(rows []model.AccountCampaignMetrics, days int, now ti
 		// still run with pacingPct=0 (below the underspend action floor, so that item is
 		// correctly suppressed too).
 		if m.StartDate == "" {
-			m.PacingUnknown = true
-			out = append(out, model.AccountMonitorRow{Metrics: m, PacingLabel: model.MonitorPacingNormal})
-			items = append(items, redditActionItems(m, 0)...)
+			row := fetchFailedRow(m)
+			out = append(out, row)
+			items = append(items, redditActionItems(row.Metrics, 0)...)
 			continue
 		}
 

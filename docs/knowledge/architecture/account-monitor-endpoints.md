@@ -288,3 +288,16 @@ differential diff, since fixed:
    the capability-absent (`!ok`) arm already did — the per-campaign data is
    the response's primary content, and the account-wide totals are a
    secondary, derivable figure not worth a 5xx over.
+4. Three more false-absence/false-zero defects, found by Copilot's second PR
+   review pass and fixed in round 24: Google Ads'
+   `internal/platform/googleads/monitor.go` converted a present-but-unparseable
+   `campaign_budget.amount_micros` into a trusted real `$0` budget instead of
+   `FetchFailed`; LinkedIn's `internal/platform/linkedin/monitor.go` treated an
+   absent campaign-list `metadata` block the same as an exhausted cursor,
+   silently returning a partial campaign list as complete; and the same file's
+   analytics decode used a value-typed `elements` slice, so a null/absent/empty
+   analytics response was indistinguishable from a genuine zero-activity
+   response and was read as measured zero delivery rather than a failed
+   fetch. See
+   [2026-09-19-215-monitor-account-endpoints-round24-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round24-fixes.md)
+   for the fixes and their pinning tests.

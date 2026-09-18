@@ -91,3 +91,58 @@ func TestListAccountCampaigns_MalformedMetrics_MarksFetchFailed(t *testing.T) {
 		t.Errorf("row for campaign 111 = %+v, want zero metrics (never fabricated) alongside FetchFailed", rows[0])
 	}
 }
+
+// TestListAccountCampaigns_MalformedBudget_MarksFetchFailed pins a Copilot review fix
+// (round-19-rerun): a present but unparseable campaign_budget.amount_micros used to silently
+// become a real $0 daily budget via microsToUSD, which returned 0 on any parse error with no
+// signal to the caller. The rule engine could then read that fabricated $0 as a real budget-less
+// campaign instead of unknown upstream data. Contrast with an empty amount_micros (no budget set
+// at all) and the -1 sentinel, both legitimate zero budgets — see
+// TestMicrosToUSD_EmptyAndSentinelAreNotFailures.
+func TestListAccountCampaigns_MalformedBudget_MarksFetchFailed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{
+			"campaign":{"id":"222","name":"Campaign Two","status":"ENABLED","advertisingChannelType":"SEARCH"},
+			"campaignBudget":{"amountMicros":"not-a-number"},
+			"metrics":{"impressions":"100","clicks":"5","costMicros":"2500000"}
+		}]}`)
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "1234567890", 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if !rows[0].FetchFailed {
+		t.Errorf("row for campaign 222 = %+v, want FetchFailed=true for a campaign whose budget failed to parse", rows[0])
+	}
+	if rows[0].BudgetDailyUSD != 0 {
+		t.Errorf("row for campaign 222 = %+v, want BudgetDailyUSD=0 (never fabricated) alongside FetchFailed", rows[0])
+	}
+}
+
+// TestMicrosToUSD_EmptyAndSentinelAreNotFailures pins the legitimate-zero-budget cases that
+// must NOT set FetchFailed, so a future edit can't collapse them into the malformed-input case
+// above.
+func TestMicrosToUSD_EmptyAndSentinelAreNotFailures(t *testing.T) {
+	for _, s := range []string{"", "-1"} {
+		usd, ok := microsToUSD(s)
+		if !ok {
+			t.Errorf("microsToUSD(%q) ok = false, want true (a legitimate zero budget, not malformed data)", s)
+		}
+		if usd != 0 {
+			t.Errorf("microsToUSD(%q) = %v, want 0", s, usd)
+		}
+	}
+	if usd, ok := microsToUSD("garbage"); ok || usd != 0 {
+		t.Errorf("microsToUSD(%q) = (%v, %v), want (0, false)", "garbage", usd, ok)
+	}
+}

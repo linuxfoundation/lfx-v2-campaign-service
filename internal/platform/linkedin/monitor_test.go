@@ -155,3 +155,52 @@ func TestListAccountCampaigns_MalformedCostInUsd_MarksFetchFailed(t *testing.T) 
 		t.Errorf("row for campaign 111 = %+v, want SpendUSD=0 (never fabricated) alongside FetchFailed", rows[0])
 	}
 }
+
+// TestListAccountCampaigns_MissingCampaignListMetadata_IsRejected pins a Copilot review fix
+// (round-19-rerun): an absent metadata block on the adCampaigns page used to be treated the same
+// as an empty NextPageToken — "no more pages" — so a malformed or truncated intermediate page
+// silently returned a partial campaign list as a complete one. accounts.go's adAccount picker
+// already rejects this exact state (accounts.go:202-211); the campaign list walk did not.
+func TestListAccountCampaigns_MissingCampaignListMetadata_IsRejected(t *testing.T) {
+	srv, _ := adAccountsServer(t,
+		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"}]}`,
+	)
+	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
+
+	_, err := c.ListAccountCampaigns(context.Background(), "512345678", 7)
+	if err == nil {
+		t.Fatal("a campaign-list page with no metadata block was accepted as a complete list")
+	}
+	if !strings.Contains(err.Error(), "no metadata") {
+		t.Errorf("error = %v, want it to report the missing metadata block", err)
+	}
+}
+
+// TestListAccountCampaigns_NullAnalyticsElements_IsRejected pins a Copilot review fix
+// (round-19-rerun): fetchAccountCampaignAnalyticsRaw's elements field used to be value-typed, so
+// `{}`, `"elements":null`, and a missing field all decoded as the same empty/nil slice with no
+// error. ListAccountCampaigns would then read every listed campaign as measured zero activity
+// instead of a failed analytics read, fabricating a false "no delivery" pacing/action-item
+// verdict from data that was never actually fetched.
+func TestListAccountCampaigns_NullAnalyticsElements_IsRejected(t *testing.T) {
+	for name, analyticsBody := range map[string]string{
+		"null elements":   `{"elements":null}`,
+		"absent elements": `{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, _ := adAccountsServer(t,
+				`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"}],"metadata":{}}`,
+				analyticsBody,
+			)
+			c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
+
+			_, err := c.ListAccountCampaigns(context.Background(), "512345678", 7)
+			if err == nil {
+				t.Fatalf("an analytics response with %s was accepted as a successful empty read", name)
+			}
+			if !strings.Contains(err.Error(), "no elements field") {
+				t.Errorf("error = %v, want it to report the missing elements field", err)
+			}
+		})
+	}
+}

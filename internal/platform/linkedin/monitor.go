@@ -164,7 +164,14 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 			}
 			out = append(out, row)
 		}
-		if resp.Metadata == nil || resp.Metadata.NextPageToken == "" {
+		// An ABSENT metadata block is not an exhausted cursor — same false-absence guard as
+		// accounts.go's adAccount picker (accounts.go:202-211). Without this split, a malformed
+		// or truncated intermediate page reads as "no more pages" and silently returns a partial
+		// campaign list as a complete one (Copilot review, round-19-rerun).
+		if resp.Metadata == nil {
+			return nil, fmt.Errorf("list account campaigns: response has no metadata; cannot confirm all campaigns were enumerated")
+		}
+		if resp.Metadata.NextPageToken == "" {
 			return out, nil
 		}
 		pageToken = resp.Metadata.NextPageToken
@@ -262,7 +269,12 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 	}
 
 	var parsed struct {
-		Elements []struct {
+		// Elements is a pointer so `{}`, `"elements":null`, and a missing field are all
+		// distinguishable from a genuine empty array — a value-typed slice decodes all three
+		// as the same nil/zero-length slice with no error, which this endpoint's caller
+		// (ListAccountCampaigns) would then read as "every listed campaign had zero activity"
+		// instead of "the analytics read failed" (Copilot review, round-19-rerun).
+		Elements *[]struct {
 			// PivotValues arrives automatically once `pivot=CAMPAIGN` is set — it is not, and
 			// cannot be, requested via `fields` (see the RawQuery comment above). Mirrors the
 			// BFF's `pivotValues?: string[]` (linkedin-ads.service.ts:907).
@@ -276,8 +288,11 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("decode account monitor analytics: malformed JSON (%d bytes)", len(body))}
 	}
-	out := make(map[string]monitorMetricsRow, len(parsed.Elements))
-	for _, el := range parsed.Elements {
+	if parsed.Elements == nil {
+		return nil, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("decode account monitor analytics: response has no elements field")}
+	}
+	out := make(map[string]monitorMetricsRow, len(*parsed.Elements))
+	for _, el := range *parsed.Elements {
 		if len(el.PivotValues) == 0 {
 			continue
 		}

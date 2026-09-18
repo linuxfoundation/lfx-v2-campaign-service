@@ -117,12 +117,20 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 		}
 		existing, ok := byID[id]
 		if !ok {
+			budgetUSD, budgetOK := microsToUSD(row.CampaignBudget.AmountMicros)
 			existing = &AccountCampaignRow{
 				CampaignID:      id,
 				Name:            row.Campaign.Name,
 				Status:          row.Campaign.Status,
 				IsSearchChannel: row.Campaign.AdvertisingChannelType == "SEARCH",
-				BudgetDailyUSD:  microsToUSD(row.CampaignBudget.AmountMicros),
+				BudgetDailyUSD:  budgetUSD,
+			}
+			if !budgetOK {
+				// A present but unparseable amount_micros is malformed upstream data, not a
+				// legitimate "no budget set" (that's the empty-string / -1-sentinel case, which
+				// budgetOK still reports true for). Mark FetchFailed so the rule engine treats
+				// this row's budget as unknown rather than a real $0 (Copilot review, round-19-rerun).
+				existing.FetchFailed = true
 			}
 			byID[id] = existing
 			order = append(order, id)
@@ -163,15 +171,21 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 	return out, nil
 }
 
-// microsToUSD converts a Google Ads amount_micros string to whole currency units. Empty or
-// unparseable input (including Google's sentinel -1 for "no budget amount set") yields 0.
-func microsToUSD(s string) float64 {
+// microsToUSD converts a Google Ads amount_micros string to whole currency units. An empty
+// string or Google's sentinel -1 (both meaning "no budget amount set") yield (0, true) — a
+// legitimate zero budget, not a failure. A present but unparseable value yields (0, false):
+// the caller must treat that as unknown, never as a real $0 (Copilot review, round-19-rerun —
+// see the FetchFailed comment at the call site in ListAccountCampaigns).
+func microsToUSD(s string) (usd float64, ok bool) {
 	if s == "" {
-		return 0
+		return 0, true
 	}
 	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
-	if err != nil || n < 0 {
-		return 0
+	if err != nil {
+		return 0, false
 	}
-	return float64(n) / 1_000_000
+	if n < 0 {
+		return 0, true
+	}
+	return float64(n) / 1_000_000, true
 }
