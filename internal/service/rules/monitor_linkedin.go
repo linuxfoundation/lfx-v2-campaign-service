@@ -76,8 +76,11 @@ func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now 
 // linkedinPacingPct ports the totalBudget/dailyBudget branches of getLinkedInAnalytics'
 // campaignMetrics.map, in day granularity (this port's AccountCampaignMetrics carries
 // date-only flight bounds, not the BFF's millisecond runSchedule timestamps — see
-// model.AccountCampaignMetrics.StartDate/EndDate). rangeStart is `now - days days`, mirroring
-// dateRangeParams(days).start.
+// model.AccountCampaignMetrics.StartDate/EndDate). rangeStart is `now - (days-1) days`, the
+// same inclusive-of-today convention shared by the Google/Reddit/Meta monitor dispatchers and
+// pinned by internal/platform/linkedin/monitor_test.go's
+// TestListAccountCampaigns_UsesInjectedClockNotWallClock (a "days=7" window ending on today
+// starts 6 days back, not 7) — not `now - days days` as an earlier draft of this comment said.
 //
 // Deliberately UNROUNDED — see model.AccountMonitorRow.PacingPct.
 func linkedinPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) float64 {
