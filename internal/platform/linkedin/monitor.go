@@ -167,7 +167,7 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 		// An ABSENT metadata block is not an exhausted cursor — same false-absence guard as
 		// accounts.go's adAccount picker (accounts.go:202-211). Without this split, a malformed
 		// or truncated intermediate page reads as "no more pages" and silently returns a partial
-		// campaign list as a complete one (Copilot review, round-19-rerun).
+		// campaign list as a complete one (round-24 review).
 		if resp.Metadata == nil {
 			return nil, fmt.Errorf("list account campaigns: response has no metadata; cannot confirm all campaigns were enumerated")
 		}
@@ -273,7 +273,7 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 		// distinguishable from a genuine empty array — a value-typed slice decodes all three
 		// as the same nil/zero-length slice with no error, which this endpoint's caller
 		// (ListAccountCampaigns) would then read as "every listed campaign had zero activity"
-		// instead of "the analytics read failed" (Copilot review, round-19-rerun).
+		// instead of "the analytics read failed" (round-24 review).
 		Elements *[]struct {
 			// PivotValues arrives automatically once `pivot=CAMPAIGN` is set — it is not, and
 			// cannot be, requested via `fields` (see the RawQuery comment above). Mirrors the

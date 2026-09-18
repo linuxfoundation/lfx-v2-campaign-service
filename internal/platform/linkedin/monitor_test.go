@@ -156,8 +156,8 @@ func TestListAccountCampaigns_MalformedCostInUsd_MarksFetchFailed(t *testing.T) 
 	}
 }
 
-// TestListAccountCampaigns_MissingCampaignListMetadata_IsRejected pins a Copilot review fix
-// (round-19-rerun): an absent metadata block on the adCampaigns page used to be treated the same
+// TestListAccountCampaigns_MissingCampaignListMetadata_IsRejected pins a round-24 review fix:
+// an absent metadata block on the adCampaigns page used to be treated the same
 // as an empty NextPageToken — "no more pages" — so a malformed or truncated intermediate page
 // silently returned a partial campaign list as a complete one. accounts.go's adAccount picker
 // already rejects this exact state (accounts.go:202-211); the campaign list walk did not.
@@ -176,8 +176,8 @@ func TestListAccountCampaigns_MissingCampaignListMetadata_IsRejected(t *testing.
 	}
 }
 
-// TestListAccountCampaigns_NullAnalyticsElements_IsRejected pins a Copilot review fix
-// (round-19-rerun): fetchAccountCampaignAnalyticsRaw's elements field used to be value-typed, so
+// TestListAccountCampaigns_NullAnalyticsElements_IsRejected pins a round-24 review fix:
+// fetchAccountCampaignAnalyticsRaw's elements field used to be value-typed, so
 // `{}`, `"elements":null`, and a missing field all decoded as the same empty/nil slice with no
 // error. ListAccountCampaigns would then read every listed campaign as measured zero activity
 // instead of a failed analytics read, fabricating a false "no delivery" pacing/action-item

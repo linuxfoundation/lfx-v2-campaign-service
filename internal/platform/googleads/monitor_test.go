@@ -92,8 +92,8 @@ func TestListAccountCampaigns_MalformedMetrics_MarksFetchFailed(t *testing.T) {
 	}
 }
 
-// TestListAccountCampaigns_MalformedBudget_MarksFetchFailed pins a Copilot review fix
-// (round-19-rerun): a present but unparseable campaign_budget.amount_micros used to silently
+// TestListAccountCampaigns_MalformedBudget_MarksFetchFailed pins a round-24 review fix: a
+// present but unparseable campaign_budget.amount_micros used to silently
 // become a real $0 daily budget via microsToUSD, which returned 0 on any parse error with no
 // signal to the caller. The rule engine could then read that fabricated $0 as a real budget-less
 // campaign instead of unknown upstream data. Contrast with an empty amount_micros (no budget set
@@ -144,5 +144,10 @@ func TestMicrosToUSD_EmptyAndSentinelAreNotFailures(t *testing.T) {
 	}
 	if usd, ok := microsToUSD("garbage"); ok || usd != 0 {
 		t.Errorf("microsToUSD(%q) = (%v, %v), want (0, false)", "garbage", usd, ok)
+	}
+	// Only Google's exact -1 sentinel is a legitimate zero; any other negative value is
+	// malformed data, not a variant of "no budget set" (round-24 review).
+	if usd, ok := microsToUSD("-5"); ok || usd != 0 {
+		t.Errorf("microsToUSD(%q) = (%v, %v), want (0, false)", "-5", usd, ok)
 	}
 }

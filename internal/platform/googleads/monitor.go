@@ -116,8 +116,8 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 			continue
 		}
 		existing, ok := byID[id]
+		budgetUSD, budgetOK := microsToUSD(row.CampaignBudget.AmountMicros)
 		if !ok {
-			budgetUSD, budgetOK := microsToUSD(row.CampaignBudget.AmountMicros)
 			existing = &AccountCampaignRow{
 				CampaignID:      id,
 				Name:            row.Campaign.Name,
@@ -125,15 +125,19 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 				IsSearchChannel: row.Campaign.AdvertisingChannelType == "SEARCH",
 				BudgetDailyUSD:  budgetUSD,
 			}
-			if !budgetOK {
-				// A present but unparseable amount_micros is malformed upstream data, not a
-				// legitimate "no budget set" (that's the empty-string / -1-sentinel case, which
-				// budgetOK still reports true for). Mark FetchFailed so the rule engine treats
-				// this row's budget as unknown rather than a real $0 (Copilot review, round-19-rerun).
-				existing.FetchFailed = true
-			}
 			byID[id] = existing
 			order = append(order, id)
+		}
+		if !budgetOK {
+			// A present but unparseable amount_micros is malformed upstream data, not a
+			// legitimate "no budget set" (that's the empty-string / -1-sentinel case, which
+			// budgetOK still reports true for). Mark FetchFailed so the rule engine treats
+			// this row's budget as unknown rather than a real $0 (round-24 review). Checked on
+			// EVERY row, not only the first sighting: segments.date makes this query multi-row
+			// per campaign (see the doc comment above), so a malformed amount_micros on an
+			// intermediate row must still mark the campaign FetchFailed even though the first
+			// row's budget already parsed and was assigned to BudgetDailyUSD.
+			existing.FetchFailed = true
 		}
 		impressions, errI := parseMetricInt(row.Metrics.Impressions)
 		clicks, errC := parseMetricInt(row.Metrics.Clicks)
@@ -172,10 +176,11 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 }
 
 // microsToUSD converts a Google Ads amount_micros string to whole currency units. An empty
-// string or Google's sentinel -1 (both meaning "no budget amount set") yield (0, true) — a
-// legitimate zero budget, not a failure. A present but unparseable value yields (0, false):
-// the caller must treat that as unknown, never as a real $0 (Copilot review, round-19-rerun —
-// see the FetchFailed comment at the call site in ListAccountCampaigns).
+// string or Google's exact sentinel -1 (both meaning "no budget amount set") yield (0, true) —
+// a legitimate zero budget, not a failure. A present but unparseable value, OR any other
+// negative value (Google defines only -1, not "negative" in general, as the sentinel), yields
+// (0, false): the caller must treat that as unknown, never as a real $0 (round-24 review — see
+// the FetchFailed comment at the call site in ListAccountCampaigns).
 func microsToUSD(s string) (usd float64, ok bool) {
 	if s == "" {
 		return 0, true
@@ -184,8 +189,11 @@ func microsToUSD(s string) (usd float64, ok bool) {
 	if err != nil {
 		return 0, false
 	}
-	if n < 0 {
+	if n == -1 {
 		return 0, true
+	}
+	if n < 0 {
+		return 0, false
 	}
 	return float64(n) / 1_000_000, true
 }

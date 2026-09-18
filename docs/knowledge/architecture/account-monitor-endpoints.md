@@ -301,3 +301,12 @@ differential diff, since fixed:
    fetch. See
    [2026-09-19-215-monitor-account-endpoints-round24-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round24-fixes.md)
    for the fixes and their pinning tests.
+5. Round 24's own budget fix (item 4) had two more defects, caught by the
+   next local review pass: `microsToUSD` treated *any* negative
+   `amount_micros`, not just Google's exact `-1` sentinel, as a legitimate
+   zero budget, so a genuinely malformed negative value was silently
+   accepted instead of marking `FetchFailed`; and the budget/`FetchFailed`
+   check only ran on a campaign id's first-sighting GAQL row, missing a
+   malformed value on a later row of the same multi-row-per-campaign query.
+   See
+   [2026-09-19-215-monitor-account-endpoints-round25-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round25-fixes.md).
