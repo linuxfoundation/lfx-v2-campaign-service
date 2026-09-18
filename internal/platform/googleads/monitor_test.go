@@ -184,7 +184,7 @@ func TestListAccountCampaigns_MalformedBudgetOnLaterRow_MarksFetchFailed(t *test
 // must NOT set FetchFailed, so a future edit can't collapse them into the malformed-input case
 // above.
 func TestMicrosToUSD_EmptyAndSentinelAreNotFailures(t *testing.T) {
-	for _, s := range []string{"", "-1"} {
+	for _, s := range []string{"", "  ", "-1"} {
 		usd, ok := microsToUSD(s)
 		if !ok {
 			t.Errorf("microsToUSD(%q) ok = false, want true (a legitimate zero budget, not malformed data)", s)

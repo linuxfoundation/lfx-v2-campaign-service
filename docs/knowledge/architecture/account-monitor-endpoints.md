@@ -335,3 +335,21 @@ differential diff, since fixed:
    budget-dependent ones, unlike `monitor_reddit.go`'s empty-`StartDate`
    branch, which still runs its metrics-only action items. See
    [2026-09-19-215-monitor-account-endpoints-round27-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round27-fixes.md).
+8. Round 27's own doc widening (item 7) left one sentence in
+   `fetchFailedRow`'s comment inaccurate for the case it had just added to
+   that comment's scope: it said the row "still" carries its `FetchFailed`
+   flag regardless of cause, but `monitor_reddit.go`'s empty-`StartDate` row
+   never sets `FetchFailed` — only `PacingUnknown`. Also fixed:
+   `fetchAccountCampaignList`'s absent-`metadata` guard comment claimed full
+   parity with `accounts.go`'s adAccount picker, which additionally dedups
+   repeated page cursors; this loop does not, so the comment now says so
+   instead of overclaiming. And `microsToUSD` checked for an empty
+   `amount_micros` before trimming whitespace, so a whitespace-only value
+   took the malformed-data path instead of the legitimate-zero path the
+   empty string gets — now trims once, up front. Plus: a pre-existing,
+   repo-wide convention of naming a human reviewer by GitHub handle was
+   redacted in the two places it appeared in this feature's own round-24 log
+   entry, since that file is new within this review range (unlike the
+   dozen other pre-existing files elsewhere in the repo, redacting here
+   needed no wider sweep to keep the range clean). See
+   [2026-09-19-215-monitor-account-endpoints-round28-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round28-fixes.md).

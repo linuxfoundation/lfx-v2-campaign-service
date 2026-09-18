@@ -180,16 +180,17 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 }
 
 // microsToUSD converts a Google Ads amount_micros string to whole currency units. An empty
-// string or Google's exact sentinel -1 (both meaning "no budget amount set") yield (0, true) —
-// a legitimate zero budget, not a failure. A present but unparseable value, OR any other
-// negative value (Google defines only -1, not "negative" in general, as the sentinel), yields
-// (0, false): the caller must treat that as unknown, never as a real $0 (round-24 review — see
-// the FetchFailed comment at the call site in ListAccountCampaigns).
+// (or whitespace-only) string or Google's exact sentinel -1 (both meaning "no budget amount
+// set") yield (0, true) — a legitimate zero budget, not a failure. A present but unparseable
+// value, OR any other negative value (Google defines only -1, not "negative" in general, as the
+// sentinel), yields (0, false): the caller must treat that as unknown, never as a real $0
+// (round-24/27 review — see the FetchFailed comment at the call site in ListAccountCampaigns).
 func microsToUSD(s string) (usd float64, ok bool) {
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, true
 	}
-	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
 		return 0, false
 	}

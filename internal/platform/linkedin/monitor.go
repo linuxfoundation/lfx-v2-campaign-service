@@ -164,10 +164,12 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 			}
 			out = append(out, row)
 		}
-		// An ABSENT metadata block is not an exhausted cursor — same false-absence guard as
-		// accounts.go's adAccount picker (accounts.go:202-211). Without this split, a malformed
-		// or truncated intermediate page reads as "no more pages" and silently returns a partial
-		// campaign list as a complete one (round-24 review).
+		// An ABSENT metadata block is not an exhausted cursor — mirrors the same false-absence
+		// guard in accounts.go's adAccount picker (accounts.go:202-211), though only that half of
+		// it: unlike accounts.go, this loop has no seen-cursor dedup, so a server that repeats a
+		// pageToken is only bounded by monitorMaxPages below, not caught immediately. Without the
+		// metadata check, a malformed or truncated intermediate page reads as "no more pages" and
+		// silently returns a partial campaign list as a complete one (round-24 review).
 		if resp.Metadata == nil {
 			return nil, fmt.Errorf("list account campaigns: response has no metadata; cannot confirm all campaigns were enumerated")
 		}

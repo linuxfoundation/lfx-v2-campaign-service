@@ -28,8 +28,10 @@ import (
 // budget-only-failed row is different: its impressions/clicks/spend may be genuinely non-zero,
 // only BudgetDailyUSD is untrusted, but the pacing calc needs BudgetDailyUSD, so the whole row
 // is still routed through here rather than partially evaluated. Either way the row is still
-// returned in the campaigns array (the caller sees it and its FetchFailed flag), just with
-// pacing/action-item evaluation skipped. PacingLabel keeps its zero-value "normal" placeholder —
+// returned in the campaigns array, with pacing/action-item evaluation skipped — the caller sees
+// it, and, for the two Google causes above, its FetchFailed flag; the Reddit empty-StartDate row
+// carries PacingUnknown=true with FetchFailed left unset, since that row's metrics are real and
+// only its flight window is unknown. PacingLabel keeps its zero-value "normal" placeholder —
 // pacing_label is a required enum with no "unknown" member — and PacingUnknown=true is the
 // caller's signal not to trust it, the same convention pacing_pct's own "meaningless when
 // pacing_unknown is true" doc comment establishes (design/connection.go).
