@@ -1698,16 +1698,19 @@ func TestHubSpot_NAT64PrefixesReachTheHeroFetch(t *testing.T) {
 
 	// The upload is best-effort, so the refusal surfaces as the hero simply not being hosted.
 	rec.mu.Lock()
-	_, heroWritten := rec.widgets["staging_hero"]
+	_, heroWritten := rec.widgets["staging_banner"]
 	rec.mu.Unlock()
 	if heroWritten {
 		t.Error("a NAT64-encoded metadata address was fetched and re-hosted as the hero")
 	}
 
-	// And it must be REFUSED, not merely slow. Without the prefix the address cannot be decoded,
-	// so the dial is attempted and the fetch times out — the hero is unwritten either way, and a
-	// test asserting only the outcome passes with the option deleted. Verified: that mutation
-	// took 10s (the download timeout) and still went green. The elapsed time is the tell.
+	// THIS is the assertion that binds the test; the widget check above is corroboration only.
+	//
+	// Without the prefix the address cannot be decoded, so the dial is attempted and the fetch
+	// times out — the hero goes unwritten EITHER WAY, so the widget check passes whether or not
+	// the option was forwarded. Verified by mutation: with this assertion relaxed, deleting
+	// hubspot.WithNAT64Prefixes left the test green at 10s (the download timeout). Refusal is
+	// immediate; a dial is not. Do not remove this in favour of the widget check alone.
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Errorf("the address was dialled rather than refused (%s elapsed): the NAT64 prefix did not reach the guard", elapsed)
 	}
