@@ -2414,7 +2414,7 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: df1e8458-7c38-4a18-935a-35a8838c99b4
+                    example: 9ec91566-0522-4a18-935a-35a8838c99b4
                     format: uuid
                   example: 6aa60ee7-97b0-4ac6-8d14-de3f381bca58
             requestBody:
@@ -3460,9 +3460,9 @@ paths:
                             $ref: '#/components/schemas/UpdateCampaignRequestBody'
                         example:
                             campaign:
-                                campaign_name: Dignissimos in tempore quo consequatur sint qui.
-                                config: Autem impedit.
-                                status: Illum expedita commodi in dolores nemo similique.
+                                campaign_name: Tempore quo consequatur sint qui non illum.
+                                config: Impedit tenetur.
+                                status: Commodi in dolores nemo similique eaque.
             responses:
                 "200":
                     description: OK response.
@@ -4500,6 +4500,15 @@ paths:
                     description: 'Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
                     example: Post-Event
                   example: Post-Event
+                - name: variant
+                  in: query
+                  description: 'Requests a differently-styled draft of the same stage''s copy. Currently one value is recognised: ''urgency-fomo'', which asks for an urgency/FOMO-forward structure (deadline framing, social proof, a secondary CTA) instead of the stage''s normal copy. Any other value, or absence, produces the normal stage-based copy.'
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: 'Requests a differently-styled draft of the same stage''s copy. Currently one value is recognised: ''urgency-fomo'', which asks for an urgency/FOMO-forward structure (deadline framing, social proof, a secondary CTA) instead of the stage''s normal copy. Any other value, or absence, produces the normal stage-based copy.'
+                    example: urgency-fomo
+                  example: urgency-fomo
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -4527,9 +4536,16 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/EmailCopy'
                             example:
-                                body: <p>We're excited to invite you...</p>
-                                cta: Register Now
                                 preheader: Register now and shape the future of cloud native computing
+                                sections:
+                                    - html: <p>We're excited to invite you...</p>
+                                      text: Register Now
+                                      type: rich_text
+                                      url: https://example.com/register
+                                    - html: <p>We're excited to invite you...</p>
+                                      text: Register Now
+                                      type: rich_text
+                                      url: https://example.com/register
                                 subject: Join Us at KubeCon 2026
                 "400":
                     description: 'BadRequest: Bad request'
@@ -10713,14 +10729,14 @@ components:
                 id:
                     type: string
                     description: 'Account identifier in the ad platform''s OWN namespace, ready to store as the connection''s account_id verbatim. The format is per-provider and is whatever that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads; an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter — so a caller must treat it as an OPAQUE string and must not validate, normalise or re-derive it. Each discovery method''s own example shows its provider''s form. Storing it unchanged is what matters: the connection validation for each provider accepts only its own format.'
-                    example: Quidem est qui perspiciatis in.
+                    example: Minima blanditiis officiis.
                 label:
                     type: string
                     description: Human-readable account name or label
-                    example: Mollitia architecto distinctio maxime.
+                    example: Quod voluptatem.
             example:
-                id: Facere animi facilis minima blanditiis officiis est.
-                label: Voluptatem fugit fugit repudiandae voluptates nulla.
+                id: Fugit repudiandae voluptates.
+                label: Beatae inventore.
             required:
                 - id
         AdoptCampaignRequestBody:
@@ -13974,18 +13990,18 @@ components:
                 campaign_name:
                     type: string
                     description: Campaign name
-                    example: Aut nostrum ipsa quis.
+                    example: Maxime tenetur eos voluptatum.
                 config:
                     description: Campaign configuration snapshot
-                    example: Et maxime tenetur eos.
+                    example: Autem doloremque rerum.
                 status:
                     type: string
                     description: Campaign status
-                    example: Numquam illo blanditiis aut.
+                    example: Culpa velit voluptas et ea sed provident.
             example:
-                campaign_name: Tempore culpa velit voluptas et ea.
-                config: Perferendis in ut qui aperiam nihil.
-                status: Provident facilis autem doloremque rerum qui sunt.
+                campaign_name: Sunt soluta perferendis.
+                config: Nihil quibusdam maiores corporis.
+                status: Ut qui.
             required:
                 - campaign_name
                 - status
@@ -14063,14 +14079,14 @@ components:
                 message:
                     type: string
                     description: Human-readable detail
-                    example: Nesciunt aspernatur harum consectetur similique expedita debitis.
+                    example: Unde recusandae.
                 ok:
                     type: boolean
                     description: Whether the credential authenticated against the provider
                     example: false
             example:
-                message: Unde recusandae.
-                ok: false
+                message: Exercitationem illo aperiam dolorem alias non.
+                ok: true
             required:
                 - ok
         CreateAudienceRequestBody:
@@ -14305,16 +14321,16 @@ components:
                 brief_id:
                     type: string
                     description: Parent brief
-                    example: Eveniet deserunt ut.
+                    example: Temporibus reprehenderit officiis nam magni.
                 byte_size:
                     type: integer
                     description: Size of the stored image in bytes
-                    example: 4537044645564221435
+                    example: 802402217250929549
                     format: int64
                 checksum:
                     type: string
                     description: Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a brief
-                    example: Officiis nam magni.
+                    example: Corrupti tempora voluptates mollitia ullam.
                 created:
                     type: string
                     description: '"true" when this request stored the asset; "false" when an identical upload already existed. Set only on the upload response, where it selects 201 vs 200.'
@@ -14325,27 +14341,27 @@ components:
                 id:
                     type: string
                     description: Creative asset UUID
-                    example: 58c8f505-f06d-4b53-bb44-6a2fbe7d8fcd
+                    example: 58c8f51c-dfa0-4316-90ac-7e1fed663120
                     format: uuid
                 mime_type:
                     type: string
                     description: Stored image MIME type, as verified from the bytes (not merely the declared header)
-                    example: image/jpeg
+                    example: image/png
                     enum:
                         - image/png
                         - image/jpeg
                 project_id:
                     type: string
                     description: Owning project
-                    example: Officiis perspiciatis.
+                    example: Eveniet deserunt ut.
             example:
-                brief_id: Qui asperiores ullam sed consequuntur illo amet.
-                byte_size: 724676163210486352
-                checksum: Error repudiandae aspernatur et tempora.
+                brief_id: Quod laboriosam error repudiandae aspernatur et.
+                byte_size: 6390527780980351899
+                checksum: Nesciunt aspernatur harum consectetur similique expedita debitis.
                 created: "true"
-                id: b08ed41f-993a-4132-9dad-f07d68055ad3
-                mime_type: image/png
-                project_id: Neque corrupti ut recusandae velit non quis.
+                id: ea711f56-4e79-4f20-a54f-95c9cf7570ce
+                mime_type: image/jpeg
+                project_id: Qui asperiores ullam sed consequuntur illo amet.
             required:
                 - id
                 - project_id
@@ -14367,36 +14383,87 @@ components:
         EmailCopy:
             type: object
             properties:
-                body:
-                    type: string
-                    description: Email body HTML (the main content)
-                    example: <p>We're excited to invite you...</p>
-                    maxLength: 8000
-                cta:
-                    type: string
-                    description: Call-to-action button text
-                    example: Register Now
-                    maxLength: 50
                 preheader:
                     type: string
                     description: Email preheader text (preview summary)
                     example: Register now and shape the future of cloud native computing
                     maxLength: 150
+                sections:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/EmailCopySection'
+                    description: Ordered content sections making up the email body, in display order
+                    example:
+                        - html: <p>We're excited to invite you...</p>
+                          text: Register Now
+                          type: rich_text
+                          url: https://example.com/register
+                        - html: <p>We're excited to invite you...</p>
+                          text: Register Now
+                          type: rich_text
+                          url: https://example.com/register
+                        - html: <p>We're excited to invite you...</p>
+                          text: Register Now
+                          type: rich_text
+                          url: https://example.com/register
+                        - html: <p>We're excited to invite you...</p>
+                          text: Register Now
+                          type: rich_text
+                          url: https://example.com/register
                 subject:
                     type: string
                     description: Email subject line
                     example: Join Us at KubeCon 2026
                     maxLength: 200
             example:
-                body: <p>We're excited to invite you...</p>
-                cta: Register Now
                 preheader: Register now and shape the future of cloud native computing
+                sections:
+                    - html: <p>We're excited to invite you...</p>
+                      text: Register Now
+                      type: rich_text
+                      url: https://example.com/register
+                    - html: <p>We're excited to invite you...</p>
+                      text: Register Now
+                      type: rich_text
+                      url: https://example.com/register
                 subject: Join Us at KubeCon 2026
             required:
                 - subject
                 - preheader
-                - body
-                - cta
+                - sections
+        EmailCopySection:
+            type: object
+            properties:
+                html:
+                    type: string
+                    description: Inline HTML for the section (rich_text sections only) -- paragraphs/lists with inline CSS, no outer <div> or <style> tag
+                    example: <p>We're excited to invite you...</p>
+                    maxLength: 8000
+                text:
+                    type: string
+                    description: Button label (button sections only)
+                    example: Register Now
+                    maxLength: 50
+                type:
+                    type: string
+                    description: Which kind of section this is
+                    example: rich_text
+                    enum:
+                        - rich_text
+                        - button
+                        - divider
+                url:
+                    type: string
+                    description: Button destination URL (button sections only)
+                    example: https://example.com/register
+                    maxLength: 2000
+            example:
+                html: <p>We're excited to invite you...</p>
+                text: Register Now
+                type: rich_text
+                url: https://example.com/register
+            required:
+                - type
         EmailMetrics:
             type: object
             properties:
@@ -14451,11 +14518,11 @@ components:
                 description:
                     type: string
                     description: Event description
-                    example: Omnis optio.
+                    example: Maxime voluptatum voluptatem consequuntur laboriosam quae fuga.
                 end_date:
                     type: string
                     description: Event end date, same caveat as start_date
-                    example: Rerum eius voluptate vitae ut.
+                    example: Vitae ut tenetur enim libero modi dolorum.
                 event_name:
                     type: string
                     description: Event name
@@ -14471,28 +14538,28 @@ components:
                 image:
                     type: string
                     description: Event image URL
-                    example: Enim libero.
+                    example: Aut voluptatem.
                 location:
                     type: string
                     description: Event location as written on the page — free text, not a resolved place
-                    example: Voluptatum voluptatem consequuntur laboriosam.
+                    example: Laudantium quos qui.
                 start_date:
                     type: string
                     description: Event start date exactly as the page states it; NOT normalised to RFC 3339, because the source rarely is
-                    example: Fuga qui laudantium quos qui ullam iste.
+                    example: Iste rem rerum eius.
                 url:
                     type: string
                     description: 'The event''s own landing page, as the page declares it (JSON-LD url / og:url), falling back to the URL that was fetched when it declares none. NOT necessarily the fetched URL: a caller commonly pastes a link carrying tracking parameters, and the page''s declared canonical is the better destination for an ad'
-                    example: Dolorum accusantium aut.
+                    example: Aut dolorem eum maxime error sed.
             example:
-                description: Aut dolorem eum maxime error sed.
-                end_date: A rerum saepe voluptatem beatae.
+                description: Distinctio quisquam accusamus rerum non.
+                end_date: Eos voluptatem.
                 event_name: KubeCon + CloudNativeCon Europe 2026
-                extracted_from: opengraph
-                image: Harum facilis id.
-                location: Est distinctio quisquam accusamus.
-                start_date: Non repudiandae.
-                url: Est nam eos.
+                extracted_from: jsonld
+                image: Aut nostrum ipsa quis.
+                location: Incidunt a rerum saepe.
+                start_date: Beatae quaerat harum facilis id facere est.
+                url: Numquam illo blanditiis aut.
             required:
                 - extracted_from
         FetchEventURLRequestBody:
@@ -15041,35 +15108,35 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Quo magnam illo est eos.
+                    example: Ipsum labore sint deserunt qui.
                 etag:
                     type: string
                     description: ETag header value (mirrors version)
-                    example: Deserunt qui et asperiores.
+                    example: Nihil reiciendis perferendis non iusto explicabo.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
-                    example: false
+                    example: true
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Voluptatem autem.
+                    example: Et eaque saepe.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Corrupti minima voluptates.
+                    example: Quo magnam illo est eos.
                 login_customer_id:
                     type: string
                     description: Manager account used for API access
-                    example: Ipsa nihil.
+                    example: Nihil porro rerum.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Et eaque saepe.
+                    example: Corrupti minima voluptates.
                 status:
                     type: string
                     description: Connection status
-                    example: error
+                    example: active
                     enum:
                         - active
                         - inactive
@@ -15078,18 +15145,18 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 6280178269767889704
+                    example: 3336262082608657985
                     format: int64
             example:
-                account_id: Qui rerum deserunt aspernatur autem impedit.
-                etag: Deleniti cumque qui doloremque consequatur.
+                account_id: Cumque qui doloremque consequatur quis tempore neque.
+                etag: Est qui perspiciatis in distinctio mollitia architecto.
                 has_credentials: true
-                id: Perferendis non iusto explicabo pariatur.
-                label: Id aliquid consequatur fugiat eos est.
-                login_customer_id: Tempore neque et nobis.
-                project_id: Porro rerum.
-                status: deleted
-                version: 931693555538450572
+                id: Id aliquid consequatur fugiat eos est.
+                label: Quo aut quia.
+                login_customer_id: Maxime qui facere animi.
+                project_id: Qui rerum deserunt aspernatur autem impedit.
+                status: inactive
+                version: 6581951564744618178
             required:
                 - id
                 - project_id
@@ -15294,25 +15361,25 @@ components:
                 client_id:
                     type: string
                     description: OAuth client id
-                    example: Non ut repudiandae qui nisi.
+                    example: Mollitia repudiandae nam modi corrupti.
                 client_secret:
                     type: string
                     description: OAuth client secret
-                    example: Eveniet quo nihil.
+                    example: Cumque qui voluptatum officiis quod.
                 developer_token:
                     type: string
                     description: Google Ads developer token
-                    example: Repudiandae nam modi corrupti vero cumque.
+                    example: Mollitia numquam unde perspiciatis.
                 refresh_token:
                     type: string
                     description: OAuth refresh token
-                    example: Sit exercitationem illo aperiam dolorem.
+                    example: Repudiandae qui nisi sed eveniet quo.
             description: Google Ads OAuth credential set. Write-only; never returned.
             example:
-                client_id: Molestias odit magnam esse et.
-                client_secret: Doloribus sed.
-                developer_token: Maiores cumque porro laudantium voluptates.
-                refresh_token: Voluptatum officiis quod maiores mollitia numquam unde.
+                client_id: Sed ab.
+                client_secret: Cumque porro laudantium voluptates.
+                developer_token: Voluptatem autem.
+                refresh_token: Odit magnam esse et quo.
             required:
                 - refresh_token
                 - client_id
@@ -16577,15 +16644,15 @@ components:
                 name:
                     type: string
                     description: Internal email name, as it appears in the HubSpot email list
-                    example: Inventore quis nobis quia sed perferendis.
+                    example: Nobis quia sed perferendis quis numquam sit.
                 state:
                     type: string
                     description: HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED). Archived emails are not returned at all — archival is a separate flag in HubSpot, not a state.
-                    example: Illo nihil sed aut non dolores eligendi.
+                    example: Sed aut non dolores eligendi.
                 subject:
                     type: string
                     description: Subject line
-                    example: Numquam sit doloremque sunt praesentium temporibus voluptate.
+                    example: Sunt praesentium temporibus voluptate quis illo.
                 updated_at:
                     type: string
                     description: Last-modified timestamp (ISO-8601)
@@ -19705,9 +19772,9 @@ components:
                     $ref: '#/components/schemas/CampaignUpdateInput'
             example:
                 campaign:
-                    campaign_name: Dignissimos in tempore quo consequatur sint qui.
-                    config: Autem impedit.
-                    status: Illum expedita commodi in dolores nemo similique.
+                    campaign_name: Tempore quo consequatur sint qui non illum.
+                    config: Impedit tenetur.
+                    status: Commodi in dolores nemo similique eaque.
             required:
                 - campaign
         UpdateGoogleAdsRequestBody:

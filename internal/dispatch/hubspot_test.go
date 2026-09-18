@@ -4,15 +4,15 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -99,25 +99,12 @@ type hubspotRec struct {
 	taggedHTML     string
 	subjectSet     string
 	bodyHTMLSet    string
-	bodyWidget     string
 	// widgets is content.widgets as the draft currently holds it: module id -> the whole module
 	// object, body and scaffolding included. Seeded by seed(), then REPLACED by every content
 	// PATCH, exactly as HubSpot treats it.
 	widgets map[string]map[string]any
 	// layout is the reading order content.flexAreas places the module ids in.
 	layout []string
-	// dropped names every widget a content PATCH removed from the draft. On a drag-and-drop
-	// email that is destroyed content, not a harmless omission.
-	dropped []string
-	// contentKeys is the key set of the last content PATCH's `content` object. flexAreas absent
-	// from it is the same destruction by another route — the layout tree would be gone.
-	contentKeys []string
-	// extraWidget adds a SECOND populated rich-text block below the first. The generated body
-	// belongs in the first one; this block must survive untouched.
-	extraWidget bool
-	// emptyExtraWidget adds a second rich-text block with an EMPTY body. An empty block is one an
-	// operator can see and fill, so it counts as a block — and it is not the first one.
-	emptyExtraWidget bool
 	// onlyEmptyWidget makes the draft's SINGLE rich-text block empty -- the most unambiguous
 	// shape there is, and the one an operator most expects the generated body to fill.
 	onlyEmptyWidget bool
@@ -125,14 +112,18 @@ type hubspotRec struct {
 	// shape. It has a body object but no `html` key, so counting object-bodied modules reported
 	// two blocks and the body write silently no-opped.
 	imageWidget bool
-	// reversedLayout places module_2 ABOVE module_1 while the map's keys sort the other way, so
-	// only a caller that reads flexAreas can name the block at the top of the email.
-	reversedLayout bool
-	// classicTemplate drops the flexAreas layout entirely -- a non-drag-and-drop template, where
-	// NOTHING is placed and the block order is only a sort of opaque module ids. The fixture puts
-	// the footer at the lowest-sorting id, so a caller that trusts blocks[0] writes the operator's
-	// lede over the unsubscribe footer.
-	classicTemplate bool
+	// abVariantFails makes the ab-test/create-variation endpoint return 429, exercising the
+	// best-effort contract: a failed variant must not fail the dispatch.
+	abVariantFails bool
+	// sawCreateVariation / createVariationBody / variantWidgets record what the fake variant
+	// (id "998") saw, independent of the clone's own rec state above.
+	sawCreateVariation  bool
+	createVariationBody map[string]any
+	variantWidgets      map[string]map[string]any
+	variantLayout       []string
+	variantTaggedHTML   string
+	variantSubjectSet   string
+	variantBodyHTMLSet  string
 }
 
 // richModule is a rich-text drag-and-drop module: a body carrying `html`, plus the scaffolding
@@ -169,28 +160,116 @@ func (r *hubspotRec) seed() {
 		}
 		r.layout = append([]string{"module_hdr"}, r.layout...)
 	}
-	if r.emptyExtraWidget {
-		r.widgets["module_2"] = richModule("   ")
-		r.layout = append(r.layout, "module_2")
-	}
-	if r.extraWidget {
-		r.widgets["module_2"] = richModule("<p>second block</p>")
-		r.layout = append(r.layout, "module_2")
-	}
-	if r.reversedLayout {
-		r.widgets["module_2"] = richModule("<p>top block</p>")
-		r.layout = []string{"module_2", "module_1"}
-	}
-	if r.classicTemplate {
-		// "a_footer" sorts BEFORE "module_1": with no layout, blocks[0] IS the footer.
-		r.widgets["a_footer"] = richModule("<p>Unsubscribe</p>")
-		r.layout = nil
-	}
 	// A template-level module the layout does not place, and which is not rich text at all. The
 	// real template's preview_text is exactly this, and it was the ONE widget that survived the
 	// destructive write — so a fixture without it cannot tell "everything survived" from
 	// "everything unplaced was lost".
 	r.widgets["preview_text"] = map[string]any{"body": map[string]any{"value": "See you there"}}
+}
+
+// variantDraftPayload renders the fake variant email's (id "998") draft: one placed rich-text
+// block, mirroring the clone's own seed shape closely enough for applyEmailContent to have
+// somewhere to write.
+func (r *hubspotRec) variantDraftPayload() []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.variantWidgets == nil {
+		r.variantWidgets = map[string]map[string]any{"module_v1": richModule("<p>variant template body</p>")}
+	}
+	if r.variantLayout == nil {
+		r.variantLayout = []string{"module_v1"}
+	}
+	widgetIDs := make([]string, len(r.variantLayout))
+	copy(widgetIDs, r.variantLayout)
+	sections := []any{map[string]any{
+		"id":      "section_module_v1",
+		"columns": []any{map[string]any{"id": "column_module_v1", "width": 12, "widgets": widgetIDs}},
+	}}
+	content := map[string]any{
+		"templatePath":  "@hubspot/email/dnd/Start_from_scratch.html",
+		"styleSettings": map[string]any{"backgroundColor": "#ffffff"},
+		"flexAreas":     map[string]any{"main": map[string]any{"boxed": true, "sections": sections}},
+		"widgets":       r.variantWidgets,
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"id":                "998",
+		"emailTemplateMode": "DRAG_AND_DROP",
+		"content":           content,
+	})
+	return payload
+}
+
+// applyVariantContent replays a content PATCH against the fake variant email (id "998"), mirroring
+// applyContent's classification but keeping the variant's captures separate from the clone's.
+func (r *hubspotRec) applyVariantContent(raw string, content map[string]any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.variantWidgets == nil {
+		r.variantWidgets = map[string]map[string]any{"module_v1": richModule("<p>variant template body</p>")}
+	}
+	before := map[string]string{}
+	for key, w := range r.variantWidgets {
+		body, _ := w["body"].(map[string]any)
+		if html, ok := body["html"].(string); ok {
+			before[key] = html
+		}
+	}
+	submitted, _ := content["widgets"].(map[string]any)
+	next := make(map[string]map[string]any, len(submitted))
+	for key, v := range submitted {
+		wm, _ := v.(map[string]any)
+		next[key] = wm
+	}
+	r.variantWidgets = next
+	// Same staleness fix as applyContent: a full rebuild submits its own flexAreas, so later
+	// GETs must echo the widget ids THIS patch actually placed.
+	if placed := flexAreaWidgetIDs(content["flexAreas"]); placed != nil {
+		r.variantLayout = placed
+	}
+	for key, w := range r.variantWidgets {
+		body, _ := w["body"].(map[string]any)
+		html, _ := body["html"].(string)
+		if before[key] == html {
+			continue
+		}
+		if strings.Contains(html, "utm_") {
+			r.variantTaggedHTML = raw
+			continue
+		}
+		// Same reasoning as applyContent: only "staging_body" is the caller's generated body.
+		if key != "staging_body" {
+			continue
+		}
+		r.variantBodyHTMLSet = html
+	}
+}
+
+// SawCreateVariation / CreateVariationBody / VariantTaggedHTML / VariantBodyHTML /
+// VariantSubject read the variant captures under the lock.
+func (r *hubspotRec) SawCreateVariation() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sawCreateVariation
+}
+func (r *hubspotRec) CreateVariationBody() map[string]any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.createVariationBody
+}
+func (r *hubspotRec) VariantTaggedHTML() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.variantTaggedHTML
+}
+func (r *hubspotRec) VariantBodyHTML() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.variantBodyHTMLSet
+}
+func (r *hubspotRec) VariantSubject() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.variantSubjectSet
 }
 
 func (r *hubspotRec) markClone() {
@@ -232,14 +311,6 @@ func (r *hubspotRec) draftPayload() []byte {
 		"widgets":       r.widgets,
 	}
 	mode := "DRAG_AND_DROP"
-	if r.classicTemplate {
-		// A classic template carries NO layout tree at all, and an empty flexAreas object is not
-		// the same shape: it would still let a reader believe a layout exists and simply placed
-		// nothing. Delete the key, and drop the mode with it.
-		delete(content, "flexAreas")
-		content["templatePath"] = "custom/email/classic_newsletter.html"
-		mode = "HTML"
-	}
 	payload, _ := json.Marshal(map[string]any{
 		"id":                "999",
 		"emailTemplateMode": mode,
@@ -257,13 +328,6 @@ func (r *hubspotRec) applyContent(raw string, content map[string]any) {
 	defer r.mu.Unlock()
 	r.seed()
 
-	keys := make([]string, 0, len(content))
-	for k := range content {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	r.contentKeys = keys
-
 	before := r.richBodies()
 	submitted, _ := content["widgets"].(map[string]any)
 	next := make(map[string]map[string]any, len(submitted))
@@ -271,12 +335,13 @@ func (r *hubspotRec) applyContent(raw string, content map[string]any) {
 		wm, _ := v.(map[string]any)
 		next[key] = wm
 	}
-	for key := range r.widgets {
-		if _, kept := next[key]; !kept {
-			r.dropped = append(r.dropped, key)
-		}
-	}
 	r.widgets = next
+	// A full content rebuild submits its own flexAreas, not the seeded r.layout, so later GETs
+	// must echo the widget ids THIS patch actually placed — otherwise draftPayload() keeps
+	// rendering the stale seeded layout and verifyContentSaved sees widgets nothing references.
+	if placed := flexAreaWidgetIDs(content["flexAreas"]); placed != nil {
+		r.layout = placed
+	}
 
 	for key, html := range r.richBodies() {
 		if before[key] == html {
@@ -286,9 +351,44 @@ func (r *hubspotRec) applyContent(raw string, content map[string]any) {
 			r.taggedHTML = raw
 			continue
 		}
+		// A full content rebuild replaces the ENTIRE widget tree in one PATCH, so several
+		// widgets look "changed" at once (the body, the footer, the sponsor header) — only
+		// "staging_body" (see content.go's addBodySection) is the caller's GENERATED body; the
+		// rest are the rebuild's own fixed furniture and must not overwrite that capture.
+		if key != "staging_body" {
+			continue
+		}
 		r.bodyHTMLSet = html
-		r.bodyWidget = key
 	}
+}
+
+// flexAreaWidgetIDs flattens a submitted content.flexAreas value into the widget ids it places,
+// in section/column reading order, or nil if the value isn't a flexAreas-shaped map (e.g. a
+// send-list or subject-only PATCH, which carries no flexAreas at all).
+func flexAreaWidgetIDs(flex any) []string {
+	areas, ok := flex.(map[string]any)
+	if !ok {
+		return nil
+	}
+	var ids []string
+	for _, area := range areas {
+		areaMap, _ := area.(map[string]any)
+		sections, _ := areaMap["sections"].([]any)
+		for _, sec := range sections {
+			secMap, _ := sec.(map[string]any)
+			cols, _ := secMap["columns"].([]any)
+			for _, col := range cols {
+				colMap, _ := col.(map[string]any)
+				widgets, _ := colMap["widgets"].([]any)
+				for _, w := range widgets {
+					if id, ok := w.(string); ok {
+						ids = append(ids, id)
+					}
+				}
+			}
+		}
+	}
+	return ids
 }
 
 // richBodies is the draft's rich-text bodies keyed by module id. Callers hold the lock.
@@ -320,55 +420,6 @@ func (r *hubspotRec) SendListBody() map[string]any {
 }
 func (r *hubspotRec) TaggedHTML() string { r.mu.Lock(); defer r.mu.Unlock(); return r.taggedHTML }
 
-// BodyWidget is the module id the content apply chose to write into.
-func (r *hubspotRec) BodyWidget() string { r.mu.Lock(); defer r.mu.Unlock(); return r.bodyWidget }
-
-// Dropped names the widgets a content PATCH removed from the draft. Any name here is content an
-// operator lost.
-func (r *hubspotRec) Dropped() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]string(nil), r.dropped...)
-}
-
-// ContentKeys is the key set of the last content PATCH's content object.
-func (r *hubspotRec) ContentKeys() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]string(nil), r.contentKeys...)
-}
-
-// WidgetBody is one module's current body field, and whether the draft still carries the module.
-// RichTextKeys returns the draft's rich-text widget ids in the SAME sorted order the client falls
-// back to when no layout places them. A test that depends on which block sorts first asks this
-// rather than restating the ids, so renaming a fixture widget cannot leave the assertion passing
-// while testing something else.
-func (r *hubspotRec) RichTextKeys() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	keys := make([]string, 0, len(r.widgets))
-	for k, w := range r.widgets {
-		body, _ := w["body"].(map[string]any)
-		if _, isRich := body["html"]; isRich {
-			keys = append(keys, k)
-		}
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func (r *hubspotRec) WidgetBody(key, field string) (string, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	w, ok := r.widgets[key]
-	if !ok {
-		return "", false
-	}
-	body, _ := w["body"].(map[string]any)
-	v, _ := body[field].(string)
-	return v, true
-}
-
 func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 	t.Helper()
 	rec := &hubspotRec{}
@@ -385,6 +436,36 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 		case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone":
 			rec.markClone()
 			_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon NA 2026 — brief-1","state":"DRAFT"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/ab-test/create-variation":
+			raw, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(raw, &body)
+			rec.mu.Lock()
+			rec.sawCreateVariation = true
+			rec.createVariationBody = body
+			fails := rec.abVariantFails
+			rec.mu.Unlock()
+			if fails {
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			_, _ = io.WriteString(w, `{"id":"998","name":"KubeCon NA 2026 — brief-1 - Variant B","state":"DRAFT_AB_VARIANT"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/marketing/v3/emails/998/draft":
+			_, _ = w.Write(rec.variantDraftPayload())
+		case r.Method == http.MethodPatch && r.URL.Path == "/marketing/v3/emails/998/draft":
+			raw, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(raw, &body)
+			switch {
+			case body["content"] != nil:
+				content, _ := body["content"].(map[string]any)
+				rec.applyVariantContent(string(raw), content)
+			case body["subject"] != nil:
+				rec.mu.Lock()
+				rec.variantSubjectSet = fmt.Sprint(body["subject"])
+				rec.mu.Unlock()
+			}
+			_, _ = io.WriteString(w, `{"id":"998","name":"KubeCon NA 2026 — brief-1 - Variant B","state":"DRAFT_AB_VARIANT"}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/") && strings.HasSuffix(r.URL.Path, "/draft"):
 			_, _ = w.Write(rec.draftPayload())
 		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/") && strings.HasSuffix(r.URL.Path, "/draft"):
@@ -578,144 +659,6 @@ func TestHubSpot_HeaderImageDoesNotBlockTheBodyWrite(t *testing.T) {
 	}
 }
 
-// An EMPTY second rich-text block does not stop the write; it is simply not the FIRST block.
-//
-// This shape used to be refused outright: `GetEmailHTMLWidgets` counted the empty block (rightly
-// — an empty block is one an operator can see and fill), the count came to two, and the
-// single-block guard declined. Refusing was never safe by comparison, only inert: the operator
-// got a draft carrying the template's placeholder copy and no sign the generated body existed.
-// Now the body goes to the block at the top and the empty one stays empty.
-func TestHubSpot_EmptySecondBlockIsNotTheFirstBlock(t *testing.T) {
-	srv, rec := hubspotServer(t)
-	rec.emptyExtraWidget = true
-	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
-	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
-
-	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
-	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
-		t.Fatalf("Dispatch: %v", err)
-	}
-
-	subject, body := rec.snapshotContent()
-	if subject != "Three days in Amsterdam" {
-		t.Errorf("subject = %q, want the generated subject", subject)
-	}
-	if !strings.Contains(body, "Join us") {
-		t.Errorf("body = %q, want the generated body written into the first block", body)
-	}
-	if got := rec.BodyWidget(); got != "module_1" {
-		t.Errorf("wrote into %q, want the first block module_1", got)
-	}
-	if got, ok := rec.WidgetBody("module_2", "html"); !ok || got != "   " {
-		t.Errorf("second block html = %q (present=%v), want it left exactly as the template had it", got, ok)
-	}
-}
-
-// A template with SEVERAL rich-text blocks gets the generated body in the FIRST one, and keeps
-// every other block verbatim.
-//
-// This is the ordinary case, not an edge one: every template in the LF portal has nine or so
-// blocks. It used to be refused on the grounds that choosing between them was a guess — so the
-// generated copy an operator reviewed and staged reached no real template at all. The first
-// block is the top of the email, which is where a lede goes; the blocks below it are programme
-// details, sponsor tiers and footers that the copy was never meant to replace, and this pins
-// that they are untouched rather than merely "probably fine".
-func TestHubSpot_WritesFirstBlockAndKeepsTheRest(t *testing.T) {
-	srv, rec := hubspotServer(t)
-	rec.extraWidget = true
-	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
-	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
-
-	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
-	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
-		t.Fatalf("Dispatch: %v", err)
-	}
-
-	subject, body := rec.snapshotContent()
-	if subject != "Three days in Amsterdam" {
-		t.Errorf("subject = %q, want the generated subject", subject)
-	}
-	if !strings.Contains(body, "Join us") {
-		t.Errorf("body = %q, want the generated body written into the first block", body)
-	}
-	if got := rec.BodyWidget(); got != "module_1" {
-		t.Errorf("wrote into %q, want the first block module_1", got)
-	}
-	if got, ok := rec.WidgetBody("module_2", "html"); !ok || got != "<p>second block</p>" {
-		t.Errorf("second block html = %q (present=%v), want the template's own copy untouched", got, ok)
-	}
-}
-
-// FIRST means first in the LAYOUT, not first by map key.
-//
-// The layout here places module_2 above module_1 while the keys sort the other way, so a caller
-// sorting keys — or iterating the map, which Go randomizes — names the wrong block. Only
-// content.flexAreas says which block is at the top of the email, and this is the one test that
-// can tell the two apart.
-func TestHubSpot_FirstBlockComesFromTheLayoutNotTheKeys(t *testing.T) {
-	srv, rec := hubspotServer(t)
-	rec.reversedLayout = true
-	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
-	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
-
-	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","bodyHtml":"<p>Join us</p>"}}`)
-	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
-		t.Fatalf("Dispatch: %v", err)
-	}
-
-	if got := rec.BodyWidget(); got != "module_2" {
-		t.Errorf("wrote into %q, want module_2 — the block the layout places at the top", got)
-	}
-	if got, ok := rec.WidgetBody("module_1", "html"); !ok || !strings.Contains(got, "events.lfx.dev/reg") {
-		t.Errorf("module_1 html = %q (present=%v), want the template's own copy left below the lede", got, ok)
-	}
-}
-
-// A content write must DROP NOTHING — not one widget, not one field of the content object.
-//
-// This is the bug that produced an email with nothing inside it. HubSpot does not merge
-// `content` on a drag-and-drop email: it takes what is submitted as authoritative. The client
-// PATCHed only the widgets it had rewritten, so the draft came back holding those alone; the
-// layout tree still referenced all 32 placed modules, none of which existed any more, and the
-// operator opened 14 empty sections. Two writes happen in this flow (the body apply, then the
-// UTM tagger), and either one is enough to do it.
-//
-// The draft here carries a rich-text block, a second rich-text block, a header IMAGE and an
-// unplaced template-level module, so the assertion covers a widget that was written, one that
-// was not, one that is not rich text at all, and one the layout never places.
-func TestHubSpot_ContentWriteDropsNothing(t *testing.T) {
-	srv, rec := hubspotServer(t)
-	rec.extraWidget = true
-	rec.imageWidget = true
-	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
-	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
-
-	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p><a href=\"https://events.lfx.dev/reg\">Register</a>"}}`)
-	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
-		t.Fatalf("Dispatch: %v", err)
-	}
-
-	if dropped := rec.Dropped(); len(dropped) != 0 {
-		t.Errorf("a content write removed %v from the draft; every widget must be sent back", dropped)
-	}
-	// The layout tree and the template's styling travel in the same content object. Omitting
-	// them is the same loss by another route: the sections would have nothing to lay out.
-	keys := rec.ContentKeys()
-	for _, want := range []string{"flexAreas", "styleSettings", "templatePath", "widgets"} {
-		if !slices.Contains(keys, want) {
-			t.Errorf("content PATCH omitted %q; sent %v", want, keys)
-		}
-	}
-	// Per-widget scaffolding matters as much as the widget's presence: HubSpot discarded the two
-	// widgets the old client DID name because they arrived as a bare {body:{html}}.
-	if got, ok := rec.WidgetBody("module_hdr", "src"); !ok || got != "https://img.example/logo.png" {
-		t.Errorf("header image src = %q (present=%v), want the image module preserved whole", got, ok)
-	}
-	if got, ok := rec.WidgetBody("preview_text", "value"); !ok || got != "See you there" {
-		t.Errorf("preview_text value = %q (present=%v), want the unplaced template module preserved", got, ok)
-	}
-}
-
 // TestHubSpot_ContentAbsentLeavesTemplateCopy: omitting subject/bodyHtml must change nothing —
 // this is every campaign that predates LFXV2-2775.
 func TestHubSpot_ContentAbsentLeavesTemplateCopy(t *testing.T) {
@@ -854,6 +797,107 @@ func TestHubSpot_SendListFailureIsPartial(t *testing.T) {
 	var nuc interface{ NoUpstreamCreate() bool }
 	if errors.As(err, &nuc) && nuc.NoUpstreamCreate() {
 		t.Errorf("a post-clone failure must NOT be NoUpstreamCreate (the email exists): %v", err)
+	}
+}
+
+// TestHubSpot_ABTestDisabledCreatesNoVariant pins the opt-in default: the common case (no A/B
+// config) must not touch the ab-test endpoint at all, and the Result blob must omit
+// abTestVariant entirely rather than persist a null.
+func TestHubSpot_ABTestDisabledCreatesNoVariant(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot,
+		json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if rec.SawCreateVariation() {
+		t.Error("ABTestEnabled=false must never call the ab-test/create-variation endpoint")
+	}
+	if strings.Contains(string(camp.Result), "abTestVariant") {
+		t.Errorf("result blob must omit abTestVariant when no variant was requested, got %s", camp.Result)
+	}
+}
+
+// TestHubSpot_ABTestEnabledCreatesAndTagsVariant pins the opt-in success path: STEP 3B creates a
+// variant of the clone, applies SubjectB/BodyHTMLB to it (a DIFFERENT email than the clone), tags
+// its links too, and records it in the Result blob.
+func TestHubSpot_ABTestEnabledCreatesAndTagsVariant(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","abTestEnabled":true,"subjectB":"Variant B subject","bodyHtmlB":"<p>Variant B body</p><a href=\"https://events.lfx.dev/reg\">Register</a>"}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if !rec.SawCreateVariation() {
+		t.Fatal("ABTestEnabled=true must call the ab-test/create-variation endpoint")
+	}
+	if rec.CreateVariationBody()["contentId"] != "999" {
+		t.Errorf("create-variation must target the CLONE's id (999), got %v", rec.CreateVariationBody())
+	}
+	if name, _ := rec.CreateVariationBody()["variationName"].(string); !strings.Contains(name, "Variant B") {
+		t.Errorf("variation name = %q, want it to carry the Variant B suffix", name)
+	}
+	if rec.VariantSubject() != "Variant B subject" {
+		t.Errorf("variant subject = %q, want the configured SubjectB", rec.VariantSubject())
+	}
+	if !strings.Contains(rec.VariantBodyHTML(), "Variant B body") {
+		t.Errorf("variant body = %q, want the configured BodyHTMLB", rec.VariantBodyHTML())
+	}
+	// The clone's own content must be UNTOUCHED by the variant's copy.
+	if _, body := rec.snapshotContent(); strings.Contains(body, "Variant B body") {
+		t.Errorf("the clone's body must not carry the variant's copy, got %q", body)
+	}
+	// The variant is a different email with its own links — it must be tagged too.
+	if rec.VariantTaggedHTML() == "" {
+		t.Fatal("the variant's links were never tagged: variant traffic would be invisible in the warehouse")
+	}
+	if !strings.Contains(rec.VariantTaggedHTML(), "utm_") {
+		t.Errorf("variant tagged html must carry utm parameters, got %q", rec.VariantTaggedHTML())
+	}
+
+	var blob struct {
+		ABTestVariant struct {
+			ID string `json:"id"`
+		} `json:"abTestVariant"`
+	}
+	if err := json.Unmarshal(camp.Result, &blob); err != nil {
+		t.Fatalf("result blob is not valid JSON: %v", err)
+	}
+	if blob.ABTestVariant.ID != "998" {
+		t.Errorf("result abTestVariant.id = %q, want the variant's own id (998)", blob.ABTestVariant.ID)
+	}
+}
+
+// TestHubSpot_ABTestVariantFailureDoesNotFailTheDispatch pins the best-effort contract: by the
+// time STEP 3B runs the campaign is already a complete, working single email, so a failure to
+// also stand up a variant must not fail the dispatch.
+func TestHubSpot_ABTestVariantFailureDoesNotFailTheDispatch(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.abVariantFails = true
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","abTestEnabled":true,"subjectB":"Variant B subject"}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("a failed variant creation must not fail the dispatch: %v", err)
+	}
+	if camp.Status != campaignStatusCreated {
+		t.Errorf("status = %q, want %q even though the variant failed", camp.Status, campaignStatusCreated)
+	}
+	if strings.Contains(string(camp.Result), "abTestVariant") {
+		t.Errorf("result blob must omit abTestVariant when creation failed, got %s", camp.Result)
+	}
+	// The clone itself must still have been cloned, audienced, and tagged — a working campaign.
+	if !rec.SawClone() || !rec.SawSendList() {
+		t.Error("the clone and its send list must still succeed despite the variant failure")
 	}
 }
 
@@ -1500,50 +1544,174 @@ func TestHubSpot_DispatchReadsThePortalOnce(t *testing.T) {
 	}
 }
 
-// TestHubSpot_ClassicTemplateKeepsItsBody pins the case the "first block" contract does NOT cover.
+// TestHubSpot_ConfigSnapshotRecordsThatABTestWasRequested pins the distinction the snapshot
+// could not previously make.
 //
-// applyEmailContent writes the generated lede into blocks[0], justified by the top of the email
-// being where a lede goes. That justification holds only while the position came from the LAYOUT.
-// A classic (non-drag-and-drop) template has no flexAreas, so every block falls through to sorted
-// key order and blocks[0] is whichever opaque module id sorts first. This fixture makes that id
-// the unsubscribe footer -- so a caller trusting the index overwrites template furniture with the
-// operator's copy and logs it as "the first block".
+// ABTestVariant is written only when variant creation SUCCEEDED, and creation is best-effort,
+// so before ABTestEnabled was persisted a campaign whose A/B creation failed was byte-identical
+// in stored state to one that never asked for a variant. That erased the only signal anyone
+// could select on to find the failed ones and retry them.
 //
-// The draft must keep its template body instead, the same conservative answer as a draft with no
-// rich-text block at all.
-func TestHubSpot_ClassicTemplateKeepsItsBody(t *testing.T) {
-	srv, rec := hubspotServer(t)
-	rec.classicTemplate = true
+// The assertion is on the REQUEST flag surviving, not on the variant: the variant's absence is
+// exactly the case being disambiguated.
+func TestHubSpot_ConfigSnapshotRecordsThatABTestWasRequested(t *testing.T) {
+	srv, _ := hubspotServer(t)
 	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
 	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
 
-	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"Three days in Amsterdam","bodyHtml":"<p>Join us</p>"}}`)
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","abTestEnabled":true,"subjectB":"Variant B subject","bodyHtmlB":"<p>B</p>"}}`)
+	out, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if !strings.Contains(string(out.ConfigSnapshot), "abTestEnabled") {
+		t.Errorf("ConfigSnapshot did not record that an A/B variant was requested: %s", out.ConfigSnapshot)
+	}
+}
+
+// TestHubSpot_ConfigSnapshotOmitsABTestWhenNotRequested is the other half: omitempty must keep
+// the key off a campaign that never asked, so its presence alone is the signal.
+func TestHubSpot_ConfigSnapshotOmitsABTestWhenNotRequested(t *testing.T) {
+	srv, _ := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)
+	out, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if strings.Contains(string(out.ConfigSnapshot), "abTestEnabled") {
+		t.Errorf("ConfigSnapshot claimed an A/B variant was requested when none was: %s", out.ConfigSnapshot)
+	}
+}
+
+// TestHubSpot_AContentRevertIsLoggedAsAnErrorNotAWarning pins the distinction the typed error
+// exists to make.
+//
+// HubSpot has, in practice, accepted a content PATCH with a 2xx and silently reverted it. That
+// leaves a draft matching neither the template nor the generated copy, and no retry of the same
+// payload is known to fix it — unlike a FAILED patch, which leaves the clone intact and is
+// retryable. Both used to log the same best-effort WARN, so a draft needing manual repair read
+// as a routine degrade.
+//
+// The assertion is on the log record because that is the only observable: the dispatch stays
+// best-effort by design (the campaign exists by this point, and failing it would be worse), so
+// the severity and the named error ARE the fix.
+func TestHubSpot_AContentRevertIsLoggedAsAnErrorNotAWarning(t *testing.T) {
+	// 2xx on the content PATCH, but a re-read that never shows the widgets — HubSpot's silent
+	// revert. verifyContentSaved catches it and RebuildEmailContent wraps it.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone":
+			_, _ = io.WriteString(w, `{"id":"999","name":"cloned","state":"DRAFT"}`)
+		case strings.HasSuffix(r.URL.Path, "/draft"):
+			// Always the empty content tree, whatever was PATCHed. The PATCH itself 2xxes.
+			_, _ = io.WriteString(w, `{"id":"999","content":{"widgets":{},"flexAreas":{"main":{"sections":[]}}}}`)
+		default:
+			_, _ = io.WriteString(w, `{"id":"999"}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"S","bodyHtml":"<p>b</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch should stay best-effort: %v", err)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "level=ERROR") || !strings.Contains(logged, "not persisted") {
+		t.Errorf("a silently reverted content write was not raised as a named ERROR:\n%s", logged)
+	}
+}
+
+// TestHubSpot_APreheaderOnlyConfigLeavesTheDraftAlone pins a deliberate GAP, so nobody closes it
+// the way I first tried to.
+//
+// Preview text is only settable through the content tree — hubspot.EmailSettings documents that
+// the Marketing Emails v3 object exposes no preheader field — and RebuildEmailContent replaces
+// that tree wholesale by design, which is what stops the clone source's stale content leaking
+// into the new draft. So a rebuild carrying no body cannot preserve the clone's body: writing an
+// empty staging_body blanks it, and omitting the section drops it from the tree entirely. Both
+// are data loss; the second only looks quieter.
+//
+// Not applying a preheader-only change is therefore the CORRECT behaviour today. Asserted so the
+// next person who notices the gap finds the reason before re-widening the guard, as I did.
+func TestHubSpot_APreheaderOnlyConfigLeavesTheDraftAlone(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","previewText":"Three days in Amsterdam"}}`)
 	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
 
-	// The fixture only exercises the trap while the FOOTER is the block that sorts first — that is
-	// the whole point of the case, and it is invisible if it breaks. Renaming either widget to
-	// something that reorders them would leave every assertion below still passing while testing
-	// nothing, so assert the precondition rather than trusting it.
-	if keys := rec.RichTextKeys(); len(keys) < 2 || keys[0] != "a_footer" {
-		t.Fatalf("fixture no longer exercises the trap: rich-text keys sort to %v, want the footer first", keys)
+	// The clone's own template widget (module_1, seeded by the fake) survives untouched, which
+	// is only true if no rebuild ran -- a rebuild replaces the whole map with staging_* keys.
+	rec.mu.Lock()
+	_, headerSurvived := rec.widgets["module_1"]
+	rec.mu.Unlock()
+	if !headerSurvived {
+		t.Error("a preheader-only config triggered a full rebuild, replacing the whole widget tree and losing the clone's content")
+	}
+}
+
+// TestHubSpot_NAT64PrefixesReachTheHeroFetch pins that a hubspot.Option given to
+// NewHubSpotDispatcher reaches the image-download guard.
+//
+// This is the assertion the container test kept claiming and could not make: from
+// internal/container the dispatcher's client is unexported and registerDispatchers needs a live
+// *postgres.ConnectionRepo, so the option's EFFECT is unobservable there. Here a fake connection
+// lets Dispatch run far enough to attempt the hero fetch, which is where the guard applies.
+//
+// 2a01:4f8:808:808::a9fe:a9fe decodes to 169.254.169.254 at /96 — the metadata endpoint. Without
+// the prefix the address cannot be decoded and the guard never sees the IPv4 it encodes.
+func TestHubSpot_NAT64PrefixesReachTheHeroFetch(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(
+		fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud,
+		hubspot.WithBaseURL(srv.URL),
+		hubspot.WithNAT64Prefixes("2a01:4f8:808:808::/96"),
+	)
+
+	started := time.Now()
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","bodyHtml":"<p>b</p>","heroImageUrl":"http://[2a01:4f8:808:808::a9fe:a9fe]/hero.png"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch should stay best-effort on a refused hero: %v", err)
 	}
 
-	// The SUBJECT is still set: it addresses the email as a whole and needs no layout to be
-	// unambiguous. Only the body write depends on knowing which block is the top.
-	subject, body := rec.snapshotContent()
-	if subject != "Three days in Amsterdam" {
-		t.Errorf("subject = %q, want the generated subject — it does not depend on the layout", subject)
+	// The upload is best-effort, so the refusal surfaces as the hero simply not being hosted.
+	rec.mu.Lock()
+	_, heroWritten := rec.widgets["staging_banner"]
+	rec.mu.Unlock()
+	if heroWritten {
+		t.Error("a NAT64-encoded metadata address was fetched and re-hosted as the hero")
 	}
-	if strings.Contains(body, "Join us") {
-		t.Errorf("the generated body reached a draft with no layout to place it: %q", body)
-	}
-	if got := rec.BodyWidget(); got != "" {
-		t.Errorf("wrote into %q, want no body write at all on a classic template", got)
-	}
-	// And specifically not over the footer, which is what sorts first here.
-	if got, ok := rec.WidgetBody("a_footer", "html"); !ok || got != "<p>Unsubscribe</p>" {
-		t.Errorf("footer html = %q (present=%v), want the template's own footer untouched", got, ok)
+
+	// THIS is the assertion that binds the test; the widget check above is corroboration only.
+	//
+	// Without the prefix the address cannot be decoded, so the dial is attempted and the fetch
+	// times out — the hero goes unwritten EITHER WAY, so the widget check passes whether or not
+	// the option was forwarded. Verified by mutation: with this assertion relaxed, deleting
+	// hubspot.WithNAT64Prefixes left the test green at 10s (the download timeout). Refusal is
+	// immediate; a dial is not. Do not remove this in favour of the widget check alone.
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Errorf("the address was dialled rather than refused (%s elapsed): the NAT64 prefix did not reach the guard", elapsed)
 	}
 }
