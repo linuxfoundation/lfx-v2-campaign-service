@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -95,6 +96,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 			LifetimeBudget: cm.LifetimeBudget,
 			StartDate:      cm.StartDate,
 			EndDate:        cm.EndDate,
+			FetchFailed:    cm.FetchFailed,
 		}
 		if ins, ok := insightsByID[cm.ID]; ok {
 			row.Impressions = ins.Impressions
@@ -128,6 +130,10 @@ type metaCampaignListEntry struct {
 	LifetimeBudget float64
 	StartDate      string
 	EndDate        string
+	// FetchFailed marks a campaign whose daily_budget/lifetime_budget string was present but
+	// unparseable — the row's budget fields are left at 0 and MUST NOT be read as a measured
+	// zero (round-31+ review, same convention as AccountCampaignRow.FetchFailed).
+	FetchFailed bool
 }
 
 // fetchAccountCampaignList reads GET /act_.../campaigns for status/budget/schedule fields
@@ -179,14 +185,17 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 			}
 		}
 		for _, d := range *resp.Data {
+			dailyBudget, dailyOK := minorUnitsToWhole(d.DailyBudget)
+			lifetimeBudget, lifetimeOK := minorUnitsToWhole(d.LifetimeBudget)
 			out = append(out, metaCampaignListEntry{
 				ID:             d.ID,
 				Name:           d.Name,
 				Status:         d.Status,
-				DailyBudget:    minorUnitsToWhole(d.DailyBudget),
-				LifetimeBudget: minorUnitsToWhole(d.LifetimeBudget),
+				DailyBudget:    dailyBudget,
+				LifetimeBudget: lifetimeBudget,
 				StartDate:      dateOnly(d.StartTime),
 				EndDate:        dateOnly(d.StopTime),
+				FetchFailed:    !dailyOK || !lifetimeOK,
 			})
 		}
 		if resp.Paging.Next == "" {
@@ -312,26 +321,35 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 }
 
 // minorUnitsToWhole converts a Meta budget string (minor units, e.g. cents) to whole
-// currency units. Empty/unparseable input yields 0 — a campaign with no budget field set
+// currency units. An empty input is a legitimate 0 — a campaign with no budget field set
 // (funded the other way) is 0 in this port's model, matching model.AccountCampaignMetrics'
-// BudgetDay/TotalBudget contract.
-func minorUnitsToWhole(s string) float64 {
+// BudgetDay/TotalBudget contract. ok=false means s was non-empty but failed to parse, an
+// upstream-data failure that must not be silently trusted as a real zero budget — mirroring
+// the LinkedIn parseUSDAmount and Google Ads microsToUSD fixes (round-24/25, round-31+
+// review).
+func minorUnitsToWhole(s string) (whole float64, ok bool) {
 	if s == "" {
-		return 0
+		return 0, true
 	}
 	n, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return 0
+		return 0, false
 	}
-	return n / 100
+	return n / 100, true
 }
 
-// dateOnly truncates a Meta ISO-8601 timestamp ("2026-01-15T00:00:00-0800") to its
-// YYYY-MM-DD date component, matching model.AccountCampaignMetrics.StartDate/EndDate's
-// date-only contract. Empty/malformed input yields "".
+// dateOnly validates and truncates a Meta ISO-8601 timestamp ("2026-01-15T00:00:00-0800") to
+// its YYYY-MM-DD date component, matching model.AccountCampaignMetrics.StartDate/EndDate's
+// date-only contract. It parses the 10-char prefix as an actual calendar date rather than
+// merely slicing it, so a malformed timestamp (e.g. "0000-00-00...") does not silently pass
+// through as a fabricated date — empty/malformed input yields "" (round-31+ review).
 func dateOnly(s string) string {
 	if len(s) < 10 {
 		return ""
 	}
-	return s[:10]
+	prefix := s[:10]
+	if _, err := time.Parse("2006-01-02", prefix); err != nil {
+		return ""
+	}
+	return prefix
 }

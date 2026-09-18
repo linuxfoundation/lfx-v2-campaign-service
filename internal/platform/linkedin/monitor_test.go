@@ -156,6 +156,64 @@ func TestListAccountCampaigns_MalformedCostInUsd_MarksFetchFailed(t *testing.T) 
 	}
 }
 
+// TestListAccountCampaigns_MalformedDailyBudget_MarksFetchFailed pins a round-31+ review fix
+// mirroring TestListAccountCampaigns_MalformedCostInUsd_MarksFetchFailed: a non-empty,
+// unparseable dailyBudget/totalBudget amount used to be silently ignored (parseUSDAmount
+// swallowed the error and returned 0), converting an upstream-data failure into a trusted
+// zero budget rather than surfacing it as unreliable.
+func TestListAccountCampaigns_MalformedDailyBudget_MarksFetchFailed(t *testing.T) {
+	srv, _ := adAccountsServer(t,
+		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE","dailyBudget":{"amount":"not-a-number"}}],"metadata":{}}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
+	)
+	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "512345678", 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if !rows[0].FetchFailed {
+		t.Errorf("row for campaign 111 = %+v, want FetchFailed=true for a campaign whose dailyBudget failed to parse", rows[0])
+	}
+	if rows[0].DailyBudget != 0 {
+		t.Errorf("row for campaign 111 = %+v, want DailyBudget=0 (never fabricated) alongside FetchFailed", rows[0])
+	}
+	// A malformed dailyBudget must not mask a successful analytics read: the row's other
+	// metrics still came back reliably and must not be discarded.
+	if rows[0].Impressions != 1000 || rows[0].SpendUSD != 12.50 {
+		t.Errorf("row for campaign 111 = %+v, want the successfully-read analytics metrics preserved alongside the budget failure", rows[0])
+	}
+}
+
+// TestListAccountCampaigns_EmptyBudgetAmount_IsZeroNotFailed pins the companion case: an
+// absent/empty budget amount is LinkedIn's own representation of "no budget set" (getting a
+// dailyBudget block with an empty amount, or omitting it), not a parse failure — it must not
+// be marked FetchFailed.
+func TestListAccountCampaigns_EmptyBudgetAmount_IsZeroNotFailed(t *testing.T) {
+	srv, _ := adAccountsServer(t,
+		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE","dailyBudget":{"amount":""}}],"metadata":{}}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
+	)
+	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "512345678", 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if rows[0].FetchFailed {
+		t.Errorf("row for campaign 111 = %+v, want FetchFailed=false — an empty amount is a legitimate zero budget, not a parse failure", rows[0])
+	}
+	if rows[0].DailyBudget != 0 {
+		t.Errorf("row for campaign 111 = %+v, want DailyBudget=0", rows[0])
+	}
+}
+
 // TestListAccountCampaigns_MissingCampaignListMetadata_IsRejected pins a round-24 review fix:
 // an absent metadata block on the adCampaigns page used to be treated the same
 // as an empty NextPageToken — "no more pages" — so a malformed or truncated intermediate page

@@ -284,6 +284,80 @@ func TestListAccountCampaigns_EmptySpend_IsLegitimateZero(t *testing.T) {
 	}
 }
 
+// TestListAccountCampaigns_MalformedDailyBudget_MarksFetchFailed pins a round-31+ review fix
+// mirroring TestListAccountCampaigns_MalformedSpend_MarksFetchFailed: minorUnitsToWhole used
+// to swallow a parse error and return 0, converting an upstream-data failure (a non-empty,
+// unparseable daily_budget) into a trusted zero budget instead of surfacing it as unreliable.
+func TestListAccountCampaigns_MalformedDailyBudget_MarksFetchFailed(t *testing.T) {
+	badBudget := `{"data":[{"id":"111","name":"Campaign One","status":"ACTIVE","daily_budget":"not-a-number","lifetime_budget":"","start_time":"2026-01-01T00:00:00-0800","stop_time":""}],"paging":{}}`
+	srv, _ := monitorPageResponses(t, []string{badBudget}, []string{insightsPage("111", 1000, 50, false)})
+	c := newMonitorClient(srv)
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 30)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if !rows[0].FetchFailed {
+		t.Errorf("row for campaign 111 = %+v, want FetchFailed=true for a campaign whose daily_budget failed to parse", rows[0])
+	}
+	if rows[0].DailyBudget != 0 {
+		t.Errorf("row for campaign 111 = %+v, want DailyBudget=0 (never fabricated) alongside FetchFailed", rows[0])
+	}
+	// A malformed budget must not mask a successful insights read.
+	if rows[0].Impressions != 1000 || rows[0].Clicks != 50 {
+		t.Errorf("row for campaign 111 = %+v, want the successfully-read insights metrics preserved alongside the budget failure", rows[0])
+	}
+}
+
+// TestListAccountCampaigns_EmptyBudget_IsLegitimateZero confirms an omitted/empty budget
+// string is NOT treated as a parse failure — only a non-empty, unparseable value is.
+func TestListAccountCampaigns_EmptyBudget_IsLegitimateZero(t *testing.T) {
+	emptyBudget := `{"data":[{"id":"111","name":"Campaign One","status":"ACTIVE","daily_budget":"","lifetime_budget":"","start_time":"2026-01-01T00:00:00-0800","stop_time":""}],"paging":{}}`
+	srv, _ := monitorPageResponses(t, []string{emptyBudget}, []string{insightsPage("111", 1000, 50, false)})
+	c := newMonitorClient(srv)
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 30)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if rows[0].FetchFailed {
+		t.Errorf("row for campaign 111 = %+v, want FetchFailed=false for a legitimately empty budget field", rows[0])
+	}
+	if rows[0].DailyBudget != 0 {
+		t.Errorf("row for campaign 111 = %+v, want DailyBudget=0", rows[0])
+	}
+}
+
+// TestDateOnly pins the round-31+ review fix: dateOnly used to blindly slice the first 10
+// characters without validating they form a real calendar date, so a malformed timestamp
+// (e.g. all zeros) silently passed through as a fabricated date instead of yielding "".
+func TestDateOnly(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"valid timestamp", "2026-01-15T00:00:00-0800", "2026-01-15"},
+		{"too short", "2026-01", ""},
+		{"empty", "", ""},
+		{"not a real calendar date", "0000-00-00T00:00:00-0800", ""},
+		{"malformed prefix", "not-a-date00", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dateOnly(tc.in); got != tc.want {
+				t.Errorf("dateOnly(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestListAccountCampaigns_MissingCursor_IsAnError(t *testing.T) {
 	// paging.next present but no cursors.after: an unusable shape, not a truncated list.
 	badPage := `{"data":[{"id":"111","name":"Campaign One","status":"ACTIVE","daily_budget":"1000","lifetime_budget":"","start_time":"2026-01-01T00:00:00-0800","stop_time":""}],"paging":{"next":"https://graph.facebook.com/next"}}`

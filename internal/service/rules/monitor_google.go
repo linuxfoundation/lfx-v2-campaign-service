@@ -6,6 +6,7 @@ package rules
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -207,15 +208,10 @@ func googlePriorityRank(p model.MonitorPriority) int {
 
 // sortByPriority is a small stable sort shared by all four monitor_*.go files (each with its
 // own rank function, since — see monitor_linkedin.go — the rank functions are NOT
-// interchangeable).
+// interchangeable). sort.SliceStable matches Array.prototype.sort's stability the BFF relies
+// on, in O(n log n) rather than the O(n²) insertion sort this used to run (round-31+ review).
 func sortByPriority(items []model.AccountMonitorActionItem, rank func(model.MonitorPriority) int) {
-	// insertion sort: stable, and these lists are always small (one account's worth of
-	// campaigns), matching Array.prototype.sort's stability the BFF relies on.
-	for i := 1; i < len(items); i++ {
-		j := i
-		for j > 0 && rank(items[j-1].Priority) > rank(items[j].Priority) {
-			items[j-1], items[j] = items[j], items[j-1]
-			j--
-		}
-	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return rank(items[i].Priority) < rank(items[j].Priority)
+	})
 }

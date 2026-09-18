@@ -87,12 +87,16 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		// the row at its zero defaults reports the honest "no delivery" reading; only a
 		// genuine per-row parse failure (m.FetchFailed, from a malformed costInUsd) marks the
 		// row failed.
+		//
+		// row.FetchFailed may already be true from fetchAccountCampaignList's own budget parse
+		// (a malformed dailyBudget/totalBudget amount) — OR it with m.FetchFailed rather than
+		// overwrite, or a bad analytics read here would silently clear that earlier failure.
 		if m, ok := metricsByID[cm.CampaignID]; ok {
 			row.Impressions = m.Impressions
 			row.Clicks = m.Clicks
 			row.SpendUSD = m.SpendUSD
 			row.Conversions = m.Conversions
-			row.FetchFailed = m.FetchFailed
+			row.FetchFailed = row.FetchFailed || m.FetchFailed
 			if row.Impressions > 0 {
 				row.Ctr = float64(row.Clicks) / float64(row.Impressions) * 100
 			}
@@ -149,10 +153,18 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 		for _, el := range *resp.Elements {
 			row := AccountCampaignRow{CampaignID: el.ID.String(), Name: el.Name, Status: el.Status}
 			if el.DailyBudget != nil {
-				row.DailyBudget = parseUSDAmount(el.DailyBudget.Amount)
+				if v, ok := parseUSDAmount(el.DailyBudget.Amount); ok {
+					row.DailyBudget = v
+				} else {
+					row.FetchFailed = true
+				}
 			}
 			if el.TotalBudget != nil {
-				row.TotalBudget = parseUSDAmount(el.TotalBudget.Amount)
+				if v, ok := parseUSDAmount(el.TotalBudget.Amount); ok {
+					row.TotalBudget = v
+				} else {
+					row.FetchFailed = true
+				}
 			}
 			if el.RunSchedule != nil {
 				if el.RunSchedule.Start > 0 {
@@ -324,16 +336,20 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 }
 
 // parseUSDAmount parses a LinkedIn budget "amount" decimal string (e.g. "150.00") to a
-// float64. Empty/unparseable input yields 0.
-func parseUSDAmount(s string) float64 {
+// float64. ok=false means s was non-empty but failed to parse — an upstream-data failure,
+// not a legitimate zero, mirroring the costInUsd fix above (round-19 review) and the
+// Google Ads/Meta budget-parsing siblings. An empty string is a legitimate zero (LinkedIn
+// omits the field rather than sending "0.00" for an unbudgeted campaign) and returns
+// (0, true).
+func parseUSDAmount(s string) (amount float64, ok bool) {
 	if s == "" {
-		return 0
+		return 0, true
 	}
 	n, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return 0
+		return 0, false
 	}
-	return n
+	return n, true
 }
 
 // doMonitorGET performs a single, non-retried finder GET and decodes the response body into

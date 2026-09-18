@@ -283,3 +283,49 @@ func TestListAccountCampaigns_MalformedReportJSON_MarksFetchFailed(t *testing.T)
 		}
 	}
 }
+
+// TestListAccountCampaigns_MalformedCampaignListShape_ReturnsError pins the round-30+ review
+// fix: a campaign-list body matching neither the bare-array nor the {"campaigns": [...]} shape
+// must surface as an error, not as a fabricated empty account. Before this fix
+// decodeCampaignList silently returned nil for any unrecognized shape, indistinguishable from
+// an account that genuinely has zero campaigns (a 200 with no findings) — see
+// decodeCampaignList's own doc comment.
+func TestListAccountCampaigns_MalformedCampaignListShape_ReturnsError(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":"not-an-array-or-a-campaigns-object"}`))
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(tokenHandlerReturning("tok"))
+	defer tokenSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), testAccount.AccountID, 7)
+	if err == nil {
+		t.Fatalf("ListAccountCampaigns: got rows=%+v, err=nil; want an error for a malformed campaign-list shape, not a silent empty account", rows)
+	}
+}
+
+// TestListAccountCampaigns_EmptyCampaignListBody_ReturnsNoRowsWithoutError confirms the
+// legitimately-empty case (no body at all) is still NOT treated as malformed — Reddit's own
+// API returns this for "no campaigns," and decodeCampaignList must not conflate it with a
+// decode failure.
+func TestListAccountCampaigns_EmptyCampaignListBody_ReturnsNoRowsWithoutError(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer apiSrv.Close()
+	tokenSrv := httptest.NewServer(tokenHandlerReturning("tok"))
+	defer tokenSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), testAccount.AccountID, 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("got %d rows, want 0 for a legitimately empty account", len(rows))
+	}
+}

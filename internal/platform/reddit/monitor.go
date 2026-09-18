@@ -84,25 +84,33 @@ type campaignElement struct {
 // been exercised against this client (see the UNVERIFIED-CONTRACT banner on
 // GetCampaignMetrics) — narrowing to one shape here could silently return zero campaigns
 // against a real account that uses either of the other two.
-func decodeCampaignList(data json.RawMessage) []campaignElement {
+//
+// decodeCampaignList reports ok=false when data matches NEITHER known shape — that is a
+// malformed/unrecognized response, not a legitimately empty account, and its caller must not
+// treat the two the same way. DIVERGES from the BFF here (round-30+ review): fetchCampaigns
+// swallows a shape mismatch into an empty list, indistinguishable downstream from "this
+// account really has zero campaigns" — the same false-empty-result failure mode
+// fetchMonitorReport's own malformed-JSON branch already refuses to reproduce (see its
+// comment). An absent/empty body (len(data)==0) is still a legitimate empty account: Reddit's
+// own API returns that for "no campaigns," not for a decode failure.
+func decodeCampaignList(data json.RawMessage) (elements []campaignElement, ok bool) {
 	if len(data) == 0 {
-		return nil
+		return nil, true
 	}
 	// Shape 1: a bare array.
 	var bare []campaignElement
 	if err := json.Unmarshal(data, &bare); err == nil {
-		return bare
+		return bare, true
 	}
 	// Shape 2: {"campaigns": [...]}.
 	var wrapped struct {
 		Campaigns []campaignElement `json:"campaigns"`
 	}
 	if err := json.Unmarshal(data, &wrapped); err == nil && wrapped.Campaigns != nil {
-		return wrapped.Campaigns
+		return wrapped.Campaigns, true
 	}
-	// Shape 3 / ultimate fallback: fetchCampaigns never throws on a shape mismatch, it
-	// returns an empty list. Mirrored here rather than erroring.
-	return nil
+	// Neither shape matched: malformed/unrecognized response.
+	return nil, false
 }
 
 // monitorReportRow is one entry of a monitor report's "metrics" array. Unlike
@@ -204,7 +212,10 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 	if err != nil {
 		return nil, fmt.Errorf("list account campaigns: %w", redactReportPath(err, accountID))
 	}
-	elements := decodeCampaignList(resp.Data)
+	elements, ok := decodeCampaignList(resp.Data)
+	if !ok {
+		return nil, fmt.Errorf("list account campaigns: malformed campaign-list response (%d bytes)", len(resp.Data))
+	}
 
 	// activeCampaigns: filter to configured_status ACTIVE or PAUSED, matching
 	// reddit-ads.service.ts:219 exactly (every other configured_status, e.g. ARCHIVED or

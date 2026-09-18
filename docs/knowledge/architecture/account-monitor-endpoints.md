@@ -367,3 +367,18 @@ differential diff, since fixed:
    (same "a human reviewer" phrasing item 8 already used forward) and
    replayed the later commits on top unchanged; only their SHAs moved. See
    [2026-09-19-215-monitor-account-endpoints-round29-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round29-fixes.md).
+10. Five defects named on PR #215's own GitHub review threads (distinct from
+    the local review trio rounds above), fixed in round 30: Reddit's
+    `decodeCampaignList` treated a malformed/unrecognized campaign-list
+    response the same as a legitimately empty one; LinkedIn's
+    `parseUSDAmount` and Meta's `minorUnitsToWhole` both silently trusted a
+    non-empty, unparseable budget string as a real `$0` instead of marking
+    `FetchFailed` (the same class rounds 24/25 fixed for Google Ads and for
+    LinkedIn's `costInUsd`); fixing LinkedIn's also surfaced a latent
+    overwrite bug where a successful analytics read would clear an
+    already-set budget-parse `FetchFailed`; Meta's `dateOnly` sliced a
+    timestamp's first 10 characters without validating they formed a real
+    calendar date; and the shared `sortByPriority` ran an O(n²) insertion
+    sort, replaced with `sort.SliceStable` (pure efficiency, no output
+    change). See
+    [2026-09-19-215-monitor-account-endpoints-round30-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round30-fixes.md).
