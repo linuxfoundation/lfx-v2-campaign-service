@@ -34,15 +34,15 @@ type Frontmatter struct {
 func (fm Frontmatter) Render() string {
 	var b strings.Builder
 	b.WriteString("---\n")
-	b.WriteString(fmt.Sprintf("type: %q\n", fm.Type))
+	fmt.Fprintf(&b, "type: %q\n", fm.Type)
 	if fm.Title != "" {
-		b.WriteString(fmt.Sprintf("title: %q\n", fm.Title))
+		fmt.Fprintf(&b, "title: %q\n", fm.Title)
 	}
 	if fm.Description != "" {
-		b.WriteString(fmt.Sprintf("description: %q\n", fm.Description))
+		fmt.Fprintf(&b, "description: %q\n", fm.Description)
 	}
 	if fm.Resource != "" {
-		b.WriteString(fmt.Sprintf("resource: %q\n", fm.Resource))
+		fmt.Fprintf(&b, "resource: %q\n", fm.Resource)
 	}
 	b.WriteString("---\n")
 	return b.String()

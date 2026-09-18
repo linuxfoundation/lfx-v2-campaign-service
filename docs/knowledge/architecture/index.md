@@ -7,3 +7,4 @@
 * [MegaLinter and secret scanning](megalinter-secrets.md) - How MegaLinter, gitleaks, secretlint, and grype are configured for this repo, including local Docker runs.
 * [Local pre-PR review](local-pre-pr-review.md) - How the repo-owned code and learnings reviewers, the empirical knowledge base, and the Claude fallback run a local review of the newest commit before a PR exists.
 * [Account-Monitor Endpoints](account-monitor-endpoints.md) - Four new account-scoped monitor endpoints ported from the LFX One BFF's four separate rule engines, one per ad platform.
+* [GHCR stale image cleanup](ghcr-image-cleanup.md) - How the scheduled and on-demand GitHub Actions workflow removes stale GHCR image versions, tagged and untagged, for the campaign-service container package.

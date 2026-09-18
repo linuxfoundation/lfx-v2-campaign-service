@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	explorer "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audience_builder"
 	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/dispatch"
@@ -366,6 +367,16 @@ func TestNewContainer_NoDatabase(t *testing.T) {
 	require.NoError(t, aerr, "after SetBackend the audiences handler must reach the repo")
 	require.NotNil(t, got)
 
+	// The audience-builder service is wired on this path too, for the same reason: an
+	// unmounted route answers 404, which reads as "wrong URL" rather than "not configured
+	// here". Its capabilities handler is the one endpoint whose whole job is to report the
+	// degrade, so a 503 from it is the contract, not a gap.
+	require.NotNil(t, cont.Explore)
+	_, xerr := cont.Explore.GetAudienceBuilderCapabilities(context.Background(),
+		&explorer.GetAudienceBuilderCapabilitiesPayload{ProjectID: "proj-1"})
+	var xunavail *explorer.ConnServiceUnavailableError
+	require.ErrorAs(t, xerr, &xunavail, "the audience-builder routes must return the typed 503 when no DB is configured")
+
 	require.NoError(t, cont.Close(context.Background()))
 }
 
@@ -595,6 +606,7 @@ func TestNewContainer_AllPathsInjectTheTokenVerifier(t *testing.T) {
 			"briefs":      cont.Briefs.(*service.BriefService),
 			"connections": cont.Connections.(*service.ConnectionService),
 			"audiences":   cont.Audiences.(*service.AudienceService),
+			"explore":     cont.Explore.(*service.AudienceExploreService),
 		} {
 			assert.True(t, s.HasTokenVerifier(),
 				"%s was constructed without a token verifier: it will reject every request", name)
@@ -648,6 +660,7 @@ func TestNewServices_LivePathInjectsTheTokenVerifier(t *testing.T) {
 		"briefs":      c.newBriefService(nil, nil, nil, nil),
 		"connections": c.newConnectionService(nil, nil),
 		"audiences":   c.newAudienceService(nil, nil),
+		"explore":     c.newAudienceExploreService(),
 	} {
 		assert.True(t, s.HasTokenVerifier(),
 			"%s: the live wiring path built it without a verifier; it would reject every request", name)
@@ -991,6 +1004,53 @@ func TestAudienceService_ColdStartBindsAllBuildDeps(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, s.BuilderIsSet(),
 		"the cold-start path must bind the builder; binding only the audience repo leaves BuildAudience 503 forever")
+}
+
+// TestNewAudienceExploreService_InjectsExplorer mirrors TestNewAudienceService_InjectsBuilder
+// one layer over, and for the same reason: every audience-builder handler answers the same
+// typed 503 when the explorer is absent, so only the service's own view distinguishes a wired
+// service from an unwired one.
+func TestNewAudienceExploreService_InjectsExplorer(t *testing.T) {
+	b, _ := newAudienceBuilder(nil, nil, &config.Config{})
+	c := &Container{audienceBuilder: b, Config: &config.Config{}}
+	require.NotNil(t, c.audienceBuilder)
+
+	s := c.newAudienceExploreService()
+	require.NotNil(t, s)
+	assert.True(t, s.ExplorerIsSet(),
+		"the container's explorer must reach the service; without it every audience-builder route is 503 forever")
+
+	// And a container with no builder must NOT claim an explorer. This is the degraded
+	// deployment, and an explorer over a nil builder would panic on the first request
+	// rather than report that audience building is unconfigured.
+	assert.False(t, (&Container{Config: &config.Config{}}).newAudienceExploreService().ExplorerIsSet())
+}
+
+// TestAudienceExploreService_ColdStartBindsExplorer pins the cold-start late-binding for the
+// audience-builder routes. The service is constructed in 503 mode with no explorer, so a retry
+// path that binds only the audience repo leaves all nine endpoints 503 for the life of a pod
+// that merely cold-started — the exact failure TestAudienceService_ColdStartBindsAllBuildDeps
+// documents for BuildAudience.
+func TestAudienceExploreService_ColdStartBindsExplorer(t *testing.T) {
+	var xb exploreBackendSetter = service.NewAudienceExploreService(nil)
+
+	b, _ := newAudienceBuilder(nil, nil, &config.Config{})
+	c := &Container{audienceBuilder: b, Config: &config.Config{}}
+	xb.SetExplorer(c.newAudienceExplorer())
+
+	s, ok := xb.(*service.AudienceExploreService)
+	require.True(t, ok)
+	assert.True(t, s.ExplorerIsSet(),
+		"the cold-start path must bind the explorer; binding only the audience repo leaves the audience-builder routes 503 forever")
+}
+
+// TestSetExplorer_IgnoresNil is TestSetBuilder_IgnoresNil's counterpart: on a deployment with
+// no connection store the container's explorer is nil, and binding it must leave the service
+// reporting "not configured" rather than storing a nil interface that panics on first use.
+func TestSetExplorer_IgnoresNil(t *testing.T) {
+	s := service.NewAudienceExploreService(nil)
+	s.SetExplorer(nil)
+	assert.False(t, s.ExplorerIsSet(), "a nil explorer must not register as configured")
 }
 
 // TestSetBuilder_IgnoresNil guards the degraded deployment: with no HubSpot/Snowflake

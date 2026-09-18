@@ -1155,4 +1155,47 @@ The classification itself is read from DOMAIN sentinels the dispatcher tags, nev
 platform client to inspect its unexported error types — that would invert service → dispatch →
 platform. See [internal/dispatch](internal-dispatch.md).
 
+## Audience-builder handlers (LFXV2-2770)
+
+`audience_explore.go` serves the nine `audience-builder` endpoints and does three things and
+nothing else: it refuses unauthenticated callers, it maps the orchestration's transport-neutral
+results onto the generated Goa types, and it turns failures into the statuses the contract
+declares. Everything about WHICH lists an audience is made of lives in
+[internal/audience](internal-audience.md), and everything that calls HubSpot lives in
+[internal/dispatch](internal-dispatch.md).
+
+The split matters most for error mapping. A 404 on a list an operator typed is an ANSWER they
+act on; the same failure reported as a 500 sends them looking for an outage that does not exist.
+
+`AudienceExplorer` is an interface here rather than a concrete dependency for two reasons: the
+handlers stay testable without a live HubSpot portal, and a deployment with no connection store
+degrades to the contract's typed 503 instead of a nil dereference.
+
+`GetAudienceBuilderCapabilities` returns no error on purpose — an unusable connection is this
+endpoint's ANSWER, not its failure, and it is what lets the UI render one explanatory banner
+with the actions disabled instead of nine broken buttons.
+
+`ComposeAudienceMaster` is the one handler with two distinct 500s. Goa maps both the declared
+`ComposePartial` error and `InternalServerError` to HTTP 500, discriminating with a `goa-error`
+response header — which a proxying BFF does not see. So the BODY is the discriminator: a
+`ComposePartial` body carries whichever of three fields describes what actually happened, and the
+presence of ANY of them is the discriminator.
+
+**Four shapes are reachable, and only ONE carries `suppression`** — so keying on
+`suppression.list_id` alone silently rethrows the other three as ordinary failures. That is the
+worst available outcome here, because the fields it discards are the deterministic NAMES the
+operator needs to find lists that may already exist:
+
+- `suppression` set — the suppression list definitely exists; the master create failed.
+- `suppression_name` set — the suppression create itself is UNCONFIRMED (no id came back).
+- `master_name` set — no exclusions requested, or suppression failed outright; master unconfirmed.
+- `suppression` + `master_name` — suppression exists, master unconfirmed.
+
+`suppression` and `suppression_name` are never both set. See `docs/api-catalog.md` for the
+authoritative list. This is what lets a caller show the operator what WAS or MAY HAVE BEEN created
+rather than offering a retry that would duplicate it — compose is not idempotent.
+
+There is no streaming variant: Goa v3 has no SSE encoding, so `discover` is a synchronous POST
+here and any progress feel is the caller's own concern.
+
 See [internal/service](../../../internal/service).

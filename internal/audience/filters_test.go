@@ -185,6 +185,32 @@ func TestRegionEventRegistrantsFilter_UsesIsAnyOfForCountries(t *testing.T) {
 //
 // Confirmed against the live API: the identical payload returns 200 with the field and 400
 // without it.
+// TestValidateInclusionIDs pins the deterministic shape check callers must run
+// BEFORE any mutating HubSpot call, so a malformed request is rejected before
+// anything is written -- a combined suppression list included.
+func TestValidateInclusionIDs(t *testing.T) {
+	cases := []struct {
+		name    string
+		ids     []string
+		wantErr bool
+	}{
+		{"empty", nil, true},
+		{"blank id", []string{"111", "  "}, true},
+		{"single id", []string{"111"}, false},
+		{"multiple ids", []string{"111", "222"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateInclusionIDs(tc.ids)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestMasterListFilter_SetsOperatorAtTheFilterLevel(t *testing.T) {
 	raw, err := MasterListFilter([]string{"30781", "30782"})
 	if err != nil {
