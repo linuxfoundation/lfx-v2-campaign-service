@@ -6,6 +6,7 @@ package hubspot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -274,5 +275,69 @@ func TestRebuildEmailContent_RequiresNonEmptyID(t *testing.T) {
 	})
 	if _, err := c.RebuildEmailContent(context.Background(), "  ", RebuildEmailContentInput{}); err == nil {
 		t.Fatal("expected an error for an empty id")
+	}
+}
+
+// TestRebuildEmailContent_AVerificationReadFailureIsNotAProvenRevert pins the distinction the
+// two error types exist to make.
+//
+// A failed verification READ means the write's outcome is UNKNOWN and retryable. Reporting it as
+// ErrContentNotPersisted — a proven revert — sends the dispatcher's ERROR branch, which tells an
+// operator a draft needs manual repair when it may be perfectly correct.
+func TestRebuildEmailContent_AVerificationReadFailureIsNotAProvenRevert(t *testing.T) {
+	var patched bool
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPatch:
+			patched = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"999"}`)
+		case patched:
+			// The verification re-read fails AFTER a successful PATCH: the write may well have
+			// landed, so this must not be reported as a revert.
+			w.WriteHeader(http.StatusGatewayTimeout)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"999","content":{"widgets":{},"flexAreas":{"main":{"sections":[]}}}}`)
+		}
+	})
+
+	_, err := c.RebuildEmailContent(context.Background(), "999", RebuildEmailContentInput{BodyHTML: "<p>b</p>"})
+	if err == nil {
+		t.Fatal("a failed verification read was reported as success")
+	}
+	if errors.Is(err, ErrContentNotPersisted) {
+		t.Errorf("an unreadable verification was reported as a proven revert: %v", err)
+	}
+	if !errors.Is(err, errVerifyReadFailed) {
+		t.Errorf("expected errVerifyReadFailed, got %v", err)
+	}
+}
+
+// TestRebuildEmailContent_AnEmptyBodyDropsTheBodySection pins the reachable "no body" path.
+//
+// A hero-only change reaches RebuildEmailContent with an empty BodyHTML, because the dispatcher
+// skips the call only when body, hero, button AND sponsors are all empty. The body section is
+// then absent from the rebuilt tree — the documented gap, asserted so the comment above the
+// guard and the code cannot drift apart again.
+func TestRebuildEmailContent_AnEmptyBodyDropsTheBodySection(t *testing.T) {
+	var sent map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			raw, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(raw, &body)
+			if content, ok := body["content"].(map[string]any); ok {
+				sent, _ = content["widgets"].(map[string]any)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"999","content":{"widgets":{"staging_footer_hs":{}},"flexAreas":{"main":{"sections":[{"columns":[{"widgets":["staging_footer_hs"]}]}]}}}}`)
+	})
+
+	_, _ = c.RebuildEmailContent(context.Background(), "999", RebuildEmailContentInput{HeroImageURL: "https://cdn.example/hero.png"})
+
+	if _, ok := sent["staging_body"]; ok {
+		t.Error("an empty body wrote a staging_body widget; it should be omitted, not blanked")
 	}
 }

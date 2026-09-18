@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestUploadImage_HappyPathReturnsHostedURL(t *testing.T) {
@@ -471,5 +472,22 @@ func TestSniffImageFormat_UsesRegisteredMIMETypes(t *testing.T) {
 	}
 	if mime != "image/jpeg" {
 		t.Errorf("jpeg mime = %q, want image/jpeg (image/jpg is not a registered type)", mime)
+	}
+}
+
+// TestDeriveImageFilename_TruncatesByRunesNotBytes pins that a long non-ASCII basename is not cut
+// mid-character. len() counts bytes, so base[:80] could split a multibyte rune and put invalid
+// UTF-8 into the multipart filename field — and scraped event names are frequently non-ASCII.
+func TestDeriveImageFilename_TruncatesByRunesNotBytes(t *testing.T) {
+	// 100 three-byte runes: any byte-wise cut at 80 lands mid-character.
+	long := strings.Repeat("あ", 100)
+	got := deriveImageFilename("https://cdn.example/"+long+".png", "png", []byte("bytes"))
+
+	if !utf8.ValidString(got) {
+		t.Fatalf("filename is not valid UTF-8: %q", got)
+	}
+	// The stem is capped at 80 runes; the hash and extension follow.
+	if stem := strings.SplitN(got, "-", 2)[0]; utf8.RuneCountInString(stem) > 80 {
+		t.Errorf("stem is %d runes, want at most 80", utf8.RuneCountInString(stem))
 	}
 }

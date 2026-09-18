@@ -221,8 +221,12 @@ func deriveImageFilename(imageURL, ext string, body []byte) string {
 				}
 				return r
 			}, base)
-			if len(base) > 80 {
-				base = base[:80]
+			// RUNES, not bytes: len() counts bytes and base[:80] can cut mid-character, putting
+			// an invalid UTF-8 sequence into the multipart filename field. A scraped basename is
+			// frequently non-ASCII (an event name in Japanese or German), so this is ordinary
+			// input rather than a contrived one.
+			if runes := []rune(base); len(runes) > 80 {
+				base = string(runes[:80])
 			}
 			if base != "" {
 				stem = base
