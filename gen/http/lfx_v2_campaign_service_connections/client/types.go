@@ -4885,9 +4885,12 @@ type AccountMonitorCampaignResponseBody struct {
 	// Google Ads only: true when the campaign's advertising_channel_type is
 	// SEARCH. Always false for LinkedIn/Meta/Reddit rows.
 	IsSearchChannel *bool `form:"is_search_channel,omitempty" json:"is_search_channel,omitempty" xml:"is_search_channel,omitempty"`
-	// True when this row's per-campaign metrics fetch failed upstream. The numeric
-	// fields are left at their zero value in that case — a renderer MUST check
-	// this before treating zero metrics as a real reading.
+	// True when some part of this row's upstream data could not be trusted: either
+	// its per-campaign metrics fetch failed outright (numeric fields left at their
+	// zero value), or, for Google Ads, its budget field was present but
+	// unparseable alongside otherwise-good metrics. A renderer MUST check this
+	// before treating any of this row's fields, zero or not, as a fully trusted
+	// reading.
 	FetchFailed *bool `form:"fetch_failed,omitempty" json:"fetch_failed,omitempty" xml:"fetch_failed,omitempty"`
 	// spend / expected-spend * 100. Meaningless when pacing_unknown is true.
 	PacingPct *float64 `form:"pacing_pct,omitempty" json:"pacing_pct,omitempty" xml:"pacing_pct,omitempty"`

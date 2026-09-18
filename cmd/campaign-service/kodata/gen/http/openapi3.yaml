@@ -10507,7 +10507,7 @@ components:
                     example: "2026-11-30"
                 fetch_failed:
                     type: boolean
-                    description: True when this row's per-campaign metrics fetch failed upstream. The numeric fields are left at their zero value in that case — a renderer MUST check this before treating zero metrics as a real reading.
+                    description: 'True when some part of this row''s upstream data could not be trusted: either its per-campaign metrics fetch failed outright (numeric fields left at their zero value), or, for Google Ads, its budget field was present but unparseable alongside otherwise-good metrics. A renderer MUST check this before treating any of this row''s fields, zero or not, as a fully trusted reading.'
                     example: false
                 impressions:
                     type: integer

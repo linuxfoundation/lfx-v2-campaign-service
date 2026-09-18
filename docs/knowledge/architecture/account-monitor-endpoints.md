@@ -310,3 +310,11 @@ differential diff, since fixed:
    malformed value on a later row of the same multi-row-per-campaign query.
    See
    [2026-09-19-215-monitor-account-endpoints-round25-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round25-fixes.md).
+6. Round 24's budget fix (item 4) also left `FetchFailed`'s published
+   contract — the doc comment on `AccountCampaignRow.FetchFailed`, the
+   `fetch_failed` design attribute description, and its `docs/api-catalog.md`
+   row — describing only the metrics-fetch-failure case, which implies zero
+   metrics whenever the flag is set. That's inaccurate for the budget case:
+   a row can have `FetchFailed=true` with genuinely non-zero metrics if only
+   its budget was unparseable. All three texts now describe both causes. See
+   [2026-09-19-215-monitor-account-endpoints-round26-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round26-fixes.md).

@@ -129,6 +129,57 @@ func TestListAccountCampaigns_MalformedBudget_MarksFetchFailed(t *testing.T) {
 	}
 }
 
+// TestListAccountCampaigns_MalformedBudgetOnLaterRow_MarksFetchFailed pins a round-25 review
+// fix: the budget/FetchFailed check used to run only inside the `if !ok` first-sighting block,
+// so a malformed amount_micros on a later GAQL row for an already-seen campaign id was never
+// checked. segments.date makes this query legitimately multi-row per campaign (see the doc
+// comment above ListAccountCampaigns), so a single-row fixture like
+// TestListAccountCampaigns_MalformedBudget_MarksFetchFailed cannot exercise this: the malformed
+// value lands on the campaign's first (and only) row either way. This fixture puts a parseable
+// budget on the first row and the malformed one on the second, for the same campaign id.
+func TestListAccountCampaigns_MalformedBudgetOnLaterRow_MarksFetchFailed(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[
+			{
+				"campaign":{"id":"222","name":"Campaign Two","status":"ENABLED","advertisingChannelType":"SEARCH"},
+				"campaignBudget":{"amountMicros":"5000000"},
+				"metrics":{"impressions":"100","clicks":"5","costMicros":"2500000"}
+			},
+			{
+				"campaign":{"id":"222","name":"Campaign Two","status":"ENABLED","advertisingChannelType":"SEARCH"},
+				"campaignBudget":{"amountMicros":"not-a-number"},
+				"metrics":{"impressions":"50","clicks":"2","costMicros":"1000000"}
+			}
+		]}`)
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL))
+
+	rows, err := c.ListAccountCampaigns(context.Background(), "1234567890", 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if !rows[0].FetchFailed {
+		t.Errorf("row for campaign 222 = %+v, want FetchFailed=true — the second row's budget failed to parse even though the first row's parsed fine", rows[0])
+	}
+	// The first row's parsed budget is deliberately kept rather than zeroed — see the call-site
+	// comment in ListAccountCampaigns — but FetchFailed=true still tells the caller not to trust
+	// it at face value.
+	if rows[0].BudgetDailyUSD != 5 {
+		t.Errorf("row for campaign 222 = %+v, want BudgetDailyUSD=5 (the first row's parsed value, kept as-is)", rows[0])
+	}
+	if rows[0].Impressions != 150 || rows[0].Clicks != 7 {
+		t.Errorf("row for campaign 222 = %+v, want metrics from both rows accumulated (150 impressions, 7 clicks)", rows[0])
+	}
+}
+
 // TestMicrosToUSD_EmptyAndSentinelAreNotFailures pins the legitimate-zero-budget cases that
 // must NOT set FetchFailed, so a future edit can't collapse them into the malformed-input case
 // above.

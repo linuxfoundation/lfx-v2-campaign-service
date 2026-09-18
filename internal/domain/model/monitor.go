@@ -96,14 +96,18 @@ type AccountCampaignMetrics struct {
 	// avoids depending on an unported string-parsing helper for a boolean that GAQL already
 	// answers authoritatively. Always false for LinkedIn/Meta/Reddit rows.
 	IsSearchChannel bool
-	// FetchFailed marks a row whose per-campaign metrics call to the platform failed (e.g.
-	// LinkedIn's per-campaign creative-analytics fetch, or Reddit's per-campaign report
-	// fetch). This is the explicit status marker the migration spec calls for: a failed row
-	// carries FetchFailed=true with its numeric fields left at their zero value, so a
-	// consumer can tell "the platform authoritatively reported zero" from "this service could
-	// not read this row" — the same distinguishability CampaignSettingsReadback's `unknown`
-	// verdict exists to preserve. Renderers MUST check this before treating zero metrics as
-	// a real reading.
+	// FetchFailed marks a row some part of whose upstream data could not be trusted: either a
+	// per-campaign metrics call to the platform failed outright (e.g. LinkedIn's per-campaign
+	// creative-analytics fetch, or Reddit's per-campaign report fetch), in which case the
+	// numeric metrics fields are left at their zero value, or (Google Ads only) a
+	// present-but-unparseable campaign_budget.amount_micros was read alongside otherwise-good
+	// metrics (round-24/25 review — internal/platform/googleads/monitor.go's microsToUSD), in
+	// which case Impressions/Clicks/SpendUSD may be genuinely non-zero while BudgetDailyUSD is
+	// the untrusted one. Either way, this is the explicit status marker the migration spec
+	// calls for: a consumer can tell "the platform authoritatively reported zero" from "this
+	// service could not read this row's data" — the same distinguishability
+	// CampaignSettingsReadback's `unknown` verdict exists to preserve. Renderers MUST check
+	// this before treating any of this row's fields, zero or not, as a fully trusted reading.
 	FetchFailed bool
 	// CampaignURL is Google Ads only: a direct link to the campaign in the Google Ads UI,
 	// matching the BFF's buildGoogleAdsUrl(campaignId) =

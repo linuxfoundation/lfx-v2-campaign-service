@@ -64,8 +64,11 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 		}
 
 		// internal/platform/googleads.ListAccountCampaigns sets FetchFailed when a campaign's
-		// GAQL metrics fields fail to parse (round-19 review) — see fetchFailedRow's doc
-		// comment in monitor_shared.go.
+		// GAQL metrics fields fail to parse (round-19 review) OR when its budget is present
+		// but unparseable alongside otherwise-good metrics (round-24/25 review) — see
+		// fetchFailedRow's doc comment in monitor_shared.go. Either way this row (metrics
+		// possibly real, possibly zero-value) is excluded here rather than risk fabricating a
+		// pacing/action-item finding against an untrusted field.
 		if m.FetchFailed {
 			out = append(out, fetchFailedRow(m))
 			continue
