@@ -68,7 +68,14 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 		// but unparseable alongside otherwise-good metrics (round-24/25 review) — see
 		// fetchFailedRow's doc comment in monitor_shared.go. Either way this row (metrics
 		// possibly real, possibly zero-value) is excluded here rather than risk fabricating a
-		// pacing/action-item finding against an untrusted field.
+		// pacing/action-item finding against an untrusted field. This is a deliberately blanket
+		// exclusion, unlike monitor_reddit.go's empty-StartDate branch (which still runs the
+		// metrics-only action items): budgetOK failing here means BudgetDailyUSD specifically is
+		// untrusted, but most of googleActionItems' own rules read status/impressions/clicks/
+		// spend, not the budget, and could in principle still fire. Left blanket for now — no
+		// evidence yet that a real budget-parse failure has ever coincided with an actionable
+		// delivery issue on the same row — rather than partially evaluating a row this port has
+		// never had to before (round-26 review).
 		if m.FetchFailed {
 			out = append(out, fetchFailedRow(m))
 			continue

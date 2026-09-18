@@ -311,10 +311,27 @@ differential diff, since fixed:
    See
    [2026-09-19-215-monitor-account-endpoints-round25-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round25-fixes.md).
 6. Round 24's budget fix (item 4) also left `FetchFailed`'s published
-   contract — the doc comment on `AccountCampaignRow.FetchFailed`, the
-   `fetch_failed` design attribute description, and its `docs/api-catalog.md`
-   row — describing only the metrics-fetch-failure case, which implies zero
-   metrics whenever the flag is set. That's inaccurate for the budget case:
-   a row can have `FetchFailed=true` with genuinely non-zero metrics if only
-   its budget was unparseable. All three texts now describe both causes. See
+   contract — the doc comment on `model.AccountCampaignMetrics.FetchFailed`,
+   the `fetch_failed` design attribute description, and its
+   `docs/api-catalog.md` row — describing only the metrics-fetch-failure
+   case, which implies zero metrics whenever the flag is set. That's
+   inaccurate for the budget case: a row can have `FetchFailed=true` with
+   genuinely non-zero metrics if only its budget was unparseable. All three
+   texts now describe both causes. See
    [2026-09-19-215-monitor-account-endpoints-round26-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round26-fixes.md).
+7. Round 26 (item 6) widened `model.AccountCampaignMetrics.FetchFailed`'s
+   contract but missed three more texts describing the same field from a
+   different angle, caught by the next local review pass:
+   `googleads.AccountCampaignRow.FetchFailed`'s own doc comment (the
+   platform-layer type, distinct from the domain-layer type item 6 fixed);
+   `rules.fetchFailedRow`'s doc comment, which also mis-cited its GAQL
+   metrics-parse line number after item 4's insertion and didn't mention that
+   `monitor_reddit.go` reuses the same builder for its empty-`StartDate`
+   case; and `monitorTotalsFallback`'s doc comment, which still claimed a
+   `FetchFailed` row always contributes zero-value metrics to the account
+   totals sum. All three now describe both causes. Also documented, as a
+   comment only (no behavior change): `monitor_google.go` excludes a
+   budget-only-failed row from every action item, not just the
+   budget-dependent ones, unlike `monitor_reddit.go`'s empty-`StartDate`
+   branch, which still runs its metrics-only action items. See
+   [2026-09-19-215-monitor-account-endpoints-round27-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round27-fixes.md).

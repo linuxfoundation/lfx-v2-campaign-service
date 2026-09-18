@@ -9,18 +9,25 @@ import (
 
 // fetchFailedRow builds the row all four EvaluateXMonitor loops (monitor_google.go,
 // monitor_linkedin.go, monitor_meta.go, monitor_reddit.go) return, unevaluated, for a campaign
-// whose per-campaign metrics fetch failed upstream (m.FetchFailed == true).
+// whose pacing inputs cannot be trusted — not only m.FetchFailed == true, but also
+// monitor_reddit.go's m.StartDate == "" branch, which reuses this same builder for a campaign
+// whose metrics are real but whose flight window is unknown (see that branch's own comment).
 //
 // The Google branch is reachable: internal/platform/googleads.ListAccountCampaigns sets
 // FetchFailed on a row whose GAQL metrics fields (impressions/clicks/costMicros) fail to parse
-// (monitor.go:133-141, round-19 review) — see the branch's own comment in monitor_google.go and
-// TestListAccountCampaigns_MalformedMetrics_MarksFetchFailed in
+// (round-19 review), or whose campaign_budget.amount_micros is present but unparseable alongside
+// otherwise-good metrics (round-24/25 review) — see AccountCampaignRow.FetchFailed's doc comment
+// in internal/platform/googleads/monitor.go and TestListAccountCampaigns_MalformedMetrics_
+// MarksFetchFailed / TestListAccountCampaigns_MalformedBudget_MarksFetchFailed in
 // internal/platform/googleads/monitor_test.go.
 //
-// A FetchFailed row's numeric fields are left at their platform-reported zero value (see
-// AccountCampaignMetrics.FetchFailed's doc comment) — running the pacing/action-item calc
+// A metrics-fetch-failed row's numeric fields are left at their platform-reported zero value
+// (see AccountCampaignMetrics.FetchFailed's doc comment) — running the pacing/action-item calc
 // against that placeholder zero would fabricate a bogus "underspending" label and a
-// HIGH-priority action item for a campaign this port never actually measured. The row is still
+// HIGH-priority action item for a campaign this port never actually measured. A Google
+// budget-only-failed row is different: its impressions/clicks/spend may be genuinely non-zero,
+// only BudgetDailyUSD is untrusted, but the pacing calc needs BudgetDailyUSD, so the whole row
+// is still routed through here rather than partially evaluated. Either way the row is still
 // returned in the campaigns array (the caller sees it and its FetchFailed flag), just with
 // pacing/action-item evaluation skipped. PacingLabel keeps its zero-value "normal" placeholder —
 // pacing_label is a required enum with no "unknown" member — and PacingUnknown=true is the

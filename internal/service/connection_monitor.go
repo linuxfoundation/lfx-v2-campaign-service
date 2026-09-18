@@ -74,9 +74,12 @@ func validateMonitorDays(days int) error {
 }
 
 // monitorTotalsFallback sums the per-campaign rows exactly the way every platform but Reddit's
-// account-wide totals are derived (model.AccountMonitorTotals' own doc comment). A FetchFailed
-// row contributes its zero-value numeric fields, which is a no-op on the sum — it is not
-// specially excluded, because there is no correct non-zero contribution to substitute.
+// account-wide totals are derived (model.AccountMonitorTotals' own doc comment). A row is never
+// specially excluded from the sum: a metrics-fetch-failed row contributes its zero-value numeric
+// fields, which is a no-op, since there is no correct non-zero contribution to substitute; a
+// Google row whose budget alone was unparseable (round-24/25 review) contributes its genuinely
+// non-zero spend/impressions/clicks, which is correct because only its budget field — not summed
+// here — was untrusted.
 //
 // derived controls DerivedFromRows on the result and must be true only when this sum stands in
 // for a platform-native figure that was expected but unavailable — i.e. only ever for Reddit

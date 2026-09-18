@@ -27,8 +27,12 @@ type AccountCampaignRow struct {
 	SpendUSD        float64
 	Conversions     *float64
 	BudgetDailyUSD  float64
-	// FetchFailed marks a row whose GAQL metrics fields could not be parsed — see the
-	// round-19-review comment at the parse site in ListAccountCampaigns below.
+	// FetchFailed marks a row some part of whose upstream data could not be trusted: either its
+	// GAQL metrics fields could not be parsed (round-19 review), or its campaign_budget.
+	// amount_micros was present but unparseable alongside otherwise-good metrics (round-24/25
+	// review) — see microsToUSD and the parse sites in ListAccountCampaigns below. In the budget
+	// case, Impressions/Clicks/SpendUSD may be genuinely non-zero while BudgetDailyUSD is the
+	// untrusted field.
 	FetchFailed bool
 }
 
