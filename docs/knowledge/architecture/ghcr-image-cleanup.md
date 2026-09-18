@@ -1,14 +1,14 @@
 ---
 type: "Architecture Doc"
 title: "GHCR stale image cleanup"
-description: "How the scheduled and on-demand GitHub Actions workflow removes stale, untagged GHCR image versions for the campaign-service container package."
+description: "How the scheduled and on-demand GitHub Actions workflow removes stale GHCR image versions, tagged and untagged, for the campaign-service container package."
 resource: ".github/workflows/ghcr-image-cleanup.yaml"
 ---
 
 # GHCR stale image cleanup
 
 [`.github/workflows/ghcr-image-cleanup.yaml`](../../../.github/workflows/ghcr-image-cleanup.yaml)
-deletes stale, untagged versions of the
+deletes stale versions, tagged and untagged, of the
 `linuxfoundation/lfx-v2-campaign-service/campaign-service` GHCR package using
 [`snok/container-retention-policy`](https://github.com/snok/container-retention-policy),
 invoked as a direct container reference (`docker://ghcr.io/snok/container-retention-policy@sha256:...`)
@@ -30,27 +30,49 @@ run to fail immediately.
 ## Triggers
 
 - **Scheduled**: weekly, Sundays at 00:00 UTC. Uses fixed defaults —
-  `cut-off: 30d`. `dry-run` currently defaults to `true` (preview only)
-  because the package's existing ~15,000-version backlog means the first
-  unattended run would otherwise face the whole backlog at once instead of
-  a manageable weekly slice. A maintainer flips the fallback to `false` in
-  the workflow file after reviewing a manual preview or draining the
-  backlog manually.
+  `cut-off: 30d`, `dry-run: false` — since `github.event.inputs` is undefined
+  on a `schedule` trigger, the `dry-run` expression checks `github.event_name`
+  directly to give scheduled runs their own default rather than inheriting
+  the `workflow_dispatch` input default.
 - **Manual** (`workflow_dispatch`): a maintainer can preview or tune a single
   run via the `dry-run` (default `true`) and `cut-off` (default `30d`)
   inputs, without changing the schedule's defaults.
 
 ## Scope
 
-`tag-selection` is hardcoded to `untagged` — tagged versions, including
-per-commit SHA tags and any release/production tags, are never deletion
-candidates. This is intentionally not exposed as an override: `ko build`
-publishes every image with both an immutable SHA tag and a moving
-branch-name tag (see `.github/workflows/ko-build-branch.yaml`), so the
-untagged versions this workflow reclaims are the orphaned digests left
-behind when a branch's moving tag is repointed to a newer build. SHA-tagged
-versions keep accumulating and are a known, accepted limitation of this
-rollout.
+`tag-selection` is hardcoded to `both` — untagged versions and tagged
+versions are both deletion candidates once past `cut-off`. `--image-tags`
+carries the negative filter `"!v* !latest !development"`, which protects any
+package version carrying a tag matching `v*`, `latest`, or `development`
+regardless of its other tags: release builds
+(`.github/workflows/ko-build-tag.yaml`) tag with a `vX.Y.Z` version string
+plus `latest`, so `!v*` alone already protects every release; `!latest` is
+redundant today but kept as defense in depth in case a future release build
+ever tags `latest` without a version string. The current main build
+(`.github/workflows/ko-build-main.yaml`) tags with `development`. Neither
+workflow's tags ever share a digest with a plain PR/main SHA-tagged build,
+so this excludes exactly the versions that must survive.
+
+Everything else tagged — a per-commit SHA plus a branch name from
+`.github/workflows/ko-build-branch.yaml`, or a superseded SHA + `development`
+pairing from an older main build — is a deletion candidate once past
+cut-off. Previously only fully-untagged versions were ever considered, so
+per-commit SHA-tagged versions accumulated indefinitely; this widening to
+`tag-selection=both` closes that gap. `tag-selection` and the fixed
+`account`/`image-names` are not exposed as `workflow_dispatch` overrides.
+
+Known tradeoff: a PR branch whose last push is older than `cut-off` still
+carries a live branch-name tag, so its current image is now a deletion
+candidate too, not just superseded commits on an active branch. This is
+treated as normal cleanup of stale PR images; a maintainer can preview this
+wider scope by triggering `workflow_dispatch` with `dry-run: true` (see
+Triggers above), but nothing enforces that preview before a scheduled run.
+
+Known tradeoff: `!v*` matches any tag beginning with `v`, not only
+`vX.Y.Z` version strings — a branch name like `validate-something` or
+`v2-refactor` built by `ko-build-branch.yaml` would also carry a `v`-prefixed
+tag and be permanently protected from cleanup. This is accepted as
+over-protection, the opposite failure direction from deleting a release.
 
 `snok/container-retention-policy` automatically protects multi-arch child
 manifests still referenced by a retained parent index, so multi-platform
