@@ -83,7 +83,15 @@ func (c *Client) UploadImage(ctx context.Context, imageURL string) (string, erro
 func (c *Client) downloadImage(ctx context.Context, imageURL string) (data []byte, contentType, filename string, err error) {
 	parsed, perr := url.Parse(imageURL)
 	if perr != nil {
-		return nil, "", "", fmt.Errorf("hubspot: image URL is not parsable: %w", perr)
+		// NOT %w: url.Parse returns a *url.Error whose text embeds the COMPLETE input, so
+		// wrapping it copies a signed query into every string this error reaches. The parse
+		// failed, so there is nothing safe to name — the reason alone is what is actionable.
+		reason := "invalid URL"
+		var uerr *url.Error
+		if errors.As(perr, &uerr) && uerr.Err != nil {
+			reason = uerr.Err.Error()
+		}
+		return nil, "", "", fmt.Errorf("hubspot: image URL is not parsable: %s", reason)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, "", "", fmt.Errorf("hubspot: image URL scheme %q is not http(s)", parsed.Scheme)
@@ -91,7 +99,9 @@ func (c *Client) downloadImage(ctx context.Context, imageURL string) (data []byt
 
 	req, rerr := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
 	if rerr != nil {
-		return nil, "", "", fmt.Errorf("hubspot: build image download request: %w", rerr)
+		// Same hazard as the parse above: this error renders the request URL verbatim.
+		return nil, "", "", fmt.Errorf("hubspot: build image download request for %s: %s",
+			redact.URLUserinfo(imageURL), errors.Unwrap(rerr))
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 
@@ -280,6 +290,18 @@ func (c *Client) uploadFileBytes(ctx context.Context, data []byte, contentType, 
 	raw, rerr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
 	if rerr != nil {
 		return "", &transportError{Method: http.MethodPost, Path: filesPath, err: rerr, Mutating: true}
+	}
+	// The +1 above exists to DETECT overflow; reading it and not acting on it is the bug. A body
+	// at the cap is a truncated read, so the JSON that parses out of it describes only part of
+	// what the server sent -- and this is a non-idempotent create, so accepting it would confirm
+	// an upload whose real outcome is unknown. Ambiguous, not failed: the file may well exist.
+	if len(raw) > maxResponseBody {
+		return "", &apiError{
+			StatusCode: resp.StatusCode,
+			Method:     http.MethodPost,
+			Path:       filesPath,
+			Ambiguous:  true,
+		}
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

@@ -74,10 +74,29 @@ func NewEmailReferenceSource(conn connReader, enc domain.Encryptor, opts ...hubs
 // this enriches email-copy generation, it does not gate it. Callers must not treat "" as
 // distinguishable from "lookup failed"; GenerateEmailCopy does not need to.
 func (r *EmailReferenceSource) BuildReferenceBlock(ctx context.Context, projectID string) string {
-	client, err := r.resolveClient(ctx, projectID)
+	client, fromSystem, err := r.resolveClient(ctx, projectID)
 	if err != nil {
 		slog.DebugContext(ctx, "email reference lookup skipped: could not resolve a hubspot client",
 			"project_id", projectID, "error", err)
+		return ""
+	}
+
+	// REFUSED on the shared portal. SearchEmails with an empty needle matches every email the
+	// portal returns, and projectID only chose the CONNECTION -- it never filters the results. So
+	// on the system-wide connection this would seed one project's generated copy with another
+	// project's past sent emails: attendee counts, sponsor names, pricing, unpublished agenda
+	// detail. That is a cross-tenant data flow with no consent surface, and it is the COMMON
+	// case, not an edge one, because every project without its own connection resolves here.
+	//
+	// It differs from the dispatch-side fallback, which is legitimate: that one only ever WRITES
+	// the requesting project's own content to the shared portal. This one reads everyone's.
+	//
+	// Skipping degrades to copy generated without a style reference, which is exactly what a
+	// project with no HubSpot history gets anyway. Re-enabling this needs a per-project ownership
+	// signal on the emails themselves to filter by; there is none today.
+	if fromSystem {
+		slog.DebugContext(ctx, "email reference lookup skipped: only the shared LF connection is available, and a portal-wide search would cross project boundaries",
+			"project_id", projectID)
 		return ""
 	}
 
@@ -166,7 +185,11 @@ type connReader interface {
 // LF system-wide connection when the project has none — the same fallback shape
 // internal/dispatch's credsSource.resolve uses for every other HubSpot call, since ALL LF
 // foundations share one HubSpot portal absent a project-specific override.
-func (r *EmailReferenceSource) resolveClient(ctx context.Context, projectID string) (*hubspot.Client, error) {
+// resolveClient reports fromSystem when it fell back to the LF-wide connection, because the
+// CALLER cannot otherwise tell whose portal it is about to search — and that distinction decides
+// whether searching it at all is legitimate.
+func (r *EmailReferenceSource) resolveClient(ctx context.Context, projectID string) (client *hubspot.Client, fromSystem bool, err error) {
+	var usedSystem bool
 	conn, err := r.conn.Get(ctx, projectID, model.ProviderHubSpot)
 	if errors.Is(err, domain.ErrNotFound) {
 		// ErrNotFound does NOT mean "this project never connected". Connections are
@@ -178,43 +201,44 @@ func (r *EmailReferenceSource) resolveClient(ctx context.Context, projectID stri
 		// Fails CLOSED on a probe error, matching dispatch's systemConn: an unanswered "was
 		// this disconnected?" is not a no.
 		if disconnected, derr := r.conn.Disconnected(ctx, projectID, model.ProviderHubSpot); derr != nil {
-			return nil, fmt.Errorf("could not determine whether %s disconnected hubspot: %w", projectID, derr)
+			return nil, false, fmt.Errorf("could not determine whether %s disconnected hubspot: %w", projectID, derr)
 		} else if disconnected {
-			return nil, domain.ErrNotFound
+			return nil, false, domain.ErrNotFound
 		}
+		usedSystem = true
 		conn, err = r.conn.Get(ctx, model.SystemProjectID, model.ProviderHubSpot)
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// domain.ConnectionReader does not forbid a (nil, nil) return, and dereferencing that
 	// would panic rather than degrade — the one failure mode this best-effort caller cannot
 	// absorb, since it takes the whole request down instead of dropping the reference block.
 	if conn == nil {
-		return nil, domain.ErrNotFound
+		return nil, false, domain.ErrNotFound
 	}
 	if conn.Status != model.StatusActive || !conn.HasCredentials() {
-		return nil, errors.New("hubspot connection is not usable")
+		return nil, false, errors.New("hubspot connection is not usable")
 	}
 
 	plaintext, err := r.enc.Decrypt(conn.EncryptedCredentials)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var creds hubspotCreds
 	if err := json.Unmarshal(plaintext, &creds); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	token := strings.TrimSpace(creds.PrivateAppToken)
 	if token == "" {
-		return nil, errors.New("hubspot credentials are incomplete")
+		return nil, false, errors.New("hubspot credentials are incomplete")
 	}
 
 	return hubspot.NewClient(
 		hubspot.Credentials{PrivateAppToken: token},
 		hubspot.AccountConfig{PortalID: conn.ProviderConfig["portal_id"]},
 		r.opts...,
-	), nil
+	), usedSystem, nil
 }
 
 // publishedEmails filters to PUBLISHED (sent) emails, dropping drafts and A/B variant drafts —

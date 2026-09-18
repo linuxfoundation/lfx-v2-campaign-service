@@ -587,6 +587,9 @@ func parseEmailCopyResponse(raw string, allowLegacyShape bool) (*briefs.EmailCop
 	// model returned something unusable" it actually is.
 	const maxHTMLRunes = 8000
 
+	// MIRRORS MaxLength(2000) on email-copy-section's `url` attribute in design/brief.go.
+	const maxButtonURLRunes = 2000
+
 	var parsed struct {
 		Subject   string `json:"subject"`
 		Preheader string `json:"preheader"`
@@ -665,6 +668,16 @@ func parseEmailCopyResponse(raw string, allowLegacyShape bool) (*briefs.EmailCop
 			text := truncateString(s.Text, 50)
 			section.Text = &text
 			if url := strings.TrimSpace(s.URL); url != "" {
+				// REJECTED, not truncated. maxButtonURLRunes mirrors MaxLength(2000) on
+				// email-copy-section's `url` in design/brief.go, and the two move together: Goa
+				// validates the response against it, so a value this function let through would
+				// fail there as a 500 naming nothing actionable, rather than the 503 "the model
+				// returned something unusable" it actually is -- the same reasoning as
+				// maxHTMLRunes above. Truncating is worse than rejecting for a URL: a cut
+				// destination is a live link to the wrong place, not a shorter one.
+				if utf8.RuneCountInString(url) > maxButtonURLRunes {
+					return nil, fmt.Errorf("email button url exceeds maximum length of %d characters; model response is unusable", maxButtonURLRunes)
+				}
 				section.URL = &url
 			}
 		}
