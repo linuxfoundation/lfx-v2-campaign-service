@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -119,7 +120,17 @@ func (c *Client) RebuildEmailContent(ctx context.Context, id string, in RebuildE
 		addHeroSection(widgets, &sections, in.HeroImageURL, in.HeroLinkURL)
 	}
 
-	addBodySection(widgets, &sections, in.BodyHTML)
+	// Conditional, like every other section above and below it. An unconditional call wrote an
+	// EMPTY staging_body whenever no body was supplied, and since this rebuild REPLACES the whole
+	// widget tree, that silently destroyed the cloned template's own body — turning a
+	// metadata-only request (a preheader or footer-org change) into data loss.
+	//
+	// Skipping the section is the correct degrade rather than a gap: the caller supplied no body,
+	// so there is nothing to write, and every other section behaves this way. A caller that
+	// genuinely wants an empty body is not expressible here, and never was.
+	if strings.TrimSpace(in.BodyHTML) != "" {
+		addBodySection(widgets, &sections, in.BodyHTML)
+	}
 
 	if strings.TrimSpace(in.ButtonURL) != "" {
 		addButtonSection(widgets, &sections, in.ButtonText, in.ButtonURL)
@@ -203,7 +214,12 @@ func (c *Client) readDraftContent(ctx context.Context, id string) (rawEmailConte
 func (c *Client) verifyContentSaved(ctx context.Context, id string, ourWidgets map[string]any) error {
 	doc, err := c.readDraftContent(ctx, id)
 	if err != nil {
-		return fmt.Errorf("hubspot: verify email %s content: %w", id, err)
+		// NOT ErrContentNotPersisted. The verification READ failed -- timeout, malformed JSON --
+		// so whether the write persisted is UNKNOWN, which is a different state from "HubSpot
+		// accepted and reverted it". Reporting it as the latter would send an operator to
+		// manually repair a draft that may be perfectly correct, and the caller raises that case
+		// to ERROR precisely because it is unrecoverable. This one is retryable.
+		return fmt.Errorf("hubspot: could not verify email %s content: %w", id, err)
 	}
 
 	var savedFlex map[string]struct {
@@ -226,15 +242,29 @@ func (c *Client) verifyContentSaved(ctx context.Context, id string, ourWidgets m
 		}
 	}
 
+	// EVERY widget we wrote, not merely one. Returning on the first match confirmed the whole
+	// rebuild from a single surviving key -- and the keys are fixed (`staging_body`, the footer
+	// pair), so a draft that kept ONE of them from an earlier generation passed while the new
+	// body and layout were lost. A partial apply is the failure mode this check exists to catch,
+	// and it was the one it could not see.
+	//
+	// preview_text is excluded because it is carried over from the clone rather than written by
+	// this rebuild when the caller supplies none.
+	var missing []string
 	for key := range ourWidgets {
 		if key == "preview_text" {
 			continue
 		}
-		if saved[key] {
-			return nil
+		if !saved[key] {
+			missing = append(missing, key)
 		}
 	}
-	return fmt.Errorf("hubspot: email %s content PATCH did not persist any rebuilt widget (HubSpot may have silently reverted it)", id)
+	if len(missing) > 0 {
+		sort.Strings(missing) // deterministic message; map iteration order is not
+		return fmt.Errorf("hubspot: email %s content PATCH did not persist %d of the rebuilt widgets (%s) (HubSpot may have silently reverted it)",
+			id, len(missing), strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 var defaultSectionStyle = map[string]any{

@@ -1667,3 +1667,28 @@ func TestHubSpot_APreheaderOnlyConfigStillRebuilds(t *testing.T) {
 		t.Error("a preheader-only config was treated as nothing to rebuild, so the draft kept the template's preview text")
 	}
 }
+
+// TestHubSpot_APreheaderOnlyConfigDoesNotWipeTheBody is the other half of the guard above, and
+// the more important one.
+//
+// Counting previewText as rebuild content is only safe if a rebuild carrying no body LEAVES the
+// body alone. It did not: addBodySection was called unconditionally, so a metadata-only request
+// wrote an EMPTY staging_body — and because the rebuild replaces the whole widget tree, that
+// destroyed the cloned template's body. Widening the guard without this would have converted a
+// silent no-op into silent data loss.
+func TestHubSpot_APreheaderOnlyConfigDoesNotWipeTheBody(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","previewText":"Three days in Amsterdam"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	// An EMPTY staging_body is the failure: it means the rebuild wrote a blank body over the
+	// template's own. Absent is correct — no body was supplied, so no body section is written.
+	if body, ok := rec.richBodies()["staging_body"]; ok && strings.TrimSpace(body) == "" {
+		t.Error("a metadata-only rebuild wrote an empty body, destroying the cloned template's content")
+	}
+}

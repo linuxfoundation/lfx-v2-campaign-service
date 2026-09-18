@@ -1,7 +1,7 @@
 ---
 type: "Code Concept"
 title: "Email Copy Generation (internal/service/email_copy.go)"
-description: "AI-generated email copy (subject, preheader, body, CTA) for campaign briefs using the LiteLLM proxy client. Implements scrape-not-invent, defensive parsing, code-enforced length limits, and graceful degradation when the model is unconfigured."
+description: "AI-generated email copy (subject, preheader, and ordered content sections) for campaign briefs using the LiteLLM proxy client. Implements scrape-not-invent, defensive parsing, code-enforced length limits, and graceful degradation when the model is unconfigured."
 resource: "internal/service"
 ---
 

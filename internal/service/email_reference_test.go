@@ -168,7 +168,16 @@ func TestBuildReferenceBlock_HappyPath(t *testing.T) {
 	}
 }
 
-func TestBuildReferenceBlock_FallsBackToSystemConnection(t *testing.T) {
+// TestBuildReferenceBlock_RefusesThePortalWideSearchOnTheSharedConnection inverts what this test
+// used to assert.
+//
+// It previously pinned that a project with no connection of its own falls back to the LF-wide
+// portal and uses its emails. That fallback is right for DISPATCH, which only writes the
+// requesting project's own content to the shared portal — but this path READS, with an empty
+// needle that matches every email the portal returns, and projectID never filters the results.
+// So it seeded one project's generated copy with another project's past sends, and because every
+// project without its own connection lands here, that was the common case rather than an edge.
+func TestBuildReferenceBlock_RefusesThePortalWideSearchOnTheSharedConnection(t *testing.T) {
 	srv := emailDraftServer(t,
 		`{"results":[{"id":"1","subject":"System Template","state":"PUBLISHED","updatedAt":"2026-01-01T00:00:00Z"}]}`,
 		map[string][]string{"1": {"Hello from the shared portal"}},
@@ -182,9 +191,8 @@ func TestBuildReferenceBlock_FallsBackToSystemConnection(t *testing.T) {
 		hubspot.WithBaseURL(srv.URL),
 	)
 
-	got := src.BuildReferenceBlock(context.Background(), "proj-no-own-connection")
-	if !strings.Contains(got, "System Template") {
-		t.Errorf("expected the system connection's email to be used, got: %q", got)
+	if got := src.BuildReferenceBlock(context.Background(), "proj-no-own-connection"); got != "" {
+		t.Errorf("another project's email content leaked into this project's reference block: %q", got)
 	}
 }
 
