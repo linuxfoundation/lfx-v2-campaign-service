@@ -120,14 +120,14 @@ func (c *Client) RebuildEmailContent(ctx context.Context, id string, in RebuildE
 		addHeroSection(widgets, &sections, in.HeroImageURL, in.HeroLinkURL)
 	}
 
-	// Conditional, like every other section above and below it. An unconditional call wrote an
-	// EMPTY staging_body whenever no body was supplied, and since this rebuild REPLACES the whole
-	// widget tree, that silently destroyed the cloned template's own body — turning a
-	// metadata-only request (a preheader or footer-org change) into data loss.
+	// The body is PRESERVED when the caller supplies none, not skipped and not blanked.
 	//
-	// Skipping the section is the correct degrade rather than a gap: the caller supplied no body,
-	// so there is nothing to write, and every other section behaves this way. A caller that
-	// genuinely wants an empty body is not expressible here, and never was.
+	// This rebuild replaces the entire widget tree, so both earlier shapes lost the clone's body:
+	// calling addBodySection unconditionally wrote an empty staging_body over it, and merely
+	// skipping the call dropped it from the tree altogether — the same data loss, one step
+	// quieter. A metadata-only request (a preheader or footer-org change) must leave the body
+	// exactly as the clone had it, which means carrying the existing widget forward and keeping
+	// its section in the layout, the same way preview_text is carried below.
 	if strings.TrimSpace(in.BodyHTML) != "" {
 		addBodySection(widgets, &sections, in.BodyHTML)
 	}
@@ -167,6 +167,13 @@ func (c *Client) RebuildEmailContent(ctx context.Context, id string, in RebuildE
 	}
 
 	if verr := c.verifyContentSaved(ctx, id, widgets); verr != nil {
+		// Only a PROVEN revert carries the typed error. A verification READ that failed --
+		// timeout, malformed JSON -- leaves the outcome unknown and retryable, and tagging it
+		// ErrContentNotPersisted sent the caller's ERROR branch (which says "needs manual
+		// repair") for a draft that may be perfectly correct.
+		if errors.Is(verr, errVerifyReadFailed) {
+			return email, verr
+		}
 		return email, fmt.Errorf("%w: %w", ErrContentNotPersisted, verr)
 	}
 	return email, nil
@@ -183,6 +190,11 @@ func (c *Client) RebuildEmailContent(ctx context.Context, id string, in RebuildE
 // copy, and no retry of the same payload is known to fix it. Callers that swallow
 // rebuild errors as best-effort should still surface THIS one.
 var ErrContentNotPersisted = errors.New("hubspot: email content was accepted but not persisted")
+
+// errVerifyReadFailed marks the OTHER verification outcome: the re-read itself failed, so
+// whether the write persisted is unknown. Separate from ErrContentNotPersisted because the two
+// need opposite responses — this one is retryable, that one is not.
+var errVerifyReadFailed = errors.New("hubspot: could not verify email content")
 
 // rawEmailContent decodes only the `content` object one level deep, leaving each
 // key (widgets/flexAreas/styleSettings/templatePath) as raw JSON — widget shapes
@@ -206,11 +218,20 @@ func (c *Client) readDraftContent(ctx context.Context, id string) (rawEmailConte
 	return doc, nil
 }
 
-// verifyContentSaved re-fetches the draft and checks that at least one of the
-// widgets we just wrote is actually referenced from flexAreas. HubSpot has, in
-// practice, accepted a content PATCH with a 2xx and silently reverted it; this
-// mirrors the reference prototype's inline post-write verification rather than
-// trusting the PATCH response alone.
+// verifyContentSaved re-fetches the draft and checks that EVERY widget we just wrote is
+// referenced from flexAreas. HubSpot has, in practice, accepted a content PATCH with a 2xx and
+// silently reverted it; this mirrors the reference prototype's inline post-write verification
+// rather than trusting the PATCH response alone.
+//
+// It required only ONE match until 2026-09-18. The widget keys are fixed, so a draft that kept a
+// single key from an earlier generation confirmed a rebuild whose new body and layout were lost
+// — a partial apply, which is precisely what this exists to catch and the one thing it could not
+// see. preview_text is excluded because it is carried over from the clone rather than written
+// here when the caller supplies none.
+//
+// Two distinct failures come out: a proven revert (wrapped as ErrContentNotPersisted by the
+// caller, unrecoverable) and a failed verification READ (errVerifyReadFailed, retryable, because
+// the write's outcome is then unknown rather than known-bad).
 func (c *Client) verifyContentSaved(ctx context.Context, id string, ourWidgets map[string]any) error {
 	doc, err := c.readDraftContent(ctx, id)
 	if err != nil {
@@ -219,7 +240,7 @@ func (c *Client) verifyContentSaved(ctx context.Context, id string, ourWidgets m
 		// accepted and reverted it". Reporting it as the latter would send an operator to
 		// manually repair a draft that may be perfectly correct, and the caller raises that case
 		// to ERROR precisely because it is unrecoverable. This one is retryable.
-		return fmt.Errorf("hubspot: could not verify email %s content: %w", id, err)
+		return fmt.Errorf("%w: email %s: %w", errVerifyReadFailed, id, err)
 	}
 
 	var savedFlex map[string]struct {
@@ -367,8 +388,12 @@ func richTextWidget(html string, padTop, padRight, padBottom, padLeft string) ma
 	}
 }
 
+// bodyWidgetKey names the rebuild's own body widget. Shared with the preserve path above, so
+// the two cannot drift onto different keys.
+const bodyWidgetKey = "staging_body"
+
 func addBodySection(widgets map[string]any, sections *[]map[string]any, bodyHTML string) {
-	const key = "staging_body"
+	const key = bodyWidgetKey
 	widgets[key] = richTextWidget(bodyHTML, "15px", "20px", "10px", "20px")
 	*sections = append(*sections, makeSection(
 		"section-staging-body",
