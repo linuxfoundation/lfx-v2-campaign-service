@@ -66,11 +66,11 @@ func monitorTotalsFallback(rows []model.AccountCampaignMetrics, derived bool) *m
 }
 
 // toConnAccountMonitorCampaign converts one rule-engine output row to the generated response
-// type. campaign_url and ad_groups are Google Ads only and left nil/absent for every other
-// platform, per AccountMonitorCampaign's design-layer doc comment.
+// type. campaign_url is Google Ads only and left nil for every other platform, per
+// AccountMonitorCampaign's design-layer doc comment.
 func toConnAccountMonitorCampaign(row model.AccountMonitorRow) *conn.AccountMonitorCampaign {
 	m := row.Metrics
-	return &conn.AccountMonitorCampaign{
+	c := &conn.AccountMonitorCampaign{
 		PlatformCampaignID: m.PlatformCampaignID,
 		Name:               m.Name,
 		Status:             m.Status,
@@ -89,6 +89,11 @@ func toConnAccountMonitorCampaign(row model.AccountMonitorRow) *conn.AccountMoni
 		PacingPct:          row.PacingPct,
 		PacingLabel:        string(row.PacingLabel),
 	}
+	if m.CampaignURL != "" {
+		url := m.CampaignURL
+		c.CampaignURL = &url
+	}
+	return c
 }
 
 // toConnAccountMonitorActionItems converts the rule engine's findings to the generated

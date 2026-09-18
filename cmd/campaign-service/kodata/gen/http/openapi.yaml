@@ -7547,38 +7547,18 @@ definitions:
                       campaign_name: KubeCon NA 2026 - Search
                       issue: 'Underspending: 42% of expected spend'
                       priority: LOW
+                    - action: Increase daily budget or check for delivery limits
+                      campaign_id: "24183781329"
+                      campaign_name: KubeCon NA 2026 - Search
+                      issue: 'Underspending: 42% of expected spend'
+                      priority: LOW
             campaigns:
                 type: array
                 items:
                     $ref: '#/definitions/AccountMonitorCampaign'
                 description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
                 example:
-                    - ad_groups:
-                        - ad_group_id: "135792468"
-                          keywords:
-                            - Dolor harum nisi illo quia assumenda aut.
-                            - Voluptate quam delectus optio.
-                            - Ducimus aliquam vel cum alias.
-                          name: Registration - Exact
-                        - ad_group_id: "135792468"
-                          keywords:
-                            - Dolor harum nisi illo quia assumenda aut.
-                            - Voluptate quam delectus optio.
-                            - Ducimus aliquam vel cum alias.
-                          name: Registration - Exact
-                        - ad_group_id: "135792468"
-                          keywords:
-                            - Dolor harum nisi illo quia assumenda aut.
-                            - Voluptate quam delectus optio.
-                            - Ducimus aliquam vel cum alias.
-                          name: Registration - Exact
-                        - ad_group_id: "135792468"
-                          keywords:
-                            - Dolor harum nisi illo quia assumenda aut.
-                            - Voluptate quam delectus optio.
-                            - Ducimus aliquam vel cum alias.
-                          name: Registration - Exact
-                      budget_day: 150
+                    - budget_day: 150
                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
                       clicks: 3110
                       conversions: 12.5
@@ -7596,32 +7576,7 @@ definitions:
                       start_date: "2026-08-01"
                       status: ENABLED
                       total_budget: 5000
-                    - ad_groups:
-                        - ad_group_id: "135792468"
-                          keywords:
-                            - Dolor harum nisi illo quia assumenda aut.
-                            - Voluptate quam delectus optio.
-                            - Ducimus aliquam vel cum alias.
-                          name: Registration - Exact
-                        - ad_group_id: "135792468"
-                          keywords:
-                            - Dolor harum nisi illo quia assumenda aut.
-                            - Voluptate quam delectus optio.
-                            - Ducimus aliquam vel cum alias.
-                          name: Registration - Exact
-                        - ad_group_id: "135792468"
-                          keywords:
-                            - Dolor harum nisi illo quia assumenda aut.
-                            - Voluptate quam delectus optio.
-                            - Ducimus aliquam vel cum alias.
-                          name: Registration - Exact
-                        - ad_group_id: "135792468"
-                          keywords:
-                            - Dolor harum nisi illo quia assumenda aut.
-                            - Voluptate quam delectus optio.
-                            - Ducimus aliquam vel cum alias.
-                          name: Registration - Exact
-                      budget_day: 150
+                    - budget_day: 150
                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
                       clicks: 3110
                       conversions: 12.5
@@ -7664,33 +7619,13 @@ definitions:
                   campaign_name: KubeCon NA 2026 - Search
                   issue: 'Underspending: 42% of expected spend'
                   priority: LOW
+                - action: Increase daily budget or check for delivery limits
+                  campaign_id: "24183781329"
+                  campaign_name: KubeCon NA 2026 - Search
+                  issue: 'Underspending: 42% of expected spend'
+                  priority: LOW
             campaigns:
-                - ad_groups:
-                    - ad_group_id: "135792468"
-                      keywords:
-                        - Dolor harum nisi illo quia assumenda aut.
-                        - Voluptate quam delectus optio.
-                        - Ducimus aliquam vel cum alias.
-                      name: Registration - Exact
-                    - ad_group_id: "135792468"
-                      keywords:
-                        - Dolor harum nisi illo quia assumenda aut.
-                        - Voluptate quam delectus optio.
-                        - Ducimus aliquam vel cum alias.
-                      name: Registration - Exact
-                    - ad_group_id: "135792468"
-                      keywords:
-                        - Dolor harum nisi illo quia assumenda aut.
-                        - Voluptate quam delectus optio.
-                        - Ducimus aliquam vel cum alias.
-                      name: Registration - Exact
-                    - ad_group_id: "135792468"
-                      keywords:
-                        - Dolor harum nisi illo quia assumenda aut.
-                        - Voluptate quam delectus optio.
-                        - Ducimus aliquam vel cum alias.
-                      name: Registration - Exact
-                  budget_day: 150
+                - budget_day: 150
                   campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
                   clicks: 3110
                   conversions: 12.5
@@ -7708,32 +7643,25 @@ definitions:
                   start_date: "2026-08-01"
                   status: ENABLED
                   total_budget: 5000
-                - ad_groups:
-                    - ad_group_id: "135792468"
-                      keywords:
-                        - Dolor harum nisi illo quia assumenda aut.
-                        - Voluptate quam delectus optio.
-                        - Ducimus aliquam vel cum alias.
-                      name: Registration - Exact
-                    - ad_group_id: "135792468"
-                      keywords:
-                        - Dolor harum nisi illo quia assumenda aut.
-                        - Voluptate quam delectus optio.
-                        - Ducimus aliquam vel cum alias.
-                      name: Registration - Exact
-                    - ad_group_id: "135792468"
-                      keywords:
-                        - Dolor harum nisi illo quia assumenda aut.
-                        - Voluptate quam delectus optio.
-                        - Ducimus aliquam vel cum alias.
-                      name: Registration - Exact
-                    - ad_group_id: "135792468"
-                      keywords:
-                        - Dolor harum nisi illo quia assumenda aut.
-                        - Voluptate quam delectus optio.
-                        - Ducimus aliquam vel cum alias.
-                      name: Registration - Exact
-                  budget_day: 150
+                - budget_day: 150
+                  campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                  clicks: 3110
+                  conversions: 12.5
+                  ctr: 6.45
+                  end_date: "2026-11-30"
+                  fetch_failed: false
+                  impressions: 48200
+                  is_search_channel: true
+                  name: KubeCon NA 2026 - Search
+                  pacing_label: underspending
+                  pacing_pct: 87
+                  pacing_unknown: false
+                  platform_campaign_id: "24183781329"
+                  spend: 482.13
+                  start_date: "2026-08-01"
+                  status: ENABLED
+                  total_budget: 5000
+                - budget_day: 150
                   campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
                   clicks: 3110
                   conversions: 12.5
@@ -7788,7 +7716,7 @@ definitions:
             priority:
                 type: string
                 description: The rule engine's priority band for this item.
-                example: MED
+                example: LOW
                 enum:
                     - HIGH
                     - MED
@@ -7798,79 +7726,15 @@ definitions:
             campaign_id: "24183781329"
             campaign_name: KubeCon NA 2026 - Search
             issue: 'Underspending: 42% of expected spend'
-            priority: LOW
+            priority: HIGH
         required:
             - priority
             - issue
             - action
-    AccountMonitorAdGroup:
-        title: AccountMonitorAdGroup
-        type: object
-        properties:
-            ad_group_id:
-                type: string
-                description: The ad group's platform id.
-                example: "135792468"
-            keywords:
-                type: array
-                items:
-                    type: string
-                    example: Tempora harum corporis deserunt quae occaecati aut.
-                description: The keyword text served under this ad group.
-                example:
-                    - Et qui est qui commodi hic.
-                    - Pariatur ratione blanditiis.
-                    - Ex quis molestias nam quia facilis.
-            name:
-                type: string
-                description: The ad group's display name.
-                example: Registration - Exact
-        example:
-            ad_group_id: "135792468"
-            keywords:
-                - Accusantium beatae.
-                - Deserunt earum saepe repellat.
-                - Voluptatum explicabo vero repudiandae temporibus ut.
-                - Aut nesciunt illum reiciendis itaque.
-            name: Registration - Exact
-        required:
-            - ad_group_id
-            - name
-            - keywords
     AccountMonitorCampaign:
         title: AccountMonitorCampaign
         type: object
         properties:
-            ad_groups:
-                type: array
-                items:
-                    $ref: '#/definitions/AccountMonitorAdGroup'
-                description: 'Google Ads only: the ad-group/keyword nesting under this campaign.'
-                example:
-                    - ad_group_id: "135792468"
-                      keywords:
-                        - Dolor harum nisi illo quia assumenda aut.
-                        - Voluptate quam delectus optio.
-                        - Ducimus aliquam vel cum alias.
-                      name: Registration - Exact
-                    - ad_group_id: "135792468"
-                      keywords:
-                        - Dolor harum nisi illo quia assumenda aut.
-                        - Voluptate quam delectus optio.
-                        - Ducimus aliquam vel cum alias.
-                      name: Registration - Exact
-                    - ad_group_id: "135792468"
-                      keywords:
-                        - Dolor harum nisi illo quia assumenda aut.
-                        - Voluptate quam delectus optio.
-                        - Ducimus aliquam vel cum alias.
-                      name: Registration - Exact
-                    - ad_group_id: "135792468"
-                      keywords:
-                        - Dolor harum nisi illo quia assumenda aut.
-                        - Voluptate quam delectus optio.
-                        - Ducimus aliquam vel cum alias.
-                      name: Registration - Exact
             budget_day:
                 type: number
                 description: Daily budget in the account's currency, 0 when the campaign has none (e.g. a LinkedIn/Meta campaign funded by total_budget instead).
@@ -7957,25 +7821,6 @@ definitions:
                 example: 5000
                 format: double
         example:
-            ad_groups:
-                - ad_group_id: "135792468"
-                  keywords:
-                    - Dolor harum nisi illo quia assumenda aut.
-                    - Voluptate quam delectus optio.
-                    - Ducimus aliquam vel cum alias.
-                  name: Registration - Exact
-                - ad_group_id: "135792468"
-                  keywords:
-                    - Dolor harum nisi illo quia assumenda aut.
-                    - Voluptate quam delectus optio.
-                    - Ducimus aliquam vel cum alias.
-                  name: Registration - Exact
-                - ad_group_id: "135792468"
-                  keywords:
-                    - Dolor harum nisi illo quia assumenda aut.
-                    - Voluptate quam delectus optio.
-                    - Ducimus aliquam vel cum alias.
-                  name: Registration - Exact
             budget_day: 150
             campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
             clicks: 3110
@@ -7986,7 +7831,7 @@ definitions:
             impressions: 48200
             is_search_channel: true
             name: KubeCon NA 2026 - Search
-            pacing_label: overspending
+            pacing_label: constrained
             pacing_pct: 87
             pacing_unknown: false
             platform_campaign_id: "24183781329"
@@ -8065,15 +7910,15 @@ definitions:
             brief_id:
                 type: string
                 description: Owning brief
-                example: Distinctio ea.
+                example: Fuga et id voluptatem et et et.
             id:
                 type: string
                 description: Audience UUID
-                example: Et ad et.
+                example: In voluptate quam delectus optio saepe.
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                example: Eligendi voluptatem repellat consectetur alias reiciendis voluptas.
+                example: Voluptatem veritatis.
             platform:
                 type: string
                 description: Platform the audience is built on
@@ -8083,15 +7928,15 @@ definitions:
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Iste earum.
+                example: Ad et doloribus ex dolor quia.
             project_id:
                 type: string
                 description: Owning project
-                example: Ex dolor quia et dolores.
+                example: Aliquam vel cum alias iusto.
             status:
                 type: string
                 description: Build lifecycle status
-                example: building
+                example: failed
                 enum:
                     - building
                     - built
@@ -8100,29 +7945,29 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: Laboriosam maxime nemo.
+                    example: Dolores commodi distinctio ea dignissimos ab.
                 description: Platform suppression list ids applied to the master
                 example:
-                    - Architecto error consequatur nam veniam.
-                    - Est a et quia voluptatem.
-                    - Molestiae similique optio et corporis.
+                    - Consequatur laboriosam.
+                    - Nemo atque velit architecto.
+                    - Consequatur nam veniam ipsum est a et.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 2029869701188910276
+                example: 9033899472371437363
                 format: int64
         example:
-            brief_id: Enim rem modi.
-            id: Quis nostrum quod rerum.
-            inclusion_summary: Modi eveniet.
+            brief_id: Cumque est quis nostrum quod.
+            id: Et corporis error eligendi voluptatem repellat consectetur.
+            inclusion_summary: Eveniet fuga quaerat sed et modi.
             platform: hubspot
-            platform_master_list_id: Atque quo sit iure quos.
-            project_id: Enim doloribus et.
-            status: failed
+            platform_master_list_id: Enim doloribus et.
+            project_id: Reiciendis voluptas.
+            status: building
             suppression_list_ids:
-                - Facere debitis quo.
-                - Fuga quaerat sed.
-            version: 466512809077515709
+                - Rem modi omnis repellendus atque quo.
+                - Iure quos aut eligendi facere debitis.
+            version: 6286047277745250482
         required:
             - id
             - project_id
@@ -8137,7 +7982,7 @@ definitions:
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                example: Reprehenderit consectetur quis inventore iste nemo rerum.
+                example: Incidunt in.
             platform:
                 type: string
                 description: Platform the audience is built on
@@ -8147,11 +7992,11 @@ definitions:
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Deserunt eligendi rerum architecto necessitatibus alias.
+                example: Neque deserunt eligendi rerum.
             status:
                 type: string
                 description: Build lifecycle status
-                example: failed
+                example: building
                 enum:
                     - building
                     - built
@@ -8160,22 +8005,20 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: Vitae sapiente dolor unde harum dolorem iusto.
+                    example: Necessitatibus alias.
                 description: Platform suppression list ids applied to the master
                 example:
+                    - Sapiente dolor unde harum dolorem iusto quia.
                     - Eos doloremque qui repellendus.
-                    - Incidunt in.
-                    - Ea et nesciunt et culpa similique.
-                    - Ratione ut laboriosam dolorem ut dolorem odio.
         example:
-            inclusion_summary: Enim distinctio et corrupti magnam deleniti nam.
+            inclusion_summary: Repellat nemo excepturi iusto in.
             platform: hubspot
-            platform_master_list_id: Excepturi iusto in.
-            status: failed
+            platform_master_list_id: Nesciunt et culpa similique.
+            status: built
             suppression_list_ids:
-                - In odio rem aliquam voluptatem.
-                - Et eveniet eaque non architecto aut.
-                - Quo voluptate.
+                - Ut laboriosam.
+                - Ut dolorem odio aut.
+                - Consectetur quis inventore iste nemo rerum.
         required:
             - platform
     AudienceUpdateInput:
@@ -8189,15 +8032,15 @@ definitions:
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                example: Nemo adipisci deleniti.
+                example: Dolorem impedit sint consequatur.
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Ut voluptatibus qui qui officia.
+                example: Rem aliquam voluptatem.
             status:
                 type: string
                 description: Build lifecycle status
-                example: failed
+                example: built
                 enum:
                     - building
                     - built
@@ -8206,22 +8049,22 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: Alias quis voluptates nihil odio facere magnam.
+                    example: Et eveniet eaque non architecto aut.
                 description: Platform suppression list ids applied to the master
                 example:
-                    - Impedit sint consequatur quisquam nihil labore.
-                    - Illum in.
-                    - Magnam corporis.
-                    - Sed laboriosam placeat nesciunt tempore porro.
+                    - Voluptate repudiandae enim distinctio et corrupti.
+                    - Deleniti nam laboriosam esse temporibus eaque ut.
+                    - Qui qui officia.
+                    - Alias quis voluptates nihil odio facere magnam.
         description: 'Partial update for a campaign audience; only supplied fields change. IMMUTABILITY: once the audience records the HubSpot portal its lists were built in, platform_master_list_id and suppression_list_ids are frozen and a request that would CHANGE either is refused 409 with reason=audience_provenance_immutable; the remedy is to rebuild the audience, which re-creates its lists under the current connection. Re-sending the values a read returned is not a change and is never refused, suppression ids are compared as a set so reordering them is also not a change, and status and inclusion_summary stay editable throughout. The reason it cannot be relaxed: a PATCH carries ids rather than a credential, so the service cannot verify which portal new ids belong to, and dispatch checks the recorded portal against the connection it resolves rather than against the ids -- so an unverified change would be APPROVED at send time. Audiences created before provenance existed record no portal, are not backfilled, and remain fully editable.'
         example:
             clear_suppression_lists: false
-            inclusion_summary: Quia quod.
-            platform_master_list_id: Molestias aliquid dolorum consequatur est qui qui.
+            inclusion_summary: Officia suscipit qui molestias aliquid dolorum consequatur.
+            platform_master_list_id: Accusamus illum in delectus magnam corporis velit.
             status: building
             suppression_list_ids:
-                - Aut dolores dolores.
-                - Debitis optio enim repellendus.
+                - Placeat nesciunt.
+                - Porro voluptatum nemo adipisci.
         required:
             - platform
     BadRequestError:
@@ -8249,7 +8092,7 @@ definitions:
         properties:
             copy:
                 description: Ad copy
-                example: Delectus nisi minima quas voluptatem consequuntur.
+                example: Natus enim non.
             delivery_type:
                 type: string
                 description: Delivery surface this brief was authored for.
@@ -8259,33 +8102,31 @@ definitions:
                     - email
             event_details:
                 description: Extracted event/course details
-                example: Ea in sunt odit aspernatur.
+                example: Suscipit consequatur iure dolor sit quis ut.
             event_slug:
                 type: string
                 description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
-                example: Temporibus facere sit.
+                example: Ea et sequi aperiam impedit omnis explicabo.
             id:
                 type: string
                 description: Brief UUID
-                example: Ea et sequi aperiam impedit omnis explicabo.
+                example: Ducimus enim aut dolores dolores sed.
             keywords:
                 description: Keyword list
-                example: Doloribus similique et.
+                example: Ut est est mollitia.
             platforms:
                 type: array
                 items:
                     type: string
-                    example: Et consequuntur id libero sunt.
+                    example: Enim temporibus facere.
                 description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                 example:
-                    - Consequatur iure dolor sit quis ut amet.
-                    - Enim non vitae.
-                    - Est est mollitia.
-                    - Corporis omnis.
+                    - Corporis tenetur delectus excepturi et a.
+                    - Et consequuntur id libero sunt.
             program_type:
                 type: string
                 description: Funnel context
-                example: membership
+                example: education
                 enum:
                     - events
                     - education
@@ -8293,7 +8134,7 @@ definitions:
             project_id:
                 type: string
                 description: Owning project
-                example: Et et commodi autem.
+                example: Optio enim repellendus commodi quia quod sit.
             stage:
                 type: string
                 description: Stage within an email series. Empty for paid, which has no series.
@@ -8309,41 +8150,40 @@ definitions:
             status:
                 type: string
                 description: Lifecycle status
-                example: draft
+                example: archived
                 enum:
                     - draft
                     - approved
                     - archived
             targeting:
                 description: Targeting recommendation
-                example: Animi reprehenderit inventore aliquam dolorem voluptas autem.
+                example: Corporis omnis.
             url:
                 type: string
                 description: Event/course page URL
-                example: Corporis tenetur delectus excepturi et a.
+                example: Et et commodi autem.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 6659445586352284087
+                example: 69798951378578078
                 format: int64
         example:
-            copy: Maiores similique.
+            copy: Facere dolorum rem laborum dolor provident.
             delivery_type: email
-            event_details: Aut minima inventore tenetur qui quam aliquid.
-            event_slug: Exercitationem sapiente a animi laborum.
-            id: Enim eum.
-            keywords: Vel et.
+            event_details: Voluptas earum provident qui.
+            event_slug: Inventore aliquam dolorem.
+            id: Sunt odit aspernatur exercitationem delectus nisi minima.
+            keywords: Odio aut suscipit.
             platforms:
-                - Laborum dolor.
-                - Neque odio.
-                - Suscipit vitae vitae voluptas.
-            program_type: education
-            project_id: Rem illum totam autem.
+                - Eum ut rem illum.
+                - Autem ratione est exercitationem sapiente a animi.
+            program_type: events
+            project_id: Voluptatem consequuntur dolore doloribus similique et et.
             stage: Registration Push
-            status: draft
-            targeting: Corporis accusamus optio consequatur excepturi rerum.
-            url: Earum provident qui odio facere.
-            version: 27434947523218054
+            status: archived
+            targeting: Vitae voluptas fuga aut minima inventore tenetur.
+            url: Autem enim aut.
+            version: 6745596384904401170
         required:
             - id
             - project_id
@@ -8359,7 +8199,7 @@ definitions:
         properties:
             copy:
                 description: Ad copy
-                example: Minima optio.
+                example: Deleniti dolorem voluptas harum soluta repudiandae quisquam.
             delivery_type:
                 type: string
                 description: Delivery surface this brief was authored for.
@@ -8369,29 +8209,29 @@ definitions:
                     - email
             event_details:
                 description: Extracted event/course details
-                example: Ratione architecto corporis totam et.
+                example: Accusamus aut deleniti libero veritatis cum.
             event_slug:
                 type: string
                 description: Event/course slug. Unique with delivery_type and stage, not alone.
-                example: 3d
+                example: "2"
                 minLength: 1
             keywords:
                 description: Keyword list
-                example: Tempora magnam ea repellat qui.
+                example: Quidem perferendis.
             platforms:
                 type: array
                 items:
                     type: string
-                    example: Iure consectetur libero.
+                    example: Optio consequatur excepturi rerum dolores.
                 description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                 example:
-                    - Aut deleniti libero veritatis cum.
-                    - Deleniti dolorem voluptas harum soluta repudiandae quisquam.
-                    - Quidem perferendis.
+                    - Dolores delectus architecto.
+                    - Velit eligendi omnis est vel est et.
+                    - Iure consectetur libero.
             program_type:
                 type: string
                 description: Funnel context
-                example: membership
+                example: events
                 enum:
                     - events
                     - education
@@ -8410,24 +8250,25 @@ definitions:
                     - Post-Event
             targeting:
                 description: Targeting recommendation
-                example: Eveniet dolor necessitatibus est mollitia.
+                example: Ratione architecto corporis totam et.
             url:
                 type: string
                 description: Event/course page URL
-                example: Velit eligendi omnis est vel est et.
+                example: Ab vel et libero corporis.
         example:
-            copy: Culpa sit.
+            copy: Eum iure aut eaque autem possimus.
             delivery_type: email
-            event_details: Eaque autem possimus asperiores recusandae deserunt ratione.
-            event_slug: wi
-            keywords: Dolore esse quos quis.
+            event_details: Qui omnis et blanditiis asperiores.
+            event_slug: ux
+            keywords: Recusandae deserunt ratione eius culpa sit.
             platforms:
-                - Et blanditiis.
-                - Vel eum iure.
-            program_type: membership
+                - Mollitia nulla.
+                - Dolorem necessitatibus blanditiis.
+                - Eligendi tempora reprehenderit eveniet in.
+            program_type: education
             stage: Registration Push
-            targeting: Voluptas sed ut dolor.
-            url: Rerum eligendi tempora reprehenderit eveniet in aliquid.
+            targeting: Dolore esse quos quis.
+            url: Magnam ea repellat qui ducimus eveniet dolor.
         required:
             - program_type
             - event_slug
@@ -9257,16 +9098,16 @@ definitions:
             brief_id:
                 type: string
                 description: Parent brief
-                example: Aut consequatur rerum est et.
+                example: Doloribus sed vitae.
             byte_size:
                 type: integer
                 description: Size of the stored image in bytes
-                example: 7095377090573010981
+                example: 1841107414194909151
                 format: int64
             checksum:
                 type: string
                 description: Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a brief
-                example: Autem explicabo soluta omnis.
+                example: Rerum est et et aliquid ut.
             created:
                 type: string
                 description: '"true" when this request stored the asset; "false" when an identical upload already existed. Set only on the upload response, where it selects 201 vs 200.'
@@ -9277,27 +9118,27 @@ definitions:
             id:
                 type: string
                 description: Creative asset UUID
-                example: d54f1660-c696-45ee-bf4a-dda9259aa455
+                example: d54f1660-136d-4c99-ad8b-c72ec2e9a51c
                 format: uuid
             mime_type:
                 type: string
                 description: Stored image MIME type, as verified from the bytes (not merely the declared header)
-                example: image/png
+                example: image/jpeg
                 enum:
                     - image/png
                     - image/jpeg
             project_id:
                 type: string
                 description: Owning project
-                example: Doloribus sed vitae.
+                example: Mollitia est repellendus et.
         example:
-            brief_id: Deserunt quia vero.
+            brief_id: Ut qui minima nemo deserunt quia vero.
             byte_size: 3318397650999369152
             checksum: Magni quod veritatis voluptatem voluptatibus itaque laborum.
             created: "true"
-            id: 0cc514ea-7213-410d-9480-b2f344cbaa98
+            id: 2b892614-cc36-4deb-b72f-28a9b9322901
             mime_type: image/png
-            project_id: Hic tempore voluptatem ut qui minima.
+            project_id: Consequuntur possimus corporis molestiae hic tempore.
         required:
             - id
             - project_id
@@ -9395,11 +9236,11 @@ definitions:
             description:
                 type: string
                 description: Event description
-                example: Enim modi ut esse numquam.
+                example: Voluptas sed ut dolor.
             end_date:
                 type: string
                 description: Event end date, same caveat as start_date
-                example: Perspiciatis neque ab commodi nesciunt.
+                example: Aperiam placeat odio.
             event_name:
                 type: string
                 description: Event name
@@ -9407,7 +9248,7 @@ definitions:
             extracted_from:
                 type: string
                 description: Which strategy produced this record — the whole record came from exactly one of them
-                example: opengraph
+                example: fallback
                 enum:
                     - jsonld
                     - opengraph
@@ -9415,28 +9256,28 @@ definitions:
             image:
                 type: string
                 description: Event image URL
-                example: Facilis est pariatur.
+                example: Perspiciatis neque ab commodi nesciunt.
             location:
                 type: string
                 description: Event location as written on the page — free text, not a resolved place
-                example: Laborum aut nobis ex exercitationem.
+                example: Enim modi ut esse numquam.
             start_date:
                 type: string
                 description: Event start date exactly as the page states it; NOT normalised to RFC 3339, because the source rarely is
-                example: Aperiam placeat odio.
+                example: Laborum aut nobis ex exercitationem.
             url:
                 type: string
                 description: 'The event''s own landing page, as the page declares it (JSON-LD url / og:url), falling back to the URL that was fetched when it declares none. NOT necessarily the fetched URL: a caller commonly pastes a link carrying tracking parameters, and the page''s declared canonical is the better destination for an ad'
-                example: Numquam inventore qui exercitationem eos reprehenderit sapiente.
+                example: Facilis est pariatur.
         example:
-            description: Voluptates pariatur facilis nostrum sint enim.
-            end_date: Est culpa eos sed sed est.
+            description: Inventore qui exercitationem eos reprehenderit sapiente necessitatibus.
+            end_date: Eaque consequatur possimus qui est numquam omnis.
             event_name: KubeCon + CloudNativeCon Europe 2026
             extracted_from: fallback
-            image: Non suscipit quisquam.
-            location: Unde natus ipsam amet.
-            start_date: Eaque consequatur possimus qui est numquam omnis.
-            url: In et explicabo possimus sit.
+            image: Est culpa eos sed sed est.
+            location: Voluptates pariatur facilis nostrum sint enim.
+            start_date: Unde natus ipsam amet.
+            url: Non suscipit quisquam.
         required:
             - extracted_from
     GoogleAdsAudience:
@@ -10317,14 +10158,14 @@ definitions:
                 $ref: '#/definitions/AudienceInput'
         example:
             audience:
-                inclusion_summary: Fugit provident officia officiis.
+                inclusion_summary: Et aut consequatur inventore enim reiciendis.
                 platform: hubspot
-                platform_master_list_id: Ullam omnis autem.
-                status: failed
+                platform_master_list_id: Perferendis autem ut alias quis nihil dolore.
+                status: building
                 suppression_list_ids:
-                    - Laboriosam nihil ea quod et.
-                    - Consequatur inventore enim reiciendis.
-                    - Neque ut rerum facilis quia molestiae ratione.
+                    - Et aut animi.
+                    - Ullam omnis autem.
+                    - Id laboriosam nihil ea.
         required:
             - audience
     LfxV2CampaignServiceAudiencesListAudiencesResponseBody:
@@ -10372,8 +10213,44 @@ definitions:
                         - Quam et eos quaerat rem.
                         - Fuga aut est dolor.
                       version: 1995168378618678740
+                    - brief_id: Magni repudiandae.
+                      etag: Totam ut illo.
+                      id: Dignissimos non sed omnis officiis et.
+                      inclusion_summary: Corporis voluptas cupiditate ut.
+                      platform: hubspot
+                      platform_master_list_id: Corrupti repellat eius ut qui nobis.
+                      project_id: Laboriosam qui id enim.
+                      status: built
+                      suppression_list_ids:
+                        - Quam et eos quaerat rem.
+                        - Fuga aut est dolor.
+                      version: 1995168378618678740
         example:
             audiences:
+                - brief_id: Magni repudiandae.
+                  etag: Totam ut illo.
+                  id: Dignissimos non sed omnis officiis et.
+                  inclusion_summary: Corporis voluptas cupiditate ut.
+                  platform: hubspot
+                  platform_master_list_id: Corrupti repellat eius ut qui nobis.
+                  project_id: Laboriosam qui id enim.
+                  status: built
+                  suppression_list_ids:
+                    - Quam et eos quaerat rem.
+                    - Fuga aut est dolor.
+                  version: 1995168378618678740
+                - brief_id: Magni repudiandae.
+                  etag: Totam ut illo.
+                  id: Dignissimos non sed omnis officiis et.
+                  inclusion_summary: Corporis voluptas cupiditate ut.
+                  platform: hubspot
+                  platform_master_list_id: Corrupti repellat eius ut qui nobis.
+                  project_id: Laboriosam qui id enim.
+                  status: built
+                  suppression_list_ids:
+                    - Quam et eos quaerat rem.
+                    - Fuga aut est dolor.
+                  version: 1995168378618678740
                 - brief_id: Magni repudiandae.
                   etag: Totam ut illo.
                   id: Dignissimos non sed omnis officiis et.

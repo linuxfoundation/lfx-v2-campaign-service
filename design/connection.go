@@ -938,26 +938,15 @@ var HubSpotConnection = Type("hubspot-connection", func() {
 	commonConnectionRequired()
 })
 
-// AccountMonitorAdGroup is a Google Ads-only nesting level under AccountMonitorCampaign: one
-// ad group and the keywords under it. LinkedIn, Meta and Reddit rows never populate it — see
-// AccountMonitorCampaign's own doc comment.
-var AccountMonitorAdGroup = Type("account-monitor-ad-group", func() {
-	Attribute("ad_group_id", String, "The ad group's platform id.", func() { Example("135792468") })
-	Attribute("name", String, "The ad group's display name.", func() { Example("Registration - Exact") })
-	Attribute("keywords", ArrayOf(String), "The keyword text served under this ad group.")
-	Required("ad_group_id", "name", "keywords")
-})
-
 // AccountMonitorCampaign is one campaign row from the account-scoped monitor read, mirroring
 // model.AccountCampaignMetrics plus the rule engine's per-row pacing output
 // (model.AccountMonitorRow). One shared type across all four platforms rather than a
 // per-provider result, matching AccessibleAccount above — Goa cannot express a per-platform
 // result union, so the house convention is one method per platform sharing one result shape.
 //
-// campaign_url and ad_groups are Google Ads only, and declared Optional for that reason: no
-// other platform's rule engine or dispatcher produces them, so LinkedIn/Meta/Reddit rows never
-// set them. A caller must treat their absence as "not applicable to this platform", not as a
-// missing read.
+// campaign_url is Google Ads only, and declared Optional for that reason: no other platform's
+// rule engine or dispatcher produces it, so LinkedIn/Meta/Reddit rows never set it. A caller
+// must treat its absence as "not applicable to this platform", not as a missing read.
 var AccountMonitorCampaign = Type("account-monitor-campaign", func() {
 	Attribute("platform_campaign_id", String, "The id the platform assigned to this campaign.", func() { Example("24183781329") })
 	Attribute("name", String, "The campaign's platform-side name, unparsed.", func() { Example("KubeCon NA 2026 - Search") })
@@ -979,7 +968,6 @@ var AccountMonitorCampaign = Type("account-monitor-campaign", func() {
 	Attribute("pacing_pct", Float64, "spend / expected-spend * 100. Meaningless when pacing_unknown is true.", func() { Example(87) })
 	Attribute("pacing_label", String, "The pacing classification derived from pacing_pct. Meaningless when pacing_unknown is true — a fetch-failed row keeps the placeholder value \"normal\" rather than carrying no label at all, since the enum has no unknown member.", func() { Enum("normal", "underspending", "constrained", "overspending") })
 	Attribute("campaign_url", String, "Google Ads only: direct link to the campaign in the Google Ads UI.", func() { Example("https://ads.google.com/aw/campaigns?campaignId=24183781329") })
-	Attribute("ad_groups", ArrayOf(AccountMonitorAdGroup), "Google Ads only: the ad-group/keyword nesting under this campaign.")
 	Required("platform_campaign_id", "name", "status", "spend", "impressions", "clicks", "ctr",
 		"budget_day", "total_budget", "start_date", "end_date", "pacing_unknown",
 		"is_search_channel", "fetch_failed", "pacing_pct", "pacing_label")

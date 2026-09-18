@@ -308,3 +308,24 @@ func TestMonitorAccount_ContractViolationFallsBackToRowSum(t *testing.T) {
 			"contract violation, so this row sum stands in for a platform-native figure that was expected")
 	}
 }
+
+// TestToConnAccountMonitorCampaign_CampaignURL pins the round-21-review fix (PR #215 comment
+// #4): a Google row's CampaignURL must come through as a non-nil pointer on the response, and
+// every other platform's empty CampaignURL must stay nil rather than becoming an empty-string
+// pointer — the same optional-field convention CampaignID/CampaignName already use.
+func TestToConnAccountMonitorCampaign_CampaignURL(t *testing.T) {
+	withURL := toConnAccountMonitorCampaign(model.AccountMonitorRow{
+		Metrics: model.AccountCampaignMetrics{PlatformCampaignID: "24183781329",
+			CampaignURL: "https://ads.google.com/aw/campaigns?campaignId=24183781329"},
+	})
+	if withURL.CampaignURL == nil || *withURL.CampaignURL != "https://ads.google.com/aw/campaigns?campaignId=24183781329" {
+		t.Errorf("CampaignURL = %v, want a non-nil pointer to the Google Ads URL", withURL.CampaignURL)
+	}
+
+	withoutURL := toConnAccountMonitorCampaign(model.AccountMonitorRow{
+		Metrics: model.AccountCampaignMetrics{PlatformCampaignID: "reddit-1"},
+	})
+	if withoutURL.CampaignURL != nil {
+		t.Errorf("CampaignURL = %v, want nil for a platform row with no campaign_url", *withoutURL.CampaignURL)
+	}
+}

@@ -4898,19 +4898,6 @@ type AccountMonitorCampaignResponseBody struct {
 	PacingLabel *string `form:"pacing_label,omitempty" json:"pacing_label,omitempty" xml:"pacing_label,omitempty"`
 	// Google Ads only: direct link to the campaign in the Google Ads UI.
 	CampaignURL *string `form:"campaign_url,omitempty" json:"campaign_url,omitempty" xml:"campaign_url,omitempty"`
-	// Google Ads only: the ad-group/keyword nesting under this campaign.
-	AdGroups []*AccountMonitorAdGroupResponseBody `form:"ad_groups,omitempty" json:"ad_groups,omitempty" xml:"ad_groups,omitempty"`
-}
-
-// AccountMonitorAdGroupResponseBody is used to define fields on response body
-// types.
-type AccountMonitorAdGroupResponseBody struct {
-	// The ad group's platform id.
-	AdGroupID *string `form:"ad_group_id,omitempty" json:"ad_group_id,omitempty" xml:"ad_group_id,omitempty"`
-	// The ad group's display name.
-	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
-	// The keyword text served under this ad group.
-	Keywords []string `form:"keywords,omitempty" json:"keywords,omitempty" xml:"keywords,omitempty"`
 }
 
 // AccountMonitorActionItemResponseBody is used to define fields on response
@@ -15941,28 +15928,6 @@ func ValidateAccountMonitorCampaignResponseBody(body *AccountMonitorCampaignResp
 		if !(*body.PacingLabel == "normal" || *body.PacingLabel == "underspending" || *body.PacingLabel == "constrained" || *body.PacingLabel == "overspending") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.pacing_label", *body.PacingLabel, []any{"normal", "underspending", "constrained", "overspending"}))
 		}
-	}
-	for _, e := range body.AdGroups {
-		if e != nil {
-			if err2 := ValidateAccountMonitorAdGroupResponseBody(e); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-	return
-}
-
-// ValidateAccountMonitorAdGroupResponseBody runs the validations defined on
-// account-monitor-ad-groupResponseBody
-func ValidateAccountMonitorAdGroupResponseBody(body *AccountMonitorAdGroupResponseBody) (err error) {
-	if body.AdGroupID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("ad_group_id", "body"))
-	}
-	if body.Name == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
-	}
-	if body.Keywords == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("keywords", "body"))
 	}
 	return
 }

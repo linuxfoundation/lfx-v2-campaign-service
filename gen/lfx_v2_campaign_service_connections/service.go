@@ -411,15 +411,6 @@ type AccountMonitorActionItem struct {
 	Action string
 }
 
-type AccountMonitorAdGroup struct {
-	// The ad group's platform id.
-	AdGroupID string
-	// The ad group's display name.
-	Name string
-	// The keyword text served under this ad group.
-	Keywords []string
-}
-
 type AccountMonitorCampaign struct {
 	// The id the platform assigned to this campaign.
 	PlatformCampaignID string
@@ -470,8 +461,6 @@ type AccountMonitorCampaign struct {
 	PacingLabel string
 	// Google Ads only: direct link to the campaign in the Google Ads UI.
 	CampaignURL *string
-	// Google Ads only: the ad-group/keyword nesting under this campaign.
-	AdGroups []*AccountMonitorAdGroup
 }
 
 type AccountMonitorTotals struct {

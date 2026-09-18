@@ -22,8 +22,13 @@ reaches), not project-scoped ones.
   computes an explicit date range rather than snapping to a fixed enum, and
   the port preserves that so the numbers match exactly.
 - One shared `AccountMonitor` result type (`design/connection.go`); Google's
-  richer per-campaign fields (`campaign_url`, ad-group/keyword nesting) are
-  `Optional` and documented Google-only.
+  richer per-campaign field (`campaign_url`, a direct link built by
+  `buildGoogleAdsCampaignURL` in `internal/dispatch/googleads.go`, mirroring
+  the BFF's `buildGoogleAdsUrl`) is `Optional` and documented Google-only. An
+  earlier draft also declared a speculative `ad_groups`/`AccountMonitorAdGroup`
+  nesting; removed (2026-09-18) once the BFF source showed no ad-group/keyword
+  data exists anywhere in the monitor response being ported — only in a
+  wholly separate `getKeywords` endpoint.
 - `internal/service/orchestrator.go`'s `AccountMetricsReader` capability +
   `Orchestrator.ReadAccountCampaignMetrics` follow the same optional-capability,
   type-assertion pattern as `AccountLister`/`MetricsReader`.

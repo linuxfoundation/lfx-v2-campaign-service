@@ -105,6 +105,11 @@ type AccountCampaignMetrics struct {
 	// verdict exists to preserve. Renderers MUST check this before treating zero metrics as
 	// a real reading.
 	FetchFailed bool
+	// CampaignURL is Google Ads only: a direct link to the campaign in the Google Ads UI,
+	// matching the BFF's buildGoogleAdsUrl(campaignId) =
+	// "https://ads.google.com/aw/campaigns?campaignId=<id>". Empty for every other platform's
+	// rows, and for a Google row with no PlatformCampaignID.
+	CampaignURL string
 }
 
 // AccountMonitorActionItem is one rule-engine finding for a single campaign (or, on

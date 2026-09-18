@@ -9009,39 +9009,6 @@ func marshalLfxv2campaignserviceconnectionsAccountMonitorCampaignToAccountMonito
 		PacingLabel:        v.PacingLabel,
 		CampaignURL:        v.CampaignURL,
 	}
-	if v.AdGroups != nil {
-		res.AdGroups = make([]*AccountMonitorAdGroupResponseBody, len(v.AdGroups))
-		for i, val := range v.AdGroups {
-			if val == nil {
-				res.AdGroups[i] = nil
-				continue
-			}
-			res.AdGroups[i] = marshalLfxv2campaignserviceconnectionsAccountMonitorAdGroupToAccountMonitorAdGroupResponseBody(val)
-		}
-	}
-
-	return res
-}
-
-// marshalLfxv2campaignserviceconnectionsAccountMonitorAdGroupToAccountMonitorAdGroupResponseBody
-// builds a value of type *AccountMonitorAdGroupResponseBody from a value of
-// type *lfxv2campaignserviceconnections.AccountMonitorAdGroup.
-func marshalLfxv2campaignserviceconnectionsAccountMonitorAdGroupToAccountMonitorAdGroupResponseBody(v *lfxv2campaignserviceconnections.AccountMonitorAdGroup) *AccountMonitorAdGroupResponseBody {
-	if v == nil {
-		return nil
-	}
-	res := &AccountMonitorAdGroupResponseBody{
-		AdGroupID: v.AdGroupID,
-		Name:      v.Name,
-	}
-	if v.Keywords != nil {
-		res.Keywords = make([]string, len(v.Keywords))
-		for i, val := range v.Keywords {
-			res.Keywords[i] = val
-		}
-	} else {
-		res.Keywords = []string{}
-	}
 
 	return res
 }

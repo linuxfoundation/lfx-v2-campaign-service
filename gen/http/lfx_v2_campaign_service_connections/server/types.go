@@ -4727,19 +4727,6 @@ type AccountMonitorCampaignResponseBody struct {
 	PacingLabel string `form:"pacing_label" json:"pacing_label" xml:"pacing_label"`
 	// Google Ads only: direct link to the campaign in the Google Ads UI.
 	CampaignURL *string `form:"campaign_url,omitempty" json:"campaign_url,omitempty" xml:"campaign_url,omitempty"`
-	// Google Ads only: the ad-group/keyword nesting under this campaign.
-	AdGroups []*AccountMonitorAdGroupResponseBody `form:"ad_groups,omitempty" json:"ad_groups,omitempty" xml:"ad_groups,omitempty"`
-}
-
-// AccountMonitorAdGroupResponseBody is used to define fields on response body
-// types.
-type AccountMonitorAdGroupResponseBody struct {
-	// The ad group's platform id.
-	AdGroupID string `form:"ad_group_id" json:"ad_group_id" xml:"ad_group_id"`
-	// The ad group's display name.
-	Name string `form:"name" json:"name" xml:"name"`
-	// The keyword text served under this ad group.
-	Keywords []string `form:"keywords" json:"keywords" xml:"keywords"`
 }
 
 // AccountMonitorActionItemResponseBody is used to define fields on response

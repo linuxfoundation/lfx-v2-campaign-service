@@ -921,9 +921,20 @@ func (d *GoogleAdsDispatcher) ListAccountCampaignMetrics(ctx context.Context, pr
 			// doc comment); StartDate/EndDate are left empty and PacingUnknown false —
 			// monitor_google.go's pacing formula does not consult flight dates at all.
 			FetchFailed: r.FetchFailed,
+			CampaignURL: buildGoogleAdsCampaignURL(r.CampaignID),
 		})
 	}
 	return out, nil
+}
+
+// buildGoogleAdsCampaignURL ports the BFF's buildGoogleAdsUrl(campaignId): a direct link to
+// the campaign in the Google Ads UI. Empty campaignID (should not happen for a real row) yields
+// no URL rather than a malformed one.
+func buildGoogleAdsCampaignURL(campaignID string) string {
+	if campaignID == "" {
+		return ""
+	}
+	return "https://ads.google.com/aw/campaigns?campaignId=" + campaignID
 }
 
 // googleAdsRunStatus maps the service's run-state vocabulary to Google's campaign status.

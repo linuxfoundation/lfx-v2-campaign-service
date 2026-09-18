@@ -11785,36 +11785,6 @@ func unmarshalAccountMonitorCampaignResponseBodyToLfxv2campaignserviceconnection
 		PacingLabel:        *v.PacingLabel,
 		CampaignURL:        v.CampaignURL,
 	}
-	if v.AdGroups != nil {
-		res.AdGroups = make([]*lfxv2campaignserviceconnections.AccountMonitorAdGroup, len(v.AdGroups))
-		for i, val := range v.AdGroups {
-			if val == nil {
-				res.AdGroups[i] = nil
-				continue
-			}
-			res.AdGroups[i] = unmarshalAccountMonitorAdGroupResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorAdGroup(val)
-		}
-	}
-
-	return res
-}
-
-// unmarshalAccountMonitorAdGroupResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorAdGroup
-// builds a value of type
-// *lfxv2campaignserviceconnections.AccountMonitorAdGroup from a value of type
-// *AccountMonitorAdGroupResponseBody.
-func unmarshalAccountMonitorAdGroupResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorAdGroup(v *AccountMonitorAdGroupResponseBody) *lfxv2campaignserviceconnections.AccountMonitorAdGroup {
-	if v == nil {
-		return nil
-	}
-	res := &lfxv2campaignserviceconnections.AccountMonitorAdGroup{
-		AdGroupID: *v.AdGroupID,
-		Name:      *v.Name,
-	}
-	res.Keywords = make([]string, len(v.Keywords))
-	for i, val := range v.Keywords {
-		res.Keywords[i] = val
-	}
 
 	return res
 }

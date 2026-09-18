@@ -2986,3 +2986,15 @@ func TestGoogleAds_ListAccountCampaignMetrics_RefusesSystemFallback(t *testing.T
 			"report the project as having no connection of its own", err)
 	}
 }
+
+// TestBuildGoogleAdsCampaignURL pins the round-21-review fix (PR #215 comment #4): a Google
+// monitor row must carry the same campaign_url the BFF's buildGoogleAdsUrl(campaignId) built,
+// so a renderer can link straight to the campaign in the Google Ads UI.
+func TestBuildGoogleAdsCampaignURL(t *testing.T) {
+	if got, want := buildGoogleAdsCampaignURL("24183781329"), "https://ads.google.com/aw/campaigns?campaignId=24183781329"; got != want {
+		t.Errorf("buildGoogleAdsCampaignURL(%q) = %q, want %q", "24183781329", got, want)
+	}
+	if got := buildGoogleAdsCampaignURL(""); got != "" {
+		t.Errorf("buildGoogleAdsCampaignURL(\"\") = %q, want empty string", got)
+	}
+}
