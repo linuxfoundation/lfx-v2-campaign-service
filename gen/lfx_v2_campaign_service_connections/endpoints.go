@@ -69,6 +69,10 @@ type Endpoints struct {
 	ListHubspotEmails         goa.Endpoint
 	SearchHubspotCampaigns    goa.Endpoint
 	CreateHubspotCampaign     goa.Endpoint
+	MonitorGoogleAdsAccount   goa.Endpoint
+	MonitorLinkedinAdsAccount goa.Endpoint
+	MonitorMetaAdsAccount     goa.Endpoint
+	MonitorRedditAdsAccount   goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "lfx-v2-campaign-service-connections"
@@ -130,6 +134,10 @@ func NewEndpoints(s Service) *Endpoints {
 		ListHubspotEmails:         NewListHubspotEmailsEndpoint(s, a.JWTAuth),
 		SearchHubspotCampaigns:    NewSearchHubspotCampaignsEndpoint(s, a.JWTAuth),
 		CreateHubspotCampaign:     NewCreateHubspotCampaignEndpoint(s, a.JWTAuth),
+		MonitorGoogleAdsAccount:   NewMonitorGoogleAdsAccountEndpoint(s, a.JWTAuth),
+		MonitorLinkedinAdsAccount: NewMonitorLinkedinAdsAccountEndpoint(s, a.JWTAuth),
+		MonitorMetaAdsAccount:     NewMonitorMetaAdsAccountEndpoint(s, a.JWTAuth),
+		MonitorRedditAdsAccount:   NewMonitorRedditAdsAccountEndpoint(s, a.JWTAuth),
 	}
 }
 
@@ -189,6 +197,10 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ListHubspotEmails = m(e.ListHubspotEmails)
 	e.SearchHubspotCampaigns = m(e.SearchHubspotCampaigns)
 	e.CreateHubspotCampaign = m(e.CreateHubspotCampaign)
+	e.MonitorGoogleAdsAccount = m(e.MonitorGoogleAdsAccount)
+	e.MonitorLinkedinAdsAccount = m(e.MonitorLinkedinAdsAccount)
+	e.MonitorMetaAdsAccount = m(e.MonitorMetaAdsAccount)
+	e.MonitorRedditAdsAccount = m(e.MonitorRedditAdsAccount)
 }
 
 // NewCreateGoogleAdsEndpoint returns an endpoint function that calls the
@@ -1431,5 +1443,101 @@ func NewCreateHubspotCampaignEndpoint(s Service, authJWTFn security.AuthJWTFunc)
 			return nil, err
 		}
 		return s.CreateHubspotCampaign(ctx, p)
+	}
+}
+
+// NewMonitorGoogleAdsAccountEndpoint returns an endpoint function that calls
+// the method "monitor-google-ads-account" of service
+// "lfx-v2-campaign-service-connections".
+func NewMonitorGoogleAdsAccountEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*MonitorGoogleAdsAccountPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.MonitorGoogleAdsAccount(ctx, p)
+	}
+}
+
+// NewMonitorLinkedinAdsAccountEndpoint returns an endpoint function that calls
+// the method "monitor-linkedin-ads-account" of service
+// "lfx-v2-campaign-service-connections".
+func NewMonitorLinkedinAdsAccountEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*MonitorLinkedinAdsAccountPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.MonitorLinkedinAdsAccount(ctx, p)
+	}
+}
+
+// NewMonitorMetaAdsAccountEndpoint returns an endpoint function that calls the
+// method "monitor-meta-ads-account" of service
+// "lfx-v2-campaign-service-connections".
+func NewMonitorMetaAdsAccountEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*MonitorMetaAdsAccountPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.MonitorMetaAdsAccount(ctx, p)
+	}
+}
+
+// NewMonitorRedditAdsAccountEndpoint returns an endpoint function that calls
+// the method "monitor-reddit-ads-account" of service
+// "lfx-v2-campaign-service-connections".
+func NewMonitorRedditAdsAccountEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*MonitorRedditAdsAccountPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.MonitorRedditAdsAccount(ctx, p)
 	}
 }

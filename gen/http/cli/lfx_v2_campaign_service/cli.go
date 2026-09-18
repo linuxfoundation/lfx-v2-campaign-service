@@ -30,14 +30,14 @@ func UsageCommands() []string {
 		"lfx-v2-campaign-service-audiences (create-audience|get-audience|list-audiences|update-audience|build-audience)",
 		"lfx-v2-campaign-service-audience-builder (get-audience-builder-capabilities|discover-audience-lists|search-audience-lists|get-audience-suppression-lists|get-audience-last-sent|get-existing-audience-master-lists|preview-audience-count|compose-audience-master|run-audience-qa)",
 		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|upload-creative-asset|create-campaigns|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|apply-keyword-actions|delete-campaign|get-job)",
-		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|resolve-google-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign)",
+		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|resolve-google-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign|monitor-google-ads-account|monitor-linkedin-ads-account|monitor-meta-ads-account|monitor-reddit-ads-account)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
 	}
 }
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Nostrum corporis quasi magnam.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Quis quam dolor occaecati earum iusto rerum.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Nobis iste qui rerum est sed.\",\n            \"Similique enim ea maiores quidem molestiae.\",\n            \"Omnis ratione expedita voluptatum.\",\n            \"Fuga ipsa.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"8759bcd0-da3b-4166-91a8-e2cc8829e1e7\" --bearer-token \"eyJhbGci...\"" + "\n" +
+	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Nostrum corporis quasi magnam.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Occaecati earum iusto rerum sit cupiditate nobis.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Rerum est sed sed.\",\n            \"Enim ea.\",\n            \"Quidem molestiae deleniti omnis.\",\n            \"Expedita voluptatum commodi fuga ipsa.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"228a7016-da3b-4166-91a8-e2cc8829e1e7\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-audience-builder get-audience-builder-capabilities --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-briefs create-brief --body '{\n      \"brief\": {\n         \"copy\": \"Iste numquam optio possimus velit.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Accusantium voluptas ratione dignissimos esse et labore.\",\n         \"event_slug\": \"rn\",\n         \"keywords\": \"Cumque perspiciatis quam.\",\n         \"platforms\": [\n            \"Magnam cum veritatis mollitia vel velit.\",\n            \"Eum perferendis qui qui soluta repudiandae quae.\",\n            \"Necessitatibus tempore rem quo.\"\n         ],\n         \"program_type\": \"events\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Possimus ipsam perspiciatis enim id.\",\n         \"url\": \"Tempore est omnis iusto fugiat ad.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Ratione provident laborum.\",\n         \"client_secret\": \"Sed voluptatem repudiandae soluta.\",\n         \"developer_token\": \"Et quisquam dolores.\",\n         \"refresh_token\": \"Consequatur porro corrupti magnam omnis.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
@@ -511,6 +511,30 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsCreateHubspotCampaignProjectIDFlag   = lfxV2CampaignServiceConnectionsCreateHubspotCampaignFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsCreateHubspotCampaignBearerTokenFlag = lfxV2CampaignServiceConnectionsCreateHubspotCampaignFlags.String("bearer-token", "", "")
 
+		lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountFlags           = flag.NewFlagSet("monitor-google-ads-account", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountProjectIDFlag   = lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountIDFlag   = lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountFlags.String("account-id", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountDaysFlag        = lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountFlags.String("days", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountBearerTokenFlag = lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountFlags           = flag.NewFlagSet("monitor-linkedin-ads-account", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountProjectIDFlag   = lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountIDFlag   = lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountFlags.String("account-id", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountDaysFlag        = lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountFlags.String("days", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountBearerTokenFlag = lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags           = flag.NewFlagSet("monitor-meta-ads-account", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountProjectIDFlag   = lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountAccountIDFlag   = lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags.String("account-id", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountDaysFlag        = lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags.String("days", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountBearerTokenFlag = lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags           = flag.NewFlagSet("monitor-reddit-ads-account", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountProjectIDFlag   = lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountAccountIDFlag   = lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags.String("account-id", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountDaysFlag        = lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags.String("days", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountBearerTokenFlag = lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags.String("bearer-token", "", "")
+
 		lfxV2CampaignServiceSvcFlags = flag.NewFlagSet("lfx-v2-campaign-service-svc", flag.ContinueOnError)
 
 		lfxV2CampaignServiceSvcReadyzFlags = flag.NewFlagSet("readyz", flag.ExitOnError)
@@ -611,6 +635,10 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsListHubspotEmailsFlags.Usage = lfxV2CampaignServiceConnectionsListHubspotEmailsUsage
 	lfxV2CampaignServiceConnectionsSearchHubspotCampaignsFlags.Usage = lfxV2CampaignServiceConnectionsSearchHubspotCampaignsUsage
 	lfxV2CampaignServiceConnectionsCreateHubspotCampaignFlags.Usage = lfxV2CampaignServiceConnectionsCreateHubspotCampaignUsage
+	lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountFlags.Usage = lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountUsage
+	lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountFlags.Usage = lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountUsage
+	lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags.Usage = lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountUsage
+	lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags.Usage = lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountUsage
 
 	lfxV2CampaignServiceSvcFlags.Usage = lfxV2CampaignServiceSvcUsage
 	lfxV2CampaignServiceSvcReadyzFlags.Usage = lfxV2CampaignServiceSvcReadyzUsage
@@ -931,6 +959,18 @@ func ParseEndpoint(
 			case "create-hubspot-campaign":
 				epf = lfxV2CampaignServiceConnectionsCreateHubspotCampaignFlags
 
+			case "monitor-google-ads-account":
+				epf = lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountFlags
+
+			case "monitor-linkedin-ads-account":
+				epf = lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountFlags
+
+			case "monitor-meta-ads-account":
+				epf = lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags
+
+			case "monitor-reddit-ads-account":
+				epf = lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags
+
 			}
 
 		case "lfx-v2-campaign-service-svc":
@@ -1239,6 +1279,18 @@ func ParseEndpoint(
 			case "create-hubspot-campaign":
 				endpoint = c.CreateHubspotCampaign()
 				data, err = lfxv2campaignserviceconnectionsc.BuildCreateHubspotCampaignPayload(*lfxV2CampaignServiceConnectionsCreateHubspotCampaignBodyFlag, *lfxV2CampaignServiceConnectionsCreateHubspotCampaignProjectIDFlag, *lfxV2CampaignServiceConnectionsCreateHubspotCampaignBearerTokenFlag)
+			case "monitor-google-ads-account":
+				endpoint = c.MonitorGoogleAdsAccount()
+				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorGoogleAdsAccountPayload(*lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountProjectIDFlag, *lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountIDFlag, *lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountDaysFlag, *lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountBearerTokenFlag)
+			case "monitor-linkedin-ads-account":
+				endpoint = c.MonitorLinkedinAdsAccount()
+				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorLinkedinAdsAccountPayload(*lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountProjectIDFlag, *lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountIDFlag, *lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountDaysFlag, *lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountBearerTokenFlag)
+			case "monitor-meta-ads-account":
+				endpoint = c.MonitorMetaAdsAccount()
+				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorMetaAdsAccountPayload(*lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountProjectIDFlag, *lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountAccountIDFlag, *lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountDaysFlag, *lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountBearerTokenFlag)
+			case "monitor-reddit-ads-account":
+				endpoint = c.MonitorRedditAdsAccount()
+				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorRedditAdsAccountPayload(*lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountProjectIDFlag, *lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountAccountIDFlag, *lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountDaysFlag, *lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountBearerTokenFlag)
 			}
 		case "lfx-v2-campaign-service-svc":
 			c := lfxv2campaignservicesvcc.NewClient(scheme, host, doer, enc, dec, restore)
@@ -1293,7 +1345,7 @@ func lfxV2CampaignServiceAudiencesCreateAudienceUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Nostrum corporis quasi magnam.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Quis quam dolor occaecati earum iusto rerum.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Nobis iste qui rerum est sed.\",\n            \"Similique enim ea maiores quidem molestiae.\",\n            \"Omnis ratione expedita voluptatum.\",\n            \"Fuga ipsa.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"8759bcd0-da3b-4166-91a8-e2cc8829e1e7\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Nostrum corporis quasi magnam.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Occaecati earum iusto rerum sit cupiditate nobis.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Rerum est sed sed.\",\n            \"Enim ea.\",\n            \"Quidem molestiae deleniti omnis.\",\n            \"Expedita voluptatum commodi fuga ipsa.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"228a7016-da3b-4166-91a8-e2cc8829e1e7\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudiencesGetAudienceUsage() {
@@ -2192,6 +2244,10 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    list-hubspot-emails: Search the marketing emails reachable via the stored HubSpot connection, most-recently-updated first. This is a TEMPLATE picker, not an account picker: a HubSpot connection is already scoped to the portal its private-app token authenticates against, but staging an email campaign clones a caller-specified source email (sourceEmailId is required and has no default), so the caller has to be able to find one.`)
 	fmt.Fprintln(os.Stderr, `    search-hubspot-campaigns: Find LF HubSpot marketing campaigns by name, to read back an existing campaign's `+"`"+`hs_utm`+"`"+` token. **THE NAMESPACE IS PORTAL-WIDE.** HubSpot campaigns are not scoped to a project, so this returns every campaign in the portal the connection authenticates against, regardless of which project scopes the path. `+"`"+`project_id`+"`"+` gates permission AND selects WHICH portal is visible: a HubSpot connection is stored per project with its own token and `+"`"+`portal_id`+"`"+`, and a project with none resolves the LF system connection — so two projects see the same campaigns when they are configured against the same portal, which is the ordinary case under the LF umbrella, whose foundations share one portal. The portal-wide part is a property of HubSpot's data model rather than a gap in the scoping here, and it is why the create route below needs a warning. The match is HubSpot's own `+"`"+`query`+"`"+` search over its default searchable properties: NOT an exact-name lookup, and NOT relevance-ranked — the CRM v3 search API has no relevance sort, and no `+"`"+`sorts`+"`"+` is sent, so the order is UNSPECIFIED. **Do not read the first row as the best match** — the search is token-based, so a hit can merely share a token with the query. Every match is returned, in the order HubSpot returned them, rather than narrowed to a best one, because choosing between similarly-named campaigns needs a human reading the names — collapsing them here would hide the ambiguity from the only party able to resolve it. **An empty `+"`"+`campaigns`+"`"+` array is a 200, not a 404**: 'no campaign is named that' is the answer a caller acts on by offering to create one, and it must be distinguishable from a search that failed. A campaign with no `+"`"+`utm`+"`"+` is a real result and is returned as one — an absent token does NOT mean the campaign was not found, and treating it that way would prompt a duplicate create. **The result set is CAPPED at 200 and there is no paging.** A campaign ranked below the cap is not returned, and a caller reads an absent campaign as licence to create one — so an operator who cannot find a campaign should search a narrower term rather than assume it does not exist. 200 is HubSpot's own per-request maximum (raised from 100 in September 2024), so the gap between "not in the top N" and "does not exist" is as small as one request can make it. **`+"`"+`capped`+"`"+` reports when that gap is actually open**, derived from HubSpot's own total rather than from the returned count — an exactly-full page and a truncated one are the same length. While `+"`"+`capped`+"`"+` is true the caller must not offer an unqualified create: the campaign it would duplicate may be one of the matches HubSpot did not return. This is NOT a list endpoint under rule 3: it is a keyed query returning the matches for one supplied term. It IS a collection — `+"`"+`campaigns`+"`"+` is an array and `+"`"+`q`+"`"+` narrows it — but a BOUNDED one: a single unpaged request capped at 200, with no cursor and no filters beyond the search term, so rule 3's concern about an open-ended listing surface does not apply.`)
 	fmt.Fprintln(os.Stderr, `    create-hubspot-campaign: Create an LF HubSpot marketing campaign, returning the `+"`"+`hs_utm`+"`"+` token when the response carries one. **`+"`"+`utm`+"`"+` MAY BE ABSENT ON A SUCCESSFUL CREATE**, and that is not an error: the marketing create is not documented to return the property, and this route does no follow-up read — a second call after a non-idempotent write is another failure point whose failure would make a campaign that EXISTS look like one that was never created. An absent token means only that this response did not carry one, NOT that the campaign has none configured; the ordinary lookup reads it back. What IS required is the id: an id-less 2xx is refused as unconfirmed, because a campaign that cannot be addressed is not a usable answer. **THIS WRITE IS VISIBLE PORTAL-WIDE.** The campaign namespace is the whole HubSpot portal this project's connection authenticates against, so a campaign created here appears for everyone working in that portal however this path is scoped. WHICH portal depends on the connection — they are stored per project with their own token and `+"`"+`portal_id`+"`"+`, and a project with none resolves the LF system connection — so for LF foundations, which share one portal, this IS visible to every other foundation working in it; projects on a different portal do not see each other's campaigns. A caller MUST warn before invoking it, and must not put anything project-sensitive in the name. **It does not check for an existing campaign first, and that is deliberate.** A search-then-create inside one call would still race any concurrent caller and could not prevent a duplicate; the check belongs with the human who can read the candidate names. Search first, show the matches, create only if the operator confirms none is right. This method always creates. `+"`"+`hs_utm`+"`"+` is assigned by HubSpot, never supplied here, and is read back from the create response rather than re-fetched — so the returned token is the one HubSpot actually assigned rather than one this service guessed. **A 2xx carrying no id is reported as an error**, because the campaign may or may not exist and cannot be addressed either way: the caller must check HubSpot rather than retry into a second copy. Other failures fall into FOUR classes, and the status tells them apart. **400 — nothing was created, and the request is correctable.** Either HubSpot rejected it on the merits (a definite non-429 4xx), or the stored connection EXISTS but is not usable as configured. A 401/403 on a connection the PROJECT owns says so in its own words, because retrying another name cannot fix a permission problem. The SAME rejection on the shared LF connection — used when the project has none of its own — is a 500 instead: that scope is unaddressable over HTTP, so a 400 would tell the caller to repair a row they cannot reach. Retrying another NAME cannot fix a permission problem. **404 — no HubSpot connection is configured for this project.** Distinct from the 400 above, which means one exists and is broken: the remedy is to connect HubSpot, not to fix a credential. **500 — the shared LF connection was refused on permissions, the stored credential could not be decrypted**, or the service is otherwise faulted BEFORE the request went out. Not the operator's to fix, and not retryable by them. 500 is reserved for that pre-send position: a fault discovered AFTER the create returned without error is a 503, because by then the campaign may exist and only this service's reading of the outcome failed. Those three prove nothing reached HubSpot, which is why they are reported as themselves rather than as an unconfirmed outcome: sending an operator to look for a campaign that was never attempted hides the remedy they actually need. **503 — the outcome could not be confirmed, OR the request never left this service.** Those two share a status because both are retryable-when-things-recover rather than correctable by the caller, and the MESSAGE distinguishes them: a pre-send failure (DNS, dial, an already-cancelled context) can promise nothing was created, which the unconfirmed case cannot. Everything else lands here too, including any failure this service cannot positively classify: a non-idempotent write into a shared namespace fails CLOSED, so an unrecognised error is treated as possibly-committed rather than reported as a clean failure. HubSpot marks mutating transport, 429, 3xx and 5xx failures as possibly-committed, and so is a 2xx whose body could not be decoded. Verify in HubSpot before creating it again.`)
+	fmt.Fprintln(os.Stderr, `    monitor-google-ads-account: Read every campaign visible on a Google Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped: {project_id} resolves which stored connection credential to use, exactly as GET .../connection-google-ads/accounts does, and the read enumerates everything that credential reaches on account_id, not only campaigns this service created. A pure read: nothing is persisted.`)
+	fmt.Fprintln(os.Stderr, `    monitor-linkedin-ads-account: Read every campaign visible on a LinkedIn Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
+	fmt.Fprintln(os.Stderr, `    monitor-meta-ads-account: Read every campaign visible on a Meta Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
+	fmt.Fprintln(os.Stderr, `    monitor-reddit-ads-account: Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. totals on this platform come from a separate account-level upstream call rather than a sum of the campaigns array — see AccountTotalsReader in internal/service/orchestrator.go. A pure read: nothing is persisted.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-connections COMMAND --help\n", os.Args[0])
@@ -3322,6 +3378,102 @@ func lfxV2CampaignServiceConnectionsCreateHubspotCampaignUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-hubspot-campaign --body '{\n      \"name\": \"KubeCon NA 2026\"\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections monitor-google-ads-account", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -account-id STRING")
+	fmt.Fprint(os.Stderr, " -days INT")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Read every campaign visible on a Google Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped: {project_id} resolves which stored connection credential to use, exactly as GET .../connection-google-ads/accounts does, and the read enumerates everything that credential reaches on account_id, not only campaigns this service created. A pure read: nothing is persisted.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -account-id STRING: `)
+	fmt.Fprintln(os.Stderr, `    -days INT: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-google-ads-account --project-id \"cncf\" --account-id \"8666746580\" --days 30 --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections monitor-linkedin-ads-account", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -account-id STRING")
+	fmt.Fprint(os.Stderr, " -days INT")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Read every campaign visible on a LinkedIn Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -account-id STRING: `)
+	fmt.Fprintln(os.Stderr, `    -days INT: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-linkedin-ads-account --project-id \"cncf\" --account-id \"512345678\" --days 30 --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections monitor-meta-ads-account", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -account-id STRING")
+	fmt.Fprint(os.Stderr, " -days INT")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Read every campaign visible on a Meta Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -account-id STRING: `)
+	fmt.Fprintln(os.Stderr, `    -days INT: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-meta-ads-account --project-id \"cncf\" --account-id \"act_8666746580\" --days 30 --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections monitor-reddit-ads-account", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -account-id STRING")
+	fmt.Fprint(os.Stderr, " -days INT")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. totals on this platform come from a separate account-level upstream call rather than a sum of the campaigns array — see AccountTotalsReader in internal/service/orchestrator.go. A pure read: nothing is persisted.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -account-id STRING: `)
+	fmt.Fprintln(os.Stderr, `    -days INT: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-reddit-ads-account --project-id \"cncf\" --account-id \"t2_gv9wtbfa\" --days 30 --bearer-token \"eyJhbGci...\"")
 }
 
 // lfxV2CampaignServiceSvcUsage displays the usage of the

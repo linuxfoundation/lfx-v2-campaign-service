@@ -37,6 +37,18 @@ var JWTAuth = JWTSecurity("jwt", func() {
 	Description("JWT issued by Heimdall; audience is this service.")
 })
 
+// monitorDaysMin and monitorDaysMax are the account-monitor `days` attribute's
+// inclusive bound, shared by all four provider monitor methods so the pair can't
+// drift between them. This file defines the API contract only (see the package
+// doc) and deliberately does not import internal/domain's mirrored
+// MonitorDaysMin/MonitorDaysMax — internal/apivalidation/monitor_account_id_drift_test.go
+// drives the generated decoders from those runtime constants to catch the two
+// copies drifting apart instead.
+const (
+	monitorDaysMin = 7
+	monitorDaysMax = 90
+)
+
 // ─── Shared attribute helpers ───
 
 // bearerToken declares the JWT bearer token attribute on a payload.
@@ -926,6 +938,76 @@ var HubSpotConnection = Type("hubspot-connection", func() {
 	commonConnectionRequired()
 })
 
+// AccountMonitorCampaign is one campaign row from the account-scoped monitor read, mirroring
+// model.AccountCampaignMetrics plus the rule engine's per-row pacing output
+// (model.AccountMonitorRow). One shared type across all four platforms rather than a
+// per-provider result, matching AccessibleAccount above — Goa cannot express a per-platform
+// result union, so the house convention is one method per platform sharing one result shape.
+//
+// campaign_url is Google Ads only, and declared Optional for that reason: no other platform's
+// rule engine or dispatcher produces it, so LinkedIn/Meta/Reddit rows never set it. A caller
+// must treat its absence as "not applicable to this platform", not as a missing read.
+var AccountMonitorCampaign = Type("account-monitor-campaign", func() {
+	Attribute("platform_campaign_id", String, "The id the platform assigned to this campaign.", func() { Example("24183781329") })
+	Attribute("name", String, "The campaign's platform-side name, unparsed.", func() { Example("KubeCon NA 2026 - Search") })
+	Attribute("status", String, "The platform's own status string, passed through verbatim (e.g. ENABLED/PAUSED on Google Ads, ACTIVE/PAUSED on LinkedIn/Meta/Reddit).", func() { Example("ENABLED") })
+	Attribute("spend", Float64, "Total cost in the account's currency over the requested window.", func() { Example(482.13) })
+	Attribute("impressions", Int64, "Impressions over the window.", func() { Example(48200) })
+	Attribute("clicks", Int64, "Clicks over the window.", func() { Example(3110) })
+	Attribute("ctr", Float64, "Clicks/Impressions * 100, 0 when Impressions is 0.", func() { Example(6.45) })
+	// Optional for the same reason CampaignMetrics.Conversions is: absent means this
+	// platform/row could not measure conversions, not that it measured 0.
+	Attribute("conversions", Float64, "Conversions over the window. ABSENT when this platform/row could not measure conversions — not a measured 0.", func() { Example(12.5) })
+	Attribute("budget_day", Float64, "Daily budget in the account's currency, 0 when the campaign has none (e.g. a LinkedIn/Meta campaign funded by total_budget instead).", func() { Example(150) })
+	Attribute("total_budget", Float64, "Lifetime/total budget in the account's currency, 0 when the campaign is funded by budget_day instead.", func() { Example(5000) })
+	Attribute("start_date", String, "The campaign's flight start date, RFC 3339 date-only (YYYY-MM-DD). Empty when the platform did not report one.", func() { Example("2026-08-01") })
+	Attribute("end_date", String, "The campaign's flight end date, RFC 3339 date-only (YYYY-MM-DD). Empty when the platform did not report one.", func() { Example("2026-11-30") })
+	Attribute("pacing_unknown", Boolean, "True when the flight dates needed to compute pacing_pct were unavailable. A renderer MUST NOT treat pacing_pct as meaningful when this is true.", func() { Example(false) })
+	Attribute("is_search_channel", Boolean, "Google Ads only: true when the campaign's advertising_channel_type is SEARCH. Always false for LinkedIn/Meta/Reddit rows.", func() { Example(true) })
+	Attribute("fetch_failed", Boolean, "True when some part of this row's upstream data could not be trusted: either its per-campaign metrics fetch failed outright (numeric fields left at their zero value), or, for Google Ads, its budget field was present but unparseable alongside otherwise-good metrics. A renderer MUST check this before treating any of this row's fields, zero or not, as a fully trusted reading.", func() { Example(false) })
+	Attribute("pacing_pct", Float64, "spend / expected-spend * 100. Meaningless when pacing_unknown is true.", func() { Example(87) })
+	Attribute("pacing_label", String, "The pacing classification derived from pacing_pct. Meaningless when pacing_unknown is true — a fetch-failed row keeps the placeholder value \"normal\" rather than carrying no label at all, since the enum has no unknown member.", func() { Enum("normal", "underspending", "constrained", "overspending") })
+	Attribute("campaign_url", String, "Google Ads only: direct link to the campaign in the Google Ads UI.", func() { Example("https://ads.google.com/aw/campaigns?campaignId=24183781329") })
+	Required("platform_campaign_id", "name", "status", "spend", "impressions", "clicks", "ctr",
+		"budget_day", "total_budget", "start_date", "end_date", "pacing_unknown",
+		"is_search_channel", "fetch_failed", "pacing_pct", "pacing_label")
+})
+
+// AccountMonitorActionItem is one rule-engine finding, ported verbatim per platform in
+// internal/service/rules/monitor_*.go — see model.AccountMonitorActionItem.
+var AccountMonitorActionItem = Type("account-monitor-action-item", func() {
+	Attribute("campaign_id", String, "The platform campaign id this item is about. Empty for an account-wide item.", func() { Example("24183781329") })
+	Attribute("campaign_name", String, "The campaign's platform-side name, carried alongside campaign_id so a renderer never needs to re-join against the row list.", func() { Example("KubeCon NA 2026 - Search") })
+	Attribute("priority", String, "The rule engine's priority band for this item.", func() { Enum("HIGH", "MED", "LOW") })
+	Attribute("issue", String, "What the rule engine flagged.", func() { Example("Underspending: 42% of expected spend") })
+	Attribute("action", String, "The suggested remedy.", func() { Example("Increase daily budget or check for delivery limits") })
+	Required("priority", "issue", "action")
+})
+
+// AccountMonitorTotals is the account-wide aggregate reported next to the per-campaign rows —
+// see model.AccountMonitorTotals. NOT necessarily a sum of the campaigns array: Reddit's
+// totals come from a separate account-level upstream call.
+var AccountMonitorTotals = Type("account-monitor-totals", func() {
+	Attribute("spend", Float64, "Account-wide spend over the window.", func() { Example(1842.55) })
+	Attribute("impressions", Int64, "Account-wide impressions over the window.", func() { Example(184200) })
+	Attribute("clicks", Int64, "Account-wide clicks over the window.", func() { Example(11420) })
+	Attribute("conversions", Float64, "Account-wide conversions over the window.", func() { Example(212.5) })
+	Attribute("campaign_count", Int, "How many campaigns the totals reflect.", func() { Example(14) })
+	Attribute("derived_from_rows", Boolean, "True when these totals are a sum of the returned campaigns array rather than the platform's own account-wide figure. Always false except on a Reddit read whose separate account-totals call actually failed, in which case the campaign rows are still authoritative but this aggregate is a derived stand-in.", func() { Example(false) })
+	Required("spend", "impressions", "clicks", "conversions", "campaign_count", "derived_from_rows")
+})
+
+// AccountMonitor is the account-scoped monitor read result, shared across all four
+// monitor-*-ads-account methods below.
+var AccountMonitor = Type("account-monitor", func() {
+	Attribute("account_id", String, "The account this read covers, echoed back from the request.", func() { Example("8666746580") })
+	Attribute("days", Int, "The trailing-days window this read covers, echoed back from the request.", func() { Example(30) })
+	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "Every campaign visible on the account, with the rule engine's per-row pacing output attached.")
+	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the account's campaigns.")
+	Attribute("totals", AccountMonitorTotals)
+	Required("account_id", "days", "campaigns", "action_items", "totals")
+})
+
 // ─── Connection service ───
 
 var _ = Service("lfx-v2-campaign-service-connections", func() {
@@ -1482,6 +1564,175 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Response(StatusCreated)
 			Response("NotFound", StatusNotFound)
 			connectionAuthErrorResponses()
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	// Account-scoped monitor reads. Four separate methods rather than a union, for the same
+	// reason the list-*-accounts methods above are separate: Goa cannot express a
+	// per-platform result union, and the house convention is one method per platform sharing
+	// one result type (AccountMonitor). Unlike list-*-accounts, every platform gets one here —
+	// including Reddit, which has no ListAccounts dispatcher implementation but does have an
+	// account-scoped metrics read (see AccountTotalsReader in internal/service/orchestrator.go).
+	//
+	// account_id is supplied by the caller rather than resolved from the stored connection:
+	// this ports the BFF's account-scoped monitor endpoints, which read a raw ad account
+	// (everything the credential reaches), not this service's own persisted Campaign rows —
+	// same scoping rule as list-*-accounts above. days is a plain bounded integer, NOT
+	// model.MetricsWindow: MetricsWindow is a closed 7-value enum that cannot express an
+	// arbitrary day count, and the BFF's own date-range math computes an explicit range from
+	// an integer days directly.
+	Method("monitor-google-ads-account", func() {
+		Description("Read every campaign visible on a Google Ads account, live from the platform, with " +
+			"pacing and action items derived by this service's ported rule engine. Account-scoped, not " +
+			"project-scoped: {project_id} resolves which stored connection credential to use, exactly as " +
+			"GET .../connection-google-ads/accounts does, and the read enumerates everything that " +
+			"credential reaches on account_id, not only campaigns this service created. A pure read: " +
+			"nothing is persisted.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("account_id", String, "The Google Ads account to read.", func() {
+				Pattern(`^[0-9]+$`)
+				MaxLength(64)
+				Example("8666746580")
+			})
+			Attribute("days", Int, "Trailing days to read metrics over.", func() {
+				Minimum(monitorDaysMin)
+				Maximum(monitorDaysMax)
+				Example(30)
+			})
+			Required("project_id", "account_id", "days")
+		})
+		Result(AccountMonitor)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-google-ads/account-monitor")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("account_id")
+			Param("days")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("monitor-linkedin-ads-account", func() {
+		Description("Read every campaign visible on a LinkedIn Ads account, live from the platform, with " +
+			"pacing and action items derived by this service's ported rule engine. Account-scoped, not " +
+			"project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is " +
+			"persisted.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("account_id", String, "The LinkedIn ad account to read.", func() {
+				Pattern(`^[0-9]+$`)
+				MaxLength(64)
+				Example("512345678")
+			})
+			Attribute("days", Int, "Trailing days to read metrics over.", func() {
+				Minimum(monitorDaysMin)
+				Maximum(monitorDaysMax)
+				Example(30)
+			})
+			Required("project_id", "account_id", "days")
+		})
+		Result(AccountMonitor)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-linkedin-ads/account-monitor")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("account_id")
+			Param("days")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("monitor-meta-ads-account", func() {
+		Description("Read every campaign visible on a Meta Ads account, live from the platform, with " +
+			"pacing and action items derived by this service's ported rule engine. Account-scoped, not " +
+			"project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is " +
+			"persisted.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("account_id", String, "The Meta ad account to read.", func() {
+				Pattern(`^act_[0-9]+$`)
+				MaxLength(64)
+				Example("act_8666746580")
+			})
+			Attribute("days", Int, "Trailing days to read metrics over.", func() {
+				Minimum(monitorDaysMin)
+				Maximum(monitorDaysMax)
+				Example(30)
+			})
+			Required("project_id", "account_id", "days")
+		})
+		Result(AccountMonitor)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-meta-ads/account-monitor")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("account_id")
+			Param("days")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("monitor-reddit-ads-account", func() {
+		Description("Read every campaign visible on a Reddit Ads account, live from the platform, with " +
+			"pacing and action items derived by this service's ported rule engine. Account-scoped, not " +
+			"project-scoped, the same way monitor-google-ads-account is. totals on this platform come " +
+			"from a separate account-level upstream call rather than a sum of the campaigns array — see " +
+			"AccountTotalsReader in internal/service/orchestrator.go. A pure read: nothing is persisted.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("account_id", String, "The Reddit advertiser account to read.", func() {
+				Pattern(`^[A-Za-z0-9_]+$`)
+				MaxLength(64)
+				Example("t2_gv9wtbfa")
+			})
+			Attribute("days", Int, "Trailing days to read metrics over.", func() {
+				Minimum(monitorDaysMin)
+				Maximum(monitorDaysMax)
+				Example(30)
+			})
+			Required("project_id", "account_id", "days")
+		})
+		Result(AccountMonitor)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-reddit-ads/account-monitor")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("account_id")
+			Param("days")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})

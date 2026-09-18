@@ -377,6 +377,13 @@ func (r reportRow) validate(wantCampaignID string) error {
 // interpolated into a Reddit v3 API path or report filter expression.
 var ErrInvalidCampaignID = errors.New("campaign id must be non-empty and contain only letters, digits, and underscores")
 
+// ErrInvalidAccountID is returned when a caller-supplied account ID is empty or contains
+// characters outside the same safe charset ErrInvalidCampaignID enforces for campaign ids —
+// kept as a distinct sentinel so errors.Is can tell "bad account id" from "bad campaign id"
+// apart, which callers and logs both need (see ValidateAccountID, ListAccountCampaigns, and
+// FetchAccountTotals's account-id guards).
+var ErrInvalidAccountID = errors.New("account id must be non-empty and contain only letters, digits, and underscores")
+
 // ErrUnsupportedWindow is returned for a model.MetricsWindow this client does not map to a
 // Reddit reporting date range.
 var ErrUnsupportedWindow = errors.New("unsupported metrics window")

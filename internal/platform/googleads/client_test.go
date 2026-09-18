@@ -645,6 +645,33 @@ func TestGaqlSearchForCustomer_RejectsMalformedCustomerID(t *testing.T) {
 	}
 }
 
+// TestValidateCustomerID pins the exported guard a caller reached directly by an
+// untrusted account id (e.g. the account-monitor dispatcher, which re-checks the same shape
+// the design-layer Pattern already enforces — see design/connection.go — as defense-in-depth
+// for a non-HTTP caller that bypasses Goa) must use to classify a malformed id BEFORE this
+// client is invoked at all, rather than reaching gaqlSearchForCustomer's own unsentineled
+// error path.
+func TestValidateCustomerID(t *testing.T) {
+	valid := []string{"1234567890", "1"}
+	for _, cid := range valid {
+		if err := ValidateCustomerID(cid); err != nil {
+			t.Errorf("ValidateCustomerID(%q) = %v, want nil", cid, err)
+		}
+	}
+
+	invalid := []string{"123-456-7890", " 123 ", "123/456", "123.456", "abc", ""}
+	for _, cid := range invalid {
+		err := ValidateCustomerID(cid)
+		if err == nil {
+			t.Errorf("ValidateCustomerID(%q) = nil, want ErrNotACustomerID", cid)
+			continue
+		}
+		if !errors.Is(err, ErrNotACustomerID) {
+			t.Errorf("ValidateCustomerID(%q) error is not ErrNotACustomerID: %v", cid, err)
+		}
+	}
+}
+
 // TestAccessToken_ConcurrentSingleFlight verifies the token single-flight: with
 // the token endpoint blocked, N concurrent callers trigger exactly ONE refresh, a
 // cancelled waiter returns WHILE the shared refresh is STILL BLOCKED (proving it

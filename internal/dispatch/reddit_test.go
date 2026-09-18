@@ -1178,3 +1178,117 @@ func TestReddit_AuthorPostFailurePersistsCreatedDegraded(t *testing.T) {
 		t.Errorf("persisted status = %q, want %q: the campaign owns no ad, so a clean status would let idempotency freeze an ad-less campaign as a success", camp.Status, campaignStatusCreatedDegraded)
 	}
 }
+
+// TestReddit_ListAccountCampaignMetrics_RejectsMalformedAccountID pins the guard at
+// reddit.go:460: a shape-invalid account id must surface as domain.ErrAccountIDMalformed (a
+// clean 400), not fall through to the default 503 arm. This dispatcher-level check is
+// defense-in-depth for a non-HTTP caller that bypasses Goa — an ordinary HTTP request is
+// already refused by the design attribute's own Pattern (see design/connection.go) before this
+// method ever runs. Calling the dispatcher method directly, as this test does, is exactly how
+// that bypass happens.
+//
+// Deliberately nonempty and charset-invalid ("/" is outside reddit.accountIDRe), so it exercises
+// this dispatcher's own shape check rather than an emptiness guard. reddit.ValidateAccountID
+// rejects this shape before resolveMonitorClient or
+// ListAccountCampaigns ever run, exercising that dispatch-level guard directly, not
+// the inner reddit.ErrInvalidAccountID branch a few lines below it (kept only as defense in
+// depth against the platform client's own check ever diverging from ValidateAccountID's — see
+// that branch's comment). No token or API server is wired: the shape check runs first.
+func TestReddit_ListAccountCampaignMetrics_RejectsMalformedAccountID(t *testing.T) {
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	_, err := d.ListAccountCampaignMetrics(context.Background(), "proj", model.ProviderRedditAds, "t2/../abc", 30)
+	if err == nil {
+		t.Fatal("expected an error for a malformed (charset-invalid) account id")
+	}
+	if !errors.Is(err, domain.ErrAccountIDMalformed) {
+		t.Errorf("expected err to wrap domain.ErrAccountIDMalformed, got: %v", err)
+	}
+	if !errors.Is(err, reddit.ErrInvalidAccountID) {
+		t.Errorf("expected err to still wrap reddit.ErrInvalidAccountID, got: %v", err)
+	}
+}
+
+// TestReddit_ListAccountCampaignMetrics_RejectsInvalidDays is days' sibling of the
+// malformed-account-id test above: validateMonitorDays (internal/dispatch/monitor_validation.go)
+// runs right after ValidateAccountID, before resolveMonitorClient or any credential decrypt, as
+// defense-in-depth for the same non-HTTP-caller bypass — an ordinary HTTP request is already
+// refused by the design attribute's own Minimum/Maximum (see design/connection.go).
+func TestReddit_ListAccountCampaignMetrics_RejectsInvalidDays(t *testing.T) {
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	_, err := d.ListAccountCampaignMetrics(context.Background(), "proj", model.ProviderRedditAds, "t2_abc123", 0)
+	if err == nil {
+		t.Fatal("expected an error for days=0, outside the 7..90 bound")
+	}
+	if !errors.Is(err, domain.ErrMonitorDaysInvalid) {
+		t.Errorf("expected err to wrap domain.ErrMonitorDaysInvalid, got: %v", err)
+	}
+}
+
+// TestReddit_ListAccountCampaignMetrics_RefusesSystemFallback pins round-17 review's finding
+// that round-16's fix was incomplete: resolveMonitorClient's accountID-equality check alone did
+// NOT close the credential-scope gap for Reddit, because a caller who supplied the shared LF
+// system account's id satisfied that check and was served its campaigns. scopedConnReader is
+// configured with a valid connection ONLY under model.SystemProjectID, and the requested
+// accountID matches that connection's own account — so if the fallback were still consulted,
+// both the credential resolution AND the equality check would succeed. A passing test here
+// proves the fallback itself is refused before the equality check ever runs.
+func TestReddit_ListAccountCampaignMetrics_RefusesSystemFallback(t *testing.T) {
+	d := NewRedditDispatcher(&scopedConnReader{
+		rows: map[string]*model.Connection{model.SystemProjectID: activeRedditConn(goodRedditCreds)},
+	}, identityEncryptor{})
+
+	_, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderRedditAds, "t2_acct", 30)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want domain.ErrNotFound — the read must refuse the system row and "+
+			"report the project as having no connection of its own", err)
+	}
+}
+
+// TestReddit_ListAccountCampaignMetrics_RejectsMismatchedAccount pins round-18 review's fix:
+// a well-formed account id that simply isn't the one the project's own connection resolves to
+// must surface as domain.ErrAccountNotManagedByConnection, not domain.ErrConnectionNotUsable —
+// the stored connection here is perfectly fine, the REQUEST named a different account, and
+// ErrConnectionNotUsable's classification tells the caller to check the stored credential,
+// which would point at the wrong remedy.
+func TestReddit_ListAccountCampaignMetrics_RejectsMismatchedAccount(t *testing.T) {
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	// activeRedditConn resolves to account t2_acct; request a different, still well-formed one.
+	_, err := d.ListAccountCampaignMetrics(context.Background(), "proj", model.ProviderRedditAds, "t2_other", 30)
+	if !errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+		t.Errorf("expected err to wrap domain.ErrAccountNotManagedByConnection, got: %v", err)
+	}
+	if errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Errorf("did not expect err to wrap domain.ErrConnectionNotUsable, since the stored connection is fine: %v", err)
+	}
+}
+
+// TestReddit_ReadAccountTotals_RejectsMalformedAccountID and
+// TestReddit_ReadAccountTotals_RejectsInvalidDays pin round-18 review's fix: ReadAccountTotals
+// previously called resolveMonitorClient (and so resolved a credential) without validating
+// accountID or days first, unlike its sibling ListAccountCampaignMetrics — even though
+// resolveMonitorClient's own doc comment claimed every caller validated first.
+func TestReddit_ReadAccountTotals_RejectsMalformedAccountID(t *testing.T) {
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	_, err := d.ReadAccountTotals(context.Background(), "proj", model.ProviderRedditAds, "t2/../abc", 30, 5)
+	if !errors.Is(err, domain.ErrAccountIDMalformed) {
+		t.Errorf("expected err to wrap domain.ErrAccountIDMalformed, got: %v", err)
+	}
+}
+
+func TestReddit_ReadAccountTotals_RejectsInvalidDays(t *testing.T) {
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	_, err := d.ReadAccountTotals(context.Background(), "proj", model.ProviderRedditAds, "t2_abc123", 0, 5)
+	if !errors.Is(err, domain.ErrMonitorDaysInvalid) {
+		t.Errorf("expected err to wrap domain.ErrMonitorDaysInvalid, got: %v", err)
+	}
+}

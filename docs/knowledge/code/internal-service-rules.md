@@ -13,6 +13,18 @@ resource: "internal/service"
 (is this campaign spending what its flight expects by now?) and a list of **action items**
 (what should an operator look at, and what should they do?).
 
+**This package (`pacing.go`/`actions.go`) is not the only rule engine in this
+directory.** The four `monitor_*.go` files (`monitor_google.go`,
+`monitor_linkedin.go`, `monitor_meta.go`, `monitor_reddit.go`) back the
+account-scoped `/account-monitor` endpoints and are deliberately **separate,
+unshared, per-platform ports** of the LFX One BFF's own four historically
+divergent rule engines — including the divergent thresholds and known bugs this
+package exists to replace — kept unmerged so an OLD-vs-NEW differential diff
+against the BFF stays a meaningful faithfulness check. Unifying them onto this
+package is follow-up ticket #7, tracked in
+[Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md), which
+is the concept file for that surface.
+
 It exists because the UI carried four separate implementations of this logic — LinkedIn, Reddit,
 Meta and campaign-metrics — which disagreed three ways on the underspending floor, and Reddit
 disagreed with *itself*: it labelled at 50 and alerted at 40, so a campaign could be shown as

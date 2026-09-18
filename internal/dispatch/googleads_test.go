@@ -2945,3 +2945,56 @@ func TestGoogleAds_ReadMetrics_ConversionsPointerSurvivesTheDispatcher(t *testin
 		t.Errorf("Conversions = %v after the dispatcher, want 0", *m2.Conversions)
 	}
 }
+
+// TestGoogleAds_ListAccountCampaignMetrics_RejectsMalformedAccountID pins the dispatcher-level
+// guard at googleads.go:838, which exists as defense-in-depth for a non-HTTP caller that
+// bypasses Goa — an ordinary HTTP request is already refused by the design attribute's own
+// Pattern (see design/connection.go) before this method ever runs. Calling the dispatcher
+// method directly, as this test does, is exactly how that bypass happens: without this guard, a
+// malformed id would reach gaqlSearchForCustomer's own unsentineled error, which
+// classifyDiscoveryError's default arm maps to an opaque 503.
+func TestGoogleAds_ListAccountCampaignMetrics_RejectsMalformedAccountID(t *testing.T) {
+	// No connection is wired at all: resolveGoogleAdsDiscoveryClient must never be reached,
+	// so a connection-lookup error here would prove nothing about this guard either way.
+	d := NewGoogleAdsDispatcher(fakeConnReader{err: errors.New("must not be reached")}, identityEncryptor{})
+	_, err := d.ListAccountCampaignMetrics(context.Background(), "proj", model.ProviderGoogleAds, "abc-123", 30)
+	if err == nil {
+		t.Fatal("expected an error for a malformed account id")
+	}
+	if !errors.Is(err, domain.ErrAccountIDMalformed) {
+		t.Errorf("expected err to wrap domain.ErrAccountIDMalformed, got: %v", err)
+	}
+	if !errors.Is(err, googleads.ErrNotACustomerID) {
+		t.Errorf("expected err to still wrap googleads.ErrNotACustomerID, got: %v", err)
+	}
+}
+
+// TestGoogleAds_ListAccountCampaignMetrics_RefusesSystemFallback pins round-16 review's Critical
+// finding: a project with no Google Ads connection of its own must not have its monitor read
+// served from the shared LF system credential. scopedConnReader is configured with a valid
+// connection ONLY under model.SystemProjectID — if the fallback were still consulted, this read
+// would succeed against it, so a passing test here proves the fallback was actually refused, not
+// merely that some unrelated error was returned.
+func TestGoogleAds_ListAccountCampaignMetrics_RefusesSystemFallback(t *testing.T) {
+	d := NewGoogleAdsDispatcher(&scopedConnReader{
+		rows: map[string]*model.Connection{model.SystemProjectID: activeGoogleAdsConn(goodGoogleAdsCreds)},
+	}, identityEncryptor{})
+
+	_, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderGoogleAds, "1234567890", 30)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want domain.ErrNotFound — the read must refuse the system row and "+
+			"report the project as having no connection of its own", err)
+	}
+}
+
+// TestBuildGoogleAdsCampaignURL pins the round-21-review fix (PR #215 comment #4): a Google
+// monitor row must carry the same campaign_url the BFF's buildGoogleAdsUrl(campaignId) built,
+// so a renderer can link straight to the campaign in the Google Ads UI.
+func TestBuildGoogleAdsCampaignURL(t *testing.T) {
+	if got, want := buildGoogleAdsCampaignURL("24183781329"), "https://ads.google.com/aw/campaigns?campaignId=24183781329"; got != want {
+		t.Errorf("buildGoogleAdsCampaignURL(%q) = %q, want %q", "24183781329", got, want)
+	}
+	if got := buildGoogleAdsCampaignURL(""); got != "" {
+		t.Errorf("buildGoogleAdsCampaignURL(\"\") = %q, want empty string", got)
+	}
+}

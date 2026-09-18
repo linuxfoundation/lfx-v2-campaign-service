@@ -21,12 +21,13 @@ import (
 )
 
 // storedCustomerIDRE is the shape a STORED Google Ads account id must have: digits
-// only, no dashes, spaces, or grouping. It intentionally duplicates the client's
-// customerIDRE (internal/platform/googleads/client.go) rather than exporting it: the
-// client keeps its own copy as the backstop for every caller, while this one exists so
-// a malformed STORED value is caught at the dispatch boundary, where the failure can
-// still be classified as domain.ErrConnectionNotUsable instead of an upstream 503. The
-// two must stay in step — widen one and you must widen the other.
+// only, no dashes, spaces, or grouping. The client now exports googleads.ValidateCustomerID
+// for a caller-supplied id (see this file's account-monitor path), but this copy stays
+// separate for the STORED-value check below: a malformed stored value must classify as
+// domain.ErrConnectionNotUsable (a broken connection row), never as
+// domain.ErrAccountIDMalformed (a caller mistake) — sharing one helper would conflate
+// those two error paths. The two regexes must stay in step — widen one and you must
+// widen the other.
 var storedCustomerIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 // googleAdsCreds is the credential shape stored (encrypted) for a Google Ads
@@ -818,6 +819,122 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 		},
 		d.opts...,
 	), nil
+}
+
+// resolveOwnedGoogleAdsDiscoveryClient is resolveGoogleAdsDiscoveryClient for the monitor read,
+// which — like adoption's resolveOwnedGoogleAdsClient above — must NOT accept the LF system
+// fallback.
+//
+// round-16 review escalated the gap resolveGoogleAdsDiscoveryClient's caller used to accept
+// (documented, not fixed, in round-15) to Critical: the four monitor endpoints are externally
+// routed (see this branch's httproute.yaml/ruleset.yaml chart changes), so a project with no
+// Google Ads connection of its own could read another project's spend/budget/campaign data for
+// any customer id the shared LF system credential reaches.
+//
+// The fix mirrors adoption's precedent exactly, and for the same reason resolveOwned's own doc
+// comment gives: Google Ads is ONE shared customer across every foundation (docs/architecture.md,
+// "Account Tenancy"), so checking accountID against what ListAccounts would return for THIS
+// project is a no-op — two different projects both on the system fallback see the identical
+// shared account list from the identical credential, so membership in that list proves nothing
+// about ownership. Refusing the system fallback outright, rather than checking membership
+// against it, is the only version of this check that actually distinguishes the two projects.
+func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
+	res, err := d.creds.resolveOwned(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	creds, err := validateGoogleAdsCredentials(projectID, res)
+	if err != nil {
+		return nil, err
+	}
+	loginCustomerID, err := validatedLoginCustomerID(res)
+	if err != nil {
+		return nil, err
+	}
+	return googleads.NewClient(
+		googleads.Credentials{
+			ClientID:       creds.ClientID,
+			ClientSecret:   creds.ClientSecret,
+			DeveloperToken: creds.DeveloperToken,
+			RefreshToken:   creds.RefreshToken,
+		},
+		googleads.AccountConfig{
+			LoginCustomerID: loginCustomerID,
+			Label:           res.label,
+		},
+		d.opts...,
+	), nil
+}
+
+// ListAccountCampaignMetrics implements service.AccountMetricsReader for Google Ads,
+// backing the account-monitor endpoint. It resolves an account-agnostic client the same way
+// ListAccounts does (a monitor read names its own target accountID, distinct from whatever
+// customer id the project's connection currently points at) — except, per round-16 review, it
+// refuses the LF system fallback entirely (resolveOwnedGoogleAdsDiscoveryClient, not
+// resolveGoogleAdsDiscoveryClient): see that resolver's doc comment for why membership-checking
+// against ListAccounts would not have closed this gap. It then reads every campaign visible on
+// that customer id via googleads.Client.ListAccountCampaigns, which itself derives the
+// campaign-metrics.service.ts resolveDateRange window (end = today, start = today -
+// (days-1)) from its own injected clock rather than the wall clock.
+//
+// A project with no Google Ads connection of its own now gets domain.ErrNotFound (404 "no
+// connection configured for this project", via classifyDiscoveryError) instead of a read served
+// from the shared system credential. Same fix applies to the LinkedIn/Meta siblings of this
+// method; Reddit needs none, because its dispatcher already scopes accountID to the resolved
+// connection's own single account rather than building an account-agnostic client.
+func (d *GoogleAdsDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+	// Validated up front, before any credential is resolved: this is defense-in-depth for a
+	// non-HTTP caller that bypasses Goa — an ordinary HTTP request already gets refused by the
+	// design attribute's own Pattern (see design/connection.go) before this method ever runs.
+	// Without this check, a malformed value reaching here would hit gaqlSearchForCustomer's
+	// own unsentineled error, which classifyDiscoveryError's default arm maps to an opaque
+	// 503 — this wraps the same shape check in domain.ErrAccountIDMalformed for the clean 400.
+	if err := googleads.ValidateCustomerID(accountID); err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
+	}
+	if err := validateMonitorDays(days); err != nil {
+		return nil, err
+	}
+	client, err := d.resolveOwnedGoogleAdsDiscoveryClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
+	if lerr != nil {
+		return nil, lerr
+	}
+	out := make([]model.AccountCampaignMetrics, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, model.AccountCampaignMetrics{
+			PlatformCampaignID: r.CampaignID,
+			Name:               r.Name,
+			Status:             r.Status,
+			IsSearchChannel:    r.IsSearchChannel,
+			Spend:              r.SpendUSD,
+			Impressions:        r.Impressions,
+			Clicks:             r.Clicks,
+			Ctr:                r.Ctr,
+			Conversions:        r.Conversions,
+			BudgetDay:          r.BudgetDailyUSD,
+			// Google Ads campaigns read by this port are not schedule-bound the way
+			// LinkedIn/Meta/Reddit's are (see model.AccountCampaignMetrics.PacingUnknown's
+			// doc comment); StartDate/EndDate are left empty and PacingUnknown false —
+			// monitor_google.go's pacing formula does not consult flight dates at all.
+			FetchFailed: r.FetchFailed,
+			CampaignURL: buildGoogleAdsCampaignURL(r.CampaignID),
+		})
+	}
+	return out, nil
+}
+
+// buildGoogleAdsCampaignURL ports the BFF's buildGoogleAdsUrl(campaignId): a direct link to
+// the campaign in the Google Ads UI. Empty campaignID (should not happen for a real row) yields
+// no URL rather than a malformed one.
+func buildGoogleAdsCampaignURL(campaignID string) string {
+	if campaignID == "" {
+		return ""
+	}
+	return "https://ads.google.com/aw/campaigns?campaignId=" + campaignID
 }
 
 // googleAdsRunStatus maps the service's run-state vocabulary to Google's campaign status.

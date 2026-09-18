@@ -5,7 +5,10 @@
 // errors for the campaign service. It has no infrastructure dependencies.
 package domain
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Sentinel errors returned by repositories and mapped to HTTP status codes at
 // the service/handler boundary.
@@ -222,6 +225,18 @@ var (
 	// ErrToggleUnsupported: a platform dispatcher must be able to return it without
 	// importing the orchestration layer.
 	ErrAccountsUnsupported = errors.New("account discovery is not supported for this platform")
+
+	// ErrAccountMetricsUnsupported indicates the platform has no account-scoped monitor
+	// capability wired (the AccountMetricsReader interface). The platform is never contacted.
+	//
+	// `Orchestrator.ReadAccountCampaignMetrics` returns it when the platform's dispatcher
+	// does not implement AccountMetricsReader, and the monitor handlers map it to 400 — a
+	// request for a platform this service cannot read account-wide metrics for is a caller
+	// error, not a transient upstream failure. Distinct from ErrAccountsUnsupported because
+	// the two capabilities are independent (a platform can enumerate accounts without this
+	// service having ported its monitor rule engine, and vice versa is possible in principle
+	// even if it does not occur among the four platforms this was added for).
+	ErrAccountMetricsUnsupported = errors.New("account campaign metrics are not supported for this platform")
 
 	// ErrKeywordInsightsUnsupported indicates the platform has no keyword/audience-insight
 	// capability wired. The platform is never contacted.
@@ -637,4 +652,65 @@ var (
 	// The refusal costs nothing real, because a project with no ad account of its own has no
 	// campaign of its own to adopt.
 	ErrAdoptionRequiresOwnConnection = errors.New("adoption requires a connection owned by this project")
+
+	// ErrAccountIDMalformed indicates a caller-supplied account id is shape-invalid for its
+	// platform. Maps to 400.
+	//
+	// All four account-monitor dispatchers (googleads.ValidateCustomerID,
+	// linkedin.ValidateAccountID, meta.ValidateAccountID, reddit.ValidateAccountID) validate
+	// the id's shape themselves, before resolving any credential, and wrap a failure in this
+	// sentinel — rather than falling through to classifyDiscoveryError's default arm, which
+	// would report an unrelated-looking 503 for what is really a caller error. All four design
+	// attributes also carry a Goa Pattern, so an HTTP caller's malformed id never reaches the
+	// dispatcher at all; the dispatcher-level check exists for defense-in-depth against a
+	// non-HTTP caller that bypasses Goa entirely. The platform-package regexes
+	// (googleads.customerIDRE, reddit.accountIDRe, etc.) and the design Patterns are two
+	// independent copies of the same shape, guarded against drifting apart by
+	// internal/apivalidation/monitor_account_id_drift_test.go. See
+	// docs/knowledge/architecture/account-monitor-endpoints.md.
+	//
+	// Distinct from ErrConnectionNotUsable: that sentinel is about the STORED connection
+	// being unusable; this one is about the id the CALLER passed on this one request.
+	ErrAccountIDMalformed = errors.New("the account id is not valid for this platform")
+
+	// ErrMonitorDaysInvalid indicates a caller-supplied days window for an account-monitor
+	// read is outside MonitorDaysMin..MonitorDaysMax. Maps to 400, alongside
+	// ErrAccountIDMalformed.
+	//
+	// The service layer's own validateMonitorDays already rejects this for an HTTP caller
+	// before any dispatcher runs, mirroring the design attribute's own Minimum/Maximum. The
+	// four account-monitor dispatchers re-check it themselves too, for the same reason they
+	// re-check account_id's shape (see ErrAccountIDMalformed's doc comment): a non-HTTP
+	// caller that bypasses Goa also bypasses the service-layer check, and an unchecked days
+	// of 0 or negative inverts the [start, end] window each dispatcher computes from it,
+	// which would otherwise surface as classifyDiscoveryError's opaque default 503 instead
+	// of a clean 400.
+	ErrMonitorDaysInvalid = fmt.Errorf("days must be between %d and %d", MonitorDaysMin, MonitorDaysMax)
+
+	// ErrAccountNotManagedByConnection indicates a caller-supplied account id is well-formed
+	// but names an account the project's OWN resolved connection does not manage. Maps to 400.
+	//
+	// Reddit's resolveMonitorClient is the only place this can happen: a Reddit connection is
+	// bound to exactly one ad account, so a request for any other account id is a request
+	// mismatch, not a connection defect. Before round-18 review this rode on
+	// ErrConnectionNotUsable, whose message tells the operator to check that the STORED
+	// credential is active and valid — which it is; the wrong thing here is the REQUEST, not
+	// the connection. Distinct for the same reason ErrAccountIDMalformed is distinct from
+	// ErrConnectionNotUsable: this sentinel is about what the caller asked for on this one
+	// request, not about the state of the stored connection.
+	ErrAccountNotManagedByConnection = errors.New("the requested account is not managed by this project's connection")
+)
+
+// MonitorDaysMin and MonitorDaysMax are the account-monitor `days` window's inclusive
+// bound, mirrored (not imported, to keep design/ standalone — see its package doc)
+// by the four Minimum/Maximum pairs in design/connection.go's monitor attributes, and
+// consumed directly by internal/service/connection_monitor.go's and
+// internal/dispatch/monitor_validation.go's validateMonitorDays so those two runtime
+// copies cannot drift from each other or from ErrMonitorDaysInvalid's own message.
+// internal/apivalidation/monitor_account_id_drift_test.go's sibling test drives the
+// design-layer boundary from these same constants, so a change here that isn't mirrored
+// in design/connection.go fails that test instead of drifting silently.
+const (
+	MonitorDaysMin = 7
+	MonitorDaysMax = 90
 )

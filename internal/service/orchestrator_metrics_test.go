@@ -321,6 +321,23 @@ func (d upstreamCapableDispatcher) LookupCampaign(context.Context, string, model
 	return &model.PlatformCampaignRef{ID: "pc-1", Name: "n"}, nil
 }
 
+// ListAccountCampaignMetrics and ReadAccountTotals implement AccountMetricsReader and
+// AccountTotalsReader (both optional dispatcher capabilities) so this same fake also drives
+// the two account-monitor upstream calls the orchestrator instruments.
+func (d upstreamCapableDispatcher) ListAccountCampaignMetrics(context.Context, string, model.Provider, string, int) ([]model.AccountCampaignMetrics, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return []model.AccountCampaignMetrics{}, nil
+}
+
+func (d upstreamCapableDispatcher) ReadAccountTotals(context.Context, string, model.Provider, string, int, int) (*model.AccountMonitorTotals, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.AccountMonitorTotals{}, nil
+}
+
 // TestUpstreamCallsAreInstrumented drives each instrumented capability path and
 // asserts the upstream call was actually recorded with the right bounded operation
 // token and outcome.
@@ -433,6 +450,22 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opLookupCampaign,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.LookupPlatformCampaign(ctx, "p1", platform, "pc-1")
+				return err
+			},
+		},
+		{
+			name: "list account campaign metrics",
+			op:   opListAccountCampaignMetrics,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadAccountCampaignMetrics(ctx, "p1", platform, "acct-1", 30)
+				return err
+			},
+		},
+		{
+			name: "read account totals",
+			op:   opReadAccountTotals,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, _, err := o.ReadAccountTotals(ctx, "p1", platform, "acct-1", 30, 5)
 				return err
 			},
 		},
