@@ -11,14 +11,20 @@ resource: ".github/workflows/ghcr-image-cleanup.yaml"
 deletes stale versions, tagged and untagged, of the
 `linuxfoundation/lfx-v2-campaign-service/campaign-service` GHCR package using
 [`snok/container-retention-policy`](https://github.com/snok/container-retention-policy),
-invoked as a direct container reference (`docker://ghcr.io/snok/container-retention-policy@sha256:...`)
-pinned by image digest, not by a mutable release tag.
+invoked with `docker pull` / `docker run` against an image digest
+(`ghcr.io/snok/container-retention-policy@sha256:...`), not a mutable
+release tag and not the `snok/container-retention-policy@<sha>` action alias.
 
-Because this is a raw `docker://` reference rather than the
-`snok/container-retention-policy@<sha>` action alias, there is no
-`action.yaml` to translate `with:` inputs into CLI flags or fill in its
-defaults — any flag this workflow doesn't pass in `with.args` falls back to
-whatever default the CLI's own argument parser supplies, not `action.yaml`'s.
+The action alias only pins action metadata; that metadata still points at the
+mutable `v3.1.0` container tag. A raw `uses: docker://` step would pin the
+executed image, but it has no `action.yaml` outputs and does not leave the
+container's stdout in a file a later step can read. This workflow therefore
+runs the digest-pinned image itself and tees stdout to `$RUNNER_TEMP` so the
+summary step can count unique package versions.
+
+Because there is no `action.yaml` to translate `with:` inputs into CLI flags
+or fill in its defaults, any flag this workflow doesn't pass on `docker run`
+falls back to whatever default the CLI's own argument parser supplies.
 `--keep-n-most-recent` and `--timestamp-to-use` are safe to omit because the
 CLI's own defaults happen to match what `action.yaml` would have passed
 (`0` and `updated_at`). `--image-tags` and `--shas-to-skip` are different: the
@@ -89,11 +95,17 @@ need a token with broader package visibility than a single job's
 ## Auditability
 
 Every run's job log lists each considered/deleted image version by digest
-and age, and a final step writes a summary (trigger, mode, cut-off,
-deleted/failed counts) to the run's `$GITHUB_STEP_SUMMARY`. The
-`deleted`/`failed` fields in that summary come from the action's own
-outputs and may render `(none)` even on a run that deleted versions, if the
-underlying Docker action does not populate `GITHUB_OUTPUT`; the job log
-itself is the authoritative record regardless. Accidental deletions are
+and age. The cleanup step tees the container's stdout to `$RUNNER_TEMP`, and
+a final step (`if: always()`) writes a summary to `$GITHUB_STEP_SUMMARY`:
+trigger, mode, cut-off, the tagged/untagged candidate counts snok logged
+before multi-arch filtering, the number of multi-arch children it protected,
+and unique package-version counts for deleted (or would-delete, on a dry
+run) and failed. Counts are unique `package_version_id` values, not log
+lines — one GHCR version that carries both a commit SHA and a branch-name
+tag is one deletion and two log lines. snok v3.1.0's `deleted`/`failed`
+action outputs are unused: the binary concatenates those values onto the
+`GITHUB_OUTPUT` path string and calls `env::set_var`, which the runner never
+sees, and a raw docker image has no `action.yaml` to publish them anyway.
+The job log remains the per-version record. Accidental deletions are
 recovered via GitHub's own package-version restore window, not by this
 workflow.
