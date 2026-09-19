@@ -585,7 +585,13 @@ func (s *BriefService) findWizardSourceEmail(ctx context.Context, projectID stri
 			"project_id", projectID)
 		return nil, false
 	}
-	hits, serr := client.SearchEmails(ctx, query)
+	// Bound the WHOLE search, not each request inside it. SearchEmails paginates -- up to 200
+	// pages -- and only the individual calls carry a deadline, so a slow portal could keep this
+	// planning handler running long past the server's write deadline while every single request
+	// looked healthy. Same budget and same reason as the orchestrator's account listing.
+	searchCtx, cancelSearch := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancelSearch()
+	hits, serr := client.SearchEmails(searchCtx, query)
 	if serr != nil {
 		slog.WarnContext(ctx, "wizard could not search past hubspot emails; planning without a clone source",
 			"project_id", projectID, "error", safeErrSummary(serr))
@@ -1145,8 +1151,15 @@ func (s *BriefService) CloneWizardEmail(ctx context.Context, p *briefs.CloneWiza
 			slog.WarnContext(ctx, "wizard created the draft but could not apply the requested send list",
 				"email_id", email.ID, "send_list_id", listID, "error", safeErrSummary(lerr))
 			out.ValidationPassed = false
-			out.ValidationIssues = append(out.ValidationIssues,
-				"the draft was created but the requested send list could not be applied; set it again")
+			// An UNCONFIRMED outcome is not a failure, and "set it again" is the wrong advice
+			// for it: HubSpot may have applied the list already, so a blind retry can act on a
+			// draft that is not in the state the operator thinks it is. Same distinction
+			// hubspot.IsUnconfirmed carries everywhere else in this service.
+			issue := "the draft was created but the requested send list could not be applied; set it again"
+			if hubspot.IsUnconfirmed(lerr) {
+				issue = "the draft was created but the outcome of applying the requested send list is unknown; check the draft in HubSpot before setting it again"
+			}
+			out.ValidationIssues = append(out.ValidationIssues, issue)
 		} else {
 			out.Message += fmt.Sprintf(" Recipient list %s applied.", listID)
 		}
@@ -1259,6 +1272,15 @@ func (s *BriefService) SetWizardSendList(ctx context.Context, p *briefs.SetWizar
 	if _, lerr := client.SetSendList(ctx, emailID, primary, suppression); lerr != nil {
 		slog.WarnContext(ctx, "wizard could not apply the send list to the draft",
 			"email_id", emailID, "send_list_id", primary, "error", safeErrSummary(lerr))
+		// "the draft is unchanged" is a DEFINITE claim, and it is false for an unconfirmed
+		// outcome: the write may have landed. Telling an operator the draft is untouched when
+		// it may already carry the list is worse than saying nothing -- they act on it.
+		if hubspot.IsUnconfirmed(lerr) {
+			return nil, &briefs.ConnServiceUnavailableError{
+				Code:    "503",
+				Message: "the outcome of applying the recipient list is unknown; check the draft in HubSpot before retrying",
+			}
+		}
 		return nil, &briefs.ConnServiceUnavailableError{
 			Code:    "503",
 			Message: "the recipient list could not be applied to the draft; the draft is unchanged",

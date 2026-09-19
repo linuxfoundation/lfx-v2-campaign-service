@@ -1345,3 +1345,121 @@ func TestWizard_EveryTurnRefusesADeletedBrief(t *testing.T) {
 		})
 	}
 }
+
+// unconfirmedHubSpotErr returns a real, ambiguous HubSpot error: a mutating request answered
+// 429, which means the server MAY have applied the change. Built through the real client rather
+// than hand-rolled, because IsUnconfirmed reads the concrete type -- a stand-in error would
+// classify as definite and the test would prove nothing.
+func unconfirmedHubSpotErr(t *testing.T) error {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(srv.Close)
+
+	hc := hubspot.NewClient(
+		hubspot.Credentials{PrivateAppToken: "t"}, hubspot.AccountConfig{PortalID: "8112310"},
+		hubspot.WithBaseURL(srv.URL),
+	)
+	_, err := hc.SetSendList(context.Background(), "email-1", "list-1", nil)
+	if err == nil {
+		t.Fatal("fixture precondition: a mutating 429 must be an error")
+	}
+	if !hubspot.IsUnconfirmed(err) {
+		t.Fatal("fixture precondition: a mutating 429 must classify as unconfirmed, else this test proves nothing")
+	}
+	return err
+}
+
+// TestWizard_AnUnconfirmedSendListIsNotReportedAsUnchanged pins the wording of both send-list
+// failure paths against an AMBIGUOUS outcome.
+//
+// A 429 or 5xx on a mutating request means HubSpot may already have applied the list. Telling
+// the operator to "set it again" -- or worse, that "the draft is unchanged" -- is a definite
+// claim the service cannot support, and they act on it: a blind retry targets a draft that is
+// not in the state they were told it was in. The service already draws this distinction
+// everywhere else through hubspot.IsUnconfirmed; these two paths did not.
+func TestWizard_AnUnconfirmedSendListIsNotReportedAsUnchanged(t *testing.T) {
+	ctx := context.Background()
+	ambiguous := unconfirmedHubSpotErr(t)
+
+	t.Run("clone reports it as an issue, not as a retry instruction", func(t *testing.T) {
+		h := newWizardHarness(t, wizardModelJSON)
+		h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+		h.hubspot.sendErr = ambiguous
+		started, err := h.svc.StartEmailWizardPlan(ctx, &briefs.StartEmailWizardPlanPayload{
+			ProjectID: wizardTestProject, BriefID: wizardTestBrief})
+		if err != nil {
+			t.Fatalf("StartEmailWizardPlan: %v", err)
+		}
+		if _, perr := h.svc.PlanEmailWizard(ctx, &briefs.PlanEmailWizardPayload{
+			ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID}); perr != nil {
+			t.Fatalf("PlanEmailWizard: %v", perr)
+		}
+		if _, gerr := h.svc.GenerateWizardContent(ctx, &briefs.GenerateWizardContentPayload{
+			ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID}); gerr != nil {
+			t.Fatalf("GenerateWizardContent: %v", gerr)
+		}
+		listID := "list-1"
+		out, cerr := h.svc.CloneWizardEmail(ctx, &briefs.CloneWizardEmailPayload{
+			ProjectID: wizardTestProject, BriefID: wizardTestBrief,
+			SessionID: started.SessionID, SendListID: &listID, Approved: true,
+		})
+		if cerr != nil {
+			t.Fatalf("CloneWizardEmail: %v", cerr)
+		}
+		joined := strings.Join(out.ValidationIssues, " | ")
+		if !strings.Contains(joined, "unknown") {
+			t.Errorf("issues = %q, want the outcome described as unknown", joined)
+		}
+		if strings.Contains(joined, "could not be applied; set it again") {
+			t.Errorf("issues = %q, want no blind-retry instruction for an unconfirmed outcome", joined)
+		}
+	})
+
+	t.Run("set-send-list does not claim the draft is unchanged", func(t *testing.T) {
+		h := newWizardHarness(t, wizardModelJSON)
+		h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+		started, err := h.svc.StartEmailWizardPlan(ctx, &briefs.StartEmailWizardPlanPayload{
+			ProjectID: wizardTestProject, BriefID: wizardTestBrief})
+		if err != nil {
+			t.Fatalf("StartEmailWizardPlan: %v", err)
+		}
+		if _, perr := h.svc.PlanEmailWizard(ctx, &briefs.PlanEmailWizardPayload{
+			ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID}); perr != nil {
+			t.Fatalf("PlanEmailWizard: %v", perr)
+		}
+		if _, gerr := h.svc.GenerateWizardContent(ctx, &briefs.GenerateWizardContentPayload{
+			ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID}); gerr != nil {
+			t.Fatalf("GenerateWizardContent: %v", gerr)
+		}
+		if _, cerr := h.svc.CloneWizardEmail(ctx, &briefs.CloneWizardEmailPayload{
+			ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID, Approved: true,
+		}); cerr != nil {
+			t.Fatalf("CloneWizardEmail: %v", cerr)
+		}
+
+		h.hubspot.sendErr = ambiguous
+		listID := "list-1"
+		_, serr := h.svc.SetWizardSendList(ctx, &briefs.SetWizardSendListPayload{
+			ProjectID: wizardTestProject, BriefID: wizardTestBrief,
+			SessionID: started.SessionID, SendListID: &listID,
+		})
+		if serr == nil {
+			t.Fatal("an unconfirmed send-list must still be reported as a failure")
+		}
+		// Goa's generated error types render an empty Error(); the operator-facing text is the
+		// Message field, which is what actually reaches them.
+		var unavailable *briefs.ConnServiceUnavailableError
+		if !errors.As(serr, &unavailable) {
+			t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError", serr, serr)
+		}
+		msg := unavailable.Message
+		if strings.Contains(msg, "the draft is unchanged") {
+			t.Errorf("err = %q -- claims the draft is unchanged when the write may have landed", msg)
+		}
+		if !strings.Contains(msg, "unknown") {
+			t.Errorf("err = %q, want the outcome described as unknown", msg)
+		}
+	})
+}
