@@ -5304,3 +5304,71 @@ func TestDeleteBrief_WithNoWizardBackendStillDeletes(t *testing.T) {
 		t.Fatalf("DeleteBrief with no wizard backend: %v", derr)
 	}
 }
+
+// TestDeleteBrief_AFailedScrubIsRetriedByReDeleting pins the RECOVERY path for the retention
+// scrub.
+//
+// The scrub is best-effort, so a cancelled request or a transient database error leaves the
+// personal data in place. There is no purge job and no TTL, so the only way back is to issue
+// the delete again -- and that only works because the scrub runs even when ArchiveBrief answers
+// ErrNotFound. The archive's status guard makes an already-archived brief answer ErrNotFound
+// forever, so returning on it would strand the data permanently: every retry would stop before
+// reaching the scrub, while the API reported the brief as already deleted.
+func TestDeleteBrief_AFailedScrubIsRetriedByReDeleting(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+	sessions := newFakeWizardSessionRepo()
+	s.SetWizardBackend(sessions, nil, nil)
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	actor := &model.Actor{}
+	session, err := sessions.CreateSession(ctx, &model.WizardSession{
+		ProjectID:   "cncf",
+		BriefID:     created.ID,
+		ChatHistory: json.RawMessage(`[{"role":"user","content":"my unpublished keynote"}]`),
+		CreatedBy:   actor,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// First delete: the archive lands, the scrub fails.
+	sessions.scrubE = errors.New("connection reset")
+	if derr := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); derr != nil {
+		t.Fatalf("a failed scrub must not fail the delete, got %v", derr)
+	}
+	stranded, err := sessions.GetSession(ctx, "cncf", created.ID, session.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if len(stranded.ChatHistory) == 0 {
+		t.Fatal("fixture precondition: the scrub was supposed to fail, so the data must still be here")
+	}
+
+	// The operator re-issues the delete. The brief is already archived, so the archive answers
+	// ErrNotFound -- and the scrub must still run.
+	sessions.scrubE = nil
+	derr := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{ProjectID: "cncf", BriefID: created.ID})
+	if derr == nil {
+		t.Error("re-deleting an archived brief should still report 404 to the caller")
+	}
+
+	recovered, err := sessions.GetSession(ctx, "cncf", created.ID, session.ID)
+	if err != nil {
+		t.Fatalf("GetSession after retry: %v", err)
+	}
+	if len(recovered.ChatHistory) != 0 {
+		t.Errorf("chat_history = %s -- a scrub that failed once can never be retried, so the data is stranded forever",
+			recovered.ChatHistory)
+	}
+}

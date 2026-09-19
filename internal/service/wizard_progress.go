@@ -54,6 +54,11 @@ const (
 	// open after this has been abandoned by a tab nobody is looking at, and the client
 	// reconnects if it has not.
 	wizardStreamMaxDuration = 30 * time.Minute
+	// wizardStreamWriteTimeout is how long a SINGLE frame write may take, reset before each
+	// one. It bounds a stuck client without bounding the stream: the stream's own cap is
+	// wizardStreamMaxDuration, and the poll interval above guarantees a write well inside this
+	// window, so a healthy stream always refreshes its deadline before reaching it.
+	wizardStreamWriteTimeout = 60 * time.Second
 )
 
 // WizardProgressFrame is one frame on the wizard's progress stream. Its JSON keys are the
@@ -324,7 +329,22 @@ func (s *BriefService) WizardProgressHandler(baseCtx context.Context) http.Handl
 }
 
 // writeWizardFrame writes one SSE event, reporting whether the stream is still usable.
+// The write deadline is pushed forward on EVERY frame, which is what makes the stream's
+// advertised lifetime real. `buildServer` sets `WriteTimeout: constants.DefaultWriteTimeout`
+// (120s) and net/http's write deadline is ABSOLUTE -- it is not refreshed by writing, so
+// heartbeats do not help. Without this, a stream capped at wizardStreamMaxDuration (30 minutes)
+// actually died at about two minutes, mid-run, on every long wizard turn. The failure looks
+// like a dropped connection rather than a timeout, which is why it survived review until now.
+//
+// Extended here rather than by removing the server-wide timeout: that timeout is what stops an
+// ordinary slow handler holding a connection open, and SSE is the one route that legitimately
+// needs longer.
 func writeWizardFrame(w http.ResponseWriter, flusher http.Flusher, frame WizardProgressFrame) bool {
+	// Best-effort: a ResponseWriter that cannot set a deadline (a wrapper that does not
+	// implement it) still streams, it just keeps the server's own timeout. Failing the frame
+	// over it would turn a shorter stream into no stream at all.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(wizardStreamWriteTimeout))
+
 	payload, err := json.Marshal(frame)
 	if err != nil {
 		// A frame whose Result will not marshal is dropped rather than failing the stream: the

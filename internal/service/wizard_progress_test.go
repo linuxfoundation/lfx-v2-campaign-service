@@ -5,11 +5,13 @@ package service
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
@@ -320,5 +322,59 @@ func TestWizardProgressHub_PublishDoesNotRaceUnsubscribe(t *testing.T) {
 			go func(f func()) { defer wg.Done(); f() }(c)
 		}
 		wg.Wait()
+	}
+}
+
+// TestWriteWizardFrame_OutlivesTheServerWriteTimeout pins the SSE stream against dying at the
+// server's global write deadline.
+//
+// `buildServer` sets `WriteTimeout: constants.DefaultWriteTimeout` (120s), and net/http's write
+// deadline is ABSOLUTE — writing to the connection does not push it back, so heartbeat frames
+// do not help. A stream advertised as lasting wizardStreamMaxDuration (30 minutes) therefore
+// died after about two minutes, mid-run, and it surfaced to the client as a dropped connection
+// rather than a timeout.
+//
+// This drives a REAL http.Server with a deliberately tiny WriteTimeout, because the behaviour
+// under test belongs to the server's connection deadline — an httptest.ResponseRecorder has no
+// deadline to miss and would pass no matter what writeWizardFrame did.
+func TestWriteWizardFrame_OutlivesTheServerWriteTimeout(t *testing.T) {
+	const writeTimeout = 150 * time.Millisecond
+
+	released := make(chan struct{})
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("the test server's ResponseWriter cannot flush")
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
+
+		// Past the server's write deadline. Without the per-frame extension this write fails
+		// and the frame never reaches the client.
+		time.Sleep(writeTimeout * 2)
+		if !writeWizardFrame(w, flusher, WizardProgressFrame{Type: "brief", Text: "late frame"}) {
+			t.Error("writeWizardFrame reported the client was gone")
+		}
+		close(released)
+	}))
+	srv.Config.WriteTimeout = writeTimeout
+	srv.Start()
+	defer srv.Close()
+
+	resp, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, rerr := io.ReadAll(resp.Body)
+	<-released
+	if rerr != nil {
+		t.Fatalf("reading the stream: %v -- the connection died at the server's write deadline", rerr)
+	}
+	if !strings.Contains(string(body), "late frame") {
+		t.Errorf("body = %q, want the frame written after the write deadline -- every long stream is cut short", body)
 	}
 }
