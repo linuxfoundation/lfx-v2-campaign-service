@@ -570,13 +570,20 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	// guidance, the generated bodies and the actor blobs in `wizard_sessions` indefinitely --
 	// a store of personal data with no TTL, no purge job and no deletion path.
 	//
-	// It runs even when the archive reported ErrNotFound, and that is the RECOVERY path, not
-	// sloppiness. The archive's status guard means a brief archived by an earlier attempt
-	// answers ErrNotFound forever; returning here on that would make a scrub that failed once
-	// -- a cancelled request, a transient database error -- unrepairable through the API,
-	// because every retry would stop above this line. Re-issuing the delete now retries the
-	// scrub. The statement is idempotent (its WHERE skips already-scrubbed rows), so the
-	// repeat costs nothing when there is nothing to do.
+	// It runs on exactly two outcomes: the archive SUCCEEDED, or it reported ErrNotFound.
+	//
+	// ErrNotFound is the RECOVERY path. The archive's status guard means a brief archived by an
+	// earlier attempt answers ErrNotFound forever, so returning on it would make a scrub that
+	// failed once -- a cancelled request, a transient database error -- unrepairable through
+	// the API, because every retry would stop above this line. Re-issuing the delete retries
+	// the scrub, and the statement is idempotent (its WHERE skips already-scrubbed rows), so
+	// the repeat costs nothing when there is nothing to do.
+	//
+	// Any OTHER archive error must not scrub, and the distinction is not pedantic: a rolled-back
+	// transaction or a transient failure leaves the brief LIVE. Scrubbing there would destroy
+	// the transcript, the operator's guidance and the generated bodies of a brief that was never
+	// deleted -- the caller sees the delete fail, goes on using the brief, and the wizard work
+	// is silently gone. ErrNotFound is the only failure that PROVES the brief is not live.
 	//
 	// Still BEST-EFFORT and still outside the archive transaction: the brief is already
 	// deleted from the operator's point of view, and failing the whole delete because the
@@ -586,7 +593,8 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	//
 	// Snapshot under the read lock -- `SetWizardBackend` writes this field on the startup
 	// path, so reading it directly is a data race the detector flags.
-	if sessions, _, _ := s.wizardDeps(); sessions != nil {
+	briefIsGone := aerr == nil || errors.Is(aerr, domain.ErrNotFound)
+	if sessions, _, _ := s.wizardDeps(); sessions != nil && briefIsGone {
 		if n, serr := sessions.ScrubSessionsForBrief(ctx, p.ProjectID, p.BriefID); serr != nil {
 			slog.ErrorContext(ctx, "could not scrub wizard-session personal data for a deleted brief; "+
 				"re-issue the delete to retry the scrub",

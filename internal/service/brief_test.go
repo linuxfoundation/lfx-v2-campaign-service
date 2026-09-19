@@ -43,6 +43,10 @@ type fakeBriefRepo struct {
 	// createErr, when set, fails CreateBrief BEFORE it stores anything — the shape of a
 	// version conflict or a database error, where the handler ran but no row committed.
 	createErr error
+	// archiveErr, when set, fails every ArchiveBrief. Deliberately NOT ErrNotFound: it models
+	// a TRANSIENT failure (rolled-back transaction, dropped connection) where the brief stays
+	// LIVE and the caller can keep using it — the case a deletion side effect must not act on.
+	archiveErr error
 	// getErr, when set, fails every GetBrief. It is deliberately NOT ErrNotFound: it models
 	// the case where the service cannot tell what the brief's state is (pool exhausted,
 	// deadline expired), which must never be answered with a claim about what somebody else
@@ -194,6 +198,12 @@ func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, by *mod
 // It also models the actor stamp: the real UPDATE sets updated_by in the same statement,
 // so a fake that dropped the argument would let a caller that never passes an actor pass.
 func (r *fakeBriefRepo) ArchiveBrief(_ context.Context, projectID, id string, by *model.Actor, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
+	// archiveErr models a TRANSIENT failure -- a rolled-back transaction, a dropped
+	// connection -- as distinct from the ErrNotFound below. The brief stays LIVE, which is
+	// the state a caller can keep using.
+	if r.archiveErr != nil {
+		return nil, r.archiveErr
+	}
 	b, ok := r.briefs[briefKey(projectID, id)]
 	if !ok || b.Status == model.BriefArchived {
 		// The real query guards on status <> 'archived', so a second archive is ErrNotFound.
@@ -5370,5 +5380,66 @@ func TestDeleteBrief_AFailedScrubIsRetriedByReDeleting(t *testing.T) {
 	if len(recovered.ChatHistory) != 0 {
 		t.Errorf("chat_history = %s -- a scrub that failed once can never be retried, so the data is stranded forever",
 			recovered.ChatHistory)
+	}
+}
+
+// TestDeleteBrief_ATransientArchiveFailureDoesNotScrub pins the scrub against destroying the
+// work of a brief that is still LIVE.
+//
+// The scrub runs on two outcomes -- the archive succeeded, or it reported ErrNotFound (the
+// retry path for an already-archived brief). It must NOT run on any other error. A rolled-back
+// transaction or a dropped connection leaves the brief live: the caller sees the delete fail
+// and goes on using it. Scrubbing there would clear the transcript, the operator's guidance and
+// the generated bodies of a brief nobody deleted, and nothing would report it -- the operator
+// would simply find the wizard work gone.
+//
+// ErrNotFound is the only archive failure that PROVES the brief is not live, which is why it is
+// the only one that authorises the side effect.
+func TestDeleteBrief_ATransientArchiveFailureDoesNotScrub(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+	sessions := newFakeWizardSessionRepo()
+	s.SetWizardBackend(sessions, nil, nil)
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	session, err := sessions.CreateSession(ctx, &model.WizardSession{
+		ProjectID:   "cncf",
+		BriefID:     created.ID,
+		ChatHistory: json.RawMessage(`[{"role":"user","content":"my unpublished keynote"}]`),
+		PlanResult:  json.RawMessage(`{"extra_context":"write it for sponsors"}`),
+		CreatedBy:   &model.Actor{},
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	repo.archiveErr = errors.New("connection reset by peer")
+	if derr := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); derr == nil {
+		t.Fatal("a failed archive must be reported to the caller")
+	}
+
+	// The brief is still live, so its wizard work must be untouched.
+	got, err := sessions.GetSession(ctx, "cncf", created.ID, session.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if len(got.ChatHistory) == 0 {
+		t.Error("chat_history was scrubbed although the delete FAILED and the brief is still live")
+	}
+	if len(got.PlanResult) == 0 {
+		t.Error("plan_result was scrubbed although the delete FAILED and the brief is still live")
+	}
+	if got.CreatedBy == nil {
+		t.Error("created_by was cleared although the delete FAILED and the brief is still live")
 	}
 }
