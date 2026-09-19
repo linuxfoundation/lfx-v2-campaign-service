@@ -6,6 +6,7 @@ package dbtest_test
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,6 +16,22 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
 )
+
+// sameJSON compares two JSON documents by VALUE. JSONB stores a parsed representation and
+// re-serializes on read, so the bytes that come back differ from the bytes that went in even
+// when nothing changed.
+func sameJSON(t *testing.T, got, want string) bool {
+	t.Helper()
+	var g, w any
+	if err := json.Unmarshal([]byte(got), &g); err != nil {
+		t.Errorf("value read back is not valid JSON: %v", err)
+		return false
+	}
+	if err := json.Unmarshal([]byte(want), &w); err != nil {
+		t.Fatalf("test expectation is not valid JSON: %v", err)
+	}
+	return reflect.DeepEqual(g, w)
+}
 
 func newWizardSessionRepo(pool *pgxpool.Pool) *postgres.WizardSessionRepo {
 	return postgres.NewWizardSessionRepo(&postgres.Pool{Pool: pool})
@@ -165,5 +182,184 @@ func TestLiveScrubSessionsForBriefRejectsEmptyIdentifiers(t *testing.T) {
 				t.Errorf("err = %v, want domain.ErrNotFound", err)
 			}
 		})
+	}
+}
+
+// TestLiveWizardSessionCRUDRoundTrip exercises the repository methods against a real database.
+//
+// wizard_session_repo_test.go asserts over SQL SOURCE TEXT -- column order, actor stamping,
+// tenant scoping in the query string. Those tests are worth having and they cannot fail for
+// any of the reasons this one can: whether Postgres accepts the statement, whether the bind
+// arguments land on the columns they name, whether the RETURNING list round-trips through
+// seven JSONB columns, and whether the version gate actually gates.
+func TestLiveWizardSessionCRUDRoundTrip(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	briefs := newBriefRepo(pool)
+	sessions := newWizardSessionRepo(pool)
+
+	projectID := dbtest.UniqueID(t, "proj-crud")
+	brief, err := briefs.CreateBrief(ctx, draftBrief(projectID, dbtest.UniqueID(t, "crud")), nil)
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	created, err := sessions.CreateSession(ctx, &model.WizardSession{
+		ProjectID:        projectID,
+		BriefID:          brief.ID,
+		ProgressToken:    dbtest.UniqueID(t, "tok"),
+		PlanResult:       json.RawMessage(`{"plan":"a"}`),
+		ReferenceVariant: json.RawMessage(`{"variant":"reference"}`),
+		StageVariant:     json.RawMessage(`{"variant":"stage"}`),
+		Sections:         json.RawMessage(`[{"type":"rich_text"}]`),
+		ChatHistory:      json.RawMessage(`[{"role":"user"}]`),
+		EmailID:          "email-1",
+		DraftURL:         "https://hubspot.example.test/draft/1",
+		CreatedBy:        &model.Actor{Name: "Ada Lovelace", Email: "ada@example.test"},
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if created.ID == "" {
+		t.Fatal("CreateSession returned no id")
+	}
+	if created.Version != 1 {
+		t.Errorf("new session version = %d, want 1 (a database default, so this is the only place it is checked)", created.Version)
+	}
+
+	// Each JSONB column read back under its OWN name. A positional shift inside
+	// scanWizardSession cannot fail at the type level -- five of these are JSONB and would
+	// happily swap -- so the values are made distinguishable on purpose.
+	got, err := sessions.GetSession(ctx, projectID, brief.ID, created.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	// Compared as JSON values, not as bytes: JSONB is a parsed representation, so Postgres
+	// returns `{"plan": "a"}` for the `{"plan":"a"}` that went in. A byte comparison here
+	// fails on the whitespace and says nothing about the column mapping, which is what this
+	// is actually checking.
+	for _, f := range []struct{ name, got, want string }{
+		{"plan_result", string(got.PlanResult), `{"plan":"a"}`},
+		{"reference_variant", string(got.ReferenceVariant), `{"variant":"reference"}`},
+		{"stage_variant", string(got.StageVariant), `{"variant":"stage"}`},
+		{"sections", string(got.Sections), `[{"type":"rich_text"}]`},
+		{"chat_history", string(got.ChatHistory), `[{"role":"user"}]`},
+	} {
+		if !sameJSON(t, f.got, f.want) {
+			t.Errorf("%s = %s, want %s -- a swapped scan destination reads as valid JSON under the wrong name", f.name, f.got, f.want)
+		}
+	}
+	for _, f := range []struct{ name, got, want string }{
+		{"email_id", got.EmailID, "email-1"},
+		{"draft_url", got.DraftURL, "https://hubspot.example.test/draft/1"},
+	} {
+		if f.got != f.want {
+			t.Errorf("%s = %q, want %q", f.name, f.got, f.want)
+		}
+	}
+	if got.CreatedBy == nil || got.CreatedBy.Email != "ada@example.test" {
+		t.Errorf("created_by = %v, want the stamped actor", got.CreatedBy)
+	}
+
+	// Tenancy: the same id under another project must NOT resolve.
+	if _, gerr := sessions.GetSession(ctx, dbtest.UniqueID(t, "proj-wrong"), brief.ID, created.ID); gerr != domain.ErrNotFound {
+		t.Errorf("cross-project GetSession err = %v, want domain.ErrNotFound", gerr)
+	}
+
+	got.Phase = model.WizardPhaseContent
+	got.ChatHistory = json.RawMessage(`[{"role":"user"},{"role":"assistant"}]`)
+	got.UpdatedBy = &model.Actor{Name: "Grace Hopper", Email: "grace@example.test"}
+	updated, err := sessions.UpdateSession(ctx, got, created.Version)
+	if err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+	if updated.Version != created.Version+1 {
+		t.Errorf("version = %d, want %d -- the optimistic-concurrency counter must advance", updated.Version, created.Version+1)
+	}
+
+	// The version gate. A second update at the ORIGINAL version is the two-tabs case: it must
+	// be refused as STALE, not reported as missing. The distinction decides whether the caller
+	// re-reads and retries or starts a second wizard session -- and a second session that
+	// reaches the clone phase produces a duplicate HubSpot draft.
+	if _, uerr := sessions.UpdateSession(ctx, got, created.Version); uerr != domain.ErrStaleWizardSession {
+		t.Errorf("stale update err = %v, want domain.ErrStaleWizardSession", uerr)
+	}
+
+	// A row that does not exist must classify as NotFound, not Stale -- the other arm of the
+	// same branch, which a test of only the stale case would leave unproven.
+	missing := *got
+	missing.ID = "00000000-0000-0000-0000-000000000000"
+	if _, uerr := sessions.UpdateSession(ctx, &missing, 1); uerr != domain.ErrNotFound {
+		t.Errorf("update of a missing session err = %v, want domain.ErrNotFound", uerr)
+	}
+}
+
+// TestLiveGetSessionByTokenIsDeterministicOnATie pins the tiebreaker in
+// `ORDER BY created_at DESC, id DESC`.
+//
+// created_at defaults to now(), which is the TRANSACTION timestamp -- so two sessions created
+// inside one transaction do not merely land close together, they tie EXACTLY. With only
+// created_at in the ORDER BY, the winner is whatever the plan returns first: stable-looking,
+// and free to change under a different plan or after a vacuum. The SSE handler resolves a
+// token through this lookup, so a non-deterministic pick routes one caller's progress frames
+// from the wrong session's run.
+//
+// The tie is forced rather than hoped for: both rows are inserted in a single transaction and
+// their created_at is then asserted EQUAL, so the test cannot quietly degrade into two
+// distinct timestamps that the tiebreaker never has to break.
+func TestLiveGetSessionByTokenIsDeterministicOnATie(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	briefs := newBriefRepo(pool)
+	sessions := newWizardSessionRepo(pool)
+
+	projectID := dbtest.UniqueID(t, "proj-tie")
+	brief, err := briefs.CreateBrief(ctx, draftBrief(projectID, dbtest.UniqueID(t, "tie")), nil)
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	token := dbtest.UniqueID(t, "shared-token")
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	ids := make([]string, 0, 2)
+	for range 2 {
+		var id string
+		if qerr := tx.QueryRow(ctx,
+			`INSERT INTO wizard_sessions (project_id, brief_id, phase, progress_token)
+			 VALUES ($1, $2, 'planning', $3) RETURNING id`,
+			projectID, brief.ID, token).Scan(&id); qerr != nil {
+			t.Fatalf("seed insert: %v", qerr)
+		}
+		ids = append(ids, id)
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		t.Fatalf("Commit: %v", cerr)
+	}
+
+	// Prove the tie is real. Without this the test could pass for the wrong reason.
+	var tied bool
+	if qerr := pool.QueryRow(ctx,
+		`SELECT count(DISTINCT created_at) = 1 FROM wizard_sessions WHERE progress_token = $1`,
+		token).Scan(&tied); qerr != nil {
+		t.Fatalf("tie check: %v", qerr)
+	}
+	if !tied {
+		t.Fatal("the two seeded sessions do not share created_at -- the tiebreaker is never exercised, so this test proves nothing")
+	}
+
+	want := max(ids[0], ids[1])
+	for i := range 5 {
+		got, gerr := sessions.GetSessionByToken(ctx, token)
+		if gerr != nil {
+			t.Fatalf("GetSessionByToken (run %d): %v", i, gerr)
+		}
+		if got.ID != want {
+			t.Fatalf("run %d resolved the token to %s, want %s -- the pick is not deterministic on a created_at tie", i, got.ID, want)
+		}
 	}
 }

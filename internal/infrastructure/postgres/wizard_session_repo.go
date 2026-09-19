@@ -98,17 +98,23 @@ func (r *WizardSessionRepo) GetSessionByToken(ctx context.Context, progressToken
 	if progressToken == "" {
 		return nil, domain.ErrNotFound
 	}
-	// ORDER BY created_at DESC LIMIT 1: the token is not UNIQUE (see 000033 — a caller may
-	// legitimately reuse one across a re-plan), so the newest holder is the one whose run is
-	// actually streaming. Without the ordering the result would be whatever the planner
-	// happened to return first, which is a stable-looking answer that changes under
-	// vacuum.
-	// Newest holder, as before. The token is server-minted now (email_wizard.go), so a
-	// collision across projects is no longer reachable -- but the ordering stays, because a
-	// caller may still legitimately reuse its OWN token across a re-plan, and the handler's
-	// project/brief check remains the authorization boundary either way.
+	// ORDER BY created_at DESC, id DESC LIMIT 1: the token is not UNIQUE (see 000033 — a
+	// caller may legitimately reuse its own token across a re-plan), so the newest holder is
+	// the one whose run is actually streaming. Without the ordering the result would be
+	// whatever the planner happened to return first, which is a stable-looking answer that
+	// changes under vacuum.
+	//
+	// `id` is the TIEBREAKER, and it is not decoration: created_at defaults to now(), which
+	// is the TRANSACTION timestamp, so two sessions created in one transaction tie EXACTLY
+	// rather than merely close together. On a tie the SSE handler would resolve a token to a
+	// non-deterministic session, and the pick could change between executions or plans. The
+	// column is a primary key, so it totally orders whatever created_at leaves tied.
+	//
+	// The token is server-minted (email_wizard.go), so a collision across projects is not
+	// reachable; the handler's project/brief check remains the authorization boundary either
+	// way. This ordering is about determinism, not authorization.
 	q := `SELECT ` + wizardSessionCols + ` FROM wizard_sessions
-		WHERE progress_token = $1 ORDER BY created_at DESC LIMIT 1`
+		WHERE progress_token = $1 ORDER BY created_at DESC, id DESC LIMIT 1`
 	s, err := scanWizardSession(r.db.QueryRow(ctx, q, progressToken))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
