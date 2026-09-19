@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -508,5 +509,78 @@ func TestLiveCreateSessionRefusesAnArchivedBrief(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("%d session(s) still hold chat_history for a deleted brief", n)
+	}
+}
+
+// TestLiveCreateSessionSerializesAgainstArchive pins the FOR UPDATE lock in CreateSession.
+//
+// The insert's own WHERE EXISTS closes the check-then-insert gap WITHIN one statement, but two
+// statements in different transactions still interleave: under READ COMMITTED an ArchiveBrief
+// can commit after the subquery observed `status <> 'archived'` and run its scrub before the
+// insert commits. The foreign key is still satisfied -- the soft delete keeps the parent row --
+// so a brand-new unscrubbed session is left behind a completed deletion.
+//
+// This drives the interleaving rather than hoping for it: a concurrent goroutine archives while
+// the insert is in flight, and the test asserts the two outcomes are CONSISTENT. Either the
+// insert won (and the session exists, having been created before the delete) or the archive won
+// (and the insert was refused). What must never happen is both: an archived brief with a
+// populated session created after it.
+func TestLiveCreateSessionSerializesAgainstArchive(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	briefs := newBriefRepo(pool)
+	sessions := newWizardSessionRepo(pool)
+
+	// Repeated, because a race that is merely UNLIKELY passes a single run. With the lock
+	// removed this fails within the first few iterations.
+	for i := range 12 {
+		projectID := dbtest.UniqueID(t, "proj-race")
+		brief, err := briefs.CreateBrief(ctx, draftBrief(projectID, dbtest.UniqueID(t, "race")), nil)
+		if err != nil {
+			t.Fatalf("CreateBrief: %v", err)
+		}
+
+		var wg sync.WaitGroup
+		var createErr, archiveErr error
+		start := make(chan struct{})
+
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, createErr = sessions.CreateSession(ctx, &model.WizardSession{
+				ProjectID:   projectID,
+				BriefID:     brief.ID,
+				ChatHistory: json.RawMessage(`[{"role":"user","content":"racing secret"}]`),
+				CreatedBy:   &model.Actor{Name: "Ada Lovelace", Email: "ada@example.test"},
+			})
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			if _, archiveErr = briefs.ArchiveBrief(ctx, projectID, brief.ID,
+				&model.Actor{Name: "Ada Lovelace"}, nil); archiveErr != nil {
+				return
+			}
+			_, archiveErr = sessions.ScrubSessionsForBrief(ctx, projectID, brief.ID)
+		}()
+		close(start)
+		wg.Wait()
+
+		if archiveErr != nil {
+			t.Fatalf("iteration %d: archive/scrub: %v", i, archiveErr)
+		}
+
+		// Whatever the interleaving, no session may hold content for this archived brief.
+		var leaked int
+		if qerr := pool.QueryRow(ctx,
+			`SELECT count(*) FROM wizard_sessions WHERE brief_id = $1 AND chat_history <> '[]'::jsonb`,
+			brief.ID).Scan(&leaked); qerr != nil {
+			t.Fatalf("iteration %d: count: %v", i, qerr)
+		}
+		if leaked != 0 {
+			t.Fatalf("iteration %d: %d session(s) hold chat_history for a brief that was archived and scrubbed "+
+				"(CreateSession err=%v) -- the insert straddled the archive", i, leaked, createErr)
+		}
 	}
 }

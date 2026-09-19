@@ -78,7 +78,39 @@ func (r *WizardSessionRepo) CreateSession(ctx context.Context, s *model.WizardSe
 	if err != nil {
 		return nil, fmt.Errorf("create wizard session: %w", err)
 	}
-	row := r.db.QueryRow(ctx, createWizardSessionQuery,
+	// Lock the parent brief, then insert on the SAME transaction -- the shape
+	// CreateAsset uses, and for the same reason. The insert's own WHERE EXISTS closes the
+	// check-then-insert gap WITHIN one statement, but two statements in different
+	// transactions still interleave: under READ COMMITTED an ArchiveBrief can commit after
+	// this subquery observed `status <> 'archived'` and run its scrub before this insert
+	// commits. The FK is still satisfied, because the soft delete keeps the parent row -- so
+	// a brand-new unscrubbed session is left behind a completed deletion.
+	//
+	// FOR UPDATE is what orders the two: whichever transaction takes the lock first runs to
+	// completion before the other observes the row, so the archive either waits and then
+	// scrubs this session, or wins and makes this insert return no rows.
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create wizard session: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status string
+	lockQ := `SELECT status FROM campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`
+	if lerr := tx.QueryRow(ctx, lockQ, s.BriefID, s.ProjectID).Scan(&status); lerr != nil {
+		if errors.Is(lerr, pgx.ErrNoRows) {
+			// Absent, or another project's. Both are ErrNotFound for the reason the insert's
+			// gate collapses them too: telling them apart leaks whether a brief the caller
+			// cannot see exists.
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("create wizard session: lock brief: %w", lerr)
+	}
+	if status == "archived" {
+		return nil, domain.ErrNotFound
+	}
+
+	row := tx.QueryRow(ctx, createWizardSessionQuery,
 		s.ProjectID, s.BriefID, string(s.PhaseOrDefault()), nullStr(s.ProgressToken),
 		nullJSON(s.PlanResult), nullJSON(s.ReferenceVariant), nullJSON(s.StageVariant),
 		nullJSON(s.Sections), nullStr(s.EmailID), nullStr(s.DraftURL), nullJSON(s.ChatHistory),
@@ -93,6 +125,10 @@ func (r *WizardSessionRepo) CreateSession(ctx context.Context, s *model.WizardSe
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("create wizard session: %w", err)
+	}
+
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("create wizard session: commit: %w", cerr)
 	}
 	return out, nil
 }
