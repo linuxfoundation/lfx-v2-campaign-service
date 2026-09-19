@@ -80,7 +80,11 @@ three cannot drift and the operator's edits — not the model's first draft — 
 receives. It needs no model, which is what keeps the editing half of the wizard working when the
 AI proxy is unconfigured.
 
-Not covered by a live-database test: the `WizardSessionRepo` has column-order, actor-stamping
-and tenancy tests that read the SQL text, but no Postgres round-trip test. `wizard_sessions` has
-many columns written positionally, which is exactly the shape where a mis-numbered placeholder
-compiles and passes text-level tests — a follow-up should add the round-trip.
+Covered by a live-database test. `WizardSessionRepo` kept its column-order, actor-stamping and
+tenancy tests that read the SQL text, but those can only check that the string still looks the
+way someone decided it should look. `wizard_sessions` writes many columns positionally — the
+shape where a mis-numbered placeholder compiles and passes every text-level test — so
+`internal/infrastructure/postgres/dbtest/wizard_scrub_live_test.go` now exercises the repository
+against a real migrated schema: the CRUD round-trip with each JSONB column read back under its
+own name, cross-project reads refused, the optimistic-version gate distinguishing a stale update
+from a missing row, deterministic token lookup on a `created_at` tie, and the retention scrub.

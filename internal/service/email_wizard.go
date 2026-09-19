@@ -170,9 +170,22 @@ func mapWizardErr(err error) error {
 }
 
 // loadWizardSession reads a session scoped to its project and brief.
-func loadWizardSession(ctx context.Context, sessions domain.WizardSessionRepository, projectID, briefID, sessionID string) (*model.WizardSession, error) {
+// The parent brief is verified ACTIVE here, not at the call sites. It was checked in four of
+// the seven wizard handlers and forgotten in three (send-list, update-sections, get-session),
+// which is the shape a per-handler rule always ends in: every new endpoint is another chance
+// to forget, and the omission is invisible because the session still loads perfectly.
+//
+// It matters because ArchiveBrief is a SOFT delete. The session rows survive it, so without
+// this a caller holding a session id could go on driving a wizard for a brief the operator
+// deleted -- and SetWizardSendList would mutate the HubSpot draft's recipients, an effect
+// outside this database entirely. GetBrief already filters `status <> 'archived'`, so asking
+// it is the whole check; the answer is a 404, which is what the brief being gone means.
+func loadWizardSession(ctx context.Context, briefRepo domain.BriefRepository, sessions domain.WizardSessionRepository, projectID, briefID, sessionID string) (*model.WizardSession, error) {
 	if strings.TrimSpace(sessionID) == "" {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "session_id is required"}
+	}
+	if _, gerr := briefRepo.GetBrief(ctx, projectID, briefID); gerr != nil {
+		return nil, mapBriefErr(gerr)
 	}
 	sess, err := sessions.GetSession(ctx, projectID, briefID, sessionID)
 	if err != nil {
@@ -197,11 +210,16 @@ func saveWizardSession(ctx context.Context, sessions domain.WizardSessionReposit
 // Fire-and-forget on purpose: the hub drops frames for a token nobody is listening on, and
 // a turn must not fail or block because a browser closed its stream. Every frame published
 // here is also part of the turn's own response.
-func (s *BriefService) publishWizardProgress(sess *model.WizardSession, override string, frame WizardProgressFrame) {
-	token := strings.TrimSpace(override)
-	if token == "" {
-		token = strings.TrimSpace(sess.ProgressToken)
-	}
+// The token is the SESSION's, always. A caller-supplied override used to win, which meant any
+// plan or generate request could publish plan_done, content or error frames onto any token it
+// knew -- and the SSE handler, which verifies a token against the session that OWNS it, would
+// hand those frames to that session's subscriber. Binding the stream at mint time is pointless
+// if a later turn can address someone else's.
+//
+// The override parameter is gone rather than ignored: a parameter that is accepted and
+// discarded reads at the call site as though it still does something.
+func (s *BriefService) publishWizardProgress(sess *model.WizardSession, frame WizardProgressFrame) {
+	token := strings.TrimSpace(sess.ProgressToken)
 	if token == "" {
 		return
 	}
@@ -412,7 +430,7 @@ func (s *BriefService) PlanEmailWizard(ctx context.Context, p *briefs.PlanEmailW
 	if err != nil {
 		return nil, err
 	}
-	sess, serr := loadWizardSession(ctx, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
 	}
@@ -420,9 +438,7 @@ func (s *BriefService) PlanEmailWizard(ctx context.Context, p *briefs.PlanEmailW
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
-	token := strVal(p.ProgressToken)
-
-	s.publishWizardProgress(sess, token, WizardProgressFrame{Type: "brief", Text: "Resolving the event details"})
+	s.publishWizardProgress(sess, WizardProgressFrame{Type: "brief", Text: "Resolving the event details"})
 	details := s.resolveWizardDetails(ctx, brief, strVal(p.URL))
 
 	tpl := emailstage.Resolve(brief.Stage)
@@ -448,7 +464,7 @@ func (s *BriefService) PlanEmailWizard(ctx context.Context, p *briefs.PlanEmailW
 	// A past-campaign email is a NICE-TO-HAVE for planning and a REQUIREMENT for cloning, so
 	// a search failure is logged and carried rather than failing the turn: the operator can
 	// still review the plan, edit the brief and re-plan.
-	s.publishWizardProgress(sess, token, WizardProgressFrame{Type: "brief", Text: "Looking for a past campaign email to clone"})
+	s.publishWizardProgress(sess, WizardProgressFrame{Type: "brief", Text: "Looking for a past campaign email to clone"})
 	if src, found := s.findWizardSourceEmail(ctx, p.ProjectID, details, tpl); found {
 		plan.Mode = "reference"
 		plan.SourceEmail = src
@@ -488,7 +504,7 @@ func (s *BriefService) PlanEmailWizard(ctx context.Context, p *briefs.PlanEmailW
 	if plan.SourceEmail != nil {
 		out.SourceEmail = &briefs.WizardSourceEmail{ID: plan.SourceEmail.ID, Name: plan.SourceEmail.Name}
 	}
-	s.publishWizardProgress(saved, token, WizardProgressFrame{
+	s.publishWizardProgress(saved, WizardProgressFrame{
 		Type: "plan_done", Text: plan.Message, Result: out, Done: true,
 	})
 	return out, nil
@@ -663,7 +679,7 @@ func (s *BriefService) GenerateWizardContent(ctx context.Context, p *briefs.Gene
 			Message: "AI model is not configured; wizard content generation is unavailable",
 		}
 	}
-	sess, serr := loadWizardSession(ctx, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
 	}
@@ -671,8 +687,6 @@ func (s *BriefService) GenerateWizardContent(ctx context.Context, p *briefs.Gene
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
-	token := strVal(p.ProgressToken)
-
 	details := decodeWizardEventDetails(brief.EventDetails)
 	// The guidance comes off the SESSION, not this payload: generate-content has no field
 	// for it (it is supplied on plan-start/plan), and dropping it here would generate copy
@@ -693,21 +707,21 @@ func (s *BriefService) GenerateWizardContent(ctx context.Context, p *briefs.Gene
 	tpl := emailstage.Resolve(brief.Stage)
 
 	// Reference variant.
-	s.publishWizardProgress(sess, token, WizardProgressFrame{Type: "brief", Text: "Writing the email in your team's voice"})
+	s.publishWizardProgress(sess, WizardProgressFrame{Type: "brief", Text: "Writing the email in your team's voice"})
 	refs := s.wizardReferenceEmails(ctx, p.ProjectID, sess)
 	refSystem, refUser := composeWizardReferencePrompt(facts, refs)
 	reference, rerr := generateWizardVariant(ctx, llmClient, refSystem, refUser, details, tpl)
 	if rerr != nil {
 		slog.WarnContext(ctx, "wizard content generation failed on the primary variant",
 			"project_id", p.ProjectID, "brief_id", p.BriefID, "error", safeErrSummary(rerr))
-		s.publishWizardProgress(sess, token, WizardProgressFrame{
+		s.publishWizardProgress(sess, WizardProgressFrame{
 			Type: "error", Error: "the email content could not be generated", Done: true,
 		})
 		return nil, wizardGenerationUnavailable(rerr)
 	}
 
 	// Stage variant. Its error is CARRIED, not returned.
-	s.publishWizardProgress(sess, token, WizardProgressFrame{Type: "brief", Text: "Writing a second option from the stage guide"})
+	s.publishWizardProgress(sess, WizardProgressFrame{Type: "brief", Text: "Writing a second option from the stage guide"})
 	stageSystem, stageUser := composeWizardStagePrompt(facts)
 	stageVariant, verr := generateWizardVariant(ctx, llmClient, stageSystem, stageUser, details, tpl)
 	if verr != nil {
@@ -769,7 +783,7 @@ func (s *BriefService) GenerateWizardContent(ctx context.Context, p *briefs.Gene
 	if stageVariant.TemplateKey != "" {
 		out.VariantATemplateKey = &stageVariant.TemplateKey
 	}
-	s.publishWizardProgress(saved, token, WizardProgressFrame{
+	s.publishWizardProgress(saved, WizardProgressFrame{
 		Type: "plan_done", Text: "Both email options are ready to review", Result: out, Done: true,
 	})
 	return out, nil
@@ -924,11 +938,11 @@ func wizardSponsorsOut(d wizardEventDetails) []*briefs.WizardSponsor {
 // just accepted. It is also the reason the editing half of the wizard keeps working when the
 // AI proxy is unconfigured.
 func (s *BriefService) UpdateWizardSections(ctx context.Context, p *briefs.UpdateWizardSectionsPayload) (*briefs.WizardSections, error) {
-	_, sessions, err := s.wizardReady()
+	briefRepo, sessions, err := s.wizardReady()
 	if err != nil {
 		return nil, err
 	}
-	sess, serr := loadWizardSession(ctx, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
 	}
@@ -1028,7 +1042,7 @@ func (s *BriefService) CloneWizardEmail(ctx context.Context, p *briefs.CloneWiza
 			Message: "approved must be true to create a HubSpot draft",
 		}
 	}
-	sess, serr := loadWizardSession(ctx, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
 	}
@@ -1202,11 +1216,11 @@ func wizardValidateDraft(ctx context.Context, client HubSpotWizardClient, emailI
 // same audience the rest of the service built and recorded, rather than to a second,
 // parallel notion of who the recipients are.
 func (s *BriefService) SetWizardSendList(ctx context.Context, p *briefs.SetWizardSendListPayload) (*briefs.WizardSendList, error) {
-	_, sessions, err := s.wizardReady()
+	briefRepo, sessions, err := s.wizardReady()
 	if err != nil {
 		return nil, err
 	}
-	sess, serr := loadWizardSession(ctx, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
 	}
@@ -1437,7 +1451,7 @@ func (s *BriefService) ChatWizardTurn(ctx context.Context, p *briefs.ChatWizardT
 			Message: "AI model is not configured; the wizard chat is unavailable",
 		}
 	}
-	sess, serr := loadWizardSession(ctx, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
 	}
@@ -1536,11 +1550,11 @@ func wizardHistoryText(turns []model.WizardChatTurn) []wizardTurnText {
 // The endpoint a reconnecting client calls: the SSE stream carries live frames only, so a
 // browser that reloaded mid-run recovers its state here rather than re-running a turn.
 func (s *BriefService) GetWizardSession(ctx context.Context, p *briefs.GetWizardSessionPayload) (*briefs.WizardSession, error) {
-	_, sessions, err := s.wizardReady()
+	briefRepo, sessions, err := s.wizardReady()
 	if err != nil {
 		return nil, err
 	}
-	sess, serr := loadWizardSession(ctx, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
 	}

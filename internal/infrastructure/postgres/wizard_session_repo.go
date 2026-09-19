@@ -266,9 +266,19 @@ func rawJSON(b []byte) json.RawMessage {
 // scrubWizardSessionsQuery clears personal data from a brief's sessions, keeping the rows.
 //
 // An explicit column list, not a DELETE: the row records that a wizard run happened, which is
-// the audit trail worth keeping, while `chat_history` and the actor blobs are the personal
-// content that a deleted brief no longer needs. Scoped by BOTH project and brief, so a brief id
-// alone cannot reach another project's rows.
+// the audit trail worth keeping, while everything content-bearing goes. Scoped by BOTH project
+// and brief, so a brief id alone cannot reach another project's rows.
+//
+// EVERY content column, not just chat_history. `plan_result` carries the operator's own
+// free-text guidance (wizardPlan.ExtraContext, supplied on plan-start and plan), and
+// `reference_variant`, `stage_variant` and `sections` hold the generated and hand-edited email
+// bodies. Clearing only the transcript would have left the same words behind in four other
+// columns and reported success -- a scrub that is partial is worse than one that is absent,
+// because it looks done.
+//
+// The identity/provenance columns that REMAIN are deliberate: id, project_id, brief_id, phase,
+// email_id, draft_url and the timestamps. They record that a run happened and which HubSpot
+// draft it produced, which is the audit trail, and none of them is user-authored text.
 //
 // `version + 1` is what makes the scrub STICK, and it is not bookkeeping. UpdateSession gates
 // on `version = $14`, so a scrub that left the counter alone would leave an in-flight turn's
@@ -280,13 +290,20 @@ func rawJSON(b []byte) json.RawMessage {
 // caller's snapshot IS stale. Verified against a live database -- without the bump, the late
 // write restores the transcript verbatim.
 const scrubWizardSessionsQuery = `UPDATE wizard_sessions
-	SET chat_history = '[]'::jsonb,
-	    created_by   = NULL,
-	    updated_by   = NULL,
-	    version      = version + 1,
-	    updated_at   = NOW()
+	SET chat_history      = '[]'::jsonb,
+	    plan_result       = NULL,
+	    reference_variant = NULL,
+	    stage_variant     = NULL,
+	    sections          = NULL,
+	    created_by        = NULL,
+	    updated_by        = NULL,
+	    version           = version + 1,
+	    updated_at        = NOW()
 	WHERE project_id = $1 AND brief_id = $2
-	  AND (chat_history <> '[]'::jsonb OR created_by IS NOT NULL OR updated_by IS NOT NULL)`
+	  AND (chat_history <> '[]'::jsonb
+	       OR plan_result IS NOT NULL OR reference_variant IS NOT NULL
+	       OR stage_variant IS NOT NULL OR sections IS NOT NULL
+	       OR created_by IS NOT NULL OR updated_by IS NOT NULL)`
 
 // ScrubSessionsForBrief implements domain.WizardSessionRepository.
 func (r *WizardSessionRepo) ScrubSessionsForBrief(ctx context.Context, projectID, briefID string) (int64, error) {

@@ -112,10 +112,17 @@ func (r *fakeWizardSessionRepo) ScrubSessionsForBrief(_ context.Context, project
 		if s.ProjectID != projectID || s.BriefID != briefID {
 			continue
 		}
-		if len(s.ChatHistory) == 0 && s.CreatedBy == nil && s.UpdatedBy == nil {
+		if len(s.ChatHistory) == 0 && len(s.PlanResult) == 0 && len(s.ReferenceVariant) == 0 &&
+			len(s.StageVariant) == 0 && len(s.Sections) == 0 && s.CreatedBy == nil && s.UpdatedBy == nil {
 			continue
 		}
+		// Every content column, matching the real statement. A fake that cleared fewer would
+		// keep the service test green against a scrub that leaks four columns.
 		s.ChatHistory = nil
+		s.PlanResult = nil
+		s.ReferenceVariant = nil
+		s.StageVariant = nil
+		s.Sections = nil
 		s.CreatedBy = nil
 		s.UpdatedBy = nil
 		n++
@@ -1270,5 +1277,71 @@ func TestWizard_ProgressTokenIsServerMintedNotCallerSupplied(t *testing.T) {
 	}
 	if second.Token == out.Token {
 		t.Fatalf("two sessions were given the same progress token: %q", out.Token)
+	}
+}
+
+// TestWizard_EveryTurnRefusesADeletedBrief pins the lifecycle guard in loadWizardSession.
+//
+// The check used to live in each handler, and four of the seven had it: plan, generate, clone
+// and plan-start checked the brief, while send-list, update-sections and get-session did not.
+// That is the failure mode a per-handler rule always reaches -- every new endpoint is another
+// chance to forget, and the omission is invisible because the session still loads perfectly.
+//
+// It matters because ArchiveBrief is a SOFT delete: the session rows outlive it. Without the
+// guard a caller holding a session id could go on driving the wizard for a brief the operator
+// deleted, and SetWizardSendList would mutate the recipients of the HubSpot draft -- an effect
+// outside this database entirely, on a brief that no longer exists.
+//
+// Every session-taking method is listed, so a NEW one that skips the guard fails here rather
+// than shipping. `t.Run` per method names the offender instead of stopping at the first.
+func TestWizard_EveryTurnRefusesADeletedBrief(t *testing.T) {
+	ctx := context.Background()
+
+	turns := []struct {
+		name string
+		call func(h *wizardHarness, sessionID string) error
+	}{
+		{"plan", func(h *wizardHarness, id string) error {
+			_, err := h.svc.PlanEmailWizard(ctx, &briefs.PlanEmailWizardPayload{
+				ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: id})
+			return err
+		}},
+		{"generate-content", func(h *wizardHarness, id string) error {
+			_, err := h.svc.GenerateWizardContent(ctx, &briefs.GenerateWizardContentPayload{
+				ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: id})
+			return err
+		}},
+		{"get-session", func(h *wizardHarness, id string) error {
+			_, err := h.svc.GetWizardSession(ctx, &briefs.GetWizardSessionPayload{
+				ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: id})
+			return err
+		}},
+		{"set-send-list", func(h *wizardHarness, id string) error {
+			_, err := h.svc.SetWizardSendList(ctx, &briefs.SetWizardSendListPayload{
+				ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: id})
+			return err
+		}},
+	}
+
+	for _, turn := range turns {
+		t.Run(turn.name, func(t *testing.T) {
+			h := newWizardHarness(t, wizardModelJSON)
+			started, err := h.svc.StartEmailWizardPlan(ctx, &briefs.StartEmailWizardPlanPayload{
+				ProjectID: wizardTestProject, BriefID: wizardTestBrief,
+			})
+			if err != nil {
+				t.Fatalf("StartEmailWizardPlan: %v", err)
+			}
+
+			// The brief is deleted. The SESSION deliberately survives -- that is what makes
+			// the guard necessary rather than redundant with the session lookup.
+			delete(h.briefs.briefs, briefKey(wizardTestProject, wizardTestBrief))
+
+			if cerr := turn.call(h, started.SessionID); cerr == nil {
+				t.Fatal("the turn was allowed on a deleted brief")
+			} else if nf := (*briefs.NotFoundError)(nil); !errors.As(cerr, &nf) {
+				t.Errorf("err = %T (%v), want a 404 -- the brief is gone, so retrying cannot help", cerr, cerr)
+			}
+		})
 	}
 }

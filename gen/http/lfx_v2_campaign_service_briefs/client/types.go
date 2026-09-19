@@ -114,9 +114,6 @@ type PlanEmailWizardRequestBody struct {
 	EmailType *string `form:"email_type,omitempty" json:"email_type,omitempty" xml:"email_type,omitempty"`
 	// Whether the email is transactional rather than marketing
 	IsTransactional *bool `form:"is_transactional,omitempty" json:"is_transactional,omitempty" xml:"is_transactional,omitempty"`
-	// Progress token to publish this turn's SSE frames on; defaults to the
-	// session's own token
-	ProgressToken *string `form:"progress_token,omitempty" json:"progress_token,omitempty" xml:"progress_token,omitempty"`
 }
 
 // GenerateWizardContentRequestBody is the type of the
@@ -128,9 +125,6 @@ type GenerateWizardContentRequestBody struct {
 	// What to change relative to the content already generated for this session;
 	// empty on the first pass
 	ChangeRequest *string `form:"change_request,omitempty" json:"change_request,omitempty" xml:"change_request,omitempty"`
-	// Progress token to publish this turn's SSE frames on; defaults to the
-	// session's own token
-	ProgressToken *string `form:"progress_token,omitempty" json:"progress_token,omitempty" xml:"progress_token,omitempty"`
 }
 
 // UpdateWizardSectionsRequestBody is the type of the
@@ -3371,7 +3365,6 @@ func NewPlanEmailWizardRequestBody(p *lfxv2campaignservicebriefs.PlanEmailWizard
 		ExtraContext:    p.ExtraContext,
 		EmailType:       p.EmailType,
 		IsTransactional: p.IsTransactional,
-		ProgressToken:   p.ProgressToken,
 	}
 	return body
 }
@@ -3383,7 +3376,6 @@ func NewGenerateWizardContentRequestBody(p *lfxv2campaignservicebriefs.GenerateW
 	body := &GenerateWizardContentRequestBody{
 		SessionID:     p.SessionID,
 		ChangeRequest: p.ChangeRequest,
-		ProgressToken: p.ProgressToken,
 	}
 	return body
 }

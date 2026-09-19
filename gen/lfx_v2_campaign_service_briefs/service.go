@@ -775,9 +775,6 @@ type GenerateWizardContentPayload struct {
 	// What to change relative to the content already generated for this session;
 	// empty on the first pass
 	ChangeRequest *string
-	// Progress token to publish this turn's SSE frames on; defaults to the
-	// session's own token
-	ProgressToken *string
 }
 
 // GetBriefMetricsPayload is the payload type of the
@@ -954,9 +951,6 @@ type PlanEmailWizardPayload struct {
 	EmailType *string
 	// Whether the email is transactional rather than marketing
 	IsTransactional *bool
-	// Progress token to publish this turn's SSE frames on; defaults to the
-	// session's own token
-	ProgressToken *string
 }
 
 type PlatformResult struct {

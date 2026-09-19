@@ -92,12 +92,18 @@ func TestLiveScrubSessionsForBriefClearsOnlyThatBriefsPersonalData(t *testing.T)
 	actor := &model.Actor{Name: "Ada Lovelace", Email: "ada@example.test"}
 	seed := func(projectID, briefID string) *model.WizardSession {
 		t.Helper()
+		// EVERY content column is populated. Seeding only chat_history would let a scrub that
+		// clears one column and misses four pass -- which is the exact defect review found.
 		s, serr := sessions.CreateSession(ctx, &model.WizardSession{
-			ProjectID:   projectID,
-			BriefID:     briefID,
-			ChatHistory: json.RawMessage(`[{"role":"user","content":"my unpublished keynote"}]`),
-			CreatedBy:   actor,
-			UpdatedBy:   actor,
+			ProjectID:        projectID,
+			BriefID:          briefID,
+			ChatHistory:      json.RawMessage(`[{"role":"user","content":"my unpublished keynote"}]`),
+			PlanResult:       json.RawMessage(`{"extra_context":"write it for sponsors"}`),
+			ReferenceVariant: json.RawMessage(`{"body":"generated reference copy"}`),
+			StageVariant:     json.RawMessage(`{"body":"generated stage copy"}`),
+			Sections:         json.RawMessage(`[{"type":"rich_text","html":"<p>edited</p>"}]`),
+			CreatedBy:        actor,
+			UpdatedBy:        actor,
 		})
 		if serr != nil {
 			t.Fatalf("CreateSession(%s/%s): %v", projectID, briefID, serr)
@@ -127,6 +133,22 @@ func TestLiveScrubSessionsForBriefClearsOnlyThatBriefsPersonalData(t *testing.T)
 	if string(got.ChatHistory) != "[]" {
 		t.Errorf("chat_history = %q, want %q -- the user's typed content is retained", got.ChatHistory, "[]")
 	}
+	// plan_result carries the operator's own free-text guidance; the other three hold the
+	// generated and hand-edited email bodies. A scrub that cleared only the transcript would
+	// leave the same words in four other columns and still report success.
+	for _, c := range []struct {
+		name string
+		val  json.RawMessage
+	}{
+		{"plan_result", got.PlanResult},
+		{"reference_variant", got.ReferenceVariant},
+		{"stage_variant", got.StageVariant},
+		{"sections", got.Sections},
+	} {
+		if len(c.val) != 0 {
+			t.Errorf("%s = %s, want empty -- content survived the delete", c.name, c.val)
+		}
+	}
 	if got.CreatedBy != nil || got.UpdatedBy != nil {
 		t.Errorf("actor blobs survived (created_by=%v updated_by=%v)", got.CreatedBy, got.UpdatedBy)
 	}
@@ -144,9 +166,9 @@ func TestLiveScrubSessionsForBriefClearsOnlyThatBriefsPersonalData(t *testing.T)
 		if gerr != nil {
 			t.Fatalf("GetSession (%s): %v", keep.label, gerr)
 		}
-		if string(survivor.ChatHistory) == "[]" || survivor.CreatedBy == nil {
-			t.Errorf("the scrub reached a session it must not touch (%s): chat_history=%q created_by=%v",
-				keep.label, survivor.ChatHistory, survivor.CreatedBy)
+		if string(survivor.ChatHistory) == "[]" || survivor.CreatedBy == nil || len(survivor.PlanResult) == 0 {
+			t.Errorf("the scrub reached a session it must not touch (%s): chat_history=%q plan_result=%s created_by=%v",
+				keep.label, survivor.ChatHistory, survivor.PlanResult, survivor.CreatedBy)
 		}
 	}
 

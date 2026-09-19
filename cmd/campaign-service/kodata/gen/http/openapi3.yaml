@@ -416,9 +416,9 @@ paths:
                   schema:
                     type: string
                     description: Event name to match
-                    example: g
+                    example: r
                     minLength: 1
-                  example: lw
+                  example: k
                 - name: brand_short
                   in: query
                   description: Short brand token to match
@@ -426,8 +426,8 @@ paths:
                   schema:
                     type: string
                     description: Short brand token to match
-                    example: Repellat numquam.
-                  example: Dolore quis.
+                    example: Animi commodi nesciunt.
+                  example: Quo culpa maxime voluptatem.
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -552,9 +552,9 @@ paths:
                   schema:
                     type: string
                     description: Event name to search emails for
-                    example: h
+                    example: "56"
                     minLength: 1
-                  example: is
+                  example: zr8
                 - name: brand_short
                   in: query
                   description: Short brand token, used as a fallback search term
@@ -562,8 +562,8 @@ paths:
                   schema:
                     type: string
                     description: Short brand token, used as a fallback search term
-                    example: Maxime voluptatem ullam aut dicta.
-                  example: Accusamus veritatis nihil error repudiandae expedita consequuntur.
+                    example: Qui quo quaerat asperiores cum.
+                  example: Aliquid nesciunt.
                 - name: limit
                   in: query
                   description: How many emails to report
@@ -572,11 +572,11 @@ paths:
                     type: integer
                     description: How many emails to report
                     default: 3
-                    example: 3
+                    example: 1
                     format: int64
                     minimum: 1
                     maximum: 10
-                  example: 2
+                  example: 8
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -781,9 +781,9 @@ paths:
                   schema:
                     type: string
                     description: Search query
-                    example: "62"
+                    example: 3y
                     minLength: 1
-                  example: "3"
+                  example: f
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -1195,8 +1195,8 @@ paths:
                   schema:
                     type: string
                     description: Short brand token to match brand suppression lists
-                    example: Quos atque vel rerum laudantium itaque.
-                  example: Tempore dolores nihil qui quo quaerat asperiores.
+                    example: Cumque fugit ad iste in nisi cupiditate.
+                  example: Natus sequi aut id rerum nesciunt.
                 - name: event_name
                   in: query
                   description: Event name to match event-specific suppression lists
@@ -1204,8 +1204,8 @@ paths:
                   schema:
                     type: string
                     description: Event name to match event-specific suppression lists
-                    example: Ab aliquid nesciunt rerum explicabo.
-                  example: Expedita sit odio voluptatem.
+                    example: Consectetur tenetur.
+                  example: Non quos atque.
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -1387,8 +1387,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Quod quod cum vel inventore.
-                            example: Numquam in dolorem aperiam.
+                                example: Placeat est omnis repellat numquam.
+                            example: Fugit laudantium at qui provident sit quas.
                     content:
                         application/json:
                             schema:
@@ -1531,8 +1531,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Fugit laudantium at qui provident sit quas.
-                            example: Sunt omnis iure molestiae quam qui.
+                                example: Aut dicta distinctio accusamus.
+                            example: Nemo tempora dolores.
                     content:
                         application/json:
                             schema:
@@ -1654,9 +1654,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: a8f17c26-76a6-49d9-ab54-9e1ab14a8466
+                    example: 40f2c9f8-2271-4572-a8bb-f1f25c21b71b
                     format: uuid
-                  example: f15fb7ec-efb3-466f-a1d3-6524caa730f5
+                  example: 219b319b-ba8c-4e2e-b13d-d5db5d41f691
             responses:
                 "204":
                     description: No Content response.
@@ -1757,9 +1757,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 5ada4bc3-c79f-44eb-b65c-6ef9a562b886
+                    example: 16f108c0-8935-42fb-afe9-9fe3c90f2c1b
                     format: uuid
-                  example: ac99725f-a10c-461e-a752-0d18791806e4
+                  example: bb3e72a7-a93e-433d-b0f2-ca9096e66e5f
             responses:
                 "200":
                     description: OK response.
@@ -1769,8 +1769,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Voluptatem odit est.
-                            example: Fuga impedit voluptate qui.
+                                example: Voluptatum quidem repellendus quo officia.
+                            example: Autem sed.
                     content:
                         application/json:
                             schema:
@@ -1890,9 +1890,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 5b25e046-8b2d-4912-a1be-c8f041ec9a4b
+                    example: 4274cab6-5dd2-4397-846e-d6500bded5a1
                     format: uuid
-                  example: 3337e975-779b-4ac4-b2d9-cd0eca7a9ebc
+                  example: 64d8ed8e-88ff-4767-8527-55c7e34275e9
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
@@ -1931,8 +1931,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Pariatur saepe ipsa unde aut consequuntur.
-                            example: Rerum perspiciatis et ad officia.
+                                example: Iusto ab.
+                            example: Voluptas nulla dolorum.
                     content:
                         application/json:
                             schema:
@@ -2072,9 +2072,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 0082c648-b7a8-4cac-a64f-e2d3431578ed
+                    example: 0b601b08-4628-4665-88b4-c18c3993def6
                     format: uuid
-                  example: 6dcbb306-6377-4c1f-99e1-785acbe8a765
+                  example: 726e433f-b4fb-4f7e-9640-d99b8268c1c6
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
@@ -2093,8 +2093,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Ut aut.
-                            example: Et earum nam ut vitae.
+                                example: Dolor ex excepturi consequatur eveniet.
+                            example: Nemo et fuga et voluptatem ut illo.
                     content:
                         application/json:
                             schema:
@@ -2234,9 +2234,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: c887150d-5c0d-4098-a4e6-9c213f50ca2c
+                    example: 0f0204d1-4de5-4f22-96d1-8cf0cd62e054
                     format: uuid
-                  example: b92b7f00-1407-44f8-b254-e2b7591d122d
+                  example: 63140de0-ac63-4562-8142-3b5a85be4889
             responses:
                 "200":
                     description: OK response.
@@ -2379,9 +2379,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 7d6b7009-be6b-40f0-8032-cbeb7a9dc21e
+                    example: 2cd1b233-dac3-4561-b5ca-8251ab5bfe22
                     format: uuid
-                  example: a686864a-6d13-4fbb-add5-53eca7bf819e
+                  example: 107f78e6-1b4f-445b-af69-e3ead39833a2
             requestBody:
                 required: true
                 content:
@@ -2408,8 +2408,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Occaecati possimus.
-                            example: Ex hic ut non voluptatem voluptatem.
+                                example: Eos ut odit sed.
+                            example: Dolores ex quos consectetur eum praesentium reprehenderit.
                     content:
                         application/json:
                             schema:
@@ -2524,9 +2524,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 296726f4-6191-4f9b-84ea-06b3b227c003
+                    example: 8bba44e1-e67b-4221-bb60-1a8a02f53317
                     format: uuid
-                  example: 8fc2d70b-2b38-4a90-87d4-4df0c22bfd3f
+                  example: 942ccb61-a38c-4faf-9da3-3a7714f7591c
                 - name: audience_id
                   in: path
                   description: Audience UUID
@@ -2534,9 +2534,9 @@ paths:
                   schema:
                     type: string
                     description: Audience UUID
-                    example: e5668d86-47be-4dbe-b730-df9b3bdfb0ad
+                    example: c866e3eb-9178-48b7-950f-728dcbfd40af
                     format: uuid
-                  example: bbd44adb-f5ab-4e5c-b904-75f78d9a9d6a
+                  example: cc7899c9-3577-43ca-99aa-f878b665f706
             responses:
                 "200":
                     description: OK response.
@@ -2546,8 +2546,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Et sit a omnis debitis odio culpa.
-                            example: Iste porro.
+                                example: Dolore maiores.
+                            example: Aut cum quaerat doloribus at sunt.
                     content:
                         application/json:
                             schema:
@@ -2661,9 +2661,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 0f156fd3-32ac-41fe-af7a-880f67a7d0e9
+                    example: d7534bef-8e11-498a-a42f-47544ddc5b9b
                     format: uuid
-                  example: f34e727b-ec9d-4946-9036-60c9a6b7223a
+                  example: d33515c5-3371-4830-bb32-7887f8e46c62
                 - name: audience_id
                   in: path
                   description: Audience UUID
@@ -2671,9 +2671,9 @@ paths:
                   schema:
                     type: string
                     description: Audience UUID
-                    example: 1dd750f0-07dd-45ec-86d2-6f4c7342a432
+                    example: f0648bfa-05f4-4f22-9217-85f8ae1bac65
                     format: uuid
-                  example: 215b218c-5d44-4e27-a2e8-090adf689ce6
+                  example: 0001fd08-b9da-499c-a862-5195a8b5a227
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
@@ -2708,8 +2708,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Quia distinctio.
-                            example: Tenetur cumque sint.
+                                example: Temporibus maiores autem.
+                            example: Autem quod dolorum est accusamus et doloribus.
                     content:
                         application/json:
                             schema:
@@ -2844,9 +2844,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 1ef94bb9-5cb8-44a0-a24d-937fa0b69c4d
+                    example: f1835d28-0dc2-4c84-9dbf-9dd1b802959a
                     format: uuid
-                  example: 2e7ef845-d12d-41e0-bba0-b5849e63c8e9
+                  example: 3f09fa40-25d3-4561-bb6e-bae87e85a8a5
             responses:
                 "202":
                     description: Accepted response.
@@ -2856,8 +2856,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Fugit ad iste in nisi.
-                            example: Id rerum.
+                                example: Ipsa tempora.
+                            example: Non quaerat qui totam molestias.
                     content:
                         application/json:
                             schema:
@@ -2976,9 +2976,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: c33c8d4a-16f2-48f3-ba73-2ec42f8b8a21
+                    example: a2c0c807-af52-4e6e-941d-fe75eacf860a
                     format: uuid
-                  example: 6a3a6ccb-fcd6-4128-b8ca-2f83da71305e
+                  example: 6ba5a361-752a-4bf0-8fe1-78de27c899c1
             requestBody:
                 required: true
                 content:
@@ -3123,9 +3123,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: ca27df79-e820-4022-bbb1-2972ab07b8e8
+                    example: 294fa376-db6e-4548-9616-4a71d22d7399
                     format: uuid
-                  example: d235da64-9ad1-4e90-9f1f-313d481567da
+                  example: 414092ad-b182-42ec-9313-2fdfc9cba6fa
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -3133,9 +3133,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: b736c0c2-55a5-4663-b8cc-1f3d383a7c45
+                    example: a596bbec-5bcc-4cde-9d47-e6ea70e5a6e9
                     format: uuid
-                  example: 814a694d-73ca-4d4b-870f-a7afd2e76e20
+                  example: 28069d36-302a-433e-b569-dfa382ef8cdd
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
@@ -3263,9 +3263,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 0cc15bcb-522f-4726-a39c-1b9b352bc174
+                    example: 3bd8a97a-f7a3-4919-883b-4e462e3e75b9
                     format: uuid
-                  example: e5a0a52a-d37d-481b-a954-3e3b5adffb13
+                  example: 8af2e482-b75a-4958-8150-551f1d37c65b
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -3273,9 +3273,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: fa84c65e-94e3-4327-b18c-e0994097d644
+                    example: d880cbfd-754f-46e2-9361-31e0fbebe7e1
                     format: uuid
-                  example: f0382194-a9d0-42e0-93db-ab52b0203d94
+                  example: b8e11bc7-bcd1-4fea-bc32-0863c0307dfc
             responses:
                 "200":
                     description: OK response.
@@ -3285,8 +3285,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Suscipit maiores labore earum error officia unde.
-                            example: Ipsa et.
+                                example: Nihil est dolore sed maiores ratione.
+                            example: Libero ut quia odio nemo quaerat quisquam.
                     content:
                         application/json:
                             schema:
@@ -3397,9 +3397,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 7e248842-c6fd-4c9d-b6d3-ece58174a0bc
+                    example: 42de001b-9862-44a9-bcbf-461340ad3002
                     format: uuid
-                  example: ec92e196-771b-4c87-89d4-093045d7d107
+                  example: d26d7387-a21e-406f-94f2-dd8575a0ff1e
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -3407,9 +3407,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: d64f4d18-a311-46a9-9473-bf36073d94a0
+                    example: d73eaeac-c1a7-4ece-9f4c-06c727ce274a
                     format: uuid
-                  example: 2ee043cd-2040-4e6c-b88a-0563f3fb050d
+                  example: c14c83bc-61f3-4beb-8307-cf1da5574415
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
@@ -3439,8 +3439,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Sed magni velit aspernatur et animi delectus.
-                            example: Impedit dolorum nobis.
+                                example: Ducimus aut.
+                            example: Dolor esse eius exercitationem.
                     content:
                         application/json:
                             schema:
@@ -3570,9 +3570,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 4c3e2cc9-0853-4898-83af-fbf73f560bca
+                    example: b76ca9d9-a551-4000-b162-82c0100d65fa
                     format: uuid
-                  example: fa302f20-0d93-499a-9bc9-f2dc96cf5376
+                  example: 68bf8e10-2ae4-4cff-8d3e-7d6b94ddf6b9
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -3580,9 +3580,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: 2eb5757a-b3f1-4f7c-ac59-030653a226c6
+                    example: 939f5d0d-b619-4431-9260-3518f4417539
                     format: uuid
-                  example: 8bb77fba-d7f6-4bb5-8db2-2d0c9c651dc2
+                  example: db54a99d-6397-4f9d-8c66-99c680c40a31
             requestBody:
                 required: true
                 content:
@@ -3702,7 +3702,7 @@ paths:
                   schema:
                     type: string
                     description: Platform-agnostic reporting window; defaults to last_30_days when omitted, except on platforms whose API cannot serve that range (e.g. X Ads, capped at 7 days), which default to the widest range they support instead
-                    example: last_30_days
+                    example: last_month
                     enum:
                         - today
                         - yesterday
@@ -3711,7 +3711,7 @@ paths:
                         - last_30_days
                         - this_month
                         - last_month
-                  example: last_month
+                  example: yesterday
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -3728,9 +3728,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 2a69b202-7f4c-4f56-be97-12ea8bbb860f
+                    example: fd8114b0-2b7f-4404-b42a-cd936420e929
                     format: uuid
-                  example: 857c85a8-6ee2-4ca2-adf2-a9d565e4adf2
+                  example: aa69a0be-b0ae-4583-9fd9-0cb89a3b2ded
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -3738,9 +3738,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: fa740cb4-8a4d-410d-8176-217d280abd97
+                    example: a6b741bd-a5a0-4f68-915c-7fa6904659b6
                     format: uuid
-                  example: adf1c195-116a-4550-b2dc-683cdc55dff9
+                  example: 2a56a6db-8ea7-4be2-b185-647d9e5f147b
             responses:
                 "200":
                     description: OK response.
@@ -3861,9 +3861,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 1cc2388c-40c5-4fee-aa2f-c062a0505015
+                    example: 5a973265-992f-448a-965c-c0a1d6ace2f9
                     format: uuid
-                  example: 486f69be-c987-4f03-bdb4-fa753c2e43aa
+                  example: ce630e89-9de6-4e2b-863e-dd6c37d5cf11
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -3871,9 +3871,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: b2b4da83-9dd7-4076-9504-207ad3e8e700
+                    example: a27248f2-5912-45e9-b638-0f4506d79273
                     format: uuid
-                  example: 46e86726-20c6-4f4e-9904-c203d739ceba
+                  example: d1c386fa-fe6d-4252-9d20-5ad430f5cefd
             responses:
                 "200":
                     description: OK response.
@@ -4021,9 +4021,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: f3f44377-f612-48c1-b6e4-6957fec1fe0c
+                    example: 8d1e37f3-2a75-4bca-99aa-4a938a8f895b
                     format: uuid
-                  example: 33560b74-a4c3-40f6-822e-0834b764185e
+                  example: 1513cded-d761-4394-b8ef-10c25912b754
                 - name: campaign_id
                   in: path
                   description: Campaign UUID
@@ -4031,9 +4031,9 @@ paths:
                   schema:
                     type: string
                     description: Campaign UUID
-                    example: 2fc433d7-22ff-4fbb-be6c-e3c058d15b0e
+                    example: d50d3df9-8971-4226-ae87-6506a27681d7
                     format: uuid
-                  example: fc58c666-7c3a-49ca-a424-d2148ecb85f8
+                  example: d1db9b27-ba4c-4979-ad5b-84c3b158bb15
                 - name: If-Match
                   in: header
                   description: If-Match header carrying the current ETag/version
@@ -4060,8 +4060,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Pariatur quia eius.
-                            example: Est voluptatem.
+                                example: Odio quod.
+                            example: Odit quas velit sunt soluta.
                     content:
                         application/json:
                             schema:
@@ -4193,9 +4193,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 546b4e23-3948-449a-9f43-d00cdd036f6e
+                    example: 5c8e6b72-da70-4e89-99c9-ad0cb2da388e
                     format: uuid
-                  example: 22e436be-afa2-43b8-8bf3-7c5f9fd64e76
+                  example: 675cbc8b-cfba-4fe3-b41b-70e2cf4cea87
             requestBody:
                 required: true
                 content:
@@ -4214,8 +4214,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Culpa quasi nobis aut perspiciatis.
-                            example: Aut non.
+                                example: Blanditiis quidem.
+                            example: Vitae aut voluptas quos sunt perspiciatis.
                     content:
                         application/json:
                             schema:
@@ -4327,9 +4327,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 2e8d5251-c4bb-4c71-9215-56e28dffd8b5
+                    example: 16f83e38-8afd-4e45-8cb3-4ae1946d6e6a
                     format: uuid
-                  example: 9038ac1a-9bea-4351-8b4c-35d29cf1e296
+                  example: 102d9d48-8d47-4f2c-9137-d302f6ed2000
             requestBody:
                 required: true
                 content:
@@ -4475,9 +4475,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: b660fe69-ce05-45f2-8c16-0ad5811b7268
+                    example: d81a14e3-8cb7-4375-ac14-8732003e4bd3
                     format: uuid
-                  example: 826665d8-b9ba-4c4f-9780-da518728c9d8
+                  example: e613df93-1363-49ca-b846-f0d85d111a9e
             responses:
                 "200":
                     description: OK response.
@@ -4579,7 +4579,7 @@ paths:
                   schema:
                     type: string
                     description: Platform-agnostic reporting window applied to every campaign; defaults to last_30_days when omitted, except on platforms whose API cannot serve that range (e.g. X Ads, capped at 7 days), which fall back to the widest range they support. A row's own metrics.window records what it actually covers.
-                    example: last_30_days
+                    example: yesterday
                     enum:
                         - today
                         - yesterday
@@ -4588,7 +4588,7 @@ paths:
                         - last_30_days
                         - this_month
                         - last_month
-                  example: last_7_days
+                  example: this_month
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -4605,9 +4605,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: a78afa77-d213-4c51-bd0c-8529d43738f4
+                    example: 3b7e72f6-d67a-4588-9eb8-979cb32cb8bc
                     format: uuid
-                  example: 4bdbd6b8-8445-4c8c-b946-7beff00e1350
+                  example: 7f136884-ab69-48ad-a431-f3d4536a3e3f
             responses:
                 "200":
                     description: OK response.
@@ -4819,9 +4819,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: bd52b7cf-fc01-493b-bae0-ef4d67d20172
+                    example: eb7f9c03-0e40-4e54-b735-2e974f4dd484
                     format: uuid
-                  example: e7459f15-84c6-479b-97f2-a44ce33213a9
+                  example: 1fb61a7d-6695-4c94-a028-e9f3a3408b46
             requestBody:
                 required: true
                 content:
@@ -4941,9 +4941,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 602c1fd6-b713-40cc-afa1-f103217bf1a1
+                    example: 0e2c9018-dc54-41db-ae1c-416db03a55b1
                     format: uuid
-                  example: 64ee4d11-2575-48c0-abce-2bb600924fb0
+                  example: 77038f17-0830-4685-b4b0-2d1465adad1e
             requestBody:
                 required: true
                 content:
@@ -5076,9 +5076,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 24b305f6-102c-4b75-9a43-96913e2e11d6
+                    example: e97b2653-d9d4-4949-afff-a78f739ead61
                     format: uuid
-                  example: 95cf5f86-c714-474d-9487-315da8fbfc28
+                  example: 3cf6d4cd-5601-4b34-9251-04877f085e2f
             requestBody:
                 required: true
                 content:
@@ -5086,9 +5086,8 @@ paths:
                         schema:
                             $ref: '#/components/schemas/GenerateWizardContentRequestBody'
                         example:
-                            change_request: Molestias accusantium beatae.
-                            progress_token: Deserunt earum saepe repellat.
-                            session_id: 64ec6993-69a0-4d9f-a042-103e69d9ef81
+                            change_request: Earum saepe repellat quo voluptatum.
+                            session_id: db787ec1-cf0f-4ee3-b25c-282ecc1b2c51
             responses:
                 "200":
                     description: OK response.
@@ -5097,36 +5096,43 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/WizardContent'
                             example:
-                                banner_url: Repudiandae sunt voluptatem ratione delectus recusandae quia.
-                                body_html: Eum enim architecto.
-                                html: Voluptates voluptatem quae maxime ut dolor itaque.
-                                preview_text: Adipisci ipsa itaque facilis ut ut ut.
+                                banner_url: Dolores aperiam.
+                                body_html: Sunt laborum.
+                                html: Itaque nisi eum enim architecto et dolores.
+                                preview_text: Sed voluptates voluptatem quae maxime ut.
                                 sections:
-                                    - Et sunt.
-                                    - Sed ad repellendus neque.
-                                    - Atque provident eos sapiente eveniet consectetur ut.
-                                    - Non odio repudiandae molestiae veritatis dolores.
-                                session_id: 4f029ab5-00d8-455a-84bc-9fe8b97a6843
+                                    - Repellendus neque tempora atque provident eos sapiente.
+                                    - Consectetur ut sed non odio repudiandae.
+                                session_id: b1cbf32c-3743-4696-8960-6fe8915cdd49
                                 sponsors:
-                                    - logo_url: Tempora quos impedit rerum sapiente aut itaque.
-                                      name: Ratione unde occaecati fugiat.
-                                      tier: Dolorum qui nisi.
-                                      url: Autem voluptatem.
-                                    - logo_url: Tempora quos impedit rerum sapiente aut itaque.
-                                      name: Ratione unde occaecati fugiat.
-                                      tier: Dolorum qui nisi.
-                                      url: Autem voluptatem.
-                                subject: Libero eum et.
-                                variant_a_banner_url: Reiciendis optio fuga nam vero repellendus et.
-                                variant_a_body_html: Inventore nobis quisquam unde sed laboriosam.
-                                variant_a_html: Voluptatum perspiciatis.
+                                    - logo_url: Sapiente aut.
+                                      name: Occaecati fugiat error tempora quos impedit.
+                                      tier: Eos facilis necessitatibus.
+                                      url: Quia autem voluptatem odio dolorum qui nisi.
+                                    - logo_url: Sapiente aut.
+                                      name: Occaecati fugiat error tempora quos impedit.
+                                      tier: Eos facilis necessitatibus.
+                                      url: Quia autem voluptatem odio dolorum qui nisi.
+                                    - logo_url: Sapiente aut.
+                                      name: Occaecati fugiat error tempora quos impedit.
+                                      tier: Eos facilis necessitatibus.
+                                      url: Quia autem voluptatem odio dolorum qui nisi.
+                                    - logo_url: Sapiente aut.
+                                      name: Occaecati fugiat error tempora quos impedit.
+                                      tier: Eos facilis necessitatibus.
+                                      url: Quia autem voluptatem odio dolorum qui nisi.
+                                subject: Ipsa itaque facilis ut ut.
+                                variant_a_banner_url: Ullam repellat reiciendis.
+                                variant_a_body_html: Voluptatum perspiciatis.
+                                variant_a_html: Facilis quo dolor magni aliquam.
                                 variant_a_mode: ai-generated
-                                variant_a_preview_text: Facilis quo dolor magni aliquam.
+                                variant_a_preview_text: Excepturi esse officiis temporibus dolorem aperiam.
                                 variant_a_sections:
-                                    - Dolorem adipisci.
-                                    - Quam possimus ex delectus ea ullam.
-                                variant_a_subject: Excepturi esse officiis temporibus dolorem aperiam.
-                                variant_a_template_key: Saepe molestiae aut est.
+                                    - Nobis quisquam unde sed.
+                                    - Perspiciatis sint.
+                                    - Adipisci excepturi quam possimus ex delectus.
+                                variant_a_subject: Repudiandae sunt voluptatem ratione delectus recusandae quia.
+                                variant_a_template_key: Fuga nam vero repellendus et enim saepe.
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -5225,9 +5231,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 6673edb9-b4ca-4104-8229-f2a791ead2f5
+                    example: bf56d03c-19d2-436e-aadb-8e19b9bd7543
                     format: uuid
-                  example: f086864d-1c70-4610-a158-61cf8cf66c3a
+                  example: 6a503146-78ce-4424-8746-a9da3f7f107a
             requestBody:
                 required: true
                 content:
@@ -5238,7 +5244,6 @@ paths:
                             email_type: Non et maiores ut totam.
                             extra_context: Vel sint nisi laborum laboriosam assumenda sed.
                             is_transactional: true
-                            progress_token: Quia ut.
                             session_id: 548e0d33-8555-4092-a062-028e1fa63184
                             url: Commodi repudiandae sequi aperiam.
             responses:
@@ -5249,15 +5254,15 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/WizardPlanResult'
                             example:
-                                message: Ipsam voluptates.
+                                message: Et laudantium corporis nesciunt ipsam voluptates magnam.
                                 mode: reference
                                 phase: cloned
-                                session_id: 0282b6d1-4790-4e15-98a6-3194cc61c0f2
+                                session_id: 08e733e8-9d5b-4bd4-9d34-3a401c337014
                                 source_email:
-                                    id: Sed laudantium ut ea iure assumenda repellat.
-                                    name: Rerum cum.
-                                stage: Aliquid consequatur.
-                                utm: At repudiandae distinctio.
+                                    id: Ipsam ad.
+                                    name: Laudantium ut ea iure.
+                                stage: Consequatur beatae.
+                                utm: Repudiandae distinctio quo reprehenderit et omnis consequatur.
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -5356,9 +5361,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 970c656d-f334-48ab-9d59-0770cfa8a911
+                    example: f7d0b0ed-bbb4-4c6a-89b1-7968bff4ba7f
                     format: uuid
-                  example: 11054bc7-210b-4930-af3e-e3a12f3ee51f
+                  example: 4a933d44-39ef-4d7f-a134-4c9ad212edac
             requestBody:
                 required: true
                 content:
@@ -5478,9 +5483,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 57db0075-b86a-4ff9-87e2-40dd16c08045
+                    example: 2616a4de-bcfc-47a3-ab09-4f19065f8afc
                     format: uuid
-                  example: 51b73dca-d1e8-4986-b1b8-de47fe27bc2f
+                  example: 6ca704a9-a924-4caf-a4e0-de25ec8d2047
                 - name: session_id
                   in: path
                   description: Wizard session UUID, as returned by plan-start
@@ -5488,9 +5493,9 @@ paths:
                   schema:
                     type: string
                     description: Wizard session UUID, as returned by plan-start
-                    example: 8d1b2bab-157f-4423-9e63-67f1f9137605
+                    example: aeb73b65-7cd3-4316-8e87-7ffc2730ef6c
                     format: uuid
-                  example: 46c59453-1080-460e-84e8-44ae3e19ccb9
+                  example: 740f8f41-70dd-4aee-8c11-db9c13e3e869
             responses:
                 "200":
                     description: OK response.
@@ -5602,9 +5607,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 14eb479f-9343-4779-823f-778d3f22e0f1
+                    example: 05491dcf-795f-4b1f-b10e-d3b6c607b842
                     format: uuid
-                  example: 2696157d-0a4a-4bcf-a4f1-e02cc898e397
+                  example: f5bee0f8-9ce8-4b3a-b369-85ed35473eed
             requestBody:
                 required: true
                 content:
@@ -5732,9 +5737,9 @@ paths:
                   schema:
                     type: string
                     description: Brief UUID
-                    example: 6aac9c8a-fe6d-47d4-84c5-109a17e5ff56
+                    example: 214164bf-1063-459f-a21d-9f57c682dff4
                     format: uuid
-                  example: f895fece-b347-42cf-ade0-68b8b9e3d637
+                  example: 75e3ce6f-f4fd-4bd1-b196-efaf2d32507e
             requestBody:
                 required: true
                 content:
@@ -5941,8 +5946,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Qui expedita illo.
-                            example: Est eum animi.
+                                example: Magnam et.
+                            example: Perspiciatis libero pariatur et minus ut.
                     content:
                         application/json:
                             schema:
@@ -6063,8 +6068,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Delectus totam officia qui eligendi.
-                            example: Culpa aut voluptates nihil quia.
+                                example: Fugit molestiae eum.
+                            example: Possimus soluta alias accusantium consequuntur laudantium.
                     content:
                         application/json:
                             schema:
@@ -6188,8 +6193,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Quia voluptatem libero.
-                            example: Pariatur porro laboriosam facilis ex facere sint.
+                                example: Culpa aut voluptates nihil quia.
+                            example: Praesentium inventore quod error nesciunt dolores qui.
                     content:
                         application/json:
                             schema:
@@ -6675,8 +6680,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Recusandae sit dolorem.
-                            example: Qui sit.
+                                example: Illum fuga necessitatibus quia.
+                            example: Rerum non dolores eum.
                     content:
                         application/json:
                             schema:
@@ -6800,8 +6805,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Sed deleniti asperiores sed et.
-                            example: Et est ipsam aperiam.
+                                example: Doloribus laboriosam suscipit.
+                            example: Est nihil est aut non corporis.
                     content:
                         application/json:
                             schema:
@@ -6931,8 +6936,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Temporibus quasi a fugit harum exercitationem nostrum.
-                            example: Sit voluptatem.
+                                example: Et est ipsam aperiam.
+                            example: Esse qui.
                     content:
                         application/json:
                             schema:
@@ -7643,8 +7648,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Ut maiores vero autem voluptas.
-                            example: Dicta atque ea non ut enim.
+                                example: Pariatur porro laboriosam facilis ex facere sint.
+                            example: Quis eius.
                     content:
                         application/json:
                             schema:
@@ -7765,8 +7770,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Atque sed id nam.
-                            example: Esse voluptas fugit.
+                                example: Est eum animi.
+                            example: Quam incidunt sapiente.
                     content:
                         application/json:
                             schema:
@@ -7890,8 +7895,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Id maxime quod excepturi non.
-                            example: Ut placeat reprehenderit.
+                                example: Esse voluptas fugit.
+                            example: Et itaque sint dolores.
                     content:
                         application/json:
                             schema:
@@ -8377,8 +8382,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Sed itaque et consequatur veritatis aut aliquam.
-                            example: Dolorem qui aliquam sit esse ut.
+                                example: Ut placeat reprehenderit.
+                            example: Sed eum totam repudiandae nobis quibusdam.
                     content:
                         application/json:
                             schema:
@@ -8499,8 +8504,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Dicta soluta voluptate officiis illo minima.
-                            example: Rerum at enim laboriosam consequatur facilis dolor.
+                                example: Dicta atque ea non ut enim.
+                            example: Fugiat aperiam.
                     content:
                         application/json:
                             schema:
@@ -8626,8 +8631,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Magni repellendus accusantium eveniet enim voluptatem minus.
-                            example: Magni consequatur.
+                                example: Rerum at enim laboriosam consequatur facilis dolor.
+                            example: Dolores laudantium sapiente laudantium.
                     content:
                         application/json:
                             schema:
@@ -9112,8 +9117,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Molestias aut.
-                            example: Doloribus laboriosam suscipit.
+                                example: Quia dolorem eum animi exercitationem.
+                            example: Et est iure.
                     content:
                         application/json:
                             schema:
@@ -9234,8 +9239,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Rerum perferendis.
-                            example: Harum tenetur quisquam ab modi.
+                                example: Nisi dignissimos voluptatem similique qui eum nisi.
+                            example: Cupiditate ut enim possimus.
                     content:
                         application/json:
                             schema:
@@ -9359,8 +9364,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Hic aut asperiores doloremque.
-                            example: Illum fuga necessitatibus quia.
+                                example: Harum tenetur quisquam ab modi.
+                            example: Ex et accusamus est unde.
                     content:
                         application/json:
                             schema:
@@ -9846,8 +9851,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Rem eveniet animi.
-                            example: Accusamus voluptatem error.
+                                example: Magni consequatur.
+                            example: Sit veniam nobis deleniti accusantium magnam.
                     content:
                         application/json:
                             schema:
@@ -9967,8 +9972,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Illum nesciunt ea totam.
-                            example: Non repellendus exercitationem omnis eos.
+                                example: Dolorem qui aliquam sit esse ut.
+                            example: Placeat et voluptatem possimus.
                     content:
                         application/json:
                             schema:
@@ -10092,8 +10097,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Minus blanditiis.
-                            example: Sunt accusamus aliquid sed rerum perspiciatis fugiat.
+                                example: Non repellendus exercitationem omnis eos.
+                            example: Impedit laboriosam velit ut officiis aliquid.
                     content:
                         application/json:
                             schema:
@@ -10484,8 +10489,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Labore enim consequatur deserunt ut alias et.
-                            example: Nisi dignissimos voluptatem similique qui eum nisi.
+                                example: Sunt accusamus aliquid sed rerum perspiciatis fugiat.
+                            example: Animi eum suscipit.
                     content:
                         application/json:
                             schema:
@@ -10606,8 +10611,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Velit ipsa tenetur.
-                            example: Doloribus odit rerum tenetur.
+                                example: Accusamus voluptatem error.
+                            example: Beatae nulla voluptatem repudiandae minus sunt.
                     content:
                         application/json:
                             schema:
@@ -10731,8 +10736,8 @@ paths:
                             schema:
                                 type: string
                                 description: ETag header value (mirrors version)
-                                example: Numquam reprehenderit.
-                            example: Quia dolorem eum animi exercitationem.
+                                example: Doloribus odit rerum tenetur.
+                            example: Dignissimos officia eveniet nihil et est.
                     content:
                         application/json:
                             schema:
@@ -11250,7 +11255,7 @@ paths:
                         - last_30_days
                         - this_month
                         - last_month
-                  example: last_30_days
+                  example: today
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -11489,7 +11494,7 @@ paths:
                         - last_30_days
                         - this_month
                         - last_month
-                  example: last_7_days
+                  example: last_month
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -11651,9 +11656,9 @@ paths:
                   schema:
                     type: string
                     description: Job UUID
-                    example: 676bcd3f-0b95-4405-9294-88f6fdb782d1
+                    example: 7e1acb40-9e22-4029-a94a-46878e44cef8
                     format: uuid
-                  example: b9afe52c-adb0-4d9c-ad20-414fbfda09b4
+                  example: d406a5e9-9960-4dae-80b6-54e567d13740
             responses:
                 "200":
                     description: OK response.
@@ -15060,15 +15065,15 @@ components:
                 message:
                     type: string
                     description: The user's message for this turn
-                    example: Distinctio sunt.
+                    example: Iste dolores ipsa quis.
                 session_id:
                     type: string
                     description: Wizard session UUID, as returned by plan-start
-                    example: ad77a9f6-93fc-420d-9ce7-c150f85122ae
+                    example: ce8fb7bb-e866-4684-a262-c4758f7231e5
                     format: uuid
             example:
-                message: Fugit voluptas.
-                session_id: 5f750d8b-10d0-46b2-8f8a-b04f339d5f96
+                message: Nihil dicta quia non.
+                session_id: 62a5f49d-e4f1-45c1-995f-fe3a28fb637e
             required:
                 - session_id
                 - message
@@ -15082,33 +15087,33 @@ components:
                 preview_text:
                     type: string
                     description: Override the generated preview text
-                    example: Ullam dicta dolores corrupti aut earum.
+                    example: Tenetur voluptas veritatis ipsum error.
                 send_list_id:
                     type: string
                     description: Apply this recipient list to the new draft in the same request
-                    example: Sit aut qui nemo ut consequatur.
+                    example: Occaecati et illum porro ipsum.
                 session_id:
                     type: string
                     description: Wizard session UUID, as returned by plan-start
-                    example: 70219717-fe34-4473-8f05-7a4530ca5dee
+                    example: fb085528-a7fc-4e2b-831a-978ea9fefad2
                     format: uuid
                 subject:
                     type: string
                     description: Override the generated subject line
-                    example: Dolores mollitia.
+                    example: Distinctio quis exercitationem consequatur.
                 variant:
                     type: string
                     description: Which generated variant to write into the draft; defaults to the reference variant
-                    example: stage
+                    example: reference
                     enum:
                         - reference
                         - stage
             example:
                 approved: false
-                preview_text: Reprehenderit aperiam commodi dolore.
-                send_list_id: Sint doloribus eos eum.
-                session_id: 111844ee-b1ce-4b44-aaad-4d719692ab96
-                subject: Debitis amet voluptate ex.
+                preview_text: Animi asperiores delectus.
+                send_list_id: Maxime ut velit blanditiis.
+                session_id: 7553eb17-7173-4dfc-bd54-a4b5f882138e
+                subject: Omnis omnis officia esse magnam sed.
                 variant: stage
             required:
                 - session_id
@@ -15633,20 +15638,15 @@ components:
                 change_request:
                     type: string
                     description: What to change relative to the content already generated for this session; empty on the first pass
-                    example: Odit ullam velit mollitia.
-                progress_token:
-                    type: string
-                    description: Progress token to publish this turn's SSE frames on; defaults to the session's own token
-                    example: Voluptatem culpa et error aut.
+                    example: Et explicabo nihil itaque.
                 session_id:
                     type: string
                     description: Wizard session UUID, as returned by plan-start
-                    example: 89a17bc3-1902-4bb5-b58a-a9852c7ed3ba
+                    example: b25447fd-2b4b-410b-aedc-005d8fac2187
                     format: uuid
             example:
-                change_request: Amet dolores magni dignissimos magni inventore.
-                progress_token: Aliquam assumenda ea dolorem sequi ipsam.
-                session_id: 043d64c7-68a9-473d-8ecf-c733fd93bf2a
+                change_request: Corporis nesciunt.
+                session_id: 3797c168-f783-4938-9ae8-785c6b0d7470
             required:
                 - session_id
         GetAudienceLastSentResponseBody:
@@ -16110,7 +16110,7 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Rem rem quis officia qui.
+                    example: Et eveniet autem voluptatibus.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
@@ -16118,23 +16118,23 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Eum molestias laudantium voluptas.
+                    example: Dolorem molestiae quo sunt voluptatum ut.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Porro quia ipsa ipsam.
+                    example: Accusantium fugiat ducimus velit numquam laudantium nihil.
                 login_customer_id:
                     type: string
                     description: Manager account used for API access
-                    example: Sit commodi et doloribus esse non consequatur.
+                    example: Aut alias distinctio.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Voluptas magni.
+                    example: Eos et cum totam ducimus.
                 status:
                     type: string
                     description: Connection status
-                    example: active
+                    example: deleted
                     enum:
                         - active
                         - inactive
@@ -16143,17 +16143,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 4855017337083243010
+                    example: 9044101530721923417
                     format: int64
             example:
-                account_id: Neque hic dolores repudiandae esse commodi.
-                has_credentials: false
-                id: Nulla fugiat repudiandae earum ad.
-                label: Nam sint sit est.
-                login_customer_id: Est architecto.
-                project_id: Fugiat quibusdam saepe.
-                status: error
-                version: 6376871918093768857
+                account_id: Est fugit voluptas quidem eum.
+                has_credentials: true
+                id: Voluptatibus debitis autem in optio dolor.
+                label: Est odio et.
+                login_customer_id: Voluptas magni.
+                project_id: Molestias ullam esse unde.
+                status: active
+                version: 390167198114410893
             required:
                 - id
                 - project_id
@@ -16167,7 +16167,7 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Rerum laudantium.
+                    example: Non consequatur similique.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
@@ -16175,23 +16175,23 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Vel magni officia velit velit.
+                    example: Porro quia ipsa ipsam.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Ut sed.
+                    example: Quo incidunt sed sit commodi et doloribus.
                 login_customer_id:
                     type: string
                     description: Manager account used for API access
-                    example: Facilis et molestiae placeat aut corrupti nostrum.
+                    example: Ad doloremque fugiat quibusdam saepe.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Quis unde voluptatibus quam amet.
+                    example: Rem rem quis officia qui.
                 status:
                     type: string
                     description: Connection status
-                    example: deleted
+                    example: active
                     enum:
                         - active
                         - inactive
@@ -16200,17 +16200,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 5291953951856315552
+                    example: 6217682654622206385
                     format: int64
             example:
-                account_id: Nihil beatae iste id laudantium debitis id.
+                account_id: Officia velit velit quibusdam.
                 has_credentials: false
-                id: Facilis voluptates ea.
-                label: Et accusantium deleniti quos commodi numquam est.
-                login_customer_id: Commodi molestiae dolorem tenetur aspernatur et deserunt.
-                project_id: Minima temporibus natus in.
+                id: Nam sint sit est.
+                label: Ut debitis quibusdam est architecto dolores vel.
+                login_customer_id: Amet placeat ut sed iusto rerum laudantium.
+                project_id: Neque hic dolores repudiandae esse commodi.
                 status: active
-                version: 408245214572317901
+                version: 590659756624935388
             required:
                 - id
                 - project_id
@@ -16224,7 +16224,7 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Id quod ducimus eaque.
+                    example: Ea magnam minima.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
@@ -16232,23 +16232,23 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Iusto laudantium atque quidem.
+                    example: Est esse repudiandae facilis.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Sunt voluptatum qui at ut molestias.
+                    example: Nostrum et facilis.
                 login_customer_id:
                     type: string
                     description: Manager account used for API access
-                    example: Ut qui voluptates.
+                    example: Et accusantium deleniti quos commodi numquam est.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Rerum non placeat.
+                    example: Molestiae placeat aut.
                 status:
                     type: string
                     description: Connection status
-                    example: active
+                    example: error
                     enum:
                         - active
                         - inactive
@@ -16257,17 +16257,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 273156717390403576
+                    example: 6863518924256862255
                     format: int64
             example:
-                account_id: Consequatur minus autem praesentium rerum.
-                has_credentials: false
-                id: Quaerat ad nam et non.
-                label: Est harum architecto.
-                login_customer_id: Nam itaque quibusdam enim.
-                project_id: Eum velit quaerat.
+                account_id: Iusto laudantium atque quidem.
+                has_credentials: true
+                id: Nihil beatae iste id laudantium debitis id.
+                label: Commodi molestiae dolorem tenetur aspernatur et deserunt.
+                login_customer_id: Voluptas sunt voluptatum qui at.
+                project_id: Rerum molestiae.
                 status: deleted
-                version: 5379943253680717560
+                version: 3161087285741382787
             required:
                 - id
                 - project_id
@@ -16679,11 +16679,11 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Unde nobis quae fugiat minima incidunt numquam.
+                    example: Similique eum eius.
                 brand_kit:
                     type: string
                     description: Per-project brand kit selector
-                    example: Qui blanditiis.
+                    example: Molestias nobis quis quia sunt illum saepe.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
@@ -16691,31 +16691,31 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Nulla doloribus sapiente vel repudiandae.
+                    example: Possimus blanditiis accusamus consequuntur praesentium.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Molestias nobis quis quia sunt illum saepe.
+                    example: Aliquam earum eaque.
                 portal_id:
                     type: string
                     description: HubSpot portal/account ID
-                    example: Alias similique alias eius.
+                    example: Quia et qui reprehenderit aut dolor.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Eligendi nihil et qui quia delectus.
+                    example: Enim perspiciatis.
                 sender_email:
                     type: string
                     description: Default sender address
-                    example: Nostrum est occaecati nobis placeat quasi eum.
+                    example: Nulla doloribus sapiente vel repudiandae.
                 sender_name:
                     type: string
                     description: Default sender name
-                    example: Atque distinctio inventore est.
+                    example: Eligendi nihil et qui quia delectus.
                 status:
                     type: string
                     description: Connection status
-                    example: active
+                    example: deleted
                     enum:
                         - active
                         - inactive
@@ -16724,20 +16724,20 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 599857158471591311
+                    example: 5282370065610149827
                     format: int64
             example:
-                account_id: Aspernatur rerum facilis nisi itaque nesciunt molestias.
-                brand_kit: Numquam aliquam numquam consequatur omnis consequuntur tenetur.
+                account_id: Occaecati nobis.
+                brand_kit: Maxime expedita exercitationem voluptatem.
                 has_credentials: false
-                id: Totam voluptates vel reiciendis excepturi ipsa voluptas.
-                label: Amet maxime porro est molestiae enim.
-                portal_id: Occaecati omnis quam illum et modi.
-                project_id: Maxime expedita exercitationem voluptatem.
-                sender_email: Ex quibusdam.
-                sender_name: Libero atque repellat.
-                status: deleted
-                version: 1524754752402894946
+                id: Unde nobis quae fugiat minima incidunt numquam.
+                label: Similique alias eius repudiandae nostrum.
+                portal_id: Atque distinctio inventore est.
+                project_id: Amet magni vitae.
+                sender_email: Qui blanditiis.
+                sender_name: Totam voluptates vel reiciendis excepturi ipsa voluptas.
+                status: inactive
+                version: 3965812482995067381
             required:
                 - id
                 - project_id
@@ -16751,11 +16751,11 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Dolorem dolores maiores.
+                    example: Et modi quia ex.
                 brand_kit:
                     type: string
                     description: Per-project brand kit selector
-                    example: In sint nesciunt.
+                    example: Ullam et eos quia rerum.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
@@ -16763,27 +16763,27 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Id dolores perferendis.
+                    example: Amet maxime porro est molestiae enim.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Eos rem beatae.
+                    example: Id corrupti reprehenderit occaecati omnis quam.
                 portal_id:
                     type: string
                     description: HubSpot portal/account ID
-                    example: Rerum qui perspiciatis.
+                    example: Repellat eum.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Eius ullam et eos quia.
+                    example: Aspernatur rerum facilis nisi itaque nesciunt molestias.
                 sender_email:
                     type: string
                     description: Default sender address
-                    example: Laboriosam dolorum animi nihil.
+                    example: Aliquam numquam consequatur omnis.
                 sender_name:
                     type: string
                     description: Default sender name
-                    example: Tempora excepturi quia omnis quae qui.
+                    example: Tenetur veniam id dolores perferendis praesentium.
                 status:
                     type: string
                     description: Connection status
@@ -16796,20 +16796,20 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 8269382827729977899
+                    example: 4129184222380665847
                     format: int64
             example:
-                account_id: Est nobis numquam at ut.
-                brand_kit: Eos doloribus repellendus.
+                account_id: Nihil sed tempora excepturi.
+                brand_kit: Est voluptatem.
                 has_credentials: false
-                id: Qui aliquam aut ut sed architecto.
-                label: Cum est voluptatem sit et.
-                portal_id: Eos iure est laudantium aut.
-                project_id: Dolor quidem facere modi eaque.
-                sender_email: Dolorem quas laudantium.
-                sender_name: Impedit fugit voluptas odio sed dolorum.
+                id: Rem beatae sunt.
+                label: Perspiciatis possimus laboriosam dolorum.
+                portal_id: Exercitationem in sint nesciunt dolorum qui aliquam.
+                project_id: Dolores maiores quidem pariatur voluptatum consequuntur rerum.
+                sender_email: Ut sed architecto aut dolor quidem.
+                sender_name: Modi eaque voluptas.
                 status: error
-                version: 4185102961118925175
+                version: 3619766451952351974
             required:
                 - id
                 - project_id
@@ -16823,11 +16823,11 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Fugit dolorem cumque quae temporibus.
+                    example: Iure est laudantium aut non dolorem.
                 brand_kit:
                     type: string
                     description: Per-project brand kit selector
-                    example: Officiis veniam et.
+                    example: Consequuntur et quos in perspiciatis.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
@@ -16835,31 +16835,31 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Rerum aliquid consequuntur.
+                    example: Et accusantium est.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Nihil repellendus consequatur facere est.
+                    example: Sed minima.
                 portal_id:
                     type: string
                     description: HubSpot portal/account ID
-                    example: Nihil accusamus incidunt architecto.
+                    example: Fugit voluptas odio sed.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Quos in perspiciatis.
+                    example: Numquam at ut sunt.
                 sender_email:
                     type: string
                     description: Default sender address
-                    example: Quam aut magni magnam eos asperiores atque.
+                    example: Dolorem eos doloribus.
                 sender_name:
                     type: string
                     description: Default sender name
-                    example: Voluptatem voluptatem laborum voluptas.
+                    example: Expedita rerum.
                 status:
                     type: string
                     description: Connection status
-                    example: error
+                    example: active
                     enum:
                         - active
                         - inactive
@@ -16868,20 +16868,20 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 4671652232235921221
+                    example: 3297607909475075878
                     format: int64
             example:
-                account_id: Ad eius sunt et eos itaque voluptates.
-                brand_kit: Iure non consectetur hic est enim.
+                account_id: Quam aut magni magnam eos asperiores atque.
+                brand_kit: Aspernatur excepturi animi.
                 has_credentials: false
-                id: Quisquam voluptatem labore alias.
-                label: Animi molestias consectetur ipsam architecto tenetur.
-                portal_id: Et omnis sit.
-                project_id: Id voluptas corrupti qui aspernatur.
-                sender_email: Itaque sit quis.
-                sender_name: Ipsum quae labore sit deserunt excepturi minus.
+                id: Nihil repellendus consequatur facere est.
+                label: Vel laboriosam odit nihil accusamus incidunt architecto.
+                portal_id: Voluptas reprehenderit officiis veniam et molestiae quisquam.
+                project_id: Fugit dolorem cumque quae temporibus.
+                sender_email: Labore alias incidunt.
+                sender_name: Voluptas corrupti.
                 status: inactive
-                version: 2349491770425836543
+                version: 1833515327436614470
             required:
                 - id
                 - project_id
@@ -17224,7 +17224,7 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Facere pariatur omnis sed veritatis perspiciatis.
+                    example: Ut eum.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
@@ -17232,23 +17232,23 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Et et vel.
+                    example: Molestias quia id quod ducimus eaque aperiam.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Laboriosam recusandae quae enim libero consequatur ut.
+                    example: Ad nam et.
                 org_id:
                     type: string
                     description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
-                    example: Et omnis tempore sapiente consequuntur et deserunt.
+                    example: Harum architecto.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Aut et qui.
+                    example: Eligendi molestiae ut qui voluptates id.
                 status:
                     type: string
                     description: Connection status
-                    example: inactive
+                    example: error
                     enum:
                         - active
                         - inactive
@@ -17257,17 +17257,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 869733467246014075
+                    example: 3326547180415343562
                     format: int64
             example:
-                account_id: Molestiae saepe.
-                has_credentials: false
-                id: Omnis excepturi.
-                label: Qui dolor dolore sit beatae rerum omnis.
-                org_id: Iure est.
-                project_id: Est iusto nemo.
-                status: inactive
-                version: 2912770559490313976
+                account_id: Reprehenderit et et vel voluptatem aut et.
+                has_credentials: true
+                id: Consequatur minus autem praesentium rerum.
+                label: Itaque quibusdam.
+                org_id: Quae enim libero consequatur ut facere.
+                project_id: Optio earum in.
+                status: active
+                version: 3821004580767345623
             required:
                 - id
                 - project_id
@@ -17281,7 +17281,7 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Quasi eligendi veniam incidunt omnis necessitatibus.
+                    example: Et deserunt quia.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
@@ -17289,23 +17289,23 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Eum et optio.
+                    example: Pariatur omnis sed.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Natus veritatis voluptates modi minus.
+                    example: Omnis tempore sapiente.
                 org_id:
                     type: string
                     description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
-                    example: Vel delectus similique rerum corrupti.
+                    example: Iusto nemo.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Aliquid id.
+                    example: Perspiciatis itaque voluptatem et officia.
                 status:
                     type: string
                     description: Connection status
-                    example: error
+                    example: deleted
                     enum:
                         - active
                         - inactive
@@ -17314,17 +17314,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 5946149378121718190
+                    example: 4694442898231876529
                     format: int64
             example:
-                account_id: Sunt voluptas rem.
-                has_credentials: false
-                id: Officia velit eum.
-                label: Et iure commodi fugiat.
-                org_id: Mollitia molestiae vitae consectetur unde in ut.
-                project_id: Sed voluptates veritatis iusto natus.
-                status: inactive
-                version: 6175002707933309986
+                account_id: Aut eum.
+                has_credentials: true
+                id: Qui dolor dolore sit beatae rerum omnis.
+                label: Culpa rem iste iure.
+                org_id: Id aliquid natus veritatis voluptates.
+                project_id: Molestiae saepe.
+                status: active
+                version: 7491418640793248805
             required:
                 - id
                 - project_id
@@ -17338,31 +17338,31 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Eaque et repellendus id minima.
+                    example: Eum cum.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
-                    example: false
+                    example: true
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Numquam iure aut magni.
+                    example: Minus facere quasi eligendi veniam incidunt.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Fugiat dolores molestiae excepturi minima minus ex.
+                    example: Delectus similique rerum corrupti eos officia.
                 org_id:
                     type: string
                     description: 'LinkedIn organization ID (the bare NUMERIC id, not the full urn:li:organization: URN)'
-                    example: Qui enim.
+                    example: Natus ad.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Voluptatem qui.
+                    example: Necessitatibus et quo labore aut.
                 status:
                     type: string
                     description: Connection status
-                    example: error
+                    example: inactive
                     enum:
                         - active
                         - inactive
@@ -17371,17 +17371,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 2622642087298795705
+                    example: 4766891525618923427
                     format: int64
             example:
-                account_id: Commodi voluptatem.
+                account_id: Numquam iure aut magni.
                 has_credentials: true
-                id: Eveniet doloribus.
-                label: Et eveniet.
-                org_id: Ut aut.
-                project_id: Quisquam ut sint error quia saepe molestiae.
-                status: error
-                version: 6898689643757178595
+                id: Iure commodi fugiat aut sunt.
+                label: Mollitia molestiae vitae consectetur unde in ut.
+                org_id: Fugiat dolores molestiae excepturi minima minus ex.
+                project_id: Rem delectus ut atque.
+                status: inactive
+                version: 6889942811901219503
             required:
                 - id
                 - project_id
@@ -17697,11 +17697,11 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Libero et et.
+                    example: Quisquam ut sint error quia saepe molestiae.
                 app_id:
                     type: string
                     description: Meta app ID
-                    example: Vitae et in.
+                    example: Quo ut et ut aut veniam tenetur.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
@@ -17709,19 +17709,19 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Tenetur quae ut.
+                    example: Eaque et repellendus id minima.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Recusandae omnis.
+                    example: Eveniet doloribus.
                 page_id:
                     type: string
                     description: Facebook page ID
-                    example: Et nostrum officia quo quisquam alias minima.
+                    example: Commodi voluptatem.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Architecto ab ratione.
+                    example: Impedit quia perspiciatis qui enim.
                 status:
                     type: string
                     description: Connection status
@@ -17734,18 +17734,18 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 5350292374631333237
+                    example: 3917854281825546005
                     format: int64
             example:
-                account_id: Accusamus eaque qui suscipit animi.
-                app_id: Tempore et.
-                has_credentials: false
-                id: Rem adipisci.
-                label: Esse facilis eaque explicabo molestiae ab tenetur.
-                page_id: Delectus fugit iste.
-                project_id: Ad odit rerum.
-                status: inactive
-                version: 1554347395752341279
+                account_id: Consectetur occaecati molestias ea et.
+                app_id: Adipisci sunt ad odit rerum.
+                has_credentials: true
+                id: Ut consequatur architecto ab.
+                label: Natus libero et.
+                page_id: Alias minima soluta vitae et in ab.
+                project_id: Deserunt recusandae.
+                status: error
+                version: 8311686256532853833
             required:
                 - id
                 - project_id
@@ -17759,35 +17759,35 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Autem occaecati modi dicta.
+                    example: Fugit iste deserunt tempore et.
                 app_id:
                     type: string
                     description: Meta app ID
-                    example: Atque fugiat.
+                    example: Tempora consequuntur ut reprehenderit reprehenderit quasi ut.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
-                    example: true
+                    example: false
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Laboriosam cumque.
+                    example: Esse facilis eaque explicabo molestiae ab tenetur.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Tempora consequuntur ut reprehenderit reprehenderit quasi ut.
+                    example: Consectetur totam voluptates.
                 page_id:
                     type: string
                     description: Facebook page ID
-                    example: Quaerat veniam omnis animi omnis ut tempora.
+                    example: Et voluptate odio corporis voluptatem suscipit.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Et voluptate odio corporis voluptatem suscipit.
+                    example: Accusamus eaque qui suscipit animi.
                 status:
                     type: string
                     description: Connection status
-                    example: active
+                    example: deleted
                     enum:
                         - active
                         - inactive
@@ -17796,18 +17796,18 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 6008119677654841012
+                    example: 6836422669979298627
                     format: int64
             example:
-                account_id: Repudiandae enim sunt recusandae.
-                app_id: Et omnis.
-                has_credentials: true
-                id: Optio vitae deserunt debitis.
-                label: Veritatis amet.
-                page_id: Esse et pariatur corporis eos.
-                project_id: Illum molestiae.
+                account_id: Repellat optio.
+                app_id: Veritatis amet.
+                has_credentials: false
+                id: Autem occaecati modi dicta.
+                label: Ut tempora incidunt atque.
+                page_id: Illum molestiae.
+                project_id: Sed commodi repellat quaerat veniam omnis animi.
                 status: inactive
-                version: 8103997832861753581
+                version: 1493696294789780868
             required:
                 - id
                 - project_id
@@ -17821,35 +17821,35 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Consequatur voluptas reiciendis.
+                    example: Et omnis.
                 app_id:
                     type: string
                     description: Meta app ID
-                    example: Deserunt et.
+                    example: Et corporis praesentium voluptas error.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
-                    example: true
+                    example: false
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Omnis impedit.
+                    example: Repudiandae enim sunt recusandae.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Et corporis praesentium voluptas error.
+                    example: Esse et pariatur corporis eos.
                 page_id:
                     type: string
                     description: Facebook page ID
-                    example: Molestias et necessitatibus sint itaque necessitatibus.
+                    example: Atque doloribus et dolor.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Atque doloribus et dolor.
+                    example: Ipsam fugit.
                 status:
                     type: string
                     description: Connection status
-                    example: deleted
+                    example: inactive
                     enum:
                         - active
                         - inactive
@@ -17858,18 +17858,18 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 7270406014705385081
+                    example: 6598960560243792962
                     format: int64
             example:
-                account_id: Quis qui quos asperiores perspiciatis.
-                app_id: Enim dolorum consequatur corrupti voluptas assumenda.
-                has_credentials: true
-                id: Aliquam voluptatem velit velit eos.
-                label: Ea consectetur nobis cumque officiis.
-                page_id: Totam officiis repellat recusandae et id.
-                project_id: Adipisci fugit repudiandae dolore alias.
-                status: error
-                version: 4953132304830550116
+                account_id: Deserunt et.
+                app_id: Alias provident ea consectetur nobis cumque.
+                has_credentials: false
+                id: Consequatur voluptas reiciendis.
+                label: Et necessitatibus sint itaque necessitatibus.
+                page_id: Velit eos iste adipisci fugit repudiandae.
+                project_id: Dolores qui veniam.
+                status: active
+                version: 1152660675847393404
             required:
                 - id
                 - project_id
@@ -17994,11 +17994,11 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Repellendus eos quam facilis est porro.
+                    example: Provident sit dolores.
                 customer_id:
                     type: string
                     description: Microsoft Advertising customer ID
-                    example: Sed eos.
+                    example: Omnis quis.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
@@ -18006,19 +18006,19 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Iste nam.
+                    example: Non ut.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Aut magni fuga ducimus.
+                    example: Ducimus laudantium incidunt quisquam eum.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Sed consequuntur accusantium totam unde accusantium dolorem.
+                    example: Aperiam illum.
                 status:
                     type: string
                     description: Connection status
-                    example: deleted
+                    example: inactive
                     enum:
                         - active
                         - inactive
@@ -18027,17 +18027,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 5216415328826097746
+                    example: 8540560425206779354
                     format: int64
             example:
-                account_id: Vitae dolore a quia.
-                customer_id: Ab saepe quibusdam est natus.
+                account_id: Repellendus eos quam facilis est porro.
+                customer_id: Sed eos.
                 has_credentials: true
-                id: Dignissimos illum aut necessitatibus iusto.
-                label: Optio numquam.
-                project_id: Voluptatem ut architecto vel adipisci.
+                id: Iste nam.
+                label: Aut magni fuga ducimus.
+                project_id: Sed consequuntur accusantium totam unde accusantium dolorem.
                 status: deleted
-                version: 6977113787577220202
+                version: 5216415328826097746
             required:
                 - id
                 - project_id
@@ -18051,27 +18051,27 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Rerum reiciendis doloremque suscipit ut eos.
+                    example: Vitae dolore a quia.
                 customer_id:
                     type: string
                     description: Microsoft Advertising customer ID
-                    example: Recusandae in.
+                    example: Ab saepe quibusdam est natus.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
-                    example: false
+                    example: true
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Pariatur impedit autem blanditiis ullam voluptate.
+                    example: Dignissimos illum aut necessitatibus iusto.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Voluptatem ut ut cupiditate et.
+                    example: Optio numquam.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Ex dolore velit ad.
+                    example: Voluptatem ut architecto vel adipisci.
                 status:
                     type: string
                     description: Connection status
@@ -18084,17 +18084,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 3459568575001420958
+                    example: 6977113787577220202
                     format: int64
             example:
-                account_id: Aspernatur atque aspernatur assumenda.
-                customer_id: Qui culpa consequatur non minus consequatur.
+                account_id: Rerum reiciendis doloremque suscipit ut eos.
+                customer_id: Recusandae in.
                 has_credentials: false
-                id: Ea ut.
-                label: Est temporibus saepe eius modi ipsa.
-                project_id: Necessitatibus non eos doloribus.
-                status: active
-                version: 6466117893931589923
+                id: Pariatur impedit autem blanditiis ullam voluptate.
+                label: Voluptatem ut ut cupiditate et.
+                project_id: Ex dolore velit ad.
+                status: deleted
+                version: 3459568575001420958
             required:
                 - id
                 - project_id
@@ -18108,31 +18108,31 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Quibusdam illo hic animi sunt commodi quos.
+                    example: Aspernatur atque aspernatur assumenda.
                 customer_id:
                     type: string
                     description: Microsoft Advertising customer ID
-                    example: Provident earum quidem numquam dolore.
+                    example: Qui culpa consequatur non minus consequatur.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
-                    example: true
+                    example: false
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Autem excepturi neque.
+                    example: Ea ut.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Quibusdam quo nulla sint.
+                    example: Est temporibus saepe eius modi ipsa.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Magni recusandae quia nostrum.
+                    example: Necessitatibus non eos doloribus.
                 status:
                     type: string
                     description: Connection status
-                    example: inactive
+                    example: active
                     enum:
                         - active
                         - inactive
@@ -18141,17 +18141,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 3794476328735633390
+                    example: 6466117893931589923
                     format: int64
             example:
-                account_id: Similique eum eius.
-                customer_id: Quia et qui reprehenderit aut dolor.
+                account_id: Quibusdam illo hic animi sunt commodi quos.
+                customer_id: Provident earum quidem numquam dolore.
                 has_credentials: true
-                id: Possimus blanditiis accusamus consequuntur praesentium.
-                label: Aliquam earum eaque.
-                project_id: Enim perspiciatis.
-                status: deleted
-                version: 5282370065610149827
+                id: Autem excepturi neque.
+                label: Quibusdam quo nulla sint.
+                project_id: Magni recusandae quia nostrum.
+                status: inactive
+                version: 3794476328735633390
             required:
                 - id
                 - project_id
@@ -18259,10 +18259,6 @@ components:
                     type: boolean
                     description: Whether the email is transactional rather than marketing
                     example: false
-                progress_token:
-                    type: string
-                    description: Progress token to publish this turn's SSE frames on; defaults to the session's own token
-                    example: Praesentium qui ut natus recusandae dolore.
                 session_id:
                     type: string
                     description: Wizard session UUID, as returned by plan-start
@@ -18273,12 +18269,11 @@ components:
                     description: Event page to plan from; defaults to the event details already scraped onto the brief
                     example: Placeat cupiditate soluta ut dolores aut.
             example:
-                email_type: Rerum ipsam repellat aliquid quae unde.
-                extra_context: Possimus aut.
-                is_transactional: true
-                progress_token: Facere quae.
-                session_id: 2975b759-370d-4abc-848c-cfee9635121b
-                url: Autem sit ab laboriosam sit.
+                email_type: Laboriosam sit iste possimus aut.
+                extra_context: Reiciendis eius autem sit.
+                is_transactional: false
+                session_id: 1e9acb46-5879-442f-94e3-70de38718013
+                url: Quas doloremque ullam voluptatem.
             required:
                 - session_id
         PlatformCampaignResolution:
@@ -18462,27 +18457,27 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Sit qui cum praesentium non odio suscipit.
+                    example: Et id sit enim dolorum consequatur.
                 conversion_pixel_id:
                     type: string
                     description: Reddit conversion pixel ID
-                    example: Nam deleniti.
+                    example: Est laborum.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
-                    example: false
+                    example: true
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Est laborum.
+                    example: Non quis qui.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Ipsa illo id ducimus amet.
+                    example: Mollitia totam officiis repellat.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Velit quia sequi.
+                    example: Asperiores perspiciatis doloribus iure.
                 status:
                     type: string
                     description: Connection status
@@ -18495,17 +18490,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 7177431025957759821
+                    example: 3902487265467821847
                     format: int64
             example:
-                account_id: Sit eos.
-                conversion_pixel_id: Dolore praesentium.
+                account_id: Et itaque et.
+                conversion_pixel_id: Aliquam tempore eligendi.
                 has_credentials: true
-                id: Enim aliquam tempore eligendi rerum non sed.
-                label: Est voluptas.
-                project_id: Natus sunt aut commodi cupiditate.
-                status: inactive
-                version: 5968940193174336522
+                id: Velit quia sequi.
+                label: Sit qui cum praesentium non odio suscipit.
+                project_id: Ipsa illo id ducimus amet.
+                status: active
+                version: 5931667946239821963
             required:
                 - id
                 - project_id
@@ -18519,31 +18514,31 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Odit velit amet ad.
+                    example: Quia nulla.
                 conversion_pixel_id:
                     type: string
                     description: Reddit conversion pixel ID
-                    example: Vel a animi veniam rem expedita.
+                    example: Suscipit alias.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
-                    example: false
+                    example: true
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Nulla sed quo sunt in.
+                    example: Non sed aut natus sunt aut.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Perspiciatis amet qui et doloremque nemo voluptas.
+                    example: Eos voluptate reiciendis dicta culpa dolore.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Alias ut error velit facere ea maxime.
+                    example: Cupiditate cumque est voluptas atque.
                 status:
                     type: string
                     description: Connection status
-                    example: inactive
+                    example: active
                     enum:
                         - active
                         - inactive
@@ -18552,17 +18547,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 3106289311571160881
+                    example: 6913021150099933914
                     format: int64
             example:
-                account_id: Et voluptatum beatae dolor porro voluptatibus est.
-                conversion_pixel_id: Magnam pariatur.
-                has_credentials: true
-                id: Necessitatibus facere rerum optio sed quia autem.
-                label: Minima assumenda inventore et vel id.
-                project_id: Fugiat beatae aliquam.
-                status: active
-                version: 1025200317033758491
+                account_id: Amet ad non.
+                conversion_pixel_id: A animi veniam.
+                has_credentials: false
+                id: Error velit facere ea.
+                label: Quas odit.
+                project_id: Et perspiciatis amet qui et doloremque nemo.
+                status: inactive
+                version: 8799429938619413242
             required:
                 - id
                 - project_id
@@ -18576,11 +18571,11 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Repellat dicta quae magni dicta.
+                    example: Et voluptatum beatae dolor porro voluptatibus est.
                 conversion_pixel_id:
                     type: string
                     description: Reddit conversion pixel ID
-                    example: Eaque voluptatibus molestiae eius autem culpa vitae.
+                    example: Magnam pariatur.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
@@ -18588,19 +18583,19 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Placeat quibusdam qui error sit necessitatibus.
+                    example: Expedita quisquam necessitatibus facere rerum.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Omnis accusamus non atque fugiat sunt.
+                    example: Minima assumenda inventore et vel id.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Ullam nemo.
+                    example: Sed quia autem facere fugiat beatae aliquam.
                 status:
                     type: string
                     description: Connection status
-                    example: inactive
+                    example: active
                     enum:
                         - active
                         - inactive
@@ -18609,17 +18604,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 3480160184683156141
+                    example: 1025200317033758491
                     format: int64
             example:
-                account_id: Rerum nihil recusandae similique nesciunt exercitationem numquam.
-                conversion_pixel_id: Alias ut possimus deleniti dolorem.
+                account_id: Repellat dicta quae magni dicta.
+                conversion_pixel_id: Eaque voluptatibus molestiae eius autem culpa vitae.
                 has_credentials: true
-                id: A delectus natus cupiditate dolorem fuga quia.
-                label: Fuga iure veniam id facilis adipisci.
-                project_id: Sunt quaerat molestiae dolor.
+                id: Placeat quibusdam qui error sit necessitatibus.
+                label: Omnis accusamus non atque fugiat sunt.
+                project_id: Ullam nemo.
                 status: inactive
-                version: 7195549355323133570
+                version: 3480160184683156141
             required:
                 - id
                 - project_id
@@ -18744,12 +18739,20 @@ components:
                           name: KubeCon NA 2026
                           start_date: "2026-11-01"
                           utm: kubecon-na-2026
+                        - id: "112233445566"
+                          name: KubeCon NA 2026
+                          start_date: "2026-11-01"
+                          utm: kubecon-na-2026
                 capped:
                     type: boolean
                     description: 'True when the search could NOT be shown to be complete. That covers the case HubSpot reported more matches than it returned, and equally the cases where completeness is simply unknown: an absent `total`, or one that contradicts the rows (negative, or fewer than were returned). All of them fail CLOSED, because "we cannot tell" must not be reported as the proven absence a caller acts on by creating a campaign. While it is true, absence from `campaigns` is NOT proof the campaign does not exist, and a caller must not offer an unqualified create on an empty result — it would duplicate a campaign in a namespace shared by everyone on that HubSpot portal. Narrow the search term instead.'
                     example: false
             example:
                 campaigns:
+                    - id: "112233445566"
+                      name: KubeCon NA 2026
+                      start_date: "2026-11-01"
+                      utm: kubecon-na-2026
                     - id: "112233445566"
                       name: KubeCon NA 2026
                       start_date: "2026-11-01"
@@ -18857,49 +18860,46 @@ components:
                 email_id:
                     type: string
                     description: Draft to configure; defaults to the session's primary draft
-                    example: Quos minus et at alias.
+                    example: Dolorem aliquid numquam at.
                 send_list_id:
                     type: string
                     description: Single recipient list id; ignored when send_list_ids is given
-                    example: Est molestiae et distinctio voluptas placeat.
+                    example: Nemo porro fuga repellendus eum laudantium.
                 send_list_ids:
                     type: array
                     items:
                         type: string
-                        example: Voluptas laboriosam recusandae quae.
+                        example: Modi corporis natus similique ut.
                     description: Recipient list ids; takes priority over send_list_id
                     example:
-                        - Vel ipsa sapiente est atque.
-                        - Iure eveniet facilis quos.
-                        - Sunt voluptates.
-                        - Ea beatae.
+                        - Adipisci praesentium.
+                        - Mollitia quas officiis perspiciatis quos minus.
                 session_id:
                     type: string
                     description: Wizard session UUID, as returned by plan-start
-                    example: 6b3d6c97-bbc6-41bb-8d7a-e620267f6f61
+                    example: 0a71a56c-62cf-46bf-937b-2de83a4dd55d
                     format: uuid
                 suppression_list_ids:
                     type: array
                     items:
                         type: string
-                        example: Sit doloribus reprehenderit.
+                        example: At alias dolorem est molestiae et.
                     description: Lists whose members must not receive the send
                     example:
-                        - Mollitia id neque aliquam vitae qui minus.
-                        - Est laborum ullam sed excepturi quisquam.
-                        - Molestiae beatae voluptas fugit sit.
-                        - Delectus sit cumque optio vitae.
+                        - Placeat eum voluptas.
+                        - Recusandae quae.
             example:
-                email_id: Architecto molestias non quaerat aut eum ex.
-                send_list_id: Harum aut.
+                email_id: Quae atque.
+                send_list_id: Accusantium voluptatem aut.
                 send_list_ids:
-                    - Facilis doloribus quibusdam.
-                    - Nihil quasi minima quasi.
-                    - Dolorem officiis.
-                session_id: 96d3bcb9-00aa-4405-95d7-79cbc2f1c401
+                    - Magni eum ut.
+                    - Totam atque deleniti esse et.
+                session_id: eb2db51e-7c06-4619-b72c-9bf9065383aa
                 suppression_list_ids:
-                    - Est et maiores omnis assumenda.
-                    - Ab ea ea hic in.
+                    - At maiores dolorum.
+                    - Sed cumque quae.
+                    - Atque repellendus.
+                    - Qui ducimus et.
             required:
                 - session_id
         StartEmailWizardPlanRequestBody:
@@ -19009,11 +19009,11 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Fugiat vel ab est quas veniam.
+                    example: Rerum nihil recusandae similique nesciunt exercitationem numquam.
                 funding_instrument_id:
                     type: string
                     description: Funding instrument for the ad account
-                    example: Aut enim perspiciatis autem.
+                    example: Alias ut possimus deleniti dolorem.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
@@ -19021,15 +19021,15 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Earum praesentium.
+                    example: A delectus natus cupiditate dolorem fuga quia.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Qui sint occaecati accusantium fugiat officiis.
+                    example: Fuga iure veniam id facilis adipisci.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Quia est sapiente ab.
+                    example: Sunt quaerat molestiae dolor.
                 status:
                     type: string
                     description: Connection status
@@ -19042,17 +19042,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 8187457968189503087
+                    example: 7195549355323133570
                     format: int64
             example:
-                account_id: Veniam aut.
-                funding_instrument_id: Nisi repudiandae sit qui facilis dignissimos dolore.
-                has_credentials: false
-                id: Velit tempore at cumque explicabo iure sunt.
-                label: Maiores placeat et voluptates ea nulla.
-                project_id: Velit nulla illum omnis cupiditate dolores libero.
+                account_id: Fugiat vel ab est quas veniam.
+                funding_instrument_id: Aut enim perspiciatis autem.
+                has_credentials: true
+                id: Earum praesentium.
+                label: Qui sint occaecati accusantium fugiat officiis.
+                project_id: Quia est sapiente ab.
                 status: inactive
-                version: 1158927958228361495
+                version: 8187457968189503087
             required:
                 - id
                 - project_id
@@ -19066,11 +19066,11 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Repellat fuga iusto in est sunt.
+                    example: Veniam aut.
                 funding_instrument_id:
                     type: string
                     description: Funding instrument for the ad account
-                    example: Saepe aliquam sed ipsum.
+                    example: Nisi repudiandae sit qui facilis dignissimos dolore.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
@@ -19078,19 +19078,19 @@ components:
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Id deleniti incidunt similique voluptas.
+                    example: Velit tempore at cumque explicabo iure sunt.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Velit dignissimos impedit ipsa cupiditate nobis aliquid.
+                    example: Maiores placeat et voluptates ea nulla.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Et ea quo qui eveniet est.
+                    example: Velit nulla illum omnis cupiditate dolores libero.
                 status:
                     type: string
                     description: Connection status
-                    example: error
+                    example: inactive
                     enum:
                         - active
                         - inactive
@@ -19099,17 +19099,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 8203203721079371579
+                    example: 1158927958228361495
                     format: int64
             example:
-                account_id: Ut rerum molestiae.
-                funding_instrument_id: Nihil quasi.
+                account_id: Repellat fuga iusto in est sunt.
+                funding_instrument_id: Saepe aliquam sed ipsum.
                 has_credentials: false
-                id: Aperiam culpa cumque sit tenetur possimus.
-                label: Mollitia architecto aut tempore.
-                project_id: Corporis labore ea at voluptatem ipsam cupiditate.
-                status: active
-                version: 7071596914110057985
+                id: Id deleniti incidunt similique voluptas.
+                label: Velit dignissimos impedit ipsa cupiditate nobis aliquid.
+                project_id: Et ea quo qui eveniet est.
+                status: error
+                version: 8203203721079371579
             required:
                 - id
                 - project_id
@@ -19123,31 +19123,31 @@ components:
                 account_id:
                     type: string
                     description: Provider account identifier
-                    example: Debitis officiis.
+                    example: Ut rerum molestiae.
                 funding_instrument_id:
                     type: string
                     description: Funding instrument for the ad account
-                    example: Nostrum repellendus cumque nostrum.
+                    example: Nihil quasi.
                 has_credentials:
                     type: boolean
                     description: Whether an encrypted credential is stored
-                    example: true
+                    example: false
                 id:
                     type: string
                     description: Service-generated connection UUID (not used in paths)
-                    example: Maxime aut quas.
+                    example: Aperiam culpa cumque sit tenetur possimus.
                 label:
                     type: string
                     description: Optional friendly name
-                    example: Enim harum ipsa dolores voluptates cumque.
+                    example: Mollitia architecto aut tempore.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Eligendi numquam corrupti corporis.
+                    example: Corporis labore ea at voluptatem ipsam cupiditate.
                 status:
                     type: string
                     description: Connection status
-                    example: error
+                    example: active
                     enum:
                         - active
                         - inactive
@@ -19156,17 +19156,17 @@ components:
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 5219140266469586382
+                    example: 7071596914110057985
                     format: int64
             example:
-                account_id: Provident sit dolores.
-                funding_instrument_id: Omnis quis.
+                account_id: Debitis officiis.
+                funding_instrument_id: Nostrum repellendus cumque nostrum.
                 has_credentials: true
-                id: Non ut.
-                label: Ducimus laudantium incidunt quisquam eum.
-                project_id: Aperiam illum.
-                status: inactive
-                version: 8540560425206779354
+                id: Maxime aut quas.
+                label: Enim harum ipsa dolores voluptates cumque.
+                project_id: Eligendi numquam corrupti corporis.
+                status: error
+                version: 5219140266469586382
             required:
                 - id
                 - project_id
@@ -21085,24 +21085,23 @@ components:
                 sections:
                     type: array
                     items:
-                        example: Deleniti aut quod.
+                        example: Voluptatum nobis consequuntur.
                     description: Content blocks to render, in the order they should appear
                     example:
-                        - Aut eaque cum.
-                        - Omnis possimus et voluptatem adipisci.
-                        - Labore nobis.
+                        - Velit est ducimus quia sint.
+                        - Sed nisi quis error.
+                        - Qui laudantium commodi harum in quibusdam.
+                        - Suscipit ut deleniti aut.
                 session_id:
                     type: string
                     description: Wizard session UUID, as returned by plan-start
-                    example: ffeacb48-de59-4602-afaa-315b9c8e2226
+                    example: b36b67df-8bdf-4211-8fa9-9c550b2a1471
                     format: uuid
             example:
                 sections:
-                    - Sit molestiae saepe eius blanditiis distinctio.
-                    - Repellendus distinctio rerum consequatur.
-                    - Aspernatur velit.
-                    - At laborum quis praesentium consequuntur ut.
-                session_id: 6ae54d72-fa27-42d4-9766-93fcdebbd462
+                    - Ullam nesciunt quos corporis exercitationem.
+                    - Illum aut.
+                session_id: 479a26a9-55e5-4f01-bea6-88b0dfb746a3
             required:
                 - session_id
                 - sections
@@ -21282,18 +21281,18 @@ components:
                         $ref: '#/components/schemas/WizardSponsor'
                     description: Sponsor logos scraped from the event page
                     example:
-                        - logo_url: Vel architecto quas eligendi impedit qui.
-                          name: Magnam consequuntur qui quidem exercitationem sint ipsa.
-                          tier: Soluta neque facilis est qui.
-                          url: Numquam necessitatibus laudantium est.
-                        - logo_url: Vel architecto quas eligendi impedit qui.
-                          name: Magnam consequuntur qui quidem exercitationem sint ipsa.
-                          tier: Soluta neque facilis est qui.
-                          url: Numquam necessitatibus laudantium est.
-                        - logo_url: Vel architecto quas eligendi impedit qui.
-                          name: Magnam consequuntur qui quidem exercitationem sint ipsa.
-                          tier: Soluta neque facilis est qui.
-                          url: Numquam necessitatibus laudantium est.
+                        - logo_url: Necessitatibus laudantium est ut.
+                          name: Architecto quas eligendi impedit qui sed.
+                          tier: Possimus et corrupti et nobis voluptas.
+                          url: Neque facilis est qui possimus eligendi.
+                        - logo_url: Necessitatibus laudantium est ut.
+                          name: Architecto quas eligendi impedit qui sed.
+                          tier: Possimus et corrupti et nobis voluptas.
+                          url: Neque facilis est qui possimus eligendi.
+                        - logo_url: Necessitatibus laudantium est ut.
+                          name: Architecto quas eligendi impedit qui sed.
+                          tier: Possimus et corrupti et nobis voluptas.
+                          url: Neque facilis est qui possimus eligendi.
                 subject:
                     type: string
                     description: Reference variant subject line
@@ -21348,14 +21347,14 @@ components:
                     - Quia consequatur.
                 session_id: 673badf4-998f-4685-a69d-8d67125f722a
                 sponsors:
-                    - logo_url: Vel architecto quas eligendi impedit qui.
-                      name: Magnam consequuntur qui quidem exercitationem sint ipsa.
-                      tier: Soluta neque facilis est qui.
-                      url: Numquam necessitatibus laudantium est.
-                    - logo_url: Vel architecto quas eligendi impedit qui.
-                      name: Magnam consequuntur qui quidem exercitationem sint ipsa.
-                      tier: Soluta neque facilis est qui.
-                      url: Numquam necessitatibus laudantium est.
+                    - logo_url: Necessitatibus laudantium est ut.
+                      name: Architecto quas eligendi impedit qui sed.
+                      tier: Possimus et corrupti et nobis voluptas.
+                      url: Neque facilis est qui possimus eligendi.
+                    - logo_url: Necessitatibus laudantium est ut.
+                      name: Architecto quas eligendi impedit qui sed.
+                      tier: Possimus et corrupti et nobis voluptas.
+                      url: Neque facilis est qui possimus eligendi.
                 subject: Consequatur in et quos.
                 variant_a_banner_url: Officiis omnis.
                 variant_a_body_html: Dolor est vitae sed velit consequatur.
@@ -21424,14 +21423,14 @@ components:
                         $ref: '#/components/schemas/WizardSponsor'
                     description: Sponsor logos scraped from the event page
                     example:
-                        - logo_url: Vel architecto quas eligendi impedit qui.
-                          name: Magnam consequuntur qui quidem exercitationem sint ipsa.
-                          tier: Soluta neque facilis est qui.
-                          url: Numquam necessitatibus laudantium est.
-                        - logo_url: Vel architecto quas eligendi impedit qui.
-                          name: Magnam consequuntur qui quidem exercitationem sint ipsa.
-                          tier: Soluta neque facilis est qui.
-                          url: Numquam necessitatibus laudantium est.
+                        - logo_url: Necessitatibus laudantium est ut.
+                          name: Architecto quas eligendi impedit qui sed.
+                          tier: Possimus et corrupti et nobis voluptas.
+                          url: Neque facilis est qui possimus eligendi.
+                        - logo_url: Necessitatibus laudantium est ut.
+                          name: Architecto quas eligendi impedit qui sed.
+                          tier: Possimus et corrupti et nobis voluptas.
+                          url: Neque facilis est qui possimus eligendi.
                 stage_name:
                     type: string
                     description: Resolved stage name
@@ -21456,22 +21455,22 @@ components:
                     - Hic enim.
                     - Cum necessitatibus id modi qui accusamus.
                 sponsors:
-                    - logo_url: Vel architecto quas eligendi impedit qui.
-                      name: Magnam consequuntur qui quidem exercitationem sint ipsa.
-                      tier: Soluta neque facilis est qui.
-                      url: Numquam necessitatibus laudantium est.
-                    - logo_url: Vel architecto quas eligendi impedit qui.
-                      name: Magnam consequuntur qui quidem exercitationem sint ipsa.
-                      tier: Soluta neque facilis est qui.
-                      url: Numquam necessitatibus laudantium est.
-                    - logo_url: Vel architecto quas eligendi impedit qui.
-                      name: Magnam consequuntur qui quidem exercitationem sint ipsa.
-                      tier: Soluta neque facilis est qui.
-                      url: Numquam necessitatibus laudantium est.
-                    - logo_url: Vel architecto quas eligendi impedit qui.
-                      name: Magnam consequuntur qui quidem exercitationem sint ipsa.
-                      tier: Soluta neque facilis est qui.
-                      url: Numquam necessitatibus laudantium est.
+                    - logo_url: Necessitatibus laudantium est ut.
+                      name: Architecto quas eligendi impedit qui sed.
+                      tier: Possimus et corrupti et nobis voluptas.
+                      url: Neque facilis est qui possimus eligendi.
+                    - logo_url: Necessitatibus laudantium est ut.
+                      name: Architecto quas eligendi impedit qui sed.
+                      tier: Possimus et corrupti et nobis voluptas.
+                      url: Neque facilis est qui possimus eligendi.
+                    - logo_url: Necessitatibus laudantium est ut.
+                      name: Architecto quas eligendi impedit qui sed.
+                      tier: Possimus et corrupti et nobis voluptas.
+                      url: Neque facilis est qui possimus eligendi.
+                    - logo_url: Necessitatibus laudantium est ut.
+                      name: Architecto quas eligendi impedit qui sed.
+                      tier: Possimus et corrupti et nobis voluptas.
+                      url: Neque facilis est qui possimus eligendi.
                 stage_name: Sit aut.
                 subject: Ullam consequatur aut vel quae.
                 template_key: Est numquam.
@@ -21521,8 +21520,8 @@ components:
                 phase: planning
                 session_id: 56cda10f-79f7-4edc-9336-7e69e01e4321
                 source_email:
-                    id: Aperiam eos et architecto voluptas.
-                    name: Vel natus provident.
+                    id: Officia et sint numquam accusamus.
+                    name: Eos et architecto voluptas.
                 stage: Et exercitationem minus.
                 utm: Repudiandae consequatur.
             required:
