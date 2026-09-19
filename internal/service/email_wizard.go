@@ -184,12 +184,23 @@ func loadWizardSession(ctx context.Context, briefRepo domain.BriefRepository, se
 	if strings.TrimSpace(sessionID) == "" {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "session_id is required"}
 	}
-	if _, gerr := briefRepo.GetBrief(ctx, projectID, briefID); gerr != nil {
-		return nil, mapBriefErr(gerr)
-	}
+	// ORDER MATTERS: the session is read FIRST, the brief second.
+	//
+	// The reverse order leaves a window. A delete that archives and scrubs between the two
+	// reads would pass the brief check (it ran before the archive) and then hand back the
+	// POST-scrub session -- whose version a later generate or chat save still matches, so the
+	// save succeeds and repopulates exactly the content the deletion just cleared.
+	//
+	// Reading the session first inverts that: any scrub landing afterwards bumps `version`
+	// past the value this caller holds, and `saveWizardSession` -- which writes back at the
+	// version it read -- fails stale. The brief check then runs against the newer state and
+	// rejects the turn anyway. The two guards cover each other only in this order.
 	sess, err := sessions.GetSession(ctx, projectID, briefID, sessionID)
 	if err != nil {
 		return nil, mapWizardErr(err)
+	}
+	if _, gerr := briefRepo.GetBrief(ctx, projectID, briefID); gerr != nil {
+		return nil, mapBriefErr(gerr)
 	}
 	return sess, nil
 }

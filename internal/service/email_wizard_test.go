@@ -125,6 +125,11 @@ func (r *fakeWizardSessionRepo) ScrubSessionsForBrief(_ context.Context, project
 		s.Sections = nil
 		s.CreatedBy = nil
 		s.UpdatedBy = nil
+		// The version bump is part of the statement, not bookkeeping: it is what makes an
+		// in-flight turn's pre-scrub snapshot fail stale instead of repopulating the columns
+		// this just cleared. A fake that skipped it would keep every service-level test green
+		// against a scrub that can be silently undone.
+		s.Version++
 		n++
 	}
 	return n, nil
@@ -1462,4 +1467,77 @@ func TestWizard_AnUnconfirmedSendListIsNotReportedAsUnchanged(t *testing.T) {
 			t.Errorf("err = %q, want the outcome described as unknown", msg)
 		}
 	})
+}
+
+// TestWizard_ASaveCannotRepopulateAScrubbedSession pins the READ ORDER inside
+// loadWizardSession, which is load-bearing and invisible.
+//
+// If the brief were checked BEFORE the session is read, a delete landing between the two reads
+// would pass the brief check (it ran before the archive) and then hand back the POST-scrub
+// session. Its version matches what the scrub left, so a later save succeeds and repopulates
+// exactly the content the deletion just cleared -- and the operator is never told.
+//
+// Reading the session FIRST inverts that: a scrub landing afterwards bumps `version` past the
+// value the caller holds, and saveWizardSession -- which writes back at the version it read --
+// fails stale.
+//
+// The interleaving is forced through the fake's onGet hook, which fires after the first repo
+// read, so the scrub lands in exactly the window under test rather than by luck.
+func TestWizard_ASaveCannotRepopulateAScrubbedSession(t *testing.T) {
+	ctx := context.Background()
+	h := newWizardHarness(t, wizardModelJSON)
+
+	started, err := h.svc.StartEmailWizardPlan(ctx, &briefs.StartEmailWizardPlanPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief,
+	})
+	if err != nil {
+		t.Fatalf("StartEmailWizardPlan: %v", err)
+	}
+
+	// Give the session something to scrub. A freshly started session has no content yet, so
+	// the scrub's already-scrubbed guard would skip it and the test would pass for the wrong
+	// reason -- proving only that a no-op scrub changes nothing.
+	seeded, gerr := h.sessions.GetSession(ctx, wizardTestProject, wizardTestBrief, started.SessionID)
+	if gerr != nil {
+		t.Fatalf("GetSession (seed): %v", gerr)
+	}
+	seeded.ChatHistory = json.RawMessage(`[{"role":"user","content":"my unpublished keynote"}]`)
+	if _, uerr := h.sessions.UpdateSession(ctx, seeded, seeded.Version); uerr != nil {
+		t.Fatalf("UpdateSession (seed): %v", uerr)
+	}
+
+	// The delete lands in the WINDOW BETWEEN the two reads: onGet fires immediately after
+	// GetBrief returns. This is what makes the ordering observable -- with the brief read
+	// first, the scrub happens before the session read and the caller gets a post-scrub
+	// snapshot whose version a later save still matches. With the session read first, the
+	// scrub lands after it and the version has moved on.
+	var scrubbed int64
+	h.briefs.onGet = func() {
+		var serr error
+		if scrubbed, serr = h.sessions.ScrubSessionsForBrief(ctx, wizardTestProject, wizardTestBrief); serr != nil {
+			t.Errorf("ScrubSessionsForBrief: %v", serr)
+		}
+	}
+
+	sess, lerr := loadWizardSession(ctx, h.briefs, h.sessions, wizardTestProject, wizardTestBrief, started.SessionID)
+	if lerr != nil {
+		t.Fatalf("loadWizardSession: %v", lerr)
+	}
+	if scrubbed != 1 {
+		t.Fatalf("fixture precondition: the scrub matched %d rows, want 1 -- it must actually clear this session", scrubbed)
+	}
+
+	// The in-flight turn tries to persist what it loaded.
+	sess.ChatHistory = json.RawMessage(`[{"role":"user","content":"repopulated"}]`)
+	if _, saveErr := saveWizardSession(ctx, h.sessions, sess, &model.Actor{Name: "Ada Lovelace"}); saveErr == nil {
+		t.Fatal("a save at the pre-scrub version succeeded -- it repopulates the content the delete cleared")
+	}
+
+	after, gerr := h.sessions.GetSession(ctx, wizardTestProject, wizardTestBrief, started.SessionID)
+	if gerr != nil {
+		t.Fatalf("GetSession: %v", gerr)
+	}
+	if len(after.ChatHistory) != 0 {
+		t.Errorf("chat_history = %s -- the scrubbed content came back", after.ChatHistory)
+	}
 }
