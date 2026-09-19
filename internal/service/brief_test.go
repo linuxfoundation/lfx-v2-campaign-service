@@ -5178,3 +5178,129 @@ func TestGetCampaignSettings_SystemOriginAttributesTheCredentialFailureToTheSyst
 		t.Errorf("message = %q, want the generic one", ise.Message)
 	}
 }
+
+// TestDeleteBrief_ScrubsWizardSessionPersonalData pins the retention half of the delete.
+//
+// ArchiveBrief is a SOFT delete, and it touches only the brief row. The wizard's sessions for
+// that brief carry `chat_history` -- free text the user typed -- plus `created_by`/`updated_by`
+// actor blobs, and nothing else in the service ever removes them: there is no TTL on the table,
+// no purge job, and no other deletion path. Without this, an operator who deletes a brief to
+// remove its content leaves every word of it behind indefinitely, with the UI showing the brief
+// as gone.
+//
+// The scrub is scoped by project AND brief for the same reason the reads are: a scrub keyed on
+// the brief alone would wipe another tenant's sessions if brief ids ever collide across
+// projects, and that is unrecoverable -- there is no undo for a cleared column.
+func TestDeleteBrief_ScrubsWizardSessionPersonalData(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+	sessions := newFakeWizardSessionRepo()
+	s.SetWizardBackend(sessions, nil, nil)
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	actor := &model.Actor{}
+	victim, err := sessions.CreateSession(ctx, &model.WizardSession{
+		ProjectID:   "cncf",
+		BriefID:     created.ID,
+		ChatHistory: json.RawMessage(`[{"role":"user","content":"my unpublished keynote"}]`),
+		CreatedBy:   actor,
+		UpdatedBy:   actor,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// A session on a DIFFERENT brief, same project. If the scrub were keyed on the project
+	// alone it would take this one too, destroying data for a brief nobody deleted.
+	bystander, err := sessions.CreateSession(ctx, &model.WizardSession{
+		ProjectID:   "cncf",
+		BriefID:     "another-brief",
+		ChatHistory: json.RawMessage(`[{"role":"user","content":"unrelated"}]`),
+		CreatedBy:   actor,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession (bystander): %v", err)
+	}
+
+	if derr := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); derr != nil {
+		t.Fatalf("DeleteBrief: %v", derr)
+	}
+
+	got, err := sessions.GetSession(ctx, "cncf", created.ID, victim.ID)
+	if err != nil {
+		t.Fatalf("GetSession after delete: %v", err)
+	}
+	if len(got.ChatHistory) != 0 {
+		t.Errorf("chat_history survived the delete: %s -- the user's typed content is retained forever", got.ChatHistory)
+	}
+	if got.CreatedBy != nil || got.UpdatedBy != nil {
+		t.Errorf("actor blobs survived the delete (created_by=%v updated_by=%v)", got.CreatedBy, got.UpdatedBy)
+	}
+
+	other, err := sessions.GetSession(ctx, "cncf", "another-brief", bystander.ID)
+	if err != nil {
+		t.Fatalf("GetSession (bystander): %v", err)
+	}
+	if len(other.ChatHistory) == 0 {
+		t.Error("the scrub took a session belonging to a brief that was NOT deleted")
+	}
+}
+
+// TestDeleteBrief_SurvivesAScrubFailure pins the scrub as BEST-EFFORT. The brief is already
+// archived by the time it runs, so returning the scrub's error would report a failure for a
+// delete that did happen -- and leave the operator retrying a delete that can never succeed.
+func TestDeleteBrief_SurvivesAScrubFailure(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+	sessions := newFakeWizardSessionRepo()
+	sessions.scrubE = errors.New("boom")
+	s.SetWizardBackend(sessions, nil, nil)
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	if derr := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); derr != nil {
+		t.Fatalf("a failed scrub must not fail the delete, got %v", derr)
+	}
+}
+
+// TestDeleteBrief_WithNoWizardBackendStillDeletes pins the nil-guard: the wizard backend is
+// late-bound and may be unwired (cold start, or a deployment without it), and a delete must not
+// nil-panic there.
+func TestDeleteBrief_WithNoWizardBackendStillDeletes(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeBriefRepo()
+	s := newIndexTestBriefService(repo)
+
+	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{EventSlug: "kubecon-eu-2026"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	if derr := s.DeleteBrief(ctx, &briefs.DeleteBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID,
+	}); derr != nil {
+		t.Fatalf("DeleteBrief with no wizard backend: %v", derr)
+	}
+}

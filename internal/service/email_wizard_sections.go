@@ -116,10 +116,12 @@ func decodeWizardSections(in []any) (out []wizardSection, dropped int) {
 // renderWizardSections assembles the BODY-ONLY HTML — what goes into the HubSpot draft's
 // first rich-text block, with no <html>/<head> wrapper.
 //
-// Every value the blocks carry is escaped EXCEPT a rich_text block's html, which is markup by
-// definition and is the one field the UI's rich-text editor owns. Escaping it would show
-// operators their own tags as literal text; the bound above is what keeps it from being
-// unbounded. Hrefs and image sources go through httpURL, so a `javascript:` or `data:` URL
+// Every value the blocks carry is escaped except a rich_text block's html, which is markup by
+// definition -- escaping it would show operators their own tags as literal text. It is
+// SANITIZED instead (sanitizeWizardHTML): an allow-list of formatting tags, href-only on
+// anchors, script/style content dropped entirely. The length bound alone stopped nothing, and
+// this field is filled by a MODEL as well as by the editor, reaching both the preview document
+// and the HubSpot draft sent to recipients. Hrefs and image sources go through httpURL, so a `javascript:` or `data:` URL
 // supplied by a model or a scraped page cannot reach an anchor.
 func renderWizardSections(sections []wizardSection) string {
 	var b strings.Builder
@@ -130,7 +132,7 @@ func renderWizardSections(sections []wizardSection) string {
 			if utf8.RuneCountInString(sec.HTML) > maxWizardSectionHTML {
 				continue
 			}
-			b.WriteString(`<div class="lfx-block lfx-rich-text">` + sec.HTML + "</div>\n")
+			b.WriteString(`<div class="lfx-block lfx-rich-text">` + sanitizeWizardHTML(sec.HTML) + "</div>\n")
 		case "button":
 			// destination is the tagged/resolved target and url the pre-tagging one; a block
 			// that carries both means the same button, so the resolved one wins.

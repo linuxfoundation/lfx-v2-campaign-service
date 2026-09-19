@@ -38,6 +38,7 @@ type fakeWizardSessionRepo struct {
 	createE  error
 	getE     error
 	updateE  error
+	scrubE   error
 	getCalls int
 }
 
@@ -95,6 +96,31 @@ func (r *fakeWizardSessionRepo) GetSessionByToken(_ context.Context, token strin
 		}
 	}
 	return nil, domain.ErrNotFound
+}
+
+func (r *fakeWizardSessionRepo) ScrubSessionsForBrief(_ context.Context, projectID, briefID string) (int64, error) {
+	if r.scrubE != nil {
+		return 0, r.scrubE
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var n int64
+	for _, s := range r.items {
+		// Scoped by BOTH ids for the same reason GetSession is: a fake that matched on the
+		// brief alone would let a cross-project scrub pass here and wipe another tenant's
+		// sessions only in production.
+		if s.ProjectID != projectID || s.BriefID != briefID {
+			continue
+		}
+		if len(s.ChatHistory) == 0 && s.CreatedBy == nil && s.UpdatedBy == nil {
+			continue
+		}
+		s.ChatHistory = nil
+		s.CreatedBy = nil
+		s.UpdatedBy = nil
+		n++
+	}
+	return n, nil
 }
 
 func (r *fakeWizardSessionRepo) UpdateSession(_ context.Context, s *model.WizardSession, expectedVersion int64) (*model.WizardSession, error) {
@@ -1206,5 +1232,42 @@ func TestChatWizardTurn_BoundsTheStoredReply(t *testing.T) {
 			t.Errorf("a stored %s turn is %d runes, over the %d bound",
 				turn.Role, utf8.RuneCountInString(turn.Content), maxWizardChatMessage)
 		}
+	}
+}
+
+// The progress token addresses an SSE stream that `WizardProgressHub.Publish` fans out to every
+// subscriber of that token, and `progress_token` is deliberately NOT UNIQUE. While the caller
+// could choose it, an attacker could pick one colliding with a victim's session in another
+// project: `GetSessionByToken` resolves the NEWEST holder, so the handler's project check passed
+// against the attacker's own row while the hub delivered the victim's frames.
+//
+// Minting it server-side removes the collision rather than trying to detect it.
+func TestWizard_ProgressTokenIsServerMintedNotCallerSupplied(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+
+	chosen := "attacker-chosen-token"
+	out, err := h.svc.StartEmailWizardPlan(context.Background(), &briefs.StartEmailWizardPlanPayload{
+		ProjectID:     wizardTestProject,
+		BriefID:       wizardTestBrief,
+		ProgressToken: &chosen,
+	})
+	if err != nil {
+		t.Fatalf("StartEmailWizardPlan: %v", err)
+	}
+	if out.Token == chosen {
+		t.Fatalf("the caller's progress token was honoured: %q", out.Token)
+	}
+	if out.Token == "" {
+		t.Fatal("a token must still be returned, so a client that sent one gets a usable value back")
+	}
+	// Two starts must never collide, which is the property the whole fix rests on.
+	second, err := h.svc.StartEmailWizardPlan(context.Background(), &briefs.StartEmailWizardPlanPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, ProgressToken: &chosen,
+	})
+	if err != nil {
+		t.Fatalf("second StartEmailWizardPlan: %v", err)
+	}
+	if second.Token == out.Token {
+		t.Fatalf("two sessions were given the same progress token: %q", out.Token)
 	}
 }

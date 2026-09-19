@@ -103,6 +103,10 @@ func (r *WizardSessionRepo) GetSessionByToken(ctx context.Context, progressToken
 	// actually streaming. Without the ordering the result would be whatever the planner
 	// happened to return first, which is a stable-looking answer that changes under
 	// vacuum.
+	// Newest holder, as before. The token is server-minted now (email_wizard.go), so a
+	// collision across projects is no longer reachable -- but the ordering stays, because a
+	// caller may still legitimately reuse its OWN token across a re-plan, and the handler's
+	// project/brief check remains the authorization boundary either way.
 	q := `SELECT ` + wizardSessionCols + ` FROM wizard_sessions
 		WHERE progress_token = $1 ORDER BY created_at DESC LIMIT 1`
 	s, err := scanWizardSession(r.db.QueryRow(ctx, q, progressToken))
@@ -228,4 +232,30 @@ func rawJSON(b []byte) json.RawMessage {
 		return nil
 	}
 	return json.RawMessage(b)
+}
+
+// scrubWizardSessionsQuery clears personal data from a brief's sessions, keeping the rows.
+//
+// An explicit column list, not a DELETE: the row records that a wizard run happened, which is
+// the audit trail worth keeping, while `chat_history` and the actor blobs are the personal
+// content that a deleted brief no longer needs. Scoped by BOTH project and brief, so a brief id
+// alone cannot reach another project's rows.
+const scrubWizardSessionsQuery = `UPDATE wizard_sessions
+	SET chat_history = '[]'::jsonb,
+	    created_by   = NULL,
+	    updated_by   = NULL,
+	    updated_at   = NOW()
+	WHERE project_id = $1 AND brief_id = $2
+	  AND (chat_history <> '[]'::jsonb OR created_by IS NOT NULL OR updated_by IS NOT NULL)`
+
+// ScrubSessionsForBrief implements domain.WizardSessionRepository.
+func (r *WizardSessionRepo) ScrubSessionsForBrief(ctx context.Context, projectID, briefID string) (int64, error) {
+	if projectID == "" || briefID == "" {
+		return 0, domain.ErrNotFound
+	}
+	tag, err := r.db.Exec(ctx, scrubWizardSessionsQuery, projectID, briefID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }

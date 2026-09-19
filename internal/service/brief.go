@@ -567,6 +567,28 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	if aerr != nil {
 		return mapBriefErr(aerr)
 	}
+
+	// Scrub the wizard sessions' personal data. The archive above is SOFT, so without this a
+	// brief the operator deleted left its free-text `chat_history` and actor blobs in
+	// `wizard_sessions` indefinitely -- a store of personal data with no TTL, no purge job and
+	// no deletion path.
+	//
+	// BEST-EFFORT, and deliberately after the archive rather than inside it: the brief is
+	// already deleted from the operator's point of view, and failing the whole delete because
+	// the scrub could not run would leave them unable to delete at all. A failure is logged
+	// loudly enough to be found, because unscrubbed personal data is a real outcome, not noise.
+	// Snapshot under the read lock -- `SetWizardBackend` writes this field on the startup
+	// path, so reading it directly is a data race the detector flags.
+	sessions, _, _ := s.wizardDeps()
+	if sessions != nil {
+		if n, serr := sessions.ScrubSessionsForBrief(ctx, p.ProjectID, p.BriefID); serr != nil {
+			slog.ErrorContext(ctx, "could not scrub wizard-session personal data for a deleted brief",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "error", safeErrSummary(serr))
+		} else if n > 0 {
+			slog.InfoContext(ctx, "scrubbed wizard-session personal data for a deleted brief",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "sessions", n)
+		}
+	}
 	return nil
 }
 

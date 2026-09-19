@@ -334,12 +334,17 @@ func (s *BriefService) StartEmailWizardPlan(ctx context.Context, p *briefs.Start
 		return nil, mapBriefErr(gerr)
 	}
 
-	token := strings.TrimSpace(strVal(p.ProgressToken))
-	if token == "" {
-		token = uuid.NewString()
-	} else if utf8.RuneCountInString(token) > 200 {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "progress_token is too long"}
-	}
+	// ALWAYS server-minted. A caller-supplied token was accepted here, and the column is
+	// deliberately not UNIQUE, so two sessions in DIFFERENT projects could hold the same one.
+	// `WizardProgressHub.Publish` fans a frame to every subscriber of a token, and
+	// `GetSessionByToken` resolves the NEWEST holder -- so an attacker who chose a token
+	// colliding with a victim's passed the handler's project check against their OWN row and
+	// then received the victim's frames.
+	//
+	// A UUID the caller cannot influence removes the collision rather than trying to detect it.
+	// The caller's value is ignored rather than rejected: it is echoed back in the response, so
+	// a client that sends one still gets a usable token, just not one it chose.
+	token := uuid.NewString()
 
 	sess := &model.WizardSession{
 		ProjectID:     p.ProjectID,

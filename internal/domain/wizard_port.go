@@ -60,4 +60,16 @@ type WizardSessionRepository interface {
 	// id, project_id, brief_id, created_by and created_at are NOT mutable: a session's
 	// identity and provenance are fixed when it is created.
 	UpdateSession(ctx context.Context, s *model.WizardSession, expectedVersion int64) (*model.WizardSession, error)
+
+	// ScrubSessionsForBrief clears the PERSONAL data from every session of a brief, returning
+	// how many rows it touched.
+	//
+	// The rows are kept: a session records that a wizard run happened, which is the audit
+	// trail, and deleting them would also delete that. What goes is the personal content --
+	// free-text `chat_history` and the `created_by`/`updated_by` actor blobs -- because a
+	// deleted brief has no remaining purpose that needs them.
+	//
+	// Called on brief deletion. Briefs are SOFT-archived, so without this the personal data of
+	// a brief the operator deleted was retained indefinitely, with no TTL and no purge path.
+	ScrubSessionsForBrief(ctx context.Context, projectID, briefID string) (int64, error)
 }
