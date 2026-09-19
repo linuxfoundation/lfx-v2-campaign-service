@@ -240,7 +240,6 @@ func wizardMethods() {
 			Attribute("extra_context", String, "Free-text guidance appended to the planning prompt")
 			Attribute("email_type", String, "Caller's own label for the kind of email being built")
 			Attribute("is_transactional", Boolean, "Whether the email is transactional rather than marketing")
-			Attribute("progress_token", String, "Reuse an existing progress token instead of minting a new one")
 			Required("project_id", "brief_id")
 		})
 		Result(WizardPlanStart)

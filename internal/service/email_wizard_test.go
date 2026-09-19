@@ -1241,28 +1241,29 @@ func TestChatWizardTurn_BoundsTheStoredReply(t *testing.T) {
 // project: `GetSessionByToken` resolves the NEWEST holder, so the handler's project check passed
 // against the attacker's own row while the hub delivered the victim's frames.
 //
-// Minting it server-side removes the collision rather than trying to detect it.
+// Minting it server-side removes the collision rather than trying to detect it. The payload no
+// longer carries a `progress_token` field at all -- an earlier version of this test passed one
+// and asserted it was ignored, which the design change makes unrepresentable. That is the
+// stronger outcome: a caller cannot express the attack rather than having it declined.
+//
+// What remains testable, and is the property the whole fix rests on, is that two starts never
+// collide.
 func TestWizard_ProgressTokenIsServerMintedNotCallerSupplied(t *testing.T) {
 	h := newWizardHarness(t, wizardModelJSON)
 
-	chosen := "attacker-chosen-token"
 	out, err := h.svc.StartEmailWizardPlan(context.Background(), &briefs.StartEmailWizardPlanPayload{
-		ProjectID:     wizardTestProject,
-		BriefID:       wizardTestBrief,
-		ProgressToken: &chosen,
+		ProjectID: wizardTestProject,
+		BriefID:   wizardTestBrief,
 	})
 	if err != nil {
 		t.Fatalf("StartEmailWizardPlan: %v", err)
 	}
-	if out.Token == chosen {
-		t.Fatalf("the caller's progress token was honoured: %q", out.Token)
-	}
 	if out.Token == "" {
-		t.Fatal("a token must still be returned, so a client that sent one gets a usable value back")
+		t.Fatal("a token must be returned, or the client has no stream to subscribe to")
 	}
-	// Two starts must never collide, which is the property the whole fix rests on.
+
 	second, err := h.svc.StartEmailWizardPlan(context.Background(), &briefs.StartEmailWizardPlanPayload{
-		ProjectID: wizardTestProject, BriefID: wizardTestBrief, ProgressToken: &chosen,
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief,
 	})
 	if err != nil {
 		t.Fatalf("second StartEmailWizardPlan: %v", err)

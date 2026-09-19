@@ -97,8 +97,6 @@ type StartEmailWizardPlanRequestBody struct {
 	EmailType *string `form:"email_type,omitempty" json:"email_type,omitempty" xml:"email_type,omitempty"`
 	// Whether the email is transactional rather than marketing
 	IsTransactional *bool `form:"is_transactional,omitempty" json:"is_transactional,omitempty" xml:"is_transactional,omitempty"`
-	// Reuse an existing progress token instead of minting a new one
-	ProgressToken *string `form:"progress_token,omitempty" json:"progress_token,omitempty" xml:"progress_token,omitempty"`
 }
 
 // PlanEmailWizardRequestBody is the type of the
@@ -6368,7 +6366,6 @@ func NewStartEmailWizardPlanPayload(body *StartEmailWizardPlanRequestBody, proje
 		ExtraContext:    body.ExtraContext,
 		EmailType:       body.EmailType,
 		IsTransactional: body.IsTransactional,
-		ProgressToken:   body.ProgressToken,
 	}
 	v.ProjectID = projectID
 	v.BriefID = briefID

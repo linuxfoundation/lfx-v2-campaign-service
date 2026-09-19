@@ -1011,8 +1011,6 @@ type StartEmailWizardPlanPayload struct {
 	EmailType *string
 	// Whether the email is transactional rather than marketing
 	IsTransactional *bool
-	// Reuse an existing progress token instead of minting a new one
-	ProgressToken *string
 }
 
 // ToggleCampaignStatusPayload is the payload type of the

@@ -363,3 +363,128 @@ func TestLiveGetSessionByTokenIsDeterministicOnATie(t *testing.T) {
 		}
 	}
 }
+
+// TestLiveScrubSurvivesAnInFlightTurn pins the scrub against being silently UNDONE.
+//
+// Clearing the columns is not enough on its own. UpdateSession gates on `version = $14`, so a
+// scrub that left the counter alone would leave any in-flight turn's pre-scrub snapshot still
+// matching -- and generate-content holds exactly such a snapshot across a long model call. The
+// turn would then write the transcript and actor blobs back over the cleared columns, with the
+// brief still archived and nothing scheduled to purge them again. The delete would report
+// success, the data would be gone for a second, and it would come back.
+//
+// The fix is a `version + 1` in the scrub, which lets the session's existing
+// optimistic-concurrency protocol refuse the stale write -- the correct answer, because the
+// caller's snapshot genuinely IS stale.
+func TestLiveScrubSurvivesAnInFlightTurn(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	briefs := newBriefRepo(pool)
+	sessions := newWizardSessionRepo(pool)
+
+	projectID := dbtest.UniqueID(t, "proj-inflight")
+	brief, err := briefs.CreateBrief(ctx, draftBrief(projectID, dbtest.UniqueID(t, "inflight")), nil)
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	created, err := sessions.CreateSession(ctx, &model.WizardSession{
+		ProjectID:   projectID,
+		BriefID:     brief.ID,
+		ChatHistory: json.RawMessage(`[{"role":"user","content":"my unpublished keynote"}]`),
+		CreatedBy:   &model.Actor{Name: "Ada Lovelace", Email: "ada@example.test"},
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// The snapshot a turn already holds when the delete arrives.
+	inFlight, err := sessions.GetSession(ctx, projectID, brief.ID, created.ID)
+	if err != nil {
+		t.Fatalf("GetSession (in-flight snapshot): %v", err)
+	}
+
+	if _, serr := sessions.ScrubSessionsForBrief(ctx, projectID, brief.ID); serr != nil {
+		t.Fatalf("ScrubSessionsForBrief: %v", serr)
+	}
+
+	// The turn completes and tries to persist what it loaded.
+	if _, uerr := sessions.UpdateSession(ctx, inFlight, inFlight.Version); uerr != domain.ErrStaleWizardSession {
+		t.Errorf("late write err = %v, want domain.ErrStaleWizardSession -- an accepted write restores the scrubbed transcript", uerr)
+	}
+
+	after, err := sessions.GetSession(ctx, projectID, brief.ID, created.ID)
+	if err != nil {
+		t.Fatalf("GetSession (after): %v", err)
+	}
+	if !sameJSON(t, string(after.ChatHistory), "[]") {
+		t.Errorf("chat_history = %s, want [] -- the in-flight turn restored the personal data the delete removed", after.ChatHistory)
+	}
+	if after.CreatedBy != nil || after.UpdatedBy != nil {
+		t.Errorf("actor blobs came back (created_by=%v updated_by=%v)", after.CreatedBy, after.UpdatedBy)
+	}
+}
+
+// TestLiveCreateSessionRefusesAnArchivedBrief pins the gate that closes the OTHER way a
+// deleted brief can keep personal data.
+//
+// StartEmailWizardPlan reads the brief before inserting, but that read cannot carry the
+// guarantee: the composite FK only requires the brief ROW to exist, and ArchiveBrief is a SOFT
+// delete that leaves it. An archive landing between the check and the insert therefore still
+// satisfies the FK, and the new session -- with its chat_history and actor blobs -- is created
+// against a brief the operator has deleted, AFTER the scrub has already run past it. Nothing
+// revisits it.
+//
+// Closing that window needs the parent check inside the INSERT, which is what
+// createWizardSessionQuery's WHERE EXISTS does. The refusal must be ErrNotFound rather than a
+// raw error, because the brief genuinely is gone -- a 500 would tell the caller to retry
+// something that can never succeed.
+func TestLiveCreateSessionRefusesAnArchivedBrief(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	briefs := newBriefRepo(pool)
+	sessions := newWizardSessionRepo(pool)
+
+	projectID := dbtest.UniqueID(t, "proj-archived")
+	brief, err := briefs.CreateBrief(ctx, draftBrief(projectID, dbtest.UniqueID(t, "archived")), nil)
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	// An ACTIVE parent still accepts sessions -- without this the test would pass against a
+	// gate that refuses everything.
+	if _, cerr := sessions.CreateSession(ctx, &model.WizardSession{
+		ProjectID: projectID, BriefID: brief.ID,
+	}); cerr != nil {
+		t.Fatalf("a session on an ACTIVE brief must be accepted, got %v", cerr)
+	}
+
+	if _, aerr := briefs.ArchiveBrief(ctx, projectID, brief.ID, &model.Actor{Name: "Ada Lovelace"}, nil); aerr != nil {
+		t.Fatalf("ArchiveBrief: %v", aerr)
+	}
+	if _, serr := sessions.ScrubSessionsForBrief(ctx, projectID, brief.ID); serr != nil {
+		t.Fatalf("ScrubSessionsForBrief: %v", serr)
+	}
+
+	// The racing plan-start, whose own GetBrief succeeded just before the archive.
+	_, cerr := sessions.CreateSession(ctx, &model.WizardSession{
+		ProjectID:   projectID,
+		BriefID:     brief.ID,
+		ChatHistory: json.RawMessage(`[{"role":"user","content":"late secret"}]`),
+		CreatedBy:   &model.Actor{Name: "Ada Lovelace", Email: "ada@example.test"},
+	})
+	if cerr != domain.ErrNotFound {
+		t.Fatalf("CreateSession against an archived brief err = %v, want domain.ErrNotFound -- a retained session survives the delete", cerr)
+	}
+
+	// And nothing was written: a gate that inserted and then errored would be worse than none.
+	var n int
+	if qerr := pool.QueryRow(ctx,
+		`SELECT count(*) FROM wizard_sessions WHERE brief_id = $1 AND chat_history <> '[]'::jsonb`,
+		brief.ID).Scan(&n); qerr != nil {
+		t.Fatalf("count: %v", qerr)
+	}
+	if n != 0 {
+		t.Errorf("%d session(s) still hold chat_history for a deleted brief", n)
+	}
+}

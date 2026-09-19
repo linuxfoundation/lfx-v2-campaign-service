@@ -34,10 +34,27 @@ const wizardSessionCols = `id::text, project_id::text, brief_id::text, phase, pr
 // follow-up UPDATE to do the attribution separately would compile, pass, and leave a
 // committed window where the row had changed and the audit trail had not.
 const (
+	// INSERT ... SELECT ... WHERE EXISTS, matching createCreativeAssetQuery: the parent-brief
+	// check is part of THIS statement rather than a separate read before it.
+	//
+	// The caller does read the brief first, but that read cannot carry the guarantee. The
+	// composite FK only requires the brief ROW to exist, and ArchiveBrief is a SOFT delete --
+	// it sets status='archived' and leaves the row -- so an archive landing between the check
+	// and this insert still satisfies the FK. The session is then created against a brief the
+	// operator has deleted, carrying chat_history and actor blobs that the deletion scrub has
+	// already run past and will never revisit. Verified against a live database: without this
+	// gate, the insert succeeds.
+	//
+	// Zero rows means the brief is absent, archived, or another project's; CreateSession maps
+	// that to ErrNotFound, which is also the right answer for the race -- the brief is gone.
 	createWizardSessionQuery = `INSERT INTO wizard_sessions
 		(project_id, brief_id, phase, progress_token, plan_result, reference_variant, stage_variant,
 		 sections, email_id, draft_url, chat_history, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11,'[]'::jsonb),$12,$12)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11,'[]'::jsonb),$12,$12
+		WHERE EXISTS (
+			SELECT 1 FROM campaign_briefs
+			WHERE id = $2 AND project_id = $1 AND status <> 'archived'
+		)
 		RETURNING ` + wizardSessionCols
 
 	// The SET list is exactly the mutable state: identity (id/project_id/brief_id) and
@@ -69,6 +86,12 @@ func (r *WizardSessionRepo) CreateSession(ctx context.Context, s *model.WizardSe
 	)
 	out, err := scanWizardSession(row)
 	if err != nil {
+		// No row means the WHERE EXISTS gate found no ACTIVE parent brief: absent, archived,
+		// or another project's. That is a 404, not a 500 -- the same answer GetBrief would
+		// have given, and the correct one for the archive race the gate closes.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
 		return nil, fmt.Errorf("create wizard session: %w", err)
 	}
 	return out, nil
@@ -246,10 +269,21 @@ func rawJSON(b []byte) json.RawMessage {
 // the audit trail worth keeping, while `chat_history` and the actor blobs are the personal
 // content that a deleted brief no longer needs. Scoped by BOTH project and brief, so a brief id
 // alone cannot reach another project's rows.
+//
+// `version + 1` is what makes the scrub STICK, and it is not bookkeeping. UpdateSession gates
+// on `version = $14`, so a scrub that left the counter alone would leave an in-flight turn's
+// pre-scrub snapshot still matching -- and generate-content holds exactly such a snapshot
+// across a long model call. That turn would then write the transcript and actor back over the
+// cleared columns, restoring the personal data with the brief still archived and no later
+// purge to catch it. Bumping the version makes the session's existing optimistic-concurrency
+// protocol refuse the stale write as ErrStaleWizardSession, which is the correct answer: the
+// caller's snapshot IS stale. Verified against a live database -- without the bump, the late
+// write restores the transcript verbatim.
 const scrubWizardSessionsQuery = `UPDATE wizard_sessions
 	SET chat_history = '[]'::jsonb,
 	    created_by   = NULL,
 	    updated_by   = NULL,
+	    version      = version + 1,
 	    updated_at   = NOW()
 	WHERE project_id = $1 AND brief_id = $2
 	  AND (chat_history <> '[]'::jsonb OR created_by IS NOT NULL OR updated_by IS NOT NULL)`
