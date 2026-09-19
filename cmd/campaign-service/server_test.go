@@ -37,7 +37,7 @@ func TestConnectionRoutesAreMounted(t *testing.T) {
 	audienceEndpoints := audiencesvc.NewEndpoints(service.NewAudienceService(nil))
 	exploreEndpoints := exploresvc.NewEndpoints(service.NewAudienceExploreService(nil))
 
-	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, exploreEndpoints, nil)
+	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, exploreEndpoints, nil, nil)
 	if err != nil {
 		t.Fatalf("buildMux: %v", err)
 	}
@@ -77,16 +77,16 @@ func TestBuildMuxNilEndpointsFailsLoud(t *testing.T) {
 	audienceEndpoints := audiencesvc.NewEndpoints(service.NewAudienceService(nil))
 	exploreEndpoints := exploresvc.NewEndpoints(service.NewAudienceExploreService(nil))
 
-	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, nil, briefEndpoints, audienceEndpoints, exploreEndpoints, nil); err == nil {
+	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, nil, briefEndpoints, audienceEndpoints, exploreEndpoints, nil, nil); err == nil {
 		t.Error("expected buildMux to fail loudly when connEndpoints is nil, got nil error")
 	}
-	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, nil, audienceEndpoints, exploreEndpoints, nil); err == nil {
+	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, nil, audienceEndpoints, exploreEndpoints, nil, nil); err == nil {
 		t.Error("expected buildMux to fail loudly when briefEndpoints is nil, got nil error")
 	}
-	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, nil, exploreEndpoints, nil); err == nil {
+	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, nil, exploreEndpoints, nil, nil); err == nil {
 		t.Error("expected buildMux to fail loudly when audienceEndpoints is nil, got nil error")
 	}
-	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, nil, nil); err == nil {
+	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, nil, nil, nil); err == nil {
 		t.Error("expected buildMux to fail loudly when exploreEndpoints is nil, got nil error")
 	}
 }
@@ -108,7 +108,7 @@ func TestMetricsRouteIsMountedAndUnauthenticated(t *testing.T) {
 		t.Fatalf("metrics.New: %v", err)
 	}
 
-	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, exploreEndpoints, reg)
+	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, exploreEndpoints, reg, nil)
 	if err != nil {
 		t.Fatalf("buildMux: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestMetricsRouteAbsentWithoutRegistry(t *testing.T) {
 	audienceEndpoints := audiencesvc.NewEndpoints(service.NewAudienceService(nil))
 	exploreEndpoints := exploresvc.NewEndpoints(service.NewAudienceExploreService(nil))
 
-	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, exploreEndpoints, nil)
+	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, exploreEndpoints, nil, nil)
 	if err != nil {
 		t.Fatalf("buildMux: %v", err)
 	}

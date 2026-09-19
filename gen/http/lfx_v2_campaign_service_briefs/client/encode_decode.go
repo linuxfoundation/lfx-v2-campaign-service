@@ -4431,6 +4431,1688 @@ func DecodeGetJobResponse(decoder func(*http.Response) goahttp.Decoder, restoreB
 	}
 }
 
+// BuildStartEmailWizardPlanRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "start-email-wizard-plan" endpoint
+func (c *Client) BuildStartEmailWizardPlanRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.StartEmailWizardPlanPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", "*lfxv2campaignservicebriefs.StartEmailWizardPlanPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: StartEmailWizardPlanLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeStartEmailWizardPlanRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-briefs start-email-wizard-plan server.
+func EncodeStartEmailWizardPlanRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.StartEmailWizardPlanPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", "*lfxv2campaignservicebriefs.StartEmailWizardPlanPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewStartEmailWizardPlanRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+		}
+		return nil
+	}
+}
+
+// DecodeStartEmailWizardPlanResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-briefs start-email-wizard-plan endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeStartEmailWizardPlanResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeStartEmailWizardPlanResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body StartEmailWizardPlanResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			err = ValidateStartEmailWizardPlanResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			res := NewStartEmailWizardPlanWizardPlanStartOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body StartEmailWizardPlanBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			err = ValidateStartEmailWizardPlanBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			return nil, NewStartEmailWizardPlanBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body StartEmailWizardPlanConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			err = ValidateStartEmailWizardPlanConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			return nil, NewStartEmailWizardPlanConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body StartEmailWizardPlanServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			err = ValidateStartEmailWizardPlanServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			return nil, NewStartEmailWizardPlanServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body StartEmailWizardPlanInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			err = ValidateStartEmailWizardPlanInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			return nil, NewStartEmailWizardPlanInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body StartEmailWizardPlanNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			err = ValidateStartEmailWizardPlanNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			return nil, NewStartEmailWizardPlanNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body StartEmailWizardPlanPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			err = ValidateStartEmailWizardPlanPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			return nil, NewStartEmailWizardPlanPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body StartEmailWizardPlanUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			err = ValidateStartEmailWizardPlanUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+			}
+			return nil, NewStartEmailWizardPlanUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildPlanEmailWizardRequest instantiates a HTTP request object with method
+// and path set to call the "lfx-v2-campaign-service-briefs" service
+// "plan-email-wizard" endpoint
+func (c *Client) BuildPlanEmailWizardRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.PlanEmailWizardPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "plan-email-wizard", "*lfxv2campaignservicebriefs.PlanEmailWizardPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: PlanEmailWizardLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "plan-email-wizard", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodePlanEmailWizardRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs plan-email-wizard server.
+func EncodePlanEmailWizardRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.PlanEmailWizardPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "plan-email-wizard", "*lfxv2campaignservicebriefs.PlanEmailWizardPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewPlanEmailWizardRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+		}
+		return nil
+	}
+}
+
+// DecodePlanEmailWizardResponse returns a decoder for responses returned by
+// the lfx-v2-campaign-service-briefs plan-email-wizard endpoint. restoreBody
+// controls whether the response body should be restored after having been read.
+// DecodePlanEmailWizardResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodePlanEmailWizardResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body PlanEmailWizardResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			err = ValidatePlanEmailWizardResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			res := NewPlanEmailWizardWizardPlanResultOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body PlanEmailWizardBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			err = ValidatePlanEmailWizardBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			return nil, NewPlanEmailWizardBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body PlanEmailWizardConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			err = ValidatePlanEmailWizardConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			return nil, NewPlanEmailWizardConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body PlanEmailWizardServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			err = ValidatePlanEmailWizardServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			return nil, NewPlanEmailWizardServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body PlanEmailWizardInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			err = ValidatePlanEmailWizardInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			return nil, NewPlanEmailWizardInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body PlanEmailWizardNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			err = ValidatePlanEmailWizardNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			return nil, NewPlanEmailWizardNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body PlanEmailWizardPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			err = ValidatePlanEmailWizardPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			return nil, NewPlanEmailWizardPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body PlanEmailWizardUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			err = ValidatePlanEmailWizardUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+			}
+			return nil, NewPlanEmailWizardUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "plan-email-wizard", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildGenerateWizardContentRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "generate-wizard-content" endpoint
+func (c *Client) BuildGenerateWizardContentRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.GenerateWizardContentPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "generate-wizard-content", "*lfxv2campaignservicebriefs.GenerateWizardContentPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GenerateWizardContentLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "generate-wizard-content", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGenerateWizardContentRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-briefs generate-wizard-content server.
+func EncodeGenerateWizardContentRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.GenerateWizardContentPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "generate-wizard-content", "*lfxv2campaignservicebriefs.GenerateWizardContentPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewGenerateWizardContentRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+		}
+		return nil
+	}
+}
+
+// DecodeGenerateWizardContentResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-briefs generate-wizard-content endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeGenerateWizardContentResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeGenerateWizardContentResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GenerateWizardContentResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			err = ValidateGenerateWizardContentResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			res := NewGenerateWizardContentWizardContentOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GenerateWizardContentBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			err = ValidateGenerateWizardContentBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			return nil, NewGenerateWizardContentBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GenerateWizardContentConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			err = ValidateGenerateWizardContentConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			return nil, NewGenerateWizardContentConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GenerateWizardContentServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			err = ValidateGenerateWizardContentServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			return nil, NewGenerateWizardContentServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GenerateWizardContentInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			err = ValidateGenerateWizardContentInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			return nil, NewGenerateWizardContentInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GenerateWizardContentNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			err = ValidateGenerateWizardContentNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			return nil, NewGenerateWizardContentNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GenerateWizardContentPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			err = ValidateGenerateWizardContentPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			return nil, NewGenerateWizardContentPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GenerateWizardContentUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			err = ValidateGenerateWizardContentUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+			}
+			return nil, NewGenerateWizardContentUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "generate-wizard-content", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildUpdateWizardSectionsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "update-wizard-sections" endpoint
+func (c *Client) BuildUpdateWizardSectionsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.UpdateWizardSectionsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "update-wizard-sections", "*lfxv2campaignservicebriefs.UpdateWizardSectionsPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: UpdateWizardSectionsLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "update-wizard-sections", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeUpdateWizardSectionsRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-briefs update-wizard-sections server.
+func EncodeUpdateWizardSectionsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.UpdateWizardSectionsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "update-wizard-sections", "*lfxv2campaignservicebriefs.UpdateWizardSectionsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewUpdateWizardSectionsRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+		}
+		return nil
+	}
+}
+
+// DecodeUpdateWizardSectionsResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-briefs update-wizard-sections endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeUpdateWizardSectionsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeUpdateWizardSectionsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body UpdateWizardSectionsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			err = ValidateUpdateWizardSectionsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			res := NewUpdateWizardSectionsWizardSectionsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body UpdateWizardSectionsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			err = ValidateUpdateWizardSectionsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			return nil, NewUpdateWizardSectionsBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body UpdateWizardSectionsConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			err = ValidateUpdateWizardSectionsConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			return nil, NewUpdateWizardSectionsConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body UpdateWizardSectionsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			err = ValidateUpdateWizardSectionsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			return nil, NewUpdateWizardSectionsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body UpdateWizardSectionsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			err = ValidateUpdateWizardSectionsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			return nil, NewUpdateWizardSectionsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body UpdateWizardSectionsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			err = ValidateUpdateWizardSectionsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			return nil, NewUpdateWizardSectionsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateWizardSectionsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			err = ValidateUpdateWizardSectionsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			return nil, NewUpdateWizardSectionsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body UpdateWizardSectionsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			err = ValidateUpdateWizardSectionsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+			}
+			return nil, NewUpdateWizardSectionsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "update-wizard-sections", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildCloneWizardEmailRequest instantiates a HTTP request object with method
+// and path set to call the "lfx-v2-campaign-service-briefs" service
+// "clone-wizard-email" endpoint
+func (c *Client) BuildCloneWizardEmailRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.CloneWizardEmailPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "clone-wizard-email", "*lfxv2campaignservicebriefs.CloneWizardEmailPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: CloneWizardEmailLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "clone-wizard-email", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeCloneWizardEmailRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs clone-wizard-email server.
+func EncodeCloneWizardEmailRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.CloneWizardEmailPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "clone-wizard-email", "*lfxv2campaignservicebriefs.CloneWizardEmailPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewCloneWizardEmailRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+		}
+		return nil
+	}
+}
+
+// DecodeCloneWizardEmailResponse returns a decoder for responses returned by
+// the lfx-v2-campaign-service-briefs clone-wizard-email endpoint. restoreBody
+// controls whether the response body should be restored after having been read.
+// DecodeCloneWizardEmailResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeCloneWizardEmailResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body CloneWizardEmailResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			err = ValidateCloneWizardEmailResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			res := NewCloneWizardEmailWizardCloneOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body CloneWizardEmailBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			err = ValidateCloneWizardEmailBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			return nil, NewCloneWizardEmailBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body CloneWizardEmailConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			err = ValidateCloneWizardEmailConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			return nil, NewCloneWizardEmailConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body CloneWizardEmailServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			err = ValidateCloneWizardEmailServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			return nil, NewCloneWizardEmailServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body CloneWizardEmailInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			err = ValidateCloneWizardEmailInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			return nil, NewCloneWizardEmailInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body CloneWizardEmailNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			err = ValidateCloneWizardEmailNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			return nil, NewCloneWizardEmailNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body CloneWizardEmailPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			err = ValidateCloneWizardEmailPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			return nil, NewCloneWizardEmailPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body CloneWizardEmailUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			err = ValidateCloneWizardEmailUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+			}
+			return nil, NewCloneWizardEmailUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "clone-wizard-email", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildSetWizardSendListRequest instantiates a HTTP request object with method
+// and path set to call the "lfx-v2-campaign-service-briefs" service
+// "set-wizard-send-list" endpoint
+func (c *Client) BuildSetWizardSendListRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.SetWizardSendListPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "set-wizard-send-list", "*lfxv2campaignservicebriefs.SetWizardSendListPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: SetWizardSendListLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "set-wizard-send-list", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeSetWizardSendListRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs set-wizard-send-list server.
+func EncodeSetWizardSendListRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.SetWizardSendListPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "set-wizard-send-list", "*lfxv2campaignservicebriefs.SetWizardSendListPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewSetWizardSendListRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+		}
+		return nil
+	}
+}
+
+// DecodeSetWizardSendListResponse returns a decoder for responses returned by
+// the lfx-v2-campaign-service-briefs set-wizard-send-list endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeSetWizardSendListResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeSetWizardSendListResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body SetWizardSendListResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			err = ValidateSetWizardSendListResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			res := NewSetWizardSendListWizardSendListOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body SetWizardSendListBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			err = ValidateSetWizardSendListBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			return nil, NewSetWizardSendListBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body SetWizardSendListConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			err = ValidateSetWizardSendListConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			return nil, NewSetWizardSendListConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body SetWizardSendListServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			err = ValidateSetWizardSendListServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			return nil, NewSetWizardSendListServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body SetWizardSendListInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			err = ValidateSetWizardSendListInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			return nil, NewSetWizardSendListInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body SetWizardSendListNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			err = ValidateSetWizardSendListNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			return nil, NewSetWizardSendListNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body SetWizardSendListPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			err = ValidateSetWizardSendListPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			return nil, NewSetWizardSendListPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body SetWizardSendListUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			err = ValidateSetWizardSendListUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+			}
+			return nil, NewSetWizardSendListUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "set-wizard-send-list", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildChatWizardTurnRequest instantiates a HTTP request object with method
+// and path set to call the "lfx-v2-campaign-service-briefs" service
+// "chat-wizard-turn" endpoint
+func (c *Client) BuildChatWizardTurnRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.ChatWizardTurnPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "chat-wizard-turn", "*lfxv2campaignservicebriefs.ChatWizardTurnPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ChatWizardTurnLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "chat-wizard-turn", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeChatWizardTurnRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs chat-wizard-turn server.
+func EncodeChatWizardTurnRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.ChatWizardTurnPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "chat-wizard-turn", "*lfxv2campaignservicebriefs.ChatWizardTurnPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewChatWizardTurnRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+		}
+		return nil
+	}
+}
+
+// DecodeChatWizardTurnResponse returns a decoder for responses returned by the
+// lfx-v2-campaign-service-briefs chat-wizard-turn endpoint. restoreBody
+// controls whether the response body should be restored after having been read.
+// DecodeChatWizardTurnResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeChatWizardTurnResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ChatWizardTurnResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			err = ValidateChatWizardTurnResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			res := NewChatWizardTurnWizardChatOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ChatWizardTurnBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			err = ValidateChatWizardTurnBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			return nil, NewChatWizardTurnBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body ChatWizardTurnConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			err = ValidateChatWizardTurnConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			return nil, NewChatWizardTurnConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ChatWizardTurnServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			err = ValidateChatWizardTurnServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			return nil, NewChatWizardTurnServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ChatWizardTurnInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			err = ValidateChatWizardTurnInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			return nil, NewChatWizardTurnInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ChatWizardTurnNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			err = ValidateChatWizardTurnNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			return nil, NewChatWizardTurnNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ChatWizardTurnPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			err = ValidateChatWizardTurnPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			return nil, NewChatWizardTurnPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ChatWizardTurnUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			err = ValidateChatWizardTurnUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+			}
+			return nil, NewChatWizardTurnUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "chat-wizard-turn", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildGetWizardSessionRequest instantiates a HTTP request object with method
+// and path set to call the "lfx-v2-campaign-service-briefs" service
+// "get-wizard-session" endpoint
+func (c *Client) BuildGetWizardSessionRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+		sessionID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.GetWizardSessionPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "get-wizard-session", "*lfxv2campaignservicebriefs.GetWizardSessionPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		sessionID = p.SessionID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetWizardSessionLfxV2CampaignServiceBriefsPath(projectID, briefID, sessionID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "get-wizard-session", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGetWizardSessionRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs get-wizard-session server.
+func EncodeGetWizardSessionRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.GetWizardSessionPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "get-wizard-session", "*lfxv2campaignservicebriefs.GetWizardSessionPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeGetWizardSessionResponse returns a decoder for responses returned by
+// the lfx-v2-campaign-service-briefs get-wizard-session endpoint. restoreBody
+// controls whether the response body should be restored after having been read.
+// DecodeGetWizardSessionResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeGetWizardSessionResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GetWizardSessionResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			err = ValidateGetWizardSessionResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			res := NewGetWizardSessionWizardSessionOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetWizardSessionBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			err = ValidateGetWizardSessionBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			return nil, NewGetWizardSessionBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GetWizardSessionConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			err = ValidateGetWizardSessionConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			return nil, NewGetWizardSessionConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GetWizardSessionServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			err = ValidateGetWizardSessionServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			return nil, NewGetWizardSessionServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GetWizardSessionInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			err = ValidateGetWizardSessionInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			return nil, NewGetWizardSessionInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GetWizardSessionNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			err = ValidateGetWizardSessionNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			return nil, NewGetWizardSessionNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetWizardSessionPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			err = ValidateGetWizardSessionPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			return nil, NewGetWizardSessionPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetWizardSessionUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			err = ValidateGetWizardSessionUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
+			}
+			return nil, NewGetWizardSessionUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "get-wizard-session", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // marshalLfxv2campaignservicebriefsBriefInputToBriefInputRequestBody builds a
 // value of type *BriefInputRequestBody from a value of type
 // *lfxv2campaignservicebriefs.BriefInput.
@@ -4705,6 +6387,38 @@ func unmarshalPlatformResultResponseBodyToLfxv2campaignservicebriefsPlatformResu
 		OK:         *v.OK,
 		CampaignID: v.CampaignID,
 		Error:      v.Error,
+	}
+
+	return res
+}
+
+// unmarshalWizardSourceEmailResponseBodyToLfxv2campaignservicebriefsWizardSourceEmail
+// builds a value of type *lfxv2campaignservicebriefs.WizardSourceEmail from a
+// value of type *WizardSourceEmailResponseBody.
+func unmarshalWizardSourceEmailResponseBodyToLfxv2campaignservicebriefsWizardSourceEmail(v *WizardSourceEmailResponseBody) *lfxv2campaignservicebriefs.WizardSourceEmail {
+	if v == nil {
+		return nil
+	}
+	res := &lfxv2campaignservicebriefs.WizardSourceEmail{
+		ID:   *v.ID,
+		Name: *v.Name,
+	}
+
+	return res
+}
+
+// unmarshalWizardSponsorResponseBodyToLfxv2campaignservicebriefsWizardSponsor
+// builds a value of type *lfxv2campaignservicebriefs.WizardSponsor from a
+// value of type *WizardSponsorResponseBody.
+func unmarshalWizardSponsorResponseBodyToLfxv2campaignservicebriefsWizardSponsor(v *WizardSponsorResponseBody) *lfxv2campaignservicebriefs.WizardSponsor {
+	if v == nil {
+		return nil
+	}
+	res := &lfxv2campaignservicebriefs.WizardSponsor{
+		Name:    *v.Name,
+		LogoURL: *v.LogoURL,
+		URL:     v.URL,
+		Tier:    v.Tier,
 	}
 
 	return res

@@ -84,6 +84,113 @@ type ApplyKeywordActionsRequestBody struct {
 	Actions []*KeywordActionInputRequestBody `form:"actions,omitempty" json:"actions,omitempty" xml:"actions,omitempty"`
 }
 
+// StartEmailWizardPlanRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "start-email-wizard-plan" endpoint
+// HTTP request body.
+type StartEmailWizardPlanRequestBody struct {
+	// Event page to plan from; defaults to the event details already scraped onto
+	// the brief
+	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
+	// Free-text guidance appended to the planning prompt
+	ExtraContext *string `form:"extra_context,omitempty" json:"extra_context,omitempty" xml:"extra_context,omitempty"`
+	// Caller's own label for the kind of email being built
+	EmailType *string `form:"email_type,omitempty" json:"email_type,omitempty" xml:"email_type,omitempty"`
+	// Whether the email is transactional rather than marketing
+	IsTransactional *bool `form:"is_transactional,omitempty" json:"is_transactional,omitempty" xml:"is_transactional,omitempty"`
+	// Reuse an existing progress token instead of minting a new one
+	ProgressToken *string `form:"progress_token,omitempty" json:"progress_token,omitempty" xml:"progress_token,omitempty"`
+}
+
+// PlanEmailWizardRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "plan-email-wizard" endpoint HTTP
+// request body.
+type PlanEmailWizardRequestBody struct {
+	// Wizard session UUID, as returned by plan-start
+	SessionID *string `form:"session_id,omitempty" json:"session_id,omitempty" xml:"session_id,omitempty"`
+	// Event page to plan from; defaults to the event details already scraped onto
+	// the brief
+	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
+	// Free-text guidance appended to the planning prompt
+	ExtraContext *string `form:"extra_context,omitempty" json:"extra_context,omitempty" xml:"extra_context,omitempty"`
+	// Caller's own label for the kind of email being built
+	EmailType *string `form:"email_type,omitempty" json:"email_type,omitempty" xml:"email_type,omitempty"`
+	// Whether the email is transactional rather than marketing
+	IsTransactional *bool `form:"is_transactional,omitempty" json:"is_transactional,omitempty" xml:"is_transactional,omitempty"`
+	// Progress token to publish this turn's SSE frames on; defaults to the
+	// session's own token
+	ProgressToken *string `form:"progress_token,omitempty" json:"progress_token,omitempty" xml:"progress_token,omitempty"`
+}
+
+// GenerateWizardContentRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-wizard-content" endpoint
+// HTTP request body.
+type GenerateWizardContentRequestBody struct {
+	// Wizard session UUID, as returned by plan-start
+	SessionID *string `form:"session_id,omitempty" json:"session_id,omitempty" xml:"session_id,omitempty"`
+	// What to change relative to the content already generated for this session;
+	// empty on the first pass
+	ChangeRequest *string `form:"change_request,omitempty" json:"change_request,omitempty" xml:"change_request,omitempty"`
+	// Progress token to publish this turn's SSE frames on; defaults to the
+	// session's own token
+	ProgressToken *string `form:"progress_token,omitempty" json:"progress_token,omitempty" xml:"progress_token,omitempty"`
+}
+
+// UpdateWizardSectionsRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-wizard-sections" endpoint
+// HTTP request body.
+type UpdateWizardSectionsRequestBody struct {
+	// Wizard session UUID, as returned by plan-start
+	SessionID *string `form:"session_id,omitempty" json:"session_id,omitempty" xml:"session_id,omitempty"`
+	// Content blocks to render, in the order they should appear
+	Sections []any `form:"sections,omitempty" json:"sections,omitempty" xml:"sections,omitempty"`
+}
+
+// CloneWizardEmailRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "clone-wizard-email" endpoint HTTP
+// request body.
+type CloneWizardEmailRequestBody struct {
+	// Wizard session UUID, as returned by plan-start
+	SessionID *string `form:"session_id,omitempty" json:"session_id,omitempty" xml:"session_id,omitempty"`
+	// Must be true; the request is refused with 400 otherwise, so a draft is never
+	// created by accident
+	Approved *bool `form:"approved,omitempty" json:"approved,omitempty" xml:"approved,omitempty"`
+	// Override the generated subject line
+	Subject *string `form:"subject,omitempty" json:"subject,omitempty" xml:"subject,omitempty"`
+	// Override the generated preview text
+	PreviewText *string `form:"preview_text,omitempty" json:"preview_text,omitempty" xml:"preview_text,omitempty"`
+	// Apply this recipient list to the new draft in the same request
+	SendListID *string `form:"send_list_id,omitempty" json:"send_list_id,omitempty" xml:"send_list_id,omitempty"`
+	// Which generated variant to write into the draft; defaults to the reference
+	// variant
+	Variant *string `form:"variant,omitempty" json:"variant,omitempty" xml:"variant,omitempty"`
+}
+
+// SetWizardSendListRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "set-wizard-send-list" endpoint
+// HTTP request body.
+type SetWizardSendListRequestBody struct {
+	// Wizard session UUID, as returned by plan-start
+	SessionID *string `form:"session_id,omitempty" json:"session_id,omitempty" xml:"session_id,omitempty"`
+	// Draft to configure; defaults to the session's primary draft
+	EmailID *string `form:"email_id,omitempty" json:"email_id,omitempty" xml:"email_id,omitempty"`
+	// Single recipient list id; ignored when send_list_ids is given
+	SendListID *string `form:"send_list_id,omitempty" json:"send_list_id,omitempty" xml:"send_list_id,omitempty"`
+	// Recipient list ids; takes priority over send_list_id
+	SendListIds []string `form:"send_list_ids,omitempty" json:"send_list_ids,omitempty" xml:"send_list_ids,omitempty"`
+	// Lists whose members must not receive the send
+	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
+}
+
+// ChatWizardTurnRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "chat-wizard-turn" endpoint HTTP
+// request body.
+type ChatWizardTurnRequestBody struct {
+	// Wizard session UUID, as returned by plan-start
+	SessionID *string `form:"session_id,omitempty" json:"session_id,omitempty" xml:"session_id,omitempty"`
+	// The user's message for this turn
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // CreateBriefResponseBody is the type of the "lfx-v2-campaign-service-briefs"
 // service "create-brief" endpoint HTTP response body.
 type CreateBriefResponseBody struct {
@@ -576,6 +683,163 @@ type GetJobResponseBody struct {
 	Result []*PlatformResultResponseBody `form:"result,omitempty" json:"result,omitempty" xml:"result,omitempty"`
 	// Terminal error, if any
 	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
+}
+
+// StartEmailWizardPlanResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "start-email-wizard-plan" endpoint
+// HTTP response body.
+type StartEmailWizardPlanResponseBody struct {
+	// Wizard session UUID to pass to every subsequent turn
+	SessionID string `form:"session_id" json:"session_id" xml:"session_id"`
+	// Opaque progress token for the SSE stream at
+	// /projects/{project_id}/briefs/{brief_id}/wizard/progress/{token}
+	Token string `form:"token" json:"token" xml:"token"`
+}
+
+// PlanEmailWizardResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "plan-email-wizard" endpoint HTTP
+// response body.
+type PlanEmailWizardResponseBody struct {
+	// Wizard session UUID
+	SessionID string `form:"session_id" json:"session_id" xml:"session_id"`
+	// Human-readable summary of the plan, rendered directly in the wizard's chat
+	// transcript
+	Message string `form:"message" json:"message" xml:"message"`
+	// Session lifecycle phase
+	Phase string `form:"phase" json:"phase" xml:"phase"`
+	// How content will be produced for this session
+	Mode string `form:"mode" json:"mode" xml:"mode"`
+	// Past-campaign email chosen as the clone source, when one was found
+	SourceEmail *WizardSourceEmailResponseBody `form:"source_email,omitempty" json:"source_email,omitempty" xml:"source_email,omitempty"`
+	// Resolved event-lifecycle stage template (name, purpose, tone, CTA strategy)
+	Stage any `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
+	// UTM parameters that will be applied to the draft's links
+	Utm any `form:"utm,omitempty" json:"utm,omitempty" xml:"utm,omitempty"`
+}
+
+// GenerateWizardContentResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-wizard-content" endpoint
+// HTTP response body.
+type GenerateWizardContentResponseBody struct {
+	// Wizard session UUID
+	SessionID string `form:"session_id" json:"session_id" xml:"session_id"`
+	// Reference variant subject line
+	Subject string `form:"subject" json:"subject" xml:"subject"`
+	// Reference variant preview text
+	PreviewText string `form:"preview_text" json:"preview_text" xml:"preview_text"`
+	// Reference variant full preview HTML
+	HTML string `form:"html" json:"html" xml:"html"`
+	// Reference variant body-only HTML
+	BodyHTML string `form:"body_html" json:"body_html" xml:"body_html"`
+	// Reference variant editable content blocks
+	Sections []any `form:"sections" json:"sections" xml:"sections"`
+	// Sponsor logos scraped from the event page
+	Sponsors []*WizardSponsorResponseBody `form:"sponsors,omitempty" json:"sponsors,omitempty" xml:"sponsors,omitempty"`
+	// Reference variant banner image URL
+	BannerURL *string `form:"banner_url,omitempty" json:"banner_url,omitempty" xml:"banner_url,omitempty"`
+	// Stage variant subject line
+	VariantASubject string `form:"variant_a_subject" json:"variant_a_subject" xml:"variant_a_subject"`
+	// Stage variant preview text
+	VariantAPreviewText string `form:"variant_a_preview_text" json:"variant_a_preview_text" xml:"variant_a_preview_text"`
+	// Stage variant full preview HTML
+	VariantAHTML string `form:"variant_a_html" json:"variant_a_html" xml:"variant_a_html"`
+	// Stage variant body-only HTML
+	VariantABodyHTML string `form:"variant_a_body_html" json:"variant_a_body_html" xml:"variant_a_body_html"`
+	// Stage variant editable content blocks
+	VariantASections []any `form:"variant_a_sections" json:"variant_a_sections" xml:"variant_a_sections"`
+	// Stage variant banner image URL
+	VariantABannerURL *string `form:"variant_a_banner_url,omitempty" json:"variant_a_banner_url,omitempty" xml:"variant_a_banner_url,omitempty"`
+	// Stage template that produced the stage variant
+	VariantATemplateKey *string `form:"variant_a_template_key,omitempty" json:"variant_a_template_key,omitempty" xml:"variant_a_template_key,omitempty"`
+	// Stage variant outcome; "failed" is a normal, displayable state and does not
+	// fail the request
+	VariantAMode string `form:"variant_a_mode" json:"variant_a_mode" xml:"variant_a_mode"`
+}
+
+// UpdateWizardSectionsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-wizard-sections" endpoint
+// HTTP response body.
+type UpdateWizardSectionsResponseBody struct {
+	// Wizard session UUID
+	SessionID string `form:"session_id" json:"session_id" xml:"session_id"`
+	// Body-only HTML rebuilt from the submitted sections
+	BodyHTML string `form:"body_html" json:"body_html" xml:"body_html"`
+	// Full preview HTML rebuilt from the submitted sections
+	GeneratedHTML string `form:"generated_html" json:"generated_html" xml:"generated_html"`
+}
+
+// CloneWizardEmailResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "clone-wizard-email" endpoint HTTP
+// response body.
+type CloneWizardEmailResponseBody struct {
+	// Wizard session UUID
+	SessionID string `form:"session_id" json:"session_id" xml:"session_id"`
+	// Human-readable summary of what was cloned
+	Message string `form:"message" json:"message" xml:"message"`
+	// Session lifecycle phase
+	Phase string `form:"phase" json:"phase" xml:"phase"`
+	// HubSpot id of the primary draft
+	EmailID *string `form:"email_id,omitempty" json:"email_id,omitempty" xml:"email_id,omitempty"`
+	// HubSpot app URL of the primary draft
+	DraftURL *string `form:"draft_url,omitempty" json:"draft_url,omitempty" xml:"draft_url,omitempty"`
+	// HubSpot id of the stage variant's draft
+	VariantAEmailID *string `form:"variant_a_email_id,omitempty" json:"variant_a_email_id,omitempty" xml:"variant_a_email_id,omitempty"`
+	// HubSpot app URL of the stage variant's draft
+	VariantADraftURL *string `form:"variant_a_draft_url,omitempty" json:"variant_a_draft_url,omitempty" xml:"variant_a_draft_url,omitempty"`
+	// HubSpot id of the reference variant's draft
+	VariantBEmailID *string `form:"variant_b_email_id,omitempty" json:"variant_b_email_id,omitempty" xml:"variant_b_email_id,omitempty"`
+	// HubSpot app URL of the reference variant's draft
+	VariantBDraftURL *string `form:"variant_b_draft_url,omitempty" json:"variant_b_draft_url,omitempty" xml:"variant_b_draft_url,omitempty"`
+	// Whether every post-clone check passed
+	ValidationPassed bool `form:"validation_passed" json:"validation_passed" xml:"validation_passed"`
+	// Advisory problems found on the created draft; the draft exists regardless
+	ValidationIssues []string `form:"validation_issues,omitempty" json:"validation_issues,omitempty" xml:"validation_issues,omitempty"`
+}
+
+// SetWizardSendListResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "set-wizard-send-list" endpoint
+// HTTP response body.
+type SetWizardSendListResponseBody struct {
+	// Whether the send list was applied
+	Success bool `form:"success" json:"success" xml:"success"`
+	// HubSpot id of the draft the list was applied to
+	EmailID string `form:"email_id" json:"email_id" xml:"email_id"`
+	// Primary recipient list id
+	SendListID string `form:"send_list_id" json:"send_list_id" xml:"send_list_id"`
+	// How the recipients were resolved
+	ListType *string `form:"list_type,omitempty" json:"list_type,omitempty" xml:"list_type,omitempty"`
+	// HubSpot's own recipient descriptor for the draft
+	To any `form:"to,omitempty" json:"to,omitempty" xml:"to,omitempty"`
+}
+
+// ChatWizardTurnResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "chat-wizard-turn" endpoint HTTP
+// response body.
+type ChatWizardTurnResponseBody struct {
+	// Wizard session UUID
+	SessionID string `form:"session_id" json:"session_id" xml:"session_id"`
+	// The assistant's reply for this turn
+	Message string `form:"message" json:"message" xml:"message"`
+	// Session lifecycle phase
+	Phase string `form:"phase" json:"phase" xml:"phase"`
+	// HubSpot app URL of the draft, once one exists
+	DraftURL *string `form:"draft_url,omitempty" json:"draft_url,omitempty" xml:"draft_url,omitempty"`
+}
+
+// GetWizardSessionResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-wizard-session" endpoint HTTP
+// response body.
+type GetWizardSessionResponseBody struct {
+	// Wizard session UUID
+	SessionID string `form:"session_id" json:"session_id" xml:"session_id"`
+	// Session lifecycle phase
+	Phase string `form:"phase" json:"phase" xml:"phase"`
+	// The plan result recorded for this session, when planning has run
+	Plan any `form:"plan,omitempty" json:"plan,omitempty" xml:"plan,omitempty"`
+	// HubSpot id of the primary draft, once cloned
+	EmailID *string `form:"email_id,omitempty" json:"email_id,omitempty" xml:"email_id,omitempty"`
+	// HubSpot app URL of the primary draft, once cloned
+	DraftURL *string `form:"draft_url,omitempty" json:"draft_url,omitempty" xml:"draft_url,omitempty"`
 }
 
 // CreateBriefBadRequestResponseBody is the type of the
@@ -2138,6 +2402,590 @@ type GetJobUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// StartEmailWizardPlanBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "start-email-wizard-plan" endpoint
+// HTTP response body for the "BadRequest" error.
+type StartEmailWizardPlanBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// StartEmailWizardPlanConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "start-email-wizard-plan" endpoint
+// HTTP response body for the "Conflict" error.
+type StartEmailWizardPlanConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// StartEmailWizardPlanServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "start-email-wizard-plan" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type StartEmailWizardPlanServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// StartEmailWizardPlanInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "start-email-wizard-plan" endpoint
+// HTTP response body for the "InternalServerError" error.
+type StartEmailWizardPlanInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// StartEmailWizardPlanNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "start-email-wizard-plan" endpoint
+// HTTP response body for the "NotFound" error.
+type StartEmailWizardPlanNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// StartEmailWizardPlanPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "start-email-wizard-plan" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type StartEmailWizardPlanPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// StartEmailWizardPlanUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "start-email-wizard-plan" endpoint
+// HTTP response body for the "Unauthorized" error.
+type StartEmailWizardPlanUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// PlanEmailWizardBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "plan-email-wizard" endpoint HTTP
+// response body for the "BadRequest" error.
+type PlanEmailWizardBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// PlanEmailWizardConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "plan-email-wizard" endpoint HTTP
+// response body for the "Conflict" error.
+type PlanEmailWizardConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// PlanEmailWizardServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "plan-email-wizard" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type PlanEmailWizardServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// PlanEmailWizardInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "plan-email-wizard" endpoint HTTP
+// response body for the "InternalServerError" error.
+type PlanEmailWizardInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// PlanEmailWizardNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "plan-email-wizard" endpoint HTTP
+// response body for the "NotFound" error.
+type PlanEmailWizardNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// PlanEmailWizardPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "plan-email-wizard" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type PlanEmailWizardPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// PlanEmailWizardUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "plan-email-wizard" endpoint HTTP
+// response body for the "Unauthorized" error.
+type PlanEmailWizardUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GenerateWizardContentBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-wizard-content" endpoint
+// HTTP response body for the "BadRequest" error.
+type GenerateWizardContentBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GenerateWizardContentConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-wizard-content" endpoint
+// HTTP response body for the "Conflict" error.
+type GenerateWizardContentConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GenerateWizardContentServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-wizard-content" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type GenerateWizardContentServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GenerateWizardContentInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-wizard-content" endpoint
+// HTTP response body for the "InternalServerError" error.
+type GenerateWizardContentInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GenerateWizardContentNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-wizard-content" endpoint
+// HTTP response body for the "NotFound" error.
+type GenerateWizardContentNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GenerateWizardContentPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-wizard-content" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type GenerateWizardContentPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GenerateWizardContentUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-wizard-content" endpoint
+// HTTP response body for the "Unauthorized" error.
+type GenerateWizardContentUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateWizardSectionsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-wizard-sections" endpoint
+// HTTP response body for the "BadRequest" error.
+type UpdateWizardSectionsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateWizardSectionsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-wizard-sections" endpoint
+// HTTP response body for the "Conflict" error.
+type UpdateWizardSectionsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// UpdateWizardSectionsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-wizard-sections" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type UpdateWizardSectionsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateWizardSectionsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-wizard-sections" endpoint
+// HTTP response body for the "InternalServerError" error.
+type UpdateWizardSectionsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateWizardSectionsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-wizard-sections" endpoint
+// HTTP response body for the "NotFound" error.
+type UpdateWizardSectionsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateWizardSectionsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-wizard-sections" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type UpdateWizardSectionsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UpdateWizardSectionsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-wizard-sections" endpoint
+// HTTP response body for the "Unauthorized" error.
+type UpdateWizardSectionsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CloneWizardEmailBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "clone-wizard-email" endpoint HTTP
+// response body for the "BadRequest" error.
+type CloneWizardEmailBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CloneWizardEmailConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "clone-wizard-email" endpoint HTTP
+// response body for the "Conflict" error.
+type CloneWizardEmailConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// CloneWizardEmailServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "clone-wizard-email" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type CloneWizardEmailServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CloneWizardEmailInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "clone-wizard-email" endpoint HTTP
+// response body for the "InternalServerError" error.
+type CloneWizardEmailInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CloneWizardEmailNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "clone-wizard-email" endpoint HTTP
+// response body for the "NotFound" error.
+type CloneWizardEmailNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CloneWizardEmailPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "clone-wizard-email" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type CloneWizardEmailPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CloneWizardEmailUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "clone-wizard-email" endpoint HTTP
+// response body for the "Unauthorized" error.
+type CloneWizardEmailUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetWizardSendListBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "set-wizard-send-list" endpoint
+// HTTP response body for the "BadRequest" error.
+type SetWizardSendListBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetWizardSendListConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "set-wizard-send-list" endpoint
+// HTTP response body for the "Conflict" error.
+type SetWizardSendListConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// SetWizardSendListServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "set-wizard-send-list" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type SetWizardSendListServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetWizardSendListInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "set-wizard-send-list" endpoint
+// HTTP response body for the "InternalServerError" error.
+type SetWizardSendListInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetWizardSendListNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "set-wizard-send-list" endpoint
+// HTTP response body for the "NotFound" error.
+type SetWizardSendListNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetWizardSendListPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "set-wizard-send-list" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type SetWizardSendListPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// SetWizardSendListUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "set-wizard-send-list" endpoint
+// HTTP response body for the "Unauthorized" error.
+type SetWizardSendListUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ChatWizardTurnBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "chat-wizard-turn" endpoint HTTP
+// response body for the "BadRequest" error.
+type ChatWizardTurnBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ChatWizardTurnConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "chat-wizard-turn" endpoint HTTP
+// response body for the "Conflict" error.
+type ChatWizardTurnConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// ChatWizardTurnServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "chat-wizard-turn" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type ChatWizardTurnServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ChatWizardTurnInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "chat-wizard-turn" endpoint HTTP
+// response body for the "InternalServerError" error.
+type ChatWizardTurnInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ChatWizardTurnNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "chat-wizard-turn" endpoint HTTP
+// response body for the "NotFound" error.
+type ChatWizardTurnNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ChatWizardTurnPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "chat-wizard-turn" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type ChatWizardTurnPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ChatWizardTurnUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "chat-wizard-turn" endpoint HTTP
+// response body for the "Unauthorized" error.
+type ChatWizardTurnUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetWizardSessionBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-wizard-session" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetWizardSessionBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetWizardSessionConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-wizard-session" endpoint HTTP
+// response body for the "Conflict" error.
+type GetWizardSessionConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetWizardSessionServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-wizard-session" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GetWizardSessionServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetWizardSessionInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-wizard-session" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GetWizardSessionInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetWizardSessionNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-wizard-session" endpoint HTTP
+// response body for the "NotFound" error.
+type GetWizardSessionNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetWizardSessionPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-wizard-session" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type GetWizardSessionPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetWizardSessionUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-wizard-session" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetWizardSessionUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // EmailMetricsResponseBody is used to define fields on response body types.
 type EmailMetricsResponseBody struct {
 	// Emails handed to the delivery pipeline, to date
@@ -2316,6 +3164,28 @@ type PlatformResultResponseBody struct {
 	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
 	// Failure reason (present when not ok)
 	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
+}
+
+// WizardSourceEmailResponseBody is used to define fields on response body
+// types.
+type WizardSourceEmailResponseBody struct {
+	// HubSpot marketing email id
+	ID string `form:"id" json:"id" xml:"id"`
+	// HubSpot marketing email name
+	Name string `form:"name" json:"name" xml:"name"`
+}
+
+// WizardSponsorResponseBody is used to define fields on response body types.
+type WizardSponsorResponseBody struct {
+	// Sponsor name
+	Name string `form:"name" json:"name" xml:"name"`
+	// Sponsor logo image URL
+	LogoURL string `form:"logo_url" json:"logo_url" xml:"logo_url"`
+	// Sponsor link target
+	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
+	// Sponsorship tier as the page expresses it; free text, not a normalised
+	// vocabulary
+	Tier *string `form:"tier,omitempty" json:"tier,omitempty" xml:"tier,omitempty"`
 }
 
 // BriefInputRequestBody is used to define fields on request body types.
@@ -2782,6 +3652,161 @@ func NewGetJobResponseBody(res *lfxv2campaignservicebriefs.JobPollResponse) *Get
 			}
 			body.Result[i] = marshalLfxv2campaignservicebriefsPlatformResultToPlatformResultResponseBody(val)
 		}
+	}
+	return body
+}
+
+// NewStartEmailWizardPlanResponseBody builds the HTTP response body from the
+// result of the "start-email-wizard-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewStartEmailWizardPlanResponseBody(res *lfxv2campaignservicebriefs.WizardPlanStart) *StartEmailWizardPlanResponseBody {
+	body := &StartEmailWizardPlanResponseBody{
+		SessionID: res.SessionID,
+		Token:     res.Token,
+	}
+	return body
+}
+
+// NewPlanEmailWizardResponseBody builds the HTTP response body from the result
+// of the "plan-email-wizard" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewPlanEmailWizardResponseBody(res *lfxv2campaignservicebriefs.WizardPlanResult) *PlanEmailWizardResponseBody {
+	body := &PlanEmailWizardResponseBody{
+		SessionID: res.SessionID,
+		Message:   res.Message,
+		Phase:     res.Phase,
+		Mode:      res.Mode,
+		Stage:     res.Stage,
+		Utm:       res.Utm,
+	}
+	if res.SourceEmail != nil {
+		body.SourceEmail = marshalLfxv2campaignservicebriefsWizardSourceEmailToWizardSourceEmailResponseBody(res.SourceEmail)
+	}
+	return body
+}
+
+// NewGenerateWizardContentResponseBody builds the HTTP response body from the
+// result of the "generate-wizard-content" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateWizardContentResponseBody(res *lfxv2campaignservicebriefs.WizardContent) *GenerateWizardContentResponseBody {
+	body := &GenerateWizardContentResponseBody{
+		SessionID:           res.SessionID,
+		Subject:             res.Subject,
+		PreviewText:         res.PreviewText,
+		HTML:                res.HTML,
+		BodyHTML:            res.BodyHTML,
+		BannerURL:           res.BannerURL,
+		VariantASubject:     res.VariantASubject,
+		VariantAPreviewText: res.VariantAPreviewText,
+		VariantAHTML:        res.VariantAHTML,
+		VariantABodyHTML:    res.VariantABodyHTML,
+		VariantABannerURL:   res.VariantABannerURL,
+		VariantATemplateKey: res.VariantATemplateKey,
+		VariantAMode:        res.VariantAMode,
+	}
+	if res.Sections != nil {
+		body.Sections = make([]any, len(res.Sections))
+		for i, val := range res.Sections {
+			body.Sections[i] = val
+		}
+	} else {
+		body.Sections = []any{}
+	}
+	if res.Sponsors != nil {
+		body.Sponsors = make([]*WizardSponsorResponseBody, len(res.Sponsors))
+		for i, val := range res.Sponsors {
+			if val == nil {
+				body.Sponsors[i] = nil
+				continue
+			}
+			body.Sponsors[i] = marshalLfxv2campaignservicebriefsWizardSponsorToWizardSponsorResponseBody(val)
+		}
+	}
+	if res.VariantASections != nil {
+		body.VariantASections = make([]any, len(res.VariantASections))
+		for i, val := range res.VariantASections {
+			body.VariantASections[i] = val
+		}
+	} else {
+		body.VariantASections = []any{}
+	}
+	return body
+}
+
+// NewUpdateWizardSectionsResponseBody builds the HTTP response body from the
+// result of the "update-wizard-sections" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateWizardSectionsResponseBody(res *lfxv2campaignservicebriefs.WizardSections) *UpdateWizardSectionsResponseBody {
+	body := &UpdateWizardSectionsResponseBody{
+		SessionID:     res.SessionID,
+		BodyHTML:      res.BodyHTML,
+		GeneratedHTML: res.GeneratedHTML,
+	}
+	return body
+}
+
+// NewCloneWizardEmailResponseBody builds the HTTP response body from the
+// result of the "clone-wizard-email" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCloneWizardEmailResponseBody(res *lfxv2campaignservicebriefs.WizardClone) *CloneWizardEmailResponseBody {
+	body := &CloneWizardEmailResponseBody{
+		SessionID:        res.SessionID,
+		Message:          res.Message,
+		Phase:            res.Phase,
+		EmailID:          res.EmailID,
+		DraftURL:         res.DraftURL,
+		VariantAEmailID:  res.VariantAEmailID,
+		VariantADraftURL: res.VariantADraftURL,
+		VariantBEmailID:  res.VariantBEmailID,
+		VariantBDraftURL: res.VariantBDraftURL,
+		ValidationPassed: res.ValidationPassed,
+	}
+	if res.ValidationIssues != nil {
+		body.ValidationIssues = make([]string, len(res.ValidationIssues))
+		for i, val := range res.ValidationIssues {
+			body.ValidationIssues[i] = val
+		}
+	}
+	return body
+}
+
+// NewSetWizardSendListResponseBody builds the HTTP response body from the
+// result of the "set-wizard-send-list" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewSetWizardSendListResponseBody(res *lfxv2campaignservicebriefs.WizardSendList) *SetWizardSendListResponseBody {
+	body := &SetWizardSendListResponseBody{
+		Success:    res.Success,
+		EmailID:    res.EmailID,
+		SendListID: res.SendListID,
+		ListType:   res.ListType,
+		To:         res.To,
+	}
+	return body
+}
+
+// NewChatWizardTurnResponseBody builds the HTTP response body from the result
+// of the "chat-wizard-turn" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewChatWizardTurnResponseBody(res *lfxv2campaignservicebriefs.WizardChat) *ChatWizardTurnResponseBody {
+	body := &ChatWizardTurnResponseBody{
+		SessionID: res.SessionID,
+		Message:   res.Message,
+		Phase:     res.Phase,
+		DraftURL:  res.DraftURL,
+	}
+	return body
+}
+
+// NewGetWizardSessionResponseBody builds the HTTP response body from the
+// result of the "get-wizard-session" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetWizardSessionResponseBody(res *lfxv2campaignservicebriefs.WizardSession) *GetWizardSessionResponseBody {
+	body := &GetWizardSessionResponseBody{
+		SessionID: res.SessionID,
+		Phase:     res.Phase,
+		Plan:      res.Plan,
+		EmailID:   res.EmailID,
+		DraftURL:  res.DraftURL,
 	}
 	return body
 }
@@ -4454,6 +5479,630 @@ func NewGetJobUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.Unauthori
 	return body
 }
 
+// NewStartEmailWizardPlanBadRequestResponseBody builds the HTTP response body
+// from the result of the "start-email-wizard-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewStartEmailWizardPlanBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *StartEmailWizardPlanBadRequestResponseBody {
+	body := &StartEmailWizardPlanBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewStartEmailWizardPlanConflictResponseBody builds the HTTP response body
+// from the result of the "start-email-wizard-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewStartEmailWizardPlanConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *StartEmailWizardPlanConflictResponseBody {
+	body := &StartEmailWizardPlanConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewStartEmailWizardPlanServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "start-email-wizard-plan" endpoint of
+// the "lfx-v2-campaign-service-briefs" service.
+func NewStartEmailWizardPlanServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *StartEmailWizardPlanServiceUnavailableResponseBody {
+	body := &StartEmailWizardPlanServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewStartEmailWizardPlanInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "start-email-wizard-plan" endpoint of
+// the "lfx-v2-campaign-service-briefs" service.
+func NewStartEmailWizardPlanInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *StartEmailWizardPlanInternalServerErrorResponseBody {
+	body := &StartEmailWizardPlanInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewStartEmailWizardPlanNotFoundResponseBody builds the HTTP response body
+// from the result of the "start-email-wizard-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewStartEmailWizardPlanNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *StartEmailWizardPlanNotFoundResponseBody {
+	body := &StartEmailWizardPlanNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewStartEmailWizardPlanPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "start-email-wizard-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewStartEmailWizardPlanPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *StartEmailWizardPlanPayloadTooLargeResponseBody {
+	body := &StartEmailWizardPlanPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewStartEmailWizardPlanUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "start-email-wizard-plan" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewStartEmailWizardPlanUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *StartEmailWizardPlanUnauthorizedResponseBody {
+	body := &StartEmailWizardPlanUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewPlanEmailWizardBadRequestResponseBody builds the HTTP response body from
+// the result of the "plan-email-wizard" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewPlanEmailWizardBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *PlanEmailWizardBadRequestResponseBody {
+	body := &PlanEmailWizardBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewPlanEmailWizardConflictResponseBody builds the HTTP response body from
+// the result of the "plan-email-wizard" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewPlanEmailWizardConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *PlanEmailWizardConflictResponseBody {
+	body := &PlanEmailWizardConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewPlanEmailWizardServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "plan-email-wizard" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewPlanEmailWizardServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *PlanEmailWizardServiceUnavailableResponseBody {
+	body := &PlanEmailWizardServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewPlanEmailWizardInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "plan-email-wizard" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewPlanEmailWizardInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *PlanEmailWizardInternalServerErrorResponseBody {
+	body := &PlanEmailWizardInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewPlanEmailWizardNotFoundResponseBody builds the HTTP response body from
+// the result of the "plan-email-wizard" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewPlanEmailWizardNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *PlanEmailWizardNotFoundResponseBody {
+	body := &PlanEmailWizardNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewPlanEmailWizardPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "plan-email-wizard" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewPlanEmailWizardPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *PlanEmailWizardPayloadTooLargeResponseBody {
+	body := &PlanEmailWizardPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewPlanEmailWizardUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "plan-email-wizard" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewPlanEmailWizardUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *PlanEmailWizardUnauthorizedResponseBody {
+	body := &PlanEmailWizardUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGenerateWizardContentBadRequestResponseBody builds the HTTP response body
+// from the result of the "generate-wizard-content" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateWizardContentBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *GenerateWizardContentBadRequestResponseBody {
+	body := &GenerateWizardContentBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGenerateWizardContentConflictResponseBody builds the HTTP response body
+// from the result of the "generate-wizard-content" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateWizardContentConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *GenerateWizardContentConflictResponseBody {
+	body := &GenerateWizardContentConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGenerateWizardContentServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "generate-wizard-content" endpoint of
+// the "lfx-v2-campaign-service-briefs" service.
+func NewGenerateWizardContentServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *GenerateWizardContentServiceUnavailableResponseBody {
+	body := &GenerateWizardContentServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGenerateWizardContentInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "generate-wizard-content" endpoint of
+// the "lfx-v2-campaign-service-briefs" service.
+func NewGenerateWizardContentInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *GenerateWizardContentInternalServerErrorResponseBody {
+	body := &GenerateWizardContentInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGenerateWizardContentNotFoundResponseBody builds the HTTP response body
+// from the result of the "generate-wizard-content" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateWizardContentNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GenerateWizardContentNotFoundResponseBody {
+	body := &GenerateWizardContentNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGenerateWizardContentPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "generate-wizard-content" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateWizardContentPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GenerateWizardContentPayloadTooLargeResponseBody {
+	body := &GenerateWizardContentPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGenerateWizardContentUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "generate-wizard-content" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateWizardContentUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GenerateWizardContentUnauthorizedResponseBody {
+	body := &GenerateWizardContentUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateWizardSectionsBadRequestResponseBody builds the HTTP response body
+// from the result of the "update-wizard-sections" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateWizardSectionsBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *UpdateWizardSectionsBadRequestResponseBody {
+	body := &UpdateWizardSectionsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateWizardSectionsConflictResponseBody builds the HTTP response body
+// from the result of the "update-wizard-sections" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateWizardSectionsConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *UpdateWizardSectionsConflictResponseBody {
+	body := &UpdateWizardSectionsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewUpdateWizardSectionsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "update-wizard-sections" endpoint of
+// the "lfx-v2-campaign-service-briefs" service.
+func NewUpdateWizardSectionsServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *UpdateWizardSectionsServiceUnavailableResponseBody {
+	body := &UpdateWizardSectionsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateWizardSectionsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "update-wizard-sections" endpoint of
+// the "lfx-v2-campaign-service-briefs" service.
+func NewUpdateWizardSectionsInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *UpdateWizardSectionsInternalServerErrorResponseBody {
+	body := &UpdateWizardSectionsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateWizardSectionsNotFoundResponseBody builds the HTTP response body
+// from the result of the "update-wizard-sections" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateWizardSectionsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *UpdateWizardSectionsNotFoundResponseBody {
+	body := &UpdateWizardSectionsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateWizardSectionsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "update-wizard-sections" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateWizardSectionsPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *UpdateWizardSectionsPayloadTooLargeResponseBody {
+	body := &UpdateWizardSectionsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUpdateWizardSectionsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "update-wizard-sections" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateWizardSectionsUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *UpdateWizardSectionsUnauthorizedResponseBody {
+	body := &UpdateWizardSectionsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCloneWizardEmailBadRequestResponseBody builds the HTTP response body from
+// the result of the "clone-wizard-email" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCloneWizardEmailBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *CloneWizardEmailBadRequestResponseBody {
+	body := &CloneWizardEmailBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCloneWizardEmailConflictResponseBody builds the HTTP response body from
+// the result of the "clone-wizard-email" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCloneWizardEmailConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *CloneWizardEmailConflictResponseBody {
+	body := &CloneWizardEmailConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewCloneWizardEmailServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "clone-wizard-email" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCloneWizardEmailServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *CloneWizardEmailServiceUnavailableResponseBody {
+	body := &CloneWizardEmailServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCloneWizardEmailInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "clone-wizard-email" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCloneWizardEmailInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *CloneWizardEmailInternalServerErrorResponseBody {
+	body := &CloneWizardEmailInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCloneWizardEmailNotFoundResponseBody builds the HTTP response body from
+// the result of the "clone-wizard-email" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCloneWizardEmailNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *CloneWizardEmailNotFoundResponseBody {
+	body := &CloneWizardEmailNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCloneWizardEmailPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "clone-wizard-email" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCloneWizardEmailPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *CloneWizardEmailPayloadTooLargeResponseBody {
+	body := &CloneWizardEmailPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCloneWizardEmailUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "clone-wizard-email" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCloneWizardEmailUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *CloneWizardEmailUnauthorizedResponseBody {
+	body := &CloneWizardEmailUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetWizardSendListBadRequestResponseBody builds the HTTP response body
+// from the result of the "set-wizard-send-list" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewSetWizardSendListBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *SetWizardSendListBadRequestResponseBody {
+	body := &SetWizardSendListBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetWizardSendListConflictResponseBody builds the HTTP response body from
+// the result of the "set-wizard-send-list" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewSetWizardSendListConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *SetWizardSendListConflictResponseBody {
+	body := &SetWizardSendListConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewSetWizardSendListServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "set-wizard-send-list" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewSetWizardSendListServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *SetWizardSendListServiceUnavailableResponseBody {
+	body := &SetWizardSendListServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetWizardSendListInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "set-wizard-send-list" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewSetWizardSendListInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *SetWizardSendListInternalServerErrorResponseBody {
+	body := &SetWizardSendListInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetWizardSendListNotFoundResponseBody builds the HTTP response body from
+// the result of the "set-wizard-send-list" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewSetWizardSendListNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *SetWizardSendListNotFoundResponseBody {
+	body := &SetWizardSendListNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetWizardSendListPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "set-wizard-send-list" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewSetWizardSendListPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *SetWizardSendListPayloadTooLargeResponseBody {
+	body := &SetWizardSendListPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewSetWizardSendListUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "set-wizard-send-list" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewSetWizardSendListUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *SetWizardSendListUnauthorizedResponseBody {
+	body := &SetWizardSendListUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewChatWizardTurnBadRequestResponseBody builds the HTTP response body from
+// the result of the "chat-wizard-turn" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewChatWizardTurnBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *ChatWizardTurnBadRequestResponseBody {
+	body := &ChatWizardTurnBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewChatWizardTurnConflictResponseBody builds the HTTP response body from the
+// result of the "chat-wizard-turn" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewChatWizardTurnConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *ChatWizardTurnConflictResponseBody {
+	body := &ChatWizardTurnConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewChatWizardTurnServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "chat-wizard-turn" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewChatWizardTurnServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *ChatWizardTurnServiceUnavailableResponseBody {
+	body := &ChatWizardTurnServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewChatWizardTurnInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "chat-wizard-turn" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewChatWizardTurnInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *ChatWizardTurnInternalServerErrorResponseBody {
+	body := &ChatWizardTurnInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewChatWizardTurnNotFoundResponseBody builds the HTTP response body from the
+// result of the "chat-wizard-turn" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewChatWizardTurnNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *ChatWizardTurnNotFoundResponseBody {
+	body := &ChatWizardTurnNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewChatWizardTurnPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "chat-wizard-turn" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewChatWizardTurnPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *ChatWizardTurnPayloadTooLargeResponseBody {
+	body := &ChatWizardTurnPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewChatWizardTurnUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "chat-wizard-turn" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewChatWizardTurnUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *ChatWizardTurnUnauthorizedResponseBody {
+	body := &ChatWizardTurnUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetWizardSessionBadRequestResponseBody builds the HTTP response body from
+// the result of the "get-wizard-session" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetWizardSessionBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *GetWizardSessionBadRequestResponseBody {
+	body := &GetWizardSessionBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetWizardSessionConflictResponseBody builds the HTTP response body from
+// the result of the "get-wizard-session" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetWizardSessionConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *GetWizardSessionConflictResponseBody {
+	body := &GetWizardSessionConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetWizardSessionServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "get-wizard-session" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetWizardSessionServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *GetWizardSessionServiceUnavailableResponseBody {
+	body := &GetWizardSessionServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetWizardSessionInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "get-wizard-session" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetWizardSessionInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *GetWizardSessionInternalServerErrorResponseBody {
+	body := &GetWizardSessionInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetWizardSessionNotFoundResponseBody builds the HTTP response body from
+// the result of the "get-wizard-session" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetWizardSessionNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetWizardSessionNotFoundResponseBody {
+	body := &GetWizardSessionNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetWizardSessionPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "get-wizard-session" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetWizardSessionPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *GetWizardSessionPayloadTooLargeResponseBody {
+	body := &GetWizardSessionPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetWizardSessionUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "get-wizard-session" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetWizardSessionUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *GetWizardSessionUnauthorizedResponseBody {
+	body := &GetWizardSessionUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateBriefPayload builds a lfx-v2-campaign-service-briefs service
 // create-brief endpoint payload.
 func NewCreateBriefPayload(body *CreateBriefRequestBody, projectID string, bearerToken *string) *lfxv2campaignservicebriefs.CreateBriefPayload {
@@ -4711,6 +6360,144 @@ func NewGetJobPayload(projectID string, jobID string, bearerToken *string) *lfxv
 	return v
 }
 
+// NewStartEmailWizardPlanPayload builds a lfx-v2-campaign-service-briefs
+// service start-email-wizard-plan endpoint payload.
+func NewStartEmailWizardPlanPayload(body *StartEmailWizardPlanRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.StartEmailWizardPlanPayload {
+	v := &lfxv2campaignservicebriefs.StartEmailWizardPlanPayload{
+		URL:             body.URL,
+		ExtraContext:    body.ExtraContext,
+		EmailType:       body.EmailType,
+		IsTransactional: body.IsTransactional,
+		ProgressToken:   body.ProgressToken,
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewPlanEmailWizardPayload builds a lfx-v2-campaign-service-briefs service
+// plan-email-wizard endpoint payload.
+func NewPlanEmailWizardPayload(body *PlanEmailWizardRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.PlanEmailWizardPayload {
+	v := &lfxv2campaignservicebriefs.PlanEmailWizardPayload{
+		SessionID:       *body.SessionID,
+		URL:             body.URL,
+		ExtraContext:    body.ExtraContext,
+		EmailType:       body.EmailType,
+		IsTransactional: body.IsTransactional,
+		ProgressToken:   body.ProgressToken,
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGenerateWizardContentPayload builds a lfx-v2-campaign-service-briefs
+// service generate-wizard-content endpoint payload.
+func NewGenerateWizardContentPayload(body *GenerateWizardContentRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.GenerateWizardContentPayload {
+	v := &lfxv2campaignservicebriefs.GenerateWizardContentPayload{
+		SessionID:     *body.SessionID,
+		ChangeRequest: body.ChangeRequest,
+		ProgressToken: body.ProgressToken,
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewUpdateWizardSectionsPayload builds a lfx-v2-campaign-service-briefs
+// service update-wizard-sections endpoint payload.
+func NewUpdateWizardSectionsPayload(body *UpdateWizardSectionsRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.UpdateWizardSectionsPayload {
+	v := &lfxv2campaignservicebriefs.UpdateWizardSectionsPayload{
+		SessionID: *body.SessionID,
+	}
+	v.Sections = make([]any, len(body.Sections))
+	for i, val := range body.Sections {
+		v.Sections[i] = val
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewCloneWizardEmailPayload builds a lfx-v2-campaign-service-briefs service
+// clone-wizard-email endpoint payload.
+func NewCloneWizardEmailPayload(body *CloneWizardEmailRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.CloneWizardEmailPayload {
+	v := &lfxv2campaignservicebriefs.CloneWizardEmailPayload{
+		SessionID:   *body.SessionID,
+		Approved:    *body.Approved,
+		Subject:     body.Subject,
+		PreviewText: body.PreviewText,
+		SendListID:  body.SendListID,
+		Variant:     body.Variant,
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewSetWizardSendListPayload builds a lfx-v2-campaign-service-briefs service
+// set-wizard-send-list endpoint payload.
+func NewSetWizardSendListPayload(body *SetWizardSendListRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.SetWizardSendListPayload {
+	v := &lfxv2campaignservicebriefs.SetWizardSendListPayload{
+		SessionID:  *body.SessionID,
+		EmailID:    body.EmailID,
+		SendListID: body.SendListID,
+	}
+	if body.SendListIds != nil {
+		v.SendListIds = make([]string, len(body.SendListIds))
+		for i, val := range body.SendListIds {
+			v.SendListIds[i] = val
+		}
+	}
+	if body.SuppressionListIds != nil {
+		v.SuppressionListIds = make([]string, len(body.SuppressionListIds))
+		for i, val := range body.SuppressionListIds {
+			v.SuppressionListIds[i] = val
+		}
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewChatWizardTurnPayload builds a lfx-v2-campaign-service-briefs service
+// chat-wizard-turn endpoint payload.
+func NewChatWizardTurnPayload(body *ChatWizardTurnRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.ChatWizardTurnPayload {
+	v := &lfxv2campaignservicebriefs.ChatWizardTurnPayload{
+		SessionID: *body.SessionID,
+		Message:   *body.Message,
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetWizardSessionPayload builds a lfx-v2-campaign-service-briefs service
+// get-wizard-session endpoint payload.
+func NewGetWizardSessionPayload(projectID string, briefID string, sessionID string, bearerToken *string) *lfxv2campaignservicebriefs.GetWizardSessionPayload {
+	v := &lfxv2campaignservicebriefs.GetWizardSessionPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.SessionID = sessionID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // ValidateCreateBriefRequestBody runs the validations defined on
 // Create-BriefRequestBody
 func ValidateCreateBriefRequestBody(body *CreateBriefRequestBody) (err error) {
@@ -4857,6 +6644,92 @@ func ValidateApplyKeywordActionsRequestBody(body *ApplyKeywordActionsRequestBody
 				err = goa.MergeErrors(err, err2)
 			}
 		}
+	}
+	return
+}
+
+// ValidatePlanEmailWizardRequestBody runs the validations defined on
+// Plan-Email-WizardRequestBody
+func ValidatePlanEmailWizardRequestBody(body *PlanEmailWizardRequestBody) (err error) {
+	if body.SessionID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("session_id", "body"))
+	}
+	if body.SessionID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", *body.SessionID, goa.FormatUUID))
+	}
+	return
+}
+
+// ValidateGenerateWizardContentRequestBody runs the validations defined on
+// Generate-Wizard-ContentRequestBody
+func ValidateGenerateWizardContentRequestBody(body *GenerateWizardContentRequestBody) (err error) {
+	if body.SessionID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("session_id", "body"))
+	}
+	if body.SessionID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", *body.SessionID, goa.FormatUUID))
+	}
+	return
+}
+
+// ValidateUpdateWizardSectionsRequestBody runs the validations defined on
+// Update-Wizard-SectionsRequestBody
+func ValidateUpdateWizardSectionsRequestBody(body *UpdateWizardSectionsRequestBody) (err error) {
+	if body.SessionID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("session_id", "body"))
+	}
+	if body.Sections == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("sections", "body"))
+	}
+	if body.SessionID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", *body.SessionID, goa.FormatUUID))
+	}
+	return
+}
+
+// ValidateCloneWizardEmailRequestBody runs the validations defined on
+// Clone-Wizard-EmailRequestBody
+func ValidateCloneWizardEmailRequestBody(body *CloneWizardEmailRequestBody) (err error) {
+	if body.SessionID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("session_id", "body"))
+	}
+	if body.Approved == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("approved", "body"))
+	}
+	if body.SessionID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", *body.SessionID, goa.FormatUUID))
+	}
+	if body.Variant != nil {
+		if !(*body.Variant == "reference" || *body.Variant == "stage") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.variant", *body.Variant, []any{"reference", "stage"}))
+		}
+	}
+	return
+}
+
+// ValidateSetWizardSendListRequestBody runs the validations defined on
+// Set-Wizard-Send-ListRequestBody
+func ValidateSetWizardSendListRequestBody(body *SetWizardSendListRequestBody) (err error) {
+	if body.SessionID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("session_id", "body"))
+	}
+	if body.SessionID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", *body.SessionID, goa.FormatUUID))
+	}
+	return
+}
+
+// ValidateChatWizardTurnRequestBody runs the validations defined on
+// Chat-Wizard-TurnRequestBody
+func ValidateChatWizardTurnRequestBody(body *ChatWizardTurnRequestBody) (err error) {
+	if body.SessionID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("session_id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.SessionID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", *body.SessionID, goa.FormatUUID))
 	}
 	return
 }

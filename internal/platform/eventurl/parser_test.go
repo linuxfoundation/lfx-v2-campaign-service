@@ -5,6 +5,7 @@ package eventurl
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -74,7 +75,11 @@ func TestParse(t *testing.T) {
 				Image: "https://e.com/i.jpg", ExtractedFrom: "jsonld"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := NewParser().Parse([]byte(tc.body)); got != tc.want {
+			// DeepEqual rather than ==: EventDetails carries slice fields (speakers,
+			// sponsors) since the wizard, so the struct is no longer comparable. The
+			// assertion is unchanged in meaning -- every field, including the ones these
+			// fixtures leave empty.
+			if got := NewParser().Parse([]byte(tc.body)); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("Parse() = %+v\nwant %+v", got, tc.want)
 			}
 		})
@@ -415,5 +420,157 @@ func TestParseJSONLDNameIsJudgedAfterSanitizing(t *testing.T) {
 	}
 	if got.ExtractedFrom != "jsonld" {
 		t.Errorf("ExtractedFrom = %q, want jsonld", got.ExtractedFrom)
+	}
+}
+
+// TestParseWizardFieldsFromJSONLD covers the three fields the email-creation wizard added:
+// speakers, sponsors and the registration URL.
+//
+// The shapes exercised here are the ones schema.org permits for the same property and that a
+// plain type assertion drops: performer as an array of Person nodes, a sponsor as a bare
+// string beside a full Organization, and offers as a single node rather than a list.
+func TestParseWizardFieldsFromJSONLD(t *testing.T) {
+	page := `<html><head><script type="application/ld+json">{
+		"@type":"Event","name":"KubeCon EU","url":"https://example.org/kubecon",
+		"performer":[
+			{"@type":"Person","name":"Ada Lovelace"},
+			{"@type":"Person","givenName":"Grace","familyName":"Hopper"},
+			"Alan Turing",
+			{"@type":"Person"}
+		],
+		"sponsor":[
+			{"@type":"Organization","name":"Acme","logo":{"url":"https://cdn.example.org/acme.png"},
+			 "url":"https://acme.example","sponsorshipLevel":"Diamond"},
+			"Globex",
+			{"@type":"Organization","logo":{"url":"https://cdn.example.org/anon.png"}}
+		],
+		"offers":{"@type":"Offer","url":"https://register.example.org/kubecon","price":"0"}
+	}</script></head><body></body></html>`
+
+	got := NewParser().Parse([]byte(page))
+
+	wantSpeakers := []string{"Ada Lovelace", "Grace Hopper", "Alan Turing"}
+	if len(got.Speakers) != len(wantSpeakers) {
+		t.Fatalf("Speakers = %v, want %v -- a nameless Person is dropped rather than "+
+			"appended blank, so the length is meaningful", got.Speakers, wantSpeakers)
+	}
+	for i, want := range wantSpeakers {
+		if got.Speakers[i] != want {
+			t.Errorf("Speakers[%d] = %q, want %q", i, got.Speakers[i], want)
+		}
+	}
+
+	if len(got.Sponsors) != 2 {
+		t.Fatalf("Sponsors = %+v, want 2: the logo-only entry has no name and cannot be "+
+			"captioned or attributed, so it is dropped", got.Sponsors)
+	}
+	first := got.Sponsors[0]
+	if first.Name != "Acme" || first.Logo != "https://cdn.example.org/acme.png" ||
+		first.URL != "https://acme.example" || first.Tier != "Diamond" {
+		t.Errorf("Sponsors[0] = %+v, want every field resolved", first)
+	}
+	if got.Sponsors[1].Name != "Globex" || got.Sponsors[1].Logo != "" {
+		t.Errorf("Sponsors[1] = %+v, want a name-only row from the bare string", got.Sponsors[1])
+	}
+
+	if got.RegistrationURL != "https://register.example.org/kubecon" {
+		t.Errorf("RegistrationURL = %q, want the offer's url", got.RegistrationURL)
+	}
+	// The landing page and the registration form are separate fields on purpose; one must
+	// never be defaulted from the other.
+	if got.URL != "https://example.org/kubecon" {
+		t.Errorf("URL = %q, want the event's own url unchanged", got.URL)
+	}
+}
+
+// TestWizardFieldsAreJSONLDOnly pins the deliberate restriction: a page carrying only
+// OpenGraph or only a <title> leaves all three empty.
+//
+// This is not an unfinished tier. Guessing a speaker list out of arbitrary markup does not
+// fail by returning nothing -- it fails by returning a CONFIDENT wrong list, which is then
+// printed into a marketing email under a real foundation's name.
+func TestWizardFieldsAreJSONLDOnly(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"opengraph", `<html><head><meta property="og:title" content="KubeCon EU">` +
+			`<meta property="og:description" content="Speakers: Ada Lovelace, Grace Hopper">` +
+			`</head><body><div class="speakers"><h3>Ada Lovelace</h3></div>` +
+			`<a href="https://register.example.org">Register</a></body></html>`},
+		{"fallback", `<html><head><title>KubeCon EU</title></head>` +
+			`<body><div class="sponsor-grid"><img src="/acme.png" alt="Acme"></div></body></html>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := NewParser().Parse([]byte(tc.body))
+			if got.Name == "" {
+				t.Fatalf("Name is empty; the fixture is meant to parse via %s", tc.name)
+			}
+			if len(got.Speakers) != 0 || len(got.Sponsors) != 0 || got.RegistrationURL != "" {
+				t.Errorf("speakers=%v sponsors=%+v registrationURL=%q, want all empty: these "+
+					"three come from the JSON-LD tier only",
+					got.Speakers, got.Sponsors, got.RegistrationURL)
+			}
+		})
+	}
+}
+
+// TestWizardFieldsOmittedWhenAbsent pins the wire shape: a brief's stored event_details blob
+// is byte-wise unchanged for a page that declares none of the three.
+func TestWizardFieldsOmittedWhenAbsent(t *testing.T) {
+	b, err := json.Marshal(EventDetails{Name: "KubeCon EU"})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, key := range []string{"speakers", "sponsors", "registrationUrl"} {
+		if strings.Contains(string(b), key) {
+			t.Errorf("marshalled %s, want %q omitted when empty", b, key)
+		}
+	}
+}
+
+// TestWizardListsAreBounded pins the COUNT bound that the per-field byte bounds cannot give.
+//
+// The whole struct is serialised into a brief's event_details column, so a page declaring
+// far more performers than any real event must not decide the size of a database row. Cutting
+// the list is the right response rather than rejecting the page -- the kept entries are still
+// correct, and no consumer treats these as exhaustive.
+func TestWizardListsAreBounded(t *testing.T) {
+	var performers, sponsors strings.Builder
+	for i := 0; i < maxListEntries*3; i++ {
+		if i > 0 {
+			performers.WriteString(",")
+			sponsors.WriteString(",")
+		}
+		performers.WriteString(`{"@type":"Person","name":"Speaker"}`)
+		sponsors.WriteString(`{"@type":"Organization","name":"Sponsor"}`)
+	}
+	page := `<html><head><script type="application/ld+json">{"@type":"Event","name":"E",` +
+		`"performer":[` + performers.String() + `],"sponsor":[` + sponsors.String() + `]}` +
+		`</script></head><body></body></html>`
+
+	got := NewParser().Parse([]byte(page))
+	if len(got.Speakers) != maxListEntries {
+		t.Errorf("len(Speakers) = %d, want %d", len(got.Speakers), maxListEntries)
+	}
+	if len(got.Sponsors) != maxListEntries {
+		t.Errorf("len(Sponsors) = %d, want %d", len(got.Sponsors), maxListEntries)
+	}
+
+	// Per-entry bytes are bounded too: one long name must not put an unbounded value in the
+	// column just because the list itself was short.
+	long := strings.Repeat("s", maxFieldBytes*3)
+	page = `<html><head><script type="application/ld+json">{"@type":"Event","name":"E",` +
+		`"performer":["` + long + `"],"sponsor":[{"@type":"Organization","name":"` + long + `",` +
+		`"url":"` + long + `"}],"offers":{"url":"` + long + `"}}</script></head><body></body></html>`
+	got = NewParser().Parse([]byte(page))
+	if len(got.Speakers) != 1 || len(got.Speakers[0]) > maxFieldBytes {
+		t.Errorf("Speakers = %d entries, first is %d bytes, want 1 entry within %d",
+			len(got.Speakers), len(got.Speakers[0]), maxFieldBytes)
+	}
+	if len(got.Sponsors) != 1 || len(got.Sponsors[0].Name) > maxFieldBytes ||
+		len(got.Sponsors[0].URL) > maxFieldBytes {
+		t.Errorf("Sponsors = %+v, want one entry with every field within %d bytes",
+			got.Sponsors, maxFieldBytes)
+	}
+	if len(got.RegistrationURL) > maxFieldBytes {
+		t.Errorf("len(RegistrationURL) = %d, want <= %d", len(got.RegistrationURL), maxFieldBytes)
 	}
 }
