@@ -1,0 +1,15 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+
+# actionlint (bundled with this repo's MegaLinter run) does not yet know
+# about the `copilot-requests` permission scope, added by GitHub in the same
+# July 2026 release that let Copilot CLI authenticate with GITHUB_TOKEN in
+# Actions (see .github/workflows/dd-pr-review-auto-cloud.yml). This is a
+# real, documented permission — https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli-in-actions
+# — just newer than actionlint's hardcoded permission-scope list. Scoped
+# narrowly to the one workflow that uses it; remove once actionlint ships
+# support (track https://github.com/rhysd/actionlint/issues for the fix).
+paths:
+  .github/workflows/dd-pr-review-auto-cloud.yml:
+    ignore:
+      - 'unknown permission scope "copilot-requests"'

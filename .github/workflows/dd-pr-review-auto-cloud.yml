@@ -6,19 +6,28 @@
 # Replaces the old Anthropic cloud-routine webhook (dd-pr-review-auto-cloud
 # Claude skill). Runs on GitHub-hosted infrastructure — no local machine, no
 # separate webhook receiver. Review comments and the formal APPROVE /
-# REQUEST_CHANGES verdict are posted as @dealako (via a personal access
-# token), not as a bot identity.
+# REQUEST_CHANGES verdict are posted as @dealako, not as a bot identity.
 #
-# Setup required before this workflow can run (see
-# .github/copilot-workflows/dd-pr-review-auto-cloud.md for the full review
-# spec followed by the prompt below):
+# Two separate credentials are in play here, on purpose:
+#   - Copilot CLI's own model-call auth uses the workflow's built-in
+#     GITHUB_TOKEN (billed to the linuxfoundation org), via the
+#     `copilot-requests: write` permission below. No secret required.
+#     Requires the org's Copilot policy "Allow use of Copilot CLI billed to
+#     the organization" to be enabled (Org > Settings > Copilot > Policies >
+#     Copilot CLI) — on by default when Copilot CLI is enabled org-wide.
+#   - The actual `gh pr review` / `gh pr comment` calls the agent makes (see
+#     .github/copilot-workflows/dd-pr-review-auto-cloud.md) need to post as
+#     @dealako, which GITHUB_TOKEN can never do. Those use a separate
+#     org-owned fine-grained PAT stored as the repository secret
+#     DEALAKO_REPO_PAT:
+#       - Resource owner: linuxfoundation (requires org-admin approval)
+#       - Repository access: only this repo
+#       - Permissions: Pull requests (Read and write), Contents (Read)
 #
-#   1. Create a fine-grained PAT owned by @dealako, scoped to this repo, with:
-#      - "Copilot Requests" permission (for Copilot CLI auth/billing)
-#      - "Pull requests: Read and write" (to post reviews/comments)
-#      - "Contents: Read" (to check out the repo)
-#   2. Store it as the repository secret DEALAKO_PAT
-#      (Settings > Secrets and variables > Actions).
+# These two tokens are deliberately kept in different env vars
+# (COPILOT_GITHUB_TOKEN vs. GH_TOKEN) — `copilot` checks COPILOT_GITHUB_TOKEN
+# first and `gh` never reads it, so there's no collision between "bill this
+# to the org" and "post this as dealako."
 
 name: dd-pr-review-auto-cloud
 
@@ -28,6 +37,7 @@ on:
 
 permissions:
   contents: read
+  copilot-requests: write
 
 concurrency:
   group: dd-pr-review-auto-cloud-${{ github.event.pull_request.number }}
@@ -57,8 +67,8 @@ jobs:
 
       - name: Run automated PR review
         env:
-          COPILOT_GITHUB_TOKEN: ${{ secrets.DEALAKO_PAT }}
-          GH_TOKEN: ${{ secrets.DEALAKO_PAT }}
+          COPILOT_GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.DEALAKO_REPO_PAT }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           TRIGGER: ${{ github.event.action == 'synchronize' && 'synchronize' || 'opened' }}
