@@ -122,7 +122,8 @@ type AccountCampaignMetrics struct {
 // own bugs — see that package's doc comments for the specific, deliberately-preserved
 // divergences (Google's local pacing literals, LinkedIn's MED/MEDIUM sort-key mismatch,
 // Reddit's hardcoded-zero conversions / mismatched underspend threshold+label / independent
-// account-totals call, Meta's single-page Graph insights read).
+// account-totals call; Meta's Graph insights read paginates both the campaign and insights
+// edges to exhaustion, not a single page).
 type AccountMonitorActionItem struct {
 	// CampaignID is the platform campaign id the item is about. Empty for an account-wide
 	// item (none of the four ported engines currently emit one, but the field exists so a

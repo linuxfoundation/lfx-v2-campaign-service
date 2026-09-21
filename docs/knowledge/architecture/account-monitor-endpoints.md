@@ -382,3 +382,18 @@ differential diff, since fixed:
     sort, replaced with `sort.SliceStable` (pure efficiency, no output
     change). See
     [2026-09-19-215-monitor-account-endpoints-round30-fixes.md](../log/2026-09-19-215-monitor-account-endpoints-round30-fixes.md).
+11. Three more doc-only inaccuracies named on PR #215's review threads,
+    fixed in round 31 (no behavior change): the `monitor-google-ads-account`
+    design description claimed `{project_id}` resolves credentials "exactly
+    as" the `/accounts` picker does — untrue since the round-16/17 trust-
+    boundary fix above made the monitor path `resolveOwned`-only with no
+    system fallback, unlike `/accounts`; `AccountMonitorActionItem`'s doc
+    comment (`internal/domain/model/monitor.go`) still said Meta's insights
+    read was single-page, contradicting this same file's already-documented
+    pagination fix; and `linkedin.AccountCampaignRow.FetchFailed`'s field
+    comment described the flag as marking a campaign the analytics pivot
+    omitted, the inverse of its actual contract — an omitted-but-successful
+    pivot row is a legitimate zero (see `ListAccountCampaigns`'s own comment
+    just above it), and `FetchFailed` is set only for a malformed budget or
+    unparseable `costInUsd`. See
+    [2026-09-21-215-monitor-account-endpoints-round31-doc-fixes.md](../log/2026-09-21-215-monitor-account-endpoints-round31-doc-fixes.md).

@@ -322,10 +322,12 @@ type Service interface {
 	// Read every campaign visible on a Google Ads account, live from the platform,
 	// with pacing and action items derived by this service's ported rule engine.
 	// Account-scoped, not project-scoped: {project_id} resolves which stored
-	// connection credential to use, exactly as GET
-	// .../connection-google-ads/accounts does, and the read enumerates everything
-	// that credential reaches on account_id, not only campaigns this service
-	// created. A pure read: nothing is persisted.
+	// connection credential to use, and the read enumerates everything that
+	// credential reaches on account_id, not only campaigns this service created.
+	// Unlike GET .../connection-google-ads/accounts, this endpoint resolves the
+	// project's OWN connection only and does not fall back to the shared LF system
+	// credential: a project with no Google Ads connection of its own gets a 404,
+	// not the LF account's data. A pure read: nothing is persisted.
 	MonitorGoogleAdsAccount(context.Context, *MonitorGoogleAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read every campaign visible on a LinkedIn Ads account, live from the
 	// platform, with pacing and action items derived by this service's ported rule

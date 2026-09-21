@@ -34,9 +34,12 @@ type AccountCampaignRow struct {
 	TotalBudget float64
 	StartDate   string
 	EndDate     string
-	// FetchFailed marks a campaign the analytics pivot read did not return a row for (e.g.
-	// dropped from a truncated response) — its numeric fields are left zero-value and MUST
-	// NOT be read as a measured zero.
+	// FetchFailed marks a row this service could not read trustworthily: a malformed
+	// dailyBudget/totalBudget amount from fetchAccountCampaignList, or an unparseable
+	// costInUsd from the analytics pivot (monitorMetricsRow.FetchFailed, ORed in below). A
+	// campaign the analytics pivot omits from a SUCCESSFUL response is NOT a fetch failure —
+	// LinkedIn omits campaigns with no activity in the window, and the zero-value fields left
+	// in place are the honest "no delivery" reading (see ListAccountCampaigns).
 	FetchFailed bool
 }
 
