@@ -72,7 +72,7 @@ gh pr view "$PR_NUMBER" --repo "$REPO" \
 4. Record `mergeable` (`MERGEABLE`, `CONFLICTING`, or `UNKNOWN`) for Step 5.
    Do not stop here for `CONFLICTING` or `UNKNOWN` — still run the review.
 5. The workflow already refused forks, bots, and authors/actors who are not
-   active members of `@linuxfoundation/lfx-v2-campaign-service`. Do not try
+   active members of `@linuxfoundation/lfx-platform`. Do not try
    to re-derive that gate, and do not review a PR that somehow slipped it.
 6. Otherwise, proceed to Step 2.
 

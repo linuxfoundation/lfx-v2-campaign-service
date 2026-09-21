@@ -11,11 +11,11 @@
 # Who may start this job
 # ----------------------
 # Same-repo pull requests from active members of
-# @linuxfoundation/lfx-v2-campaign-service (this repo's CODEOWNERS team)
-# only. Forks, bots, drafts, dealako-authored PRs, and authors who are
-# merely linuxfoundation org members (or outside collaborators) are skipped
-# before Copilot starts and before DEALAKO_REPO_PAT is exposed to any step.
-# Both the PR author and github.actor must pass the team check.
+# @linuxfoundation/lfx-platform only. Forks, bots, drafts,
+# dealako-authored PRs, and authors who are merely linuxfoundation org
+# members (or outside collaborators) are skipped before Copilot starts
+# and before DEALAKO_REPO_PAT is exposed to any step. Both the PR author
+# and github.actor must pass the team check.
 #
 # Two separate credentials are in play here, on purpose:
 #   - Copilot CLI's own model-call auth uses the workflow's built-in
@@ -66,7 +66,7 @@ jobs:
       allowed: ${{ steps.authz.outputs.allowed }}
     # Cheap prefilter so we do not spend a runner on PRs we will never review.
     # MEMBER/OWNER = linuxfoundation org membership on this repo. The team
-    # check below is stricter (CODEOWNERS team, not the whole org).
+    # check below is stricter (lfx-platform, not the whole org).
     if: >-
       github.event.pull_request.draft == false &&
       github.event.pull_request.user.login != 'dealako' &&
@@ -75,7 +75,7 @@ jobs:
       (github.event.pull_request.author_association == 'MEMBER' ||
        github.event.pull_request.author_association == 'OWNER')
     steps:
-      - name: Verify CODEOWNERS team membership
+      - name: Verify lfx-platform team membership
         id: authz
         env:
           GH_TOKEN: ${{ github.token }}
@@ -83,7 +83,7 @@ jobs:
           AUTHOR: ${{ github.event.pull_request.user.login }}
           ACTOR: ${{ github.actor }}
           ORG: linuxfoundation
-          TEAM: lfx-v2-campaign-service
+          TEAM: lfx-platform
         run: |
           set -euo pipefail
 
