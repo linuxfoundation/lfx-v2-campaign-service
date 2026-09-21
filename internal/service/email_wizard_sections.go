@@ -121,7 +121,8 @@ func decodeWizardSections(in []any) (out []wizardSection, dropped int) {
 // SANITIZED instead (sanitizeWizardHTML): an allow-list of formatting tags, href-only on
 // anchors, script/style content dropped entirely. The length bound alone stopped nothing, and
 // this field is filled by a MODEL as well as by the editor, reaching both the preview document
-// and the HubSpot draft sent to recipients. Hrefs and image sources go through httpURL, so a `javascript:` or `data:` URL
+// and the HubSpot draft sent to recipients. Hrefs and image sources go through httpURL, so a
+// `javascript:` or `data:` URL
 // supplied by a model or a scraped page cannot reach an anchor.
 func renderWizardSections(sections []wizardSection) string {
 	var b strings.Builder

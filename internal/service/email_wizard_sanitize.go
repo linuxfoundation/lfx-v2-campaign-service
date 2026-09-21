@@ -25,6 +25,14 @@ import (
 //
 // Parsed with a real tokenizer rather than regex: `<scr<script>ipt>` and attribute-boundary
 // tricks defeat pattern matching, and this input is adversarial by assumption.
+// voidTags are the HTML elements that have no end tag, so a self-closing spelling of one needs
+// no synthesised closer. Only those in allowedTags can actually appear, but the full set is
+// listed so the rule reads as "void elements" rather than "the two we happen to allow".
+var voidTags = map[string]bool{
+	"area": true, "base": true, "br": true, "col": true, "embed": true, "hr": true,
+	"img": true, "input": true, "link": true, "meta": true, "source": true, "track": true, "wbr": true,
+}
+
 func sanitizeWizardHTML(input string) string {
 	allowedTags := map[string]bool{
 		"p": true, "br": true, "strong": true, "b": true, "em": true, "i": true,
@@ -32,9 +40,6 @@ func sanitizeWizardHTML(input string) string {
 		"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
 		"a": true, "span": true, "div": true,
 	}
-	// `href` only, and only on <a>. Every other attribute -- style, class, id, and every `on*`
-	// handler -- is dropped: none is needed for formatting, and `style` alone carries
-	// `expression()` and `url(javascript:)` in enough mail clients to matter.
 	dropContent := map[string]bool{"script": true, "style": true, "iframe": true, "object": true, "embed": true}
 
 	var b strings.Builder
@@ -42,7 +47,8 @@ func sanitizeWizardHTML(input string) string {
 	skipDepth := 0
 
 	for {
-		switch tokenizer.Next() {
+		tokenType := tokenizer.Next()
+		switch tokenType {
 		case html.ErrorToken:
 			return b.String()
 
@@ -64,6 +70,9 @@ func sanitizeWizardHTML(input string) string {
 				continue
 			}
 			b.WriteString("<" + tag)
+			// `href` only, and only on <a>. Every other attribute -- style, class, id, and every `on*`
+			// handler -- is dropped: none is needed for formatting, and `style` alone carries
+			// `expression()` and `url(javascript:)` in enough mail clients to matter.
 			for hasAttr {
 				var k, v []byte
 				k, v, hasAttr = tokenizer.TagAttr()
@@ -77,6 +86,13 @@ func sanitizeWizardHTML(input string) string {
 				}
 			}
 			b.WriteString(">")
+			// A self-closing NON-VOID tag closes itself here, because no EndTagToken will ever
+			// arrive for it: `<div/>` emitted a bare `<div>` that nothing closed, leaving the
+			// rest of the email nested inside it. Void elements (br, img and friends) are
+			// correct unclosed, so only the others get a closer.
+			if tokenType == html.SelfClosingTagToken && !voidTags[tag] {
+				b.WriteString("</" + tag + ">")
+			}
 
 		case html.EndTagToken:
 			name, _ := tokenizer.TagName()
@@ -90,6 +106,9 @@ func sanitizeWizardHTML(input string) string {
 			if skipDepth > 0 || !allowedTags[tag] {
 				continue
 			}
+			// `</br>` is swallowed rather than emitted: `br` is a VOID element, so a closing tag
+			// for it is invalid HTML that some clients render as a second line break. Every
+			// other allowed tag needs its closer, which is why this is the one exception.
 			if a := atom.Lookup(name); a == atom.Br {
 				continue
 			}

@@ -104,3 +104,20 @@ func TestParsedSectionsAreSanitizedBeforeTheyReachTheCaller(t *testing.T) {
 		t.Errorf("sanitising removed the legitimate text too: %q", html)
 	}
 }
+
+// A self-closing NON-VOID tag must close itself: no EndTagToken ever arrives for `<div/>`, so
+// the sanitizer emitted a bare `<div>` and everything after it nested inside. Void elements are
+// correct unclosed, which is why they are asserted in the same test -- a fix that closed
+// everything would produce `<br></br>`, which is invalid.
+func TestSanitizeWizardHTMLClosesSelfClosingNonVoidTags(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`<div/>x`, `<div></div>x`},
+		{`<p/>y`, `<p></p>y`},
+		{`<span/>w`, `<span></span>w`},
+		{`<br/>z`, `<br>z`},
+	} {
+		if got := sanitizeWizardHTML(tc.in); got != tc.want {
+			t.Errorf("sanitizeWizardHTML(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
