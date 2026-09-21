@@ -290,8 +290,10 @@ type Client struct {
 	httpClient    *http.Client
 	baseURL       string
 	adsManagerURL string
-	// timeNow allows tests to control the clock used for 429 backoff.
-	// Defaults to time.Now.
+	// timeNow is this client's clock: 429 backoff timing and, since the account-monitor
+	// endpoints landed, the production time_range window fetchAccountCampaignInsights
+	// builds for every insights query. Defaults to time.Now; tests override it to control
+	// both consumers.
 	timeNow func() time.Time
 	// retryBaseDelay is the base for exponential 429 backoff. Defaults to the
 	// retryBaseDelay const; tests may shrink it to keep runs fast.
@@ -340,7 +342,13 @@ func WithBaseURL(u string) Option {
 	return func(c *Client) { c.baseURL = strings.TrimRight(u, "/") }
 }
 
-// WithClock overrides the time source used for 429 backoff. For tests.
+// WithAdsManagerURL overrides the Ads Manager base URL.
+func WithAdsManagerURL(u string) Option {
+	return func(c *Client) { c.adsManagerURL = strings.TrimRight(u, "/") }
+}
+
+// WithClock overrides the client's clock (see timeNow's doc comment: 429 backoff and the
+// account-monitor insights time_range window both read it). For tests.
 func WithClock(now func() time.Time) Option {
 	return func(c *Client) {
 		if now != nil {
@@ -1811,6 +1819,23 @@ var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 // whole value must match. Mirrors the anchored-regex approach in
 // internal/platform/twitter/client.go (accountIDRe).
 var accountIDRE = regexp.MustCompile(`^act_[0-9]+$`)
+
+// ErrInvalidAccountID reports that a caller-supplied account id is not an
+// act_<digits> Meta ad account id, mirroring googleads.ErrNotACustomerID and
+// reddit.ErrInvalidAccountID — lets a caller errors.Is-classify this failure instead
+// of matching on the message text.
+var ErrInvalidAccountID = errors.New("meta-ads: not an ad account id")
+
+// ValidateAccountID checks accountID against the same act_<digits> shape accountIDRE
+// enforces elsewhere in this package, so a dispatcher can reject a malformed id before
+// resolving (and decrypting) any stored credential — mirrors googleads.ValidateCustomerID's
+// ordering.
+func ValidateAccountID(accountID string) error {
+	if !accountIDRE.MatchString(accountID) {
+		return fmt.Errorf("%w: %q: must be act_<digits>", ErrInvalidAccountID, accountID)
+	}
+	return nil
+}
 
 // numericIDRE matches a purely numeric Meta object id (Page id, Pixel id). Meta
 // object ids are decimal strings; validating the format up front stops a malformed

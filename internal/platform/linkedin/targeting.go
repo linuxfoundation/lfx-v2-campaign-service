@@ -4,6 +4,7 @@
 package linkedin
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -20,6 +21,23 @@ var orgIDRE = regexp.MustCompile(`^[0-9]+$`)
 // invariant the source config parser enforces, so a malformed id can't be
 // interpolated into a request URN.
 var accountIDRE = regexp.MustCompile(`^[0-9]+$`)
+
+// ErrInvalidAccountID reports that a caller-supplied account id is not a digits-only
+// LinkedIn ad account id, mirroring googleads.ErrNotACustomerID and
+// reddit.ErrInvalidAccountID — lets a caller errors.Is-classify this failure instead
+// of matching on the message text.
+var ErrInvalidAccountID = errors.New("linkedin-ads: not an ad account id")
+
+// ValidateAccountID checks accountID against the same digit-only shape accountIDRE
+// enforces elsewhere in this package, so a dispatcher can reject a malformed id
+// before resolving (and decrypting) any stored credential — mirrors
+// googleads.ValidateCustomerID's ordering.
+func ValidateAccountID(accountID string) error {
+	if !accountIDRE.MatchString(accountID) {
+		return fmt.Errorf("%w: %q: must be digits only", ErrInvalidAccountID, accountID)
+	}
+	return nil
+}
 
 // geoURNRE matches a LinkedIn geo URN (urn:li:geo:<digits>), used to reject a
 // caller-supplied GeoTarget with a malformed URN before any campaign is created.

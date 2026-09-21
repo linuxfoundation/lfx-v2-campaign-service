@@ -300,7 +300,7 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		return nil
 	}
 	switch {
-	case errors.Is(aerr, ErrAccountsUnsupported):
+	case errors.Is(aerr, ErrAccountsUnsupported), errors.Is(aerr, ErrAccountMetricsUnsupported):
 		return &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
 	case errors.Is(aerr, domain.ErrSystemConnectionMissing):
 		// ABOVE the ErrNotFound arm, and load-bearing: the forced-system resolver wraps this
@@ -392,6 +392,17 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		slog.ErrorContext(ctx, "the LF system connection is not usable; "+d.label()+" is failing for every project without its own connection",
 			"provider", string(d.provider), "reason", unusableConnectionReason(aerr))
 		return &conn.InternalServerError{Code: "500", Message: d.label() + " could not be completed"}
+	case errors.Is(aerr, domain.ErrAccountNotManagedByConnection):
+		// The stored connection is fine; the REQUEST named an account the connection
+		// does not manage (Reddit only, whose connection is bound to exactly one ad
+		// account). Checked before ErrConnectionNotUsable below: prior to round-18 review
+		// this sentinel did not exist and the mismatch rode on ErrConnectionNotUsable,
+		// whose message tells the caller to check that the stored credential is active
+		// and valid, which it is, so that message pointed at the wrong remedy.
+		return &conn.BadRequestError{
+			Code:    "400",
+			Message: "the requested account is not managed by this project's " + d.displayName + " connection",
+		}
 	case errors.Is(aerr, domain.ErrConnectionNotUsable):
 		// The connection EXISTS but cannot be used as it stands — inactive, an
 		// incomplete credential blob, or a malformed stored config value such as a
@@ -424,6 +435,20 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 			Message: "the stored " + d.displayName + " connection cannot be used as configured: " +
 				d.notUsableRemedy,
 		}
+	case errors.Is(aerr, domain.ErrAccountIDMalformed):
+		// A caller-supplied account id, not a stored connection: every provider's dispatcher
+		// validates the shape itself before resolving a credential and reaches here instead of
+		// the default 503 arm below (see domain.ErrAccountIDMalformed's doc comment). All four
+		// providers also carry a Goa Pattern, so an ordinary HTTP caller's malformed id is
+		// refused before the handler — and this arm — ever run; this classification exists for
+		// non-HTTP callers, which bypass Goa entirely.
+		return &conn.BadRequestError{Code: "400", Message: "the account id is not valid for " + d.displayName}
+	case errors.Is(aerr, domain.ErrMonitorDaysInvalid):
+		// A caller-supplied days window, not a stored connection — see
+		// domain.ErrMonitorDaysInvalid's doc comment for why the dispatchers re-check this
+		// themselves even though the service layer's validateMonitorDays already rejects it
+		// for an HTTP caller.
+		return &conn.BadRequestError{Code: "400", Message: domain.ErrMonitorDaysInvalid.Error()}
 	default:
 		slog.WarnContext(ctx, d.label()+" failed upstream",
 			"project_id", projectID, "provider", string(d.provider), "error", aerr)

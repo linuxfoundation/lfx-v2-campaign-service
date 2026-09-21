@@ -1,24 +1,30 @@
 ---
 type: "Architecture Doc"
 title: "GHCR stale image cleanup"
-description: "How the scheduled and on-demand GitHub Actions workflow removes stale, untagged GHCR image versions for the campaign-service container package."
+description: "How the scheduled and on-demand GitHub Actions workflow removes stale GHCR image versions, tagged and untagged, for the campaign-service container package."
 resource: ".github/workflows/ghcr-image-cleanup.yaml"
 ---
 
 # GHCR stale image cleanup
 
 [`.github/workflows/ghcr-image-cleanup.yaml`](../../../.github/workflows/ghcr-image-cleanup.yaml)
-deletes stale, untagged versions of the
+deletes stale versions, tagged and untagged, of the
 `linuxfoundation/lfx-v2-campaign-service/campaign-service` GHCR package using
 [`snok/container-retention-policy`](https://github.com/snok/container-retention-policy),
-invoked as a direct container reference (`docker://ghcr.io/snok/container-retention-policy@sha256:...`)
-pinned by image digest, not by a mutable release tag.
+invoked with `docker pull` / `docker run` against an image digest
+(`ghcr.io/snok/container-retention-policy@sha256:...`), not a mutable
+release tag and not the `snok/container-retention-policy@<sha>` action alias.
 
-Because this is a raw `docker://` reference rather than the
-`snok/container-retention-policy@<sha>` action alias, there is no
-`action.yaml` to translate `with:` inputs into CLI flags or fill in its
-defaults — any flag this workflow doesn't pass in `with.args` falls back to
-whatever default the CLI's own argument parser supplies, not `action.yaml`'s.
+The action alias only pins action metadata; that metadata still points at the
+mutable `v3.1.0` container tag. A raw `uses: docker://` step would pin the
+executed image, but it has no `action.yaml` outputs and does not leave the
+container's stdout in a file a later step can read. This workflow therefore
+runs the digest-pinned image itself and tees stdout to `$RUNNER_TEMP` so the
+summary step can count unique package versions.
+
+Because there is no `action.yaml` to translate `with:` inputs into CLI flags
+or fill in its defaults, any flag this workflow doesn't pass on `docker run`
+falls back to whatever default the CLI's own argument parser supplies.
 `--keep-n-most-recent` and `--timestamp-to-use` are safe to omit because the
 CLI's own defaults happen to match what `action.yaml` would have passed
 (`0` and `updated_at`). `--image-tags` and `--shas-to-skip` are different: the
@@ -30,27 +36,49 @@ run to fail immediately.
 ## Triggers
 
 - **Scheduled**: weekly, Sundays at 00:00 UTC. Uses fixed defaults —
-  `cut-off: 30d`. `dry-run` currently defaults to `true` (preview only)
-  because the package's existing ~15,000-version backlog means the first
-  unattended run would otherwise face the whole backlog at once instead of
-  a manageable weekly slice. A maintainer flips the fallback to `false` in
-  the workflow file after reviewing a manual preview or draining the
-  backlog manually.
+  `cut-off: 30d`, `dry-run: false` — since `github.event.inputs` is undefined
+  on a `schedule` trigger, the `dry-run` expression checks `github.event_name`
+  directly to give scheduled runs their own default rather than inheriting
+  the `workflow_dispatch` input default.
 - **Manual** (`workflow_dispatch`): a maintainer can preview or tune a single
   run via the `dry-run` (default `true`) and `cut-off` (default `30d`)
   inputs, without changing the schedule's defaults.
 
 ## Scope
 
-`tag-selection` is hardcoded to `untagged` — tagged versions, including
-per-commit SHA tags and any release/production tags, are never deletion
-candidates. This is intentionally not exposed as an override: `ko build`
-publishes every image with both an immutable SHA tag and a moving
-branch-name tag (see `.github/workflows/ko-build-branch.yaml`), so the
-untagged versions this workflow reclaims are the orphaned digests left
-behind when a branch's moving tag is repointed to a newer build. SHA-tagged
-versions keep accumulating and are a known, accepted limitation of this
-rollout.
+`tag-selection` is hardcoded to `both` — untagged versions and tagged
+versions are both deletion candidates once past `cut-off`. `--image-tags`
+carries the negative filter `"!v* !latest !development"`, which protects any
+package version carrying a tag matching `v*`, `latest`, or `development`
+regardless of its other tags: release builds
+(`.github/workflows/ko-build-tag.yaml`) tag with a `vX.Y.Z` version string
+plus `latest`, so `!v*` alone already protects every release; `!latest` is
+redundant today but kept as defense in depth in case a future release build
+ever tags `latest` without a version string. The current main build
+(`.github/workflows/ko-build-main.yaml`) tags with `development`. Neither
+workflow's tags ever share a digest with a plain PR/main SHA-tagged build,
+so this excludes exactly the versions that must survive.
+
+Everything else tagged — a per-commit SHA plus a branch name from
+`.github/workflows/ko-build-branch.yaml`, or a superseded SHA + `development`
+pairing from an older main build — is a deletion candidate once past
+cut-off. Previously only fully-untagged versions were ever considered, so
+per-commit SHA-tagged versions accumulated indefinitely; this widening to
+`tag-selection=both` closes that gap. `tag-selection` and the fixed
+`account`/`image-names` are not exposed as `workflow_dispatch` overrides.
+
+Known tradeoff: a PR branch whose last push is older than `cut-off` still
+carries a live branch-name tag, so its current image is now a deletion
+candidate too, not just superseded commits on an active branch. This is
+treated as normal cleanup of stale PR images; a maintainer can preview this
+wider scope by triggering `workflow_dispatch` with `dry-run: true` (see
+Triggers above), but nothing enforces that preview before a scheduled run.
+
+Known tradeoff: `!v*` matches any tag beginning with `v`, not only
+`vX.Y.Z` version strings — a branch name like `validate-something` or
+`v2-refactor` built by `ko-build-branch.yaml` would also carry a `v`-prefixed
+tag and be permanently protected from cleanup. This is accepted as
+over-protection, the opposite failure direction from deleting a release.
 
 `snok/container-retention-policy` automatically protects multi-arch child
 manifests still referenced by a retained parent index, so multi-platform
@@ -67,11 +95,17 @@ need a token with broader package visibility than a single job's
 ## Auditability
 
 Every run's job log lists each considered/deleted image version by digest
-and age, and a final step writes a summary (trigger, mode, cut-off,
-deleted/failed counts) to the run's `$GITHUB_STEP_SUMMARY`. The
-`deleted`/`failed` fields in that summary come from the action's own
-outputs and may render `(none)` even on a run that deleted versions, if the
-underlying Docker action does not populate `GITHUB_OUTPUT`; the job log
-itself is the authoritative record regardless. Accidental deletions are
+and age. The cleanup step tees the container's stdout to `$RUNNER_TEMP`, and
+a final step (`if: always()`) writes a summary to `$GITHUB_STEP_SUMMARY`:
+trigger, mode, cut-off, the tagged/untagged candidate counts snok logged
+before multi-arch filtering, the number of multi-arch children it protected,
+and unique package-version counts for deleted (or would-delete, on a dry
+run) and failed. Counts are unique `package_version_id` values, not log
+lines — one GHCR version that carries both a commit SHA and a branch-name
+tag is one deletion and two log lines. snok v3.1.0's `deleted`/`failed`
+action outputs are unused: the binary concatenates those values onto the
+`GITHUB_OUTPUT` path string and calls `env::set_var`, which the runner never
+sees, and a raw docker image has no `action.yaml` to publish them anyway.
+The job log remains the per-version record. Accidental deletions are
 recovered via GitHub's own package-version restore window, not by this
 workflow.

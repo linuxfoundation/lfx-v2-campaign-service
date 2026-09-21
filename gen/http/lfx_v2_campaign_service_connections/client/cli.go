@@ -10,6 +10,7 @@ package client
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"unicode/utf8"
 
 	lfxv2campaignserviceconnections "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -1715,6 +1716,218 @@ func BuildCreateHubspotCampaignPayload(lfxV2CampaignServiceConnectionsCreateHubs
 		Name: body.Name,
 	}
 	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildMonitorGoogleAdsAccountPayload builds the payload for the
+// lfx-v2-campaign-service-connections monitor-google-ads-account endpoint from
+// CLI flags.
+func BuildMonitorGoogleAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountProjectID string, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID string, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountDays string, lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountBearerToken string) (*lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountProjectID
+	}
+	var accountID string
+	{
+		accountID = lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountAccountID
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[0-9]+$"))
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var days int
+	{
+		var v int64
+		v, err = strconv.ParseInt(lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountDays, 10, strconv.IntSize)
+		days = int(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid value for days, must be INT")
+		}
+		if days < 7 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 7, true))
+		}
+		if days > 90 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsMonitorGoogleAdsAccountBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.MonitorGoogleAdsAccountPayload{}
+	v.ProjectID = projectID
+	v.AccountID = accountID
+	v.Days = days
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildMonitorLinkedinAdsAccountPayload builds the payload for the
+// lfx-v2-campaign-service-connections monitor-linkedin-ads-account endpoint
+// from CLI flags.
+func BuildMonitorLinkedinAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountProjectID string, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountID string, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountDays string, lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountBearerToken string) (*lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountProjectID
+	}
+	var accountID string
+	{
+		accountID = lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountAccountID
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[0-9]+$"))
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var days int
+	{
+		var v int64
+		v, err = strconv.ParseInt(lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountDays, 10, strconv.IntSize)
+		days = int(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid value for days, must be INT")
+		}
+		if days < 7 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 7, true))
+		}
+		if days > 90 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsMonitorLinkedinAdsAccountBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.MonitorLinkedinAdsAccountPayload{}
+	v.ProjectID = projectID
+	v.AccountID = accountID
+	v.Days = days
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildMonitorMetaAdsAccountPayload builds the payload for the
+// lfx-v2-campaign-service-connections monitor-meta-ads-account endpoint from
+// CLI flags.
+func BuildMonitorMetaAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountProjectID string, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountAccountID string, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountDays string, lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountBearerToken string) (*lfxv2campaignserviceconnections.MonitorMetaAdsAccountPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountProjectID
+	}
+	var accountID string
+	{
+		accountID = lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountAccountID
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^act_[0-9]+$"))
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var days int
+	{
+		var v int64
+		v, err = strconv.ParseInt(lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountDays, 10, strconv.IntSize)
+		days = int(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid value for days, must be INT")
+		}
+		if days < 7 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 7, true))
+		}
+		if days > 90 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.MonitorMetaAdsAccountPayload{}
+	v.ProjectID = projectID
+	v.AccountID = accountID
+	v.Days = days
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildMonitorRedditAdsAccountPayload builds the payload for the
+// lfx-v2-campaign-service-connections monitor-reddit-ads-account endpoint from
+// CLI flags.
+func BuildMonitorRedditAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountProjectID string, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountAccountID string, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountDays string, lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountBearerToken string) (*lfxv2campaignserviceconnections.MonitorRedditAdsAccountPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountProjectID
+	}
+	var accountID string
+	{
+		accountID = lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountAccountID
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[A-Za-z0-9_]+$"))
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var days int
+	{
+		var v int64
+		v, err = strconv.ParseInt(lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountDays, 10, strconv.IntSize)
+		days = int(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid value for days, must be INT")
+		}
+		if days < 7 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 7, true))
+		}
+		if days > 90 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.MonitorRedditAdsAccountPayload{}
+	v.ProjectID = projectID
+	v.AccountID = accountID
+	v.Days = days
 	v.BearerToken = bearerToken
 
 	return v, nil
