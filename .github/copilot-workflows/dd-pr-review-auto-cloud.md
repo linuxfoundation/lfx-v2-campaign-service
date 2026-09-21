@@ -1,7 +1,7 @@
 <!-- Copyright The Linux Foundation and each contributor to LFX. -->
 <!-- SPDX-License-Identifier: MIT -->
 
-# dd-pr-review-auto-cloud (GitHub Actions / Copilot CLI edition)
+# pr-review-auto-cloud (GitHub Actions / Copilot CLI edition)
 
 You are running non-interactively inside a GitHub Actions job (`copilot -p`,
 `--no-ask-user`). There is no human to answer a prompt — if you hit a fault
