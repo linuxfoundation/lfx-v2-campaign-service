@@ -280,6 +280,19 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 			}
 		}
 		for _, row := range *resp.Data {
+			// A row with no campaign_id cannot be attributed to any specific campaign, so it
+			// cannot be recorded in `failed` either (that map is keyed by campaign id) — unlike
+			// the parse-failure case below, there is no id to mark FetchFailed on individually.
+			// Silently skipping it would let ListAccountCampaigns read the real campaign this
+			// row belonged to as a legitimate zero-activity omission, so the whole read is
+			// rejected instead (round-31 review, same class as the LinkedIn pivot-value fix).
+			if row.CampaignID == "" {
+				return nil, nil, &transportError{
+					Method: http.MethodGet,
+					Path:   path,
+					Err:    fmt.Errorf("account insights returned a row with no campaign_id"),
+				}
+			}
 			impressions, errI := parseMetricInt(row.Impressions)
 			clicks, errC := parseMetricInt(row.Clicks)
 			// Meta omits spend entirely for a zero-delivery campaign rather than sending "0",
@@ -297,10 +310,9 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 				// mark the row FetchFailed instead of silently treating it as zero-delivery.
 				// spend is included in this gate (round-19 review): a swallowed spend parse
 				// used to produce a confident $0 row, which the pacing/action-item rules then
-				// read as a real Underspending signal instead of an unknown.
-				if row.CampaignID != "" {
-					failed[row.CampaignID] = struct{}{}
-				}
+				// read as a real Underspending signal instead of an unknown. CampaignID is
+				// already known non-empty here (guarded above).
+				failed[row.CampaignID] = struct{}{}
 				continue
 			}
 			out[row.CampaignID] = metaInsightsRow{Impressions: impressions, Clicks: clicks, SpendUSD: spend}

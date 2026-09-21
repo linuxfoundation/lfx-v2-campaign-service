@@ -310,12 +310,17 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 	}
 	out := make(map[string]monitorMetricsRow, len(*parsed.Elements))
 	for _, el := range *parsed.Elements {
+		// A row with no pivot value, or one that doesn't resolve to a campaign id, cannot be
+		// attributed to any campaign — there is no id to key `FetchFailed` on, unlike the
+		// costInUsd case below. Silently dropping it would let ListAccountCampaigns read the
+		// row's real campaign as a legitimate zero-activity omission (round-31 review), so the
+		// whole read is rejected instead.
 		if len(el.PivotValues) == 0 {
-			continue
+			return nil, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("decode account monitor analytics: element has no pivotValues")}
 		}
 		id := trailingID(el.PivotValues[0])
 		if id == "" {
-			continue
+			return nil, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("decode account monitor analytics: pivotValues did not resolve to a campaign id")}
 		}
 		row := monitorMetricsRow{Impressions: el.Impressions, Clicks: el.Clicks}
 		if el.CostInUsd != nil {

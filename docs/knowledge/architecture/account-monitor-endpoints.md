@@ -397,3 +397,23 @@ differential diff, since fixed:
     just above it), and `FetchFailed` is set only for a malformed budget or
     unparseable `costInUsd`. See
     [2026-09-21-215-monitor-account-endpoints-round31-doc-fixes.md](../log/2026-09-21-215-monitor-account-endpoints-round31-doc-fixes.md).
+12. Two "previously missed" findings on the same review that submitted round
+    31's docs threads, fixed in round 32: LinkedIn's
+    `fetchAccountCampaignAnalyticsRaw` (`internal/platform/linkedin/monitor.go`)
+    silently `continue`'d past an analytics row with an empty or malformed
+    `pivotValues` — dropping it from the returned map entirely rather than
+    rejecting the read — and Meta's `fetchAccountCampaignInsights`
+    (`internal/platform/meta/monitor.go`) stored (or, for a parse failure,
+    tracked as failed) an insights row keyed by `campaign_id` without first
+    checking that field was non-empty. Both are the same false-zero bug class
+    as item 10 above, one step earlier in the pipeline: a row absent from a
+    *successful* response is read by `ListAccountCampaigns` as a legitimate
+    "no activity" zero (see item at the top of this list and each file's own
+    `ListAccountCampaigns` comment), so a row that exists but can't be
+    attributed to a campaign id must not be silently dropped — that makes an
+    unattributable upstream row indistinguishable from a real omitted-because-
+    inactive campaign. Neither malformed-id row carries an id to key a
+    per-campaign `FetchFailed` on (unlike a parse-failure row, which does),
+    so both fixes reject the whole analytics/insights read instead of
+    dropping just the one row. See
+    [2026-09-21-215-monitor-account-endpoints-round32-unattributable-rows.md](../log/2026-09-21-215-monitor-account-endpoints-round32-unattributable-rows.md).
