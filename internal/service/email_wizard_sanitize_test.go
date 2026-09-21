@@ -3,7 +3,10 @@
 
 package service
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The rich_text block is filled by a MODEL as well as by the editor, and reaches two sinks that
 // render it: the preview document served to the operator's browser, and the HubSpot draft body
@@ -59,4 +62,45 @@ func containsAny(s string, subs ...string) bool {
 		}
 	}
 	return false
+}
+
+// TestParsedSectionsAreSanitizedBeforeTheyReachTheCaller pins the THIRD sink.
+//
+// The first version of this sanitizer ran in `renderWizardSections` and in the preview
+// assembly, which covered the HubSpot draft body and the assembled `html`. It missed
+// `RawSections`, which is returned to the caller verbatim as `sections` /
+// `variant_a_sections` -- so raw model HTML reached the client untouched while both other
+// paths were clean.
+//
+// Sanitising per render path is what allowed that: every new consumer of the sections is a
+// fresh chance to forget. The sanitise now happens where the sections are PARSED, so a
+// consumer cannot receive unsanitised HTML without going around the parser entirely.
+func TestParsedSectionsAreSanitizedBeforeTheyReachTheCaller(t *testing.T) {
+	body := `{"subject":"s","preview_text":"p","sections":[` +
+		`{"type":"rich_text","html":"<p onclick=\"steal()\">hi</p><script>alert(1)</script>"}]}`
+
+	parsed, err := parseWizardContentResponse(body)
+	if err != nil {
+		t.Fatalf("parseWizardContentResponse: %v", err)
+	}
+	if len(parsed.RawSections) != 1 {
+		t.Fatalf("expected 1 raw section, got %d", len(parsed.RawSections))
+	}
+
+	obj, ok := parsed.RawSections[0].(map[string]any)
+	if !ok {
+		t.Fatalf("raw section is not an object: %T", parsed.RawSections[0])
+	}
+	html, _ := obj["html"].(string)
+
+	// The value the CALLER receives, not the rendered body.
+	if strings.Contains(html, "<script") {
+		t.Errorf("a script tag survived into the returned sections: %q", html)
+	}
+	if strings.Contains(html, "onclick") {
+		t.Errorf("an event handler survived into the returned sections: %q", html)
+	}
+	if !strings.Contains(html, "hi") {
+		t.Errorf("sanitising removed the legitimate text too: %q", html)
+	}
 }

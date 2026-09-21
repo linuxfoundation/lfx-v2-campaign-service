@@ -1297,8 +1297,11 @@ func TestWizard_ProgressTokenIsServerMintedNotCallerSupplied(t *testing.T) {
 // deleted, and SetWizardSendList would mutate the recipients of the HubSpot draft -- an effect
 // outside this database entirely, on a brief that no longer exists.
 //
-// Every session-taking method is listed, so a NEW one that skips the guard fails here rather
-// than shipping. `t.Run` per method names the offender instead of stopping at the first.
+// All SIX session-taking methods are listed -- plan, generate-content, get-session,
+// set-send-list, update-sections and clone -- so a NEW one that skips the guard fails here
+// rather than shipping. An earlier version of this comment claimed "every" while covering four,
+// which is the kind of claim that reads as coverage it does not have. `t.Run` per method names
+// the offender instead of stopping at the first.
 func TestWizard_EveryTurnRefusesADeletedBrief(t *testing.T) {
 	ctx := context.Background()
 
@@ -1324,6 +1327,17 @@ func TestWizard_EveryTurnRefusesADeletedBrief(t *testing.T) {
 		{"set-send-list", func(h *wizardHarness, id string) error {
 			_, err := h.svc.SetWizardSendList(ctx, &briefs.SetWizardSendListPayload{
 				ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: id})
+			return err
+		}},
+		{"update-sections", func(h *wizardHarness, id string) error {
+			_, err := h.svc.UpdateWizardSections(ctx, &briefs.UpdateWizardSectionsPayload{
+				ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: id,
+				Sections: []any{map[string]any{"type": "rich_text", "html": "<p>x</p>"}}})
+			return err
+		}},
+		{"clone", func(h *wizardHarness, id string) error {
+			_, err := h.svc.CloneWizardEmail(ctx, &briefs.CloneWizardEmailPayload{
+				ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: id, Approved: true})
 			return err
 		}},
 	}

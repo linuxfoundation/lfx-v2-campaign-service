@@ -363,12 +363,19 @@ func parseWizardContentResponse(raw string) (*wizardGeneratedContent, error) {
 		Subject:     truncateString(parsed.Subject, 200),
 		PreviewText: truncateString(parsed.PreviewText, 200),
 	}
+	// Sanitised HERE, at the parse, not at the two render paths.
+	//
+	// `sanitizeWizardHTML` was applied in `renderWizardSections` and in the preview assembly,
+	// which covered the HubSpot draft body and the assembled `html` -- and missed a THIRD sink:
+	// RawSections is returned to the caller verbatim as `sections`/`variant_a_sections`, so raw
+	// model HTML reached the client untouched. Sanitising at each render path is the shape that
+	// let that happen; there is one place the sections are born, and this is it.
 	for _, rawSec := range parsed.Sections {
 		var anySec any
 		if err := json.Unmarshal(rawSec, &anySec); err != nil {
 			return nil, fmt.Errorf("model response has an unreadable section: %w", err)
 		}
-		out.RawSections = append(out.RawSections, anySec)
+		out.RawSections = append(out.RawSections, sanitizeSectionHTML(anySec))
 	}
 	secs, dropped := decodeWizardSections(out.RawSections)
 	if len(secs) == 0 {

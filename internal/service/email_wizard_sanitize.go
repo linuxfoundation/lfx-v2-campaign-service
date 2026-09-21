@@ -97,3 +97,28 @@ func sanitizeWizardHTML(input string) string {
 		}
 	}
 }
+
+// sanitizeSectionHTML runs a decoded section's `html` field through sanitizeWizardHTML.
+//
+// Takes and returns `any` because RawSections is the decoded JSON as received -- it is what the
+// caller gets back as `sections`, so it cannot be re-typed without changing the wire shape. A
+// section that is not an object, or carries no string `html`, is returned untouched: only the
+// one field that reaches an HTML sink is rewritten.
+func sanitizeSectionHTML(section any) any {
+	obj, ok := section.(map[string]any)
+	if !ok {
+		return section
+	}
+	raw, ok := obj["html"].(string)
+	if !ok {
+		return section
+	}
+	// Copied, not mutated in place: the caller's map may be shared with the typed decode below,
+	// and a silent aliasing bug here would be invisible until two sections disagreed.
+	out := make(map[string]any, len(obj))
+	for k, v := range obj {
+		out[k] = v
+	}
+	out["html"] = sanitizeWizardHTML(raw)
+	return out
+}
