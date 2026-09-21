@@ -73,8 +73,8 @@ func containsAny(s string, subs ...string) bool {
 // paths were clean.
 //
 // Sanitising per render path is what allowed that: every new consumer of the sections is a
-// fresh chance to forget. The sanitise now happens where the sections are PARSED, so a
-// consumer cannot receive unsanitised HTML without going around the parser entirely.
+// fresh chance to forget. The sanitize now happens where the sections are PARSED, so a
+// consumer cannot receive unsanitized HTML without going around the parser entirely.
 func TestParsedSectionsAreSanitizedBeforeTheyReachTheCaller(t *testing.T) {
 	body := `{"subject":"s","preview_text":"p","sections":[` +
 		`{"type":"rich_text","html":"<p onclick=\"steal()\">hi</p><script>alert(1)</script>"}]}`
@@ -101,7 +101,7 @@ func TestParsedSectionsAreSanitizedBeforeTheyReachTheCaller(t *testing.T) {
 		t.Errorf("an event handler survived into the returned sections: %q", html)
 	}
 	if !strings.Contains(html, "hi") {
-		t.Errorf("sanitising removed the legitimate text too: %q", html)
+		t.Errorf("sanitizing removed the legitimate text too: %q", html)
 	}
 }
 
@@ -160,4 +160,56 @@ func TestSanitizeWizardHTMLCoversTheAllowListAndNesting(t *testing.T) {
 			}
 		})
 	}
+}
+
+// sanitizeSectionHTML's two fallback branches, which decide what happens to a section the
+// sanitizer cannot rewrite. They pull in opposite directions, so both are pinned:
+//
+//   - a NON-OBJECT entry is DROPPED. The first version returned it untouched, which is
+//     fail-open: nothing requires `sections[i]` to be an object, so a bare
+//     `"<script>alert(1)</script>"` was copied verbatim into the response while every object
+//     section beside it was sanitized.
+//   - an object with NO string `html` is KEPT. `divider` and `button` sections legitimately
+//     carry none, and dropping them would silently delete real content.
+func TestSanitizeSectionHTMLFallbackBranches(t *testing.T) {
+	t.Run("drops a non-object section", func(t *testing.T) {
+		got, keep := sanitizeSectionHTML("<script>alert(1)</script>")
+		if keep {
+			t.Errorf("a non-object section was kept as %v -- it reaches the caller unsanitized", got)
+		}
+	})
+
+	t.Run("drops a section that is a number", func(t *testing.T) {
+		if _, keep := sanitizeSectionHTML(42.0); keep {
+			t.Error("a numeric section was kept")
+		}
+	})
+
+	t.Run("keeps an object with no html field", func(t *testing.T) {
+		in := map[string]any{"type": "divider"}
+		got, keep := sanitizeSectionHTML(in)
+		if !keep {
+			t.Fatal("a divider section was dropped -- real content silently deleted")
+		}
+		obj, ok := got.(map[string]any)
+		if !ok || obj["type"] != "divider" {
+			t.Errorf("divider section came back as %v", got)
+		}
+	})
+
+	t.Run("keeps an object whose html is not a string", func(t *testing.T) {
+		if _, keep := sanitizeSectionHTML(map[string]any{"type": "rich_text", "html": 7.0}); !keep {
+			t.Error("a section with a non-string html was dropped rather than passed through")
+		}
+	})
+
+	t.Run("does not mutate the input map", func(t *testing.T) {
+		in := map[string]any{"type": "rich_text", "html": `<p onclick="x()">t</p>`}
+		if _, keep := sanitizeSectionHTML(in); !keep {
+			t.Fatal("section was dropped")
+		}
+		if in["html"] != `<p onclick="x()">t</p>` {
+			t.Errorf("the caller's map was mutated in place: %v", in["html"])
+		}
+	})
 }

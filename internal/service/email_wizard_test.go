@@ -1297,11 +1297,16 @@ func TestWizard_ProgressTokenIsServerMintedNotCallerSupplied(t *testing.T) {
 // deleted, and SetWizardSendList would mutate the recipients of the HubSpot draft -- an effect
 // outside this database entirely, on a brief that no longer exists.
 //
-// All SIX session-taking methods are listed -- plan, generate-content, get-session,
-// set-send-list, update-sections and clone -- so a NEW one that skips the guard fails here
-// rather than shipping. An earlier version of this comment claimed "every" while covering four,
-// which is the kind of claim that reads as coverage it does not have. `t.Run` per method names
-// the offender instead of stopping at the first.
+// The seven public methods that call `loadWizardSession`: plan, generate-content, get-session,
+// set-send-list, update-sections, clone and chat.
+//
+// The count is stated because it is CHECKABLE, and it has been wrong twice: first "every" while
+// covering four, then "all six" while missing chat. Verify it rather than trust it --
+//
+//	awk '/^func \(s \*BriefService\)/{fn=$0} /loadWizardSession\(ctx/{print fn}' email_wizard.go
+//
+// -- which also lists `wizardHubSpotClient`, an unexported helper reached only through these.
+// `t.Run` per method names the offender instead of stopping at the first.
 func TestWizard_EveryTurnRefusesADeletedBrief(t *testing.T) {
 	ctx := context.Background()
 
@@ -1338,6 +1343,11 @@ func TestWizard_EveryTurnRefusesADeletedBrief(t *testing.T) {
 		{"clone", func(h *wizardHarness, id string) error {
 			_, err := h.svc.CloneWizardEmail(ctx, &briefs.CloneWizardEmailPayload{
 				ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: id, Approved: true})
+			return err
+		}},
+		{"chat", func(h *wizardHarness, id string) error {
+			_, err := h.svc.ChatWizardTurn(ctx, &briefs.ChatWizardTurnPayload{
+				ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: id, Message: "hi"})
 			return err
 		}},
 	}

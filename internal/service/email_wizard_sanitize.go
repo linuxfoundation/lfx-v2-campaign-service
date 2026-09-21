@@ -117,20 +117,30 @@ func sanitizeWizardHTML(input string) string {
 	}
 }
 
-// sanitizeSectionHTML runs a decoded section's `html` field through sanitizeWizardHTML.
+// sanitizeSectionHTML runs a decoded section's `html` field through sanitizeWizardHTML,
+// reporting whether the section may be kept at all.
 //
 // Takes and returns `any` because RawSections is the decoded JSON as received -- it is what the
-// caller gets back as `sections`, so it cannot be re-typed without changing the wire shape. A
-// section that is not an object, or carries no string `html`, is returned untouched: only the
-// one field that reaches an HTML sink is rewritten.
-func sanitizeSectionHTML(section any) any {
+// caller gets back as `sections`, so it cannot be re-typed without changing the wire shape.
+//
+// A section that is not an OBJECT is dropped, not passed through. The first version returned it
+// untouched, which is fail-OPEN: nothing upstream requires `sections[i]` to be an object, so a
+// model emitting the bare string `"<script>alert(1)</script>"` had it copied verbatim into the
+// response while every object section beside it was sanitized. `decodeWizardSections` already
+// ignores non-object entries, so dropping one loses nothing a consumer could render -- it only
+// removes something no consumer should have been handed.
+//
+// An object with no string `html` is KEPT as-is: `divider` and `button` sections legitimately
+// carry no HTML, and dropping them would silently delete real content. Only the one field that
+// reaches an HTML sink is rewritten.
+func sanitizeSectionHTML(section any) (any, bool) {
 	obj, ok := section.(map[string]any)
 	if !ok {
-		return section
+		return nil, false
 	}
 	raw, ok := obj["html"].(string)
 	if !ok {
-		return section
+		return section, true
 	}
 	// Copied, not mutated in place: the caller's map may be shared with the typed decode below,
 	// and a silent aliasing bug here would be invisible until two sections disagreed.
@@ -139,5 +149,5 @@ func sanitizeSectionHTML(section any) any {
 		out[k] = v
 	}
 	out["html"] = sanitizeWizardHTML(raw)
-	return out
+	return out, true
 }

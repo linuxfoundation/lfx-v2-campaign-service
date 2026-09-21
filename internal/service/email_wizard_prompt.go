@@ -375,7 +375,11 @@ func parseWizardContentResponse(raw string) (*wizardGeneratedContent, error) {
 		if err := json.Unmarshal(rawSec, &anySec); err != nil {
 			return nil, fmt.Errorf("model response has an unreadable section: %w", err)
 		}
-		out.RawSections = append(out.RawSections, sanitizeSectionHTML(anySec))
+		clean, keep := sanitizeSectionHTML(anySec)
+		if !keep {
+			continue
+		}
+		out.RawSections = append(out.RawSections, clean)
 	}
 	secs, dropped := decodeWizardSections(out.RawSections)
 	if len(secs) == 0 {
