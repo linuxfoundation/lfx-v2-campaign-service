@@ -17,6 +17,12 @@
 # and before DEALAKO_REPO_PAT is exposed to any step. Both the PR author
 # and github.actor must pass the team check.
 #
+# PRs that change this workflow or its prompt are also skipped, even
+# when they also change other files. Those edits are human-reviewed;
+# Copilot must not review (or rewrite) the job that posts as dealako.
+# GitHub `on.paths-ignore` is not enough: it still runs when mixed
+# with other paths.
+#
 # Two separate credentials are in play here, on purpose:
 #   - Copilot CLI's own model-call auth uses the workflow's built-in
 #     GITHUB_TOKEN (billed to the linuxfoundation org), via the
@@ -39,7 +45,7 @@
 # to the org" and "post this as dealako."
 #
 # The authorize job never receives DEALAKO_REPO_PAT. The review job only
-# starts after the team check succeeds.
+# starts after the team check and the workflow/prompt path check succeed.
 
 name: dd-pr-review-auto-cloud
 
@@ -56,7 +62,7 @@ concurrency:
 
 jobs:
   authorize:
-    name: Authorize team member
+    name: Authorize review
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -75,7 +81,7 @@ jobs:
       (github.event.pull_request.author_association == 'MEMBER' ||
        github.event.pull_request.author_association == 'OWNER')
     steps:
-      - name: Verify lfx-platform team membership
+      - name: Verify team membership and protected paths
         id: authz
         env:
           GH_TOKEN: ${{ github.token }}
@@ -84,6 +90,8 @@ jobs:
           ACTOR: ${{ github.actor }}
           ORG: linuxfoundation
           TEAM: lfx-platform
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
 
@@ -122,9 +130,24 @@ jobs:
             fi
           done
 
+          # Human-only: do not auto-review PRs that touch this workflow or
+          # its prompt, even when they also change other files. Check both
+          # filename and previous_filename so a rename still trips the gate.
+          changed="$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" \
+            --jq '.[] | [.filename, .previous_filename] | .[] | select(. != null and . != "")')"
+          while IFS= read -r path; do
+            [[ -z "$path" ]] && continue
+            case "$path" in
+              .github/workflows/dd-pr-review-auto-cloud.yml|.github/copilot-workflows/dd-pr-review-auto-cloud.md)
+                echo "skip: PR touches protected review automation path ${path} (human review only)"
+                allowed=false
+                ;;
+            esac
+          done <<< "$changed"
+
           echo "allowed=${allowed}" >> "$GITHUB_OUTPUT"
           if [[ "$allowed" != "true" ]]; then
-            echo "Automated review is limited to @${ORG}/${TEAM}. Copilot will not start."
+            echo "Automated review will not start (see skip reasons above)."
           fi
 
   review:
