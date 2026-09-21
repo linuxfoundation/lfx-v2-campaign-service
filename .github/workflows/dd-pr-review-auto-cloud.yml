@@ -8,6 +8,15 @@
 # separate webhook receiver. Review comments and the formal APPROVE /
 # REQUEST_CHANGES verdict are posted as @dealako, not as a bot identity.
 #
+# Who may start this job
+# ----------------------
+# Same-repo pull requests from active members of
+# @linuxfoundation/lfx-v2-campaign-service (this repo's CODEOWNERS team)
+# only. Forks, bots, drafts, dealako-authored PRs, and authors who are
+# merely linuxfoundation org members (or outside collaborators) are skipped
+# before Copilot starts and before DEALAKO_REPO_PAT is exposed to any step.
+# Both the PR author and github.actor must pass the team check.
+#
 # Two separate credentials are in play here, on purpose:
 #   - Copilot CLI's own model-call auth uses the workflow's built-in
 #     GITHUB_TOKEN (billed to the linuxfoundation org), via the
@@ -28,6 +37,9 @@
 # (COPILOT_GITHUB_TOKEN vs. GH_TOKEN) — `copilot` checks COPILOT_GITHUB_TOKEN
 # first and `gh` never reads it, so there's no collision between "bill this
 # to the org" and "post this as dealako."
+#
+# The authorize job never receives DEALAKO_REPO_PAT. The review job only
+# starts after the team check succeeds.
 
 name: dd-pr-review-auto-cloud
 
@@ -37,30 +49,98 @@ on:
 
 permissions:
   contents: read
-  copilot-requests: write
 
 concurrency:
   group: dd-pr-review-auto-cloud-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  review:
-    name: Copilot PR review (as @dealako)
+  authorize:
+    name: Authorize team member
     runs-on: ubuntu-latest
-    # Defense-in-depth: the prompt re-checks draft and self-authored itself
-    # (Step 1), but skipping here avoids spending a Copilot CLI run on PRs
-    # we know we won't review. Forks are skipped because pull_request
-    # workflows from forks do not receive repository secrets (same guard as
-    # ko-build-branch.yaml).
+    permissions:
+      contents: read
+      members: read
+      pull-requests: read
+    outputs:
+      allowed: ${{ steps.authz.outputs.allowed }}
+    # Cheap prefilter so we do not spend a runner on PRs we will never review.
+    # MEMBER/OWNER = linuxfoundation org membership on this repo. The team
+    # check below is stricter (CODEOWNERS team, not the whole org).
     if: >-
       github.event.pull_request.draft == false &&
       github.event.pull_request.user.login != 'dealako' &&
-      github.event.pull_request.head.repo.fork == false
+      github.event.pull_request.user.type != 'Bot' &&
+      github.event.pull_request.head.repo.fork == false &&
+      (github.event.pull_request.author_association == 'MEMBER' ||
+       github.event.pull_request.author_association == 'OWNER')
+    steps:
+      - name: Verify CODEOWNERS team membership
+        id: authz
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_PAGER: cat
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          ACTOR: ${{ github.actor }}
+          ORG: linuxfoundation
+          TEAM: lfx-v2-campaign-service
+        run: |
+          set -euo pipefail
+
+          membership_state() {
+            local user="$1"
+            local err
+            err="$(mktemp)"
+            if gh api "orgs/${ORG}/teams/${TEAM}/memberships/${user}" --jq .state 2>"$err"; then
+              rm -f "$err"
+              return 0
+            fi
+            if grep -Eq 'Not Found|"status":\s*"404"|HTTP 404' "$err"; then
+              rm -f "$err"
+              echo none
+              return 0
+            fi
+            echo "team membership API failed for ${user}:" >&2
+            cat "$err" >&2
+            rm -f "$err"
+            return 1
+          }
+
+          allowed=true
+          for user in "$AUTHOR" "$ACTOR"; do
+            if [[ -z "$user" ]]; then
+              echo "skip: empty username"
+              allowed=false
+              continue
+            fi
+            state="$(membership_state "$user")"
+            if [[ "$state" != "active" ]]; then
+              echo "skip: ${user} is not an active member of ${ORG}/${TEAM} (state=${state})"
+              allowed=false
+            else
+              echo "ok: ${user} is an active member of ${ORG}/${TEAM}"
+            fi
+          done
+
+          echo "allowed=${allowed}" >> "$GITHUB_OUTPUT"
+          if [[ "$allowed" != "true" ]]; then
+            echo "Automated review is limited to @${ORG}/${TEAM}. Copilot will not start."
+          fi
+
+  review:
+    name: Copilot PR review (as @dealako)
+    needs: authorize
+    if: needs.authorize.outputs.allowed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      copilot-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           fetch-depth: 0
+          persist-credentials: false
           # PR HEAD, not the merge ref: conflicted PRs have no merge commit,
           # and Step 5 still needs a tree to review before REQUEST_CHANGES.
           ref: ${{ github.event.pull_request.head.sha }}
@@ -69,7 +149,19 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
 
       - name: Install Copilot CLI
-        run: npm install -g @github/copilot@1.0.86
+        env:
+          COPILOT_TARBALL_SHA512: ytl6vkox1l6Y+UqLhX0+SOuTkS84VCp8R2CJqzgJ8QfnOlWe3U6z1ZVRm/sYWGMLchWQpnC7d+wWZ1mTUTFuuQ==
+        run: |
+          set -euo pipefail
+          tarball="$(npm pack @github/copilot@1.0.86)"
+          actual="$(openssl dgst -sha512 -binary "$tarball" | openssl base64 -A)"
+          if [[ "$actual" != "$COPILOT_TARBALL_SHA512" ]]; then
+            echo "Copilot CLI tarball hash mismatch" >&2
+            echo "expected: $COPILOT_TARBALL_SHA512" >&2
+            echo "actual:   $actual" >&2
+            exit 1
+          fi
+          npm install -g "$tarball"
 
       - name: Run automated PR review
         env:

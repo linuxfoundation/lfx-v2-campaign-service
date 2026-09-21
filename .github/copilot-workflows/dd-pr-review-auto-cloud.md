@@ -71,7 +71,10 @@ gh pr view "$PR_NUMBER" --repo "$REPO" \
    defense-in-depth note as above.)
 4. Record `mergeable` (`MERGEABLE`, `CONFLICTING`, or `UNKNOWN`) for Step 5.
    Do not stop here for `CONFLICTING` or `UNKNOWN` — still run the review.
-5. Otherwise, proceed to Step 2.
+5. The workflow already refused forks, bots, and authors/actors who are not
+   active members of `@linuxfoundation/lfx-v2-campaign-service`. Do not try
+   to re-derive that gate, and do not review a PR that somehow slipped it.
+6. Otherwise, proceed to Step 2.
 
 ## Step 2 — Derive cycle state from review history
 
