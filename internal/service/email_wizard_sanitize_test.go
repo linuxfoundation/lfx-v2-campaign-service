@@ -121,3 +121,43 @@ func TestSanitizeWizardHTMLClosesSelfClosingNonVoidTags(t *testing.T) {
 		}
 	}
 }
+
+// The whole allow-list, and the drop/keep interaction when they nest.
+//
+// The earlier tests covered the tags an attacker reaches for and the ones a paragraph needs,
+// which left most of `allowedTags` unexercised: an entry could be dropped from the map and
+// nothing would fail. The nesting cases matter more than the flat ones -- `dropContent` removes
+// a tag's CONTENT, and getting that wrong inside an allowed parent either leaks the script text
+// as visible copy or swallows the surrounding paragraph.
+func TestSanitizeWizardHTMLCoversTheAllowListAndNesting(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"bold", `<b>x</b>`, `<b>x</b>`},
+		{"italic", `<i>x</i>`, `<i>x</i>`},
+		{"underline", `<u>x</u>`, `<u>x</u>`},
+		{"strong", `<strong>x</strong>`, `<strong>x</strong>`},
+		{"emphasis", `<em>x</em>`, `<em>x</em>`},
+		{"blockquote", `<blockquote>x</blockquote>`, `<blockquote>x</blockquote>`},
+		{"heading h1", `<h1>x</h1>`, `<h1>x</h1>`},
+		{"heading h6", `<h6>x</h6>`, `<h6>x</h6>`},
+		{"line break", `a<br>b`, `a<br>b`},
+		{"list", `<ul><li>x</li></ul>`, `<ul><li>x</li></ul>`},
+		{"ordered list", `<ol><li>x</li></ol>`, `<ol><li>x</li></ol>`},
+
+		// A dropped tag INSIDE an allowed one: the parent survives, the content does not.
+		{"script inside div", `<div>a<script>evil()</script>b</div>`, `<div>ab</div>`},
+		{"style inside p", `<p>a<style>.x{}</style>b</p>`, `<p>ab</p>`},
+		{"iframe inside blockquote", `<blockquote><iframe src="x"></iframe>keep</blockquote>`, `<blockquote>keep</blockquote>`},
+
+		// A disallowed-but-not-dropped tag: the tag goes, its TEXT stays -- unlike dropContent.
+		{"unknown tag keeps its text", `<marquee>keep</marquee>`, `keep`},
+
+		// An allowed tag nested inside a dropped one is removed with it, not resurrected.
+		{"allowed inside dropped", `<script><b>gone</b></script>after`, `after`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeWizardHTML(tc.in); got != tc.want {
+				t.Errorf("sanitizeWizardHTML(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
