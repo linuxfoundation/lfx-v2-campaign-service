@@ -3659,6 +3659,99 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/connection-google-ads/account-monitor:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: monitor-google-ads-account lfx-v2-campaign-service-connections
+            description: 'Read every campaign visible on a Google Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Account-scoped, not project-scoped: {project_id} resolves which stored connection credential to use, and the read enumerates everything that credential reaches on account_id, not only campaigns this service created. Unlike GET .../connection-google-ads/accounts, this endpoint resolves the project''s OWN connection only and does not fall back to the shared LF system credential: a project with no Google Ads connection of its own gets a 404, not the LF account''s data. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#monitor-google-ads-account
+            parameters:
+                - name: account_id
+                  in: query
+                  description: The Google Ads account to read.
+                  required: true
+                  type: string
+                  maxLength: 64
+                  pattern: ^[0-9]+$
+                - name: days
+                  in: query
+                  description: Trailing days to read metrics over.
+                  required: true
+                  type: integer
+                  maximum: 90
+                  minimum: 7
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/AccountMonitor'
+                        required:
+                            - account_id
+                            - days
+                            - campaigns
+                            - action_items
+                            - totals
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/connection-google-ads/accounts:
         get:
             tags:
@@ -4997,6 +5090,99 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/connection-linkedin-ads/account-monitor:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: monitor-linkedin-ads-account lfx-v2-campaign-service-connections
+            description: 'Read every campaign visible on a LinkedIn Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#monitor-linkedin-ads-account
+            parameters:
+                - name: account_id
+                  in: query
+                  description: The LinkedIn ad account to read.
+                  required: true
+                  type: string
+                  maxLength: 64
+                  pattern: ^[0-9]+$
+                - name: days
+                  in: query
+                  description: Trailing days to read metrics over.
+                  required: true
+                  type: integer
+                  maximum: 90
+                  minimum: 7
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/AccountMonitor'
+                        required:
+                            - account_id
+                            - days
+                            - campaigns
+                            - action_items
+                            - totals
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/connection-linkedin-ads/accounts:
         get:
             tags:
@@ -5531,6 +5717,99 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/connection-meta-ads/account-monitor:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: monitor-meta-ads-account lfx-v2-campaign-service-connections
+            description: 'Read every campaign visible on a Meta Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#monitor-meta-ads-account
+            parameters:
+                - name: account_id
+                  in: query
+                  description: The Meta ad account to read.
+                  required: true
+                  type: string
+                  maxLength: 64
+                  pattern: ^act_[0-9]+$
+                - name: days
+                  in: query
+                  description: Trailing days to read metrics over.
+                  required: true
+                  type: integer
+                  maximum: 90
+                  minimum: 7
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/AccountMonitor'
+                        required:
+                            - account_id
+                            - days
+                            - campaigns
+                            - action_items
+                            - totals
                 "400":
                     description: Bad Request response.
                     schema:
@@ -6699,6 +6978,99 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/connection-reddit-ads/account-monitor:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: monitor-reddit-ads-account lfx-v2-campaign-service-connections
+            description: 'Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. totals on this platform come from a separate account-level upstream call rather than a sum of the campaigns array — see AccountTotalsReader in internal/service/orchestrator.go. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#monitor-reddit-ads-account
+            parameters:
+                - name: account_id
+                  in: query
+                  description: The Reddit advertiser account to read.
+                  required: true
+                  type: string
+                  maxLength: 64
+                  pattern: ^[A-Za-z0-9_]+$
+                - name: days
+                  in: query
+                  description: Trailing days to read metrics over.
+                  required: true
+                  type: integer
+                  maximum: 90
+                  minimum: 7
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/AccountMonitor'
+                        required:
+                            - account_id
+                            - days
+                            - campaigns
+                            - action_items
+                            - totals
                 "400":
                     description: Bad Request response.
                     schema:
@@ -7963,6 +8335,394 @@ definitions:
             label: Ex ut.
         required:
             - id
+    AccountMonitor:
+        title: AccountMonitor
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: The account this read covers, echoed back from the request.
+                example: "8666746580"
+            action_items:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorActionItem'
+                description: The rule engine's findings across the account's campaigns.
+                example:
+                    - action: Increase daily budget or check for delivery limits
+                      campaign_id: "24183781329"
+                      campaign_name: KubeCon NA 2026 - Search
+                      issue: 'Underspending: 42% of expected spend'
+                      priority: MED
+                    - action: Increase daily budget or check for delivery limits
+                      campaign_id: "24183781329"
+                      campaign_name: KubeCon NA 2026 - Search
+                      issue: 'Underspending: 42% of expected spend'
+                      priority: MED
+                    - action: Increase daily budget or check for delivery limits
+                      campaign_id: "24183781329"
+                      campaign_name: KubeCon NA 2026 - Search
+                      issue: 'Underspending: 42% of expected spend'
+                      priority: MED
+            campaigns:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorCampaign'
+                description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+                example:
+                    - budget_day: 150
+                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                      clicks: 3110
+                      conversions: 12.5
+                      ctr: 6.45
+                      end_date: "2026-11-30"
+                      fetch_failed: false
+                      impressions: 48200
+                      is_search_channel: true
+                      name: KubeCon NA 2026 - Search
+                      pacing_label: normal
+                      pacing_pct: 87
+                      pacing_unknown: false
+                      platform_campaign_id: "24183781329"
+                      spend: 482.13
+                      start_date: "2026-08-01"
+                      status: ENABLED
+                      total_budget: 5000
+                    - budget_day: 150
+                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                      clicks: 3110
+                      conversions: 12.5
+                      ctr: 6.45
+                      end_date: "2026-11-30"
+                      fetch_failed: false
+                      impressions: 48200
+                      is_search_channel: true
+                      name: KubeCon NA 2026 - Search
+                      pacing_label: normal
+                      pacing_pct: 87
+                      pacing_unknown: false
+                      platform_campaign_id: "24183781329"
+                      spend: 482.13
+                      start_date: "2026-08-01"
+                      status: ENABLED
+                      total_budget: 5000
+                    - budget_day: 150
+                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                      clicks: 3110
+                      conversions: 12.5
+                      ctr: 6.45
+                      end_date: "2026-11-30"
+                      fetch_failed: false
+                      impressions: 48200
+                      is_search_channel: true
+                      name: KubeCon NA 2026 - Search
+                      pacing_label: normal
+                      pacing_pct: 87
+                      pacing_unknown: false
+                      platform_campaign_id: "24183781329"
+                      spend: 482.13
+                      start_date: "2026-08-01"
+                      status: ENABLED
+                      total_budget: 5000
+            days:
+                type: integer
+                description: The trailing-days window this read covers, echoed back from the request.
+                example: 30
+                format: int64
+            totals:
+                $ref: '#/definitions/AccountMonitorTotals'
+        example:
+            account_id: "8666746580"
+            action_items:
+                - action: Increase daily budget or check for delivery limits
+                  campaign_id: "24183781329"
+                  campaign_name: KubeCon NA 2026 - Search
+                  issue: 'Underspending: 42% of expected spend'
+                  priority: MED
+                - action: Increase daily budget or check for delivery limits
+                  campaign_id: "24183781329"
+                  campaign_name: KubeCon NA 2026 - Search
+                  issue: 'Underspending: 42% of expected spend'
+                  priority: MED
+            campaigns:
+                - budget_day: 150
+                  campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                  clicks: 3110
+                  conversions: 12.5
+                  ctr: 6.45
+                  end_date: "2026-11-30"
+                  fetch_failed: false
+                  impressions: 48200
+                  is_search_channel: true
+                  name: KubeCon NA 2026 - Search
+                  pacing_label: normal
+                  pacing_pct: 87
+                  pacing_unknown: false
+                  platform_campaign_id: "24183781329"
+                  spend: 482.13
+                  start_date: "2026-08-01"
+                  status: ENABLED
+                  total_budget: 5000
+                - budget_day: 150
+                  campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                  clicks: 3110
+                  conversions: 12.5
+                  ctr: 6.45
+                  end_date: "2026-11-30"
+                  fetch_failed: false
+                  impressions: 48200
+                  is_search_channel: true
+                  name: KubeCon NA 2026 - Search
+                  pacing_label: normal
+                  pacing_pct: 87
+                  pacing_unknown: false
+                  platform_campaign_id: "24183781329"
+                  spend: 482.13
+                  start_date: "2026-08-01"
+                  status: ENABLED
+                  total_budget: 5000
+                - budget_day: 150
+                  campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                  clicks: 3110
+                  conversions: 12.5
+                  ctr: 6.45
+                  end_date: "2026-11-30"
+                  fetch_failed: false
+                  impressions: 48200
+                  is_search_channel: true
+                  name: KubeCon NA 2026 - Search
+                  pacing_label: normal
+                  pacing_pct: 87
+                  pacing_unknown: false
+                  platform_campaign_id: "24183781329"
+                  spend: 482.13
+                  start_date: "2026-08-01"
+                  status: ENABLED
+                  total_budget: 5000
+            days: 30
+            totals:
+                campaign_count: 14
+                clicks: 11420
+                conversions: 212.5
+                derived_from_rows: false
+                impressions: 184200
+                spend: 1842.55
+        required:
+            - account_id
+            - days
+            - campaigns
+            - action_items
+            - totals
+    AccountMonitorActionItem:
+        title: AccountMonitorActionItem
+        type: object
+        properties:
+            action:
+                type: string
+                description: The suggested remedy.
+                example: Increase daily budget or check for delivery limits
+            campaign_id:
+                type: string
+                description: The platform campaign id this item is about. Empty for an account-wide item.
+                example: "24183781329"
+            campaign_name:
+                type: string
+                description: The campaign's platform-side name, carried alongside campaign_id so a renderer never needs to re-join against the row list.
+                example: KubeCon NA 2026 - Search
+            issue:
+                type: string
+                description: What the rule engine flagged.
+                example: 'Underspending: 42% of expected spend'
+            priority:
+                type: string
+                description: The rule engine's priority band for this item.
+                example: MED
+                enum:
+                    - HIGH
+                    - MED
+                    - LOW
+        example:
+            action: Increase daily budget or check for delivery limits
+            campaign_id: "24183781329"
+            campaign_name: KubeCon NA 2026 - Search
+            issue: 'Underspending: 42% of expected spend'
+            priority: LOW
+        required:
+            - priority
+            - issue
+            - action
+    AccountMonitorCampaign:
+        title: AccountMonitorCampaign
+        type: object
+        properties:
+            budget_day:
+                type: number
+                description: Daily budget in the account's currency, 0 when the campaign has none (e.g. a LinkedIn/Meta campaign funded by total_budget instead).
+                example: 150
+                format: double
+            campaign_url:
+                type: string
+                description: 'Google Ads only: direct link to the campaign in the Google Ads UI.'
+                example: https://ads.google.com/aw/campaigns?campaignId=24183781329
+            clicks:
+                type: integer
+                description: Clicks over the window.
+                example: 3110
+                format: int64
+            conversions:
+                type: number
+                description: Conversions over the window. ABSENT when this platform/row could not measure conversions — not a measured 0.
+                example: 12.5
+                format: double
+            ctr:
+                type: number
+                description: Clicks/Impressions * 100, 0 when Impressions is 0.
+                example: 6.45
+                format: double
+            end_date:
+                type: string
+                description: The campaign's flight end date, RFC 3339 date-only (YYYY-MM-DD). Empty when the platform did not report one.
+                example: "2026-11-30"
+            fetch_failed:
+                type: boolean
+                description: 'True when some part of this row''s upstream data could not be trusted: either its per-campaign metrics fetch failed outright (numeric fields left at their zero value), or, for Google Ads, its budget field was present but unparseable alongside otherwise-good metrics. A renderer MUST check this before treating any of this row''s fields, zero or not, as a fully trusted reading.'
+                example: false
+            impressions:
+                type: integer
+                description: Impressions over the window.
+                example: 48200
+                format: int64
+            is_search_channel:
+                type: boolean
+                description: 'Google Ads only: true when the campaign''s advertising_channel_type is SEARCH. Always false for LinkedIn/Meta/Reddit rows.'
+                example: true
+            name:
+                type: string
+                description: The campaign's platform-side name, unparsed.
+                example: KubeCon NA 2026 - Search
+            pacing_label:
+                type: string
+                description: The pacing classification derived from pacing_pct. Meaningless when pacing_unknown is true — a fetch-failed row keeps the placeholder value "normal" rather than carrying no label at all, since the enum has no unknown member.
+                example: overspending
+                enum:
+                    - normal
+                    - underspending
+                    - constrained
+                    - overspending
+            pacing_pct:
+                type: number
+                description: spend / expected-spend * 100. Meaningless when pacing_unknown is true.
+                example: 87
+                format: double
+            pacing_unknown:
+                type: boolean
+                description: True when the flight dates needed to compute pacing_pct were unavailable. A renderer MUST NOT treat pacing_pct as meaningful when this is true.
+                example: false
+            platform_campaign_id:
+                type: string
+                description: The id the platform assigned to this campaign.
+                example: "24183781329"
+            spend:
+                type: number
+                description: Total cost in the account's currency over the requested window.
+                example: 482.13
+                format: double
+            start_date:
+                type: string
+                description: The campaign's flight start date, RFC 3339 date-only (YYYY-MM-DD). Empty when the platform did not report one.
+                example: "2026-08-01"
+            status:
+                type: string
+                description: The platform's own status string, passed through verbatim (e.g. ENABLED/PAUSED on Google Ads, ACTIVE/PAUSED on LinkedIn/Meta/Reddit).
+                example: ENABLED
+            total_budget:
+                type: number
+                description: Lifetime/total budget in the account's currency, 0 when the campaign is funded by budget_day instead.
+                example: 5000
+                format: double
+        example:
+            budget_day: 150
+            campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+            clicks: 3110
+            conversions: 12.5
+            ctr: 6.45
+            end_date: "2026-11-30"
+            fetch_failed: false
+            impressions: 48200
+            is_search_channel: true
+            name: KubeCon NA 2026 - Search
+            pacing_label: overspending
+            pacing_pct: 87
+            pacing_unknown: false
+            platform_campaign_id: "24183781329"
+            spend: 482.13
+            start_date: "2026-08-01"
+            status: ENABLED
+            total_budget: 5000
+        required:
+            - platform_campaign_id
+            - name
+            - status
+            - spend
+            - impressions
+            - clicks
+            - ctr
+            - budget_day
+            - total_budget
+            - start_date
+            - end_date
+            - pacing_unknown
+            - is_search_channel
+            - fetch_failed
+            - pacing_pct
+            - pacing_label
+    AccountMonitorTotals:
+        title: AccountMonitorTotals
+        type: object
+        properties:
+            campaign_count:
+                type: integer
+                description: How many campaigns the totals reflect.
+                example: 14
+                format: int64
+            clicks:
+                type: integer
+                description: Account-wide clicks over the window.
+                example: 11420
+                format: int64
+            conversions:
+                type: number
+                description: Account-wide conversions over the window.
+                example: 212.5
+                format: double
+            derived_from_rows:
+                type: boolean
+                description: True when these totals are a sum of the returned campaigns array rather than the platform's own account-wide figure. Always false except on a Reddit read whose separate account-totals call actually failed, in which case the campaign rows are still authoritative but this aggregate is a derived stand-in.
+                example: false
+            impressions:
+                type: integer
+                description: Account-wide impressions over the window.
+                example: 184200
+                format: int64
+            spend:
+                type: number
+                description: Account-wide spend over the window.
+                example: 1842.55
+                format: double
+        example:
+            campaign_count: 14
+            clicks: 11420
+            conversions: 212.5
+            derived_from_rows: false
+            impressions: 184200
+            spend: 1842.55
+        required:
+            - spend
+            - impressions
+            - clicks
+            - conversions
+            - campaign_count
+            - derived_from_rows
     Audience:
         title: Audience
         type: object
@@ -7970,15 +8730,15 @@ definitions:
             brief_id:
                 type: string
                 description: Owning brief
-                example: Harum rerum esse id ipsam qui repellat.
+                example: Voluptatem officia quam.
             id:
                 type: string
                 description: Audience UUID
-                example: Eum pariatur ea et non ab excepturi.
+                example: Perspiciatis ullam mollitia.
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                example: Accusantium nihil omnis.
+                example: Temporibus laboriosam nihil consequatur mollitia sed.
             platform:
                 type: string
                 description: Platform the audience is built on
@@ -7988,15 +8748,15 @@ definitions:
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Officia quam consequuntur.
+                example: In harum perferendis.
             project_id:
                 type: string
                 description: Owning project
-                example: Autem et perspiciatis ullam mollitia.
+                example: Harum rerum esse id ipsam qui repellat.
             status:
                 type: string
                 description: Build lifecycle status
-                example: failed
+                example: built
                 enum:
                     - building
                     - built
@@ -8005,28 +8765,29 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: In harum perferendis.
+                    example: Inventore aliquid ducimus ut.
                 description: Platform suppression list ids applied to the master
                 example:
-                    - Aliquid ducimus ut adipisci est laboriosam ut.
+                    - Laboriosam ut.
                     - Cum ut eius.
+                    - Accusantium nihil omnis.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 2839897720619818587
+                example: 4065529768295527985
                 format: int64
         example:
-            brief_id: Voluptatem sed reiciendis et libero doloribus et.
-            id: Nihil consequatur mollitia sed illum.
-            inclusion_summary: Saepe iure.
+            brief_id: Doloribus et aut.
+            id: Atque voluptatem et aperiam dolore vitae.
+            inclusion_summary: Dolor enim.
             platform: hubspot
-            platform_master_list_id: Ipsum tempore eum atque molestias quas.
-            project_id: Molestiae atque voluptatem et aperiam dolore.
+            platform_master_list_id: Tempore eum.
+            project_id: Sed reiciendis et.
             status: failed
             suppression_list_ids:
+                - Quas et.
                 - Et est voluptatem.
-                - Dolor enim.
-            version: 5574352792368848134
+            version: 8981925771240296090
         required:
             - id
             - project_id
@@ -8451,7 +9212,7 @@ definitions:
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Veritatis non praesentium asperiores dicta voluptatem.
+                example: Architecto eum.
             status:
                 type: string
                 description: Build lifecycle status
@@ -8464,9 +9225,10 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: Ut tempora voluptas.
+                    example: Veritatis non praesentium asperiores dicta voluptatem.
                 description: Platform suppression list ids applied to the master
                 example:
+                    - Tempora voluptas qui.
                     - Aliquam sed nisi eum.
                     - Sapiente eveniet non.
                     - Ut totam aliquid recusandae totam rerum ut.
@@ -11793,13 +12555,13 @@ definitions:
             audience:
                 inclusion_summary: Nostrum corporis quasi magnam.
                 platform: hubspot
-                platform_master_list_id: Quis quam dolor occaecati earum iusto rerum.
+                platform_master_list_id: Occaecati earum iusto rerum sit cupiditate nobis.
                 status: built
                 suppression_list_ids:
-                    - Nobis iste qui rerum est sed.
-                    - Similique enim ea maiores quidem molestiae.
-                    - Omnis ratione expedita voluptatum.
-                    - Fuga ipsa.
+                    - Rerum est sed sed.
+                    - Enim ea.
+                    - Quidem molestiae deleniti omnis.
+                    - Expedita voluptatum commodi fuga ipsa.
         required:
             - audience
     LfxV2CampaignServiceAudiencesListAudiencesResponseBody:

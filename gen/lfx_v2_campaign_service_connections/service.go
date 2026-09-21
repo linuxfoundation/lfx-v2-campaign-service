@@ -319,6 +319,33 @@ type Service interface {
 	// as possibly-committed, and so is a 2xx whose body could not be decoded.
 	// Verify in HubSpot before creating it again.
 	CreateHubspotCampaign(context.Context, *CreateHubspotCampaignPayload) (res *HubspotCampaign, err error)
+	// Read every campaign visible on a Google Ads account, live from the platform,
+	// with pacing and action items derived by this service's ported rule engine.
+	// Account-scoped, not project-scoped: {project_id} resolves which stored
+	// connection credential to use, and the read enumerates everything that
+	// credential reaches on account_id, not only campaigns this service created.
+	// Unlike GET .../connection-google-ads/accounts, this endpoint resolves the
+	// project's OWN connection only and does not fall back to the shared LF system
+	// credential: a project with no Google Ads connection of its own gets a 404,
+	// not the LF account's data. A pure read: nothing is persisted.
+	MonitorGoogleAdsAccount(context.Context, *MonitorGoogleAdsAccountPayload) (res *AccountMonitor, err error)
+	// Read every campaign visible on a LinkedIn Ads account, live from the
+	// platform, with pacing and action items derived by this service's ported rule
+	// engine. Account-scoped, not project-scoped, the same way
+	// monitor-google-ads-account is. A pure read: nothing is persisted.
+	MonitorLinkedinAdsAccount(context.Context, *MonitorLinkedinAdsAccountPayload) (res *AccountMonitor, err error)
+	// Read every campaign visible on a Meta Ads account, live from the platform,
+	// with pacing and action items derived by this service's ported rule engine.
+	// Account-scoped, not project-scoped, the same way monitor-google-ads-account
+	// is. A pure read: nothing is persisted.
+	MonitorMetaAdsAccount(context.Context, *MonitorMetaAdsAccountPayload) (res *AccountMonitor, err error)
+	// Read every campaign visible on a Reddit Ads account, live from the platform,
+	// with pacing and action items derived by this service's ported rule engine.
+	// Account-scoped, not project-scoped, the same way monitor-google-ads-account
+	// is. totals on this platform come from a separate account-level upstream call
+	// rather than a sum of the campaigns array — see AccountTotalsReader in
+	// internal/service/orchestrator.go. A pure read: nothing is persisted.
+	MonitorRedditAdsAccount(context.Context, *MonitorRedditAdsAccountPayload) (res *AccountMonitor, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -341,7 +368,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [53]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "resolve-google-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign"}
+var MethodNames = [57]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "resolve-google-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -355,6 +382,109 @@ type AccessibleAccount struct {
 	ID string
 	// Human-readable account name or label
 	Label *string
+}
+
+// AccountMonitor is the result type of the lfx-v2-campaign-service-connections
+// service monitor-google-ads-account method.
+type AccountMonitor struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string
+	// The trailing-days window this read covers, echoed back from the request.
+	Days int
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaign
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItem
+	Totals      *AccountMonitorTotals
+}
+
+type AccountMonitorActionItem struct {
+	// The platform campaign id this item is about. Empty for an account-wide item.
+	CampaignID *string
+	// The campaign's platform-side name, carried alongside campaign_id so a
+	// renderer never needs to re-join against the row list.
+	CampaignName *string
+	// The rule engine's priority band for this item.
+	Priority string
+	// What the rule engine flagged.
+	Issue string
+	// The suggested remedy.
+	Action string
+}
+
+type AccountMonitorCampaign struct {
+	// The id the platform assigned to this campaign.
+	PlatformCampaignID string
+	// The campaign's platform-side name, unparsed.
+	Name string
+	// The platform's own status string, passed through verbatim (e.g.
+	// ENABLED/PAUSED on Google Ads, ACTIVE/PAUSED on LinkedIn/Meta/Reddit).
+	Status string
+	// Total cost in the account's currency over the requested window.
+	Spend float64
+	// Impressions over the window.
+	Impressions int64
+	// Clicks over the window.
+	Clicks int64
+	// Clicks/Impressions * 100, 0 when Impressions is 0.
+	Ctr float64
+	// Conversions over the window. ABSENT when this platform/row could not measure
+	// conversions — not a measured 0.
+	Conversions *float64
+	// Daily budget in the account's currency, 0 when the campaign has none (e.g. a
+	// LinkedIn/Meta campaign funded by total_budget instead).
+	BudgetDay float64
+	// Lifetime/total budget in the account's currency, 0 when the campaign is
+	// funded by budget_day instead.
+	TotalBudget float64
+	// The campaign's flight start date, RFC 3339 date-only (YYYY-MM-DD). Empty
+	// when the platform did not report one.
+	StartDate string
+	// The campaign's flight end date, RFC 3339 date-only (YYYY-MM-DD). Empty when
+	// the platform did not report one.
+	EndDate string
+	// True when the flight dates needed to compute pacing_pct were unavailable. A
+	// renderer MUST NOT treat pacing_pct as meaningful when this is true.
+	PacingUnknown bool
+	// Google Ads only: true when the campaign's advertising_channel_type is
+	// SEARCH. Always false for LinkedIn/Meta/Reddit rows.
+	IsSearchChannel bool
+	// True when some part of this row's upstream data could not be trusted: either
+	// its per-campaign metrics fetch failed outright (numeric fields left at their
+	// zero value), or, for Google Ads, its budget field was present but
+	// unparseable alongside otherwise-good metrics. A renderer MUST check this
+	// before treating any of this row's fields, zero or not, as a fully trusted
+	// reading.
+	FetchFailed bool
+	// spend / expected-spend * 100. Meaningless when pacing_unknown is true.
+	PacingPct float64
+	// The pacing classification derived from pacing_pct. Meaningless when
+	// pacing_unknown is true — a fetch-failed row keeps the placeholder value
+	// "normal" rather than carrying no label at all, since the enum has no unknown
+	// member.
+	PacingLabel string
+	// Google Ads only: direct link to the campaign in the Google Ads UI.
+	CampaignURL *string
+}
+
+type AccountMonitorTotals struct {
+	// Account-wide spend over the window.
+	Spend float64
+	// Account-wide impressions over the window.
+	Impressions int64
+	// Account-wide clicks over the window.
+	Clicks int64
+	// Account-wide conversions over the window.
+	Conversions float64
+	// How many campaigns the totals reflect.
+	CampaignCount int
+	// True when these totals are a sum of the returned campaigns array rather than
+	// the platform's own account-wide figure. Always false except on a Reddit read
+	// whose separate account-totals call actually failed, in which case the
+	// campaign rows are still authoritative but this aggregate is a derived
+	// stand-in.
+	DerivedFromRows bool
 }
 
 type CampaignRef struct {
@@ -1085,6 +1215,61 @@ type MicrosoftAdsCredentials struct {
 	RefreshToken string
 	// Microsoft Advertising developer token
 	DeveloperToken string
+}
+
+// MonitorGoogleAdsAccountPayload is the payload type of the
+// lfx-v2-campaign-service-connections service monitor-google-ads-account
+// method.
+type MonitorGoogleAdsAccountPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The Google Ads account to read.
+	AccountID string
+	// Trailing days to read metrics over.
+	Days int
+}
+
+// MonitorLinkedinAdsAccountPayload is the payload type of the
+// lfx-v2-campaign-service-connections service monitor-linkedin-ads-account
+// method.
+type MonitorLinkedinAdsAccountPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The LinkedIn ad account to read.
+	AccountID string
+	// Trailing days to read metrics over.
+	Days int
+}
+
+// MonitorMetaAdsAccountPayload is the payload type of the
+// lfx-v2-campaign-service-connections service monitor-meta-ads-account method.
+type MonitorMetaAdsAccountPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The Meta ad account to read.
+	AccountID string
+	// Trailing days to read metrics over.
+	Days int
+}
+
+// MonitorRedditAdsAccountPayload is the payload type of the
+// lfx-v2-campaign-service-connections service monitor-reddit-ads-account
+// method.
+type MonitorRedditAdsAccountPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The Reddit advertiser account to read.
+	AccountID string
+	// Trailing days to read metrics over.
+	Days int
 }
 
 // PlatformCampaignResolution is the result type of the

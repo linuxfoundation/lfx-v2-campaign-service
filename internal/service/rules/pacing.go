@@ -13,6 +13,14 @@
 //
 // The thresholds here are therefore ONE set with per-platform overrides only where a reason is
 // stated. An override with no stated reason is drift, not configuration.
+//
+// This unification covers only the single-campaign metrics path (Thresholds/ComputePacing/
+// Evaluate below). This package's four monitor_*.go siblings (monitor_google.go,
+// monitor_linkedin.go, monitor_meta.go, monitor_reddit.go) back the account-scoped
+// /account-monitor endpoints and are a DIFFERENT, deliberately un-unified read path — see each
+// file's own header and this package's entry in docs/knowledge/code/internal-service-rules.md
+// for why routing them through this package's shared thresholds would defeat their purpose (a
+// differential diff against the still-live BFF, bug for bug).
 package rules
 
 import (

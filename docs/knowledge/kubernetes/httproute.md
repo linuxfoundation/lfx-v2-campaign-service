@@ -28,28 +28,33 @@ route, so those paths forward to a service that does not serve them. Recorded ra
 than removed because implementing the route and withdrawing the matchers are opposite
 decisions; see the Monitoring warning in `docs/api-catalog.md`.
 
-**The `connection-*` family is spelled out as THREE alternation branches**, not one. All
+**The `connection-*` family is spelled out as FOUR alternation branches**, not one. All
 seven providers share `/test` and `/set-credential`; what differs is the extra ruled
 sub-path each carries:
 
-- `connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads)` add
-  **`/accounts`** — ad-account discovery (google-ads under LFXV2-2023, meta-ads under
-  LFXV2-3062, linkedin-ads and microsoft-ads under LFXV2-3064, twitter-ads under
-  LFXV2-3319). Reddit is absent because its client has no `ListAdAccounts` to expose, not
-  because the route was skipped.
+- `connection-(google-ads|meta-ads|linkedin-ads)` add **`/accounts`** — ad-account
+  discovery (google-ads under LFXV2-2023, meta-ads under LFXV2-3062, linkedin-ads under
+  LFXV2-3064) — and **`/account-monitor`** — the per-account monitoring/pacing endpoint
+  (LFXV2-2665), which every provider in this branch implements via the orchestrator's
+  optional `AccountMetricsReader` capability.
+- `connection-(microsoft-ads|twitter-ads)` add **`/accounts`** only (microsoft-ads under
+  LFXV2-3064, twitter-ads under LFXV2-3319) — neither implements `AccountMetricsReader`,
+  so they carry no `/account-monitor`.
 - `connection-hubspot` adds **`/emails`** — marketing-email search (LFXV2-3197) — and
   **`/campaigns`** — campaign UTM lookup and create (LFXV2-2641). NOT `/accounts`: a
   HubSpot connection is already scoped to the portal its token authenticates against, so
   there is no account to discover. What the caller picks is which marketing email a
   campaign clones, and which existing HubSpot campaign owns the UTM token.
-- Reddit carries neither. With it now the ONLY member of the shared branch, that branch is
-  one ticket away from disappearing — but collapsing it early would admit `/accounts` for a
-  provider the service does not serve.
+- `connection-reddit-ads` adds **`/account-monitor`** but NOT `/accounts` — its client
+  implements `AccountMetricsReader` (per-account monitoring) but has no `ListAdAccounts`
+  to back `AccountLister`, so ad-account discovery isn't served for Reddit even though
+  monitoring is.
 
-Folding these together would admit `/accounts` for hubspot and `/emails` for google-ads,
-neither of which is served — and a path the RuleSet does not rule is a route/rule parity
-violation, which is what `parity_test` exists to catch. It has both positive and negative
-rows for this reason: a widened alternation passes every positive test.
+Folding these together would admit `/accounts` for hubspot, `/emails` for google-ads, and
+`/account-monitor` for microsoft-ads/twitter-ads, none of which is served — and a path the
+RuleSet does not rule is a route/rule parity violation, which is what `parity_test` exists
+to catch. It has both positive and negative rows for this reason: a widened alternation
+passes every positive test.
 
 As each further provider gains a sub-path, add it to the branch that matches its SHAPE
 rather than widening a shared one. Collapsing branches back together is correct only once

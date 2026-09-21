@@ -154,6 +154,17 @@ type credsSource struct {
 	// is process-wide config, not per-request. Default false. It never affects HubSpot:
 	// the forced path gates on Provider.IsPaidAds(), so email resolution is untouched
 	// even with the flag on.
+	//
+	// The four account-monitor endpoints (resolveOwned*, see e.g.
+	// resolveGoogleAdsDiscoveryClient's ownership variant) deliberately do NOT consult this
+	// flag — an account-monitor read must never answer with another tenant's spend, so it
+	// resolves only the project's own connection regardless. With the flag on, a project with
+	// no connection of its own gets the monitor endpoint's ordinary no-connection 404 rather
+	// than falling through to the system account the create path uses; a project WITH its own
+	// connection resolves credentials for its own account, which will not see campaigns living
+	// on the system account either. Neither is a monitor-endpoint bug — it is this flag's
+	// forced-system deployments trading monitor visibility for the create path's convenience
+	// (round-19 review).
 	forceSystemPaidAds bool
 }
 
