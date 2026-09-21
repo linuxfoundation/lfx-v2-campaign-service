@@ -1,6 +1,6 @@
 ---
 name: campaign-service-learnings-reviewer
-description: Repo-owned empirical review brain for lfx-v2-campaign-service, the learnings role of the local pre-PR reviewer trio. Matches the host-pinned commit range against the repo-owned knowledge base at docs/reviews/knowledge-base/ — patterns extracted from verified past PR review comments on this repo, each with a mechanical detect condition — and returns a Markdown review in which every finding quotes the pattern entry it matched. Applies the known-false-positive floor last, read at both the pre-change base and the target, suppressing a finding only when both floors would suppress it. Loaded directly by the launcher; not a skill a developer invokes by hand.
+description: Repo-owned learnings reviewer skill for lfx-v2-campaign-service, the learnings role of the local pre-PR review, loaded as /campaign-service-learnings-reviewer through the /lfx-skills:lfx-local-review lifecycle. Matches the host-pinned commit range against the repo-owned knowledge base at docs/reviews/knowledge-base/ — patterns extracted from verified past PR review comments on this repo, each with a mechanical detect condition — and returns a Markdown review in which every finding quotes the pattern entry it matched. Applies the known-false-positive floor last, read at both the pre-change base and the target, suppressing a finding only when both floors would suppress it. Not a skill a developer invokes by hand.
 ---
 
 # Campaign service learnings brain

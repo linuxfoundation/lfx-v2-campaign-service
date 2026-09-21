@@ -1,6 +1,6 @@
 ---
 name: campaign-service-code-reviewer
-description: Repo-owned code-review brain for lfx-v2-campaign-service, the code role of the local pre-PR reviewer trio. Audits the host-pinned commit range against this repository's written rule surface — CLAUDE.md, README, Makefile, docs/, the OKF knowledge bundle, the Goa design/gen boundary, Postgres migrations, platform-client conventions, dispatch contracts and the chart route/ruleset parity — and returns a Markdown review in which every finding quotes the rule it cites. Loaded directly by the launcher; not a skill a developer invokes by hand.
+description: Repo-owned code reviewer skill for lfx-v2-campaign-service, the code role of the local pre-PR review, loaded as /campaign-service-code-reviewer through the /lfx-skills:lfx-local-review lifecycle. Audits the host-pinned commit range against this repository's written rule surface — CLAUDE.md, README, Makefile, docs/, the OKF knowledge bundle, the Goa design/gen boundary, Postgres migrations, platform-client conventions, dispatch contracts and the chart route/ruleset parity — and returns a Markdown review in which every finding quotes the rule it cites. Not a skill a developer invokes by hand.
 ---
 
 # Campaign service code-review brain
