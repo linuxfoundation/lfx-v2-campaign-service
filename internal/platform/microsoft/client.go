@@ -294,19 +294,6 @@ func WithTokenURL(u string) Option {
 	}
 }
 
-// WithAPIVersion overrides the API version segment for BOTH services this client
-// speaks to — Campaign Management and Customer Management (ad-account discovery). One
-// field serves both because Microsoft versions them in lockstep; a caller pinning a
-// version is pinning the client, not one of its two hosts. Lets a deployment pin/bump
-// without a code change, and lets tests assert the version reaches the path.
-func WithAPIVersion(v string) Option {
-	return func(c *Client) {
-		if v != "" {
-			c.apiVersion = v
-		}
-	}
-}
-
 // WithClock overrides the time source. For tests.
 func WithClock(now func() time.Time) Option {
 	return func(c *Client) {
