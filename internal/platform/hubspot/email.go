@@ -355,6 +355,58 @@ func (c *Client) CloneEmail(ctx context.Context, sourceID, cloneName string) (*E
 	return &e, nil
 }
 
+// abTestVariantStateDraft is the state HubSpot sets on the new variant returned by
+// CreateABTestVariant ("DRAFT_AB_VARIANT" in the live API — verified against the
+// prototype's actual response handling, not the platform's general email states).
+const abTestVariantStateDraft = "DRAFT_AB_VARIANT"
+
+// createABTestVariantRequest is the POST /marketing/v3/emails/ab-test/create-variation
+// body. Field names verified against the prototype's shipped integration
+// (backend/integrations/hubspot.py: create_ab_variation), not the platform's own
+// AB_TEST_API_IMPLEMENTATION.md design doc, which describes a different, apparently
+// unshipped endpoint shape (POST .../{email_id}/ab-test-variants, empty body). The doc
+// is stale; this is what the live API actually accepts.
+type createABTestVariantRequest struct {
+	ContentID     string `json:"contentId"`
+	VariationName string `json:"variationName"`
+}
+
+// CreateABTestVariant creates a native HubSpot A/B test variation of parentID and
+// returns the NEW VARIANT's own email (its "id" field is the variant email's id --
+// there is no separate ab-test-id in this API). MUTATING (idempotent=false): a
+// create has no idempotency key, so an ambiguous failure must NOT blind-retry (that
+// could create a second variant). An ambiguous error / a 2xx with no id is surfaced
+// as UNCONFIRMED so the caller verifies.
+//
+// HubSpot documents this as idempotent-ish on its own terms: if parentID already has
+// an active variation, it returns the EXISTING one instead of creating a new one. That
+// behavior lives on HubSpot's side, not this client's -- callers should not assume a
+// second call always mints a second variant.
+func (c *Client) CreateABTestVariant(ctx context.Context, parentID, variationName string) (*Email, error) {
+	if parentID = strings.TrimSpace(parentID); parentID == "" {
+		return nil, fmt.Errorf("hubspot: CreateABTestVariant requires a non-empty parent email id")
+	}
+	if variationName = strings.TrimSpace(variationName); variationName == "" {
+		return nil, fmt.Errorf("hubspot: CreateABTestVariant requires a non-empty variation name")
+	}
+	body := createABTestVariantRequest{ContentID: parentID, VariationName: variationName}
+	raw, err := c.doRequest(ctx, http.MethodPost, emailsPath+"/ab-test/create-variation", body, false)
+	if err != nil {
+		return nil, fmt.Errorf("hubspot: create A/B test variant of %s: %w", parentID, err)
+	}
+	// Value decode, same as CloneEmail: the ID=="" check below covers a JSON `null` body
+	// (unmarshals to a zero-valued Email) as well as a missing id, both UNCONFIRMED.
+	var e Email
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return nil, unconfirmed("hubspot: create A/B test variant UNCONFIRMED (2xx with an undecodable body — a variant may have been created; verify before retrying)", err)
+	}
+	if e.ID == "" {
+		return nil, unconfirmed("hubspot: create A/B test variant UNCONFIRMED (2xx with no id or a null body — a variant may have been created; verify before retrying)", nil)
+	}
+	e.AppURL = c.emailEditURL(e.ID)
+	return &e, nil
+}
+
 // EmailSettings carries the subject/from fields to patch on a draft. Nil pointers
 // are omitted (a HubSpot PATCH preserves omitted fields).
 //

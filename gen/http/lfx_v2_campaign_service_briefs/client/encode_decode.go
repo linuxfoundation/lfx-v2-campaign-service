@@ -3114,6 +3114,9 @@ func EncodeGenerateEmailCopyRequest(encoder func(*http.Request) goahttp.Encoder)
 		if p.Stage != nil {
 			values.Add("stage", *p.Stage)
 		}
+		if p.Variant != nil {
+			values.Add("variant", *p.Variant)
+		}
 		req.URL.RawQuery = values.Encode()
 		return nil
 	}
@@ -4622,6 +4625,20 @@ func unmarshalCampaignActionItemResponseBodyToLfxv2campaignservicebriefsCampaign
 		Platform:   *v.Platform,
 		Issue:      *v.Issue,
 		Action:     *v.Action,
+	}
+
+	return res
+}
+
+// unmarshalEmailCopySectionResponseBodyToLfxv2campaignservicebriefsEmailCopySection
+// builds a value of type *lfxv2campaignservicebriefs.EmailCopySection from a
+// value of type *EmailCopySectionResponseBody.
+func unmarshalEmailCopySectionResponseBodyToLfxv2campaignservicebriefsEmailCopySection(v *EmailCopySectionResponseBody) *lfxv2campaignservicebriefs.EmailCopySection {
+	res := &lfxv2campaignservicebriefs.EmailCopySection{
+		Type: *v.Type,
+		HTML: v.HTML,
+		Text: v.Text,
+		URL:  v.URL,
 	}
 
 	return res

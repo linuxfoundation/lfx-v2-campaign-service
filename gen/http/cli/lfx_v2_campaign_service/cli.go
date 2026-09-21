@@ -226,6 +226,7 @@ func ParseEndpoint(
 		lfxV2CampaignServiceBriefsGenerateEmailCopyProjectIDFlag   = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceBriefsGenerateEmailCopyBriefIDFlag     = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("brief-id", "REQUIRED", "Brief UUID")
 		lfxV2CampaignServiceBriefsGenerateEmailCopyStageFlag       = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("stage", "", "")
+		lfxV2CampaignServiceBriefsGenerateEmailCopyVariantFlag     = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("variant", "", "")
 		lfxV2CampaignServiceBriefsGenerateEmailCopyBearerTokenFlag = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("bearer-token", "", "")
 
 		lfxV2CampaignServiceBriefsUpdateCampaignFlags           = flag.NewFlagSet("update-campaign", flag.ExitOnError)
@@ -1060,7 +1061,7 @@ func ParseEndpoint(
 				data, err = lfxv2campaignservicebriefsc.BuildGetBriefMetricsPayload(*lfxV2CampaignServiceBriefsGetBriefMetricsProjectIDFlag, *lfxV2CampaignServiceBriefsGetBriefMetricsBriefIDFlag, *lfxV2CampaignServiceBriefsGetBriefMetricsWindowFlag, *lfxV2CampaignServiceBriefsGetBriefMetricsBearerTokenFlag)
 			case "generate-email-copy":
 				endpoint = c.GenerateEmailCopy()
-				data, err = lfxv2campaignservicebriefsc.BuildGenerateEmailCopyPayload(*lfxV2CampaignServiceBriefsGenerateEmailCopyProjectIDFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyBriefIDFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyStageFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyBearerTokenFlag)
+				data, err = lfxv2campaignservicebriefsc.BuildGenerateEmailCopyPayload(*lfxV2CampaignServiceBriefsGenerateEmailCopyProjectIDFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyBriefIDFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyStageFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyVariantFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyBearerTokenFlag)
 			case "update-campaign":
 				endpoint = c.UpdateCampaign()
 				data, err = lfxv2campaignservicebriefsc.BuildUpdateCampaignPayload(*lfxV2CampaignServiceBriefsUpdateCampaignBodyFlag, *lfxV2CampaignServiceBriefsUpdateCampaignProjectIDFlag, *lfxV2CampaignServiceBriefsUpdateCampaignBriefIDFlag, *lfxV2CampaignServiceBriefsUpdateCampaignCampaignIDFlag, *lfxV2CampaignServiceBriefsUpdateCampaignBearerTokenFlag, *lfxV2CampaignServiceBriefsUpdateCampaignIfMatchFlag)
@@ -1985,6 +1986,7 @@ func lfxV2CampaignServiceBriefsGenerateEmailCopyUsage() {
 	fmt.Fprint(os.Stderr, " -project-id STRING")
 	fmt.Fprint(os.Stderr, " -brief-id STRING")
 	fmt.Fprint(os.Stderr, " -stage STRING")
+	fmt.Fprint(os.Stderr, " -variant STRING")
 	fmt.Fprint(os.Stderr, " -bearer-token STRING")
 	fmt.Fprintln(os.Stderr)
 
@@ -1996,11 +1998,12 @@ func lfxV2CampaignServiceBriefsGenerateEmailCopyUsage() {
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
 	fmt.Fprintln(os.Stderr, `    -brief-id STRING: Brief UUID`)
 	fmt.Fprintln(os.Stderr, `    -stage STRING: `)
+	fmt.Fprintln(os.Stderr, `    -variant STRING: `)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs generate-email-copy --project-id \"cncf\" --brief-id \"7756c95c-40df-4d4c-a4c8-145807ae85ab\" --stage \"Post-Event\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs generate-email-copy --project-id \"cncf\" --brief-id \"7756c95c-40df-4d4c-a4c8-145807ae85ab\" --stage \"Post-Event\" --variant \"urgency-fomo\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceBriefsUpdateCampaignUsage() {
@@ -2028,7 +2031,7 @@ func lfxV2CampaignServiceBriefsUpdateCampaignUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs update-campaign --body '{\n      \"campaign\": {\n         \"campaign_name\": \"Dignissimos in tempore quo consequatur sint qui.\",\n         \"config\": \"Autem impedit.\",\n         \"status\": \"Illum expedita commodi in dolores nemo similique.\"\n      }\n   }' --project-id \"cncf\" --brief-id \"36429eac-eb9c-49fa-89fb-a7083962739e\" --campaign-id \"a5f32658-a26d-4763-8cf1-b5d5ad0d1e81\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs update-campaign --body '{\n      \"campaign\": {\n         \"campaign_name\": \"Tempore quo consequatur sint qui non illum.\",\n         \"config\": \"Impedit tenetur.\",\n         \"status\": \"Commodi in dolores nemo similique eaque.\"\n      }\n   }' --project-id \"cncf\" --brief-id \"91429eac-eb9c-49fa-89fb-a7083962739e\" --campaign-id \"a5f32658-a26d-4763-8cf1-b5d5ad0d1e81\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
 }
 
 func lfxV2CampaignServiceBriefsToggleCampaignStatusUsage() {

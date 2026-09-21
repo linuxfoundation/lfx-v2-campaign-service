@@ -57,18 +57,74 @@ type hubspotConfig struct {
 	// caller that generated copy (GenerateEmailCopy) and wants it applied rather than pasted in
 	// by hand.
 	Subject string `json:"subject"`
-	// BodyHTML optionally replaces the cloned draft's rich-text body. OPTIONAL, and written into
-	// the FIRST rich-text block of the draft's layout reading order — see applyEmailContent for
-	// why the top block is a stated contract rather than a guess at which block "means" body.
-	//
-	// Two shapes leave the draft's content alone: one with no rich-text block at all, and one with
-	// no LAYOUT (a classic, non-drag-and-drop template), where block order is only a sort of
-	// opaque module ids and "first" would as likely be the unsubscribe footer as the lede.
-	//
-	// This previously said "applied only when the draft has exactly ONE rich-text widget". That
-	// guard was removed because it fired on every real template in the portal — nine or so blocks
-	// each — so generated copy reached no draft at all.
+	// BodyHTML optionally replaces the cloned draft's rich-text body. OPTIONAL, and written by a
+	// full content rebuild (see applyEmailContentWithHero) that wipes the entire cloned widget/
+	// section tree and rebuilds it fresh, so no widget carried over from the source template —
+	// hero image, buttons, sponsor logos, extra body sections — leaks into the new draft.
 	BodyHTML string `json:"bodyHtml"`
+	// ABTestEnabled requests a native HubSpot A/B test variant of the cloned email. OPTIONAL,
+	// default false: most campaigns send a single email, and the prototype this ported from
+	// treats A/B testing as an opt-in per campaign, not automatic. When true, STEP 3B (see
+	// Dispatch) creates a second variant of the clone and applies SubjectB/BodyHTMLB to it.
+	ABTestEnabled bool `json:"abTestEnabled"`
+	// SubjectB optionally replaces the A/B variant's subject line. OPTIONAL, same semantics as
+	// Subject but applied to the VARIANT, not the clone. Ignored when ABTestEnabled is false.
+	SubjectB string `json:"subjectB"`
+	// BodyHTMLB optionally replaces the A/B variant's rich-text body. OPTIONAL, same semantics
+	// as BodyHTML, applied to the VARIANT. Ignored when ABTestEnabled is false.
+	BodyHTMLB string `json:"bodyHtmlB"`
+	// HeroImageURL is the campaign's hero/banner image, scraped from the event page by the
+	// caller (see event-hero-sponsors.helper.ts). OPTIONAL: when set, the image is uploaded to
+	// HubSpot's file manager and rendered as the FIRST section of the draft, ahead of the body.
+	// Empty simply skips the hero section of the full rebuild (see applyEmailContentWithHero).
+	HeroImageURL string `json:"heroImageUrl"`
+	// HeroLinkURL optionally makes the hero image a clickable link (e.g. back to the event
+	// page). OPTIONAL; ignored when HeroImageURL is empty.
+	HeroLinkURL string `json:"heroLinkUrl"`
+	// ButtonText optionally renders a native, centered CTA button (e.g. "Register Now")
+	// immediately after the body during the same full rebuild HeroImageURL/Sponsors trigger.
+	// OPTIONAL; ignored unless ButtonURL is also set. Defaults to "Register Now" when
+	// ButtonURL is set but ButtonText is empty. This exists so the CTA renders as a real
+	// HubSpot button widget instead of the caller embedding a hand-styled <table>/<a> hack
+	// inside BodyHTML, which HubSpot's editor does not recognize as a button.
+	ButtonText string `json:"buttonText"`
+	// ButtonURL optionally sets the CTA button's destination. OPTIONAL: empty skips the
+	// button section entirely.
+	ButtonURL string `json:"buttonUrl"`
+	// Sponsors optionally renders sponsor-logo tiers below the body. OPTIONAL: empty skips the
+	// sponsor sections entirely.
+	Sponsors []hubspotSponsor `json:"sponsors"`
+	// SentByOrg optionally names the sending organization in the rebuilt footer. OPTIONAL;
+	// RebuildEmailContent applies its own default when empty.
+	SentByOrg string `json:"sentByOrg"`
+	// PreviewText optionally sets the clone's inbox preheader alongside the generated content.
+	// OPTIONAL: empty preserves whatever preview_text widget the cloned template already had
+	// (usually stale copy from the source template, but still better than none).
+	PreviewText string `json:"previewText"`
+	// PreviewTextB is PreviewText's counterpart for the A/B variant. OPTIONAL; ignored when
+	// ABTestEnabled is false.
+	PreviewTextB string `json:"previewTextB"`
+}
+
+// hubspotSponsor is the JSON shape a caller sends for one sponsor logo (see
+// event-hero-sponsors.helper.spec.ts for the matching Node-side shape). Declared separately
+// from hubspot.Sponsor, which carries no JSON tags because it is an internal client type, not
+// one meant for direct external unmarshaling.
+type hubspotSponsor struct {
+	Name    string `json:"name"`
+	LogoURL string `json:"logoUrl"`
+}
+
+// toHubSpotSponsors converts the caller-supplied sponsor list to the client package's type.
+func toHubSpotSponsors(sponsors []hubspotSponsor) []hubspot.Sponsor {
+	if len(sponsors) == 0 {
+		return nil
+	}
+	out := make([]hubspot.Sponsor, len(sponsors))
+	for i, s := range sponsors {
+		out[i] = hubspot.Sponsor{Name: s.Name, LogoURL: s.LogoURL}
+	}
+	return out
 }
 
 // hubspotConfigProvenance is the subset of hubspotConfig persisted to ConfigSnapshot: what the
@@ -406,14 +462,44 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		// Assigns the NAMED return, not a local: the deferred stampProvenance reads `camp`,
 		// and a local here would leave the named return nil for any later edit that turns this
 		// into a bare `return` or inserts a statement before it.
-		camp = campaignFromHubSpot(ctx, email, cfg, portalID)
+		camp = campaignFromHubSpot(ctx, email, cfg, portalID, nil)
 		return camp, fmt.Errorf("hubspot email %s cloned but setting its send list failed (verify before retrying): %w", email.ID, serr)
 	}
 
-	// STEP 3 (mutating, BEST-EFFORT): apply generated copy to the draft. BEFORE the UTM tagging
-	// below, not after: tagging rewrites the body's links, so writing the body afterwards would
-	// discard every tag it had just added and send the email untracked.
-	applyEmailContent(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML)
+	// STEP 3 (mutating, BEST-EFFORT): apply generated copy to the draft via a FULL content
+	// rebuild (see applyEmailContentWithHero), BEFORE the UTM tagging below, not after: tagging
+	// rewrites the body's links, so writing the body afterwards would discard every tag it had
+	// just added and send the email untracked.
+	//
+	// Always a full rebuild, never a narrow first-placed-block patch: patching only the first
+	// rich-text block would leave every OTHER widget the clone source carried over untouched —
+	// its own hero image, its own CTA buttons, its own sponsor logos, its own preview text — so a
+	// generated email that this dispatcher itself cloned from an unrelated template would end up
+	// showing that template's stale content next to the new copy. A full rebuild replaces the
+	// whole tree, so there is nothing left over to leak, whether or not this campaign happens to
+	// supply a hero image or sponsors of its own (RebuildEmailContent degrades gracefully when
+	// they're empty: no hero/button/sponsor sections, just body + footer). The hero is uploaded
+	// to HubSpot ONCE here and its hosted URL reused for the A/B variant below, so a campaign
+	// with ABTestEnabled doesn't upload the same image twice.
+	sponsors := toHubSpotSponsors(cfg.Sponsors)
+	heroImageURL := strings.TrimSpace(cfg.HeroImageURL)
+	hostedHeroURL := uploadHeroImage(ctx, client, heroImageURL)
+	applyEmailContentWithHero(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML, hostedHeroURL, cfg.HeroLinkURL, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewText)
+
+	// STEP 3B (mutating, BEST-EFFORT, OPT-IN): create a native A/B test variant of the clone and
+	// apply the variant's own copy to it. Ordered AFTER the clone's own content (STEP 3) and
+	// BEFORE UTM tagging (STEP 4), mirroring the source flow this was ported from
+	// (backend/core/agent.py): the variant is created from the already-content-applied clone, and
+	// both emails' links still need tagging afterwards.
+	//
+	// BEST-EFFORT for the same reason as STEP 3/4: by this point the campaign is a working single
+	// email (cloned, audienced, content applied), so a failure to also stand up a variant is a
+	// missed optimization, not a failed campaign. It never turns a successful dispatch into an
+	// error, and it never blocks on ABTestEnabled being false (the common case costs nothing).
+	var abVariant *hubspot.Email
+	if cfg.ABTestEnabled {
+		abVariant = createABTestVariantWithHero(ctx, client, email.ID, cloneName, cfg.SubjectB, cfg.BodyHTMLB, hostedHeroURL, cfg.HeroLinkURL, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewTextB)
+	}
 
 	// STEP 4 (mutating, BEST-EFFORT): tag the draft's links with UTM parameters so email
 	// traffic is attributable in the warehouse. Deliberately LAST and non-fatal: the email is
@@ -421,48 +507,50 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// untagged email is a reporting gap; failing here would turn that gap into a failed send
 	// and leave a configured draft behind anyway.
 	tagEmailLinks(ctx, client, email.ID, cloneName, cfg.UTMCampaign)
+	if abVariant != nil {
+		// The variant is a DIFFERENT email id with its own link set — tagging the clone above does
+		// not touch it. Untagged variant traffic would be invisible in the warehouse even though
+		// the clone's half of the test reports correctly, which is a worse trap than an untagged
+		// single email: an operator who checks attribution and sees rows assumes both variants are
+		// covered.
+		tagEmailLinks(ctx, client, abVariant.ID, cloneName, cfg.UTMCampaign)
+	}
 
-	return campaignFromHubSpot(ctx, email, cfg, portalID), nil
+	return campaignFromHubSpot(ctx, email, cfg, portalID, abVariant), nil
 }
 
-// applyEmailContent writes generated copy onto a cloned draft: the subject via
-// PatchEmailSettings, the body into the draft's FIRST rich-text block.
+// uploadHeroImage re-hosts a scraped hero/banner image in HubSpot's file manager, returning the
+// hosted CDN URL, or "" on any failure (BEST-EFFORT, same contract as the rest of this file: an
+// unre-hostable hero image degrades to no hero section rather than failing the dispatch — see
+// applyEmailContentWithHero, which treats an empty URL as "no hero").
+func uploadHeroImage(ctx context.Context, client *hubspot.Client, imageURL string) string {
+	if imageURL = strings.TrimSpace(imageURL); imageURL == "" {
+		return ""
+	}
+	hosted, err := client.UploadImage(ctx, imageURL)
+	if err != nil {
+		slog.WarnContext(ctx, "could not upload the hero image to hubspot; the rebuilt email will have no hero section",
+			"source_url", imageURL, "error", err)
+		return ""
+	}
+	return hosted
+}
+
+// applyEmailContentWithHero writes generated copy onto a cloned draft: the subject via
+// PatchEmailSettings, and the body via a FULL content rebuild — hero image first, then the
+// body, then a native CTA button (if buttonURL is set), then sponsor tiers, then the standard
+// footer — REPLACING every widget the cloned template carried over (see
+// hubspot.RebuildEmailContent). This wholesale replacement is what stops clone-source content
+// (a stale hero image, CTA buttons, sponsor logos, preview text) from leaking into the new
+// draft, regardless of whether this particular campaign supplies a hero image or sponsors of
+// its own.
 //
-// BEST-EFFORT, like tagEmailLinks and for the same reason: by the time this runs the email is
-// cloned and pointed at the right audience, so it is already a working campaign. A failure here
-// leaves a draft carrying the TEMPLATE's copy — which is what every campaign had before
-// LFXV2-2775 — so turning it into a dispatch failure would trade a recoverable cosmetic gap for
-// a failed send and an orphaned draft. Every failure is logged and swallowed.
+// hostedHeroURL is expected to already be a HubSpot-hosted URL (see uploadHeroImage) — this
+// function does not upload it, so the same hosted copy can be reused for an A/B variant without
+// uploading the source image twice.
 //
-// FIRST LAYOUT-PLACED BLOCK, in the layout's reading order — the block at the top of the email.
-// (A draft with no layout has no such block; see the classic-template paragraph below.) It used to be
-// "the only block, or nothing": templates carry several rich-text widgets (an intro, keynote
-// copy, a footer note) and the API exposes no marker saying which is "the" body, so writing
-// nothing looked like the safe answer to that ambiguity. It was not. Every real template in the
-// portal has nine or so blocks, so the guard fired on all of them and the generated copy — the
-// copy an operator reviewed in the UI and pressed Stage on — reached the draft for no template
-// at all, with only an info log to say why.
-//
-// The first block is not a heuristic guess at which block "means" body; it is a stated contract
-// the operator can see. The generated copy is a lede written against the brief, the top of the
-// email is where a lede goes, and the other blocks — programme details, sponsor tiers, the
-// unsubscribe footer — are template furniture that the copy was never meant to replace. Picking
-// "the longest" or "the one that looks like prose" WOULD be a guess, and would move between
-// templates; the top block is the same block every time.
-//
-// That contract rests entirely on the position being the LAYOUT's. GetEmailHTMLWidgets orders
-// layout-placed blocks by the drag-and-drop tree and appends everything else in sorted key
-// order, so on a CLASSIC template — no flexAreas at all — blocks[0] is merely whichever opaque
-// module id sorts first, and is as likely the unsubscribe footer as the lede. Writing there
-// would overwrite template furniture with the operator's copy and log it as "the first block",
-// which is why this requires blocks[0].Placed rather than trusting the index. Without a layout
-// there is no top of the email to speak of, so the draft keeps its template body and the log
-// says so — the same conservative answer as the no-rich-text-block case below it.
-//
-// Preview text is deliberately absent: Marketing Emails v3 exposes no preheader property (see
-// hubspot.EmailSettings), so an operator sets it in HubSpot. Accepting one here would report
-// success while HubSpot silently ignored it.
-func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, subject, bodyHTML string) {
+// BEST-EFFORT, like tagEmailLinks: every failure is logged and swallowed.
+func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emailID, subject, bodyHTML, hostedHeroURL, heroLinkURL, buttonText, buttonURL string, sponsors []hubspot.Sponsor, sentByOrg, previewText string) {
 	if subject = strings.TrimSpace(subject); subject != "" {
 		if _, err := client.PatchEmailSettings(ctx, emailID, hubspot.EmailSettings{Subject: &subject}); err != nil {
 			slog.WarnContext(ctx, "could not set the generated subject on the email draft; it keeps the template's subject",
@@ -470,39 +558,71 @@ func applyEmailContent(ctx context.Context, client *hubspot.Client, emailID, sub
 		}
 	}
 
-	if bodyHTML = strings.TrimSpace(bodyHTML); bodyHTML == "" {
+	bodyHTML = strings.TrimSpace(bodyHTML)
+	hostedHeroURL = strings.TrimSpace(hostedHeroURL)
+	buttonURL = strings.TrimSpace(buttonURL)
+	if bodyHTML == "" && hostedHeroURL == "" && buttonURL == "" && len(sponsors) == 0 {
+		// Nothing to rebuild: every campaign that predates LFXV2-2775 (and any caller that only
+		// wants the subject updated) reaches here with no generated content at all, and a full
+		// rebuild with an empty body would wipe the clone's template content for nothing.
 		return
 	}
 
-	blocks, err := client.GetEmailHTMLWidgets(ctx, emailID)
-	if err != nil {
-		slog.WarnContext(ctx, "could not read the email draft to set its body; it keeps the template's body",
+	if _, err := client.RebuildEmailContent(ctx, emailID, hubspot.RebuildEmailContentInput{
+		HeroImageURL: hostedHeroURL,
+		HeroLinkURL:  heroLinkURL,
+		BodyHTML:     bodyHTML,
+		ButtonText:   buttonText,
+		ButtonURL:    buttonURL,
+		Sponsors:     sponsors,
+		SentByOrg:    sentByOrg,
+		PreviewText:  previewText,
+	}); err != nil {
+		slog.WarnContext(ctx, "could not rebuild the email draft's content; it may keep the template's content or be left partially rebuilt",
 			"email_id", emailID, "error", err)
 		return
 	}
-	if len(blocks) == 0 {
-		// An image-only or module-only template. Not an error: there is no rich-text block to
-		// write into, and inventing one would put copy somewhere the layout never placed.
-		slog.InfoContext(ctx, "email draft has no rich-text block to write the generated body into; it keeps the template's content",
-			"email_id", emailID)
-		return
-	}
+	slog.InfoContext(ctx, "rebuilt the email draft's content (hero, body, sponsors, footer), replacing the cloned template's content",
+		"email_id", emailID, "has_hero", strings.TrimSpace(hostedHeroURL) != "", "sponsor_count", len(sponsors))
+}
 
-	target := blocks[0]
-	if !target.Placed {
-		// Sorted key order, not reading order: see the contract note above. Info, not Warn —
-		// a classic template is a legitimate choice by whoever built it, not a failure.
-		slog.InfoContext(ctx, "email draft has no layout-placed rich-text block, so there is no first block to write the generated body into; it keeps the template's content",
-			"email_id", emailID, "block_count", len(blocks))
-		return
+// abVariantNameSuffix names the variant HubSpot creates from parentName, mirroring the naming the
+// prototype used ("<name> - Variant B (Existing Flow)") minus the flow label, which described
+// that prototype's two-content-source design and has no equivalent here: this dispatcher has one
+// content source (the caller-supplied config) for each of the clone and the variant.
+const abVariantNameSuffix = " - Variant B"
+
+// createABTestVariantWithHero creates a native HubSpot A/B test variant of parentID and applies
+// subjectB/bodyHTMLB to it via a full content rebuild (see applyEmailContentWithHero), reusing
+// hostedHeroURL (already uploaded once by the caller for the clone) rather than re-uploading the
+// same source image for the variant. Returns the new variant's email, or nil on any failure.
+//
+// BEST-EFFORT, like applyEmailContentWithHero and tagEmailLinks and for the same reason: the call
+// site only reaches this after the primary email is already a complete, working campaign, so a
+// failure to also stand up a variant is a missed optimization rather than a failed dispatch.
+// Every failure is logged and swallowed; the caller gets nil and proceeds as if ABTestEnabled
+// were false.
+//
+// Ported from the prototype's real production flow (backend/core/agent.py): clone → apply the
+// clone's own content → create the A/B variation from the CONTENT-APPLIED clone → apply the
+// variant's own content to the returned variant. The prototype falls back to writing its second
+// content set onto the clone itself when variant creation fails ("content_target_id = variant_b_id
+// or variant_a_id"); this port does NOT replicate that fallback, because a caller-supplied
+// SubjectB/BodyHTMLB is meant for the SEPARATE variant, and silently overwriting the clone's own
+// (already-applied) content with it would destroy Variant A's copy for a reason invisible to
+// anyone looking at the draft afterwards. Losing the second variant here is a smaller, more
+// honest failure than corrupting the first one.
+func createABTestVariantWithHero(ctx context.Context, client *hubspot.Client, parentID, parentName, subjectB, bodyHTMLB, hostedHeroURL, heroLinkURL, buttonText, buttonURL string, sponsors []hubspot.Sponsor, sentByOrg, previewTextB string) *hubspot.Email {
+	variant, err := client.CreateABTestVariant(ctx, parentID, parentName+abVariantNameSuffix)
+	if err != nil {
+		slog.WarnContext(ctx, "could not create a HubSpot A/B test variant; the campaign proceeds as a single email",
+			"email_id", parentID, "error", err)
+		return nil
 	}
-	if _, perr := client.SetEmailHTMLWidgets(ctx, emailID, map[string]string{target.Key: bodyHTML}); perr != nil {
-		slog.WarnContext(ctx, "could not set the generated body on the email draft; it keeps the template's body",
-			"email_id", emailID, "widget", target.Key, "error", perr)
-		return
-	}
-	slog.InfoContext(ctx, "wrote the generated body into the email draft's first rich-text block",
-		"email_id", emailID, "widget", target.Key, "block_count", len(blocks))
+	applyEmailContentWithHero(ctx, client, variant.ID, subjectB, bodyHTMLB, hostedHeroURL, heroLinkURL, buttonText, buttonURL, sponsors, sentByOrg, previewTextB)
+	slog.InfoContext(ctx, "created a HubSpot A/B test variant of the campaign email",
+		"email_id", parentID, "variant_id", variant.ID, "variant_state", variant.State)
+	return variant
 }
 
 // tagEmailLinks rewrites the cloned draft's links to carry UTM parameters. Best-effort by
@@ -683,7 +803,7 @@ func emailPartial(ctx context.Context, name string) *model.Campaign {
 // hubSpotCreationPortalID. It rides on a wrapper rather than inside the marshalled
 // hubspot.Email because it is a property of the connection that made the call, not a field
 // HubSpot returns. It may be empty: the lookup is best-effort at the call site.
-func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfig, portalID string) *model.Campaign {
+func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfig, portalID string, abVariant *hubspot.Email) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: e.ID,
 		CampaignName:       e.Name,
@@ -702,10 +822,15 @@ func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfi
 		SourceEmailID: cfg.SourceEmailID,
 		UTMCampaign:   cfg.UTMCampaign,
 	})
+	// ABTestVariant is nil whenever ABTestEnabled was false OR variant creation failed
+	// (createABTestVariant's best-effort contract) — omitempty on a nil pointer drops the key
+	// entirely rather than persisting a `null` that would need its own "was this even attempted"
+	// distinction from a caller that never asked for a variant.
 	if raw, err := json.Marshal(struct {
 		*hubspot.Email
-		PortalID string `json:"portalId,omitempty"`
-	}{Email: e, PortalID: portalID}); err != nil {
+		PortalID      string         `json:"portalId,omitempty"`
+		ABTestVariant *hubspot.Email `json:"abTestVariant,omitempty"`
+	}{Email: e, PortalID: portalID, ABTestVariant: abVariant}); err != nil {
 		slog.WarnContext(ctx, "failed to marshal hubspot email result blob (Result left empty)",
 			"campaign_id", c.PlatformCampaignID, "error", err)
 	} else {

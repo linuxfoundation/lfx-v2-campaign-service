@@ -72,16 +72,18 @@ That asymmetry is why `GenerateEmailCopy`'s required-field check trims before co
 ### The prompt bound is checked twice, in runes, against TWO different limits
 
 `maxPromptSize` is 2400 **runes** and bounds the four caller-supplied fields BEFORE
-`composeEmailCopyPrompt`; `maxComposedPromptSize` is 9300 and bounds the composed prompt after.
+`composeEmailCopyPrompt`; `maxComposedPromptSize` is 14000 and bounds the composed prompt after.
 They are separate constants because they measure different things — the caller's input versus that
-input plus the stage template — and getting the second number wrong fails in TWO opposite
-directions, both of which this file has actually shipped:
+input plus the stage template and the reference-email style block (`maxReferenceBlockRunes`, see
+below) — and getting the second number wrong fails in TWO opposite directions, both of which this
+file has actually shipped:
 
-- **Too low rejects valid input.** At 6500 the Post-Event stage (6388 runes COMPOSED -- framing plus its 3637-rune ContentPrompt, at zero caller input) left
-  only **112** runes for caller fields (6500 - 6388), so anything from 113 runes upward was
-  refused — 1618 runes of event details passed the 3000 pre-check and were then refused by the
-  composed one, two bounds contradicting each other, with the caller told their input was too
-  large immediately after the first accepted it.
+- **Too low rejects valid input.** At 6500 the Post-Event stage (now floors at 11055 runes COMPOSED
+  once the reference-email style block AND the urgency-fomo variant block are included, at zero
+  caller input) left only **-4555** runes for caller fields (6500 - 11055), so essentially any
+  input was refused — event details that
+  passed the pre-check were then refused by the composed one, two bounds contradicting each other,
+  with the caller told their input was too large immediately after the first accepted it.
 - **Too high never fires.** 8000 was set against a believed ceiling of 7700 and the real ceiling
   was 8041, so it fired only for the very largest Post-Event input.
   `TestGenerateEmailCopy_ComposedBoundIsReachable` exists to catch this, and it passed for a reason
@@ -95,10 +97,10 @@ None can.
 The first property wins, because a caller must never be told their input is too large by the second
 of two checks after the first accepted it. The composed bound is then sized for the case that
 remains: **a stage template growing past the budget in a future edit**. That is a real failure mode
-— the templates are large (Post-Event composes to a 6388-rune floor from a 3637-rune ContentPrompt) and hand-edited.
+— the templates are large (Post-Event composes to an 11055-rune floor from a 3637-rune ContentPrompt plus the reference-email style block plus, when requested, the urgency-fomo variant block) and hand-edited.
 
-With the input bound at 2400 the worst valid composition is 8788 (Post-Event floors at 6388), so
-9300 clears it with 512 runes of headroom. Post-Event WITHHOLDS the registration URL — its call to
+With the input bound at 2400 the worst valid composition is 13455 (Post-Event + urgency-fomo floors
+at 11055), so 14000 clears it with 545 runes of headroom. Post-Event WITHHOLDS the registration URL — its call to
 action is "Share Feedback", not a registration ask — so the 19-rune URL line is not part of its
 composition; it still leads on ContentPrompt length, so which stage is worst did not change. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
 way, by injecting an oversized stage into `emailstage.Templates` rather than a long event name.
@@ -157,12 +159,13 @@ Runes, not bytes, because the limit is stated to the caller and logged as a char
 every other bound in this file counts runes. `len()` gave an event named in Japanese a third of
 the advertised budget and an event named in English all of it — a limit that means something
 different depending on the alphabet. Measured, not estimated, and re-measured whenever the
-shared prompt or any template changes: Post-Event is the largest stage at a 6388-rune COMPOSED floor (its ContentPrompt alone is 3637),
-and with the maximum 2400 runes of caller input it composes to 8788 against the 9300 bound.
+shared prompt or any template changes: Post-Event is the largest stage at an 11055-rune COMPOSED floor with the urgency-fomo variant requested (its ContentPrompt alone is 3637, plus the reference-email style block, plus the variant block),
+and with the maximum 2400 runes of caller input it composes to 13455 against the 14000 bound.
 
 Every figure in this section has been wrong at least once from a measurement taken before a
-template grew — three times, most recently when a paragraph added to the shared system prompt grew
-every stage by ~130 runes. A prose instruction to re-measure did not survive contact, so
+template grew — four times, most recently when the content rules added to the shared system prompt
+(no sign-off, greeting-comma spacing, name speakers/topics rather than "and more") grew every stage
+by ~453 runes. A prose instruction to re-measure did not survive contact, so
 `TestComposedBoundClearsEveryStageFloor` now COMPUTES every stage floor from the real constants and
 fails if `worst + maxPromptSize` exceeds `maxComposedPromptSize`. Derive these numbers from that
 test rather than carrying them forward.
@@ -195,6 +198,17 @@ on EOF — so every existing body-less POST began failing with a 400.
 
 ### `(s *BriefService) GenerateEmailCopy(ctx, payload)`
 Main handler. Loads the brief, decodes its event details, builds the prompt, calls the LLM client, parses and validates the response, and returns the `EmailCopy` result. Does NOT persist anything to the brief; it is a pure generation call.
+
+### `EmailReferenceSource` (`internal/service/email_reference.go`)
+A best-effort, read-only lookup of a project's own past sent HubSpot marketing emails, used to build the `referenceBlock` style/tone guidance injected into the stage-aware prompt (see the sizing section above). `BuildReferenceBlock(ctx, projectID)` resolves a HubSpot client from the project's connection (falling back to `model.SystemProjectID`, the LF-shared portal, when the project has none — the same fallback shape `internal/dispatch`'s `credsSource` uses), searches for the project's marketing emails, filters to `PUBLISHED` ones (`publishedEmails`), fetches each candidate's draft content (`hubspot.GetEmailHTMLWidgets`), and extracts plain text from its **placed** rich-text blocks only (`plainTextFromBlocks`) — an email whose template places nothing (a classic, non-drag-and-drop template) contributes no excerpt and is dropped, rather than risking an arbitrarily-ordered block (e.g. the footer) standing in for the top of the email.
+
+The richest candidate (most extracted text) becomes the primary structural template; the rest become a short style/tone corpus. Both are excerpted (`referencePrimaryExcerptRunes`, `referenceStyleCorpusRunes`) and the whole block is hard-truncated to `maxReferenceBlockRunes` before it ever reaches `composeEmailCopyPrompt`.
+
+Every failure — no connection, an inactive connection, missing or malformed credentials, a HubSpot API error, zero published emails, a template with nothing placed — is logged at most and yields `""`, never an error: this enriches copy generation, it does not gate it. `EmailReferenceSource` deliberately duplicates `internal/dispatch`'s `hubspotCreds{PrivateAppToken}` shape (see that type's doc comment) rather than importing `internal/dispatch`, which would create a Go import cycle (`internal/dispatch` has in-package test files that import `internal/service`), and deliberately skips `internal/dispatch`'s full `credsSource` account-provenance-matching machinery as overkill for a read-only, best-effort enrichment.
+
+Wired into `BriefService` via the same late-bind setter pattern as `SetLLMClient` (`SetEmailReferenceSource`/`snapshotEmailReferenceSource`/`EmailReferenceSourceIsSet`), and into both container startup paths through the shared `bindBriefLiveBackends` helper (`internal/container/container.go`), so neither a fast-start nor a cold-start-retry pod can bind the brief repos while forgetting the reference source.
+
+Tests live in `internal/service/email_reference_test.go`: `TestBuildReferenceBlock_HappyPath` (richest candidate wins as primary, others become the corpus, drafts excluded), `TestBuildReferenceBlock_FallsBackToSystemConnection`, `TestBuildReferenceBlock_NoConnectionAnywhereReturnsEmpty`, `TestBuildReferenceBlock_InactiveConnectionReturnsEmpty`, `TestBuildReferenceBlock_NoCredentialsReturnsEmpty`, `TestBuildReferenceBlock_DecryptFailureReturnsEmpty`, `TestBuildReferenceBlock_EmptyTokenReturnsEmpty`, `TestBuildReferenceBlock_SearchFailureReturnsEmpty`, `TestBuildReferenceBlock_NoPublishedEmailsReturnsEmpty`, `TestBuildReferenceBlock_UnplacedOnlyEmailIsSkipped`, `TestPublishedEmails_FiltersDraftsCaseInsensitively`, `TestPlainTextFromBlocks_OnlyPlacedNonEmptyBlocksInOrder`, `TestTruncateRunes`.
 
 ## Configuration and Injection
 
