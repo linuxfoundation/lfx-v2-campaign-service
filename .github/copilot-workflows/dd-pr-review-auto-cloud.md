@@ -25,10 +25,25 @@ just not its approval posture.
 
 - `REPO` — `owner/name` (e.g. `linuxfoundation/lfx-v2-campaign-service`)
 - `PR_NUMBER` — the pull request number
-- `TRIGGER` — `opened` or `synchronize`
+- `TRIGGER` — GitHub `pull_request` action: `opened`, `synchronize`,
+  `reopened`, or `ready_for_review`. Do not collapse these values.
 - `HEAD_SHA` — the PR's current head commit SHA at trigger time
+- `BASE_SHA` — the PR's base commit SHA at trigger time (fallback diff
+  bound when `last_reviewed_sha` is no longer fetchable)
 
 Use these directly. Do not re-discover the PR via search.
+
+## Summary marker
+
+Every Step 6 summary comment MUST include this HTML comment, using the
+SHA the formal review was bound to:
+
+```text
+<!-- lfx-dd-pr-review-auto-cloud:sha=<commit_id> -->
+```
+
+Later runs use it to tell a completed cycle from a run that posted the
+terminal review and then died before the summary.
 
 ## Reviewer identity (checked first, every run)
 
@@ -44,7 +59,7 @@ secret), not a retryable error.
 
 ```bash
 gh pr view "$PR_NUMBER" --repo "$REPO" \
-  --json number,title,state,isDraft,author,mergedAt,headRefOid
+  --json number,title,state,isDraft,author,mergedAt,headRefOid,baseRefOid,mergeable
 ```
 
 1. **Not open** (`state != "OPEN"`, or `mergedAt` set) → stop, nothing to do.
@@ -54,48 +69,89 @@ gh pr view "$PR_NUMBER" --repo "$REPO" \
 3. **Self-authored** (`author.login == "dealako"`) → stop permanently. GitHub
    rejects approving your own PR. (Also gated at the workflow level, same
    defense-in-depth note as above.)
-4. Otherwise, proceed to Step 2.
+4. Record `mergeable` (`MERGEABLE`, `CONFLICTING`, or `UNKNOWN`) for Step 5.
+   Do not stop here for `CONFLICTING` or `UNKNOWN` — still run the review.
+5. Otherwise, proceed to Step 2.
 
 ## Step 2 — Derive cycle state from review history
 
 ```bash
 gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" --paginate
+gh api "repos/$REPO/pulls/$PR_NUMBER/comments" --paginate
+gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate
 ```
 
-Filter to `user.login == "dealako"`.
+Filter reviews to `user.login == "dealako"`.
 
 - **Terminal reviews** are those with `state` in (`APPROVED`,
   `CHANGES_REQUESTED`) only. Explicitly exclude `COMMENTED` and `DISMISSED` —
   neither is a valid terminal verdict from this routine.
 - **Latest terminal review** = the one with the most recent `submitted_at`.
 - **`last_reviewed_sha`** = that review's `commit_id`.
+- **Inline review comments** come from `pulls/$PR_NUMBER/comments`, not the
+  issue-comments endpoint. Associate `dealako` inline comments with terminal
+  reviews via `pull_request_review_id`. Use both issue comments and pull
+  review comments for bot reconciliation in Step 4.
 
 ## Step 3 — Branch on `TRIGGER`
+
+Preserve the workflow's `TRIGGER` value. Do not rewrite `reopened` or
+`ready_for_review` to `opened`.
+
+### Missing-summary recovery (all triggers, first)
+
+If a latest terminal `dealako` review exists, check issue comments from
+`dealako` for the summary marker bound to that review's `commit_id`. If the
+marker is absent, post a recovery summary (see Step 6) linking the formal
+review, then continue with the branch below. A later run must not skip just
+because the terminal review exists if the summary never landed.
 
 ### `TRIGGER == "opened"`
 
 - If a terminal `dealako` review already exists (a re-delivered webhook is
-  possible): stop, do not double-review.
+  possible): stop after the recovery check above, do not double-review.
 - Otherwise, proceed to Step 4 as an **initial review** (full PR diff).
 
-### `TRIGGER == "synchronize"`
+### `TRIGGER == "synchronize"`, `"reopened"`, or `"ready_for_review"`
 
-- **No terminal review exists yet** → stop. Nothing to follow up on; only the
-  `opened` trigger initiates the first review.
-- **Latest terminal review is `APPROVED`** → stop. Cycle is resolved; a push
-  after approval doesn't reopen it.
-- **Latest terminal review is `CHANGES_REQUESTED`**:
-  - If `HEAD_SHA == last_reviewed_sha` (HEAD didn't actually move past what
-    was last reviewed) → stop.
-  - Otherwise, proceed to Step 4 as a **follow-up review**, scoped to the
-    diff between `last_reviewed_sha` and `HEAD_SHA`:
-    `git diff "$last_reviewed_sha..$HEAD_SHA"` (repo is already checked out
-    with full history — `fetch-depth: 0`).
+- **No terminal review exists yet** → proceed to Step 4 as a **guarded
+  initial review** (full PR diff). This recovers the case where
+  `cancel-in-progress` killed the `opened` run before it posted, and the
+  case where a draft was marked ready with no prior review. Duplicate
+  prevention is the pre-POST re-check in Step 5 (abort if a terminal
+  `dealako` review for this `HEAD_SHA` already exists).
+- **Terminal review exists** and `HEAD_SHA == last_reviewed_sha` → stop
+  (already reviewed this SHA; recovery above has already run if needed).
+- **Terminal review exists** and `HEAD_SHA != last_reviewed_sha` → proceed
+  to Step 4 as a **follow-up review**, even when the latest terminal state
+  is `APPROVED`. A new push invalidates the prior approval; review the
+  delta and post a fresh terminal verdict.
+
+Follow-up diff:
+
+1. Confirm both commit objects exist locally, fetching if needed:
+
+   ```bash
+   ensure_commit() {
+     local sha="$1"
+     git cat-file -e "${sha}^{commit}" 2>/dev/null && return 0
+     git fetch --no-tags origin "$sha" 2>/dev/null || true
+     git cat-file -e "${sha}^{commit}" 2>/dev/null
+   }
+   ```
+
+2. If `ensure_commit "$last_reviewed_sha"` and `ensure_commit "$HEAD_SHA"`
+   both succeed: `git diff "$last_reviewed_sha..$HEAD_SHA"`.
+3. If `last_reviewed_sha` is gone (rebase / force-push dropped it):
+   `ensure_commit "$BASE_SHA"` and `git diff "$BASE_SHA..$HEAD_SHA"`
+   (full current PR diff against its base). Do not stop the follow-up
+   because the old review commit is unreachable.
 
 ## Step 4 — Run the review
 
-Cover every dimension below. For a follow-up, scope the diff to only the
-commits since `last_reviewed_sha`, not the whole PR.
+Cover every dimension below. For a follow-up, scope the diff to
+`last_reviewed_sha..HEAD_SHA`, or `BASE_SHA..HEAD_SHA` when the prior review
+commit is unreachable — not an unrelated extra range.
 
 - **Correctness** — logic errors, edge cases, off-by-one, null/undefined handling.
 - **Security** — injection, auth/authz gaps, hardcoded secrets, insecure
@@ -139,10 +195,13 @@ first, and only survivors are `[blocking]`.
 ⚠️ partially addressed / ❌ still open, with a one-line reason. A still-open
 or partially-addressed Data Privacy item stays `[blocking]` across rounds.
 
-**AI bot reconciliation**: `gh api repos/$REPO/issues/$PR_NUMBER/comments
---paginate` and cross-reference findings against existing CodeRabbit/Cursor/
-Copilot comments — agree (link, don't duplicate), disagree (state position
-briefly), or incorporate what a bot caught that this review missed.
+**AI bot reconciliation**: use the issue comments and the inline
+pull-review comments already fetched in Step 2. Cross-reference findings
+against existing CodeRabbit/Cursor/Copilot comments — agree (link, don't
+duplicate), disagree (state position briefly), or incorporate what a bot
+caught that this review missed. Classify prior `dealako` inline findings
+from the last terminal review as ✅ resolved / ⚠️ partially addressed /
+❌ still open.
 
 ## Step 5 — Resolve the verdict, then post the review in one call
 
@@ -156,33 +215,66 @@ state from this routine.
 - Any finding at all from the **Security** dimension, regardless of the
   severity label attached to it.
 - More than 2 `[minor]` issues total, across all dimensions.
-- Merge conflicts exist.
+- Merge conflicts exist (`mergeable == CONFLICTING` from Step 1, re-checked
+  immediately before POST).
 
 **Approve** if all of the following are true:
 - No `[blocking]` findings.
 - No `privacy: true` findings.
 - No findings from the Security dimension.
-- No merge conflicts.
+- `mergeable == MERGEABLE` (not `CONFLICTING`, not `UNKNOWN`).
 - 2 or fewer `[minor]` issues total.
+
+If `mergeable == UNKNOWN` and the Request-changes bullets are not otherwise
+met: **stop without posting an `APPROVE`**. Print that GitHub has not yet
+computed mergeability and take no approval action. Do not guess. If any
+Request-changes bullet is already true, still `REQUEST_CHANGES`.
 
 `[nit]` and `[question]` findings never block approval on their own. **When
 the Approve criteria are met, approve** — this is the explicit acceptance
 gate this routine exists to automate. Do not invent an additional bar beyond
-the five bullets above.
+the bullets above.
 
 ### Post the review
 
 Unlike the old MCP-based flow (pending review → add comments one at a time →
 submit), the GitHub REST API lets you do this in **one call**: build a JSON
-payload with `event`, a short `body`, and a `comments` array (one entry per
-finding, each `{"path", "line", "body"}`), and POST it:
+payload with `event`, `commit_id`, a short `body`, and a `comments` array
+(one entry per finding). Each finding is:
+
+```json
+{"path": "<file>", "line": 12, "side": "RIGHT", "body": "<template below>"}
+```
+
+- `side` is required with `line`: `"RIGHT"` for added or context lines,
+  `"LEFT"` for deleted lines.
+- If a range comment is used, also include `start_line` and `start_side`.
+- Never omit `side`; a missing field 422s the whole review POST.
+
+Immediately before building the payload:
+
+1. Re-fetch `headRefOid` and `mergeable`:
+   ```bash
+   gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid,mergeable
+   ```
+   If `headRefOid != HEAD_SHA`, **stop and do not POST** — a newer
+   `synchronize` run will review the moved head. Do not attach this
+   analysis to a SHA you did not read.
+2. Re-fetch `dealako` reviews. If a terminal review already exists for
+   this `HEAD_SHA`, do not POST another; recover the summary if needed
+   and stop.
+3. Re-apply the `mergeable` gate above with the fresh value.
+
+Then POST, binding the verdict to the analyzed SHA:
 
 ```bash
 jq -n \
   --arg event "APPROVE" \
   --arg body "<1-2 sentence verdict-level note>" \
+  --arg commit "$HEAD_SHA" \
   --argjson comments "$(cat findings.json)" \
-  '{event: $event, body: $body, comments: $comments}' > review.json
+  '{event: $event, commit_id: $commit, body: $body, comments: $comments}' \
+  > review.json
 
 gh api --method POST "repos/$REPO/pulls/$PR_NUMBER/reviews" \
   --input review.json
@@ -219,9 +311,25 @@ done.
 
 ## Step 6 — Post the abbreviated summary comment
 
+Put the summary marker as the first line of `summary.md`, using the SHA
+passed as `commit_id` in Step 5 (normally `HEAD_SHA`):
+
+```text
+<!-- lfx-dd-pr-review-auto-cloud:sha=$HEAD_SHA -->
+```
+
 ```bash
 gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file summary.md
 ```
+
+If this call fails, treat it as an incomplete cycle — a later run's
+missing-summary recovery in Step 3 must retry. Do not skip Step 6 because
+the formal review already exists.
+
+**Recovery summary** (Step 3, when the marker is missing for an already
+posted terminal review): do not invent findings. Post a short comment that
+includes the marker for that review's `commit_id`, greets `@<login>`, and
+links the formal review `html_url` as the source of truth.
 
 The summary is a **short recap**, not a restatement of every finding's
 Proof/Fix (that detail lives inline, Step 5):
@@ -270,3 +378,4 @@ skip condition applied and take no further action.
 - `gh` call failure (rate limit, permission, network): stop this run, take no
   partial action. State is derived from GitHub, not written locally, so a
   re-delivered or future webhook event re-derives cleanly from scratch.
+

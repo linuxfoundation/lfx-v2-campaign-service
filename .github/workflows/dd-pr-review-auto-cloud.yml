@@ -33,7 +33,7 @@ name: dd-pr-review-auto-cloud
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -47,23 +47,29 @@ jobs:
   review:
     name: Copilot PR review (as @dealako)
     runs-on: ubuntu-latest
-    # Defense-in-depth: the prompt re-checks both conditions itself (Step 1),
-    # but skipping here avoids spending a Copilot CLI run on PRs we know we
-    # won't review.
+    # Defense-in-depth: the prompt re-checks draft and self-authored itself
+    # (Step 1), but skipping here avoids spending a Copilot CLI run on PRs
+    # we know we won't review. Forks are skipped because pull_request
+    # workflows from forks do not receive repository secrets (same guard as
+    # ko-build-branch.yaml).
     if: >-
       github.event.pull_request.draft == false &&
-      github.event.pull_request.user.login != 'dealako'
+      github.event.pull_request.user.login != 'dealako' &&
+      github.event.pull_request.head.repo.fork == false
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           fetch-depth: 0
+          # PR HEAD, not the merge ref: conflicted PRs have no merge commit,
+          # and Step 5 still needs a tree to review before REQUEST_CHANGES.
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
 
       - name: Install Copilot CLI
-        run: npm install -g @github/copilot
+        run: npm install -g @github/copilot@1.0.86
 
       - name: Run automated PR review
         env:
@@ -71,12 +77,13 @@ jobs:
           GH_TOKEN: ${{ secrets.DEALAKO_REPO_PAT }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          TRIGGER: ${{ github.event.action == 'synchronize' && 'synchronize' || 'opened' }}
+          TRIGGER: ${{ github.event.action }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           copilot -p "$(cat .github/copilot-workflows/dd-pr-review-auto-cloud.md)
 
-          Run this routine now. REPO=$REPO PR_NUMBER=$PR_NUMBER TRIGGER=$TRIGGER HEAD_SHA=$HEAD_SHA" \
+          Run this routine now. REPO=$REPO PR_NUMBER=$PR_NUMBER TRIGGER=$TRIGGER HEAD_SHA=$HEAD_SHA BASE_SHA=$BASE_SHA" \
             --allow-tool='shell(gh:*)' \
             --allow-tool='shell(git:*)' \
             --allow-tool='shell(jq:*)' \
