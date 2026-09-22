@@ -192,6 +192,39 @@ func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID 
 	return client, err
 }
 
+// ResolveEmailClient builds a HubSpot client for one project, for a caller outside this
+// package that needs to read and write emails — today, the email-creation wizard.
+//
+// It is a thin export of the unexported resolution above rather than a second
+// implementation, because that sequence is where the connection-state and
+// incomplete-credential checks live and two copies of it drift. It deliberately returns the
+// concrete *hubspot.Client: the CONSUMER declares the narrow interface it wants (see
+// service.HubSpotWizardClient), so this package does not learn what the wizard needs and
+// this edge stays one-directional — internal/service must never import internal/dispatch,
+// since this package's own tests import internal/service.
+//
+// Per-call, not cached: a project's connection can be revoked or rotated between two wizard
+// turns, and a client held from an earlier turn would keep writing with a credential the
+// project has since withdrawn.
+func (d *HubSpotDispatcher) ResolveEmailClient(ctx context.Context, projectID string) (*hubspot.Client, error) {
+	return d.resolveHubSpotClient(ctx, projectID, model.ProviderHubSpot)
+}
+
+// ResolveEmailClientWithOrigin is ResolveEmailClient plus whether the credentials came from the
+// LF system row rather than one this project owns.
+//
+// The wizard's clone-source search needs it: SearchEmails is portal-WIDE and projectID only
+// chooses the connection, so on the shared row a hit can be another project's sent email. A
+// caller that only WRITES the requesting project's own content does not need this and should use
+// ResolveEmailClient.
+func (d *HubSpotDispatcher) ResolveEmailClientWithOrigin(ctx context.Context, projectID string) (*hubspot.Client, bool, error) {
+	client, res, err := d.resolveHubSpotClientWithCreds(ctx, projectID, model.ProviderHubSpot)
+	if err != nil {
+		return nil, false, err
+	}
+	return client, res.isFromSystem(), nil
+}
+
 // resolveHubSpotClientWithCreds is resolveHubSpotClient plus the resolved credential it built the
 // client from. Two different needs take it, and both are about attribution AFTER resolution
 // succeeded:

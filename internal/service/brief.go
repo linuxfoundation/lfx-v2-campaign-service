@@ -77,6 +77,17 @@ type BriefService struct {
 	// may allocate. Nil in every construction that does not wire one (SetDecodeReserver), which
 	// reserves nothing — so tests and cold-start paths behave exactly as before.
 	decodeReserve *DecodeReserver
+	// The email-creation wizard's collaborators (SetWizardBackend). All nil in the
+	// no-database and cold-start-pending modes, which is why the wizard handlers check
+	// them through wizardReady rather than ready() — the wizard is an OPTIONAL capability,
+	// and a deployment without it must still serve every other brief route.
+	wizardSessions  domain.WizardSessionRepository
+	wizardHubSpot   HubSpotClientResolver
+	wizardAudiences domain.AudienceRepository
+	// wizardProgress fans SSE frames out to subscribed browsers. Created on first use
+	// (WizardProgress) rather than in the constructor, so the ~40 existing NewBriefService
+	// call sites are unaffected and the SSE route is never handed a nil hub.
+	wizardProgress *WizardProgressHub
 }
 
 // SetClock overrides the time source used for pacing. For tests.
@@ -588,6 +599,47 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	// outbox, so a dropped publish is recoverable by the relay. Archiving is terminal: without
 	// this, one lost message leaves the brief searchable forever.
 	_, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID, attributedActor(ctx, "archive brief"), s.briefIndexPayload(indexer.ActionDeleted))
+
+	// Scrub the wizard sessions' personal data. The archive above is SOFT, so without this a
+	// brief the operator deleted left its free-text `chat_history`, the operator's own
+	// guidance, the generated bodies and the actor blobs in `wizard_sessions` indefinitely --
+	// a store of personal data with no TTL, no purge job and no deletion path.
+	//
+	// It runs on exactly two outcomes: the archive SUCCEEDED, or it reported ErrNotFound.
+	//
+	// ErrNotFound is the RECOVERY path. The archive's status guard means a brief archived by an
+	// earlier attempt answers ErrNotFound forever, so returning on it would make a scrub that
+	// failed once -- a cancelled request, a transient database error -- unrepairable through
+	// the API, because every retry would stop above this line. Re-issuing the delete retries
+	// the scrub, and the statement is idempotent (its WHERE skips already-scrubbed rows), so
+	// the repeat costs nothing when there is nothing to do.
+	//
+	// Any OTHER archive error must not scrub, and the distinction is not pedantic: a rolled-back
+	// transaction or a transient failure leaves the brief LIVE. Scrubbing there would destroy
+	// the transcript, the operator's guidance and the generated bodies of a brief that was never
+	// deleted -- the caller sees the delete fail, goes on using the brief, and the wizard work
+	// is silently gone. ErrNotFound is the only failure that PROVES the brief is not live.
+	//
+	// Still BEST-EFFORT and still outside the archive transaction: the brief is already
+	// deleted from the operator's point of view, and failing the whole delete because the
+	// scrub could not run would leave them unable to delete at all. A failure is logged at
+	// ERROR, because unscrubbed personal data is a real outcome, not noise -- and the log line
+	// names the retry.
+	//
+	// Snapshot under the read lock -- `SetWizardBackend` writes this field on the startup
+	// path, so reading it directly is a data race the detector flags.
+	briefIsGone := aerr == nil || errors.Is(aerr, domain.ErrNotFound)
+	if sessions, _, _ := s.wizardDeps(); sessions != nil && briefIsGone {
+		if n, serr := sessions.ScrubSessionsForBrief(ctx, p.ProjectID, p.BriefID); serr != nil {
+			slog.ErrorContext(ctx, "could not scrub wizard-session personal data for a deleted brief; "+
+				"re-issue the delete to retry the scrub",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "error", safeErrSummary(serr))
+		} else if n > 0 {
+			slog.InfoContext(ctx, "scrubbed wizard-session personal data for a deleted brief",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "sessions", n)
+		}
+	}
+
 	if aerr != nil {
 		return mapBriefErr(aerr)
 	}

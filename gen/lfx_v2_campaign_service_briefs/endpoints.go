@@ -16,26 +16,34 @@ import (
 
 // Endpoints wraps the "lfx-v2-campaign-service-briefs" service endpoints.
 type Endpoints struct {
-	CreateBrief          goa.Endpoint
-	FindBrief            goa.Endpoint
-	GetBrief             goa.Endpoint
-	UpdateBrief          goa.Endpoint
-	ApproveBrief         goa.Endpoint
-	DeleteBrief          goa.Endpoint
-	FetchEventURL        goa.Endpoint
-	UploadCreativeAsset  goa.Endpoint
-	CreateCampaigns      goa.Endpoint
-	AdoptCampaign        goa.Endpoint
-	GetCampaign          goa.Endpoint
-	GetCampaignMetrics   goa.Endpoint
-	GetCampaignSettings  goa.Endpoint
-	GetBriefMetrics      goa.Endpoint
-	GenerateEmailCopy    goa.Endpoint
-	UpdateCampaign       goa.Endpoint
-	ToggleCampaignStatus goa.Endpoint
-	ApplyKeywordActions  goa.Endpoint
-	DeleteCampaign       goa.Endpoint
-	GetJob               goa.Endpoint
+	CreateBrief           goa.Endpoint
+	FindBrief             goa.Endpoint
+	GetBrief              goa.Endpoint
+	UpdateBrief           goa.Endpoint
+	ApproveBrief          goa.Endpoint
+	DeleteBrief           goa.Endpoint
+	FetchEventURL         goa.Endpoint
+	UploadCreativeAsset   goa.Endpoint
+	CreateCampaigns       goa.Endpoint
+	AdoptCampaign         goa.Endpoint
+	GetCampaign           goa.Endpoint
+	GetCampaignMetrics    goa.Endpoint
+	GetCampaignSettings   goa.Endpoint
+	GetBriefMetrics       goa.Endpoint
+	GenerateEmailCopy     goa.Endpoint
+	UpdateCampaign        goa.Endpoint
+	ToggleCampaignStatus  goa.Endpoint
+	ApplyKeywordActions   goa.Endpoint
+	DeleteCampaign        goa.Endpoint
+	GetJob                goa.Endpoint
+	StartEmailWizardPlan  goa.Endpoint
+	PlanEmailWizard       goa.Endpoint
+	GenerateWizardContent goa.Endpoint
+	UpdateWizardSections  goa.Endpoint
+	CloneWizardEmail      goa.Endpoint
+	SetWizardSendList     goa.Endpoint
+	ChatWizardTurn        goa.Endpoint
+	GetWizardSession      goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "lfx-v2-campaign-service-briefs"
@@ -44,26 +52,34 @@ func NewEndpoints(s Service) *Endpoints {
 	// Casting service to Auther interface
 	a := s.(Auther)
 	return &Endpoints{
-		CreateBrief:          NewCreateBriefEndpoint(s, a.JWTAuth),
-		FindBrief:            NewFindBriefEndpoint(s, a.JWTAuth),
-		GetBrief:             NewGetBriefEndpoint(s, a.JWTAuth),
-		UpdateBrief:          NewUpdateBriefEndpoint(s, a.JWTAuth),
-		ApproveBrief:         NewApproveBriefEndpoint(s, a.JWTAuth),
-		DeleteBrief:          NewDeleteBriefEndpoint(s, a.JWTAuth),
-		FetchEventURL:        NewFetchEventURLEndpoint(s, a.JWTAuth),
-		UploadCreativeAsset:  NewUploadCreativeAssetEndpoint(s, a.JWTAuth),
-		CreateCampaigns:      NewCreateCampaignsEndpoint(s, a.JWTAuth),
-		AdoptCampaign:        NewAdoptCampaignEndpoint(s, a.JWTAuth),
-		GetCampaign:          NewGetCampaignEndpoint(s, a.JWTAuth),
-		GetCampaignMetrics:   NewGetCampaignMetricsEndpoint(s, a.JWTAuth),
-		GetCampaignSettings:  NewGetCampaignSettingsEndpoint(s, a.JWTAuth),
-		GetBriefMetrics:      NewGetBriefMetricsEndpoint(s, a.JWTAuth),
-		GenerateEmailCopy:    NewGenerateEmailCopyEndpoint(s, a.JWTAuth),
-		UpdateCampaign:       NewUpdateCampaignEndpoint(s, a.JWTAuth),
-		ToggleCampaignStatus: NewToggleCampaignStatusEndpoint(s, a.JWTAuth),
-		ApplyKeywordActions:  NewApplyKeywordActionsEndpoint(s, a.JWTAuth),
-		DeleteCampaign:       NewDeleteCampaignEndpoint(s, a.JWTAuth),
-		GetJob:               NewGetJobEndpoint(s, a.JWTAuth),
+		CreateBrief:           NewCreateBriefEndpoint(s, a.JWTAuth),
+		FindBrief:             NewFindBriefEndpoint(s, a.JWTAuth),
+		GetBrief:              NewGetBriefEndpoint(s, a.JWTAuth),
+		UpdateBrief:           NewUpdateBriefEndpoint(s, a.JWTAuth),
+		ApproveBrief:          NewApproveBriefEndpoint(s, a.JWTAuth),
+		DeleteBrief:           NewDeleteBriefEndpoint(s, a.JWTAuth),
+		FetchEventURL:         NewFetchEventURLEndpoint(s, a.JWTAuth),
+		UploadCreativeAsset:   NewUploadCreativeAssetEndpoint(s, a.JWTAuth),
+		CreateCampaigns:       NewCreateCampaignsEndpoint(s, a.JWTAuth),
+		AdoptCampaign:         NewAdoptCampaignEndpoint(s, a.JWTAuth),
+		GetCampaign:           NewGetCampaignEndpoint(s, a.JWTAuth),
+		GetCampaignMetrics:    NewGetCampaignMetricsEndpoint(s, a.JWTAuth),
+		GetCampaignSettings:   NewGetCampaignSettingsEndpoint(s, a.JWTAuth),
+		GetBriefMetrics:       NewGetBriefMetricsEndpoint(s, a.JWTAuth),
+		GenerateEmailCopy:     NewGenerateEmailCopyEndpoint(s, a.JWTAuth),
+		UpdateCampaign:        NewUpdateCampaignEndpoint(s, a.JWTAuth),
+		ToggleCampaignStatus:  NewToggleCampaignStatusEndpoint(s, a.JWTAuth),
+		ApplyKeywordActions:   NewApplyKeywordActionsEndpoint(s, a.JWTAuth),
+		DeleteCampaign:        NewDeleteCampaignEndpoint(s, a.JWTAuth),
+		GetJob:                NewGetJobEndpoint(s, a.JWTAuth),
+		StartEmailWizardPlan:  NewStartEmailWizardPlanEndpoint(s, a.JWTAuth),
+		PlanEmailWizard:       NewPlanEmailWizardEndpoint(s, a.JWTAuth),
+		GenerateWizardContent: NewGenerateWizardContentEndpoint(s, a.JWTAuth),
+		UpdateWizardSections:  NewUpdateWizardSectionsEndpoint(s, a.JWTAuth),
+		CloneWizardEmail:      NewCloneWizardEmailEndpoint(s, a.JWTAuth),
+		SetWizardSendList:     NewSetWizardSendListEndpoint(s, a.JWTAuth),
+		ChatWizardTurn:        NewChatWizardTurnEndpoint(s, a.JWTAuth),
+		GetWizardSession:      NewGetWizardSessionEndpoint(s, a.JWTAuth),
 	}
 }
 
@@ -90,6 +106,14 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ApplyKeywordActions = m(e.ApplyKeywordActions)
 	e.DeleteCampaign = m(e.DeleteCampaign)
 	e.GetJob = m(e.GetJob)
+	e.StartEmailWizardPlan = m(e.StartEmailWizardPlan)
+	e.PlanEmailWizard = m(e.PlanEmailWizard)
+	e.GenerateWizardContent = m(e.GenerateWizardContent)
+	e.UpdateWizardSections = m(e.UpdateWizardSections)
+	e.CloneWizardEmail = m(e.CloneWizardEmail)
+	e.SetWizardSendList = m(e.SetWizardSendList)
+	e.ChatWizardTurn = m(e.ChatWizardTurn)
+	e.GetWizardSession = m(e.GetWizardSession)
 }
 
 // NewCreateBriefEndpoint returns an endpoint function that calls the method
@@ -549,5 +573,189 @@ func NewGetJobEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
 			return nil, err
 		}
 		return s.GetJob(ctx, p)
+	}
+}
+
+// NewStartEmailWizardPlanEndpoint returns an endpoint function that calls the
+// method "start-email-wizard-plan" of service "lfx-v2-campaign-service-briefs".
+func NewStartEmailWizardPlanEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*StartEmailWizardPlanPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.StartEmailWizardPlan(ctx, p)
+	}
+}
+
+// NewPlanEmailWizardEndpoint returns an endpoint function that calls the
+// method "plan-email-wizard" of service "lfx-v2-campaign-service-briefs".
+func NewPlanEmailWizardEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*PlanEmailWizardPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.PlanEmailWizard(ctx, p)
+	}
+}
+
+// NewGenerateWizardContentEndpoint returns an endpoint function that calls the
+// method "generate-wizard-content" of service "lfx-v2-campaign-service-briefs".
+func NewGenerateWizardContentEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GenerateWizardContentPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GenerateWizardContent(ctx, p)
+	}
+}
+
+// NewUpdateWizardSectionsEndpoint returns an endpoint function that calls the
+// method "update-wizard-sections" of service "lfx-v2-campaign-service-briefs".
+func NewUpdateWizardSectionsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*UpdateWizardSectionsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.UpdateWizardSections(ctx, p)
+	}
+}
+
+// NewCloneWizardEmailEndpoint returns an endpoint function that calls the
+// method "clone-wizard-email" of service "lfx-v2-campaign-service-briefs".
+func NewCloneWizardEmailEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*CloneWizardEmailPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.CloneWizardEmail(ctx, p)
+	}
+}
+
+// NewSetWizardSendListEndpoint returns an endpoint function that calls the
+// method "set-wizard-send-list" of service "lfx-v2-campaign-service-briefs".
+func NewSetWizardSendListEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*SetWizardSendListPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.SetWizardSendList(ctx, p)
+	}
+}
+
+// NewChatWizardTurnEndpoint returns an endpoint function that calls the method
+// "chat-wizard-turn" of service "lfx-v2-campaign-service-briefs".
+func NewChatWizardTurnEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ChatWizardTurnPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ChatWizardTurn(ctx, p)
+	}
+}
+
+// NewGetWizardSessionEndpoint returns an endpoint function that calls the
+// method "get-wizard-session" of service "lfx-v2-campaign-service-briefs".
+func NewGetWizardSessionEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetWizardSessionPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetWizardSession(ctx, p)
 	}
 }

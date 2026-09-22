@@ -653,6 +653,22 @@ var (
 	// campaign of its own to adopt.
 	ErrAdoptionRequiresOwnConnection = errors.New("adoption requires a connection owned by this project")
 
+	// ErrStaleWizardSession indicates a wizard-session update lost an optimistic-concurrency
+	// race: the row still exists but at a different version than the caller read.
+	//
+	// It is deliberately NOT ErrPreconditionFailed, even though the mechanism is identical.
+	// ErrPreconditionFailed is this service's If-Match story and maps to 412, which is the
+	// right answer when the client SENT a version and can send a newer one. A wizard turn
+	// sends no version at all — the service reads the session, calls a model or HubSpot, and
+	// writes back — so 412 would name a header the caller never used and cannot fix. The
+	// honest answer is the one ErrStaleApproval already gives for the same shape of race:
+	// 409, meaning another turn of this session landed first, re-read it and try again.
+	//
+	// It is also not ErrStaleApproval itself, despite sharing that status. Reusing that
+	// sentinel would put "brief is no longer approved at the expected version" in front of a
+	// caller whose brief approval has nothing to do with the failure.
+	ErrStaleWizardSession = errors.New("wizard session was modified by another turn")
+
 	// ErrAccountIDMalformed indicates a caller-supplied account id is shape-invalid for its
 	// platform. Maps to 400.
 	//

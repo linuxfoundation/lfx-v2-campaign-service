@@ -97,6 +97,38 @@ type Client struct {
 	// GetJob Doer is the HTTP client used to make requests to the get-job endpoint.
 	GetJobDoer goahttp.Doer
 
+	// StartEmailWizardPlan Doer is the HTTP client used to make requests to the
+	// start-email-wizard-plan endpoint.
+	StartEmailWizardPlanDoer goahttp.Doer
+
+	// PlanEmailWizard Doer is the HTTP client used to make requests to the
+	// plan-email-wizard endpoint.
+	PlanEmailWizardDoer goahttp.Doer
+
+	// GenerateWizardContent Doer is the HTTP client used to make requests to the
+	// generate-wizard-content endpoint.
+	GenerateWizardContentDoer goahttp.Doer
+
+	// UpdateWizardSections Doer is the HTTP client used to make requests to the
+	// update-wizard-sections endpoint.
+	UpdateWizardSectionsDoer goahttp.Doer
+
+	// CloneWizardEmail Doer is the HTTP client used to make requests to the
+	// clone-wizard-email endpoint.
+	CloneWizardEmailDoer goahttp.Doer
+
+	// SetWizardSendList Doer is the HTTP client used to make requests to the
+	// set-wizard-send-list endpoint.
+	SetWizardSendListDoer goahttp.Doer
+
+	// ChatWizardTurn Doer is the HTTP client used to make requests to the
+	// chat-wizard-turn endpoint.
+	ChatWizardTurnDoer goahttp.Doer
+
+	// GetWizardSession Doer is the HTTP client used to make requests to the
+	// get-wizard-session endpoint.
+	GetWizardSessionDoer goahttp.Doer
+
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -118,31 +150,39 @@ func NewClient(
 	restoreBody bool,
 ) *Client {
 	return &Client{
-		CreateBriefDoer:          doer,
-		FindBriefDoer:            doer,
-		GetBriefDoer:             doer,
-		UpdateBriefDoer:          doer,
-		ApproveBriefDoer:         doer,
-		DeleteBriefDoer:          doer,
-		FetchEventURLDoer:        doer,
-		UploadCreativeAssetDoer:  doer,
-		CreateCampaignsDoer:      doer,
-		AdoptCampaignDoer:        doer,
-		GetCampaignDoer:          doer,
-		GetCampaignMetricsDoer:   doer,
-		GetCampaignSettingsDoer:  doer,
-		GetBriefMetricsDoer:      doer,
-		GenerateEmailCopyDoer:    doer,
-		UpdateCampaignDoer:       doer,
-		ToggleCampaignStatusDoer: doer,
-		ApplyKeywordActionsDoer:  doer,
-		DeleteCampaignDoer:       doer,
-		GetJobDoer:               doer,
-		RestoreResponseBody:      restoreBody,
-		scheme:                   scheme,
-		host:                     host,
-		decoder:                  dec,
-		encoder:                  enc,
+		CreateBriefDoer:           doer,
+		FindBriefDoer:             doer,
+		GetBriefDoer:              doer,
+		UpdateBriefDoer:           doer,
+		ApproveBriefDoer:          doer,
+		DeleteBriefDoer:           doer,
+		FetchEventURLDoer:         doer,
+		UploadCreativeAssetDoer:   doer,
+		CreateCampaignsDoer:       doer,
+		AdoptCampaignDoer:         doer,
+		GetCampaignDoer:           doer,
+		GetCampaignMetricsDoer:    doer,
+		GetCampaignSettingsDoer:   doer,
+		GetBriefMetricsDoer:       doer,
+		GenerateEmailCopyDoer:     doer,
+		UpdateCampaignDoer:        doer,
+		ToggleCampaignStatusDoer:  doer,
+		ApplyKeywordActionsDoer:   doer,
+		DeleteCampaignDoer:        doer,
+		GetJobDoer:                doer,
+		StartEmailWizardPlanDoer:  doer,
+		PlanEmailWizardDoer:       doer,
+		GenerateWizardContentDoer: doer,
+		UpdateWizardSectionsDoer:  doer,
+		CloneWizardEmailDoer:      doer,
+		SetWizardSendListDoer:     doer,
+		ChatWizardTurnDoer:        doer,
+		GetWizardSessionDoer:      doer,
+		RestoreResponseBody:       restoreBody,
+		scheme:                    scheme,
+		host:                      host,
+		decoder:                   dec,
+		encoder:                   enc,
 	}
 }
 
@@ -621,6 +661,198 @@ func (c *Client) GetJob() goa.Endpoint {
 		resp, err := c.GetJobDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "get-job", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// StartEmailWizardPlan returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service start-email-wizard-plan server.
+func (c *Client) StartEmailWizardPlan() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeStartEmailWizardPlanRequest(c.encoder)
+		decodeResponse = DecodeStartEmailWizardPlanResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildStartEmailWizardPlanRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.StartEmailWizardPlanDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "start-email-wizard-plan", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// PlanEmailWizard returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service plan-email-wizard server.
+func (c *Client) PlanEmailWizard() goa.Endpoint {
+	var (
+		encodeRequest  = EncodePlanEmailWizardRequest(c.encoder)
+		decodeResponse = DecodePlanEmailWizardResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildPlanEmailWizardRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.PlanEmailWizardDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "plan-email-wizard", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GenerateWizardContent returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service generate-wizard-content server.
+func (c *Client) GenerateWizardContent() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGenerateWizardContentRequest(c.encoder)
+		decodeResponse = DecodeGenerateWizardContentResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGenerateWizardContentRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GenerateWizardContentDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "generate-wizard-content", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// UpdateWizardSections returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service update-wizard-sections server.
+func (c *Client) UpdateWizardSections() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeUpdateWizardSectionsRequest(c.encoder)
+		decodeResponse = DecodeUpdateWizardSectionsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildUpdateWizardSectionsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.UpdateWizardSectionsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "update-wizard-sections", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// CloneWizardEmail returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service clone-wizard-email server.
+func (c *Client) CloneWizardEmail() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeCloneWizardEmailRequest(c.encoder)
+		decodeResponse = DecodeCloneWizardEmailResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildCloneWizardEmailRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.CloneWizardEmailDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "clone-wizard-email", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// SetWizardSendList returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service set-wizard-send-list server.
+func (c *Client) SetWizardSendList() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeSetWizardSendListRequest(c.encoder)
+		decodeResponse = DecodeSetWizardSendListResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildSetWizardSendListRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.SetWizardSendListDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "set-wizard-send-list", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ChatWizardTurn returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service chat-wizard-turn server.
+func (c *Client) ChatWizardTurn() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeChatWizardTurnRequest(c.encoder)
+		decodeResponse = DecodeChatWizardTurnResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildChatWizardTurnRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ChatWizardTurnDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "chat-wizard-turn", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetWizardSession returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service get-wizard-session server.
+func (c *Client) GetWizardSession() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetWizardSessionRequest(c.encoder)
+		decodeResponse = DecodeGetWizardSessionResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetWizardSessionRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetWizardSessionDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "get-wizard-session", err)
 		}
 		return decodeResponse(resp)
 	}
