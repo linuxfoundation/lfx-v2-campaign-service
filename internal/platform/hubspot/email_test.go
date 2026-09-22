@@ -227,6 +227,15 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 		t.Errorf("includedProperties = %v, want it to contain \"state\" — the picker surfaces the "+
 			"lifecycle state, and a property not named here comes back empty", gotProps)
 	}
+	// `publishDate` on the same terms, and for the reason the last-sent listing exists:
+	// `updatedAt` is when an email was last EDITED, so ranking on it made an ancient email
+	// touched last week read as the most recent send. Naming it here is what puts the send
+	// date on the LIST rows, where it can influence which rows are selected at all rather
+	// than only the handful already chosen.
+	if !slices.Contains(gotProps, "publishDate") {
+		t.Errorf("includedProperties = %v, want it to contain \"publishDate\" -- the last-sent "+
+			"listing ranks by when an email went out, which is not when it was edited", gotProps)
+	}
 	if len(got) != 3 || got[0].ID != "2" || got[1].ID != "3" || got[2].ID != "1" {
 		t.Errorf("results must be most-recently-updated first (2,3,1), got %v", []string{got[0].ID, got[1].ID, got[2].ID})
 	}
@@ -1050,4 +1059,178 @@ func TestHTMLBlocks_PlacedDistinguishesLayoutFromKeySort(t *testing.T) {
 			t.Errorf("blocks[1] = {%q, Placed=%v}, want the unplaced footer", got[1].Key, got[1].Placed)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// SearchEmailsMatching: the same walk under a caller-supplied match rule
+// ---------------------------------------------------------------------------
+
+// TestSearchEmailsMatching_AppliesTheCallersPredicate pins that the predicate is handed a
+// COMPLETE row. The rule a caller needs is richer than "substring of name or subject" --
+// it reads the state, the send date and the fields together -- and a row missing any of
+// them silently narrows the rule rather than failing it. AppURL in particular is built by
+// the client, so it must be assigned BEFORE the filter runs.
+func TestSearchEmailsMatching_AppliesTheCallersPredicate(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[
+			{"id":"1","name":"KubeCon Invite","subject":"Join us","state":"PUBLISHED","publishDate":"2026-05-01T10:00:00Z"},
+			{"id":"2","name":"Newsletter","subject":"Monthly","state":"DRAFT","publishDate":""}
+		]}`)
+	})
+
+	var sawURL, sawSubject, sawDate string
+	got, err := c.SearchEmailsMatching(context.Background(), func(e Email) bool {
+		if e.ID == "1" {
+			sawURL, sawSubject, sawDate = e.AppURL, e.Subject, e.PublishDate
+		}
+		return e.State == "PUBLISHED"
+	})
+	if err != nil {
+		t.Fatalf("SearchEmailsMatching: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "1" {
+		t.Fatalf("the predicate selected the wrong rows, got %+v", got)
+	}
+	if sawSubject != "Join us" || sawDate != "2026-05-01T10:00:00Z" {
+		t.Errorf("the predicate saw subject %q and publishDate %q; a rule reading a field the "+
+			"row never carried is narrowed rather than failed", sawSubject, sawDate)
+	}
+	if !strings.Contains(sawURL, "/edit/1/") {
+		t.Errorf("the predicate saw AppURL %q -- it must be built before the filter runs, or a "+
+			"caller cannot filter on the link", sawURL)
+	}
+}
+
+// TestSearchEmailsMatching_BoundWithNoAcceptedRowIsIncomplete pins that this entrypoint
+// inherits SearchEmails' false-absence contract unchanged. A tokenized predicate is
+// STRICTER than a substring, so it reaches the bound with nothing accepted more often -- and
+// an empty slice with no error there claims the portal authoritatively holds no such email.
+// The caller acts on that absence by telling an operator the event has never been emailed.
+func TestSearchEmailsMatching_BoundWithNoAcceptedRowIsIncomplete(t *testing.T) {
+	pages := 0
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		pages++
+		// Always another page, never an accepted row. The cursor must ADVANCE or the walk
+		// ends on the non-advancing-cursor check and the test passes vacuously.
+		_, _ = fmt.Fprintf(w, `{"results":[{"id":"%d","name":"unrelated","subject":"z"}],`+
+			`"paging":{"next":{"after":"CUR%d"}}}`, pages, pages)
+	})
+
+	got, err := c.SearchEmailsMatching(context.Background(), func(Email) bool { return false })
+	if !errors.Is(err, ErrSearchIncomplete) {
+		t.Fatalf("err = %v, want ErrSearchIncomplete: a bound reached with nothing accepted is "+
+			"an absence nobody established", err)
+	}
+	if got != nil {
+		t.Fatalf("a truncated walk must return no rows alongside its error, got %d", len(got))
+	}
+	if pages > maxFilteredPages {
+		t.Errorf("walked %d pages; a caller's predicate must not lift the scan bound (%d)", pages, maxFilteredPages)
+	}
+}
+
+// TestSearchEmailsMatching_OneAcceptedRowIsAPartialAnswerNotAFailure is the other side of
+// that contract: with rows in hand the bound is a partial answer rather than a false one,
+// so the caller gets what was found instead of a failure it cannot act on.
+func TestSearchEmailsMatching_OneAcceptedRowIsAPartialAnswerNotAFailure(t *testing.T) {
+	pages := 0
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		pages++
+		name := "unrelated"
+		if pages == 1 {
+			name = "KubeCon Invite"
+		}
+		_, _ = fmt.Fprintf(w, `{"results":[{"id":"%d","name":"%s","subject":"z"}],`+
+			`"paging":{"next":{"after":"CUR%d"}}}`, pages, name, pages)
+	})
+
+	got, err := c.SearchEmailsMatching(context.Background(), func(e Email) bool {
+		return strings.Contains(e.Name, "KubeCon")
+	})
+	if err != nil {
+		t.Fatalf("a bound reached WITH matches is a partial answer, not a failure: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "1" {
+		t.Fatalf("want the one accepted row, got %+v", got)
+	}
+}
+
+// TestSearchEmailsMatching_ANilFilterIsTheUnfilteredScreen pins that the two walks are told
+// apart by whether a filter was supplied at all, not by whether it matches anything. A
+// predicate returning true for every row is still FILTERED and bounded by the scan bound; a
+// nil one is the unfiltered screen and bounded by maxUnfilteredEmails. Conflating them would
+// silently change the cap on the template picker's empty-query path.
+func TestSearchEmailsMatching_ANilFilterIsTheUnfilteredScreen(t *testing.T) {
+	const perPage = 100
+	c, _ := emailPageServer(t, maxUnfilteredEmails/perPage*4, perPage, "Email")
+
+	got, err := c.SearchEmailsMatching(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("SearchEmailsMatching(nil): %v", err)
+	}
+	if len(got) != maxUnfilteredEmails {
+		t.Fatalf("a nil filter must take the unfiltered cap of %d rows, got %d", maxUnfilteredEmails, len(got))
+	}
+	// Sorted as a WHOLE then trimmed, so the rows kept are the newest of what was read.
+	// emailPageServer's updatedAt rises with the id, so the newest is the highest id fetched.
+	if got[0].ID != strconv.Itoa(maxUnfilteredEmails-1) {
+		t.Errorf("first row is id %s, want %d -- the fetched prefix must be sorted before it is trimmed",
+			got[0].ID, maxUnfilteredEmails-1)
+	}
+}
+
+// TestSearchEmails_ProjectsPublishDateAndDecodesIt pins the send date end to end on the
+// LIST rows. Requesting the property and mapping it onto the struct are separate failures:
+// a field not named in includedProperties comes back empty, and a field named but not
+// declared on Email decodes to the same empty string. Either way the last-sent ranking
+// silently falls back to "no date reported" for every row in the portal.
+func TestSearchEmails_ProjectsPublishDateAndDecodesIt(t *testing.T) {
+	var gotProps []string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotProps = r.URL.Query()["includedProperties"]
+		_, _ = io.WriteString(w, `{"results":[
+			{"id":"1","name":"KubeCon Invite","subject":"Join us","state":"PUBLISHED",
+			 "updatedAt":"2026-06-01T00:00:00Z","publishDate":"2026-05-01T10:00:00Z"}
+		]}`)
+	})
+
+	got, err := c.SearchEmails(context.Background(), "kubecon")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if !slices.Contains(gotProps, "publishDate") {
+		t.Fatalf("includedProperties = %v, want \"publishDate\"", gotProps)
+	}
+	if len(got) != 1 || got[0].PublishDate != "2026-05-01T10:00:00Z" {
+		t.Fatalf("PublishDate = %q, want the projected value -- a requested property that does "+
+			"not map onto the struct is as empty as one never requested", got[0].PublishDate)
+	}
+	// The date is distinct from updatedAt on this row, which is the whole point: an email
+	// edited in June that went out in May is a MAY send.
+	if got[0].UpdatedAt == got[0].PublishDate {
+		t.Error("the fixture must keep the edit and the send date apart, or it cannot tell them apart")
+	}
+}
+
+// TestParseEmailTime_ReadsBothShapesAndRefusesTheRest pins the shared parser. HubSpot
+// renders marketing-email dates as RFC 3339 on some fields and epoch millis on others, and
+// an unparseable value must be UNKNOWN rather than the zero time: read as 1970 it would
+// sort a real send behind nothing at all, and rendered it would be a date no client can
+// read for a send that certainly did not happen then.
+func TestParseEmailTime_ReadsBothShapesAndRefusesTheRest(t *testing.T) {
+	rfc := ParseEmailTime("2026-05-01T10:00:00Z")
+	if rfc.IsZero() || rfc.Year() != 2026 {
+		t.Errorf("RFC 3339 must parse, got %v", rfc)
+	}
+	if ms := ParseEmailTime("1777629600000"); !ms.Equal(rfc) {
+		t.Errorf("epoch millis must parse to the same instant as its RFC 3339 spelling: %v vs %v", ms, rfc)
+	}
+	if frac := ParseEmailTime(" 2026-05-01T10:00:00.250Z "); frac.IsZero() {
+		t.Error("fractional seconds and surrounding whitespace must still parse")
+	}
+	for _, bad := range []string{"", "   ", "not-a-date", "2026-05-01"} {
+		if got := ParseEmailTime(bad); !got.IsZero() {
+			t.Errorf("ParseEmailTime(%q) = %v, want the zero time so the caller can treat it as UNKNOWN", bad, got)
+		}
+	}
 }
