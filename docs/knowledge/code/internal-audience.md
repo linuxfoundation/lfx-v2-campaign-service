@@ -384,6 +384,20 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
   suppression list in the portal. `MatchesEventSuppression` requires keyword overlap AND a
   suppression word, because either alone also matches the event's own AUDIENCE lists — and
   excluding those would suppress exactly the people the send is for.
+  `LastSentTerms`/`MatchLastSent` are the same shape of decision for the last-sent listing, and
+  they exist because matching the event name as ONE contiguous phrase found nothing: no marketing
+  email is named `"KubeCon + CloudNativeCon North America"`. `NewLastSentTerms` splits the
+  year-stripped name into DISTINCTIVE and GENERIC tokens (`genericEventWords`, curated beside
+  `stopwords` on the same rule — a token belongs there only when it recurs across DIFFERENT events),
+  and keeps the brand apart as a fallback tier. `MatchLastSent` reads name AND subject, because
+  either can carry the event, and admits on ONE distinctive token or TWO tokens of any kind. A flat
+  minimum-overlap count was rejected: `"KubeCon NA 2026"` overlaps a KubeCon event on exactly one
+  token and is the precise case this exists to find, so DISTINCTIVENESS rather than count is what
+  separates `kubecon` from `summit`. A generic token still RANKS (`Overlap` counts both tiers); it
+  just cannot admit alone, since `"Summit Recap"` shares `summit` with a dozen unrelated portfolio
+  sends. A brand-only hit is reported AS one (`BrandOnly`) so the caller can demote it, and a brand
+  token that is also an event token is removed from the brand tier — otherwise the fallback claims
+  credit for a hit the event name already explains.
 - **`builder_qa.go`** — three pre-send checks, inferred from a list's own `filterBranch` plus the
   NAMES of the lists it references, because the portal carries no machine-readable marker for
   "this is the GDPR list". `NEEDS VERIFY` is the honest and most common verdict, and no caller

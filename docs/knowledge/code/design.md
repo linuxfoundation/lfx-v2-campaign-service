@@ -170,7 +170,12 @@ Three declarations are load-bearing:
   empty id set previews a count of nothing — both are caller mistakes worth a 400 rather than a
   plausible-looking answer.
 - `get-audience-last-sent` caps `limit` at `Max(10)` with a default of 3. The endpoint fans out
-  per email against a rate-limited API, so the ceiling is a budget, not a preference.
+  per email against a rate-limited API, so the ceiling is a budget, not a preference. The SEND
+  DATE the rows are ordered by costs no extra round trip: it is projected onto the list rows the
+  single sweep already reads (`publishDate` in `includedProperties`), and the fan-out only
+  confirms it for the survivors. The sweep itself is now one walk rather than one per search
+  term, so the search half of the budget HALVED. See
+  [internal/dispatch](internal-dispatch.md).
 - `compose-audience-master` responds `201` and declares a second error, `ComposePartial`, mapped
   to `500`. Goa maps both it and `InternalServerError` to that status and discriminates with a
   `goa-error` header, so the ComposePartial body carries the created suppression list where the

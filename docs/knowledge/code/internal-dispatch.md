@@ -1999,6 +1999,48 @@ ordering is what makes a partial failure describable: the suppression list exist
 does not, which is exactly what `ComposePartialError` carries up so the handler can report the
 created list instead of inviting a blind retry that would duplicate it.
 
+`LastSent` is ONE portal sweep, ranked by when each email WENT OUT. Every part of that sentence was
+once otherwise, and the endpoint returned no recent sends at all. The event name was searched as a
+single contiguous substring, so `"KubeCon + CloudNativeCon North America"` had to appear verbatim in
+an email's name or subject and never did — the sweep found zero candidates for an event with a full
+history of sends, and `brand_short` is optional so there was often no fallback term either.
+Candidates are now matched on event TOKENS across name AND subject by
+[internal/audience](internal-audience.md)'s `MatchLastSent`, handed to
+`hubspot.SearchEmailsMatching` as a predicate: the match policy lives in `internal/audience` so it
+tests without a portal, and one walk with the caller's own rule costs one walk where the previous
+per-term loop re-read identical pages (up to 40 page GETs for what one answers in 20).
+
+Ranking is the parsed send date DESCENDING, with keyword overlap only as the tiebreak. Overlap was
+the key, which ranked a wordy old email above a recent send; it measures how well a name matches and
+says nothing about when the email went out. It was also computed over the NAME alone while the
+search matched name or subject, so a subject-only match scored zero and was truncated away. And the
+date was not read until AFTER the truncation, so the field the contract orders by influenced neither
+selection nor order. A row whose date the portal did not report sorts LAST — an unknown date must
+not outrank a known one and must never be read as an instant in 1970 — and `sent_at` is NORMALISED
+to RFC 3339 on output rather than passed through, because the design documents that shape and
+HubSpot renders these dates in more than one.
+
+Three smaller rules hang off the same reading of this panel as PRECEDENT for an audience an operator
+is about to build. `isPublished` is an explicit ALLOWLIST: substring matching inverted the answer
+("UNPUBLISHED" contains "PUBLISHED"), and the prefix matching that fixed that admitted
+`AUTOMATED_DRAFT` and `AUTOMATED_SENDING` — a draft and an in-flight send counted as precedent. An
+unrecognised state is not a send. `sentInTheFuture` is the second half of that check, for
+`PUBLISHED_OR_SCHEDULED`, which covers a send that has gone out AND one merely booked; only a date
+the portal actually REPORTED can disqualify a row, so an absent date never excludes and cannot empty
+the endpoint on a portal that ignores `includedProperties`. A brand-only hit is a FALLBACK tier,
+dropped whenever an event match exists anywhere in the sweep — strictly stronger than the
+break-on-first-matching-term it replaced, which only suppressed the brand when an EARLIER term had
+matched.
+
+The rows are re-sorted on the authoritative date AFTER the per-email fan-out, and that is what makes
+"most recently sent first" hold unconditionally: projecting `publishDate` onto the list rows buys
+correct SELECTION, and this sort buys correct ORDERING even on a portal that returns every projected
+date blank. A row whose selection read fails keeps its date — the date and the `to` selection are
+independent facts, and seeding `sent_at` only from the selection read meant one failing also unknew
+the other. `ErrSearchIncomplete` now propagates rather than being swallowed per term: with one walk
+there is no next term to fall through to, and "no prior sends" is the most misleading thing this
+endpoint can say, because an operator reads an empty panel as "this event has never been emailed".
+
 `RunQA` reads a list's own filter branch plus the NAMES of the lists it references — including
 names only the legacy v1 endpoint can still resolve — and hands both to the pure rules in
 `builder_qa.go`. A name it cannot read is a suppression it cannot credit, which is why the legacy

@@ -93,7 +93,8 @@ flagged `Ambiguous` (see `IsUnconfirmed`), so the caller verifies rather than
 blind-retrying. A GET (read) is never UNCONFIRMED — a malformed read is a plain error,
 safely retryable.
 
-`SearchEmails` walks `paging.next.after` across pages, up to `maxListPages` (200). Two behaviours
+`SearchEmails` and `SearchEmailsMatching` share one walk (`walkEmails`) over
+`paging.next.after`, up to `maxListPages` (200). Two behaviours
 differ by whether a query was given, and the split is deliberate (LFXV2-3197). A FILTERED search
 reads far more pages -- `maxFilteredScan` (2000) rows or `maxFilteredPages` (20), whichever comes
 first -- because truncating it early would answer "no such email" about an email on a later page,
@@ -106,11 +107,37 @@ default first screen, where every row matches and the walk is therefore at its w
 the trade is acceptable only because a degraded order on a picker is a less useful list rather
 than a wrong answer. Nothing that must be correct depends on it.
 
-`includedProperties` restricts the projection to `name`, `subject`, `updatedAt` and `state`. The
+`SearchEmailsMatching` is the same walk under a CALLER-SUPPLIED predicate, with identical
+bounds and the identical `ErrSearchIncomplete` contract; a nil filter is the unfiltered case.
+It exists because the `query` `SearchEmails` takes is never sent upstream -- the request
+carries `limit`/`sort`/`includedProperties`/`after` and nothing else, and matching is entirely
+client-side. So a caller needing a richer rule than "substring of name or subject" gains
+nothing from calling `SearchEmails` once per term: every term re-reads the SAME pages. The
+last-sent listing (`internal/dispatch`) was doing exactly that, paying up to 40 page GETs for
+what one walk answers in 20. `SearchEmails` is now only the substring match rule expressed
+over this walk, which keeps the template picker's published behaviour identical by
+construction rather than by inspection. A predicate sees a COMPLETE row -- `AppURL` is built
+before the filter runs. Note that a stricter predicate reaches the bound with nothing accepted
+more often than a substring does, so `ErrSearchIncomplete` is MORE likely on a very large
+portal: an event with no prior send in a portal over `maxFilteredScan` emails now yields a
+recoverable failure rather than an empty list, which is the right side of that trade.
+
+`includedProperties` restricts the projection to `name`, `subject`, `updatedAt`, `state` and
+`publishDate`. The
 list endpoint returns FULL email content by default, which at `limit=100` can exceed the client's
 response cap. `state` is REQUESTED rather than assumed — `Email.State` decodes to `""` for any
 field not named here, so a consumer promised a lifecycle state would otherwise read an empty
 string from every row.
+
+`publishDate` is named for the same reason and on the same terms: `updatedAt` is when an email
+was last EDITED, so the last-sent listing ranking on it read an ancient email touched last week
+as the most recent send. Projecting it puts the send date on the LIST rows, where it can
+influence WHICH rows are selected rather than only the handful already chosen. `Email.PublishDate`
+is a string and `""` means UNKNOWN, never the zero time -- a portal that ignores
+`includedProperties` leaves every row blank, and reading that as 1970 would sort a real send
+behind nothing at all. `ParseEmailTime` (shared with `sortEmailsByUpdatedDesc`) reads RFC 3339
+and epoch millis and returns the zero time for anything else, so callers can tell unknown from
+old.
 
 **`SetSendList` recipients (ILS-only):** a HubSpot email's recipient list goes in
 `contactIlsLists` (ILS list ids). HubSpot's ILS migration removed functional support
@@ -448,6 +475,11 @@ endpoint.
 `GetEmailSendLists` deliberately does NOT use `includedProperties`: `to` is a nested object
 rather than a property, so asking for it by name returns an email with an empty selection —
 indistinguishable from a send that targeted nothing.
+
+That hazard is specific to `to`, and the distinction is what makes the list-row projection above
+safe: `publishDate` is a plain top-level SCALAR, a sibling of `id` and the same shape as `state`,
+so naming it returns it. A NESTED object named in `includedProperties` comes back empty, which is
+why the selection read projects nothing at all while the list walk projects five scalars.
 
 ## Scope
 
