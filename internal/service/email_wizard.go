@@ -180,9 +180,9 @@ func mapWizardErr(err error) error {
 // deleted -- and SetWizardSendList would mutate the HubSpot draft's recipients, an effect
 // outside this database entirely. GetBrief already filters `status <> 'archived'`, so asking
 // it is the whole check; the answer is a 404, which is what the brief being gone means.
-func loadWizardSession(ctx context.Context, briefRepo domain.BriefRepository, sessions domain.WizardSessionRepository, projectID, briefID, sessionID string) (*model.WizardSession, error) {
+func loadWizardSession(ctx context.Context, briefRepo domain.BriefRepository, sessions domain.WizardSessionRepository, projectID, briefID, sessionID string) (*model.WizardSession, *model.CampaignBrief, error) {
 	if strings.TrimSpace(sessionID) == "" {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "session_id is required"}
+		return nil, nil, &briefs.BadRequestError{Code: "400", Message: "session_id is required"}
 	}
 	// ORDER MATTERS: the session is read FIRST, the brief second.
 	//
@@ -197,12 +197,16 @@ func loadWizardSession(ctx context.Context, briefRepo domain.BriefRepository, se
 	// rejects the turn anyway. The two guards cover each other only in this order.
 	sess, err := sessions.GetSession(ctx, projectID, briefID, sessionID)
 	if err != nil {
-		return nil, mapWizardErr(err)
+		return nil, nil, mapWizardErr(err)
 	}
-	if _, gerr := briefRepo.GetBrief(ctx, projectID, briefID); gerr != nil {
-		return nil, mapBriefErr(gerr)
+	// RETURNED, not discarded. Four handlers re-fetched this same row immediately afterwards,
+	// putting two synchronous Postgres round trips for one brief on the critical path of every
+	// wizard turn -- and inviting the two reads to drift to different consistency points.
+	brief, gerr := briefRepo.GetBrief(ctx, projectID, briefID)
+	if gerr != nil {
+		return nil, nil, mapBriefErr(gerr)
 	}
-	return sess, nil
+	return sess, brief, nil
 }
 
 // saveWizardSession writes the session back at the version it was read at.
@@ -441,13 +445,9 @@ func (s *BriefService) PlanEmailWizard(ctx context.Context, p *briefs.PlanEmailW
 	if err != nil {
 		return nil, err
 	}
-	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, brief, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
-	}
-	brief, gerr := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID)
-	if gerr != nil {
-		return nil, mapBriefErr(gerr)
 	}
 	s.publishWizardProgress(sess, WizardProgressFrame{Type: "brief", Text: "Resolving the event details"})
 	details := s.resolveWizardDetails(ctx, brief, strVal(p.URL))
@@ -696,13 +696,9 @@ func (s *BriefService) GenerateWizardContent(ctx context.Context, p *briefs.Gene
 			Message: "AI model is not configured; wizard content generation is unavailable",
 		}
 	}
-	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, brief, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
-	}
-	brief, gerr := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID)
-	if gerr != nil {
-		return nil, mapBriefErr(gerr)
 	}
 	details := decodeWizardEventDetails(brief.EventDetails)
 	// The guidance comes off the SESSION, not this payload: generate-content has no field
@@ -959,7 +955,7 @@ func (s *BriefService) UpdateWizardSections(ctx context.Context, p *briefs.Updat
 	if err != nil {
 		return nil, err
 	}
-	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, _, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
 	}
@@ -995,8 +991,23 @@ func (s *BriefService) UpdateWizardSections(ctx context.Context, p *briefs.Updat
 
 	// The SUBMITTED list is persisted, not the decoded one: the UI round-trips block fields
 	// this service does not model, and storing the re-marshalled form would quietly strip them
-	// on the first preview.
-	sess.Sections = marshalAny(p.Sections)
+	// on the first preview. `sanitizeSectionHTML` copies every key and rewrites only `html`, so
+	// those unmodelled fields survive.
+	//
+	// Sanitized BEFORE the write, matching GenerateWizardContent. Not exploitable today -- every
+	// current reader re-sanitizes -- but that makes the stored invariant "sections are sanitized"
+	// depend on all future readers remembering to. A new export, admin tool or raw dump reading
+	// `sess.Sections` directly would reintroduce the third-sink bug this PR closed for the
+	// generation path, for the edit path instead.
+	sanitized := make([]any, 0, len(p.Sections))
+	for _, sec := range p.Sections {
+		clean, keep := sanitizeSectionHTML(sec)
+		if !keep {
+			continue
+		}
+		sanitized = append(sanitized, clean)
+	}
+	sess.Sections = marshalAny(sanitized)
 	saved, uerr := saveWizardSession(ctx, sessions, sess, attributedActor(ctx, "update-wizard-sections"))
 	if uerr != nil {
 		return nil, uerr
@@ -1059,13 +1070,9 @@ func (s *BriefService) CloneWizardEmail(ctx context.Context, p *briefs.CloneWiza
 			Message: "approved must be true to create a HubSpot draft",
 		}
 	}
-	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, brief, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
-	}
-	brief, gerr := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID)
-	if gerr != nil {
-		return nil, mapBriefErr(gerr)
 	}
 	variant := wizardVariantOf(sess, strVal(p.Variant))
 	if variant == nil {
@@ -1244,7 +1251,7 @@ func (s *BriefService) SetWizardSendList(ctx context.Context, p *briefs.SetWizar
 	if err != nil {
 		return nil, err
 	}
-	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, _, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
 	}
@@ -1484,13 +1491,9 @@ func (s *BriefService) ChatWizardTurn(ctx context.Context, p *briefs.ChatWizardT
 			Message: "AI model is not configured; the wizard chat is unavailable",
 		}
 	}
-	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, brief, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
-	}
-	brief, gerr := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID)
-	if gerr != nil {
-		return nil, mapBriefErr(gerr)
 	}
 
 	turns, terr := sess.Turns()
@@ -1587,7 +1590,7 @@ func (s *BriefService) GetWizardSession(ctx context.Context, p *briefs.GetWizard
 	if err != nil {
 		return nil, err
 	}
-	sess, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
+	sess, _, serr := loadWizardSession(ctx, briefRepo, sessions, p.ProjectID, p.BriefID, p.SessionID)
 	if serr != nil {
 		return nil, serr
 	}

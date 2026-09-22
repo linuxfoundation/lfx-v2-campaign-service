@@ -25,7 +25,6 @@ import (
 //
 // Parsed with a real tokenizer rather than regex: `<scr<script>ipt>` and attribute-boundary
 // tricks defeat pattern matching, and this input is adversarial by assumption.
-
 func sanitizeWizardHTML(input string) string {
 	allowedTags := map[string]bool{
 		"p": true, "br": true, "strong": true, "b": true, "em": true, "i": true,

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
@@ -169,12 +170,14 @@ type fakeWizardHubSpot struct {
 
 	blocks []hubspot.EmailHTMLBlock
 
-	clonedFrom   string
-	clonedName   string
-	wroteWidgets map[string]string
-	wroteSubject string
-	sendListID   string
-	suppression  []string
+	clonedFrom        string
+	clonedName        string
+	wroteWidgets      map[string]string
+	wroteSubject      string
+	sendListID        string
+	suppression       []string
+	searchDeadline    time.Time
+	searchHadDeadline bool
 }
 
 func newFakeWizardHubSpot() *fakeWizardHubSpot {
@@ -184,7 +187,10 @@ func newFakeWizardHubSpot() *fakeWizardHubSpot {
 	}
 }
 
-func (f *fakeWizardHubSpot) SearchEmails(context.Context, string) ([]hubspot.Email, error) {
+func (f *fakeWizardHubSpot) SearchEmails(ctx context.Context, _ string) ([]hubspot.Email, error) {
+	// The DEADLINE the caller imposed, recorded so a test can assert findWizardSourceEmail still
+	// bounds the whole paginated search rather than inheriting the request context.
+	f.searchDeadline, f.searchHadDeadline = ctx.Deadline()
 	return f.searchHits, f.searchErr
 }
 
@@ -1543,7 +1549,7 @@ func TestWizard_ASaveCannotRepopulateAScrubbedSession(t *testing.T) {
 		}
 	}
 
-	sess, lerr := loadWizardSession(ctx, h.briefs, h.sessions, wizardTestProject, wizardTestBrief, started.SessionID)
+	sess, _, lerr := loadWizardSession(ctx, h.briefs, h.sessions, wizardTestProject, wizardTestBrief, started.SessionID)
 	if lerr != nil {
 		t.Fatalf("loadWizardSession: %v", lerr)
 	}
@@ -1563,5 +1569,37 @@ func TestWizard_ASaveCannotRepopulateAScrubbedSession(t *testing.T) {
 	}
 	if len(after.ChatHistory) != 0 {
 		t.Errorf("chat_history = %s -- the scrubbed content came back", after.ChatHistory)
+	}
+}
+
+// findWizardSourceEmail must bound the WHOLE paginated search, not inherit the request context.
+//
+// SearchEmails walks up to 200 pages and only the individual requests carry a deadline, so a slow
+// portal could keep this planning handler running long past the server's write deadline while
+// every single request looked healthy. Without this test the `context.WithTimeout` wrapper could
+// be dropped in a refactor and nothing would fail until it hung in production.
+func TestWizardPlanBoundsTheEmailSearch(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	started := h.start(t)
+
+	// A context with NO deadline of its own: any deadline the fake observes can then only have
+	// come from the wrapper under test.
+	beforeCall := time.Now()
+	if _, err := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("PlanEmailWizard: %v", err)
+	}
+	afterCall := time.Now()
+
+	if !h.hubspot.searchHadDeadline {
+		t.Fatal("SearchEmails ran with NO deadline; the accountsCallTimeout wrapper is gone")
+	}
+	expectedMin := beforeCall.Add(accountsCallTimeout)
+	expectedMax := afterCall.Add(accountsCallTimeout)
+	if h.hubspot.searchDeadline.Before(expectedMin) || h.hubspot.searchDeadline.After(expectedMax) {
+		t.Errorf("SearchEmails deadline %v outside [%v, %v] — expected now+accountsCallTimeout (%v)",
+			h.hubspot.searchDeadline, expectedMin, expectedMax, accountsCallTimeout)
 	}
 }

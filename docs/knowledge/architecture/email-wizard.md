@@ -59,9 +59,30 @@ except a `rich_text` block's own HTML, which is markup by definition; hrefs and 
 through `httpURL`, so a `javascript:` or `data:` URL from a model or a scraped page cannot reach
 an anchor. Links are UTM-tagged before the draft is written, not after.
 
+That HTML is **not** passed through unfiltered. `sanitizeWizardHTML` runs it against an ALLOW-LIST
+of formatting tags and attributes, using a real tokenizer rather than pattern matching — a regex
+over tag names loses to `<scr<script>ipt>`, and this input is model-supplied and adversarial by
+assumption. Element content survives even when its tag does not, because dropping `<span>` should
+not delete the words inside it; `script`, `style`, `iframe`, `object` and `embed` are the
+exception, since their content is the payload rather than copy. It runs where the sections are
+PARSED and again before they are PERSISTED, not at each render, so a future consumer cannot
+receive unsanitised HTML by forgetting to re-sanitise.
+
 Because the renderer needs no model, the editing half of the wizard keeps working when the AI
 proxy is unconfigured. An empty section list, or one that renders to nothing, is refused rather
 than stored: it would produce a blank email, and the likely cause is a client bug.
+
+## Deletion is real, and creation cannot race it
+
+`ArchiveBrief` is a SOFT delete, and a session's `chat_history`, `plan_result` and generated
+bodies are operator- and model-authored text with no TTL. `ScrubSessionsForBrief` clears all of
+them on delete and bumps `version`, so an in-flight turn holding a pre-scrub snapshot fails stale
+rather than writing the transcript back. A partial scrub would be worse than none, because it
+looks done.
+
+`CreateSession` takes `SELECT ... FOR UPDATE` on the brief row. The composite FK only requires
+the brief to EXIST, and a soft delete leaves it there — so without the lock a session could be
+created against a brief that was archived a moment earlier, under READ COMMITTED.
 
 ## Failure is asymmetric by design
 

@@ -254,3 +254,38 @@ func TestSanitizeWizardHTMLSuppressesSelfClosingDropTags(t *testing.T) {
 		})
 	}
 }
+
+// The EDIT path must store sanitized sections, like the generation path already does.
+//
+// Not exploitable when written: every current reader of `sess.Sections` re-sanitizes before
+// emitting. That is exactly the problem -- it makes the stored invariant depend on all future
+// readers remembering to, and a new export, admin tool or raw dump reading the column directly
+// would reintroduce the third-sink bug this round closed for the generation path.
+func TestSanitizeSectionHTMLCleansAndPreservesUnmodelledFields(t *testing.T) {
+	in := map[string]any{
+		"type": "rich_text",
+		"html": `<p onclick="steal()">hi</p><script>alert(1)</script>`,
+		// A field this service does not model. The UI round-trips these, so the sanitizer must
+		// copy them through -- persisting a re-marshalled typed form would silently drop them.
+		"unmodelled": "keep me",
+	}
+
+	out, keep := sanitizeSectionHTML(in)
+	if !keep {
+		t.Fatal("section was dropped; a rich_text block with html must be kept")
+	}
+	obj, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("expected a map, got %T", out)
+	}
+	if got := obj["html"].(string); got != "<p>hi</p>" {
+		t.Errorf("html not sanitized:\n got %q\nwant %q", got, "<p>hi</p>")
+	}
+	if got := obj["unmodelled"]; got != "keep me" {
+		t.Errorf("unmodelled field lost: got %v", got)
+	}
+	// The input must not be mutated: the caller's map may be shared with the typed decode.
+	if in["html"].(string) == "<p>hi</p>" {
+		t.Error("input map was mutated in place")
+	}
+}
