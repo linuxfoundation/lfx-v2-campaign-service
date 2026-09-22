@@ -73,6 +73,14 @@ const (
 )
 
 // CreateSession inserts a wizard session and returns the stored row.
+//
+// Returns domain.ErrNotFound when the parent brief is missing OR archived. The composite FK only
+// requires the row to EXIST, and ArchiveBrief is a SOFT delete that leaves it there, so the FK
+// alone would admit a session against a brief the operator had just deleted.
+//
+// Runs in a transaction that takes SELECT ... FOR UPDATE on the brief row, which serialises this
+// against a concurrent ArchiveBrief: under READ COMMITTED a WHERE EXISTS check could pass while
+// the archive committed between the check and the insert.
 func (r *WizardSessionRepo) CreateSession(ctx context.Context, s *model.WizardSession) (*model.WizardSession, error) {
 	createdBy, err := marshalActor(s.CreatedBy)
 	if err != nil {

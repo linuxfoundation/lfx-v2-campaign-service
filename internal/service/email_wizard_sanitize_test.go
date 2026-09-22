@@ -72,7 +72,7 @@ func containsAny(s string, subs ...string) bool {
 // `variant_a_sections` -- so raw model HTML reached the client untouched while both other
 // paths were clean.
 //
-// Sanitising per render path is what allowed that: every new consumer of the sections is a
+// Sanitizing per render path is what allowed that: every new consumer of the sections is a
 // fresh chance to forget. The sanitize now happens where the sections are PARSED, so a
 // consumer cannot receive unsanitized HTML without going around the parser entirely.
 func TestParsedSectionsAreSanitizedBeforeTheyReachTheCaller(t *testing.T) {
