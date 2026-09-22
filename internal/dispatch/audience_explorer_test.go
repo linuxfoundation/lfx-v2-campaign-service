@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	genserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_audience_builder/server"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
@@ -624,7 +625,8 @@ func TestLastSent_MarksARowWhoseListsCouldNotBeRead(t *testing.T) {
 		case r.URL.Path == hubSpotTokenInfoPath:
 			_, _ = io.WriteString(w, `{"hubId":8112310}`)
 		case strings.HasSuffix(r.URL.Path, "/marketing/v3/emails"):
-			_, _ = io.WriteString(w, `{"results":[{"id":"55","name":"Synthetic Summit Invite","state":"PUBLISHED"}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"id":"55","name":"Synthetic Summit Invite","state":"PUBLISHED",`+
+				`"publishDate":"2026-05-01T10:00:00Z"}]}`)
 		case strings.Contains(r.URL.Path, "/marketing/v3/emails/55"):
 			// The selection read fails; the email itself was found.
 			w.WriteHeader(http.StatusInternalServerError)
@@ -647,6 +649,12 @@ func TestLastSent_MarksARowWhoseListsCouldNotBeRead(t *testing.T) {
 	assert.True(t, rows[0].ListsUnavailable,
 		"a failed selection read rendered as an empty selection — indistinguishable from a send that targeted nobody")
 	assert.Empty(t, rows[0].IncludedLists)
+	// The send DATE survives the failed selection read. The two are independent facts read
+	// from different places -- the date off the list row, the selection off the single-email
+	// read -- and seeding SentAt only from the latter meant one failing also unknew the
+	// other, leaving a row with no date at all in a listing ordered by date.
+	assert.Equal(t, "2026-05-01T10:00:00Z", rows[0].SentAt,
+		"the selection could not be read; when the email went out was never in question")
 }
 
 // TestIsPublished_NegativeStatesAreNotSends pins that a withdrawn or unsent email cannot
@@ -660,6 +668,19 @@ func TestIsPublished_NegativeStatesAreNotSends(t *testing.T) {
 	}
 	for _, state := range []string{"UNPUBLISHED", "NOT_SENT", "DRAFT", "SCHEDULED", ""} {
 		assert.False(t, isPublished(state), "%q is not a send and must not become precedent", state)
+	}
+	// PREFIX matching fixed the substring bug and introduced its own: "AUTOMATED" is a
+	// prefix of all three of these, so a draft and an in-flight send both counted as
+	// precedent. Only an explicit allowlist rejects them.
+	for _, state := range []string{"AUTOMATED_DRAFT", "AUTOMATED_SENDING", "AUTOMATED_AB_VARIANT"} {
+		assert.False(t, isPublished(state),
+			"%q is a draft or an in-flight send, and a prefix test admitted it as a completed one", state)
+	}
+	// An UNRECOGNISED state is not a send either. A new HubSpot spelling should omit a row
+	// a human can still find in the portal, rather than present an unapproved audience as
+	// what the last edition mailed.
+	for _, state := range []string{"PROCESSING", "CANCELED_ABUSE", "ERROR_DEQUEUED", "mystery"} {
+		assert.False(t, isPublished(state), "%q is not known to be a send", state)
 	}
 }
 
@@ -697,10 +718,11 @@ func TestExistingMasters_AnAllFailedSweepIsNotAnEmptyResult(t *testing.T) {
 }
 
 // TestLastSent_AnAllIncompleteSweepIsNotAnEmptyHistory pins that a search which never
-// completed is not reported as "this event has never been emailed". Every term hits the
-// scan bound without matching, and the loop used to `continue` past each one and fall out
-// with an empty list -- an absence nobody established, which is precisely what the
-// hubspot layer refuses to fabricate one level down.
+// completed is not reported as "this event has never been emailed". The single sweep hits
+// the scan bound without matching, and the per-term loop that preceded it used to
+// `continue` past each incomplete term and fall out with an empty list -- an absence nobody
+// established, which is precisely what the hubspot layer refuses to fabricate one level
+// down. With one walk there is no next term to fall through to, so the sentinel propagates.
 func TestLastSent_AnAllIncompleteSweepIsNotAnEmptyHistory(t *testing.T) {
 	var pages atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -940,4 +962,246 @@ func TestNewerSuppressionPrefersTheCurrentQuarterOverALargerStaleList(t *testing
 	if !newerSuppression(current, small) {
 		t.Error("within a quarter the larger list should win")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// LastSent: finding recent sends, and ordering them by when they went out
+// ---------------------------------------------------------------------------
+
+// lastSentPortal serves a fake HubSpot for the LastSent cases: one page of marketing
+// emails, then a per-email selection read keyed by id.
+//
+// A detail entry's value is that email's `publishDate`; an id absent from the map fails its
+// selection read. `to` is always present but empty, so no list ids are referenced and
+// listBriefs makes no further calls -- these cases are about WHICH rows come back and in
+// what order, not about resolving list names.
+//
+// listRequests counts only the LIST endpoint, not the per-email reads, which is what makes
+// the round-trip assertion in TestLastSent_SearchesThePortalOnce meaningful.
+func lastSentPortal(t *testing.T, listBody string, detail map[string]string) (*AudienceExplorer, *atomic.Int64) {
+	t.Helper()
+	var listRequests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/marketing/v3/emails":
+			listRequests.Add(1)
+			_, _ = io.WriteString(w, listBody)
+		case strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/"):
+			id := strings.TrimPrefix(r.URL.Path, "/marketing/v3/emails/")
+			date, ok := detail[id]
+			if !ok {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = io.WriteString(w, `{"message":"upstream unavailable"}`)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"id":%q,"publishDate":%q,"to":{}}`, id, date)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	return NewAudienceExplorer(builder, nil, nil, nil), &listRequests
+}
+
+// sentIDs is the returned rows' ids in order, which is what every ordering case asserts on.
+func sentIDs(rows []audience.LastSentEmail) []string {
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.EmailID)
+	}
+	return out
+}
+
+// TestLastSent_RanksBySendDateNotLastEdit is the central regression, and it fails three
+// ways on the old code at once.
+//
+// The ranking key was keyword overlap, and the overlap was computed over the NAME alone
+// while the search matched name or subject. So here the wordiest name belongs to the oldest
+// send and won outright, a subject-only match scored zero and was truncated away, and the
+// send date was not read until after the truncation -- it could influence neither which
+// rows survived nor their order. Ordering by `updatedAt` on top of that made an ancient
+// email edited last week read as the most recent send.
+func TestLastSent_RanksBySendDateNotLastEdit(t *testing.T) {
+	// `updatedAt` order is old, mid, new descending; `publishDate` order is the reverse.
+	// The row with the highest keyword overlap is the OLDEST send, so overlap-first ranking
+	// puts exactly the wrong row at the top.
+	list := `{"results":[
+		{"id":"old","name":"KubeCon Europe Registration Open","subject":"KubeCon Europe agenda",
+		 "state":"PUBLISHED","updatedAt":"2026-09-01T00:00:00Z","publishDate":"2024-01-15T09:00:00Z"},
+		{"id":"mid","name":"Recap","subject":"KubeCon highlights",
+		 "state":"PUBLISHED","updatedAt":"2026-01-01T00:00:00Z","publishDate":"2026-05-01T09:00:00Z"},
+		{"id":"new","name":"KubeCon Keynotes","subject":"Who is speaking",
+		 "state":"PUBLISHED","updatedAt":"2025-01-01T00:00:00Z","publishDate":"2026-08-01T09:00:00Z"}
+	]}`
+	x, _ := lastSentPortal(t, list, map[string]string{
+		"old": "2024-01-15T09:00:00Z",
+		"mid": "2026-05-01T09:00:00Z",
+		"new": "2026-08-01T09:00:00Z",
+	})
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 5)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"new", "mid", "old"}, sentIDs(rows),
+		"rows must be ordered by when they were SENT; ranking on overlap and ordering on the "+
+			"last edit put a 2024 send at the top of a panel read as \"what we sent last time\"")
+	// "mid" is a SUBJECT-only match. Scoring the name alone gave it an overlap of zero, and
+	// a limit of 2 truncated it away behind the wordier, older row.
+	assert.Contains(t, sentIDs(rows), "mid",
+		"an email carrying the event in its subject is the same send as one carrying it in its name")
+	assert.Equal(t, "2026-08-01T09:00:00Z", rows[0].SentAt, "sent_at is documented as RFC 3339")
+}
+
+// TestLastSent_OrdersTheReturnedRowsByTheAuthoritativeSendDate pins the degradation path,
+// and is why projecting `publishDate` onto the list rows is an optimization rather than a
+// load-bearing assumption. Here the portal ignores includedProperties and returns no date
+// on any list row -- so selection cannot use the date at all -- yet the single-email reads
+// during the fan-out know it, and the final order must still hold.
+func TestLastSent_OrdersTheReturnedRowsByTheAuthoritativeSendDate(t *testing.T) {
+	// No publishDate anywhere in the list response. Ordering here can only come from the
+	// re-sort that follows the fan-out.
+	list := `{"results":[
+		{"id":"a","name":"KubeCon Europe Invite","state":"PUBLISHED","updatedAt":"2026-09-01T00:00:00Z"},
+		{"id":"b","name":"KubeCon Europe Keynotes","state":"PUBLISHED","updatedAt":"2026-08-01T00:00:00Z"},
+		{"id":"c","name":"KubeCon Europe Recap","state":"PUBLISHED","updatedAt":"2026-07-01T00:00:00Z"}
+	]}`
+	x, _ := lastSentPortal(t, list, map[string]string{
+		"a": "2026-02-01T09:00:00Z",
+		"b": "2026-06-01T09:00:00Z",
+		"c": "2026-04-01T09:00:00Z",
+	})
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 5)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"b", "c", "a"}, sentIDs(rows),
+		"most-recently-sent-first must hold even on a portal that reports no date on the list rows")
+	assert.Equal(t, "2026-06-01T09:00:00Z", rows[0].SentAt)
+}
+
+// TestLastSent_ARowWithNoSendDateSortsLast pins that an unknown date is not an old one.
+// Parsed as the zero time it would be 1970 and sort last by accident; read as "no date" it
+// must sort last on purpose -- and it must never outrank a row whose date is known, because
+// the operator reads the top row as the most recent thing this event mailed.
+func TestLastSent_ARowWithNoSendDateSortsLast(t *testing.T) {
+	list := `{"results":[
+		{"id":"undated","name":"KubeCon Europe Invite","state":"PUBLISHED","updatedAt":"2026-09-01T00:00:00Z"},
+		{"id":"dated","name":"KubeCon Europe Recap","state":"PUBLISHED","updatedAt":"2026-01-01T00:00:00Z",
+		 "publishDate":"2026-03-01T09:00:00Z"}
+	]}`
+	// The undated row reports no date on its selection read either, so it is unknown
+	// throughout -- the state a portal that withholds the field leaves every row in.
+	x, _ := lastSentPortal(t, list, map[string]string{
+		"undated": "",
+		"dated":   "2026-03-01T09:00:00Z",
+	})
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 5)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"dated", "undated"}, sentIDs(rows),
+		"a row with no reported send date must not be presented as the most recent send")
+	assert.Empty(t, rows[1].SentAt,
+		"an unparseable or absent date is reported as ABSENT, not as an instant in 1970")
+}
+
+// TestLastSent_ABrandOnlyHitIsDroppedWhenTheEventItselfMatched pins the demotion that
+// replaced a `break`. brand_short is deliberately broad -- it matches every send in the
+// portfolio -- so a brand hit is only admissible when nothing matched the event. The old
+// loop broke out of the term list once a term matched, which suppressed the brand only when
+// the EARLIER term had matched; a brand-only row on an earlier page still crowded out real
+// ones. Partitioning suppresses them wherever in the sweep the event match landed.
+func TestLastSent_ABrandOnlyHitIsDroppedWhenTheEventItselfMatched(t *testing.T) {
+	// The brand-only row is FIRST and the newest send, so nothing but the tier rule can
+	// keep it out of a listing ordered by date.
+	list := `{"results":[
+		{"id":"brand","name":"CNCF Monthly Newsletter","subject":"Roundup","state":"PUBLISHED",
+		 "updatedAt":"2026-09-01T00:00:00Z","publishDate":"2026-08-01T09:00:00Z"},
+		{"id":"event","name":"KubeCon Europe Invite","subject":"Join us","state":"PUBLISHED",
+		 "updatedAt":"2026-01-01T00:00:00Z","publishDate":"2026-02-01T09:00:00Z"}
+	]}`
+	x, _ := lastSentPortal(t, list, map[string]string{
+		"brand": "2026-08-01T09:00:00Z",
+		"event": "2026-02-01T09:00:00Z",
+	})
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 5)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"event"}, sentIDs(rows),
+		"a portfolio-wide brand send was offered as precedent for this event's audience while "+
+			"the event's own send was available")
+}
+
+// TestLastSent_ABrandOnlyHitSurvivesWhenNothingMatchedTheEvent pins the other half: the
+// fallback still works. A renamed or first-time event has no prior send under its own name,
+// and the brand's last send is genuinely the best available evidence -- returning nothing
+// would tell the operator this event has never been emailed.
+func TestLastSent_ABrandOnlyHitSurvivesWhenNothingMatchedTheEvent(t *testing.T) {
+	list := `{"results":[
+		{"id":"brand","name":"CNCF Monthly Newsletter","subject":"Roundup","state":"PUBLISHED",
+		 "updatedAt":"2026-09-01T00:00:00Z","publishDate":"2026-08-01T09:00:00Z"}
+	]}`
+	x, _ := lastSentPortal(t, list, map[string]string{"brand": "2026-08-01T09:00:00Z"})
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "Brand New Gathering 2026", "CNCF", 5)
+	require.NoError(t, err)
+
+	require.Len(t, rows, 1, "with no event match the brand is the best evidence there is")
+	assert.Equal(t, "brand", rows[0].EmailID)
+}
+
+// TestLastSent_AFutureDatedPublishDateIsNotASend pins the gate on the one allowed state
+// that does not settle the question. PUBLISHED_OR_SCHEDULED covers a send that has gone out
+// AND one merely booked, and a scheduled send has no audience precedent because nobody has
+// approved it yet -- it is a draft with a date on it.
+//
+// The asymmetry is the other half of the case: only a date the portal actually REPORTED can
+// disqualify a row. Treating a blank as future-dated would empty this endpoint on any portal
+// that ignores includedProperties.
+func TestLastSent_AFutureDatedPublishDateIsNotASend(t *testing.T) {
+	list := `{"results":[
+		{"id":"scheduled","name":"KubeCon Europe Invite","state":"PUBLISHED_OR_SCHEDULED",
+		 "updatedAt":"2026-09-01T00:00:00Z","publishDate":"2026-12-01T09:00:00Z"},
+		{"id":"undated","name":"KubeCon Europe Recap","state":"PUBLISHED","updatedAt":"2026-08-01T00:00:00Z"}
+	]}`
+	x, _ := lastSentPortal(t, list, map[string]string{"undated": ""})
+	x.now = func() time.Time { return time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC) }
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 5)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"undated"}, sentIDs(rows),
+		"a send booked for December is not precedent in June, and an ABSENT date must not exclude a row")
+}
+
+// TestLastSent_SearchesThePortalOnce pins the round-trip saving, and guards against a future
+// reintroduction of per-term walks. The query SearchEmails takes is never sent upstream --
+// the request carries limit/sort/includedProperties/after and matching is entirely
+// client-side -- so a second term re-reads the SAME pages and learns nothing. The old
+// two-term loop paid up to 40 page GETs for what one walk answers in 20.
+func TestLastSent_SearchesThePortalOnce(t *testing.T) {
+	// One page, and a name matching the event but NOT the brand: a per-term loop would run
+	// the brand term as a second walk over these same rows.
+	list := `{"results":[
+		{"id":"event","name":"KubeCon Europe Invite","state":"PUBLISHED",
+		 "updatedAt":"2026-09-01T00:00:00Z","publishDate":"2026-02-01T09:00:00Z"}
+	]}`
+	x, listRequests := lastSentPortal(t, list, map[string]string{"event": "2026-02-01T09:00:00Z"})
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 5)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	assert.Equal(t, int64(1), listRequests.Load(),
+		"the marketing-email list was read more than once; every extra term re-walks identical "+
+			"pages because the query is never sent upstream")
 }
