@@ -88,8 +88,11 @@ func sanitizeWizardHTML(input string) string {
 				// script/style/iframe ARE raw text: the tokenizer force-consumes their tail as
 				// one text token, so for them the bump is what stops the payload escaping.
 				//
-				// A closed `<object>payload</object>` still loses its payload, because the
-				// EndTagToken arm below drops content for every dropContent tag.
+				// A closed `<object>payload</object>` KEEPS its text, like any other disallowed
+				// wrapper -- there was never a region to suppress, so the words are copy. That
+				// is safe because the allow-list does the work: a `<script>` inside one is still
+				// a dropContent tag and an `onerror` is still an attribute nobody allows, so
+				// only inert words survive (TestSanitizeWizardHTMLObjectPayloadIsInert).
 				if rawTextDrop[tag] {
 					skipDepth++
 				}
