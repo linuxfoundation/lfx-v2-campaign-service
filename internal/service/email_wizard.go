@@ -132,29 +132,30 @@ func (s *BriefService) wizardReady() (domain.BriefRepository, domain.WizardSessi
 }
 
 // wizardHubSpotClient resolves this project's HubSpot client, or returns the typed 503.
-func (s *BriefService) wizardHubSpotClient(ctx context.Context, projectID string) (HubSpotWizardClient, error) {
+func (s *BriefService) wizardHubSpotClient(ctx context.Context, projectID string) (HubSpotWizardClient, bool, error) {
 	_, resolver, _ := s.wizardDeps()
 	if resolver == nil {
-		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "HubSpot is not configured for this deployment"}
+		return nil, false, &briefs.ConnServiceUnavailableError{Code: "503", Message: "HubSpot is not configured for this deployment"}
 	}
-	// `fromSystem` is discarded deliberately: this path WRITES the requesting project's own
-	// content to the portal, which is the legitimate half of the fallback. Only the portal-wide
-	// READ in findWizardSourceEmail has to refuse it.
-	client, _, err := resolver.ResolveHubSpotClient(ctx, projectID)
+	// `fromSystem` is RETURNED, not discarded. A caller that only writes this project's own
+	// content to the shared portal may ignore it -- that is the legitimate half of the fallback
+	// -- but a caller that reads or clones by an id captured in an EARLIER turn must not, because
+	// that id was recorded against whatever portal resolved back then.
+	client, fromSystem, err := resolver.ResolveHubSpotClient(ctx, projectID)
 	if err != nil {
 		// 503, not 400: an unresolvable or unusable connection is a configuration state of
 		// the project, not a defect in the request the caller just made.
 		slog.WarnContext(ctx, "wizard could not resolve a hubspot client",
 			"project_id", projectID, "error", safeErrSummary(err))
-		return nil, &briefs.ConnServiceUnavailableError{
+		return nil, false, &briefs.ConnServiceUnavailableError{
 			Code:    "503",
 			Message: "no usable HubSpot connection is available for this project",
 		}
 	}
 	if client == nil {
-		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "no usable HubSpot connection is available for this project"}
+		return nil, false, &briefs.ConnServiceUnavailableError{Code: "503", Message: "no usable HubSpot connection is available for this project"}
 	}
-	return client, nil
+	return client, fromSystem, nil
 }
 
 // mapWizardErr maps domain errors for the wizard routes. It defers to mapBriefErr for
@@ -908,11 +909,26 @@ func (s *BriefService) wizardReferenceEmails(ctx context.Context, projectID stri
 	if resolver == nil {
 		return nil
 	}
-	// `fromSystem` is discarded deliberately: this path WRITES the requesting project's own
-	// content to the portal, which is the legitimate half of the fallback. Only the portal-wide
-	// READ in findWizardSourceEmail has to refuse it.
-	client, _, err := resolver.ResolveHubSpotClient(ctx, projectID)
+	// REFUSED when the freshly-resolved client is the shared LF row, and this is a READ despite
+	// what an earlier revision of this comment claimed: `GetEmail` and `GetEmailHTMLWidgets` are
+	// both documented read-only.
+	//
+	// `src.ID` was captured in an EARLIER turn, and `findWizardSourceEmail` only records it when
+	// that turn's connection was the project's own. But a connection can be revoked or rotated
+	// between two wizard turns -- the reason this resolver is deliberately per-call rather than
+	// cached -- so by now the same projectID can resolve to the shared portal. Reading a numeric
+	// id captured against a DIFFERENT portal can land on another tenant's sent email, whose
+	// subject and body would then feed this project's prompt as a voice reference.
+	//
+	// Degrades to generating without a reference, which is what a project with no clone source
+	// gets anyway.
+	client, fromSystem, err := resolver.ResolveHubSpotClient(ctx, projectID)
 	if err != nil || client == nil {
+		return nil
+	}
+	if fromSystem {
+		slog.InfoContext(ctx, "wizard voice reference skipped: the clone source was found under a connection this project no longer resolves to",
+			"project_id", projectID)
 		return nil
 	}
 	email, gerr := client.GetEmail(ctx, src.ID)
@@ -1136,7 +1152,22 @@ func (s *BriefService) CloneWizardEmail(ctx context.Context, p *briefs.CloneWiza
 			Message: "this session has no past email to clone from; re-run the plan once a source email exists in HubSpot",
 		}
 	}
-	client, cerr := s.wizardHubSpotClient(ctx, p.ProjectID)
+	// REFUSED when the connection changed since planning. `src.ID` was captured in an earlier
+	// turn against whatever portal resolved THEN, and `CloneEmail` reads that id's content from
+	// whatever portal resolves NOW -- so after a revoke or rotation this would clone another
+	// tenant's sent email into a draft attributed to this project, persisted on the session and
+	// handed back as `DraftURL`. Worse than the read in wizardReferenceEmails, which only feeds a
+	// prompt: this one materialises the leak as a durable, human-reviewable artifact.
+	//
+	// A hard 409 rather than a silent skip: the operator asked for a specific clone, and the
+	// honest answer is that the source is no longer reachable through this project's connection.
+	client, fromSystem, cerr := s.wizardHubSpotClient(ctx, p.ProjectID)
+	if cerr == nil && fromSystem {
+		return nil, &briefs.ConflictError{
+			Code:    "409",
+			Message: "the source email is no longer reachable through this project's HubSpot connection; re-run planning",
+		}
+	}
 	if cerr != nil {
 		return nil, cerr
 	}
@@ -1324,7 +1355,10 @@ func (s *BriefService) SetWizardSendList(ctx context.Context, p *briefs.SetWizar
 			Message: "this session has no HubSpot draft yet; clone the email before setting its send list",
 		}
 	}
-	client, cerr := s.wizardHubSpotClient(ctx, p.ProjectID)
+	// `fromSystem` discarded deliberately, and here the reasoning HOLDS: this acts only on the
+	// draft THIS session created (`sess.EmailID`, checked above), never on an id captured against
+	// another portal, so a changed connection cannot redirect it at another tenant's email.
+	client, _, cerr := s.wizardHubSpotClient(ctx, p.ProjectID)
 	if cerr != nil {
 		return nil, cerr
 	}

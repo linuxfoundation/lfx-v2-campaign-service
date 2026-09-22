@@ -19,6 +19,7 @@ import (
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 )
 
@@ -1713,5 +1714,81 @@ func TestWizardPlanTurnDoesNotClearTheStoredURL(t *testing.T) {
 	}
 	if got := wizardStoredPlan(sess).URL; got != want {
 		t.Errorf("the plan turn dropped the stored url:\n got %q\nwant %q", got, want)
+	}
+}
+
+// recordingEventFetcher captures the URL it was asked to fetch.
+type recordingEventFetcher struct {
+	gotURL string
+	body   []byte
+}
+
+func (f *recordingEventFetcher) Fetch(_ context.Context, eventURL string) ([]byte, error) {
+	f.gotURL = eventURL
+	return f.body, nil
+}
+
+type fixedEventParser struct{ details eventurl.EventDetails }
+
+func (p fixedEventParser) Parse([]byte) eventurl.EventDetails { return p.details }
+
+// The plan-start url must actually DRIVE the page fetch, not merely round-trip through the blob.
+//
+// The two persistence tests above assert storage only, and structurally cannot assert usage:
+// `resolveWizardDetails` returns early whenever the brief already carries a non-empty EventName,
+// which the shared harness always seeds. So they would still pass if a future change re-broke the
+// read path while continuing to store the value — which is the exact bug this was.
+func TestWizardPlanFetchesThePlanStartURL(t *testing.T) {
+	const planStartURL = "https://events.linuxfoundation.org/a-different-page/"
+
+	h := newWizardHarness(t, wizardModelJSON)
+	// Blanked so resolveWizardDetails does NOT short-circuit and actually reaches the fetch.
+	h.briefs.briefs[briefKey(wizardTestProject, wizardTestBrief)].EventDetails = json.RawMessage(`{}`)
+	fetcher := &recordingEventFetcher{body: []byte("<html></html>")}
+	h.svc.SetEventURL(fetcher, fixedEventParser{details: eventurl.EventDetails{Name: "Parsed Event"}})
+
+	started, err := h.svc.StartEmailWizardPlan(context.Background(), &briefs.StartEmailWizardPlanPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, URL: strPtr(planStartURL),
+	})
+	if err != nil {
+		t.Fatalf("StartEmailWizardPlan: %v", err)
+	}
+	// The plan turn sends NO url of its own: the stored one is all there is.
+	if _, perr := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); perr != nil {
+		t.Fatalf("PlanEmailWizard: %v", perr)
+	}
+
+	if fetcher.gotURL != planStartURL {
+		t.Errorf("plan-start url never reached the fetcher:\n got %q\nwant %q", fetcher.gotURL, planStartURL)
+	}
+}
+
+// And the plan turn's OWN url must win when both are present — the fallback is one-directional.
+func TestWizardPlanTurnURLWinsOverPlanStart(t *testing.T) {
+	const planStartURL = "https://events.linuxfoundation.org/from-plan-start/"
+	const planTurnURL = "https://events.linuxfoundation.org/from-the-plan-turn/"
+
+	h := newWizardHarness(t, wizardModelJSON)
+	h.briefs.briefs[briefKey(wizardTestProject, wizardTestBrief)].EventDetails = json.RawMessage(`{}`)
+	fetcher := &recordingEventFetcher{body: []byte("<html></html>")}
+	h.svc.SetEventURL(fetcher, fixedEventParser{details: eventurl.EventDetails{Name: "Parsed Event"}})
+
+	started, err := h.svc.StartEmailWizardPlan(context.Background(), &briefs.StartEmailWizardPlanPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, URL: strPtr(planStartURL),
+	})
+	if err != nil {
+		t.Fatalf("StartEmailWizardPlan: %v", err)
+	}
+	if _, perr := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+		URL: strPtr(planTurnURL),
+	}); perr != nil {
+		t.Fatalf("PlanEmailWizard: %v", perr)
+	}
+
+	if fetcher.gotURL != planTurnURL {
+		t.Errorf("this turn's url must win:\n got %q\nwant %q", fetcher.gotURL, planTurnURL)
 	}
 }
