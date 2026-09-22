@@ -213,3 +213,44 @@ func TestSanitizeSectionHTMLFallbackBranches(t *testing.T) {
 		}
 	})
 }
+
+// A self-closing spelling of a drop-content tag must still suppress what follows it.
+//
+// None of script/style/iframe/object/embed is a VOID element, so `<script/>` is not
+// self-closing in HTML at all: the parser treats it as an open tag and everything after it as
+// script content. Not bumping skipDepth therefore leaked the payload as escaped text AND
+// escaped the rest of the document with it, so ordinary copy after the tag rendered as visible
+// markup.
+func TestSanitizeWizardHTMLSuppressesSelfClosingDropTags(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			// The bug: `alert(1)` survived, and `<p>after</p>` came back as `&lt;p&gt;...`.
+			name: "self-closing script drops its content and does not escape the tail",
+			in:   `<p>before</p><script/>alert(1)<p>after</p>`,
+			want: `<p>before</p>`,
+		},
+		{
+			name: "self-closing style",
+			in:   `<p>a</p><style/>body{x:1}`,
+			want: `<p>a</p>`,
+		},
+		{
+			// The NEGATIVE case: a properly closed drop tag ends the skip, so text after it is
+			// ordinary copy and must survive. Without this, "fix" the bug by never resuming and
+			// every email loses everything after its first <script>.
+			name: "a closed script resumes normal output",
+			in:   `<p>a</p><script>evil</script>kept`,
+			want: `<p>a</p>kept`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeWizardHTML(tc.in); got != tc.want {
+				t.Errorf("sanitizeWizardHTML(%q):\n got %q\nwant %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

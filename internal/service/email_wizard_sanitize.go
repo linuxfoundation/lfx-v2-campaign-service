@@ -25,13 +25,6 @@ import (
 //
 // Parsed with a real tokenizer rather than regex: `<scr<script>ipt>` and attribute-boundary
 // tricks defeat pattern matching, and this input is adversarial by assumption.
-// voidTags are the HTML elements that have no end tag, so a self-closing spelling of one needs
-// no synthesised closer. Only those in allowedTags can actually appear, but the full set is
-// listed so the rule reads as "void elements" rather than "the two we happen to allow".
-var voidTags = map[string]bool{
-	"area": true, "base": true, "br": true, "col": true, "embed": true, "hr": true,
-	"img": true, "input": true, "link": true, "meta": true, "source": true, "track": true, "wbr": true,
-}
 
 func sanitizeWizardHTML(input string) string {
 	allowedTags := map[string]bool{
@@ -61,9 +54,16 @@ func sanitizeWizardHTML(input string) string {
 			name, hasAttr := tokenizer.TagName()
 			tag := string(name)
 			if dropContent[tag] {
-				if tokenizer.Token().Type != html.SelfClosingTagToken {
-					skipDepth++
-				}
+				// A self-closing spelling does NOT end the drop. None of these tags is a void
+				// element, so `<script/>` is not self-closing in HTML at all -- the parser treats
+				// it as an open tag and everything after it as script content, right up to a
+				// `</script>` that may never come. Skipping the depth bump let that content out
+				// as escaped text, and escaped the REST of the document with it:
+				// `<p>a</p><script/>alert(1)<p>b</p>` emitted `alert(1)&lt;p&gt;b&lt;/p&gt;`.
+				//
+				// `tokenType`, not `tokenizer.Token()`: calling Token() mid-iteration re-reads the
+				// current token and is easy to get wrong here. The value is already in hand.
+				skipDepth++
 				continue
 			}
 			if skipDepth > 0 || !allowedTags[tag] {
@@ -115,6 +115,14 @@ func sanitizeWizardHTML(input string) string {
 			b.WriteString("</" + tag + ">")
 		}
 	}
+}
+
+// voidTags are the HTML elements that have no end tag, so a self-closing spelling of one needs
+// no synthesised closer. Only those in allowedTags can actually appear, but the full set is
+// listed so the rule reads as "void elements" rather than "the two we happen to allow".
+var voidTags = map[string]bool{
+	"area": true, "base": true, "br": true, "col": true, "embed": true, "hr": true,
+	"img": true, "input": true, "link": true, "meta": true, "source": true, "track": true, "wbr": true,
 }
 
 // sanitizeSectionHTML runs a decoded section's `html` field through sanitizeWizardHTML,
