@@ -74,7 +74,23 @@ func sanitizeWizardHTML(input string) string {
 				//
 				// `tokenType`, not `tokenizer.Token()`: calling Token() mid-iteration re-reads the
 				// current token and is easy to get wrong here. The value is already in hand.
-				if tokenType != html.SelfClosingTagToken || rawTextDrop[tag] {
+				// ONLY the raw-text tags, in either spelling. This line has been wrong three
+				// times, each time by naming the wrong property:
+				//
+				//   1. no bump at all          -> `<script/>` leaked its payload as text
+				//   2. bump for all five       -> `<object/>` ate the rest of the block
+				//   3. bump unless self-closing -> a BARE `<embed src=x>` ate it just the same
+				//
+				// The property is the TAG, never how it was written. Verified against the
+				// tokenizer: `<p>a</p><embed src=x><p>b</p>` emits
+				// `StartTag:embed, StartTag:p, Text, EndTag:p` -- the tail is never embed
+				// content, so there is no region to hold open and a bump can only dangle.
+				// script/style/iframe ARE raw text: the tokenizer force-consumes their tail as
+				// one text token, so for them the bump is what stops the payload escaping.
+				//
+				// A closed `<object>payload</object>` still loses its payload, because the
+				// EndTagToken arm below drops content for every dropContent tag.
+				if rawTextDrop[tag] {
 					skipDepth++
 				}
 				continue

@@ -1334,7 +1334,7 @@ func (s *BriefService) SetWizardSendList(ctx context.Context, p *briefs.SetWizar
 	}
 	// The SESSION's draft, never the caller's. `firstNonEmpty(p.EmailID, sess.EmailID)` let a
 	// supplied id WIN over the recorded one with no ownership check — and because HubSpot
-	// credentials resolve through the shared LF portal, a campaign manager authorised for this
+	// credentials resolve through the shared LF portal, a campaign manager authorized for this
 	// project could retarget the recipients of any draft in the portal, including another
 	// foundation's. Authorization here is scoped to the brief, so the draft that brief created
 	// is the only one this endpoint may touch.

@@ -1095,7 +1095,7 @@ func TestComposeWizardChatPrompt_OmitsAnEmptyDraft(t *testing.T) {
 //
 // `firstNonEmpty(p.EmailID, sess.EmailID)` let a supplied id WIN over the session's recorded
 // draft with no ownership check. HubSpot credentials resolve through the shared LF portal, so a
-// campaign manager authorised for THIS project could retarget the recipients of any draft in
+// campaign manager authorized for THIS project could retarget the recipients of any draft in
 // the portal — another foundation's included. Authorization here is scoped to the brief, so the
 // draft that brief created is the only one this endpoint may touch.
 func TestSetWizardSendList_RefusesAnotherDraft(t *testing.T) {

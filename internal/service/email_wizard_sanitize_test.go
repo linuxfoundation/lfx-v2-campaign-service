@@ -332,11 +332,48 @@ func TestSanitizeWizardHTMLSelfClosingObjectEmbedDoNotTruncate(t *testing.T) {
 			want: `<p>before</p>`,
 		},
 		{
-			// A properly closed object must still drop its CONTENT while keeping the tail.
-			name: "closed object drops content and resumes",
-			in:   `<p>before</p><object>payload</object><p>after</p>`,
+			// The BARE spelling -- no trailing slash, no end tag -- which is ordinary markup and
+			// the case the self-closing fix missed. It truncated exactly like `<object/>` did.
+			name: "bare embed keeps the trailing content",
+			in:   `<p>before</p><embed src="evil.swf"><p>after</p>`,
 			want: `<p>before</p><p>after</p>`,
 		},
+		{
+			name: "bare object keeps the trailing content",
+			in:   `<p>before</p><object data="x"><p>after</p>`,
+			want: `<p>before</p><p>after</p>`,
+		},
+		{
+			// A closed object keeps its TEXT, like any other disallowed wrapper: the tokenizer
+			// never treats it as a region, so there is nothing to suppress and the words are
+			// copy. Active content inside is still stripped -- see the test below, which is what
+			// makes this safe rather than merely tolerable.
+			name: "closed object keeps its text and resumes",
+			in:   `<p>before</p><object>payload</object><p>after</p>`,
+			want: `<p>before</p>payload<p>after</p>`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeWizardHTML(tc.in); got != tc.want {
+				t.Errorf("sanitizeWizardHTML(%q):\n got %q\nwant %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// The text an object/embed keeps must be INERT -- the reason keeping it is safe.
+//
+// `<span>` behaves the same way, and the allow-list is what does the work: a script inside an
+// object is still a dropContent tag, and an event handler is still an attribute nobody allows.
+func TestSanitizeWizardHTMLObjectPayloadIsInert(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"script inside object", `<object data="x"><script>alert(1)</script></object>`, ``},
+		{"handler inside object", `<object data="x"><img src=x onerror=alert(1)></object>`, ``},
+		{"plain words survive", `<object data="x">just words</object>`, `just words`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := sanitizeWizardHTML(tc.in); got != tc.want {

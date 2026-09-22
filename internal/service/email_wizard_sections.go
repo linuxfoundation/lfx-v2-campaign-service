@@ -189,9 +189,9 @@ func renderWizardSections(sections []wizardSection) string {
 	return b.String()
 }
 
-// buttonStyleAttr renders the two colour fields a button block may carry, and nothing else.
-// Colours are escaped and length-bounded rather than parsed: the values come from the UI's own
-// colour picker, and an inline style attribute cannot execute script, but an unbounded value
+// buttonStyleAttr renders the two color fields a button block may carry, and nothing else.
+// Colors are escaped and length-bounded rather than parsed: the values come from the UI's own
+// color picker, and an inline style attribute cannot execute script, but an unbounded value
 // could carry an entire stylesheet into every recipient's inbox.
 func buttonStyleAttr(sec wizardSection) string {
 	var decls []string
@@ -207,7 +207,7 @@ func buttonStyleAttr(sec wizardSection) string {
 	return ` style="` + html.EscapeString(strings.Join(decls, ";")) + `"`
 }
 
-// boundedColor accepts a short colour token and rejects anything else. Semicolons and braces
+// boundedColor accepts a short color token and rejects anything else. Semicolons and braces
 // are refused outright so a value cannot close the declaration it sits in and open another.
 func boundedColor(v string) string {
 	v = strings.TrimSpace(v)

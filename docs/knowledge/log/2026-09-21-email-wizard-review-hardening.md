@@ -1,6 +1,6 @@
 # 2026-09-21 — email wizard: XSS, tenancy and retention hardening
 
-**Review round** — six defect classes found reviewing the wizard added on
+**Fix** — six defect classes found reviewing the wizard added on
 [2026-09-16](2026-09-16-email-creation-wizard.md). Four of them were introduced by the fix for
 the previous one, which is the part worth recording.
 
