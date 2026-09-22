@@ -3115,6 +3115,11 @@ paths:
                   description: 'Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
                   required: false
                   type: string
+                - name: variant
+                  in: query
+                  description: 'Requests a differently-styled draft of the same stage''s copy. Currently one value is recognised: ''urgency-fomo'', which asks for an urgency/FOMO-forward structure (deadline framing, social proof, a secondary CTA) instead of the stage''s normal copy. Any other value, or absence, produces the normal stage-based copy.'
+                  required: false
+                  type: string
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -3139,8 +3144,7 @@ paths:
                         required:
                             - subject
                             - preheader
-                            - body
-                            - cta
+                            - sections
                 "400":
                     description: Bad Request response.
                     schema:
@@ -11605,16 +11609,16 @@ definitions:
             campaign_name:
                 type: string
                 description: Campaign name
-                example: Et ut odio sit.
+                example: Odio sit et.
             config:
                 description: Campaign configuration snapshot
-                example: Voluptatem aperiam sunt.
+                example: Atque et et.
             status:
                 type: string
                 description: Campaign status
-                example: Fuga itaque placeat recusandae ut.
+                example: Itaque placeat recusandae ut est voluptatem aperiam.
         example:
-            campaign_name: Et et praesentium perferendis et.
+            campaign_name: Perferendis et.
             config: Culpa illo ipsum sed saepe voluptatem.
             status: Veniam ex et qui suscipit at placeat.
         required:
@@ -11744,36 +11748,80 @@ definitions:
         title: EmailCopy
         type: object
         properties:
-            body:
-                type: string
-                description: Email body HTML (the main content)
-                example: <p>We're excited to invite you...</p>
-                maxLength: 8000
-            cta:
-                type: string
-                description: Call-to-action button text
-                example: Register Now
-                maxLength: 50
             preheader:
                 type: string
                 description: Email preheader text (preview summary)
                 example: Register now and shape the future of cloud native computing
                 maxLength: 150
+            sections:
+                type: array
+                items:
+                    $ref: '#/definitions/EmailCopySection'
+                description: Ordered content sections making up the email body, in display order
+                example:
+                    - html: <p>We're excited to invite you...</p>
+                      text: Register Now
+                      type: rich_text
+                      url: https://example.com/register
+                    - html: <p>We're excited to invite you...</p>
+                      text: Register Now
+                      type: rich_text
+                      url: https://example.com/register
             subject:
                 type: string
                 description: Email subject line
                 example: Join Us at KubeCon 2026
                 maxLength: 200
         example:
-            body: <p>We're excited to invite you...</p>
-            cta: Register Now
             preheader: Register now and shape the future of cloud native computing
+            sections:
+                - html: <p>We're excited to invite you...</p>
+                  text: Register Now
+                  type: rich_text
+                  url: https://example.com/register
+                - html: <p>We're excited to invite you...</p>
+                  text: Register Now
+                  type: rich_text
+                  url: https://example.com/register
             subject: Join Us at KubeCon 2026
         required:
             - subject
             - preheader
-            - body
-            - cta
+            - sections
+    EmailCopySection:
+        title: EmailCopySection
+        type: object
+        properties:
+            html:
+                type: string
+                description: Inline HTML for the section (rich_text sections only) -- paragraphs/lists with inline CSS, no outer <div> or <style> tag
+                example: <p>We're excited to invite you...</p>
+                maxLength: 8000
+            text:
+                type: string
+                description: Button label (button sections only)
+                example: Register Now
+                maxLength: 50
+            type:
+                type: string
+                description: Which kind of section this is
+                example: rich_text
+                enum:
+                    - rich_text
+                    - button
+                    - divider
+            url:
+                type: string
+                description: Button destination URL (button sections only)
+                example: https://example.com/register
+                maxLength: 2000
+        example:
+            html: <p>We're excited to invite you...</p>
+            text: Register Now
+            type: rich_text
+            url: https://example.com/register
+        required:
+            - type
     EmailMetrics:
         title: EmailMetrics
         type: object

@@ -600,10 +600,8 @@ type GenerateEmailCopyResponseBody struct {
 	Subject *string `form:"subject,omitempty" json:"subject,omitempty" xml:"subject,omitempty"`
 	// Email preheader text (preview summary)
 	Preheader *string `form:"preheader,omitempty" json:"preheader,omitempty" xml:"preheader,omitempty"`
-	// Email body HTML (the main content)
-	Body *string `form:"body,omitempty" json:"body,omitempty" xml:"body,omitempty"`
-	// Call-to-action button text
-	Cta *string `form:"cta,omitempty" json:"cta,omitempty" xml:"cta,omitempty"`
+	// Ordered content sections making up the email body, in display order
+	Sections []*EmailCopySectionResponseBody `form:"sections,omitempty" json:"sections,omitempty" xml:"sections,omitempty"`
 }
 
 // UpdateCampaignResponseBody is the type of the
@@ -3165,6 +3163,19 @@ type CampaignActionItemResponseBody struct {
 	Action *string `form:"action,omitempty" json:"action,omitempty" xml:"action,omitempty"`
 }
 
+// EmailCopySectionResponseBody is used to define fields on response body types.
+type EmailCopySectionResponseBody struct {
+	// Which kind of section this is
+	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
+	// Inline HTML for the section (rich_text sections only) -- paragraphs/lists
+	// with inline CSS, no outer <div> or <style> tag
+	HTML *string `form:"html,omitempty" json:"html,omitempty" xml:"html,omitempty"`
+	// Button label (button sections only)
+	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// Button destination URL (button sections only)
+	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
+}
+
 // CampaignUpdateInputRequestBody is used to define fields on request body
 // types.
 type CampaignUpdateInputRequestBody struct {
@@ -4935,8 +4946,14 @@ func NewGenerateEmailCopyEmailCopyOK(body *GenerateEmailCopyResponseBody) *lfxv2
 	v := &lfxv2campaignservicebriefs.EmailCopy{
 		Subject:   *body.Subject,
 		Preheader: *body.Preheader,
-		Body:      *body.Body,
-		Cta:       *body.Cta,
+	}
+	v.Sections = make([]*lfxv2campaignservicebriefs.EmailCopySection, len(body.Sections))
+	for i, val := range body.Sections {
+		if val == nil {
+			v.Sections[i] = nil
+			continue
+		}
+		v.Sections[i] = unmarshalEmailCopySectionResponseBodyToLfxv2campaignservicebriefsEmailCopySection(val)
 	}
 
 	return v
@@ -6907,11 +6924,8 @@ func ValidateGenerateEmailCopyResponseBody(body *GenerateEmailCopyResponseBody) 
 	if body.Preheader == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("preheader", "body"))
 	}
-	if body.Body == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("body", "body"))
-	}
-	if body.Cta == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("cta", "body"))
+	if body.Sections == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("sections", "body"))
 	}
 	if body.Subject != nil {
 		if utf8.RuneCountInString(*body.Subject) > 200 {
@@ -6923,14 +6937,11 @@ func ValidateGenerateEmailCopyResponseBody(body *GenerateEmailCopyResponseBody) 
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.preheader", *body.Preheader, utf8.RuneCountInString(*body.Preheader), 150, false))
 		}
 	}
-	if body.Body != nil {
-		if utf8.RuneCountInString(*body.Body) > 8000 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.body", *body.Body, utf8.RuneCountInString(*body.Body), 8000, false))
-		}
-	}
-	if body.Cta != nil {
-		if utf8.RuneCountInString(*body.Cta) > 50 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.cta", *body.Cta, utf8.RuneCountInString(*body.Cta), 50, false))
+	for _, e := range body.Sections {
+		if e != nil {
+			if err2 := ValidateEmailCopySectionResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
 		}
 	}
 	return
@@ -10056,6 +10067,35 @@ func ValidateCampaignActionItemResponseBody(body *CampaignActionItemResponseBody
 	if body.Priority != nil {
 		if !(*body.Priority == "HIGH" || *body.Priority == "MED") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.priority", *body.Priority, []any{"HIGH", "MED"}))
+		}
+	}
+	return
+}
+
+// ValidateEmailCopySectionResponseBody runs the validations defined on
+// email-copy-sectionResponseBody
+func ValidateEmailCopySectionResponseBody(body *EmailCopySectionResponseBody) (err error) {
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	if body.Type != nil {
+		if !(*body.Type == "rich_text" || *body.Type == "button" || *body.Type == "divider") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"rich_text", "button", "divider"}))
+		}
+	}
+	if body.HTML != nil {
+		if utf8.RuneCountInString(*body.HTML) > 8000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.html", *body.HTML, utf8.RuneCountInString(*body.HTML), 8000, false))
+		}
+	}
+	if body.Text != nil {
+		if utf8.RuneCountInString(*body.Text) > 50 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", *body.Text, utf8.RuneCountInString(*body.Text), 50, false))
+		}
+	}
+	if body.URL != nil {
+		if utf8.RuneCountInString(*body.URL) > 2000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.url", *body.URL, utf8.RuneCountInString(*body.URL), 2000, false))
 		}
 	}
 	return

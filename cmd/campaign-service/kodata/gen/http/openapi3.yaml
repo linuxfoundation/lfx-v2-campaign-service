@@ -4519,6 +4519,15 @@ paths:
                     description: 'Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
                     example: Post-Event
                   example: Post-Event
+                - name: variant
+                  in: query
+                  description: 'Requests a differently-styled draft of the same stage''s copy. Currently one value is recognised: ''urgency-fomo'', which asks for an urgency/FOMO-forward structure (deadline framing, social proof, a secondary CTA) instead of the stage''s normal copy. Any other value, or absence, produces the normal stage-based copy.'
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: 'Requests a differently-styled draft of the same stage''s copy. Currently one value is recognised: ''urgency-fomo'', which asks for an urgency/FOMO-forward structure (deadline framing, social proof, a secondary CTA) instead of the stage''s normal copy. Any other value, or absence, produces the normal stage-based copy.'
+                    example: urgency-fomo
+                  example: urgency-fomo
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -4546,9 +4555,20 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/EmailCopy'
                             example:
-                                body: <p>We're excited to invite you...</p>
-                                cta: Register Now
                                 preheader: Register now and shape the future of cloud native computing
+                                sections:
+                                    - html: <p>We're excited to invite you...</p>
+                                      text: Register Now
+                                      type: rich_text
+                                      url: https://example.com/register
+                                    - html: <p>We're excited to invite you...</p>
+                                      text: Register Now
+                                      type: rich_text
+                                      url: https://example.com/register
+                                    - html: <p>We're excited to invite you...</p>
+                                      text: Register Now
+                                      type: rich_text
+                                      url: https://example.com/register
                                 subject: Join Us at KubeCon 2026
                 "400":
                     description: 'BadRequest: Bad request'
@@ -16232,18 +16252,18 @@ components:
                 campaign_name:
                     type: string
                     description: Campaign name
-                    example: Architecto consequuntur.
+                    example: Voluptatem consequatur.
                 config:
                     description: Campaign configuration snapshot
-                    example: Quaerat consequatur.
+                    example: Earum voluptatem nemo sint necessitatibus.
                 status:
                     type: string
                     description: Campaign status
-                    example: Est voluptatem consequatur quia ut suscipit.
+                    example: Ut suscipit perferendis quaerat consequatur est.
             example:
-                campaign_name: Placeat earum.
-                config: Aut nesciunt deleniti nisi.
-                status: Nemo sint necessitatibus quidem ut id magnam.
+                campaign_name: Ut id magnam consectetur.
+                config: Laborum provident praesentium soluta velit quaerat.
+                status: Nesciunt deleniti nisi.
             required:
                 - campaign_name
                 - status
@@ -16616,16 +16636,16 @@ components:
                 brief_id:
                     type: string
                     description: Parent brief
-                    example: Libero iste consectetur pariatur illum provident totam.
+                    example: Illo sunt quam et itaque sint consequuntur.
                 byte_size:
                     type: integer
                     description: Size of the stored image in bytes
-                    example: 9020878404792284064
+                    example: 891747908157411021
                     format: int64
                 checksum:
                     type: string
                     description: Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a brief
-                    example: Quam et itaque sint consequuntur commodi.
+                    example: Officiis doloribus debitis deleniti dolores impedit rerum.
                 created:
                     type: string
                     description: '"true" when this request stored the asset; "false" when an identical upload already existed. Set only on the upload response, where it selects 201 vs 200.'
@@ -16636,7 +16656,7 @@ components:
                 id:
                     type: string
                     description: Creative asset UUID
-                    example: f72b5338-611a-429e-8881-1850148c1e95
+                    example: f72b5338-611a-4c7f-a858-05d1656481d4
                     format: uuid
                 mime_type:
                     type: string
@@ -16648,15 +16668,15 @@ components:
                 project_id:
                     type: string
                     description: Owning project
-                    example: Doloribus omnis error at corporis reprehenderit quis.
+                    example: Libero iste consectetur pariatur illum provident totam.
             example:
-                brief_id: Excepturi amet repellendus qui modi ullam.
-                byte_size: 1632609523710587763
-                checksum: Dolorem fugit cum tenetur animi consequatur atque.
+                brief_id: Voluptatum itaque dolorem fugit cum tenetur.
+                byte_size: 2437535684968819715
+                checksum: Nam corporis.
                 created: "true"
-                id: 8dc77e9c-ac78-4500-a5b9-05c866f15083
-                mime_type: image/jpeg
-                project_id: Aut eos accusamus voluptatem suscipit est.
+                id: 3d261013-ce4f-42f6-ab5e-a0a9ebe13e8d
+                mime_type: image/png
+                project_id: Excepturi amet repellendus qui modi ullam.
             required:
                 - id
                 - project_id
@@ -16678,36 +16698,79 @@ components:
         EmailCopy:
             type: object
             properties:
-                body:
-                    type: string
-                    description: Email body HTML (the main content)
-                    example: <p>We're excited to invite you...</p>
-                    maxLength: 8000
-                cta:
-                    type: string
-                    description: Call-to-action button text
-                    example: Register Now
-                    maxLength: 50
                 preheader:
                     type: string
                     description: Email preheader text (preview summary)
                     example: Register now and shape the future of cloud native computing
                     maxLength: 150
+                sections:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/EmailCopySection'
+                    description: Ordered content sections making up the email body, in display order
+                    example:
+                        - html: <p>We're excited to invite you...</p>
+                          text: Register Now
+                          type: rich_text
+                          url: https://example.com/register
+                        - html: <p>We're excited to invite you...</p>
+                          text: Register Now
+                          type: rich_text
+                          url: https://example.com/register
                 subject:
                     type: string
                     description: Email subject line
                     example: Join Us at KubeCon 2026
                     maxLength: 200
             example:
-                body: <p>We're excited to invite you...</p>
-                cta: Register Now
                 preheader: Register now and shape the future of cloud native computing
+                sections:
+                    - html: <p>We're excited to invite you...</p>
+                      text: Register Now
+                      type: rich_text
+                      url: https://example.com/register
+                    - html: <p>We're excited to invite you...</p>
+                      text: Register Now
+                      type: rich_text
+                      url: https://example.com/register
                 subject: Join Us at KubeCon 2026
             required:
                 - subject
                 - preheader
-                - body
-                - cta
+                - sections
+        EmailCopySection:
+            type: object
+            properties:
+                html:
+                    type: string
+                    description: Inline HTML for the section (rich_text sections only) -- paragraphs/lists with inline CSS, no outer <div> or <style> tag
+                    example: <p>We're excited to invite you...</p>
+                    maxLength: 8000
+                text:
+                    type: string
+                    description: Button label (button sections only)
+                    example: Register Now
+                    maxLength: 50
+                type:
+                    type: string
+                    description: Which kind of section this is
+                    example: rich_text
+                    enum:
+                        - rich_text
+                        - button
+                        - divider
+                url:
+                    type: string
+                    description: Button destination URL (button sections only)
+                    example: https://example.com/register
+                    maxLength: 2000
+            example:
+                html: <p>We're excited to invite you...</p>
+                text: Register Now
+                type: rich_text
+                url: https://example.com/register
+            required:
+                - type
         EmailMetrics:
             type: object
             properties:
@@ -16762,11 +16825,11 @@ components:
                 description:
                     type: string
                     description: Event description
-                    example: Velit distinctio ratione sit corrupti magnam velit.
+                    example: Ratione sit corrupti magnam velit aut minus.
                 end_date:
                     type: string
                     description: Event end date, same caveat as start_date
-                    example: Molestiae facilis magni architecto.
+                    example: Natus ratione.
                 event_name:
                     type: string
                     description: Event name
@@ -16774,7 +16837,7 @@ components:
                 extracted_from:
                     type: string
                     description: Which strategy produced this record — the whole record came from exactly one of them
-                    example: jsonld
+                    example: fallback
                     enum:
                         - jsonld
                         - opengraph
@@ -16782,28 +16845,28 @@ components:
                 image:
                     type: string
                     description: Event image URL
-                    example: Officiis molestiae.
+                    example: Iste saepe qui facilis.
                 location:
                     type: string
                     description: Event location as written on the page — free text, not a resolved place
-                    example: Minus at suscipit sequi.
+                    example: Suscipit sequi commodi placeat ea quis molestiae.
                 start_date:
                     type: string
                     description: Event start date exactly as the page states it; NOT normalised to RFC 3339, because the source rarely is
-                    example: Placeat ea.
+                    example: Magni architecto occaecati officiis molestiae vitae.
                 url:
                     type: string
                     description: 'The event''s own landing page, as the page declares it (JSON-LD url / og:url), falling back to the URL that was fetched when it declares none. NOT necessarily the fetched URL: a caller commonly pastes a link carrying tracking parameters, and the page''s declared canonical is the better destination for an ad'
-                    example: Provident natus ratione magnam iste saepe qui.
+                    example: Beatae velit.
             example:
-                description: Beatae velit.
-                end_date: Vel maiores voluptatum ut et adipisci aut.
+                description: Voluptatem nam ut distinctio accusantium nobis.
+                end_date: Similique pariatur eos eveniet.
                 event_name: KubeCon + CloudNativeCon Europe 2026
-                extracted_from: opengraph
-                image: Similique pariatur eos eveniet.
-                location: Consequuntur voluptatem nam ut.
-                start_date: Accusantium nobis dolorem et.
-                url: Consequatur laborum sapiente voluptates vel ut cupiditate.
+                extracted_from: jsonld
+                image: Consequatur laborum sapiente voluptates vel ut cupiditate.
+                location: Et animi vel maiores voluptatum ut.
+                start_date: Adipisci aut.
+                url: Ut architecto consequuntur.
             required:
                 - extracted_from
         FetchEventURLRequestBody:
@@ -22860,7 +22923,7 @@ components:
                 session_id:
                     type: string
                     description: Wizard session UUID to pass to every subsequent turn
-                    example: 265fee3f-d779-41e1-9d0c-76de85719197
+                    example: 6befee3f-d779-41e1-9d0c-76de85719197
                     format: uuid
                 token:
                     type: string
@@ -22971,14 +23034,14 @@ components:
                 id:
                     type: string
                     description: HubSpot marketing email id
-                    example: Corporis quia.
+                    example: Voluptas voluptatum temporibus quibusdam sequi numquam.
                 name:
                     type: string
                     description: HubSpot marketing email name
-                    example: Voluptatum temporibus quibusdam.
+                    example: Praesentium perferendis nihil porro ut nisi.
             example:
-                id: Numquam dolorum praesentium perferendis nihil porro ut.
-                name: Eius ex nisi vel minus qui.
+                id: Ex nisi.
+                name: Minus qui excepturi.
             required:
                 - id
                 - name

@@ -60,6 +60,11 @@ type BriefService struct {
 	// llmClient backs GenerateEmailCopy. Nil in every construction that does not call
 	// SetLLMClient, which is why that handler checks it rather than ready().
 	llmClient *llm.Client
+	// emailReferenceSource backs GenerateEmailCopy's best-effort reference-email style mirroring.
+	// Nil in every construction that does not call SetEmailReferenceSource, which is why
+	// GenerateEmailCopy nil-checks it and skips the lookup rather than treating it as required —
+	// unlike llmClient, its absence never blocks copy generation.
+	emailReferenceSource *EmailReferenceSource
 	// clock is the time source for pacing. Injected so date arithmetic is testable at a fixed
 	// instant — a test that reads the wall clock passes or fails by WHEN it is run. Nil means
 	// time.Now, so every existing construction keeps working without naming it.
@@ -128,6 +133,36 @@ func (s *BriefService) SetLLMClient(c *llm.Client) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.llmClient = c
+}
+
+// SetEmailReferenceSource injects the best-effort reference-email lookup for GenerateEmailCopy's
+// style mirroring. Separate from the constructor for the same reason as SetLLMClient; a
+// BriefService without this still generates copy, just without a reference block (see
+// emailReferenceSource).
+func (s *BriefService) SetEmailReferenceSource(r *EmailReferenceSource) {
+	if r == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.emailReferenceSource = r
+}
+
+// snapshotEmailReferenceSource returns a snapshot of emailReferenceSource under the read lock.
+// Mirrors snapshotLLMClient.
+func (s *BriefService) snapshotEmailReferenceSource() *EmailReferenceSource {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.emailReferenceSource
+}
+
+// EmailReferenceSourceIsSet reports whether SetEmailReferenceSource has bound a source, mirroring
+// CreativeAssetRepoIsSet/DecodeReserverIsSet — used to prove bindBriefLiveBackends actually calls
+// the setter, not merely that the setter works in isolation.
+func (s *BriefService) EmailReferenceSourceIsSet() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.emailReferenceSource != nil
 }
 
 // DisableIndexing marks indexing as DELIBERATELY off, so writes skip the outbox entirely.

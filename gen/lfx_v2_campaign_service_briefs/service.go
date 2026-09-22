@@ -663,10 +663,20 @@ type EmailCopy struct {
 	Subject string
 	// Email preheader text (preview summary)
 	Preheader string
-	// Email body HTML (the main content)
-	Body string
-	// Call-to-action button text
-	Cta string
+	// Ordered content sections making up the email body, in display order
+	Sections []*EmailCopySection
+}
+
+type EmailCopySection struct {
+	// Which kind of section this is
+	Type string
+	// Inline HTML for the section (rich_text sections only) -- paragraphs/lists
+	// with inline CSS, no outer <div> or <style> tag
+	HTML *string
+	// Button label (button sections only)
+	Text *string
+	// Button destination URL (button sections only)
+	URL *string
 }
 
 // Counters that only an email campaign has. NONE of them is scoped to the
@@ -759,6 +769,12 @@ type GenerateEmailCopyPayload struct {
 	// Registration Push rather than failing, so a misspelling yields registration
 	// copy under a 200 rather than an error.
 	Stage *string
+	// Requests a differently-styled draft of the same stage's copy. Currently one
+	// value is recognised: 'urgency-fomo', which asks for an urgency/FOMO-forward
+	// structure (deadline framing, social proof, a secondary CTA) instead of the
+	// stage's normal copy. Any other value, or absence, produces the normal
+	// stage-based copy.
+	Variant *string
 }
 
 // GenerateWizardContentPayload is the payload type of the

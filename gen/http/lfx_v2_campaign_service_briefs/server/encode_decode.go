@@ -2488,6 +2488,7 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 			projectID   string
 			briefID     string
 			stage       *string
+			variant     *string
 			bearerToken *string
 			err         error
 
@@ -2496,9 +2497,14 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		projectID = params["project_id"]
 		briefID = params["brief_id"]
 		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
-		stageRaw := r.URL.Query().Get("stage")
+		qp := r.URL.Query()
+		stageRaw := qp.Get("stage")
 		if stageRaw != "" {
 			stage = &stageRaw
+		}
+		variantRaw := qp.Get("variant")
+		if variantRaw != "" {
+			variant = &variantRaw
 		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
@@ -2507,7 +2513,7 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		if err != nil {
 			return payload, err
 		}
-		payload = NewGenerateEmailCopyPayload(projectID, briefID, stage, bearerToken)
+		payload = NewGenerateEmailCopyPayload(projectID, briefID, stage, variant, bearerToken)
 		if payload.BearerToken != nil {
 			if strings.Contains(*payload.BearerToken, " ") {
 				// Remove authorization scheme prefix (e.g. "Bearer")
@@ -5097,6 +5103,20 @@ func marshalLfxv2campaignservicebriefsCampaignActionItemToCampaignActionItemResp
 		Platform:   v.Platform,
 		Issue:      v.Issue,
 		Action:     v.Action,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsEmailCopySectionToEmailCopySectionResponseBody
+// builds a value of type *EmailCopySectionResponseBody from a value of type
+// *lfxv2campaignservicebriefs.EmailCopySection.
+func marshalLfxv2campaignservicebriefsEmailCopySectionToEmailCopySectionResponseBody(v *lfxv2campaignservicebriefs.EmailCopySection) *EmailCopySectionResponseBody {
+	res := &EmailCopySectionResponseBody{
+		Type: v.Type,
+		HTML: v.HTML,
+		Text: v.Text,
+		URL:  v.URL,
 	}
 
 	return res

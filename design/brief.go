@@ -791,6 +791,38 @@ var KeywordActions = Type("keyword-actions", func() {
 	Required("campaign_id", "results", "applied_count")
 })
 
+// EmailCopySection is one ordered block of AI-generated email copy. Replaces a single flat
+// `body` HTML blob with the same rich_text/button/divider decomposition the reference
+// implementation's prompt already asks the model to produce (see
+// internal/service/email_copy.go's composeEmailCopyPrompt): the model is instructed to emit a
+// separate JSON object per button rather than embed an <a> inside the rich-text HTML, so the
+// wire shape now matches what the model is actually told to return instead of asking
+// parseEmailCopyResponse to re-derive one from the other.
+//
+// Only three types ever come FROM the model: rich_text, button, divider. image, image_row and
+// social_icons sections are system-injected after generation (sponsor logos, footer, social
+// links) and never appear in a model response — the type enum is intentionally not a superset
+// of every section kind the rendered email may eventually contain.
+var EmailCopySection = Type("email-copy-section", func() {
+	Attribute("type", String, "Which kind of section this is", func() {
+		Enum("rich_text", "button", "divider")
+		Example("rich_text")
+	})
+	Attribute("html", String, "Inline HTML for the section (rich_text sections only) -- paragraphs/lists with inline CSS, no outer <div> or <style> tag", func() {
+		MaxLength(8000)
+		Example("<p>We're excited to invite you...</p>")
+	})
+	Attribute("text", String, "Button label (button sections only)", func() {
+		MaxLength(50)
+		Example("Register Now")
+	})
+	Attribute("url", String, "Button destination URL (button sections only)", func() {
+		MaxLength(2000)
+		Example("https://example.com/register")
+	})
+	Required("type")
+})
+
 // EmailCopy holds AI-generated email copy for a campaign brief.
 var EmailCopy = Type("email-copy", func() {
 	Attribute("subject", String, "Email subject line", func() {
@@ -801,15 +833,8 @@ var EmailCopy = Type("email-copy", func() {
 		MaxLength(150)
 		Example("Register now and shape the future of cloud native computing")
 	})
-	Attribute("body", String, "Email body HTML (the main content)", func() {
-		MaxLength(8000)
-		Example("<p>We're excited to invite you...</p>")
-	})
-	Attribute("cta", String, "Call-to-action button text", func() {
-		MaxLength(50)
-		Example("Register Now")
-	})
-	Required("subject", "preheader", "body", "cta")
+	Attribute("sections", ArrayOf(EmailCopySection), "Ordered content sections making up the email body, in display order")
+	Required("subject", "preheader", "sections")
 })
 
 // EventDetailsResult is what fetch-event-url returns: the metadata extracted from an
@@ -1377,6 +1402,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Attribute("stage", String, "Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.", func() {
 				Example("Post-Event")
 			})
+			// OPTIONAL, same free-text/lenient-fallback shape as stage: absent or unrecognised
+			// means "no variant requested" rather than an error, so a caller that misspells it
+			// still gets ordinary stage-based copy under a 200 instead of being blocked.
+			Attribute("variant", String, "Requests a differently-styled draft of the same stage's copy. Currently one value is recognised: 'urgency-fomo', which asks for an urgency/FOMO-forward structure (deadline framing, social proof, a secondary CTA) instead of the stage's normal copy. Any other value, or absence, produces the normal stage-based copy.", func() {
+				Example("urgency-fomo")
+			})
 			Required("project_id", "brief_id")
 		})
 		Result(EmailCopy)
@@ -1388,6 +1419,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// with no body got a 400 instead of the default-stage copy it used to get. Verified
 			// against the running service before and after: body-less went 400, then 200.
 			Param("stage")
+			Param("variant")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()
