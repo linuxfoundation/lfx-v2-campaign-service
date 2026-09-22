@@ -432,4 +432,18 @@ and a toggle accept exactly the same connections) builds the client, then
 child ad group + ad (read from the persisted `CampaignResult`) — because the create path
 PAUSES all three, so toggling only the campaign would not serve.
 
+## Account-monitor read
+
+`monitor.go`'s `ListAccountCampaigns` plus its account-level totals call back the
+account-scoped `GET .../connection-reddit-ads/account-monitor` endpoint, ported from
+the LFX One BFF's `reddit-ads.service.ts`. A Reddit connection is bound to exactly
+one ad account, so the dispatcher additionally scopes the requested `account_id` to
+that resolved connection's own account. See
+[Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md) for the
+credential-scoping (`resolveOwned`, no system-account fallback) and the ported rule
+engine (`internal/service/rules/monitor_reddit.go`), which carries over the BFF's
+hardcoded `conversions: 0` and its underspend threshold/label mismatch (fires at
+`<40`, labeled `<50`) verbatim, plus the totals-from-a-separate-call quirk (Reddit's
+`AccountMonitorTotals` come from its own upstream rollup, not a sum of returned rows).
+
 See [internal/platform/reddit](../../../internal/platform/reddit).
