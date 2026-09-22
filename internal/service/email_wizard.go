@@ -62,7 +62,11 @@ type HubSpotWizardClient interface {
 // connection can be added, rotated or revoked between two wizard turns, and a cached client
 // would keep writing with a credential the project has since withdrawn.
 type HubSpotClientResolver interface {
-	ResolveHubSpotClient(ctx context.Context, projectID string) (HubSpotWizardClient, error)
+	// fromSystem reports that the client came from the LF-wide fallback rather than a row this
+	// project owns. It is part of the contract rather than an optional extra because the search
+	// below MUST refuse on it: HubSpot's email namespace is portal-wide and `projectID` only
+	// chose the CONNECTION, so on the shared row a match can be another project's sent email.
+	ResolveHubSpotClient(ctx context.Context, projectID string) (client HubSpotWizardClient, fromSystem bool, err error)
 }
 
 // SetWizardBackend late-binds the wizard's collaborators, alongside SetBackend on both
@@ -133,7 +137,10 @@ func (s *BriefService) wizardHubSpotClient(ctx context.Context, projectID string
 	if resolver == nil {
 		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "HubSpot is not configured for this deployment"}
 	}
-	client, err := resolver.ResolveHubSpotClient(ctx, projectID)
+	// `fromSystem` is discarded deliberately: this path WRITES the requesting project's own
+	// content to the portal, which is the legitimate half of the fallback. Only the portal-wide
+	// READ in findWizardSourceEmail has to refuse it.
+	client, _, err := resolver.ResolveHubSpotClient(ctx, projectID)
 	if err != nil {
 		// 503, not 400: an unresolvable or unusable connection is a configuration state of
 		// the project, not a defect in the request the caller just made.
@@ -394,7 +401,8 @@ func (s *BriefService) StartEmailWizardPlan(ctx context.Context, p *briefs.Start
 		ExtraContext:    strings.TrimSpace(strVal(p.ExtraContext)),
 		EmailType:       strings.TrimSpace(strVal(p.EmailType)),
 		IsTransactional: p.IsTransactional != nil && *p.IsTransactional,
-	}); g.ExtraContext != "" || g.EmailType != "" || g.IsTransactional {
+		URL:             strings.TrimSpace(strVal(p.URL)),
+	}); g.ExtraContext != "" || g.EmailType != "" || g.IsTransactional || g.URL != "" {
 		if blob, merr := json.Marshal(g); merr == nil {
 			sess.PlanResult = blob
 		}
@@ -427,6 +435,11 @@ type wizardPlan struct {
 	ExtraContext    string `json:"extra_context,omitempty"`
 	EmailType       string `json:"email_type,omitempty"`
 	IsTransactional bool   `json:"is_transactional,omitempty"`
+	// URL is the event page the caller asked the wizard to plan from, when they supplied it at
+	// plan-start rather than plan. It was the ONE optional plan-start field that was accepted and
+	// then never read: a caller who supplied it as the contract documents got a 200 and planning
+	// from the brief's own scraped details instead, with nothing saying so.
+	URL string `json:"url,omitempty"`
 }
 
 type wizardSource struct {
@@ -450,16 +463,28 @@ func (s *BriefService) PlanEmailWizard(ctx context.Context, p *briefs.PlanEmailW
 		return nil, serr
 	}
 	s.publishWizardProgress(sess, WizardProgressFrame{Type: "brief", Text: "Resolving the event details"})
-	details := s.resolveWizardDetails(ctx, brief, strVal(p.URL))
+	// Read BEFORE resolving the details, because the url recorded at plan-start is a fallback for
+	// this turn's own. A caller may send it to either request -- the contract documents the field
+	// on both -- and plan-start's copy was previously accepted and never read, so pointing the
+	// wizard at a different page there silently planned from the brief's own scraped details.
+	prior := wizardStoredPlan(sess)
+	requestedURL := strVal(p.URL)
+	if strings.TrimSpace(requestedURL) == "" {
+		requestedURL = prior.URL
+	}
+	details := s.resolveWizardDetails(ctx, brief, requestedURL)
 
 	tpl := emailstage.Resolve(brief.Stage)
-	prior := wizardStoredPlan(sess)
 	plan := wizardPlan{
 		Mode: "stage",
 		// This turn's guidance wins; anything it omits keeps what plan-start recorded.
 		ExtraContext:    firstNonEmpty(strings.TrimSpace(strVal(p.ExtraContext)), prior.ExtraContext),
 		EmailType:       firstNonEmpty(strings.TrimSpace(strVal(p.EmailType)), prior.EmailType),
 		IsTransactional: (p.IsTransactional != nil && *p.IsTransactional) || prior.IsTransactional,
+		// Carried forward like the rest. `requestedURL` already resolved this turn's value
+		// against plan-start's, so rebuilding the blob without it would DROP a url the caller
+		// supplied at plan-start -- the same silent loss this field was added to close.
+		URL: strings.TrimSpace(requestedURL),
 		Stage: map[string]any{
 			"stage_name":            tpl.StageName,
 			"purpose":               tpl.Purpose,
@@ -590,9 +615,27 @@ func (s *BriefService) findWizardSourceEmail(ctx context.Context, projectID stri
 	if query == "" {
 		return nil, false
 	}
-	client, err := resolver.ResolveHubSpotClient(ctx, projectID)
+	client, fromSystem, err := resolver.ResolveHubSpotClient(ctx, projectID)
 	if err != nil || client == nil {
 		slog.InfoContext(ctx, "wizard planning found no hubspot connection; planning without a clone source",
+			"project_id", projectID)
+		return nil, false
+	}
+	// REFUSED on the shared portal, for the same reason `EmailReferenceSource.Get` refuses:
+	// SearchEmails is portal-WIDE and `projectID` only chose the connection -- it never filters
+	// the results. On the system fallback a hit can be another project's past sent email, and
+	// cloning it would seed this project's draft with that one's subject, body, sponsor names and
+	// pricing. A cross-tenant read with no consent surface, and the COMMON case rather than an
+	// edge one, because every project without its own connection resolves here.
+	//
+	// Unlike the dispatch-side fallback, which only ever WRITES the requesting project's own
+	// content to the shared portal, this one reads everyone's.
+	//
+	// Degrades to planning from the stage guide -- exactly what a project with no HubSpot history
+	// gets anyway. Re-enabling needs a per-project ownership signal on the emails themselves;
+	// there is none today.
+	if fromSystem {
+		slog.InfoContext(ctx, "wizard clone-source search skipped: only the shared LF connection is available, and a portal-wide search would cross project boundaries",
 			"project_id", projectID)
 		return nil, false
 	}
@@ -865,7 +908,10 @@ func (s *BriefService) wizardReferenceEmails(ctx context.Context, projectID stri
 	if resolver == nil {
 		return nil
 	}
-	client, err := resolver.ResolveHubSpotClient(ctx, projectID)
+	// `fromSystem` is discarded deliberately: this path WRITES the requesting project's own
+	// content to the portal, which is the legitimate half of the fallback. Only the portal-wide
+	// READ in findWizardSourceEmail has to refuse it.
+	client, _, err := resolver.ResolveHubSpotClient(ctx, projectID)
 	if err != nil || client == nil {
 		return nil
 	}

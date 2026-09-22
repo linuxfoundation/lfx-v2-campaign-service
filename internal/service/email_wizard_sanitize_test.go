@@ -289,3 +289,59 @@ func TestSanitizeSectionHTMLCleansAndPreservesUnmodelledFields(t *testing.T) {
 		t.Error("input map was mutated in place")
 	}
 }
+
+// Only the RAW-TEXT drop tags open a region a self-close does not end. `object` and `embed` must
+// not, or they silently truncate the rest of the block.
+//
+// Verified against the tokenizer itself rather than inferred: after `<script/>`, `<style/>` or
+// `<iframe/>`, golang.org/x/net/html force-consumes the tail as ONE text token, so the region
+// really does stay open until a matching end tag. After `<object/>` or `<embed/>` it resumes
+// normal tokenization, so no `</object>` ever arrives, `skipDepth` never returns to 0, and every
+// following paragraph is suppressed with no error and no marker.
+//
+// This is the regression the previous round's self-closing fix introduced by over-generalising
+// from the raw-text tags -- a truncation traded for a leak, which is worse: the leak was visible.
+func TestSanitizeWizardHTMLSelfClosingObjectEmbedDoNotTruncate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			// The regression: `<p>after</p>` was gone entirely.
+			name: "self-closing object keeps the trailing content",
+			in:   `<p>before</p><object/><p>after</p>`,
+			want: `<p>before</p><p>after</p>`,
+		},
+		{
+			name: "self-closing embed keeps the trailing content",
+			in:   `<p>before</p><embed/><p>after</p>`,
+			want: `<p>before</p><p>after</p>`,
+		},
+		{
+			// The other direction, which must NOT regress: these three ARE raw text, so the
+			// payload after a self-close is still suppressed. Fixing object/embed by dropping the
+			// bump for all five would reopen the leak this test set exists to hold closed.
+			name: "self-closing script still suppresses its payload",
+			in:   `<p>before</p><script/>alert(1)<p>after</p>`,
+			want: `<p>before</p>`,
+		},
+		{
+			name: "self-closing iframe still suppresses its payload",
+			in:   `<p>before</p><iframe/>evil<p>after</p>`,
+			want: `<p>before</p>`,
+		},
+		{
+			// A properly closed object must still drop its CONTENT while keeping the tail.
+			name: "closed object drops content and resumes",
+			in:   `<p>before</p><object>payload</object><p>after</p>`,
+			want: `<p>before</p><p>after</p>`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeWizardHTML(tc.in); got != tc.want {
+				t.Errorf("sanitizeWizardHTML(%q):\n got %q\nwant %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

@@ -64,9 +64,15 @@ of formatting tags and attributes, using a real tokenizer rather than pattern ma
 over tag names loses to `<scr<script>ipt>`, and this input is model-supplied and adversarial by
 assumption. Element content survives even when its tag does not, because dropping `<span>` should
 not delete the words inside it; `script`, `style`, `iframe`, `object` and `embed` are the
-exception, since their content is the payload rather than copy. It runs where the sections are
-PARSED and again before they are PERSISTED, not at each render, so a future consumer cannot
-receive unsanitised HTML by forgetting to re-sanitise.
+exception, since their content is the payload rather than copy.
+
+It runs at THREE points, deliberately: where the sections are parsed, again before they are
+persisted, and again in `renderWizardSections` on every render. The first two make the stored
+invariant "sections are sanitized" hold on its own, so a future consumer reading the column
+directly cannot receive unsanitised HTML by forgetting to re-sanitise. The render-time call is
+defense-in-depth on top of that, not the primary control — it is what stands between the stored
+value and the two sinks that execute or render it, and it is deliberately NOT redundant: removing
+it would make every one of those sinks depend on the write path having been correct.
 
 Because the renderer needs no model, the editing half of the wizard keeps working when the AI
 proxy is unconfigured. An empty section list, or one that renders to nothing, is refused rather

@@ -105,18 +105,18 @@ type hubspotWizardResolver struct {
 }
 
 // ResolveHubSpotClient resolves the project's HubSpot client for one wizard turn.
-func (r hubspotWizardResolver) ResolveHubSpotClient(ctx context.Context, projectID string) (service.HubSpotWizardClient, error) {
-	client, err := r.d.ResolveEmailClient(ctx, projectID)
+func (r hubspotWizardResolver) ResolveHubSpotClient(ctx context.Context, projectID string) (service.HubSpotWizardClient, bool, error) {
+	client, fromSystem, err := r.d.ResolveEmailClientWithOrigin(ctx, projectID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if client == nil {
 		// A nil *hubspot.Client returned into an interface would be a NON-nil interface
 		// holding a nil pointer, which the wizard's own nil check cannot see — the same trap
 		// registerDispatchers guards for the creative-asset repo. Fail here instead.
-		return nil, errors.New("hubspot client resolution returned no client")
+		return nil, false, errors.New("hubspot client resolution returned no client")
 	}
-	return client, nil
+	return client, fromSystem, nil
 }
 
 // wizardResolverFrom finds the HubSpot dispatcher in the registered set and wraps it.

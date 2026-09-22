@@ -33,6 +33,12 @@ func sanitizeWizardHTML(input string) string {
 		"a": true, "span": true, "div": true,
 	}
 	dropContent := map[string]bool{"script": true, "style": true, "iframe": true, "object": true, "embed": true}
+	// The RAW-TEXT subset, and the distinction is load-bearing for the self-closing case below.
+	// `golang.org/x/net/html` force-consumes the tail of these three as a single text token, so
+	// `<script/>` really does open a region that only `</script>` closes. `object` and `embed`
+	// get no such treatment -- the tokenizer resumes normal tokenization right after them --
+	// verified against the tokenizer directly, not inferred from the spec.
+	rawTextDrop := map[string]bool{"script": true, "style": true, "iframe": true}
 
 	var b strings.Builder
 	tokenizer := html.NewTokenizer(strings.NewReader(input))
@@ -53,16 +59,24 @@ func sanitizeWizardHTML(input string) string {
 			name, hasAttr := tokenizer.TagName()
 			tag := string(name)
 			if dropContent[tag] {
-				// A self-closing spelling does NOT end the drop. None of these tags is a void
-				// element, so `<script/>` is not self-closing in HTML at all -- the parser treats
-				// it as an open tag and everything after it as script content, right up to a
-				// `</script>` that may never come. Skipping the depth bump let that content out
-				// as escaped text, and escaped the REST of the document with it:
+				// Only the RAW-TEXT tags open a region a self-close does not end. For those the
+				// tokenizer force-consumes everything after `<script/>` as script content, up to
+				// a `</script>` that may never come -- so without the bump that payload escaped
+				// as text AND took the rest of the document with it:
 				// `<p>a</p><script/>alert(1)<p>b</p>` emitted `alert(1)&lt;p&gt;b&lt;/p&gt;`.
+				//
+				// `object` and `embed` must NOT bump here. The tokenizer resumes normal
+				// tokenization after them, so no `</object>` ever arrives, `skipDepth` never
+				// returns to 0, and every following paragraph is suppressed with no error and no
+				// marker: `<p>before</p><object/><p>after</p>` lost `<p>after</p>` entirely.
+				// Bumping for all five was this file's own previous fix over-generalising from
+				// the raw-text tags -- a truncation traded for a leak.
 				//
 				// `tokenType`, not `tokenizer.Token()`: calling Token() mid-iteration re-reads the
 				// current token and is easy to get wrong here. The value is already in hand.
-				skipDepth++
+				if tokenType != html.SelfClosingTagToken || rawTextDrop[tag] {
+					skipDepth++
+				}
 				continue
 			}
 			if skipDepth > 0 || !allowedTags[tag] {

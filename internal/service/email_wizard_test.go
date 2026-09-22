@@ -241,10 +241,13 @@ func (f *fakeWizardHubSpot) AuthenticatedPortalID(context.Context) (string, erro
 type fakeWizardResolver struct {
 	client HubSpotWizardClient
 	err    error
+	// fromSystem simulates resolution falling back to the LF-wide connection, which the
+	// clone-source search must refuse because SearchEmails is portal-wide.
+	fromSystem bool
 }
 
-func (r fakeWizardResolver) ResolveHubSpotClient(context.Context, string) (HubSpotWizardClient, error) {
-	return r.client, r.err
+func (r fakeWizardResolver) ResolveHubSpotClient(context.Context, string) (HubSpotWizardClient, bool, error) {
+	return r.client, r.fromSystem, r.err
 }
 
 // orderedAudienceRepo returns audiences in a FIXED newest-first order.
@@ -1601,5 +1604,114 @@ func TestWizardPlanBoundsTheEmailSearch(t *testing.T) {
 	if h.hubspot.searchDeadline.Before(expectedMin) || h.hubspot.searchDeadline.After(expectedMax) {
 		t.Errorf("SearchEmails deadline %v outside [%v, %v] — expected now+accountsCallTimeout (%v)",
 			h.hubspot.searchDeadline, expectedMin, expectedMax, accountsCallTimeout)
+	}
+}
+
+// A portal-wide clone-source search must be REFUSED on the shared LF connection.
+//
+// `SearchEmails` is portal-wide and `projectID` only chooses the connection — it never filters
+// the results. So on the system fallback a hit can be another project's past sent email, and
+// cloning it would seed this project's draft with that one's subject, body, sponsor names and
+// pricing. `EmailReferenceSource.Get` already refuses for exactly this reason; the wizard's
+// search did not, which made the same cross-tenant read reachable by a different door.
+//
+// This is the COMMON case, not an edge one: every project without its own HubSpot connection
+// resolves to the shared row.
+func TestWizardPlanRefusesPortalWideSearchOnSharedConnection(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	// A hit the search WOULD return, so a pass here cannot come from an empty portal.
+	h.hubspot.searchHits = []hubspot.Email{{ID: "other-project-email", Name: "KubeCon EU 2025 - Registration Open"}}
+	h.svc.SetWizardBackend(h.sessions, fakeWizardResolver{client: h.hubspot, fromSystem: true}, h.audiences)
+	started := h.start(t)
+
+	plan, err := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	})
+	if err != nil {
+		t.Fatalf("PlanEmailWizard must still succeed by falling back to the stage guide: %v", err)
+	}
+	if plan.Mode == "reference" || plan.SourceEmail != nil {
+		t.Errorf("shared-connection planning must NOT pick a clone source, got mode=%q source=%+v", plan.Mode, plan.SourceEmail)
+	}
+	if h.hubspot.searchHadDeadline {
+		t.Error("SearchEmails was called at all; the refusal must happen BEFORE the portal-wide query")
+	}
+}
+
+// The other direction: a project with its OWN connection must still get a clone source.
+//
+// Without this, "always refuse" passes the test above and silently removes the feature for every
+// project that legitimately has HubSpot history.
+func TestWizardPlanStillSearchesOnProjectOwnedConnection(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	h.svc.SetWizardBackend(h.sessions, fakeWizardResolver{client: h.hubspot, fromSystem: false}, h.audiences)
+	started := h.start(t)
+
+	plan, err := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	})
+	if err != nil {
+		t.Fatalf("PlanEmailWizard: %v", err)
+	}
+	if plan.Mode != "reference" || plan.SourceEmail == nil || plan.SourceEmail.ID != "src-1" {
+		t.Errorf("a project-owned connection must still pick the clone source, got mode=%q source=%+v", plan.Mode, plan.SourceEmail)
+	}
+}
+
+// A url supplied at PLAN-START must survive to the plan turn.
+//
+// It was the one optional plan-start field accepted and then never read: `ExtraContext`,
+// `EmailType` and `IsTransactional` were all persisted, `URL` was not. A caller who supplied it
+// as the contract documents ("Event page to plan from") got a 200 and planning from the brief's
+// own scraped details instead, with nothing in the response saying which page was used.
+func TestWizardPlanStartPersistsTheRequestedURL(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	const want = "https://events.linuxfoundation.org/a-different-page/"
+
+	started, err := h.svc.StartEmailWizardPlan(context.Background(), &briefs.StartEmailWizardPlanPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief,
+		URL: strPtr(want),
+	})
+	if err != nil {
+		t.Fatalf("StartEmailWizardPlan: %v", err)
+	}
+
+	sess, _, lerr := loadWizardSession(context.Background(), h.briefs, h.sessions,
+		wizardTestProject, wizardTestBrief, started.SessionID)
+	if lerr != nil {
+		t.Fatalf("loadWizardSession: %v", lerr)
+	}
+	if got := wizardStoredPlan(sess).URL; got != want {
+		t.Errorf("plan-start url not persisted:\n got %q\nwant %q", got, want)
+	}
+}
+
+// And a url supplied ONLY at plan-start must not be overridden by the absence of one on the plan
+// turn — the fallback has to be one-directional.
+func TestWizardPlanTurnDoesNotClearTheStoredURL(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	const want = "https://events.linuxfoundation.org/a-different-page/"
+
+	started, err := h.svc.StartEmailWizardPlan(context.Background(), &briefs.StartEmailWizardPlanPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, URL: strPtr(want),
+	})
+	if err != nil {
+		t.Fatalf("StartEmailWizardPlan: %v", err)
+	}
+	// The plan turn sends NO url of its own, which is the case the fallback exists for.
+	if _, perr := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); perr != nil {
+		t.Fatalf("PlanEmailWizard: %v", perr)
+	}
+
+	sess, _, lerr := loadWizardSession(context.Background(), h.briefs, h.sessions,
+		wizardTestProject, wizardTestBrief, started.SessionID)
+	if lerr != nil {
+		t.Fatalf("loadWizardSession: %v", lerr)
+	}
+	if got := wizardStoredPlan(sess).URL; got != want {
+		t.Errorf("the plan turn dropped the stored url:\n got %q\nwant %q", got, want)
 	}
 }
