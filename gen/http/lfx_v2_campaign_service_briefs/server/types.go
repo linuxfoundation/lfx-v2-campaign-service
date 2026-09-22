@@ -501,10 +501,8 @@ type GenerateEmailCopyResponseBody struct {
 	Subject string `form:"subject" json:"subject" xml:"subject"`
 	// Email preheader text (preview summary)
 	Preheader string `form:"preheader" json:"preheader" xml:"preheader"`
-	// Email body HTML (the main content)
-	Body string `form:"body" json:"body" xml:"body"`
-	// Call-to-action button text
-	Cta string `form:"cta" json:"cta" xml:"cta"`
+	// Ordered content sections making up the email body, in display order
+	Sections []*EmailCopySectionResponseBody `form:"sections" json:"sections" xml:"sections"`
 }
 
 // UpdateCampaignResponseBody is the type of the
@@ -2291,6 +2289,19 @@ type CampaignActionItemResponseBody struct {
 	Action string `form:"action" json:"action" xml:"action"`
 }
 
+// EmailCopySectionResponseBody is used to define fields on response body types.
+type EmailCopySectionResponseBody struct {
+	// Which kind of section this is
+	Type string `form:"type" json:"type" xml:"type"`
+	// Inline HTML for the section (rich_text sections only) -- paragraphs/lists
+	// with inline CSS, no outer <div> or <style> tag
+	HTML *string `form:"html,omitempty" json:"html,omitempty" xml:"html,omitempty"`
+	// Button label (button sections only)
+	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// Button destination URL (button sections only)
+	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
+}
+
 // KeywordActionResultResponseBody is used to define fields on response body
 // types.
 type KeywordActionResultResponseBody struct {
@@ -2702,8 +2713,18 @@ func NewGenerateEmailCopyResponseBody(res *lfxv2campaignservicebriefs.EmailCopy)
 	body := &GenerateEmailCopyResponseBody{
 		Subject:   res.Subject,
 		Preheader: res.Preheader,
-		Body:      res.Body,
-		Cta:       res.Cta,
+	}
+	if res.Sections != nil {
+		body.Sections = make([]*EmailCopySectionResponseBody, len(res.Sections))
+		for i, val := range res.Sections {
+			if val == nil {
+				body.Sections[i] = nil
+				continue
+			}
+			body.Sections[i] = marshalLfxv2campaignservicebriefsEmailCopySectionToEmailCopySectionResponseBody(val)
+		}
+	} else {
+		body.Sections = []*EmailCopySectionResponseBody{}
 	}
 	return body
 }
@@ -4628,11 +4649,12 @@ func NewGetBriefMetricsPayload(projectID string, briefID string, window *string,
 
 // NewGenerateEmailCopyPayload builds a lfx-v2-campaign-service-briefs service
 // generate-email-copy endpoint payload.
-func NewGenerateEmailCopyPayload(projectID string, briefID string, stage *string, bearerToken *string) *lfxv2campaignservicebriefs.GenerateEmailCopyPayload {
+func NewGenerateEmailCopyPayload(projectID string, briefID string, stage *string, variant *string, bearerToken *string) *lfxv2campaignservicebriefs.GenerateEmailCopyPayload {
 	v := &lfxv2campaignservicebriefs.GenerateEmailCopyPayload{}
 	v.ProjectID = projectID
 	v.BriefID = briefID
 	v.Stage = stage
+	v.Variant = variant
 	v.BearerToken = bearerToken
 
 	return v

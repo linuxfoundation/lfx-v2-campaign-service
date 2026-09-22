@@ -3460,9 +3460,9 @@ paths:
                             $ref: '#/components/schemas/UpdateCampaignRequestBody'
                         example:
                             campaign:
-                                campaign_name: Dignissimos in tempore quo consequatur sint qui.
-                                config: Autem impedit.
-                                status: Illum expedita commodi in dolores nemo similique.
+                                campaign_name: Tempore quo consequatur sint qui non illum.
+                                config: Impedit tenetur.
+                                status: Commodi in dolores nemo similique eaque.
             responses:
                 "200":
                     description: OK response.
@@ -4500,6 +4500,15 @@ paths:
                     description: 'Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
                     example: Post-Event
                   example: Post-Event
+                - name: variant
+                  in: query
+                  description: 'Requests a differently-styled draft of the same stage''s copy. Currently one value is recognised: ''urgency-fomo'', which asks for an urgency/FOMO-forward structure (deadline framing, social proof, a secondary CTA) instead of the stage''s normal copy. Any other value, or absence, produces the normal stage-based copy.'
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: 'Requests a differently-styled draft of the same stage''s copy. Currently one value is recognised: ''urgency-fomo'', which asks for an urgency/FOMO-forward structure (deadline framing, social proof, a secondary CTA) instead of the stage''s normal copy. Any other value, or absence, produces the normal stage-based copy.'
+                    example: urgency-fomo
+                  example: urgency-fomo
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -4527,9 +4536,16 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/EmailCopy'
                             example:
-                                body: <p>We're excited to invite you...</p>
-                                cta: Register Now
                                 preheader: Register now and shape the future of cloud native computing
+                                sections:
+                                    - html: <p>We're excited to invite you...</p>
+                                      text: Register Now
+                                      type: rich_text
+                                      url: https://example.com/register
+                                    - html: <p>We're excited to invite you...</p>
+                                      text: Register Now
+                                      type: rich_text
+                                      url: https://example.com/register
                                 subject: Join Us at KubeCon 2026
                 "400":
                     description: 'BadRequest: Bad request'
@@ -15178,14 +15194,14 @@ components:
                 campaign_name:
                     type: string
                     description: Campaign name
-                    example: Voluptas et ea sed provident facilis.
+                    example: Culpa velit voluptas et ea sed provident.
                 config:
                     description: Campaign configuration snapshot
                     example: Sunt soluta perferendis.
                 status:
                     type: string
                     description: Campaign status
-                    example: Doloremque rerum.
+                    example: Autem doloremque rerum.
             example:
                 campaign_name: Ut qui.
                 config: Inventore corrupti at.
@@ -15571,36 +15587,79 @@ components:
         EmailCopy:
             type: object
             properties:
-                body:
-                    type: string
-                    description: Email body HTML (the main content)
-                    example: <p>We're excited to invite you...</p>
-                    maxLength: 8000
-                cta:
-                    type: string
-                    description: Call-to-action button text
-                    example: Register Now
-                    maxLength: 50
                 preheader:
                     type: string
                     description: Email preheader text (preview summary)
                     example: Register now and shape the future of cloud native computing
                     maxLength: 150
+                sections:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/EmailCopySection'
+                    description: Ordered content sections making up the email body, in display order
+                    example:
+                        - html: <p>We're excited to invite you...</p>
+                          text: Register Now
+                          type: rich_text
+                          url: https://example.com/register
+                        - html: <p>We're excited to invite you...</p>
+                          text: Register Now
+                          type: rich_text
+                          url: https://example.com/register
                 subject:
                     type: string
                     description: Email subject line
                     example: Join Us at KubeCon 2026
                     maxLength: 200
             example:
-                body: <p>We're excited to invite you...</p>
-                cta: Register Now
                 preheader: Register now and shape the future of cloud native computing
+                sections:
+                    - html: <p>We're excited to invite you...</p>
+                      text: Register Now
+                      type: rich_text
+                      url: https://example.com/register
+                    - html: <p>We're excited to invite you...</p>
+                      text: Register Now
+                      type: rich_text
+                      url: https://example.com/register
                 subject: Join Us at KubeCon 2026
             required:
                 - subject
                 - preheader
-                - body
-                - cta
+                - sections
+        EmailCopySection:
+            type: object
+            properties:
+                html:
+                    type: string
+                    description: Inline HTML for the section (rich_text sections only) -- paragraphs/lists with inline CSS, no outer <div> or <style> tag
+                    example: <p>We're excited to invite you...</p>
+                    maxLength: 8000
+                text:
+                    type: string
+                    description: Button label (button sections only)
+                    example: Register Now
+                    maxLength: 50
+                type:
+                    type: string
+                    description: Which kind of section this is
+                    example: rich_text
+                    enum:
+                        - rich_text
+                        - button
+                        - divider
+                url:
+                    type: string
+                    description: Button destination URL (button sections only)
+                    example: https://example.com/register
+                    maxLength: 2000
+            example:
+                html: <p>We're excited to invite you...</p>
+                text: Register Now
+                type: rich_text
+                url: https://example.com/register
+            required:
+                - type
         EmailMetrics:
             type: object
             properties:
@@ -15655,11 +15714,11 @@ components:
                 description:
                     type: string
                     description: Event description
-                    example: Qui ullam iste rem rerum eius voluptate.
+                    example: Iste rem rerum eius.
                 end_date:
                     type: string
                     description: Event end date, same caveat as start_date
-                    example: Neque aut dolorem.
+                    example: Aut dolorem eum maxime error sed.
                 event_name:
                     type: string
                     description: Event name
@@ -15667,7 +15726,7 @@ components:
                 extracted_from:
                     type: string
                     description: Which strategy produced this record — the whole record came from exactly one of them
-                    example: fallback
+                    example: jsonld
                     enum:
                         - jsonld
                         - opengraph
@@ -15675,28 +15734,28 @@ components:
                 image:
                     type: string
                     description: Event image URL
-                    example: Maxime error sed officia est distinctio quisquam.
+                    example: Est distinctio quisquam accusamus.
                 location:
                     type: string
                     description: Event location as written on the page — free text, not a resolved place
-                    example: Ut tenetur enim libero.
+                    example: Vitae ut tenetur enim libero modi dolorum.
                 start_date:
                     type: string
                     description: Event start date exactly as the page states it; NOT normalised to RFC 3339, because the source rarely is
-                    example: Dolorum accusantium aut.
+                    example: Aut voluptatem.
                 url:
                     type: string
                     description: 'The event''s own landing page, as the page declares it (JSON-LD url / og:url), falling back to the URL that was fetched when it declares none. NOT necessarily the fetched URL: a caller commonly pastes a link carrying tracking parameters, and the page''s declared canonical is the better destination for an ad'
-                    example: Rerum non.
+                    example: Non repudiandae.
             example:
-                description: A rerum saepe voluptatem beatae.
-                end_date: Deleniti aut nostrum ipsa.
+                description: Rerum saepe voluptatem beatae quaerat harum.
+                end_date: Aut nostrum ipsa quis.
                 event_name: KubeCon + CloudNativeCon Europe 2026
-                extracted_from: jsonld
-                image: Ut numquam illo blanditiis.
-                location: Harum facilis id.
-                start_date: Est nam eos.
-                url: Deleniti et maxime tenetur eos voluptatum tempore.
+                extracted_from: fallback
+                image: Numquam illo blanditiis aut.
+                location: Id facere est.
+                start_date: Eos voluptatem.
+                url: Et maxime tenetur eos.
             required:
                 - extracted_from
         FetchEventURLRequestBody:
@@ -20978,9 +21037,9 @@ components:
                     $ref: '#/components/schemas/CampaignUpdateInput'
             example:
                 campaign:
-                    campaign_name: Dignissimos in tempore quo consequatur sint qui.
-                    config: Autem impedit.
-                    status: Illum expedita commodi in dolores nemo similique.
+                    campaign_name: Tempore quo consequatur sint qui non illum.
+                    config: Impedit tenetur.
+                    status: Commodi in dolores nemo similique eaque.
             required:
                 - campaign
         UpdateGoogleAdsRequestBody:
