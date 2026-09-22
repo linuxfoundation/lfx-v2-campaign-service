@@ -179,6 +179,9 @@ type fakeWizardHubSpot struct {
 	suppression       []string
 	searchDeadline    time.Time
 	searchHadDeadline bool
+	// A COUNT, not a flag: a guard that skipped one read and made another would still
+	// satisfy a boolean.
+	getEmailCalls int
 }
 
 func newFakeWizardHubSpot() *fakeWizardHubSpot {
@@ -196,6 +199,7 @@ func (f *fakeWizardHubSpot) SearchEmails(ctx context.Context, _ string) ([]hubsp
 }
 
 func (f *fakeWizardHubSpot) GetEmail(_ context.Context, id string) (*hubspot.Email, error) {
+	f.getEmailCalls++
 	if f.getErr != nil {
 		return nil, f.getErr
 	}
@@ -1790,5 +1794,135 @@ func TestWizardPlanTurnURLWinsOverPlanStart(t *testing.T) {
 
 	if fetcher.gotURL != planTurnURL {
 		t.Errorf("this turn's url must win:\n got %q\nwant %q", fetcher.gotURL, planTurnURL)
+	}
+}
+
+// Setting the send list must be REFUSED when the connection changed since the clone turn.
+//
+// `sess.EmailID` is recorded by the CLONE turn, so it is a cross-turn id exactly like the plan's
+// `src.ID` — an earlier revision of this file's comment claimed otherwise, and both review bots
+// caught it independently. After a revoke or rotation the same numeric id names a different
+// portal's email, and this call MUTATES it: it would change the recipients of another tenant's
+// draft, which is worse than reading one.
+func TestWizardSendListRefusesAfterTheConnectionChanged(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.audiences.newestFirst = []*model.CampaignAudience{{
+		ID: "aud-1", Platform: model.ProviderHubSpot, Status: model.AudienceBuilt,
+		PlatformMasterListID: "ils-77", BuiltInPortalID: "portal-1",
+	}}
+	started := h.start(t)
+	// A draft recorded by an earlier turn, which is the whole point.
+	h.sessions.items[started.SessionID].EmailID = "email-99"
+
+	// The connection now resolves to the shared LF row.
+	h.svc.SetWizardBackend(h.sessions, fakeWizardResolver{client: h.hubspot, fromSystem: true}, h.audiences)
+
+	_, err := h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("a changed connection must be a 409, got %T: %v", err, err)
+	}
+	// The MUTATION is the thing that must not have happened. A refusal that still applied the
+	// send list would satisfy the error assertion above and leak anyway.
+	if h.hubspot.sendListID != "" {
+		t.Errorf("the send list was applied to %q despite the refusal", h.hubspot.sendListID)
+	}
+}
+
+// The other direction: a project-owned connection must still be able to set the send list.
+func TestWizardSendListStillWorksOnProjectOwnedConnection(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.audiences.newestFirst = []*model.CampaignAudience{{
+		ID: "aud-1", Platform: model.ProviderHubSpot, Status: model.AudienceBuilt,
+		PlatformMasterListID: "ils-77", BuiltInPortalID: "portal-1",
+	}}
+	started := h.start(t)
+	h.sessions.items[started.SessionID].EmailID = "email-99"
+	h.svc.SetWizardBackend(h.sessions, fakeWizardResolver{client: h.hubspot, fromSystem: false}, h.audiences)
+
+	if _, err := h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("SetWizardSendList on the project's own connection: %v", err)
+	}
+	if h.hubspot.sendListID == "" {
+		t.Error("the send list must still be applied when the connection is the project's own")
+	}
+}
+
+// The clone turn must refuse when the connection changed since planning.
+//
+// `src.ID` was captured by the plan turn against whatever portal resolved then, and `CloneEmail`
+// reads that id's content from whatever portal resolves NOW — so after a revoke or rotation this
+// would clone another tenant's sent email into a draft attributed to this project, persisted on
+// the session and handed back as `DraftURL`.
+func TestWizardCloneRefusesAfterTheConnectionChanged(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	started := h.start(t)
+
+	// Plan AND generate on the project's OWN connection, so both of CloneWizardEmail's earlier
+	// 409s (no generated content, no planned source) are already satisfied. Without the generate
+	// step this test passed with the guard REMOVED -- it was asserting the 409 TYPE while a
+	// different 409 answered first.
+	if _, err := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("PlanEmailWizard: %v", err)
+	}
+	if _, err := h.svc.GenerateWizardContent(context.Background(), &briefs.GenerateWizardContentPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("GenerateWizardContent: %v", err)
+	}
+
+	// The connection now resolves to the shared LF row.
+	h.svc.SetWizardBackend(h.sessions, fakeWizardResolver{client: h.hubspot, fromSystem: true}, h.audiences)
+
+	_, err := h.svc.CloneWizardEmail(context.Background(), &briefs.CloneWizardEmailPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID, Approved: true,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("a changed connection must be a 409, got %T: %v", err, err)
+	}
+	// WHICH 409, not just a 409: three of them live in this handler, and asserting only the type
+	// let this test pass with the guard removed.
+	if !strings.Contains(conflict.Message, "no longer reachable through this project's HubSpot connection") {
+		t.Errorf("wrong 409 -- this must be the provenance refusal, got %q", conflict.Message)
+	}
+	// The CLONE is what must not have happened — a 409 that still cloned would leak anyway.
+	if h.hubspot.clonedFrom != "" {
+		t.Errorf("an email was cloned from %q despite the refusal", h.hubspot.clonedFrom)
+	}
+}
+
+// The voice-reference read must skip on a changed connection, rather than read by a stale id.
+//
+// `GetEmail`/`GetEmailHTMLWidgets` are read-only, so unlike the clone this degrades silently —
+// generating without a reference is what a project with no clone source already gets.
+func TestWizardReferenceReadSkipsAfterTheConnectionChanged(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.hubspot.searchHits = []hubspot.Email{{ID: "src-1", Name: "KubeCon EU 2025 - Registration Open"}}
+	started := h.start(t)
+	if _, err := h.svc.PlanEmailWizard(context.Background(), &briefs.PlanEmailWizardPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("PlanEmailWizard: %v", err)
+	}
+
+	h.svc.SetWizardBackend(h.sessions, fakeWizardResolver{client: h.hubspot, fromSystem: true}, h.audiences)
+	h.hubspot.getEmailCalls = 0
+
+	// Generation still SUCCEEDS: the reference is an enrichment, not a precondition.
+	if _, err := h.svc.GenerateWizardContent(context.Background(), &briefs.GenerateWizardContentPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	}); err != nil {
+		t.Fatalf("GenerateWizardContent must still succeed without a voice reference: %v", err)
+	}
+	if h.hubspot.getEmailCalls != 0 {
+		t.Errorf("the clone source was read %d time(s) through a connection it was not found under", h.hubspot.getEmailCalls)
 	}
 }

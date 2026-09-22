@@ -1355,12 +1355,24 @@ func (s *BriefService) SetWizardSendList(ctx context.Context, p *briefs.SetWizar
 			Message: "this session has no HubSpot draft yet; clone the email before setting its send list",
 		}
 	}
-	// `fromSystem` discarded deliberately, and here the reasoning HOLDS: this acts only on the
-	// draft THIS session created (`sess.EmailID`, checked above), never on an id captured against
-	// another portal, so a changed connection cannot redirect it at another tenant's email.
-	client, _, cerr := s.wizardHubSpotClient(ctx, p.ProjectID)
+	// REFUSED on the shared row, for the same reason the clone turn refuses. An earlier revision
+	// of this comment claimed the opposite -- that acting on "the draft THIS session created" was
+	// safe -- and that was wrong: `sess.EmailID` is recorded by the CLONE turn, so it is a
+	// cross-turn id exactly like `src.ID`. After a revoke or rotation the same numeric id names a
+	// different portal's email, and this call MUTATES it: it would change the recipients of
+	// another tenant's draft.
+	//
+	// Every wizard call that carries an id across a turn boundary now checks provenance. The ones
+	// that do not -- plan-start, update-sections, chat -- touch only the session row.
+	client, fromSystem, cerr := s.wizardHubSpotClient(ctx, p.ProjectID)
 	if cerr != nil {
 		return nil, cerr
+	}
+	if fromSystem {
+		return nil, &briefs.ConflictError{
+			Code:    "409",
+			Message: "the draft is no longer reachable through this project's HubSpot connection; re-run the wizard",
+		}
 	}
 
 	primary, suppression, listType, rerr := s.resolveWizardSendList(ctx, client, p)
