@@ -836,12 +836,41 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 		return nil, err
 	}
 	if verr := orch.VerifyAccountOrg(ctx, p.ProjectID, model.ProviderLinkedInAds); verr != nil {
-		if errors.Is(verr, linkedin.ErrOrgVerificationInconclusive) {
-			msg := "connection found; linkedin account/organization verification was inconclusive: " + verr.Error()
+		switch {
+		case errors.Is(verr, linkedin.ErrOrgVerificationInconclusive):
+			// Do not concatenate verr.Error() into the response: it can be built from
+			// ListAdAccounts' transport error, which for a *url.Error renders the full
+			// LinkedIn request URL including query parameters — not a bearer token, but
+			// still not this endpoint's to disclose. Log it server-side only, the same
+			// way the default arm of classifyDiscoveryError above does for an equivalent
+			// upstream failure, and return a fixed advisory message.
+			slog.WarnContext(ctx, "linkedin org/account reference verification could not run to completion; the credential baseline already passed",
+				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds), "error", verr)
+			msg := "connection found; linkedin account/organization verification was inconclusive"
 			return &conn.ConnectionTestResult{OK: true, Message: &msg}, nil
+		case errors.Is(verr, domain.ErrCredentialDecryptionFailed):
+			// NO ERROR TEXT, same guard as classifyDiscoveryError's identical arm above:
+			// verr's chain is built by domain.Encryptor from ciphertext and key material,
+			// which an implementation is free to quote in its error text — concatenating
+			// verr.Error() into this response would leak that material over HTTP. This is
+			// a service-side failure, not evidence the connection under test is broken.
+			slog.ErrorContext(ctx, "stored linkedin credentials failed authenticated decryption during org verification; check the application encryption key, and whether this is one row or every connection",
+				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds))
+			return nil, &conn.InternalServerError{Code: "500", Message: "linkedin connection test could not be completed"}
+		case errors.Is(verr, domain.ErrServiceDefect):
+			// A defect in THIS service (e.g. linkedinExpiry re-tagging a malformed refresh
+			// request as ErrTokenRequestRejected), not the stored connection — per the
+			// repo's ErrServiceDefect convention, this must map to a typed 500 rather than
+			// an ordinary failed-test OK: false, which would send an operator to audit
+			// connection fields that were never at fault.
+			slog.ErrorContext(ctx, "a defect in this service is blocking linkedin org verification; the stored connection is NOT at fault and needs no repair",
+				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds),
+				"reason", unusableConnectionReason(verr))
+			return nil, &conn.InternalServerError{Code: "500", Message: "linkedin connection test could not be completed"}
+		default:
+			msg := "connection found, but linkedin account/organization verification failed: " + verr.Error()
+			return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
 		}
-		msg := "connection found, but linkedin account/organization verification failed: " + verr.Error()
-		return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
 	}
 	// nil here folds together a genuinely CONFIRMED match with several inconclusive outcomes
 	// (see OrgReferenceVerifier's doc comment) — "verified" would overclaim confidence the

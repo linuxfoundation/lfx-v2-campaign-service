@@ -521,4 +521,22 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 			t.Errorf("VerifyAccountOrgReference: %v, a credential failure must NOT be wrapped as inconclusive — TestLinkedinAds checks the inconclusive sentinel first, and folding a credential failure into it would report a broken connection as healthy", err)
 		}
 	})
+
+	t.Run("a 403 fails the verification, not folded into inconclusive", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+		}))
+		t.Cleanup(srv.Close)
+		err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "2414183")
+		if err == nil {
+			t.Fatal("VerifyAccountOrgReference: want an error when the discovery walk fails on a 403")
+		}
+		var aerr *apiError
+		if !errors.As(err, &aerr) || aerr.StatusCode != http.StatusForbidden {
+			t.Errorf("VerifyAccountOrgReference: %v, want an unwrapped *apiError with StatusCode 403", err)
+		}
+		if errors.Is(err, ErrOrgVerificationInconclusive) {
+			t.Errorf("VerifyAccountOrgReference: %v, a 403 must NOT be wrapped as inconclusive — LinkedIn evaluated this credential and refused it permission, which is a definite authorization failure, not an inconclusive walk", err)
+		}
+	})
 }

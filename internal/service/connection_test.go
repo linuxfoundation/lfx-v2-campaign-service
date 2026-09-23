@@ -441,6 +441,60 @@ func TestTestLinkedinAds_UpstreamVerification(t *testing.T) {
 			t.Errorf("message = %v, want it to say the check was inconclusive", res.Message)
 		}
 	})
+
+	t.Run("inconclusive enumeration failure never echoes the transport error's URL into the response", func(t *testing.T) {
+		s := newConn(t)
+		const leakyURL = "https://api.linkedin.com/rest/adAccounts?q=search&pageToken=SECRET-CURSOR-9f2a"
+		inconclusive := fmt.Errorf("%w: %v", linkedin.ErrOrgVerificationInconclusive, fmt.Errorf("linkedin GET /adAccounts: Get %q: EOF", leakyURL))
+		verifier := &orgReferenceVerifierStub{err: inconclusive}
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: verifier},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if err != nil {
+			t.Fatalf("TestLinkedinAds: %v", err)
+		}
+		if res.Message == nil || strings.Contains(*res.Message, leakyURL) || strings.Contains(*res.Message, "SECRET-CURSOR") {
+			t.Errorf("message = %v, leaked the transport error's request URL/query into the HTTP response", res.Message)
+		}
+	})
+
+	t.Run("credential decryption failure returns a redacted 500, never the marker text", func(t *testing.T) {
+		s := newConn(t)
+		const marker = "AES-GCM-CIPHERTEXT-DO-NOT-LEAK-77b3"
+		decryptErr := fmt.Errorf("decrypt linkedin credentials: %w: %w", domain.ErrCredentialDecryptionFailed, errors.New(marker))
+		verifier := &orgReferenceVerifierStub{err: decryptErr}
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: verifier},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if res != nil {
+			t.Errorf("result = %+v, want nil on a service-side decryption failure", res)
+		}
+		ise, ok := err.(*conn.InternalServerError)
+		if !ok {
+			t.Fatalf("err = %#v (%T), want *conn.InternalServerError", err, err)
+		}
+		if strings.Contains(ise.Message, marker) {
+			t.Errorf("InternalServerError.Message = %q leaked the decrypt error's marker text %q", ise.Message, marker)
+		}
+	})
+
+	t.Run("a service defect returns a typed 500, not an ordinary failed test", func(t *testing.T) {
+		s := newConn(t)
+		defect := fmt.Errorf("%w: %w: %w", domain.ErrServiceDefect, linkedin.ErrTokenRequestRejected, errors.New("malformed refresh request"))
+		verifier := &orgReferenceVerifierStub{err: defect}
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: verifier},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if res != nil {
+			t.Errorf("result = %+v, want nil on a service defect", res)
+		}
+		if _, ok := err.(*conn.InternalServerError); !ok {
+			t.Fatalf("err = %#v, want *conn.InternalServerError — a defect in this service, not the stored connection, must not be reported as a failed test", err)
+		}
+	})
 }
 
 func TestJWTAuth_ExtractsActorFromToken(t *testing.T) {

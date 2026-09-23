@@ -248,8 +248,9 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 }
 
 // ErrOrgVerificationInconclusive wraps a failure of the underlying ListAdAccounts walk itself
-// (transport, or the walk's own runaway/truncation guards) — deliberately NOT a credential or
-// application-authorization failure; see VerifyAccountOrgReference. It is deliberately
+// (transport, or the walk's own runaway/truncation guards) — deliberately NOT a credential,
+// application-authorization, or permission (HTTP 403) failure; see VerifyAccountOrgReference.
+// It is deliberately
 // distinct from a CONFIRMED contradiction (VerifyAccountOrgReference's other error returns):
 // the walk failing to complete proves nothing about the account/org pairing either way, so a
 // caller must not treat it as evidence of a broken connection. Callers that want to keep those
@@ -271,12 +272,12 @@ var ErrOrgVerificationInconclusive = errors.New("linkedin ad-account enumeration
 // It returns an ErrOrgVerificationInconclusive-wrapped error when the ListAdAccounts walk
 // itself fails for a reason that proves nothing about the pairing (transport failure, page cap
 // on a very large token), so it must not be confused with a confirmed contradiction. A
-// credential or application-authorization failure (ErrCredentialsExpired,
-// ErrApplicationCredentialsInvalid, ErrTokenRequestRejected) is returned UNWRAPPED instead: it
-// is the reason a broken connection cannot reach LinkedIn at all, a real and actionable
-// failure, and wrapping it in the inconclusive sentinel let TestLinkedinAds's
-// errors.Is(err, ErrOrgVerificationInconclusive) check — which runs before any other
-// classification — report an expired or revoked credential as OK: true.
+// credential failure (ErrCredentialsExpired, ErrApplicationCredentialsInvalid,
+// ErrTokenRequestRejected) or a 403 permission rejection is returned UNWRAPPED instead: each is
+// the reason a broken or under-permissioned connection cannot reach LinkedIn's ad-account list
+// at all, a real and actionable failure, and wrapping it in the inconclusive sentinel let
+// TestLinkedinAds's errors.Is(err, ErrOrgVerificationInconclusive) check — which runs before any
+// other classification — report a broken connection as OK: true.
 //
 // Every other outcome returns nil, and is inconclusive rather than a confirmed pass, but
 // nil cannot say so: a reference that is empty or person-scoped (LinkedIn simply has nothing
@@ -304,6 +305,16 @@ func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, confi
 		// inconclusive sentinel below, which callers treat as "proves nothing, do not fail
 		// the connection over it."
 		if errors.Is(err, ErrCredentialsExpired) || errors.Is(err, ErrApplicationCredentialsInvalid) || errors.Is(err, ErrTokenRequestRejected) {
+			return err
+		}
+		// A 403 reaches here as a plain *apiError (LinkedIn has no dedicated sentinel for
+		// it, unlike the 401/token-exchange failures above), but it proves the same thing
+		// they do: LinkedIn evaluated this credential and refused it permission to
+		// enumerate ad accounts. Unlike a transport failure or the page-cap/runaway
+		// guards, that is not "the walk could not complete" — it is a definite
+		// authorization failure, so it must not fold into the inconclusive sentinel below.
+		var aerr *apiError
+		if errors.As(err, &aerr) && aerr.StatusCode == http.StatusForbidden {
 			return err
 		}
 		return fmt.Errorf("%w: %w", ErrOrgVerificationInconclusive, err)

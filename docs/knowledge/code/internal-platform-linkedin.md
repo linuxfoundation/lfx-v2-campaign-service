@@ -550,11 +550,16 @@ account or an error (see its own doc comment), so reaching the end of a walk tha
 without a match means this token genuinely cannot reach the configured account, not that the
 walk merely missed it.
 
-A failure of the `ListAdAccounts` walk ITSELF (upstream/transport error, the page cap on a very
-large token) is a third, distinct outcome: it proves nothing about the pairing either way, so it
-is wrapped in the exported sentinel `ErrOrgVerificationInconclusive` rather than returned as a
-bare error — callers must not fold "the check could not run" into the same bucket as a confirmed
-contradiction (see `TestLinkedinAds` below, which reports these two outcomes differently).
+A non-authentication failure of the `ListAdAccounts` walk ITSELF (upstream/transport error, the
+page cap on a very large token) is a third, distinct outcome: it proves nothing about the pairing
+either way, so it is wrapped in the exported sentinel `ErrOrgVerificationInconclusive` rather than
+returned as a bare error — callers must not fold "the check could not run" into the same bucket as
+a confirmed contradiction (see `TestLinkedinAds` below, which reports these two outcomes
+differently). A credential or authorization failure surfacing during that same walk — expired or
+invalid credentials, an application-authorization rejection, or a 403 from LinkedIn — is NOT
+folded into this inconclusive bucket: each proves the credential cannot perform the verification
+at all, a CONFIRMED fact rather than an unresolved one, so `VerifyAccountOrgReference` returns it
+unwrapped instead.
 
 This is wired into exactly one place: `TestLinkedinAds`'s connection-test RPC (see
 [internal-service.md](internal-service.md)'s "LinkedIn org/account pairing verification"
