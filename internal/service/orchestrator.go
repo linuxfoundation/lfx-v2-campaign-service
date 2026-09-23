@@ -412,6 +412,33 @@ type CampaignAdopter interface {
 	LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error)
 }
 
+// OrgReferenceVerifier is an OPTIONAL dispatcher capability: cross-check a project's stored
+// connection against the platform's OWN record of the org/account pairing it is scoped to,
+// for use by a connection-test endpoint. Discovered by type assertion like the other optional
+// capabilities above, but unlike them its ABSENCE is not an error condition — see
+// Orchestrator.VerifyAccountOrg. Only LinkedIn implements this today: it is the one platform
+// this service integrates with whose ad-account resource carries a platform-reported
+// "reference" naming the true sponsoring organization, independent of whatever org id a
+// connection happens to have stored. The other platforms have no equivalent signal to check.
+type OrgReferenceVerifier interface {
+	// VerifyAccountOrg reports whether the project's connection's configured account/org
+	// pairing agrees with the platform's own record of it. A resolution failure — no usable
+	// connection, an inactive connection, undecodable or incomplete credentials, a missing
+	// account or org id — is a REAL error: there is nothing to verify, and the connection-test
+	// caller must see that as a failed test, not a silent pass. So is a CONFIRMED disagreement,
+	// and so is the configured account being absent from a platform enumeration the
+	// implementation has verified was complete (see linkedin.VerifyAccountOrgReference's doc
+	// comment) — both are confirmable facts about a broken pairing, not merely an inconclusive
+	// comparison. A failure of the enumeration walk itself is different: it proves nothing
+	// about the pairing, so implementations wrap it in linkedin.ErrOrgVerificationInconclusive,
+	// and callers must not treat it the same as a confirmed failure (see TestLinkedinAds).
+	// Returns nil once resolution has succeeded and the comparison is anything short of a
+	// confirmed contradiction — no reference to compare, a malformed configured org id — which
+	// is folded into the same nil as a genuine confirmed match. Callers that need to
+	// distinguish "confirmed match" from "nothing to compare" cannot, by design.
+	VerifyAccountOrg(ctx context.Context, projectID string, platform model.Provider) error
+}
+
 // Status-toggle classification sentinels. These distinguish a client/state error (the
 // toggle never reached the ad platform) from a real platform-call failure, so the service
 // can return an accurate status + message instead of blaming the platform for everything.
@@ -587,6 +614,7 @@ const (
 	opReadKeywords               = "read_keywords"
 	opReadAudience               = "read_audience"
 	opKeywordActions             = "keyword_actions"
+	opVerifyAccountOrg           = "verify_account_org"
 )
 
 // recordUpstream times one upstream platform call. It is called ONLY after the
@@ -2064,6 +2092,31 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 		return nil, fmt.Errorf("%s account campaign metrics reader returned a nil result with no error", platform)
 	}
 	return rows, nil
+}
+
+// VerifyAccountOrg cross-checks a project's stored connection against the platform's own
+// record of the org/account pairing it is scoped to, when the platform's dispatcher supports
+// it. Unlike ReadAccounts and the other optional-capability methods above, an unsupported
+// platform is NOT an error here — this is meant to be called from every platform's
+// connection-test path, and only LinkedIn's `reference` field gives this service a way to
+// catch a manually mistyped org id against the platform's own data. The other 5 platforms
+// have no such signal to check, so silently doing nothing for them is the correct, expected
+// outcome, not a degraded one.
+func (o *Orchestrator) VerifyAccountOrg(ctx context.Context, projectID string, platform model.Provider) error {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil
+	}
+	verifier, ok := d.(OrgReferenceVerifier)
+	if !ok {
+		return nil
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	err := verifier.VerifyAccountOrg(callCtx, projectID, platform)
+	o.recordUpstream(ctx, platform, opVerifyAccountOrg, start, err)
+	return err
 }
 
 // errAccountTotalsContractViolation wraps ReadAccountTotals' nil-result contract-violation

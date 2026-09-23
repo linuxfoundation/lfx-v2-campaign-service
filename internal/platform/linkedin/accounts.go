@@ -5,6 +5,7 @@ package linkedin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -78,6 +79,32 @@ type AdAccount struct {
 	// ServingStatuses is LinkedIn's raw servingStatuses array: ["RUNNABLE"] when the
 	// account can serve, otherwise one or more hold reasons.
 	ServingStatuses []string
+	// OrgID is the numeric organization id parsed from LinkedIn's own `reference` field for
+	// this account — its record of which organization the account advertises on behalf of —
+	// or "" when the account's reference is absent, person-scoped, or malformed. It is NOT
+	// the same thing as a connection's configured org id; see referenceOrgID and
+	// VerifyAccountOrgReference, which compare the two.
+	OrgID string
+}
+
+// referenceOrgID extracts the numeric organization id from a LinkedIn adAccount `reference`
+// URN. It returns "" — never an error — for every case that is not confidently "this
+// account's reference names organization <id>": an absent reference, a person-scoped one
+// ("urn:li:person:..."), or a value that does not parse as expected. An empty return is
+// therefore inconclusive, not a claim that the account has no organization; callers that need
+// to tell "no reference" apart from "not an organization reference" do not exist yet, and
+// none of the current ones need to.
+func referenceOrgID(reference string) string {
+	const prefix = "urn:li:organization:"
+	reference = strings.TrimSpace(reference)
+	if !strings.HasPrefix(reference, prefix) {
+		return ""
+	}
+	id := strings.TrimPrefix(reference, prefix)
+	if !orgIDRE.MatchString(id) {
+		return ""
+	}
+	return id
 }
 
 // Active reports whether the account's LIFECYCLE status is ACTIVE. It says nothing about
@@ -190,6 +217,7 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 				Currency:        el.Currency,
 				Test:            el.Test,
 				ServingStatuses: el.ServingStatuses,
+				OrgID:           referenceOrgID(el.Reference),
 			})
 		}
 		// NOT trimmed. A page cursor is an opaque server token echoed back verbatim, so
@@ -217,4 +245,65 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 		pageToken = next
 	}
 	return nil, fmt.Errorf("linkedin ad-account discovery exceeded %d pages; too many accounts to enumerate", adAccountMaxPages)
+}
+
+// ErrOrgVerificationInconclusive wraps a failure of the underlying ListAdAccounts walk itself
+// (transport, credential, or the walk's own runaway/truncation guards). It is deliberately
+// distinct from a CONFIRMED contradiction (VerifyAccountOrgReference's other error returns):
+// the walk failing to complete proves nothing about the account/org pairing either way, so a
+// caller must not treat it as evidence of a broken connection. Callers that want to keep those
+// two outcomes apart should check errors.Is(err, ErrOrgVerificationInconclusive).
+var ErrOrgVerificationInconclusive = errors.New("linkedin ad-account enumeration did not complete; org reference could not be checked")
+
+// VerifyAccountOrgReference cross-checks a connection's configured org id against LinkedIn's
+// own record — the `reference` field on accountID — of which organization sponsors that
+// account. It is a connection-test-time signal, not a create-time gate: nothing in this
+// package calls it, and CreateCampaign's own org resolution (resolveOrgID, targeting.go)
+// is untouched by it.
+//
+// It returns a CONFIRMED error in two cases: accountID's reference names a DIFFERENT
+// organization than configuredOrgID, and accountID is absent from a walk this package has
+// already verified was complete (ListAdAccounts returns every account or an error — see its
+// own doc comment — so reaching the end of that list without a match means this token
+// genuinely cannot reach the configured account, not that the walk merely missed it).
+//
+// It returns an ErrOrgVerificationInconclusive-wrapped error when the ListAdAccounts walk
+// itself fails: that failure (transport, credential, page cap on a very large token) proves
+// nothing about the pairing, so it must not be confused with a confirmed contradiction.
+//
+// Every other outcome returns nil, and is inconclusive rather than a confirmed pass, but
+// nil cannot say so: a reference that is empty or person-scoped (LinkedIn simply has nothing
+// to compare against), or a malformed configuredOrgID. This mirrors resolveOrgID's own
+// philosophy in targeting.go — fail closed on an actual contradiction, and only on one this
+// package can actually confirm.
+func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, configuredOrgID string) error {
+	accountID = strings.TrimSpace(accountID)
+	configuredOrgID = strings.TrimSpace(configuredOrgID)
+	if accountID == "" || configuredOrgID == "" {
+		return nil
+	}
+	// A non-numeric configuredOrgID can never equal a.OrgID (LinkedIn's reference is always
+	// numeric, per orgIDRE), so comparing it anyway would report a CONFIRMED disagreement for
+	// a value that was never a comparable org id in the first place — exactly the "malformed
+	// configuredOrgID" case the doc comment above already promises stays inconclusive.
+	if !orgIDRE.MatchString(configuredOrgID) {
+		return nil
+	}
+	accounts, err := c.ListAdAccounts(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrOrgVerificationInconclusive, err)
+	}
+	for _, a := range accounts {
+		if a.ID != accountID {
+			continue
+		}
+		if a.OrgID == "" {
+			return nil
+		}
+		if a.OrgID != configuredOrgID {
+			return fmt.Errorf("linkedin ad account %s advertises on behalf of organization %s, not the configured organization %s", accountID, a.OrgID, configuredOrgID)
+		}
+		return nil
+	}
+	return fmt.Errorf("linkedin ad account %s was not found among this token's own ad accounts", accountID)
 }

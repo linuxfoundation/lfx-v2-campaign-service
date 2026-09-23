@@ -20,6 +20,7 @@ import (
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 )
 
 // validateConnectionProjectSlug guards the connection CREATE endpoints: project_id
@@ -805,8 +806,49 @@ func (s *ConnectionService) DeleteLinkedinAds(ctx context.Context, p *conn.Delet
 	return s.deleteConn(ctx, p.ProjectID, model.ProviderLinkedInAds)
 }
 
+// TestLinkedinAds tests the stored LinkedIn connection.
+//
+// Beyond the shared testConn baseline (connection exists, has credentials — see testConn's
+// LFXV2-2556 caveat, which still applies to the other 5 platforms), this additionally cross-
+// checks the connection's configured account/org pairing against LinkedIn's OWN record of it
+// (Orchestrator.VerifyAccountOrg -> LinkedInDispatcher.VerifyAccountOrg ->
+// linkedin.Client.VerifyAccountOrgReference). This is the one piece of "org id bootstrap" this
+// service can verify today: UpdateLinkedinAds/CreateLinkedinAds persist a caller-supplied
+// org_id with no upstream check at write time, so a manually mistyped org id is otherwise
+// undetectable until it breaks a campaign creation.
+//
+// A confirmed mismatch (or an account absent from a complete ad-account enumeration — see
+// OrgReferenceVerifier's doc comment) is reported as an ordinary FAILED test (OK: false)
+// rather than a 5xx: that is what "test this connection" means for a caller — a service-level
+// 503 is reserved for this endpoint itself being unavailable, not the thing under test not
+// working. A failure of the enumeration walk ITSELF (linkedin.ErrOrgVerificationInconclusive)
+// proves nothing about the pairing, so it does not fail the test the same way: the credential
+// baseline above already passed, and this service has no basis to call a connection broken
+// just because the org-reference cross-check could not complete. That gets OK: true with an
+// advisory message instead.
 func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLinkedinAdsPayload) (*conn.ConnectionTestResult, error) {
-	return s.testConn(ctx, p.ProjectID, model.ProviderLinkedInAds)
+	result, err := s.testConn(ctx, p.ProjectID, model.ProviderLinkedInAds)
+	if err != nil || !result.OK {
+		return result, err
+	}
+	_, _, orch, err := s.resolveBackendWithOrch("connection test")
+	if err != nil {
+		return nil, err
+	}
+	if verr := orch.VerifyAccountOrg(ctx, p.ProjectID, model.ProviderLinkedInAds); verr != nil {
+		if errors.Is(verr, linkedin.ErrOrgVerificationInconclusive) {
+			msg := "connection found; linkedin account/organization verification was inconclusive: " + verr.Error()
+			return &conn.ConnectionTestResult{OK: true, Message: &msg}, nil
+		}
+		msg := "connection found, but linkedin account/organization verification failed: " + verr.Error()
+		return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
+	}
+	// nil here folds together a genuinely CONFIRMED match with several inconclusive outcomes
+	// (see OrgReferenceVerifier's doc comment) — "verified" would overclaim confidence the
+	// nil does not actually carry, so the message only promises what is actually true of
+	// every nil: no mismatch was found.
+	msg := "connection found; no linkedin account/organization mismatch found"
+	return &conn.ConnectionTestResult{OK: true, Message: &msg}, nil
 }
 
 func (s *ConnectionService) SetCredentialLinkedinAds(ctx context.Context, p *conn.SetCredentialLinkedinAdsPayload) error {

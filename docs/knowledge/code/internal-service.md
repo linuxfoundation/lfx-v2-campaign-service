@@ -903,6 +903,53 @@ deciding whether to retry, so naming the wrong one sends them to the wrong subsy
 `accountDiscovery.label()`, the same value `classifyDiscoveryError` uses one layer up, so the two
 messages a single request can produce always agree.
 
+## LinkedIn org/account pairing verification (LFXV2-2665)
+
+`TestLinkedinAds` is the one `Test<Platform>Ads` handler that goes beyond the shared `testConn`
+baseline (connection exists, has credentials — testConn itself does not verify upstream; see
+the note above and its LFXV2-2556 follow-up, which still applies unchanged to the other 5
+platforms). It calls `testConn` first and short-circuits on failure or `!result.OK`; only when
+the baseline passes does it call `Orchestrator.VerifyAccountOrg`, which cross-checks the
+connection's stored `org_id` against LinkedIn's own record of which organization sponsors the
+stored `account_id` (`linkedin.Client.VerifyAccountOrgReference`, via
+`LinkedInDispatcher.VerifyAccountOrg` — see `internal-platform-linkedin.md`'s "Org/account
+reference verification" section for the client-level mechanics). This is the one piece of "org
+id bootstrap" the service can verify today: `CreateLinkedinAds`/`UpdateLinkedinAds` persist a
+caller-supplied `org_id` with no upstream check at write time, so a mistyped org id is otherwise
+undetectable until it breaks a campaign create.
+
+A confirmed mismatch, the configured account being absent from a complete ad-account
+enumeration, or a connection-resolution failure (network, credential, or connection-state) is
+folded into an ordinary FAILED test (`OK: false`) rather than surfaced as a 5xx — a connection
+test failing is an expected outcome for a caller to see, not a service outage. A 503 stays
+reserved for `resolveBackendWithOrch` reporting the repo or orchestrator itself unavailable,
+checked before the verification call is attempted.
+
+A failure of the `ListAdAccounts` enumeration walk ITSELF is handled differently: it is wrapped
+in `linkedin.ErrOrgVerificationInconclusive`, and `TestLinkedinAds` checks for that sentinel
+with `errors.Is` before folding an error into `OK: false`. That failure proves nothing about the
+account/org pairing — only that the cross-check couldn't run — so it reports `OK: true` with an
+advisory message instead: the credential baseline already passed, and there is no basis to call
+a connection broken because an optional secondary check happened to fail.
+
+`VerifyAccountOrg`'s `nil` folds a genuinely CONFIRMED match together with the remaining
+inconclusive outcomes (no reference to compare, a malformed configured org id) — see
+`VerifyAccountOrgReference`'s own doc comment. The success message therefore says only "no ...
+mismatch found", not "verified": that phrasing is the one that stays true of every `nil`,
+including the inconclusive ones, where "verified" would claim a confidence the call never
+actually establishes.
+
+`OrgReferenceVerifier` (`orchestrator.go`) is the optional-capability outlier among this
+package's dispatcher-discovered interfaces. `StatusToggler`, `MetricsReader`, `AccountLister`
+and `CampaignAdopter` all treat a dispatcher NOT implementing them as an error the caller
+explicitly asked for and didn't get (`ErrToggleUnsupported`, `ErrMetricsUnsupported`,
+`ErrAccountsUnsupported`, …). `Orchestrator.VerifyAccountOrg` instead returns `nil` — silently —
+for an unregistered platform OR a dispatcher that isn't an `OrgReferenceVerifier`, because it is
+meant to be reachable from every platform's connection-test path, and only LinkedIn's `reference`
+field gives this service anything to check; the other 5 platforms have no equivalent upstream
+signal, and that must read as "nothing to report" rather than a degraded result the caller has
+to special-case.
+
 ## HubSpot email search (LFXV2-3197)
 
 `ListHubspotEmails` serves `GET /projects/{project_id}/connection-hubspot/emails`, returning the

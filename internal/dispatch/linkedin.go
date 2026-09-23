@@ -751,6 +751,38 @@ func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, pro
 	return out, nil
 }
 
+// VerifyAccountOrg cross-checks a project's stored LinkedIn connection against LinkedIn's own
+// record of which organization the connection's configured account advertises on behalf of.
+//
+// It satisfies the service-side OrgReferenceVerifier interface, type-asserted by
+// Orchestrator.VerifyAccountOrg for use by the connection-test endpoint. This is a per-project
+// READ, the same class of call as ListAccountCampaignMetrics — it must never answer with
+// another tenant's pairing — so it resolves via resolveLinkedInOwnedDiscoveryCredentials
+// (d.creds.resolveOwned), NOT d.creds.resolve: the forced-system fallback that create/toggle
+// use is a create-time convenience, and honoring it here would let a connection-test on a
+// project with no LinkedIn connection of its own silently verify the LF SYSTEM row's pairing
+// instead of reporting that the project has nothing to test. Every resolution/decode/status
+// failure below is a real, non-nil error — see the OrgReferenceVerifier doc comment for why
+// that is distinct from VerifyAccountOrgReference's own inconclusive-vs-confirmed nil.
+func (d *LinkedInDispatcher) VerifyAccountOrg(ctx context.Context, projectID string, platform model.Provider) error {
+	res, creds, err := d.resolveLinkedInOwnedDiscoveryCredentials(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+
+	orgID := strings.TrimSpace(res.providerConfig["org_id"])
+	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" || orgID == "" {
+		return fmt.Errorf("linkedin connection for project %s is missing account id or org id", projectID)
+	}
+
+	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), linkedin.RuntimeConfig{}, d.opts...)
+	if verr := client.VerifyAccountOrgReference(ctx, accountID, orgID); verr != nil {
+		return res.systemScoped(linkedinExpiry(verr))
+	}
+	return nil
+}
+
 // linkedInAccountLabel builds the string a picker shows for one ad account.
 //
 // It never returns "" for an account carrying any identifying information: an account with

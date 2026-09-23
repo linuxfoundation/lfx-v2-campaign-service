@@ -523,6 +523,44 @@ offering ids that fail at bind time. An unusable id fails the WHOLE walk rather 
 the row: a response shape that far from the documented one is not the response we think it is,
 and the rest of it is not trustworthy either.
 
+## Org/account reference verification (LFXV2-2665)
+
+`CreateLinkedinAds`/`UpdateLinkedinAds` (`internal/service/connection.go`) persist a
+caller-supplied `org_id` with no upstream check at write time — a manually mistyped org id is
+otherwise undetectable until it silently breaks a campaign create. `AdAccount.OrgID` and
+`Client.VerifyAccountOrgReference(ctx, accountID, configuredOrgID) error` close that gap using a
+signal `ListAdAccounts` already decodes: `adAccounts`' optional `reference` field, an
+account-only URN LinkedIn returns by default — `urn:li:organization:{id}` when the account is
+sponsored by an organization, `urn:li:person:{id}` for a personal account, or absent.
+`referenceOrgID(reference string) string` (`accounts.go`, reusing `orgIDRE` from
+`targeting.go`) extracts the numeric id from the organization form and returns `""` for
+anything else (person-scoped, malformed, or absent) — a person-scoped reference carries no org
+signal to check, not a signal that disagrees.
+
+`VerifyAccountOrgReference` walks the existing `ListAdAccounts` enumeration (there is no
+single-resource `GET /adAccounts/{id}` — `doRequest`'s GET path requires an `elements`
+envelope, i.e. only the list/search response shape) looking for `accountID`, and follows the
+same fail-closed-only-on-a-CONFIRMED-fact discipline as `resolveOrgID` (`targeting.go`): an
+empty/person-scoped reference, a missing configured org id, or a configured org id that fails
+`orgIDRE` (non-numeric — LinkedIn's own reference is always numeric, so it can never be the
+DIFFERENT organization a confirmed disagreement requires) are all INCONCLUSIVE (`nil` — nothing
+to confirm or refute). `account.OrgID != configuredOrgID` is one CONFIRMED-fact case and returns
+an error; `accountID` never appearing in the walk is the other — `ListAdAccounts` returns every
+account or an error (see its own doc comment), so reaching the end of a walk that succeeded
+without a match means this token genuinely cannot reach the configured account, not that the
+walk merely missed it.
+
+A failure of the `ListAdAccounts` walk ITSELF (upstream/transport error, the page cap on a very
+large token) is a third, distinct outcome: it proves nothing about the pairing either way, so it
+is wrapped in the exported sentinel `ErrOrgVerificationInconclusive` rather than returned as a
+bare error — callers must not fold "the check could not run" into the same bucket as a confirmed
+contradiction (see `TestLinkedinAds` below, which reports these two outcomes differently).
+
+This is wired into exactly one place: `TestLinkedinAds`'s connection-test RPC (see
+[internal-service.md](internal-service.md)'s "LinkedIn org/account pairing verification"
+section for the service-layer half). `CreateCampaign` and every other LinkedIn path are
+untouched.
+
 ## Dispatch adapter (internal/dispatch)
 
 The `internal/dispatch` linkedin adapter (see [internal/dispatch](internal-dispatch.md))
@@ -550,5 +588,22 @@ credential-scoping (`resolveOwned`, no system-account fallback), the ported rule
 engine (`internal/service/rules/monitor_linkedin.go`, including the deliberately
 preserved `MED`/`MEDIUM` sort-map bug), and the days-1-ending-today window
 convention this dispatcher shares with Google/Reddit/Meta's monitor reads.
+
+`LinkedInDispatcher.VerifyAccountOrg(ctx, projectID, platform)` implements a fifth optional
+capability, `OrgReferenceVerifier` (`internal/service/orchestrator.go`) — LinkedIn is the ONLY
+adapter that does, since it is the only platform with an upstream signal to check (see "Org/account
+reference verification" above). It is the connection-test endpoint's per-project READ, the same
+trust class as the account-monitor read above, so it resolves through
+`resolveLinkedInOwnedDiscoveryCredentials` (`d.creds.resolveOwned`, no LF system fallback) rather
+than the way `Dispatch` resolves (`d.creds.resolve`) — the forced-system fallback is a create-time
+convenience, and honoring it here would let a connection-test on a project with no LinkedIn
+connection of its own silently verify the LF SYSTEM row's pairing instead of reporting that the
+project has nothing to test. It builds the client through the shared `linkedinCredentials` helper
+(carrying the refresh token and connection identity, same as `ListAccounts`/
+`ListAccountCampaignMetrics`) rather than a bare access token, so a connection whose access token
+has aged out but still has refresh material is not misreported as failed, and an expired credential
+is attributed to the connection row that owns it (`res.systemScoped(linkedinExpiry(...))`).
+Missing `accountID`/`org_id` is still checked explicitly, because verifying a pairing needs both
+ids present and the discovery resolver only requires the credential to be otherwise usable.
 
 See [internal/platform/linkedin](../../../internal/platform/linkedin).
