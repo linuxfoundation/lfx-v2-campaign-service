@@ -1923,6 +1923,38 @@ after adoption could already have bound a campaign. `googleads.CampaignKindSearc
 `CampaignKindDemandGen` are exported so the dispatcher composes the same name the client writes.
 
 
+## `OrgReferenceVerifier` (optional capability)
+
+`OrgReferenceVerifier` is a fifth OPTIONAL dispatcher interface, alongside `StatusToggler`,
+`MetricsReader`, `AccountLister` and `CampaignAdopter`, declared in
+`internal/service/orchestrator.go` and discovered by the same type assertion. **LinkedIn is the
+only implementation today** — it is the only platform with an upstream signal to cross-check
+a connection's configured account/org pairing against.
+
+```go
+VerifyAccountOrg(ctx, projectID, platform) error
+```
+
+`LinkedInDispatcher.VerifyAccountOrg` (`internal/dispatch/linkedin.go`) backs the connection-test
+endpoint's extra LinkedIn cross-check (`ConnectionService.TestLinkedinAds`, see
+[internal-service.md](internal-service.md)'s "LinkedIn org/account pairing verification"
+section). It is a per-project READ, the same trust class as the account-monitor read, so it
+resolves through `resolveLinkedInOwnedDiscoveryCredentials` (`d.creds.resolveOwned`, no LF
+system fallback) rather than the way `Dispatch` resolves (`d.creds.resolve`) — honoring the
+forced-system fallback here would let a connection-test on a project with no LinkedIn
+connection of its own silently verify the LF SYSTEM row's pairing instead of reporting that the
+project has nothing to test. It builds the client through the shared `linkedinCredentials`
+helper (carrying the refresh token and connection identity) rather than a bare access token,
+and wraps the resulting client-call error with `res.systemScoped(linkedinExpiry(...))` like
+every sibling LinkedIn call, so an expired or revoked credential is attributed to the
+connection row that owns it and reported as a real `domain.ErrConnectionNotUsable` failure —
+never folded into `linkedin.ErrOrgVerificationInconclusive`, which is reserved for a
+transport/pagination failure of the discovery walk that proves nothing about the pairing (see
+[internal/platform/linkedin](internal-platform-linkedin.md)'s "Org/account reference
+verification" section). Missing `accountID`/`org_id` is checked explicitly, because verifying a
+pairing needs both ids present and the discovery resolver only requires the credential to be
+otherwise usable.
+
 ## HubSpot campaign capability
 
 `HubSpotDispatcher` implements `service.CampaignSearcher`: `SearchCampaigns` and

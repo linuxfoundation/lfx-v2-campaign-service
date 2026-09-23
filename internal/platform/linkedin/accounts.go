@@ -248,7 +248,8 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 }
 
 // ErrOrgVerificationInconclusive wraps a failure of the underlying ListAdAccounts walk itself
-// (transport, credential, or the walk's own runaway/truncation guards). It is deliberately
+// (transport, or the walk's own runaway/truncation guards) — deliberately NOT a credential or
+// application-authorization failure; see VerifyAccountOrgReference. It is deliberately
 // distinct from a CONFIRMED contradiction (VerifyAccountOrgReference's other error returns):
 // the walk failing to complete proves nothing about the account/org pairing either way, so a
 // caller must not treat it as evidence of a broken connection. Callers that want to keep those
@@ -268,8 +269,14 @@ var ErrOrgVerificationInconclusive = errors.New("linkedin ad-account enumeration
 // genuinely cannot reach the configured account, not that the walk merely missed it).
 //
 // It returns an ErrOrgVerificationInconclusive-wrapped error when the ListAdAccounts walk
-// itself fails: that failure (transport, credential, page cap on a very large token) proves
-// nothing about the pairing, so it must not be confused with a confirmed contradiction.
+// itself fails for a reason that proves nothing about the pairing (transport failure, page cap
+// on a very large token), so it must not be confused with a confirmed contradiction. A
+// credential or application-authorization failure (ErrCredentialsExpired,
+// ErrApplicationCredentialsInvalid, ErrTokenRequestRejected) is returned UNWRAPPED instead: it
+// is the reason a broken connection cannot reach LinkedIn at all, a real and actionable
+// failure, and wrapping it in the inconclusive sentinel let TestLinkedinAds's
+// errors.Is(err, ErrOrgVerificationInconclusive) check — which runs before any other
+// classification — report an expired or revoked credential as OK: true.
 //
 // Every other outcome returns nil, and is inconclusive rather than a confirmed pass, but
 // nil cannot say so: a reference that is empty or person-scoped (LinkedIn simply has nothing
@@ -291,6 +298,14 @@ func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, confi
 	}
 	accounts, err := c.ListAdAccounts(ctx)
 	if err != nil {
+		// A credential or application-authorization failure is a CONFIRMED, actionable
+		// reason this token cannot reach LinkedIn at all — not an inconclusive enumeration
+		// outcome — so it must propagate as a real error rather than fold into the
+		// inconclusive sentinel below, which callers treat as "proves nothing, do not fail
+		// the connection over it."
+		if errors.Is(err, ErrCredentialsExpired) || errors.Is(err, ErrApplicationCredentialsInvalid) || errors.Is(err, ErrTokenRequestRejected) {
+			return err
+		}
 		return fmt.Errorf("%w: %w", ErrOrgVerificationInconclusive, err)
 	}
 	for _, a := range accounts {
