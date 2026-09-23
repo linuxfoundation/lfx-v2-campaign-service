@@ -416,35 +416,100 @@ func guardDialAddress(nat64 []nat64Prefix) func(string, string, syscall.RawConn)
 // NewFetcher constructs a Fetcher with the standard SSRF-safe defaults. It is the only
 // constructor in non-test code, so no production path can obtain an unguarded fetcher.
 func NewFetcher(opts ...Option) *Fetcher {
+	return &Fetcher{
+		client: newGuardedClient(resolveNAT64(opts), fetchTimeout),
+	}
+}
+
+// NewGuardedClient returns an *http.Client carrying the SAME dial-time address guard
+// Fetch uses, for callers outside this package that fetch a URL chosen by a caller.
+//
+// It exists so there is exactly ONE implementation of the guard. A second fetcher that
+// builds its own http.Client is not a smaller version of this one — it is an unguarded
+// one, because every protection here lives in the Transport rather than in a check the
+// caller could remember to repeat: the dial-time Control hook (closing the DNS-rebinding
+// window a resolve-then-check would leave open), the explicit nil Proxy (an inherited
+// HTTP_PROXY would show the guard only the proxy's address while the proxy fetched
+// 169.254.169.254 on our behalf), and the refusal to follow redirects (a permitted host
+// may 302 to a forbidden one, and the guard judges addresses, not intent).
+//
+// timeout bounds the whole request. Well-known NAT64 (64:ff9b::/96) is always judged;
+// pass WithNAT64Prefixes through NewFetcher's options if an operator-specific translator
+// must also be decoded -- this constructor takes the defaults deliberately, so a caller
+// cannot silently narrow the guard.
+// opts take the SAME options NewFetcher does, and passing the deployment's
+// WithNAT64Prefixes is REQUIRED of any caller whose deployment configures them: the well-known
+// prefix alone is a NARROWER guard than the fetcher's, and an address under an operator prefix
+// that this client cannot decode is fetched rather than refused.
+func NewGuardedClient(timeout time.Duration, opts ...Option) *http.Client {
+	return newGuardedClient(resolveNAT64(opts), timeout)
+}
+
+// resolveNAT64 applies opts to the same config NewFetcher builds, so a guarded client and a
+// fetcher constructed from the same options judge the same address space. Sharing the option
+// type rather than taking a prefix slice is deliberate: it makes "use the deployment's
+// prefixes" one argument to forward rather than a conversion each caller could get wrong.
+func resolveNAT64(opts []Option) []nat64Prefix {
 	cfg := fetcherConfig{nat64: []nat64Prefix{wellKnownNAT64}}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	dialer := &net.Dialer{Timeout: connectTimeout, Control: guardDialAddress(cfg.nat64)}
-	return &Fetcher{
-		client: &http.Client{
-			Timeout:       fetchTimeout,
-			CheckRedirect: noFollow,
-			Transport: &http.Transport{
-				DialContext: dialer.DialContext,
-				// Proxy is nil ON PURPOSE, and the zero value is not enough of a
-				// statement to leave implicit. net/http uses no proxy when Proxy is
-				// nil, but http.DefaultTransport sets ProxyFromEnvironment — so
-				// "simplifying" this to DefaultTransport.Clone() would route every
-				// fetch through a cluster HTTP_PROXY, and the dialer would then only
-				// ever see the PROXY's address. The guard above would pass while the
-				// proxy fetched 169.254.169.254 on our behalf. Keep this direct.
-				Proxy: nil,
-				// The idle pool is bounded because the hostnames are CALLER-chosen.
-				// http.Transport's zero values here are "unlimited" and "never expire",
-				// so a stream of distinct event URLs would accumulate one permanent idle
-				// connection per origin — a file-descriptor leak driven by request input.
-				// These are http.DefaultTransport's numbers; the point is stating them,
-				// not the values. MaxIdleConnsPerHost stays at its default of 2, which
-				// already bounds a single origin.
-				MaxIdleConns:    100,
-				IdleConnTimeout: 90 * time.Second,
-			},
+	return cfg.nat64
+}
+
+// maxGuardedRedirects bounds a followed redirect chain. Small on purpose: legitimate asset
+// hosting redirects once or twice (a CDN to its origin, a bucket to a signed URL), and a
+// longer chain is a redirector being used as one.
+const maxGuardedRedirects = 5
+
+// NewGuardedRedirectClient is NewGuardedClient for callers that must follow redirects, which
+// asset URLs genuinely require: S3 pre-signed links, Cloudinary and imgix transforms, and most
+// CDN hotlink paths answer 302 rather than serving the bytes directly. Refusing those is a
+// functional break, not a security posture.
+//
+// Following is safe HERE because the address guard is a Transport-level dial hook, not a
+// per-request check: every hop opens its own connection and is judged on its own resolved
+// address, so a permitted host redirecting to 169.254.169.254 is refused at the hop that tries
+// to dial it. That is what makes this different from re-enabling redirects on an unguarded
+// client, and it is why the chain is bounded rather than trusted.
+//
+// Fetch keeps NewGuardedClient's refusal: an event PAGE that redirects is a different request
+// than the caller asked for, and its content is parsed rather than re-hosted.
+func NewGuardedRedirectClient(timeout time.Duration, opts ...Option) *http.Client {
+	c := newGuardedClient(resolveNAT64(opts), timeout)
+	c.CheckRedirect = func(_ *http.Request, via []*http.Request) error {
+		if len(via) >= maxGuardedRedirects {
+			return fmt.Errorf("%w: redirect chain exceeded %d hops", ErrEventURLForbidden, maxGuardedRedirects)
+		}
+		return nil
+	}
+	return c
+}
+
+func newGuardedClient(nat64 []nat64Prefix, timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: connectTimeout, Control: guardDialAddress(nat64)}
+	return &http.Client{
+		Timeout:       timeout,
+		CheckRedirect: noFollow,
+		Transport: &http.Transport{
+			DialContext: dialer.DialContext,
+			// Proxy is nil ON PURPOSE, and the zero value is not enough of a
+			// statement to leave implicit. net/http uses no proxy when Proxy is
+			// nil, but http.DefaultTransport sets ProxyFromEnvironment — so
+			// "simplifying" this to DefaultTransport.Clone() would route every
+			// fetch through a cluster HTTP_PROXY, and the dialer would then only
+			// ever see the PROXY's address. The guard above would pass while the
+			// proxy fetched 169.254.169.254 on our behalf. Keep this direct.
+			Proxy: nil,
+			// The idle pool is bounded because the hostnames are CALLER-chosen.
+			// http.Transport's zero values here are "unlimited" and "never expire",
+			// so a stream of distinct event URLs would accumulate one permanent idle
+			// connection per origin — a file-descriptor leak driven by request input.
+			// These are http.DefaultTransport's numbers; the point is stating them,
+			// not the values. MaxIdleConnsPerHost stays at its default of 2, which
+			// already bounds a single origin.
+			MaxIdleConns:    100,
+			IdleConnTimeout: 90 * time.Second,
 		},
 	}
 }

@@ -4,11 +4,13 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1539,5 +1541,177 @@ func TestHubSpot_DispatchReadsThePortalOnce(t *testing.T) {
 	if got := hubSpotCreationPortalID(camp); got != "8112310" {
 		t.Errorf("the campaign recorded portal %q, want the verified 8112310 — reusing the guard's "+
 			"value is only a win if the stamp actually carries it, or ReadMetrics refuses the send", got)
+	}
+}
+
+// TestHubSpot_ConfigSnapshotRecordsThatABTestWasRequested pins the distinction the snapshot
+// could not previously make.
+//
+// ABTestVariant is written only when variant creation SUCCEEDED, and creation is best-effort,
+// so before ABTestEnabled was persisted a campaign whose A/B creation failed was byte-identical
+// in stored state to one that never asked for a variant. That erased the only signal anyone
+// could select on to find the failed ones and retry them.
+//
+// The assertion is on the REQUEST flag surviving, not on the variant: the variant's absence is
+// exactly the case being disambiguated.
+func TestHubSpot_ConfigSnapshotRecordsThatABTestWasRequested(t *testing.T) {
+	srv, _ := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","abTestEnabled":true,"subjectB":"Variant B subject","bodyHtmlB":"<p>B</p>"}}`)
+	out, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if !strings.Contains(string(out.ConfigSnapshot), "abTestEnabled") {
+		t.Errorf("ConfigSnapshot did not record that an A/B variant was requested: %s", out.ConfigSnapshot)
+	}
+}
+
+// TestHubSpot_ConfigSnapshotOmitsABTestWhenNotRequested is the other half: omitempty must keep
+// the key off a campaign that never asked, so its presence alone is the signal.
+func TestHubSpot_ConfigSnapshotOmitsABTestWhenNotRequested(t *testing.T) {
+	srv, _ := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)
+	out, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	if strings.Contains(string(out.ConfigSnapshot), "abTestEnabled") {
+		t.Errorf("ConfigSnapshot claimed an A/B variant was requested when none was: %s", out.ConfigSnapshot)
+	}
+}
+
+// TestHubSpot_AContentRevertIsLoggedAsAnErrorNotAWarning pins the distinction the typed error
+// exists to make.
+//
+// HubSpot has, in practice, accepted a content PATCH with a 2xx and silently reverted it. That
+// leaves a draft matching neither the template nor the generated copy, and no retry of the same
+// payload is known to fix it — unlike a FAILED patch, which leaves the clone intact and is
+// retryable. Both used to log the same best-effort WARN, so a draft needing manual repair read
+// as a routine degrade.
+//
+// The assertion is on the log record because that is the only observable: the dispatch stays
+// best-effort by design (the campaign exists by this point, and failing it would be worse), so
+// the severity and the named error ARE the fix.
+func TestHubSpot_AContentRevertIsLoggedAsAnErrorNotAWarning(t *testing.T) {
+	// 2xx on the content PATCH, but a re-read that never shows the widgets — HubSpot's silent
+	// revert. verifyContentSaved catches it and RebuildEmailContent wraps it.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone":
+			_, _ = io.WriteString(w, `{"id":"999","name":"cloned","state":"DRAFT"}`)
+		case strings.HasSuffix(r.URL.Path, "/draft"):
+			// Always the empty content tree, whatever was PATCHed. The PATCH itself 2xxes.
+			_, _ = io.WriteString(w, `{"id":"999","content":{"widgets":{},"flexAreas":{"main":{"sections":[]}}}}`)
+		default:
+			_, _ = io.WriteString(w, `{"id":"999"}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","subject":"S","bodyHtml":"<p>b</p>"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch should stay best-effort: %v", err)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "level=ERROR") || !strings.Contains(logged, "not persisted") {
+		t.Errorf("a silently reverted content write was not raised as a named ERROR:\n%s", logged)
+	}
+}
+
+// TestHubSpot_APreheaderOnlyConfigLeavesTheDraftAlone pins a deliberate GAP, so nobody closes it
+// the way I first tried to.
+//
+// Preview text is only settable through the content tree — hubspot.EmailSettings documents that
+// the Marketing Emails v3 object exposes no preheader field — and RebuildEmailContent replaces
+// that tree wholesale by design, which is what stops the clone source's stale content leaking
+// into the new draft. So a rebuild carrying no body cannot preserve the clone's body: writing an
+// empty staging_body blanks it, and omitting the section drops it from the tree entirely. Both
+// are data loss; the second only looks quieter.
+//
+// Not applying a preheader-only change is therefore the CORRECT behaviour today. Asserted so the
+// next person who notices the gap finds the reason before re-widening the guard, as I did.
+func TestHubSpot_APreheaderOnlyConfigLeavesTheDraftAlone(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","previewText":"Three days in Amsterdam"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	// The clone's own template widget (module_1, seeded by the fake) survives untouched, which
+	// is only true if no rebuild ran -- a rebuild replaces the whole map with staging_* keys.
+	rec.mu.Lock()
+	_, headerSurvived := rec.widgets["module_1"]
+	rec.mu.Unlock()
+	if !headerSurvived {
+		t.Error("a preheader-only config triggered a full rebuild, replacing the whole widget tree and losing the clone's content")
+	}
+}
+
+// TestHubSpot_NAT64PrefixesReachTheHeroFetch pins that a hubspot.Option given to
+// NewHubSpotDispatcher reaches the image-download guard.
+//
+// This is the assertion the container test kept claiming and could not make: from
+// internal/container the dispatcher's client is unexported and registerDispatchers needs a live
+// *postgres.ConnectionRepo, so the option's EFFECT is unobservable there. Here a fake connection
+// lets Dispatch run far enough to attempt the hero fetch, which is where the guard applies.
+//
+// 2a01:4f8:808:808::a9fe:a9fe decodes to 169.254.169.254 at /96 — the metadata endpoint. Without
+// the prefix the address cannot be decoded and the guard never sees the IPv4 it encodes.
+func TestHubSpot_NAT64PrefixesReachTheHeroFetch(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(
+		fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud,
+		hubspot.WithBaseURL(srv.URL),
+		hubspot.WithNAT64Prefixes("2a01:4f8:808:808::/96"),
+	)
+
+	started := time.Now()
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","bodyHtml":"<p>b</p>","heroImageUrl":"http://[2a01:4f8:808:808::a9fe:a9fe]/hero.png"}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("Dispatch should stay best-effort on a refused hero: %v", err)
+	}
+
+	// The upload is best-effort, so the refusal surfaces as the hero simply not being hosted.
+	rec.mu.Lock()
+	_, heroWritten := rec.widgets["staging_banner"]
+	rec.mu.Unlock()
+	if heroWritten {
+		t.Error("a NAT64-encoded metadata address was fetched and re-hosted as the hero")
+	}
+
+	// THIS is the assertion that binds the test; the widget check above is corroboration only.
+	//
+	// Without the prefix the address cannot be decoded, so the dial is attempted and the fetch
+	// times out — the hero goes unwritten EITHER WAY, so the widget check passes whether or not
+	// the option was forwarded. Verified by mutation: with this assertion relaxed, deleting
+	// hubspot.WithNAT64Prefixes left the test green at 10s (the download timeout). Refusal is
+	// immediate; a dial is not. Do not remove this in favour of the widget check alone.
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Errorf("the address was dialled rather than refused (%s elapsed): the NAT64 prefix did not reach the guard", elapsed)
 	}
 }

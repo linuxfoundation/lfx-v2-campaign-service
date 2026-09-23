@@ -636,9 +636,12 @@ that capability isn't wired.
 Note what it does NOT list: anything this service stores. A project holds at most one connection
 per provider, read via `GET .../connection-{provider}`.
 
-Five outcomes are distinguished deliberately, because collapsing them misdirects the caller.
+Each outcome below is distinguished deliberately, because collapsing them misdirects the caller.
 
 - `ErrAccountsUnsupported` → **400** — the platform has no discovery capability.
+  `ErrAccountMetricsUnsupported` (the account-monitor endpoints' equivalent, for a platform with
+  no `AccountMetricsReader` wired) is folded into this same arm rather than given its own — both
+  say "this platform cannot do the thing you asked," just for different capabilities.
 - `domain.ErrSystemConnectionMissing` → **500** — force-system mode is on and the LF system row
   is not installed for this provider. It must sit ABOVE the `ErrNotFound` arm below, which it is
   wrapped alongside: the broad arm would otherwise answer 404 "connect your project" for a fault
@@ -712,6 +715,25 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   `account_not_selected`, `unclassified`) read off the reason
   sentinel the dispatch layer wraps alongside `ErrConnectionNotUsable`. A closed vocabulary is what
   a log line wants anyway: greppable, alertable, and with no payload to carry a secret in.
+- `ErrAccountIDMalformed` → **400** — a caller-supplied account id, not a stored connection, is
+  shape-invalid for its platform. Every dispatcher validates the shape itself before resolving
+  any credential, as defense-in-depth for a non-HTTP caller that bypasses Goa — an ordinary HTTP
+  request is already refused by the design attribute's own `Pattern` before the handler runs. See
+  `domain.ErrAccountIDMalformed`'s doc comment and
+  [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md).
+- `ErrMonitorDaysInvalid` → **400** — a caller-supplied `days` window, not a stored connection, is
+  outside the inclusive `domain.MonitorDaysMin`..`domain.MonitorDaysMax` bound. The service layer's
+  own `validateMonitorDays` already rejects this for an HTTP caller before any dispatcher runs, and
+  each of the four account-monitor dispatchers re-checks it themselves too — same defense-in-depth
+  rationale as `ErrAccountIDMalformed` above, for a non-HTTP caller that bypasses Goa. See
+  `domain.ErrMonitorDaysInvalid`'s doc comment.
+- `ErrAccountNotManagedByConnection` → **400** — a caller-supplied account id is well-formed but
+  names an account the project's own resolved connection does not manage (Reddit only, since a
+  Reddit connection is bound to exactly one ad account). Checked before `ErrConnectionNotUsable`
+  below: the stored connection is fine here, the REQUEST named the wrong account, so
+  `ErrConnectionNotUsable`'s "check that the stored credential is active and valid" message
+  would point at the wrong remedy (round-18 review). See `domain.ErrAccountNotManagedByConnection`'s
+  doc comment.
 - Anything else → **503** — the platform was reached and did not answer.
 
 **`account_not_selected` is the one reason in that vocabulary that is not a fault.** Every other

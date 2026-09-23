@@ -1039,6 +1039,24 @@ func TestMeta_ListAccounts_AttributesSystemRowDefects(t *testing.T) {
 	}
 }
 
+// TestMeta_ListAccountCampaignMetrics_RefusesSystemFallback pins round-16 review's Critical
+// finding: a project with no Meta connection of its own must not have its monitor read served
+// from the shared LF system credential. scopedConnReader is configured with a valid connection
+// ONLY under model.SystemProjectID — if the fallback were still consulted, this read would
+// succeed against it, so a passing test here proves the fallback was actually refused, not
+// merely that some unrelated error was returned.
+func TestMeta_ListAccountCampaignMetrics_RefusesSystemFallback(t *testing.T) {
+	d := NewMetaDispatcher(&scopedConnReader{
+		rows: map[string]*model.Connection{model.SystemProjectID: activeMetaConn(goodMetaCreds)},
+	}, identityEncryptor{})
+
+	_, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderMetaAds, "act_222", 30)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want domain.ErrNotFound — the read must refuse the system row and "+
+			"report the project as having no connection of its own", err)
+	}
+}
+
 // TestMeta_SystemScopedCoversEveryCallerOfResolveMetaCredentials is the same invariant as
 // the test above, extended to the three callers it does NOT reach — and it exists because
 // those three were broken.
@@ -2611,7 +2629,7 @@ func TestMeta_ConfigFieldsReachTheWire(t *testing.T) {
 	}
 }
 
-// TestMeta_MalformedAssetIDIsBoundedAndSanitisedInError covers the log-injection and
+// TestMeta_MalformedAssetIDIsBoundedAndSanitizedInError covers the log-injection and
 // unbounded-field surface on the ONE value here that is opaque caller JSON.
 //
 // imageAssetId has no length or charset bound anywhere on its path, and a rejected value
@@ -2622,7 +2640,7 @@ func TestMeta_ConfigFieldsReachTheWire(t *testing.T) {
 // Asserted as BEHAVIOUR of the rendered error, not as source text: the message must stay
 // bounded, must not carry newlines a caller could use to forge a second log entry, and
 // must still identify the variant so the operator can act on it.
-func TestMeta_MalformedAssetIDIsBoundedAndSanitisedInError(t *testing.T) {
+func TestMeta_MalformedAssetIDIsBoundedAndSanitizedInError(t *testing.T) {
 	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
 	d.SetCreativeAssetRepo(&multiCreativeAssets{assets: map[string]*model.CreativeAsset{}})
 
@@ -2672,7 +2690,7 @@ func TestMeta_MalformedAssetIDIsBoundedAndSanitisedInError(t *testing.T) {
 	})
 
 	t.Run("a valid uuid is still accepted", func(t *testing.T) {
-		// The sanitiser must not become a new rejection path: a well-formed id must still
+		// The sanitizer must not become a new rejection path: a well-formed id must still
 		// reach the repo lookup (and fail there as "does not exist"), not be refused as
 		// malformed.
 		_, _, err := d.resolveVariantAssets(context.Background(), testBrief(),

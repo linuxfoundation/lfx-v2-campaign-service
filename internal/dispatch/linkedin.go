@@ -633,6 +633,29 @@ func (d *LinkedInDispatcher) resolveLinkedInDiscoveryCredentials(ctx context.Con
 	}
 }
 
+// resolveLinkedInOwnedDiscoveryCredentials is resolveLinkedInDiscoveryCredentials WITHOUT the
+// LF system fallback — the monitor read's equivalent of googleads.go's
+// resolveOwnedGoogleAdsDiscoveryClient (see that function's doc comment for the shared
+// rationale: round-16 review escalated the pre-existing credential-scope gap to Critical, and
+// membership-checking against ListAccounts would not have closed it given LinkedIn's own
+// shared-tenancy exposure through the fallback).
+//
+// It reuses resolveLinkedInCredentials, the same validation resolveLinkedInDiscoveryCredentials
+// itself calls, but bound to d.creds.resolveOwned instead of d.creds.resolve — so a project with
+// no LinkedIn connection of its own gets domain.ErrNotFound (via noOwnConnection) instead of a
+// credential borrowed from the shared LF system row.
+func (d *LinkedInDispatcher) resolveLinkedInOwnedDiscoveryCredentials(ctx context.Context, projectID string, platform model.Provider) (*resolved, linkedinCreds, error) {
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.resolveOwned)
+	switch {
+	case err == nil:
+		return res, creds, nil
+	case errors.Is(err, domain.ErrAccountNotSelected):
+		return res, creds, nil
+	default:
+		return nil, linkedinCreds{}, err
+	}
+}
+
 // ListAccounts discovers the ad accounts reachable via the project's stored, encrypted
 // LinkedIn connection credential, returning the bare numeric account id the connection's
 // account_id takes verbatim, plus a display label.
@@ -663,6 +686,69 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 		accounts = append(accounts, model.AccessibleAccount{ID: a.ID, Label: linkedInAccountLabel(a)})
 	}
 	return accounts, nil
+}
+
+// ListAccountCampaignMetrics reads every ACTIVE/PAUSED campaign on accountID plus an
+// account-wide Ad Analytics pivot=CAMPAIGN read over the trailing `days` days, ported from
+// lfx-self-serve's linkedin-ads.service.ts (getLinkedInAnalytics). accountID is the bare
+// numeric LinkedIn ad account id (the same form ListAccounts returns and
+// AccountConfig.AccountID persists) — NOT a URN.
+//
+// It satisfies the service-side AccountMetricsReader interface, which Orchestrator
+// type-asserts on the dispatcher for the requested platform.
+//
+// Trust boundary (round-16 review, fixed): resolveLinkedInOwnedDiscoveryCredentials refuses the
+// LF system fallback entirely, so a project with no LinkedIn connection of its own gets a 404
+// instead of a read served from a credential that could reach another project's data. See that
+// resolver's doc comment, and GoogleAdsDispatcher.ListAccountCampaignMetrics
+// (internal/dispatch/googleads.go) for the shared rationale.
+func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+	// Validated up front, before any credential is resolved — mirrors googleads.ValidateCustomerID's
+	// ordering (internal/dispatch/googleads.go): an unauthenticated malformed-id caller should never
+	// cost a credential decrypt. The Goa design layer's Pattern already rejects a malformed id at
+	// the HTTP boundary, but this dispatcher method is also reachable directly (e.g. tests or a
+	// future non-HTTP caller), so it re-checks rather than trusting the caller.
+	if err := linkedin.ValidateAccountID(accountID); err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
+	}
+	if err := validateMonitorDays(days); err != nil {
+		return nil, err
+	}
+	res, creds, err := d.resolveLinkedInOwnedDiscoveryCredentials(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// RuntimeConfig is left ZERO, same rationale as ListAccounts: the monitor read is scoped
+	// to accountID by the platform-client call itself, not by the client's own AccountConfig.
+	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), linkedin.RuntimeConfig{}, d.opts...)
+	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
+	if lerr != nil {
+		// Defense in depth only, mirroring reddit.go's equivalent remap: reachable if
+		// ListAccountCampaigns' own shape check ever diverges from ValidateAccountID's above it.
+		if errors.Is(lerr, linkedin.ErrInvalidAccountID) {
+			return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, lerr)
+		}
+		return nil, res.systemScoped(linkedinExpiry(lerr))
+	}
+	out := make([]model.AccountCampaignMetrics, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, model.AccountCampaignMetrics{
+			PlatformCampaignID: r.CampaignID,
+			Name:               r.Name,
+			Status:             r.Status,
+			Spend:              r.SpendUSD,
+			Impressions:        r.Impressions,
+			Clicks:             r.Clicks,
+			Ctr:                r.Ctr,
+			Conversions:        r.Conversions,
+			BudgetDay:          r.DailyBudget,
+			TotalBudget:        r.TotalBudget,
+			StartDate:          r.StartDate,
+			EndDate:            r.EndDate,
+			FetchFailed:        r.FetchFailed,
+		})
+	}
+	return out, nil
 }
 
 // linkedInAccountLabel builds the string a picker shows for one ad account.

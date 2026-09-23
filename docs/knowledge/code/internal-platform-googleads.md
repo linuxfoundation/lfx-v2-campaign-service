@@ -1279,3 +1279,19 @@ arms (malformed/short response, mismatched resource name) carry NO underlying er
 them falling through to the DEFINITE-failure 503 ("could not be applied"), telling a caller to
 retry a batch Google may already have run. The dispatcher preserves the marker rather than
 returning the client error raw, mirroring the status-toggle path.
+
+## Account-monitor read
+
+`monitor.go`'s `ListAccountCampaigns` backs the account-scoped
+`GET .../connection-google-ads/account-monitor` endpoint, ported from the LFX One
+BFF's `campaign-metrics.service.ts`. It is a GAQL read over the WHOLE ad account the
+resolved credential reaches (including `campaign_url`, an optional field only this
+platform's response carries), not one project's own campaigns. See
+[Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md) for the
+credential-scoping (`resolveOwned`, no system-account fallback), the GAQL query-scope
+fix (missing `advertising_channel_type`/`status`/`impressions>0` filters found during
+differential verification), and the ported rule engine
+(`internal/service/rules/monitor_google.go`, including its preserved local
+50/90/100 pacing literals rather than the shared `Thresholds`).
+
+See [internal/platform/googleads](../../../internal/platform/googleads).

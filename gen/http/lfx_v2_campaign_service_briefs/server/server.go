@@ -19,27 +19,35 @@ import (
 // Server lists the lfx-v2-campaign-service-briefs service endpoint HTTP
 // handlers.
 type Server struct {
-	Mounts               []*MountPoint
-	CreateBrief          http.Handler
-	FindBrief            http.Handler
-	GetBrief             http.Handler
-	UpdateBrief          http.Handler
-	ApproveBrief         http.Handler
-	DeleteBrief          http.Handler
-	FetchEventURL        http.Handler
-	UploadCreativeAsset  http.Handler
-	CreateCampaigns      http.Handler
-	AdoptCampaign        http.Handler
-	GetCampaign          http.Handler
-	GetCampaignMetrics   http.Handler
-	GetCampaignSettings  http.Handler
-	GetBriefMetrics      http.Handler
-	GenerateEmailCopy    http.Handler
-	UpdateCampaign       http.Handler
-	ToggleCampaignStatus http.Handler
-	ApplyKeywordActions  http.Handler
-	DeleteCampaign       http.Handler
-	GetJob               http.Handler
+	Mounts                []*MountPoint
+	CreateBrief           http.Handler
+	FindBrief             http.Handler
+	GetBrief              http.Handler
+	UpdateBrief           http.Handler
+	ApproveBrief          http.Handler
+	DeleteBrief           http.Handler
+	FetchEventURL         http.Handler
+	UploadCreativeAsset   http.Handler
+	CreateCampaigns       http.Handler
+	AdoptCampaign         http.Handler
+	GetCampaign           http.Handler
+	GetCampaignMetrics    http.Handler
+	GetCampaignSettings   http.Handler
+	GetBriefMetrics       http.Handler
+	GenerateEmailCopy     http.Handler
+	UpdateCampaign        http.Handler
+	ToggleCampaignStatus  http.Handler
+	ApplyKeywordActions   http.Handler
+	DeleteCampaign        http.Handler
+	GetJob                http.Handler
+	StartEmailWizardPlan  http.Handler
+	PlanEmailWizard       http.Handler
+	GenerateWizardContent http.Handler
+	UpdateWizardSections  http.Handler
+	CloneWizardEmail      http.Handler
+	SetWizardSendList     http.Handler
+	ChatWizardTurn        http.Handler
+	GetWizardSession      http.Handler
 }
 
 // MountPoint holds information about the mounted endpoints.
@@ -89,27 +97,43 @@ func New(
 			{"ApplyKeywordActions", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-actions"},
 			{"DeleteCampaign", "DELETE", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}"},
 			{"GetJob", "GET", "/projects/{project_id}/jobs/{job_id}"},
+			{"StartEmailWizardPlan", "POST", "/projects/{project_id}/briefs/{brief_id}/wizard/plan-start"},
+			{"PlanEmailWizard", "POST", "/projects/{project_id}/briefs/{brief_id}/wizard/plan"},
+			{"GenerateWizardContent", "POST", "/projects/{project_id}/briefs/{brief_id}/wizard/generate-content"},
+			{"UpdateWizardSections", "POST", "/projects/{project_id}/briefs/{brief_id}/wizard/update-sections"},
+			{"CloneWizardEmail", "POST", "/projects/{project_id}/briefs/{brief_id}/wizard/clone"},
+			{"SetWizardSendList", "POST", "/projects/{project_id}/briefs/{brief_id}/wizard/set-send-list"},
+			{"ChatWizardTurn", "POST", "/projects/{project_id}/briefs/{brief_id}/wizard/chat"},
+			{"GetWizardSession", "GET", "/projects/{project_id}/briefs/{brief_id}/wizard/session/{session_id}"},
 		},
-		CreateBrief:          NewCreateBriefHandler(e.CreateBrief, mux, decoder, encoder, errhandler, formatter),
-		FindBrief:            NewFindBriefHandler(e.FindBrief, mux, decoder, encoder, errhandler, formatter),
-		GetBrief:             NewGetBriefHandler(e.GetBrief, mux, decoder, encoder, errhandler, formatter),
-		UpdateBrief:          NewUpdateBriefHandler(e.UpdateBrief, mux, decoder, encoder, errhandler, formatter),
-		ApproveBrief:         NewApproveBriefHandler(e.ApproveBrief, mux, decoder, encoder, errhandler, formatter),
-		DeleteBrief:          NewDeleteBriefHandler(e.DeleteBrief, mux, decoder, encoder, errhandler, formatter),
-		FetchEventURL:        NewFetchEventURLHandler(e.FetchEventURL, mux, decoder, encoder, errhandler, formatter),
-		UploadCreativeAsset:  NewUploadCreativeAssetHandler(e.UploadCreativeAsset, mux, decoder, encoder, errhandler, formatter),
-		CreateCampaigns:      NewCreateCampaignsHandler(e.CreateCampaigns, mux, decoder, encoder, errhandler, formatter),
-		AdoptCampaign:        NewAdoptCampaignHandler(e.AdoptCampaign, mux, decoder, encoder, errhandler, formatter),
-		GetCampaign:          NewGetCampaignHandler(e.GetCampaign, mux, decoder, encoder, errhandler, formatter),
-		GetCampaignMetrics:   NewGetCampaignMetricsHandler(e.GetCampaignMetrics, mux, decoder, encoder, errhandler, formatter),
-		GetCampaignSettings:  NewGetCampaignSettingsHandler(e.GetCampaignSettings, mux, decoder, encoder, errhandler, formatter),
-		GetBriefMetrics:      NewGetBriefMetricsHandler(e.GetBriefMetrics, mux, decoder, encoder, errhandler, formatter),
-		GenerateEmailCopy:    NewGenerateEmailCopyHandler(e.GenerateEmailCopy, mux, decoder, encoder, errhandler, formatter),
-		UpdateCampaign:       NewUpdateCampaignHandler(e.UpdateCampaign, mux, decoder, encoder, errhandler, formatter),
-		ToggleCampaignStatus: NewToggleCampaignStatusHandler(e.ToggleCampaignStatus, mux, decoder, encoder, errhandler, formatter),
-		ApplyKeywordActions:  NewApplyKeywordActionsHandler(e.ApplyKeywordActions, mux, decoder, encoder, errhandler, formatter),
-		DeleteCampaign:       NewDeleteCampaignHandler(e.DeleteCampaign, mux, decoder, encoder, errhandler, formatter),
-		GetJob:               NewGetJobHandler(e.GetJob, mux, decoder, encoder, errhandler, formatter),
+		CreateBrief:           NewCreateBriefHandler(e.CreateBrief, mux, decoder, encoder, errhandler, formatter),
+		FindBrief:             NewFindBriefHandler(e.FindBrief, mux, decoder, encoder, errhandler, formatter),
+		GetBrief:              NewGetBriefHandler(e.GetBrief, mux, decoder, encoder, errhandler, formatter),
+		UpdateBrief:           NewUpdateBriefHandler(e.UpdateBrief, mux, decoder, encoder, errhandler, formatter),
+		ApproveBrief:          NewApproveBriefHandler(e.ApproveBrief, mux, decoder, encoder, errhandler, formatter),
+		DeleteBrief:           NewDeleteBriefHandler(e.DeleteBrief, mux, decoder, encoder, errhandler, formatter),
+		FetchEventURL:         NewFetchEventURLHandler(e.FetchEventURL, mux, decoder, encoder, errhandler, formatter),
+		UploadCreativeAsset:   NewUploadCreativeAssetHandler(e.UploadCreativeAsset, mux, decoder, encoder, errhandler, formatter),
+		CreateCampaigns:       NewCreateCampaignsHandler(e.CreateCampaigns, mux, decoder, encoder, errhandler, formatter),
+		AdoptCampaign:         NewAdoptCampaignHandler(e.AdoptCampaign, mux, decoder, encoder, errhandler, formatter),
+		GetCampaign:           NewGetCampaignHandler(e.GetCampaign, mux, decoder, encoder, errhandler, formatter),
+		GetCampaignMetrics:    NewGetCampaignMetricsHandler(e.GetCampaignMetrics, mux, decoder, encoder, errhandler, formatter),
+		GetCampaignSettings:   NewGetCampaignSettingsHandler(e.GetCampaignSettings, mux, decoder, encoder, errhandler, formatter),
+		GetBriefMetrics:       NewGetBriefMetricsHandler(e.GetBriefMetrics, mux, decoder, encoder, errhandler, formatter),
+		GenerateEmailCopy:     NewGenerateEmailCopyHandler(e.GenerateEmailCopy, mux, decoder, encoder, errhandler, formatter),
+		UpdateCampaign:        NewUpdateCampaignHandler(e.UpdateCampaign, mux, decoder, encoder, errhandler, formatter),
+		ToggleCampaignStatus:  NewToggleCampaignStatusHandler(e.ToggleCampaignStatus, mux, decoder, encoder, errhandler, formatter),
+		ApplyKeywordActions:   NewApplyKeywordActionsHandler(e.ApplyKeywordActions, mux, decoder, encoder, errhandler, formatter),
+		DeleteCampaign:        NewDeleteCampaignHandler(e.DeleteCampaign, mux, decoder, encoder, errhandler, formatter),
+		GetJob:                NewGetJobHandler(e.GetJob, mux, decoder, encoder, errhandler, formatter),
+		StartEmailWizardPlan:  NewStartEmailWizardPlanHandler(e.StartEmailWizardPlan, mux, decoder, encoder, errhandler, formatter),
+		PlanEmailWizard:       NewPlanEmailWizardHandler(e.PlanEmailWizard, mux, decoder, encoder, errhandler, formatter),
+		GenerateWizardContent: NewGenerateWizardContentHandler(e.GenerateWizardContent, mux, decoder, encoder, errhandler, formatter),
+		UpdateWizardSections:  NewUpdateWizardSectionsHandler(e.UpdateWizardSections, mux, decoder, encoder, errhandler, formatter),
+		CloneWizardEmail:      NewCloneWizardEmailHandler(e.CloneWizardEmail, mux, decoder, encoder, errhandler, formatter),
+		SetWizardSendList:     NewSetWizardSendListHandler(e.SetWizardSendList, mux, decoder, encoder, errhandler, formatter),
+		ChatWizardTurn:        NewChatWizardTurnHandler(e.ChatWizardTurn, mux, decoder, encoder, errhandler, formatter),
+		GetWizardSession:      NewGetWizardSessionHandler(e.GetWizardSession, mux, decoder, encoder, errhandler, formatter),
 	}
 }
 
@@ -138,6 +162,14 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.ApplyKeywordActions = m(s.ApplyKeywordActions)
 	s.DeleteCampaign = m(s.DeleteCampaign)
 	s.GetJob = m(s.GetJob)
+	s.StartEmailWizardPlan = m(s.StartEmailWizardPlan)
+	s.PlanEmailWizard = m(s.PlanEmailWizard)
+	s.GenerateWizardContent = m(s.GenerateWizardContent)
+	s.UpdateWizardSections = m(s.UpdateWizardSections)
+	s.CloneWizardEmail = m(s.CloneWizardEmail)
+	s.SetWizardSendList = m(s.SetWizardSendList)
+	s.ChatWizardTurn = m(s.ChatWizardTurn)
+	s.GetWizardSession = m(s.GetWizardSession)
 }
 
 // MethodNames returns the methods served.
@@ -166,6 +198,14 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountApplyKeywordActionsHandler(mux, h.ApplyKeywordActions)
 	MountDeleteCampaignHandler(mux, h.DeleteCampaign)
 	MountGetJobHandler(mux, h.GetJob)
+	MountStartEmailWizardPlanHandler(mux, h.StartEmailWizardPlan)
+	MountPlanEmailWizardHandler(mux, h.PlanEmailWizard)
+	MountGenerateWizardContentHandler(mux, h.GenerateWizardContent)
+	MountUpdateWizardSectionsHandler(mux, h.UpdateWizardSections)
+	MountCloneWizardEmailHandler(mux, h.CloneWizardEmail)
+	MountSetWizardSendListHandler(mux, h.SetWizardSendList)
+	MountChatWizardTurnHandler(mux, h.ChatWizardTurn)
+	MountGetWizardSessionHandler(mux, h.GetWizardSession)
 }
 
 // Mount configures the mux to serve the lfx-v2-campaign-service-briefs
@@ -1228,6 +1268,438 @@ func NewGetJobHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "get-job")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountStartEmailWizardPlanHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "start-email-wizard-plan" endpoint.
+func MountStartEmailWizardPlanHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/briefs/{brief_id}/wizard/plan-start", f)
+}
+
+// NewStartEmailWizardPlanHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "start-email-wizard-plan" endpoint.
+func NewStartEmailWizardPlanHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeStartEmailWizardPlanRequest(mux, decoder)
+		encodeResponse = EncodeStartEmailWizardPlanResponse(encoder)
+		encodeError    = EncodeStartEmailWizardPlanError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "start-email-wizard-plan")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountPlanEmailWizardHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "plan-email-wizard" endpoint.
+func MountPlanEmailWizardHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/briefs/{brief_id}/wizard/plan", f)
+}
+
+// NewPlanEmailWizardHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "plan-email-wizard" endpoint.
+func NewPlanEmailWizardHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodePlanEmailWizardRequest(mux, decoder)
+		encodeResponse = EncodePlanEmailWizardResponse(encoder)
+		encodeError    = EncodePlanEmailWizardError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "plan-email-wizard")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountGenerateWizardContentHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "generate-wizard-content" endpoint.
+func MountGenerateWizardContentHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/briefs/{brief_id}/wizard/generate-content", f)
+}
+
+// NewGenerateWizardContentHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "generate-wizard-content" endpoint.
+func NewGenerateWizardContentHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeGenerateWizardContentRequest(mux, decoder)
+		encodeResponse = EncodeGenerateWizardContentResponse(encoder)
+		encodeError    = EncodeGenerateWizardContentError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "generate-wizard-content")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountUpdateWizardSectionsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "update-wizard-sections" endpoint.
+func MountUpdateWizardSectionsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/briefs/{brief_id}/wizard/update-sections", f)
+}
+
+// NewUpdateWizardSectionsHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "update-wizard-sections" endpoint.
+func NewUpdateWizardSectionsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeUpdateWizardSectionsRequest(mux, decoder)
+		encodeResponse = EncodeUpdateWizardSectionsResponse(encoder)
+		encodeError    = EncodeUpdateWizardSectionsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "update-wizard-sections")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountCloneWizardEmailHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "clone-wizard-email" endpoint.
+func MountCloneWizardEmailHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/briefs/{brief_id}/wizard/clone", f)
+}
+
+// NewCloneWizardEmailHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "clone-wizard-email" endpoint.
+func NewCloneWizardEmailHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeCloneWizardEmailRequest(mux, decoder)
+		encodeResponse = EncodeCloneWizardEmailResponse(encoder)
+		encodeError    = EncodeCloneWizardEmailError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "clone-wizard-email")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountSetWizardSendListHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "set-wizard-send-list" endpoint.
+func MountSetWizardSendListHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/briefs/{brief_id}/wizard/set-send-list", f)
+}
+
+// NewSetWizardSendListHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "set-wizard-send-list" endpoint.
+func NewSetWizardSendListHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeSetWizardSendListRequest(mux, decoder)
+		encodeResponse = EncodeSetWizardSendListResponse(encoder)
+		encodeError    = EncodeSetWizardSendListError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "set-wizard-send-list")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountChatWizardTurnHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "chat-wizard-turn" endpoint.
+func MountChatWizardTurnHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/briefs/{brief_id}/wizard/chat", f)
+}
+
+// NewChatWizardTurnHandler creates a HTTP handler which loads the HTTP request
+// and calls the "lfx-v2-campaign-service-briefs" service "chat-wizard-turn"
+// endpoint.
+func NewChatWizardTurnHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeChatWizardTurnRequest(mux, decoder)
+		encodeResponse = EncodeChatWizardTurnResponse(encoder)
+		encodeError    = EncodeChatWizardTurnError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "chat-wizard-turn")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountGetWizardSessionHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "get-wizard-session" endpoint.
+func MountGetWizardSessionHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/briefs/{brief_id}/wizard/session/{session_id}", f)
+}
+
+// NewGetWizardSessionHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "get-wizard-session" endpoint.
+func NewGetWizardSessionHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeGetWizardSessionRequest(mux, decoder)
+		encodeResponse = EncodeGetWizardSessionResponse(encoder)
+		encodeError    = EncodeGetWizardSessionError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "get-wizard-session")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
 		payload, err := decodeRequest(r)
 		if err != nil {

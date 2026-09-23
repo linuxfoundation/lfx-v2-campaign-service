@@ -16,6 +16,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/utm"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
 
 // portalLookupTimeout bounds the AuthenticatedPortalID call on BOTH paths that make it:
@@ -136,6 +137,16 @@ func toHubSpotSponsors(sponsors []hubspotSponsor) []hubspot.Sponsor {
 type hubspotConfigProvenance struct {
 	SourceEmailID string `json:"sourceEmailId"`
 	UTMCampaign   string `json:"utmCampaign,omitempty"`
+	// ABTestEnabled records that a variant was REQUESTED, which ABTestVariant cannot: that
+	// field is written only when creation SUCCEEDED, and variant creation is best-effort, so
+	// without this a campaign whose A/B creation failed is byte-identical in persisted state
+	// to one that never asked for a variant — erasing the only signal anyone could use to find
+	// and retry them.
+	//
+	// It does not violate the rule the comment above protects: a boolean saying what the
+	// operator asked for is provenance, not caller-supplied content, so it carries no tokens
+	// and nothing arbitrary into an unencrypted, API-visible column.
+	ABTestEnabled bool `json:"abTestEnabled,omitempty"`
 }
 
 // audienceReader is the narrow read slice of the audience repository the email dispatcher needs:
@@ -179,6 +190,39 @@ func NewHubSpotDispatcher(repo connReader, enc domain.Encryptor, audiences audie
 func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID string, platform model.Provider) (client *hubspot.Client, err error) {
 	client, _, err = d.resolveHubSpotClientWithCreds(ctx, projectID, platform)
 	return client, err
+}
+
+// ResolveEmailClient builds a HubSpot client for one project, for a caller outside this
+// package that needs to read and write emails — today, the email-creation wizard.
+//
+// It is a thin export of the unexported resolution above rather than a second
+// implementation, because that sequence is where the connection-state and
+// incomplete-credential checks live and two copies of it drift. It deliberately returns the
+// concrete *hubspot.Client: the CONSUMER declares the narrow interface it wants (see
+// service.HubSpotWizardClient), so this package does not learn what the wizard needs and
+// this edge stays one-directional — internal/service must never import internal/dispatch,
+// since this package's own tests import internal/service.
+//
+// Per-call, not cached: a project's connection can be revoked or rotated between two wizard
+// turns, and a client held from an earlier turn would keep writing with a credential the
+// project has since withdrawn.
+func (d *HubSpotDispatcher) ResolveEmailClient(ctx context.Context, projectID string) (*hubspot.Client, error) {
+	return d.resolveHubSpotClient(ctx, projectID, model.ProviderHubSpot)
+}
+
+// ResolveEmailClientWithOrigin is ResolveEmailClient plus whether the credentials came from the
+// LF system row rather than one this project owns.
+//
+// The wizard's clone-source search needs it: SearchEmails is portal-WIDE and projectID only
+// chooses the connection, so on the shared row a hit can be another project's sent email. A
+// caller that only WRITES the requesting project's own content does not need this and should use
+// ResolveEmailClient.
+func (d *HubSpotDispatcher) ResolveEmailClientWithOrigin(ctx context.Context, projectID string) (*hubspot.Client, bool, error) {
+	client, res, err := d.resolveHubSpotClientWithCreds(ctx, projectID, model.ProviderHubSpot)
+	if err != nil {
+		return nil, false, err
+	}
+	return client, res.isFromSystem(), nil
 }
 
 // resolveHubSpotClientWithCreds is resolveHubSpotClient plus the resolved credential it built the
@@ -530,7 +574,10 @@ func uploadHeroImage(ctx context.Context, client *hubspot.Client, imageURL strin
 	hosted, err := client.UploadImage(ctx, imageURL)
 	if err != nil {
 		slog.WarnContext(ctx, "could not upload the hero image to hubspot; the rebuilt email will have no hero section",
-			"source_url", imageURL, "error", err)
+			// Redacted: a hero URL is frequently a signed one (S3 pre-signed, a CDN token),
+			// so the query string can carry a credential. The host and path are what make the
+			// line actionable; the query never is.
+			"source_url", redact.URLUserinfo(imageURL), "error", err)
 		return ""
 	}
 	return hosted
@@ -561,6 +608,20 @@ func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emai
 	bodyHTML = strings.TrimSpace(bodyHTML)
 	hostedHeroURL = strings.TrimSpace(hostedHeroURL)
 	buttonURL = strings.TrimSpace(buttonURL)
+	// previewText and sentByOrg are deliberately NOT in this guard, and that is a real gap rather
+	// than an oversight -- I widened it to include them and had to put it back.
+	//
+	// They are only settable through the content tree (see hubspot.EmailSettings: the Marketing
+	// Emails v3 object exposes no preheader field), and RebuildEmailContent REPLACES the whole
+	// widget tree by design -- that wholesale wipe is what stops the clone source's stale content
+	// leaking into the new draft. So a rebuild carrying no body cannot preserve the clone's body:
+	// writing an empty staging_body blanks it, and omitting the section drops it from the tree.
+	// Both are data loss, and the second only looks quieter.
+	//
+	// The consequence, stated so nobody re-widens this: a config that changes ONLY the preheader
+	// or the footer org is silently not applied. That is strictly better than destroying the
+	// body, and fixing it properly needs a content path that can edit widgets in place rather
+	// than replace them. Tracked with the rest of LFXV2-2775.
 	if bodyHTML == "" && hostedHeroURL == "" && buttonURL == "" && len(sponsors) == 0 {
 		// Nothing to rebuild: every campaign that predates LFXV2-2775 (and any caller that only
 		// wants the subject updated) reaches here with no generated content at all, and a full
@@ -578,7 +639,21 @@ func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emai
 		SentByOrg:    sentByOrg,
 		PreviewText:  previewText,
 	}); err != nil {
-		slog.WarnContext(ctx, "could not rebuild the email draft's content; it may keep the template's content or be left partially rebuilt",
+		// Two failures, opposite meanings. A failed PATCH leaves the clone intact: the draft
+		// still carries the template's content, which is wrong but coherent and retryable, and
+		// swallowing it is consistent with this function's best-effort contract.
+		//
+		// ErrContentNotPersisted is not that. HubSpot returned 2xx and then reverted the write,
+		// so the draft matches neither the template nor the generated copy and no retry of the
+		// same payload is known to fix it. Logging that at WARN alongside ordinary failures is
+		// what lets a broken draft read as a routine degrade, so it is raised to ERROR and
+		// named — an operator scanning for drafts that need manual repair can select on it.
+		if errors.Is(err, hubspot.ErrContentNotPersisted) {
+			slog.ErrorContext(ctx, "the email draft's content was accepted but not persisted; the draft is left in an inconsistent state and needs manual repair",
+				"email_id", emailID, "error", err)
+			return
+		}
+		slog.WarnContext(ctx, "could not rebuild the email draft's content; it keeps the template's content",
 			"email_id", emailID, "error", err)
 		return
 	}
@@ -821,6 +896,7 @@ func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfi
 	applyCampaignConfig(ctx, c, 0, false, "", "", hubspotConfigProvenance{
 		SourceEmailID: cfg.SourceEmailID,
 		UTMCampaign:   cfg.UTMCampaign,
+		ABTestEnabled: cfg.ABTestEnabled,
 	})
 	// ABTestVariant is nil whenever ABTestEnabled was false OR variant creation failed
 	// (createABTestVariant's best-effort contract) — omitempty on a nil pointer drops the key

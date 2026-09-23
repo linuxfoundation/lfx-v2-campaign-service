@@ -556,7 +556,16 @@ func formatEventDates(startDate, endDate string) string {
 // (cutting inside tags, attributes, entities, or dropping closing tags). Oversized content is
 // rejected as an unusable response (same path as unparseable responses). Subject, preheader,
 // and button text are truncated because they are plain text with no markup concerns.
-func parseEmailCopyResponse(raw string) (*briefs.EmailCopy, error) {
+// allowLegacyShape says whether a response carrying the flat pre-sections `body`/`cta` pair
+// may be repackaged as sections. It is true ONLY on the frozen legacySystemPrompt path (an
+// absent stage), which is the prompt that still asks the model for that shape.
+//
+// Gating it matters because the repackaging is otherwise a fail-open: a stage-aware request
+// whose model output regresses to the legacy shape would be silently converted and returned as
+// a normal success, so a prompt or model regression would look like ordinary operation. When
+// sections were asked for, a legacy-only response is an unusable response, and the caller's
+// existing 503 is the honest answer.
+func parseEmailCopyResponse(raw string, allowLegacyShape bool) (*briefs.EmailCopy, error) {
 	// Try JSON first, stripping code fences if present.
 	raw = strings.TrimSpace(raw)
 	raw = strings.TrimPrefix(raw, "```json")
@@ -577,6 +586,9 @@ func parseEmailCopyResponse(raw string) (*briefs.EmailCopy, error) {
 	// a bad model response into a 500 that names nothing actionable, rather than the 503 "the
 	// model returned something unusable" it actually is.
 	const maxHTMLRunes = 8000
+
+	// MIRRORS MaxLength(2000) on email-copy-section's `url` attribute in design/brief.go.
+	const maxButtonURLRunes = 2000
 
 	var parsed struct {
 		Subject   string `json:"subject"`
@@ -602,6 +614,14 @@ func parseEmailCopyResponse(raw string) (*briefs.EmailCopy, error) {
 		// No sections array: this is the legacy flat shape. An entirely empty response (no
 		// sections, no body) falls through as zero sections, which GenerateEmailCopy's
 		// required-field check below rejects the same way an empty legacy body always did.
+		//
+		// Refuse the repackaging when sections were the shape asked for. The check is on
+		// content rather than on `len(Sections) == 0` alone so a genuinely empty response
+		// keeps its existing path (rejected below as missing required fields) rather than
+		// being reported as a shape mismatch it is not.
+		if !allowLegacyShape && (strings.TrimSpace(parsed.Body) != "" || strings.TrimSpace(parsed.Cta) != "") {
+			return nil, fmt.Errorf("model returned the legacy body/cta shape for a stage-aware request that asked for sections; model response is unusable")
+		}
 		if strings.TrimSpace(parsed.Body) != "" {
 			if utf8.RuneCountInString(parsed.Body) > maxHTMLRunes {
 				return nil, fmt.Errorf("email body exceeds maximum length of %d characters; model response is unusable", maxHTMLRunes)
@@ -648,6 +668,16 @@ func parseEmailCopyResponse(raw string) (*briefs.EmailCopy, error) {
 			text := truncateString(s.Text, 50)
 			section.Text = &text
 			if url := strings.TrimSpace(s.URL); url != "" {
+				// REJECTED, not truncated. maxButtonURLRunes mirrors MaxLength(2000) on
+				// email-copy-section's `url` in design/brief.go, and the two move together: Goa
+				// validates the response against it, so a value this function let through would
+				// fail there as a 500 naming nothing actionable, rather than the 503 "the model
+				// returned something unusable" it actually is -- the same reasoning as
+				// maxHTMLRunes above. Truncating is worse than rejecting for a URL: a cut
+				// destination is a live link to the wrong place, not a shorter one.
+				if utf8.RuneCountInString(url) > maxButtonURLRunes {
+					return nil, fmt.Errorf("email button url exceeds maximum length of %d characters; model response is unusable", maxButtonURLRunes)
+				}
 				section.URL = &url
 			}
 		}
@@ -964,7 +994,9 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	}
 
 	// Parse and validate the response, enforcing length limits in code.
-	copy, perr := parseEmailCopyResponse(raw)
+	// Legacy repackaging is permitted only on the path that actually requested that shape --
+	// the same `stage == ""` condition composeEmailCopyPrompt branches on for the frozen prompt.
+	copy, perr := parseEmailCopyResponse(raw, strings.TrimSpace(promptVars.stage) == "")
 	if perr != nil {
 		slog.WarnContext(ctx, "email copy generation: could not parse model response",
 			"project_id", p.ProjectID, "brief_id", p.BriefID, "error", perr)
