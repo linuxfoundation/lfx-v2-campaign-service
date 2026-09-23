@@ -133,3 +133,34 @@ func TestGetEmailSendListsAcceptsAnEmptyToObject(t *testing.T) {
 		t.Errorf("want an empty selection, got include=%v exclude=%v", got.Include, got.Exclude)
 	}
 }
+
+// A numeric `publishDate` must not fail the whole read.
+//
+// This is the AUTHORITATIVE send date — the one the last-sent ranking re-sorts on after the
+// fan-out, and the one its future-date gate tests. Decoded into a plain string field, a bare
+// epoch number fails with "cannot unmarshal number into Go struct field ... of type string",
+// and that error is returned for EVERY candidate row: each one is then marked
+// ListsUnavailable, the authoritative gate never runs, and an email merely BOOKED for next
+// month is reported as a past send. So the shape is tolerated here exactly as it is on the
+// list rows.
+func TestGetEmailSendListsAcceptsANumericPublishDate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"x","publishDate":1777629600000,"to":{}}`)
+	}))
+	defer server.Close()
+
+	c := NewClient(Credentials{PrivateAppToken: "t"}, AccountConfig{PortalID: "8112310"}, WithBaseURL(server.URL))
+
+	got, err := c.GetEmailSendLists(context.Background(), "x")
+	if err != nil {
+		t.Fatalf("an epoch-millisecond publishDate must read cleanly: %v — a decode error here "+
+			"loses the selection AND the date for every row", err)
+	}
+	if got.PublishDate != "1777629600000" {
+		t.Fatalf("PublishDate = %q, want the raw epoch text preserved for ParseEmailTime", got.PublishDate)
+	}
+	if ParseEmailTime(got.PublishDate).IsZero() {
+		t.Error("the preserved text must parse, or the ranking still has no date to sort on")
+	}
+}

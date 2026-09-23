@@ -47,9 +47,53 @@ type Email struct {
 	// "" means UNKNOWN, never the zero time: a portal that ignores includedProperties
 	// leaves every row blank, and reading that as 1970 would sort real sends behind
 	// nothing at all. Callers must treat blank as "no date reported" and rank it LAST.
-	PublishDate string `json:"publishDate"`
+	//
+	// The TYPE is EmailTime, not string, because the wire shape is not settled --
+	// see EmailTime for why a plain string field here would be a decode hazard for
+	// every caller of the shared walk rather than merely a blank date.
+	PublishDate EmailTime `json:"publishDate"`
 	// AppURL is a human-facing edit link (built client-side, never from the API).
 	AppURL string `json:"-"`
+}
+
+// EmailTime is a HubSpot marketing-email timestamp as it arrived on the wire, held as
+// text and interpreted by ParseEmailTime. Empty means NO DATE REPORTED.
+//
+// It exists because the JSON shape is not settled: these timestamps come back QUOTED
+// (RFC 3339) on the shapes we have seen, and HubSpot renders date properties elsewhere as
+// a bare epoch-millis NUMBER. A plain `string` field cannot receive the numeric spelling
+// -- encoding/json fails with "cannot unmarshal number into Go struct field ... of type
+// string" -- and because walkEmails decodes a whole page in ONE json.Unmarshal and
+// returns on ANY error, a single numeric value would fail the ENTIRE page. SearchEmails
+// shares that walk, so the blast radius includes the template picker: a property that is
+// only an optimization for last-sent would take a working endpoint down.
+//
+// Accepting both spellings is therefore not tolerance for its own sake. It keeps an
+// unsettled upstream detail from turning a projected convenience into an outage.
+type EmailTime string
+
+// UnmarshalJSON accepts a JSON string, a JSON number or null, keeping the raw text for
+// ParseEmailTime to interpret. Any other shape is a real error and is reported as one.
+func (t *EmailTime) UnmarshalJSON(b []byte) error {
+	switch raw := strings.TrimSpace(string(b)); {
+	case raw == "" || raw == "null":
+		*t = ""
+	case raw[0] == '"':
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		*t = EmailTime(s)
+	default:
+		// A bare number: carry the digits through as text, which ParseEmailTime reads as
+		// epoch milliseconds.
+		var n json.Number
+		if err := json.Unmarshal(b, &n); err != nil {
+			return err
+		}
+		*t = EmailTime(n)
+	}
+	return nil
 }
 
 // ParseEmailTime parses a HubSpot marketing-email timestamp, returning the ZERO time
@@ -57,8 +101,10 @@ type Email struct {
 //
 // RFC3339Nano parses BOTH plain and subsecond timestamps (HubSpot sends millisecond
 // `.000Z` values); plain RFC3339 would fail on those and treat a valid timestamp as the
-// zero time, corrupting any order built on it. An all-digit value is accepted as epoch
-// MILLISECONDS, which is how some marketing-email shapes render a date.
+// zero time, corrupting any order built on it. A POSITIVE all-digit value is accepted as
+// epoch MILLISECONDS, which is how some marketing-email shapes render a date; `0` and
+// negatives are read as UNKNOWN, because `0` is the ordinary "unset" spelling for such a
+// field and time.UnixMilli(0) is a real instant whose IsZero() is false.
 //
 // The zero return is deliberately ambiguous between "absent" and "malformed": both mean
 // the same thing to a caller, which is that no date was established. Callers decide what
@@ -71,14 +117,22 @@ func ParseEmailTime(s string) time.Time {
 	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 		return t
 	}
-	if ms, err := strconv.ParseInt(s, 10, 64); err == nil {
+	// A NON-POSITIVE epoch value is unknown, not 1970. `0` is the ordinary "unset"
+	// spelling for an epoch-millis field, and time.UnixMilli(0) is a perfectly valid
+	// instant whose IsZero() is FALSE -- so admitting it would rank a dateless row
+	// above every row whose date the portal honestly did not report, and render
+	// sent_at as "1970-01-01T00:00:00Z". That is the one outcome the doc above
+	// promises cannot happen.
+	if ms, err := strconv.ParseInt(s, 10, 64); err == nil && ms > 0 {
 		return time.UnixMilli(ms).UTC()
 	}
 	return time.Time{}
 }
 
 // sortEmailsByUpdatedDesc orders emails most-recently-updated first, in place. The
-// updatedAt values are PARSED as RFC3339 timestamps before comparing — a raw lexical
+// updatedAt values go through ParseEmailTime, which reads RFC 3339 (including subsecond)
+// AND positive epoch millis, so an all-digit updatedAt sorts as a real instant rather
+// than as the zero time. They are PARSED rather than compared as text — a raw lexical
 // compare is wrong because equivalent instants can carry different offsets and optional
 // fractional seconds (e.g. `2026-01-01T00:30:00+01:00` is OLDER than
 // `2026-01-01T00:00:00Z` but sorts lexically after it). A missing/malformed timestamp is
@@ -191,9 +245,9 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		// returns true for everything: the bounds differ between the two cases
 		// (maxUnfilteredEmails vs maxFilteredScan), and the walk tells them apart by
 		// whether a filter was supplied at all.
-		return c.walkEmails(ctx, nil)
+		return c.walkEmails(ctx, "SearchEmails", nil)
 	}
-	return c.walkEmails(ctx, func(e Email) bool {
+	return c.walkEmails(ctx, "SearchEmails", func(e Email) bool {
 		// Match the query in name OR subject INDEPENDENTLY. Concatenating them and
 		// searching the joined string would also match a query that spans the field
 		// boundary (name "Sale", subject "Invite", query "e i") -- a false positive.
@@ -216,7 +270,7 @@ type EmailFilter func(Email) bool
 // or subject" therefore gains nothing from calling SearchEmails once per term: every term
 // re-reads the SAME pages. One walk with the caller's own predicate costs one walk.
 func (c *Client) SearchEmailsMatching(ctx context.Context, accept EmailFilter) ([]Email, error) {
-	return c.walkEmails(ctx, accept)
+	return c.walkEmails(ctx, "SearchEmailsMatching", accept)
 }
 
 // walkEmails is the paginated marketing-email walk both search entrypoints share.
@@ -224,7 +278,12 @@ func (c *Client) SearchEmailsMatching(ctx context.Context, accept EmailFilter) (
 // A nil accept means UNFILTERED: every row is collected and the maxUnfilteredEmails bound
 // applies. A non-nil one means FILTERED, bounded instead by maxFilteredScan/maxFilteredPages,
 // with the ErrSearchIncomplete contract on a bound reached having accepted nothing.
-func (c *Client) walkEmails(ctx context.Context, accept EmailFilter) ([]Email, error) {
+// `caller` names the entrypoint in the walk's diagnostics. Both a scan-bound warning and a
+// cursor refusal now have two possible origins with very different consequences -- the
+// template picker and the last-sent listing -- and the stricter last-sent predicate makes
+// the bound MORE likely to be reached, so a line that cannot say which endpoint produced it
+// is the one piece of attribution an operator needs and cannot recover.
+func (c *Client) walkEmails(ctx context.Context, caller string, accept EmailFilter) ([]Email, error) {
 	// Whether a filter was supplied, not whether it matches anything, is what selects
 	// between the two bounds below.
 	filtered := accept != nil
@@ -302,7 +361,7 @@ func (c *Client) walkEmails(ctx context.Context, accept EmailFilter) ([]Email, e
 		enoughScanned := filtered && (scanned >= maxFilteredScan || page+1 >= maxFilteredPages)
 		if enoughScanned && !lastPage {
 			slog.WarnContext(ctx, "hubspot email search stopped at its scan bound; results may be incomplete",
-				"scanned", scanned, "pages", page+1, "matched", len(out))
+				"caller", caller, "scanned", scanned, "pages", page+1, "matched", len(out))
 
 			// ZERO matches at the bound is a FALSE ABSENCE, and must not be returned as one.
 			//
@@ -348,11 +407,11 @@ func (c *Client) walkEmails(ctx context.Context, accept EmailFilter) ([]Email, e
 		// otherwise re-fetch the same page every iteration, duplicating results until the
 		// page cap. Refuse to loop on it -- the raw-to-raw compare is exact.
 		if next == after {
-			return nil, fmt.Errorf("hubspot: SearchEmails cursor did not advance (repeated after token)")
+			return nil, fmt.Errorf("hubspot: %s marketing-email walk cursor did not advance (repeated after token)", caller)
 		}
 		after = next
 	}
-	return nil, fmt.Errorf("hubspot: SearchEmails exceeded %d pages; refusing to page unbounded", maxListPages)
+	return nil, fmt.Errorf("hubspot: %s exceeded %d pages; refusing to page unbounded", caller, maxListPages)
 }
 
 // GetEmail fetches one marketing email by id. Read-only (idempotent).

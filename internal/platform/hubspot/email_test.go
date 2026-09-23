@@ -15,8 +15,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // decodeBody reads a request JSON body into a map.
@@ -195,11 +197,17 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 	// Order is guaranteed CLIENT-SIDE regardless of server order. The request sends
 	// `sort=-updatedAt` (a valid hint) and repeated `includedProperties` to restrict the
 	// returned fields so full email content doesn't blow the response cap at limit=100.
+	// mu guards the handoff: the handler runs on the server's goroutine and every
+	// assertion below reads what it captured, so the two need a real synchronization
+	// edge rather than the request/response round trip that merely looks like one.
+	var mu sync.Mutex
 	var gotSort string
 	var gotProps []string
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		gotSort = r.URL.Query().Get("sort")
 		gotProps = r.URL.Query()["includedProperties"]
+		mu.Unlock()
 		// Intentionally returned oldest-first to prove the client re-orders.
 		// `state` is on each row so the decode is pinned end to end: requesting the property
 		// and mapping it are separate failures, and only asserting the decoded value catches
@@ -214,6 +222,8 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchEmails: %v", err)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if gotSort != "-updatedAt" {
 		t.Errorf("SearchEmails should send sort=-updatedAt, got %q", gotSort)
 	}
@@ -1141,7 +1151,7 @@ func TestSearchEmailsMatching_AppliesTheCallersPredicate(t *testing.T) {
 	var sawURL, sawSubject, sawDate string
 	got, err := c.SearchEmailsMatching(context.Background(), func(e Email) bool {
 		if e.ID == "1" {
-			sawURL, sawSubject, sawDate = e.AppURL, e.Subject, e.PublishDate
+			sawURL, sawSubject, sawDate = e.AppURL, e.Subject, string(e.PublishDate)
 		}
 		return e.State == "PUBLISHED"
 	})
@@ -1167,13 +1177,16 @@ func TestSearchEmailsMatching_AppliesTheCallersPredicate(t *testing.T) {
 // an empty slice with no error there claims the portal authoritatively holds no such email.
 // The caller acts on that absence by telling an operator the event has never been emailed.
 func TestSearchEmailsMatching_BoundWithNoAcceptedRowIsIncomplete(t *testing.T) {
-	pages := 0
+	// atomic, not a plain int: httptest runs each handler on its own goroutine, and the
+	// bound assertion below reads this from the test goroutine. `make test` runs -race, so
+	// an unsynchronised handoff is a detected failure rather than a theoretical one.
+	var pages atomic.Int64
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		pages++
+		n := pages.Add(1)
 		// Always another page, never an accepted row. The cursor must ADVANCE or the walk
 		// ends on the non-advancing-cursor check and the test passes vacuously.
 		_, _ = fmt.Fprintf(w, `{"results":[{"id":"%d","name":"unrelated","subject":"z"}],`+
-			`"paging":{"next":{"after":"CUR%d"}}}`, pages, pages)
+			`"paging":{"next":{"after":"CUR%d"}}}`, n, n)
 	})
 
 	got, err := c.SearchEmailsMatching(context.Background(), func(Email) bool { return false })
@@ -1184,8 +1197,8 @@ func TestSearchEmailsMatching_BoundWithNoAcceptedRowIsIncomplete(t *testing.T) {
 	if got != nil {
 		t.Fatalf("a truncated walk must return no rows alongside its error, got %d", len(got))
 	}
-	if pages > maxFilteredPages {
-		t.Errorf("walked %d pages; a caller's predicate must not lift the scan bound (%d)", pages, maxFilteredPages)
+	if walked := pages.Load(); walked > maxFilteredPages {
+		t.Errorf("walked %d pages; a caller's predicate must not lift the scan bound (%d)", walked, maxFilteredPages)
 	}
 }
 
@@ -1193,15 +1206,15 @@ func TestSearchEmailsMatching_BoundWithNoAcceptedRowIsIncomplete(t *testing.T) {
 // that contract: with rows in hand the bound is a partial answer rather than a false one,
 // so the caller gets what was found instead of a failure it cannot act on.
 func TestSearchEmailsMatching_OneAcceptedRowIsAPartialAnswerNotAFailure(t *testing.T) {
-	pages := 0
+	var pages atomic.Int64
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		pages++
+		n := pages.Add(1)
 		name := "unrelated"
-		if pages == 1 {
+		if n == 1 {
 			name = "KubeCon Invite"
 		}
 		_, _ = fmt.Fprintf(w, `{"results":[{"id":"%d","name":"%s","subject":"z"}],`+
-			`"paging":{"next":{"after":"CUR%d"}}}`, pages, name, pages)
+			`"paging":{"next":{"after":"CUR%d"}}}`, n, name, n)
 	})
 
 	got, err := c.SearchEmailsMatching(context.Background(), func(e Email) bool {
@@ -1245,9 +1258,14 @@ func TestSearchEmailsMatching_ANilFilterIsTheUnfilteredScreen(t *testing.T) {
 // declared on Email decodes to the same empty string. Either way the last-sent ranking
 // silently falls back to "no date reported" for every row in the portal.
 func TestSearchEmails_ProjectsPublishDateAndDecodesIt(t *testing.T) {
+	// Guarded for the same reason as TestSearchEmails_SortsMostRecentlyUpdatedFirst: the
+	// capture crosses goroutines and an assertion depends on it.
+	var mu sync.Mutex
 	var gotProps []string
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		gotProps = r.URL.Query()["includedProperties"]
+		mu.Unlock()
 		_, _ = io.WriteString(w, `{"results":[
 			{"id":"1","name":"KubeCon Invite","subject":"Join us","state":"PUBLISHED",
 			 "updatedAt":"2026-06-01T00:00:00Z","publishDate":"2026-05-01T10:00:00Z"}
@@ -1258,6 +1276,8 @@ func TestSearchEmails_ProjectsPublishDateAndDecodesIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchEmails: %v", err)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if !slices.Contains(gotProps, "publishDate") {
 		t.Fatalf("includedProperties = %v, want \"publishDate\"", gotProps)
 	}
@@ -1267,7 +1287,7 @@ func TestSearchEmails_ProjectsPublishDateAndDecodesIt(t *testing.T) {
 	}
 	// The date is distinct from updatedAt on this row, which is the whole point: an email
 	// edited in June that went out in May is a MAY send.
-	if got[0].UpdatedAt == got[0].PublishDate {
+	if got[0].UpdatedAt == string(got[0].PublishDate) {
 		t.Error("the fixture must keep the edit and the send date apart, or it cannot tell them apart")
 	}
 }
@@ -1288,7 +1308,12 @@ func TestParseEmailTime_ReadsBothShapesAndRefusesTheRest(t *testing.T) {
 	if frac := ParseEmailTime(" 2026-05-01T10:00:00.250Z "); frac.IsZero() {
 		t.Error("fractional seconds and surrounding whitespace must still parse")
 	}
-	for _, bad := range []string{"", "   ", "not-a-date", "2026-05-01"} {
+	// "0" and "-1" are epoch-shaped and would parse, which is exactly why they are here.
+	// time.UnixMilli(0).IsZero() is FALSE, so admitting 0 -- the ordinary "unset" spelling
+	// for an epoch-millis field -- would rank a dateless row above every honestly-undated
+	// one and render sent_at as 1970-01-01T00:00:00Z, the outcome this parser exists to
+	// prevent. A negative value is the same claim about a pre-1970 send nobody made.
+	for _, bad := range []string{"", "   ", "not-a-date", "2026-05-01", "0", "-1"} {
 		if got := ParseEmailTime(bad); !got.IsZero() {
 			t.Errorf("ParseEmailTime(%q) = %v, want the zero time so the caller can treat it as UNKNOWN", bad, got)
 		}
@@ -1320,5 +1345,52 @@ func TestCreateABTestVariant_WarnsOnAnUnexpectedState(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "unexpected A/B variant state") {
 		t.Errorf("no warning for a variant HubSpot did not create as an A/B variant:\n%s", buf.String())
+	}
+}
+
+// TestEmailTime_DecodesEveryShapeHubSpotSendsForADate pins why publishDate is EmailTime and
+// not a string. walkEmails decodes a whole PAGE in one json.Unmarshal and returns on any
+// error, and SearchEmails shares that walk -- so a single row whose date arrived as a bare
+// number would fail the entire page and take the template picker down with it, not merely
+// leave one date blank. ParseEmailTime already reads epoch millis, which is the shape a
+// plain string field could never receive.
+func TestEmailTime_DecodesEveryShapeHubSpotSendsForADate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"an ISO 8601 string", `{"publishDate":"2026-05-01T10:00:00Z"}`, "2026-05-01T10:00:00Z"},
+		{"epoch milliseconds as a number", `{"publishDate":1777629600000}`, "1777629600000"},
+		{"an explicit null", `{"publishDate":null}`, ""},
+		{"the field absent entirely", `{"id":"x"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got Email
+			if err := json.Unmarshal([]byte(tc.body), &got); err != nil {
+				t.Fatalf("decode: %v; one undecodable date fails the whole PAGE, not one row", err)
+			}
+			if string(got.PublishDate) != tc.want {
+				t.Errorf("PublishDate = %q, want %q", got.PublishDate, tc.want)
+			}
+		})
+	}
+
+	// The raw text is carried through rather than parsed on decode, so ParseEmailTime stays
+	// the single place a date shape is interpreted.
+	var numeric Email
+	if err := json.Unmarshal([]byte(`{"publishDate":1777629600000}`), &numeric); err != nil {
+		t.Fatalf("decode epoch millis: %v", err)
+	}
+	if got := ParseEmailTime(string(numeric.PublishDate)).UTC().Format(time.RFC3339); got != "2026-05-01T10:00:00Z" {
+		t.Errorf("ParseEmailTime = %q; epoch millis decoded but never became a time, so the field "+
+			"the listing orders by read as unknown", got)
+	}
+
+	// A shape that is neither is a REAL error and must say so. Silently blanking it would
+	// hide a wire change behind an endpoint that merely looks empty.
+	var bad Email
+	if err := json.Unmarshal([]byte(`{"publishDate":{"iso":"2026-05-01"}}`), &bad); err == nil {
+		t.Error("an object decoded as a date without complaint; a wire change must not read as a blank")
 	}
 }

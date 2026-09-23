@@ -60,8 +60,13 @@ func (c *Client) GetEmailSendLists(ctx context.Context, emailID string) (*EmailS
 		return nil, err
 	}
 	var resp struct {
-		ID          string `json:"id"`
-		PublishDate string `json:"publishDate"`
+		ID string `json:"id"`
+		// EmailTime, not string, for the reason Email.PublishDate carries in full: the wire
+		// shape of this field is not settled, and a bare epoch number decodes into a string
+		// field as an error. Here that error would fail the WHOLE read for every candidate
+		// row, marking each one ListsUnavailable — which silently skips the authoritative
+		// future-date gate below, restoring the booked-send defect this change exists to fix.
+		PublishDate EmailTime `json:"publishDate"`
 		// A POINTER, so an absent `to` is distinguishable from one that selected nothing.
 		// As a value struct it decoded to a zero value, and a truncated 2xx such as
 		// `{"id":"123"}` returned a successful email with no include or suppression lists —
@@ -82,7 +87,7 @@ func (c *Client) GetEmailSendLists(ctx context.Context, emailID string) (*EmailS
 	if resp.To == nil {
 		return nil, fmt.Errorf("hubspot: GetEmailSendLists(%s) returned a 2xx with no `to` object (malformed response)", emailID)
 	}
-	out := &EmailSendLists{PublishDate: strings.TrimSpace(resp.PublishDate)}
+	out := &EmailSendLists{PublishDate: strings.TrimSpace(string(resp.PublishDate))}
 	// Each selection is REPORTED AS COMPLETE to the caller, who reads it as the audience a
 	// previous send targeted. A blank element (encoding/json accepts `[1,null,3]` into
 	// []json.Number with an empty middle value) would silently shorten that audience by one

@@ -142,11 +142,25 @@ func StripYear(term string) string {
 //
 // Kept deliberately small, in the same shape as stopwords and suppressionNameHints. A
 // token belongs here only when it recurs across DIFFERENT events in the portfolio.
+//
+// Membership in this set is the WHOLE definition of "distinctive", and the second row is
+// what that costs if it is read as a list of event-format words. "Open Source Summit"
+// leaves {open, source} as distinctive, one of which admits alone -- so "Registration
+// Open", "Open Enrollment for Kubernetes Training" and "Source Code Newsletter" were all
+// returned as precedent for it, and each one, being a non-brand match, also DELETED the
+// brand fallback rows that were the honest answer. They recur across LF events exactly as
+// the rule above requires, so they belong here; they are listed apart only because nothing
+// about them looks like an event format.
+//
+// Brand words are deliberately NOT here even when they recur. Subtracting "linux" would
+// empty the fallback tier for every Linux Foundation event, and the fallback is what
+// answers a renamed or first-time edition.
 var genericEventWords = map[string]struct{}{
 	"summit": {}, "conference": {}, "con": {}, "forum": {}, "expo": {}, "festival": {},
 	"world": {}, "international": {}, "annual": {}, "virtual": {}, "online": {},
 	"day": {}, "days": {}, "north": {}, "america": {}, "europe": {}, "asia": {},
 	"emea": {}, "apac": {}, "event": {}, "events": {}, "series": {},
+	"open": {}, "source": {}, "cloud": {}, "native": {}, "tech": {},
 }
 
 // LastSentTerms is the token evidence a last-sent candidate is judged against.
@@ -164,6 +178,17 @@ type LastSentTerms struct {
 	// Brand tokens. A brand-only hit is a FALLBACK for a renamed or first-time event,
 	// never a match on the event itself -- the caller demotes it accordingly.
 	Brand map[string]struct{}
+}
+
+// IsEmpty reports that no tier carries a single token, so there is nothing to match on.
+//
+// It is reachable from ordinary input: the design constrains event_name only with
+// MinLength(1), and brand_short is optional, so "2026" or "NA EU" year-strips and
+// token-filters down to nothing. A caller must treat that as "no evidence" rather than
+// searching -- an empty rule matches no row, which a bounded walk reports as an
+// unestablished absence rather than an empty one.
+func (t LastSentTerms) IsEmpty() bool {
+	return len(t.Event) == 0 && len(t.Generic) == 0 && len(t.Brand) == 0
 }
 
 // NewLastSentTerms splits an event name into its distinctive and generic tokens, and
@@ -193,6 +218,15 @@ func NewLastSentTerms(eventName, brandShort string) LastSentTerms {
 	for token := range out.Generic {
 		delete(out.Brand, token)
 	}
+	// And a GENERIC token is no more admissible for arriving via the brand. The brand
+	// tier admits on ONE token, so a brand_short like "LF Summit Series" would make
+	// every portfolio email carrying "summit" a brand-only candidate -- offered as
+	// precedent precisely when the event itself matched nothing and the evidence is
+	// weakest. Subtracting the generic set here is what keeps "Summit Recap" out of
+	// the fallback tier as well as out of the event tier.
+	for token := range genericEventWords {
+		delete(out.Brand, token)
+	}
 	return out
 }
 
@@ -205,6 +239,15 @@ type LastSentMatch struct {
 	Matched bool
 	// BrandOnly reports that nothing in the EVENT name matched and only the brand did.
 	BrandOnly bool
+	// Fallback reports that no DISTINCTIVE token matched, so the row is admissible only
+	// while nothing better exists. It covers the brand tier AND a generic-only admission,
+	// which is the case BrandOnly alone missed: an event name made ENTIRELY of portfolio
+	// words ("Open Source Summit") has an empty distinctive tier, so every hit on it comes
+	// through the Overlap>=2 arm -- and reported as a full event match, such a row counted
+	// as evidence the event was found and DELETED the brand rows that were the honest
+	// answer. Widening genericEventWords does not fix that; it moves more event names into
+	// exactly this state, which is why the demotion has to be on the tier, not the list.
+	Fallback bool
 }
 
 // MatchLastSent classifies a candidate marketing email against an event's terms.
@@ -235,9 +278,15 @@ func MatchLastSent(name, subject string, t LastSentTerms) LastSentMatch {
 	}
 
 	m := LastSentMatch{Overlap: distinctive + generic}
-	switch {
-	case distinctive >= 1, m.Overlap >= 2:
+	if distinctive >= 1 {
 		m.Matched = true
+		return m
+	}
+	if m.Overlap >= 2 {
+		// Two generic tokens are specific enough to ADMIT -- "Summit Europe" is not a
+		// coincidence -- but not to outrank a distinctive hit, and not to stand as proof
+		// the event was found.
+		m.Matched, m.Fallback = true, true
 		return m
 	}
 
@@ -245,23 +294,9 @@ func MatchLastSent(name, subject string, t LastSentTerms) LastSentMatch {
 	// AS a last resort so the caller can drop it when the event itself matched elsewhere.
 	for token := range t.Brand {
 		if _, ok := words[token]; ok {
-			m.Matched, m.BrandOnly = true, true
+			m.Matched, m.BrandOnly, m.Fallback = true, true, true
 			return m
 		}
 	}
 	return m
-}
-
-// KeywordOverlap is how many of the event's content words a name carries — the
-// only ranking signal available for a marketing email, whose record says nothing
-// else about which event it belonged to.
-func KeywordOverlap(name string, keywords map[string]struct{}) int {
-	words := EventKeywords(name)
-	overlap := 0
-	for keyword := range keywords {
-		if _, ok := words[keyword]; ok {
-			overlap++
-		}
-	}
-	return overlap
 }

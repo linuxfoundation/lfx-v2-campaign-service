@@ -59,9 +59,63 @@ func TestMatchLastSent_AGenericWordAloneIsNotAMatch(t *testing.T) {
 		"a generic token still RANKS — it is only barred from admitting a match by itself")
 
 	assert.True(t, MatchLastSent("Open Source Summit EU", "", oss).Matched,
-		"two distinctive tokens are an unambiguous match")
+		"three overlapping tokens are an unambiguous match however each one is tiered")
 	assert.True(t, MatchLastSent("Summit Europe agenda", "", oss).Matched,
 		"two generic tokens together are specific enough, which is why Overlap>=2 also admits")
+}
+
+// TestMatchLastSent_AnOrdinaryEnglishWordInTheEventNameIsNotEvidence guards the tier that
+// decides the rule, rather than the rule itself. "Distinctive" means nothing more than
+// absent from genericEventWords, so an event whose name contains ordinary words —
+// "Open Source Summit" — used to leave {open, source} admitting on ONE hit apiece. Every
+// probe below came back as precedent for it.
+//
+// The damage does not stop at the wrong row. A false hit is a non-brand match, so it makes
+// the caller drop the brand fallback rows entirely: a weak but honest answer is replaced by
+// a confident wrong one, which is the opposite of what this panel is read for.
+func TestMatchLastSent_AnOrdinaryEnglishWordInTheEventNameIsNotEvidence(t *testing.T) {
+	oss := NewLastSentTerms("Open Source Summit Europe 2026", "LinuxFoundation")
+
+	for _, name := range []string{
+		"Registration Open",
+		"Open Enrollment for Kubernetes Training",
+		"Source Code Newsletter",
+	} {
+		m := MatchLastSent(name, "", oss)
+		assert.False(t, m.Matched,
+			"%q shares one ordinary word with the event name, which is not evidence it belongs to it", name)
+		assert.Equal(t, 1, m.Overlap, "%q must still RANK on the shared token — it is only barred from admitting", name)
+	}
+
+	assert.True(t, MatchLastSent("Open Source Summit NA", "", oss).Matched,
+		"the event's own sends must survive: several ordinary words together are specific again")
+
+	// The motivating case must not be collateral damage. A distinctive token still admits on
+	// its own, which is the whole reason admission is not a flat two-token minimum.
+	kc := NewLastSentTerms("KubeCon + CloudNativeCon North America 2026", "CNCF")
+	assert.True(t, MatchLastSent("KubeCon NA 2026 - Registration Open", "", kc).Matched,
+		"one DISTINCTIVE token is still a match, even though the event name has two")
+}
+
+// TestMatchLastSent_AGenericWordIsNoMoreAdmissibleViaTheBrand closes the same false positive
+// on the tier that was still open to it. The brand tier admits on ONE token and reports the
+// row as a fallback, so a brand_short carrying a generic word — "Linux Summit Series" — would
+// make every portfolio email containing "summit" a brand-only candidate. That is offered
+// precisely when the event itself matched nothing and the evidence is at its weakest, which
+// is why NewLastSentTerms subtracts the generic set from Brand as well as from Event.
+func TestMatchLastSent_AGenericWordIsNoMoreAdmissibleViaTheBrand(t *testing.T) {
+	terms := NewLastSentTerms("KubeCon North America 2026", "Linux Summit Series")
+
+	assert.NotContains(t, terms.Brand, "summit",
+		"a generic token in brand_short must not survive into the fallback tier")
+	assert.NotContains(t, terms.Brand, "series", "nor any other generic token")
+	assert.Contains(t, terms.Brand, "linux",
+		"the brand's own distinctive tokens must still be there, or the fallback stops working")
+
+	assert.False(t, MatchLastSent("Summit Recap", "", terms).Matched,
+		`"summit" reaching the rule through brand_short is the same false positive as through the event name`)
+	assert.True(t, MatchLastSent("Linux Newsletter", "", terms).BrandOnly,
+		"the brand fallback itself must be unharmed by the subtraction")
 }
 
 // TestMatchLastSent_ABrandOnlyHitIsFlaggedAsFallback pins that the brand is reported AS a

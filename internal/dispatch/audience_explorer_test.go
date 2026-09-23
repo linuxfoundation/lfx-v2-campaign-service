@@ -658,13 +658,25 @@ func TestLastSent_MarksARowWhoseListsCouldNotBeRead(t *testing.T) {
 }
 
 // TestIsPublished_NegativeStatesAreNotSends pins that a withdrawn or unsent email cannot
-// become precedent. The check tolerates HubSpot's spelling variants across API versions, but
-// by PREFIX: substring matching inverted the answer, because "UNPUBLISHED" contains
-// "PUBLISHED" and "NOT_SENT" contains "SENT". An operator reads the last-sent list as "what
-// we sent last time" and builds the next audience from it.
+// become precedent. The check is an explicit ALLOWLIST, and both cheaper rules it replaced
+// were wrong in opposite directions: substring matching inverted the answer, because
+// "UNPUBLISHED" contains "PUBLISHED" and "NOT_SENT" contains "SENT", and the prefix test
+// that fixed those admitted every AUTOMATED_* draft. An operator reads the last-sent list as
+// "what we sent last time" and builds the next audience from it.
 func TestIsPublished_NegativeStatesAreNotSends(t *testing.T) {
 	for _, state := range []string{"PUBLISHED", "SENT", "AUTOMATED", "published", " SENT "} {
 		assert.True(t, isPublished(state), "%q is a real send and must count", state)
+	}
+	// The A/B and form-automation spellings of those same live states. An allowlist has to
+	// name each one, and the prefix rule admitted them for free -- so replacing it with a
+	// list that omitted them would have reported "no prior sends" for every event whose last
+	// send was an A/B test. LOSER_AB counts: the losing variant still went out, and who it
+	// went to is exactly the precedent being looked for.
+	for _, state := range []string{
+		"PUBLISHED_AB", "PUBLISHED_OR_SCHEDULED_AB", "LOSER_AB", "AUTOMATED_AB", "AUTOMATED_FOR_FORM",
+	} {
+		assert.True(t, isPublished(state),
+			"%q is a completed send in an A/B or form automation, and omitting it empties the panel", state)
 	}
 	for _, state := range []string{"UNPUBLISHED", "NOT_SENT", "DRAFT", "SCHEDULED", ""} {
 		assert.False(t, isPublished(state), "%q is not a send and must not become precedent", state)
@@ -1204,4 +1216,95 @@ func TestLastSent_SearchesThePortalOnce(t *testing.T) {
 	assert.Equal(t, int64(1), listRequests.Load(),
 		"the marketing-email list was read more than once; every extra term re-walks identical "+
 			"pages because the query is never sent upstream")
+}
+
+// TestLastSent_AnAuthoritativeFutureDateDropsTheRow pins the second application of the
+// future gate, on the one input that makes it necessary: a portal that reports NO publishDate
+// on the list rows. The gate then sees a blank date on every candidate and excludes nothing,
+// so the only place a scheduled send can be caught is the authoritative date from the
+// send-list read -- and re-ordering on that date is not enough, because a booked send that
+// merely sorts last is still presented as precedent.
+func TestLastSent_AnAuthoritativeFutureDateDropsTheRow(t *testing.T) {
+	list := `{"results":[
+		{"id":"booked","name":"KubeCon Europe Invite","state":"PUBLISHED_OR_SCHEDULED",
+		 "updatedAt":"2026-09-01T00:00:00Z"},
+		{"id":"sent","name":"KubeCon Europe Recap","state":"PUBLISHED","updatedAt":"2026-08-01T00:00:00Z"}
+	]}`
+	x, _ := lastSentPortal(t, list, map[string]string{
+		"booked": "2026-12-01T09:00:00Z",
+		"sent":   "2026-02-01T09:00:00Z",
+	})
+	x.now = func() time.Time { return time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC) }
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 5)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"sent"}, sentIDs(rows),
+		"a send booked for December was reported as precedent in June, because the only date that "+
+			"revealed it arrived after the gate had already run")
+}
+
+// TestLastSent_TheShortlistIsWiderThanTheLimit pins that SELECTION does not depend on the
+// projected date arriving. With no publishDate on the list rows the sweep can only order
+// candidates by the walk's updatedAt, so truncating to `limit` BEFORE reading the
+// authoritative dates discards the newest send on the strength of an edit timestamp -- and
+// a row that has been cut cannot be recovered by re-sorting what is left.
+func TestLastSent_TheShortlistIsWiderThanTheLimit(t *testing.T) {
+	list := `{"results":[
+		{"id":"edited-last","name":"KubeCon Europe Invite","state":"PUBLISHED","updatedAt":"2026-09-01T00:00:00Z"},
+		{"id":"edited-mid","name":"KubeCon Europe Keynotes","state":"PUBLISHED","updatedAt":"2026-08-01T00:00:00Z"},
+		{"id":"sent-last","name":"KubeCon Europe Recap","state":"PUBLISHED","updatedAt":"2026-07-01T00:00:00Z"}
+	]}`
+	x, _ := lastSentPortal(t, list, map[string]string{
+		"edited-last": "2026-01-01T09:00:00Z",
+		"edited-mid":  "2026-02-01T09:00:00Z",
+		"sent-last":   "2026-05-01T09:00:00Z",
+	})
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 2)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"sent-last", "edited-mid"}, sentIDs(rows),
+		"the most recent send was truncated away by last-edit order before its send date was ever read")
+}
+
+// TestLastSent_ADegenerateEventNameIsAnEmptyHistoryNotASweep pins the short-circuit. Terms
+// are built by dropping years, stopwords and short tokens, so a name can reduce to NOTHING --
+// and an empty term set matches no row by design. Sweeping anyway walked to the scan bound
+// with zero matches, which the hubspot layer reports as ErrSearchIncomplete: 20 page GETs
+// spent to answer a 503 where the answer was already known before the first request.
+func TestLastSent_ADegenerateEventNameIsAnEmptyHistoryNotASweep(t *testing.T) {
+	x, listRequests := lastSentPortal(t, `{"results":[
+		{"id":"a","name":"KubeCon Europe Invite","state":"PUBLISHED","updatedAt":"2026-09-01T00:00:00Z"}
+	]}`, nil)
+
+	// "2026" is stripped as an edition and "of" is a stopword: no event, generic or brand
+	// token survives.
+	rows, err := x.LastSent(context.Background(), "proj-1", "2026 of", "", 5)
+
+	require.NoError(t, err, "no searchable terms is an honest empty history, not a recoverable failure")
+	assert.Empty(t, rows)
+	assert.Zero(t, listRequests.Load(),
+		"the portal was swept for terms that cannot match anything, and the bound it reached then read as a 503")
+}
+
+// TestLastSent_ADegenerateEventNameStillSweepsOnAUsableBrand pins the OTHER side of that
+// short-circuit, which the gate's name does not advertise. IsEmpty reads all three tiers,
+// and Brand is built from brand_short independently of the event name -- so the same "2026"
+// that empties the event tiers is not "nothing to search on" when a usable brand sits beside
+// it. Sweeping is the right answer there: a brand-only row is the same fallback a real event
+// name gets when nothing matches the event, and skipping it would silently discard a signal
+// the caller supplied.
+func TestLastSent_ADegenerateEventNameStillSweepsOnAUsableBrand(t *testing.T) {
+	x, listRequests := lastSentPortal(t, `{"results":[
+		{"id":"a","name":"CNCF Newsletter","state":"PUBLISHED","updatedAt":"2026-09-01T00:00:00Z","publishDate":"2026-09-01T00:00:00Z"}
+	]}`, map[string]string{"a": "2026-09-01T00:00:00Z"})
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "2026 of", "CNCF", 5)
+
+	require.NoError(t, err)
+	assert.NotZero(t, listRequests.Load(),
+		"a populated brand tier is evidence, and answering an empty history without looking discards it")
+	assert.Equal(t, []string{"a"}, sentIDs(rows),
+		"the brand fallback must still be able to answer, exactly as it does for a real event name that matched nothing")
 }
