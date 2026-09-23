@@ -2024,20 +2024,57 @@ Three smaller rules hang off the same reading of this panel as PRECEDENT for an 
 is about to build. `isPublished` is an explicit ALLOWLIST: substring matching inverted the answer
 ("UNPUBLISHED" contains "PUBLISHED"), and the prefix matching that fixed that admitted
 `AUTOMATED_DRAFT` and `AUTOMATED_SENDING` — a draft and an in-flight send counted as precedent. An
-unrecognised state is not a send. `sentInTheFuture` is the second half of that check, for
-`PUBLISHED_OR_SCHEDULED`, which covers a send that has gone out AND one merely booked; only a date
-the portal actually REPORTED can disqualify a row, so an absent date never excludes and cannot empty
-the endpoint on a portal that ignores `includedProperties`. A brand-only hit is a FALLBACK tier,
-dropped whenever an event match exists anywhere in the sweep — strictly stronger than the
+unrecognised state is not a send. The list has to name the A/B and form-automation spellings of the
+same live states — `PUBLISHED_AB`, `PUBLISHED_OR_SCHEDULED_AB`, `LOSER_AB`, `AUTOMATED_AB`,
+`AUTOMATED_FOR_FORM` — which the prefix rule admitted for free, because omitting them reports "no
+prior sends" for any event whose last send was an A/B test. `LOSER_AB` counts: the losing variant
+still went out, and who it went to is the precedent being looked for. `AUTOMATED_AB_VARIANT` is
+the one A/B spelling the prefix rule admitted that the allowlist deliberately DROPS, which is a
+split rather than an oversight: `AUTOMATED_AB` reads as a live A/B automation, the variant as one
+arm of it that may never have been the one that went out, and an unrecognised state omits a row
+rather than presenting an audience nobody approved. It is no more confirmed than the rest, and if
+the live enum shows it is a real send it belongs in the case list. The list is drawn from
+HubSpot's documented enum and is NOT yet confirmed against a live portal; `AUTOMATED_SENT` in
+particular could not be substantiated and is kept pending that check, since dropping it on a reading
+of the docs is the same guess in the other direction. `sentInTheFuture` is the second half of that
+check, for `PUBLISHED_OR_SCHEDULED` and its `_AB` spelling, which cover a send that has gone out AND
+one merely booked; only a date the portal actually REPORTED can disqualify a row, so an absent date
+never excludes and cannot empty the endpoint on a portal that ignores `includedProperties`. That
+asymmetry is why the gate runs a SECOND time on the authoritative date from the send-list read, and
+DROPS the row rather than merely reordering it: a blank projected date is exactly the case where the
+first pass cannot see a scheduled send, and a booked send that only sorts last is still presented
+as precedent. A brand-only hit is a FALLBACK tier, dropped whenever an event match exists
+anywhere in the sweep — strictly stronger than the
 break-on-first-matching-term it replaced, which only suppressed the brand when an EARLIER term had
 matched.
 
-The rows are re-sorted on the authoritative date AFTER the per-email fan-out, and that is what makes
-"most recently sent first" hold unconditionally: projecting `publishDate` onto the list rows buys
-correct SELECTION, and this sort buys correct ORDERING even on a portal that returns every projected
-date blank. A row whose selection read fails keeps its date — the date and the `to` selection are
-independent facts, and seeding `sent_at` only from the selection read meant one failing also unknew
-the other. `ErrSearchIncomplete` now propagates rather than being swallowed per term: with one walk
+The fan-out is TWO phases, and that is what keeps ordering correct on a portal that returns every
+projected date blank. Candidates are ordered by the projected date, trimmed to a shortlist of
+`limit + 12` capped at 22, and the authoritative date is read for each of those; the shortlist is then
+re-sorted on that date by the SAME comparator and trimmed to `limit`, and only the survivors pay the
+expensive `listBriefs` fan-out. Truncating to `limit` before reading any authoritative date — which
+is what this replaced — discarded the newest send on the strength of an edit timestamp, and no later
+sort can bring back a row already cut. The claim is therefore bounded rather than unconditional:
+"most recently sent first" holds for any portal whose most recent send is within the shortlist, and
+`maxSendDateReads` is the honest residue — a portal returning blank dates whose newest send sits
+past the shortlist in last-edit order can still be missed. The headroom is FIXED rather than
+proportional for that reason: `3*limit` capped at 12 gave 3x slack at `limit=3` and 1.2x at
+`limit=10`, spending the protection where it was least needed and withdrawing it at the top of the
+parameter range. Widening the bound costs one GET per row; widening `listBriefs` costs several. A
+row whose selection read fails keeps its date — the date and the `to` selection are independent
+facts, and seeding `sent_at` only from the selection read meant one failing also unknew the other. A request that yields no searchable terms AT ALL is answered before any request goes out: the design
+constrains `event_name` only with `MinLength(1)`, so a name that year-strips to nothing or whose every
+token is dropped as ≤2 characters empties the event's own two tiers. The gate is
+`LastSentTerms.IsEmpty` across all THREE tiers, so it fires only when `brand_short` is degenerate or
+absent as well — a degenerate name beside a usable brand still sweeps and can answer from the brand
+fallback, which is exactly what a real event name gets when nothing matches the event. Sweeping on
+genuinely empty terms matched no row, reached the scan bound and came back as `ErrSearchIncomplete` — 20 page GETs spent to answer a 503 where an
+honest empty list was already known. The state and future gates likewise moved OUT of the walk
+predicate and into the ranking loop, for the same reason in reverse: a predicate that rejects every
+row cannot distinguish "nothing matched this event" from "the sweep ran out of pages", so an event
+whose only emails were drafts returned a 503 instead of an empty list.
+
+`ErrSearchIncomplete` still propagates rather than being swallowed per term: with one walk
 there is no next term to fall through to, and "no prior sends" is the most misleading thing this
 endpoint can say, because an operator reads an empty panel as "this event has never been emailed".
 

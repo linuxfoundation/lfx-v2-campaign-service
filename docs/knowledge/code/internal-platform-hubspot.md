@@ -133,11 +133,32 @@ string from every row.
 was last EDITED, so the last-sent listing ranking on it read an ancient email touched last week
 as the most recent send. Projecting it puts the send date on the LIST rows, where it can
 influence WHICH rows are selected rather than only the handful already chosen. `Email.PublishDate`
-is a string and `""` means UNKNOWN, never the zero time -- a portal that ignores
+is an `EmailTime`, whose `""` means UNKNOWN and never the zero time — a portal that ignores
 `includedProperties` leaves every row blank, and reading that as 1970 would sort a real send
 behind nothing at all. `ParseEmailTime` (shared with `sortEmailsByUpdatedDesc`) reads RFC 3339
 and epoch millis and returns the zero time for anything else, so callers can tell unknown from
 old.
+
+**`EmailTime` is a decode HAZARD defused, not a convenience.** It is a `string` underneath, with
+an `UnmarshalJSON` that accepts a JSON string, a bare number or `null` and carries the raw text
+through for `ParseEmailTime` to interpret. The type matters because `walkEmails` decodes a whole
+PAGE in one `json.Unmarshal` and returns on ANY error, and `SearchEmails` shares that walk: a
+plain `string` field would fail the entire page — taking the connection-service template picker
+down with it — the first time one row's `publishDate` arrived as epoch millis rather than
+merely leaving that row's date blank. `ParseEmailTime` already reads epoch millis, which a
+`string` field can never receive, so the wire shape was being guarded against in one place and
+assumed in the other. A shape that is neither string, number nor null is still a real error and
+is reported as one. `Email.UpdatedAt` stays a plain `string` deliberately: it is consumed as a
+string by `internal/dispatch` and `internal/service`, and its quoted shape is proven in
+production.
+
+`GetEmailSendLists` decodes `publishDate` as `EmailTime` too, and that is the site where the
+hazard actually bites. It reads the SAME field from the SAME endpoint, but its value is the
+AUTHORITATIVE send date — what the last-sent ranking re-sorts on after the fan-out and what
+its second future-date gate tests. Left as a plain `string`, one numeric date would fail that
+read for every candidate row; each row would come back `ListsUnavailable`, the authoritative
+gate would never run, and an email merely BOOKED for next month would be reported as a past
+send. Defusing the shape on the list rows alone would have left exactly that path open.
 
 **`SetSendList` recipients (ILS-only):** a HubSpot email's recipient list goes in
 `contactIlsLists` (ILS list ids). HubSpot's ILS migration removed functional support
