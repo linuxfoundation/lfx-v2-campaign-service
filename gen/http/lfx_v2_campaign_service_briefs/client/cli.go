@@ -24,7 +24,7 @@ func BuildCreateBriefPayload(lfxV2CampaignServiceBriefsCreateBriefBody string, l
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsCreateBriefBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"brief\": {\n         \"copy\": \"Iste numquam optio possimus velit.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Accusantium voluptas ratione dignissimos esse et labore.\",\n         \"event_slug\": \"rn\",\n         \"keywords\": \"Cumque perspiciatis quam.\",\n         \"platforms\": [\n            \"Magnam cum veritatis mollitia vel velit.\",\n            \"Eum perferendis qui qui soluta repudiandae quae.\",\n            \"Necessitatibus tempore rem quo.\"\n         ],\n         \"program_type\": \"events\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Possimus ipsam perspiciatis enim id.\",\n         \"url\": \"Tempore est omnis iusto fugiat ad.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"brief\": {\n         \"copy\": \"Ut quas officiis mollitia ducimus sunt repellendus.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Debitis atque laboriosam unde facilis.\",\n         \"event_slug\": \"n\",\n         \"keywords\": \"Voluptatem optio.\",\n         \"platforms\": [\n            \"Odit illo ut ut.\",\n            \"Nam modi nostrum assumenda alias sed.\"\n         ],\n         \"program_type\": \"events\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Aliquam est autem vel eos minima.\",\n         \"url\": \"Et numquam voluptatem maiores ipsam dicta cum.\"\n      }\n   }'")
 		}
 		if body.Brief == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("brief", "body"))
@@ -161,7 +161,7 @@ func BuildUpdateBriefPayload(lfxV2CampaignServiceBriefsUpdateBriefBody string, l
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsUpdateBriefBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"brief\": {\n         \"copy\": \"Iste numquam optio possimus velit.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Accusantium voluptas ratione dignissimos esse et labore.\",\n         \"event_slug\": \"rn\",\n         \"keywords\": \"Cumque perspiciatis quam.\",\n         \"platforms\": [\n            \"Magnam cum veritatis mollitia vel velit.\",\n            \"Eum perferendis qui qui soluta repudiandae quae.\",\n            \"Necessitatibus tempore rem quo.\"\n         ],\n         \"program_type\": \"events\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Possimus ipsam perspiciatis enim id.\",\n         \"url\": \"Tempore est omnis iusto fugiat ad.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"brief\": {\n         \"copy\": \"Ut quas officiis mollitia ducimus sunt repellendus.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Debitis atque laboriosam unde facilis.\",\n         \"event_slug\": \"n\",\n         \"keywords\": \"Voluptatem optio.\",\n         \"platforms\": [\n            \"Odit illo ut ut.\",\n            \"Nam modi nostrum assumenda alias sed.\"\n         ],\n         \"program_type\": \"events\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Aliquam est autem vel eos minima.\",\n         \"url\": \"Et numquam voluptatem maiores ipsam dicta cum.\"\n      }\n   }'")
 		}
 		if body.Brief == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("brief", "body"))
@@ -323,7 +323,7 @@ func BuildUploadCreativeAssetPayload(lfxV2CampaignServiceBriefsUploadCreativeAss
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsUploadCreativeAssetBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"bytes\": \"aVZCT1J3MEtHZ29BQUFBTlNVaEVVZ0FBQUFFQUFBQUJDQUFBQUFDNnBLcmVBQUFBREVsRVFWUUlIV05nWUdBQUFBQUVBQUdiQTNvSkFBQUFBRWxGVGtTdVFtQ0M=\",\n      \"content_type\": \"image/png\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"bytes\": \"aVZCT1J3MEtHZ29BQUFBTlNVaEVVZ0FBQUFFQUFBQUJDQUFBQUFDNnBLcmVBQUFBREVsRVFWUUlIV05nWUdBQUFBQUVBQUdiQTNvSkFBQUFBRWxGVGtTdVFtQ0M=\",\n      \"content_type\": \"image/jpeg\"\n   }'")
 		}
 		if !(body.ContentType == "image/png" || body.ContentType == "image/jpeg") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", body.ContentType, []any{"image/png", "image/jpeg"}))
@@ -656,7 +656,7 @@ func BuildGetBriefMetricsPayload(lfxV2CampaignServiceBriefsGetBriefMetricsProjec
 
 // BuildGenerateEmailCopyPayload builds the payload for the
 // lfx-v2-campaign-service-briefs generate-email-copy endpoint from CLI flags.
-func BuildGenerateEmailCopyPayload(lfxV2CampaignServiceBriefsGenerateEmailCopyProjectID string, lfxV2CampaignServiceBriefsGenerateEmailCopyBriefID string, lfxV2CampaignServiceBriefsGenerateEmailCopyStage string, lfxV2CampaignServiceBriefsGenerateEmailCopyBearerToken string) (*lfxv2campaignservicebriefs.GenerateEmailCopyPayload, error) {
+func BuildGenerateEmailCopyPayload(lfxV2CampaignServiceBriefsGenerateEmailCopyProjectID string, lfxV2CampaignServiceBriefsGenerateEmailCopyBriefID string, lfxV2CampaignServiceBriefsGenerateEmailCopyStage string, lfxV2CampaignServiceBriefsGenerateEmailCopyVariant string, lfxV2CampaignServiceBriefsGenerateEmailCopyBearerToken string) (*lfxv2campaignservicebriefs.GenerateEmailCopyPayload, error) {
 	var err error
 	var projectID string
 	{
@@ -676,6 +676,12 @@ func BuildGenerateEmailCopyPayload(lfxV2CampaignServiceBriefsGenerateEmailCopyPr
 			stage = &lfxV2CampaignServiceBriefsGenerateEmailCopyStage
 		}
 	}
+	var variant *string
+	{
+		if lfxV2CampaignServiceBriefsGenerateEmailCopyVariant != "" {
+			variant = &lfxV2CampaignServiceBriefsGenerateEmailCopyVariant
+		}
+	}
 	var bearerToken *string
 	{
 		if lfxV2CampaignServiceBriefsGenerateEmailCopyBearerToken != "" {
@@ -686,6 +692,7 @@ func BuildGenerateEmailCopyPayload(lfxV2CampaignServiceBriefsGenerateEmailCopyPr
 	v.ProjectID = projectID
 	v.BriefID = briefID
 	v.Stage = stage
+	v.Variant = variant
 	v.BearerToken = bearerToken
 
 	return v, nil
@@ -699,7 +706,7 @@ func BuildUpdateCampaignPayload(lfxV2CampaignServiceBriefsUpdateCampaignBody str
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsUpdateCampaignBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"campaign\": {\n         \"campaign_name\": \"Dignissimos in tempore quo consequatur sint qui.\",\n         \"config\": \"Autem impedit.\",\n         \"status\": \"Illum expedita commodi in dolores nemo similique.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"campaign\": {\n         \"campaign_name\": \"Eligendi corporis tenetur delectus excepturi et.\",\n         \"config\": \"Libero sunt.\",\n         \"status\": \"Quia et consequuntur.\"\n      }\n   }'")
 		}
 		if body.Campaign == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("campaign", "body"))
@@ -963,6 +970,389 @@ func BuildGetJobPayload(lfxV2CampaignServiceBriefsGetJobProjectID string, lfxV2C
 	v := &lfxv2campaignservicebriefs.GetJobPayload{}
 	v.ProjectID = projectID
 	v.JobID = jobID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildStartEmailWizardPlanPayload builds the payload for the
+// lfx-v2-campaign-service-briefs start-email-wizard-plan endpoint from CLI
+// flags.
+func BuildStartEmailWizardPlanPayload(lfxV2CampaignServiceBriefsStartEmailWizardPlanBody string, lfxV2CampaignServiceBriefsStartEmailWizardPlanProjectID string, lfxV2CampaignServiceBriefsStartEmailWizardPlanBriefID string, lfxV2CampaignServiceBriefsStartEmailWizardPlanBearerToken string) (*lfxv2campaignservicebriefs.StartEmailWizardPlanPayload, error) {
+	var err error
+	var body StartEmailWizardPlanRequestBody
+	{
+		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsStartEmailWizardPlanBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"email_type\": \"Perferendis asperiores.\",\n      \"extra_context\": \"Ut reprehenderit ipsa.\",\n      \"is_transactional\": true,\n      \"url\": \"Quas odio.\"\n   }'")
+		}
+	}
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceBriefsStartEmailWizardPlanProjectID
+	}
+	var briefID string
+	{
+		briefID = lfxV2CampaignServiceBriefsStartEmailWizardPlanBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsStartEmailWizardPlanBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceBriefsStartEmailWizardPlanBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.StartEmailWizardPlanPayload{
+		URL:             body.URL,
+		ExtraContext:    body.ExtraContext,
+		EmailType:       body.EmailType,
+		IsTransactional: body.IsTransactional,
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildPlanEmailWizardPayload builds the payload for the
+// lfx-v2-campaign-service-briefs plan-email-wizard endpoint from CLI flags.
+func BuildPlanEmailWizardPayload(lfxV2CampaignServiceBriefsPlanEmailWizardBody string, lfxV2CampaignServiceBriefsPlanEmailWizardProjectID string, lfxV2CampaignServiceBriefsPlanEmailWizardBriefID string, lfxV2CampaignServiceBriefsPlanEmailWizardBearerToken string) (*lfxv2campaignservicebriefs.PlanEmailWizardPayload, error) {
+	var err error
+	var body PlanEmailWizardRequestBody
+	{
+		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsPlanEmailWizardBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"email_type\": \"Porro et fuga facere est qui vero.\",\n      \"extra_context\": \"Veniam doloremque dolores voluptatum aut mollitia aperiam.\",\n      \"is_transactional\": false,\n      \"session_id\": \"361474a2-47f8-4b99-b620-23a3b29fb6a0\",\n      \"url\": \"Tenetur deleniti molestias est earum.\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", body.SessionID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceBriefsPlanEmailWizardProjectID
+	}
+	var briefID string
+	{
+		briefID = lfxV2CampaignServiceBriefsPlanEmailWizardBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsPlanEmailWizardBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceBriefsPlanEmailWizardBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.PlanEmailWizardPayload{
+		SessionID:       body.SessionID,
+		URL:             body.URL,
+		ExtraContext:    body.ExtraContext,
+		EmailType:       body.EmailType,
+		IsTransactional: body.IsTransactional,
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildGenerateWizardContentPayload builds the payload for the
+// lfx-v2-campaign-service-briefs generate-wizard-content endpoint from CLI
+// flags.
+func BuildGenerateWizardContentPayload(lfxV2CampaignServiceBriefsGenerateWizardContentBody string, lfxV2CampaignServiceBriefsGenerateWizardContentProjectID string, lfxV2CampaignServiceBriefsGenerateWizardContentBriefID string, lfxV2CampaignServiceBriefsGenerateWizardContentBearerToken string) (*lfxv2campaignservicebriefs.GenerateWizardContentPayload, error) {
+	var err error
+	var body GenerateWizardContentRequestBody
+	{
+		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsGenerateWizardContentBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"change_request\": \"Sit dignissimos est.\",\n      \"session_id\": \"f61a3522-2a4d-4381-913f-197ab6acc446\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", body.SessionID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceBriefsGenerateWizardContentProjectID
+	}
+	var briefID string
+	{
+		briefID = lfxV2CampaignServiceBriefsGenerateWizardContentBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsGenerateWizardContentBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceBriefsGenerateWizardContentBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.GenerateWizardContentPayload{
+		SessionID:     body.SessionID,
+		ChangeRequest: body.ChangeRequest,
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildUpdateWizardSectionsPayload builds the payload for the
+// lfx-v2-campaign-service-briefs update-wizard-sections endpoint from CLI
+// flags.
+func BuildUpdateWizardSectionsPayload(lfxV2CampaignServiceBriefsUpdateWizardSectionsBody string, lfxV2CampaignServiceBriefsUpdateWizardSectionsProjectID string, lfxV2CampaignServiceBriefsUpdateWizardSectionsBriefID string, lfxV2CampaignServiceBriefsUpdateWizardSectionsBearerToken string) (*lfxv2campaignservicebriefs.UpdateWizardSectionsPayload, error) {
+	var err error
+	var body UpdateWizardSectionsRequestBody
+	{
+		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsUpdateWizardSectionsBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"sections\": [\n         \"Et ab aliquam voluptatem voluptatibus architecto sequi.\",\n         \"At dolore aut nemo rerum corrupti non.\"\n      ],\n      \"session_id\": \"2a80b60c-67c3-45bc-9994-b398e95d91e9\"\n   }'")
+		}
+		if body.Sections == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("sections", "body"))
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", body.SessionID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceBriefsUpdateWizardSectionsProjectID
+	}
+	var briefID string
+	{
+		briefID = lfxV2CampaignServiceBriefsUpdateWizardSectionsBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsUpdateWizardSectionsBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceBriefsUpdateWizardSectionsBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.UpdateWizardSectionsPayload{
+		SessionID: body.SessionID,
+	}
+	if body.Sections != nil {
+		v.Sections = make([]any, len(body.Sections))
+		for i, val := range body.Sections {
+			v.Sections[i] = val
+		}
+	} else {
+		v.Sections = []any{}
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildCloneWizardEmailPayload builds the payload for the
+// lfx-v2-campaign-service-briefs clone-wizard-email endpoint from CLI flags.
+func BuildCloneWizardEmailPayload(lfxV2CampaignServiceBriefsCloneWizardEmailBody string, lfxV2CampaignServiceBriefsCloneWizardEmailProjectID string, lfxV2CampaignServiceBriefsCloneWizardEmailBriefID string, lfxV2CampaignServiceBriefsCloneWizardEmailBearerToken string) (*lfxv2campaignservicebriefs.CloneWizardEmailPayload, error) {
+	var err error
+	var body CloneWizardEmailRequestBody
+	{
+		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsCloneWizardEmailBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"approved\": false,\n      \"preview_text\": \"Molestiae nesciunt sit illo repellendus.\",\n      \"send_list_id\": \"Doloribus dolores dolor nostrum ipsa reprehenderit consectetur.\",\n      \"session_id\": \"4180461e-fadd-459d-87cd-aec7224fe121\",\n      \"subject\": \"Eos earum assumenda architecto perferendis.\",\n      \"variant\": \"stage\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", body.SessionID, goa.FormatUUID))
+		if body.Variant != nil {
+			if !(*body.Variant == "reference" || *body.Variant == "stage") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.variant", *body.Variant, []any{"reference", "stage"}))
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceBriefsCloneWizardEmailProjectID
+	}
+	var briefID string
+	{
+		briefID = lfxV2CampaignServiceBriefsCloneWizardEmailBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsCloneWizardEmailBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceBriefsCloneWizardEmailBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.CloneWizardEmailPayload{
+		SessionID:   body.SessionID,
+		Approved:    body.Approved,
+		Subject:     body.Subject,
+		PreviewText: body.PreviewText,
+		SendListID:  body.SendListID,
+		Variant:     body.Variant,
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildSetWizardSendListPayload builds the payload for the
+// lfx-v2-campaign-service-briefs set-wizard-send-list endpoint from CLI flags.
+func BuildSetWizardSendListPayload(lfxV2CampaignServiceBriefsSetWizardSendListBody string, lfxV2CampaignServiceBriefsSetWizardSendListProjectID string, lfxV2CampaignServiceBriefsSetWizardSendListBriefID string, lfxV2CampaignServiceBriefsSetWizardSendListBearerToken string) (*lfxv2campaignservicebriefs.SetWizardSendListPayload, error) {
+	var err error
+	var body SetWizardSendListRequestBody
+	{
+		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsSetWizardSendListBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"email_id\": \"Deleniti tenetur sit omnis dolorem et.\",\n      \"send_list_id\": \"Reiciendis laudantium error.\",\n      \"send_list_ids\": [\n         \"Iste itaque et eum ea voluptatem.\",\n         \"Enim consequatur voluptatum excepturi ea molestias molestias.\",\n         \"Dolore sit consequatur explicabo.\",\n         \"Ut facere ipsa iure tempora ullam.\"\n      ],\n      \"session_id\": \"384b5574-7489-47ef-93bd-29da41fb90c2\",\n      \"suppression_list_ids\": [\n         \"Tenetur eaque eaque.\",\n         \"Aliquid pariatur sint temporibus.\",\n         \"Magnam id minima et.\"\n      ]\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", body.SessionID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceBriefsSetWizardSendListProjectID
+	}
+	var briefID string
+	{
+		briefID = lfxV2CampaignServiceBriefsSetWizardSendListBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsSetWizardSendListBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceBriefsSetWizardSendListBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.SetWizardSendListPayload{
+		SessionID:  body.SessionID,
+		EmailID:    body.EmailID,
+		SendListID: body.SendListID,
+	}
+	if body.SendListIds != nil {
+		v.SendListIds = make([]string, len(body.SendListIds))
+		for i, val := range body.SendListIds {
+			v.SendListIds[i] = val
+		}
+	}
+	if body.SuppressionListIds != nil {
+		v.SuppressionListIds = make([]string, len(body.SuppressionListIds))
+		for i, val := range body.SuppressionListIds {
+			v.SuppressionListIds[i] = val
+		}
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildChatWizardTurnPayload builds the payload for the
+// lfx-v2-campaign-service-briefs chat-wizard-turn endpoint from CLI flags.
+func BuildChatWizardTurnPayload(lfxV2CampaignServiceBriefsChatWizardTurnBody string, lfxV2CampaignServiceBriefsChatWizardTurnProjectID string, lfxV2CampaignServiceBriefsChatWizardTurnBriefID string, lfxV2CampaignServiceBriefsChatWizardTurnBearerToken string) (*lfxv2campaignservicebriefs.ChatWizardTurnPayload, error) {
+	var err error
+	var body ChatWizardTurnRequestBody
+	{
+		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsChatWizardTurnBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"message\": \"Quasi et quisquam qui asperiores.\",\n      \"session_id\": \"7ecd1cfb-56b6-43fa-a44f-a439d5ec1305\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", body.SessionID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceBriefsChatWizardTurnProjectID
+	}
+	var briefID string
+	{
+		briefID = lfxV2CampaignServiceBriefsChatWizardTurnBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsChatWizardTurnBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceBriefsChatWizardTurnBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.ChatWizardTurnPayload{
+		SessionID: body.SessionID,
+		Message:   body.Message,
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildGetWizardSessionPayload builds the payload for the
+// lfx-v2-campaign-service-briefs get-wizard-session endpoint from CLI flags.
+func BuildGetWizardSessionPayload(lfxV2CampaignServiceBriefsGetWizardSessionProjectID string, lfxV2CampaignServiceBriefsGetWizardSessionBriefID string, lfxV2CampaignServiceBriefsGetWizardSessionSessionID string, lfxV2CampaignServiceBriefsGetWizardSessionBearerToken string) (*lfxv2campaignservicebriefs.GetWizardSessionPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceBriefsGetWizardSessionProjectID
+	}
+	var briefID string
+	{
+		briefID = lfxV2CampaignServiceBriefsGetWizardSessionBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var sessionID string
+	{
+		sessionID = lfxV2CampaignServiceBriefsGetWizardSessionSessionID
+		err = goa.MergeErrors(err, goa.ValidateFormat("session_id", sessionID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsGetWizardSessionBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceBriefsGetWizardSessionBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.GetWizardSessionPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.SessionID = sessionID
 	v.BearerToken = bearerToken
 
 	return v, nil

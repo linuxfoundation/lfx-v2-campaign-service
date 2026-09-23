@@ -566,4 +566,16 @@ so the discovery is a deliberate choice rather than a necessity: the live enumer
 covers ads added to the ad set after dispatch, and still works for rows written before that
 field existed. It needs only the access token, not the page id.
 
+## Account-monitor read
+
+`monitor.go`'s `ListAccountCampaigns` backs the account-scoped
+`GET .../connection-meta-ads/account-monitor` endpoint, ported from the LFX One BFF's
+`meta-ads.service.ts`. Unlike the other three platforms, this is not a verbatim
+port: it paginates fully via `paging.next` (the BFF silently truncates past 100
+campaigns) and renders an explicit `time_range` from the caller's `days` using the
+client's injected clock, rather than the BFF's hardcoded `date_preset=last_30d`. See
+[Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md) for both
+departures, the credential-scoping (`resolveOwned`, no system-account fallback), and
+the ported rule engine (`internal/service/rules/monitor_meta.go`).
+
 See [internal/platform/meta](../../../internal/platform/meta).

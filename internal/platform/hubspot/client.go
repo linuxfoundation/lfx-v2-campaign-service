@@ -31,6 +31,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 )
 
 // ---------------------------------------------------------------------------
@@ -120,6 +122,19 @@ type Client struct {
 	// now is injectable so tests can compute an HTTP-date Retry-After delay
 	// deterministically. Defaults to time.Now.
 	now func() time.Time
+
+	// downloadClient fetches CALLER-SUPPLIED image URLs (UploadImage), and is a
+	// different client from httpClient on purpose. httpClient talks to HubSpot — one
+	// trusted host, fixed by baseURL — whereas a hero/sponsor image URL is scraped
+	// from an event page an operator named, so it can address anything the network
+	// can reach, including cluster-internal services and the cloud metadata endpoint.
+	// It therefore carries eventurl's dial-time SSRF guard. Redirects are FOLLOWED (bounded):
+	// asset URLs routinely 302 -- S3 pre-signed links, Cloudinary/imgix transforms, CDN hotlink
+	// paths -- and each hop is judged on its own resolved address by the same dial hook, so
+	// following is safe while refusing would silently drop every hero image behind a CDN.
+	// Defaults in NewClient;
+	// injectable so tests can point it at an httptest server the guard would deny.
+	downloadClient *http.Client
 }
 
 // Option customizes a Client at construction time.
@@ -143,11 +158,6 @@ func WithBaseURL(u string) Option {
 	return func(c *Client) { c.baseURL = strings.TrimRight(u, "/") }
 }
 
-// WithAppBaseURL overrides the app base URL used for human-facing links.
-func WithAppBaseURL(u string) Option {
-	return func(c *Client) { c.appBaseURL = strings.TrimRight(u, "/") }
-}
-
 // WithHTTPClient overrides the underlying *http.Client (default has a 30s
 // timeout). A nil client is ignored so the option can't produce an unusable
 // Client whose httpClient.Do would panic. Redirect following is force-disabled on
@@ -156,6 +166,34 @@ func WithHTTPClient(h *http.Client) Option {
 	return func(c *Client) {
 		if h != nil {
 			c.httpClient = h
+		}
+	}
+}
+
+// WithNAT64Prefixes supplies the deployment's operator-specific NAT64 prefixes to the image
+// download guard, matching what the event-URL fetcher is given.
+//
+// Without it the download guard judges only the well-known 64:ff9b::/96, which is NARROWER
+// than the fetcher's: an address under an operator prefix cannot be decoded, so the private
+// IPv4 it encodes is never seen and the fetch proceeds — and the response is re-hosted as a
+// PUBLIC_INDEXABLE file. Any deployment that sets EventURLNAT64Prefixes must pass them here too.
+func WithNAT64Prefixes(cidrs ...string) Option {
+	return func(c *Client) {
+		if len(cidrs) == 0 {
+			return
+		}
+		c.downloadClient = eventurl.NewGuardedRedirectClient(imageDownloadTimeout, eventurl.WithNAT64Prefixes(cidrs...))
+	}
+}
+
+// withDownloadClient overrides the SSRF-guarded client used to fetch caller-supplied
+// image URLs. Tests set it so an httptest server on 127.0.0.1 — which the real guard
+// denies, correctly — is reachable. Production must never call this: the default is
+// the guard.
+func withDownloadClient(h *http.Client) Option {
+	return func(c *Client) {
+		if h != nil {
+			c.downloadClient = h
 		}
 	}
 }
@@ -197,6 +235,9 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		retryBaseDelay: retryBaseDelay,
 		requestTimeout: requestTimeout,
 		now:            time.Now,
+		// SSRF-guarded by default, so a Client built with no options is already safe:
+		// the guard must be what you get by forgetting, not what you get by remembering.
+		downloadClient: eventurl.NewGuardedRedirectClient(imageDownloadTimeout),
 	}
 	for _, opt := range opts {
 		opt(c)

@@ -264,7 +264,7 @@ var registeredProviders = []model.Provider{
 // wiring line (or adding an unlisted one) fails this test, not just a missing-key check.
 // registerDispatchers only stores its args, so nil repo/encryptor build the map without a deref.
 func TestRegisterDispatchers_RegistersProviders(t *testing.T) {
-	m := registerDispatchers(nil, nil, nil, nil)
+	m := registerDispatchers(nil, nil, nil, nil, nil)
 	for _, p := range registeredProviders {
 		_, ok := m[p]
 		assert.True(t, ok, "%s must be registered — this is the wiring its PR adds", p)
@@ -290,7 +290,7 @@ func TestLogMissingDispatchers_SurfacesGaps(t *testing.T) {
 	// Feed a map with one provider deliberately REMOVED rather than relying on a real gap:
 	// adapters keep landing, so a test that asserts "provider X is still unregistered" rots
 	// the moment X ships. A synthetic gap keeps proving the function is not a no-op forever.
-	full := registerDispatchers(nil, nil, nil, nil)
+	full := registerDispatchers(nil, nil, nil, nil, nil)
 	gapped := make(map[model.Provider]service.PlatformDispatcher, len(full))
 	for p, d := range full {
 		if p == model.ProviderRedditAds {
@@ -1588,10 +1588,15 @@ func TestBindBriefLiveBackends_BindsEveryPoolBackedDependency(t *testing.T) {
 
 	require.False(t, s.DecodeReserverIsSet(), "premise: unbound before wiring")
 
-	bindBriefLiveBackends(s, nil, nil, nil, nil, nil)
+	require.False(t, s.WizardSessionRepoIsSet(), "premise: unbound before wiring")
+
+	bindBriefLiveBackends(s, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	assert.True(t, s.CreativeAssetRepoIsSet(),
 		"the shared live-wiring helper must bind the creative-asset repo; without it BOTH startup paths serve every upload a 503 forever while the rest of the brief routes work")
+
+	assert.True(t, s.EmailReferenceSourceIsSet(),
+		"the shared live-wiring helper must bind the email reference source; without it a cold-started pod would generate email copy forever with no HubSpot reference block")
 
 	// The decode budget is bound by the same helper and needs the same assertion, for a worse
 	// failure mode: an unbound repo makes uploads fail LOUDLY with a 503, but an unbound
@@ -1601,6 +1606,14 @@ func TestBindBriefLiveBackends_BindsEveryPoolBackedDependency(t *testing.T) {
 	// green until this line existed.
 	assert.True(t, s.DecodeReserverIsSet(),
 		"the shared live-wiring helper must bind the decode reserver; without it BOTH startup paths decode concurrent uploads with no aggregate memory bound")
+
+	// Same assertion for the same reason, one failure mode further on: an unbound wizard
+	// session repository makes all eight wizard routes answer 503 for the life of the pod
+	// while every other brief route works, and that 503 is deliberately indistinguishable
+	// from the no-database mode's — so nothing outside this assertion can tell a mis-wired
+	// live container from a correctly wired one.
+	assert.True(t, s.WizardSessionRepoIsSet(),
+		"the shared live-wiring helper must bind the wizard session repository; without it BOTH startup paths serve every email-wizard route a 503 forever")
 }
 
 // TestSetCreativeAssetRepo_IgnoresNil guards the degraded path: a nil repo must leave the service
@@ -1643,7 +1656,7 @@ func (fakeCreativeAssetRepo) GetAssetSize(_ context.Context, _, _, _ string) (in
 // the dispatcher's own view of whether it is bound. The nil case below is asserted in the
 // same test so the concrete-pointer guard in registerDispatchers is covered too.
 func TestRegisterDispatchers_BindsMetaCreativeAssetRepo(t *testing.T) {
-	m := registerDispatchers(nil, nil, nil, postgres.NewCreativeAssetRepo(nil))
+	m := registerDispatchers(nil, nil, nil, postgres.NewCreativeAssetRepo(nil), nil)
 
 	md, ok := m[model.ProviderMetaAds].(*dispatch.MetaDispatcher)
 	require.True(t, ok, "the meta entry must be a *dispatch.MetaDispatcher")
@@ -1654,7 +1667,7 @@ func TestRegisterDispatchers_BindsMetaCreativeAssetRepo(t *testing.T) {
 	// the CONCRETE pointer, because handing a typed nil to the interface parameter would
 	// produce a NON-nil interface holding a nil pointer — which reports as bound and then
 	// nil-panics mid-dispatch instead of failing cleanly pre-spend.
-	unbound := registerDispatchers(nil, nil, nil, nil)
+	unbound := registerDispatchers(nil, nil, nil, nil, nil)
 	mu, ok := unbound[model.ProviderMetaAds].(*dispatch.MetaDispatcher)
 	require.True(t, ok, "the meta entry must be a *dispatch.MetaDispatcher")
 	assert.False(t, mu.CreativeAssetRepoIsSet(),
@@ -1679,6 +1692,14 @@ func (r *orderRecordingBriefSetter) SetDecodeReserver(*service.DecodeReserver) {
 	r.calls = append(r.calls, "reserver")
 }
 
+func (r *orderRecordingBriefSetter) SetWizardBackend(domain.WizardSessionRepository, service.HubSpotClientResolver, domain.AudienceRepository) {
+	r.calls = append(r.calls, "wizard")
+}
+
+func (r *orderRecordingBriefSetter) SetEmailReferenceSource(*service.EmailReferenceSource) {
+	r.calls = append(r.calls, "reference")
+}
+
 // TestBindBriefLiveBackends_PublishesTheBoundBeforeTheGate pins the ORDER of two independently
 // locked setters, which on the cold-start retry path decides whether a memory bound can be
 // bypassed.
@@ -1699,7 +1720,7 @@ func (r *orderRecordingBriefSetter) SetDecodeReserver(*service.DecodeReserver) {
 func TestBindBriefLiveBackends_PublishesTheBoundBeforeTheGate(t *testing.T) {
 	rec := &orderRecordingBriefSetter{}
 
-	bindBriefLiveBackends(rec, nil, nil, nil, nil, nil)
+	bindBriefLiveBackends(rec, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	idx := func(name string) int {
 		for i, c := range rec.calls {
@@ -1772,4 +1793,30 @@ func TestNewLLMClientSilentWhenConfigured(t *testing.T) {
 	require.NotNil(t, c.newLLMClient())
 	require.NotContains(t, buf.String(), "AI proxy not configured",
 		"a configured proxy must not warn; a false alarm here devalues the real one")
+}
+
+// TestRegisterDispatchers_AcceptsNAT64Prefixes covers what is observable HERE: the join accepts
+// the configured prefixes and registers cleanly, with and without them.
+//
+// It deliberately does NOT claim to verify the guard. The dispatcher's client is unexported, so
+// from this package the option's effect cannot be seen — two earlier versions of this test
+// claimed otherwise and both stayed green with the option deleted, once by asserting only that a
+// dispatcher existed and once by constructing a client directly, bypassing the join. The guard
+// itself is pinned by hubspot's TestDownloadImage_NAT64PrefixesReachTheDownloadGuard and, for
+// the dispatcher wiring specifically, by dispatch.TestHubSpot_NAT64PrefixesReachTheHeroFetch --
+// which drives a dispatcher built with this option against a NAT64-encoded metadata address and
+// fails if it is DIALLED rather than refused. Those are the tests to change if the wiring moves.
+//
+// The timing assertion in that test matters: without the prefix the address cannot be decoded,
+// so the dial is attempted and times out, leaving the hero unwritten either way. An assertion on
+// the outcome alone passed with the option deleted.
+func TestRegisterDispatchers_AcceptsNAT64Prefixes(t *testing.T) {
+	const prefix = "2a01:4f8:808:808::/96"
+
+	if _, ok := registerDispatchers(nil, nil, nil, nil, []string{prefix})[model.ProviderHubSpot]; !ok {
+		t.Fatal("no HubSpot dispatcher was registered with prefixes configured")
+	}
+	if _, ok := registerDispatchers(nil, nil, nil, nil, nil)[model.ProviderHubSpot]; !ok {
+		t.Fatal("no HubSpot dispatcher was registered without prefixes")
+	}
 }

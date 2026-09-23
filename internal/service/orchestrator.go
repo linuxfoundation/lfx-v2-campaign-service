@@ -272,6 +272,64 @@ type AccountLister interface {
 	ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error)
 }
 
+// AccountMetricsReader is an OPTIONAL dispatcher capability: read every campaign visible on
+// a raw ad account (not this service's own persisted Campaign rows) together with its
+// metrics over an explicit `days` window, for the account-scoped "monitor" read endpoints.
+// This ports the BFF's per-platform monitor data fetch (campaign-metrics.service.ts /
+// linkedin-ads.service.ts / meta-ads.service.ts / reddit-ads.service.ts) — see
+// internal/service/rules/monitor_*.go for the rule engines that consume the rows this
+// returns.
+//
+// Not every platform's dispatcher implements it: like AccountLister and MetricsReader, the
+// orchestrator type-asserts for it rather than adding it to PlatformDispatcher. A dispatcher
+// that doesn't implement it yields a clean "not supported" error (ErrAccountMetricsUnsupported
+// → 400). A pure read that never mutates platform or DB state.
+//
+// days is a plain integer (7..90), NOT a model.MetricsWindow — MetricsWindow is a closed
+// 7-value enum that cannot express an arbitrary day count, and the BFF's own date-range math
+// (resolveDateRange in campaign-metrics.service.ts, dateRangeParams in
+// linkedin-ads.service.ts) computes an explicit range from days directly. Validating the
+// 7..90 range is the SERVICE layer's job (connection_monitor.go), the same split every other
+// handler uses between payload validation and dispatch.
+type AccountMetricsReader interface {
+	// ListAccountCampaignMetrics reads every campaign on accountID (scoped to platform via
+	// the project's stored connection credential) with its metrics over the trailing `days`
+	// days.
+	//
+	// A successful call MUST return a NON-NIL slice, even when the account has zero
+	// campaigns — return an empty slice, not nil, for the same reason ListAccounts does:
+	// ReadAccountCampaignMetrics treats (nil, nil) as a contract violation. A per-campaign
+	// fetch failure (e.g. a metrics sub-call that failed for one campaign but not others)
+	// MUST NOT be silently zeroed — set model.AccountCampaignMetrics.FetchFailed on that
+	// row instead of fabricating a zero indistinguishable from a real one.
+	ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider,
+		accountID string, days int) ([]model.AccountCampaignMetrics, error)
+}
+
+// AccountTotalsReader is a SECOND OPTIONAL dispatcher capability, orthogonal to
+// AccountMetricsReader: read the account-wide monitor totals from a SEPARATE upstream call,
+// independent of any per-campaign row.
+//
+// This exists ONLY because of Reddit. model.AccountMonitorTotals' own doc comment records
+// that Reddit's accountTotals come from a distinct account-level report
+// (reddit-ads.service.ts's fetchAccountMetrics), made independently of the per-campaign
+// fan-out fetchCampaignMetrics performs — NOT a sum of the rows AccountMetricsReader
+// returns. Every other ported platform's totals ARE a sum of its rows, computed by the
+// service layer (connection_monitor.go) without ever calling this interface; a dispatcher
+// that has no reason to diverge from that sum (Meta/GoogleAds/LinkedIn today) simply does
+// not implement it, and the service layer's summing path covers it. Folding this into
+// AccountMetricsReader's own signature would force every platform to answer a question only
+// one of them actually has a different answer to.
+type AccountTotalsReader interface {
+	// ReadAccountTotals returns the account-wide totals for accountID over the trailing
+	// `days` days. campaignCount is supplied by the CALLER (the count of rows
+	// AccountMetricsReader already returned for the same request), matching
+	// getRedditAnalytics' own accountTotals.campaignCount, which counts the filtered
+	// per-campaign result rather than anything this call could independently know.
+	ReadAccountTotals(ctx context.Context, projectID string, platform model.Provider,
+		accountID string, days, campaignCount int) (*model.AccountMonitorTotals, error)
+}
+
 // EmailSearcher is an OPTIONAL dispatcher capability: search the marketing emails reachable
 // through a project's stored connection. Discovered by type assertion like StatusToggler,
 // MetricsReader and AccountLister; a dispatcher that doesn't implement it yields a clean
@@ -377,6 +435,10 @@ var (
 
 	// ErrAccountsUnsupported: the platform has no account-listing capability wired.
 	ErrAccountsUnsupported = domain.ErrAccountsUnsupported
+
+	// ErrAccountMetricsUnsupported: the platform has no account-scoped monitor
+	// capability wired (AccountMetricsReader).
+	ErrAccountMetricsUnsupported = domain.ErrAccountMetricsUnsupported
 
 	// ErrEmailSearchUnsupported: the platform has no email-search capability wired.
 	ErrEmailSearchUnsupported = domain.ErrEmailSearchUnsupported
@@ -512,17 +574,19 @@ func (o *Orchestrator) SetIndexer(p indexer.Publisher) {
 // is a secondary shape guard at the recording boundary, which degrades an id-shaped
 // or otherwise derived string to a bounded token rather than minting series.
 const (
-	opToggleStatus   = "toggle_status"
-	opReadMetrics    = "read_metrics"
-	opLookupCampaign = "lookup_campaign"
-	opReadSettings   = "read_settings"
-	opListAccounts   = "list_accounts"
-	opSearchEmails   = "search_emails"
-	opSearchCampaign = "search_campaign"
-	opCreateCampaign = "create_campaign"
-	opReadKeywords   = "read_keywords"
-	opReadAudience   = "read_audience"
-	opKeywordActions = "keyword_actions"
+	opToggleStatus               = "toggle_status"
+	opReadMetrics                = "read_metrics"
+	opLookupCampaign             = "lookup_campaign"
+	opReadSettings               = "read_settings"
+	opListAccounts               = "list_accounts"
+	opListAccountCampaignMetrics = "list_account_campaign_metrics"
+	opReadAccountTotals          = "read_account_totals"
+	opSearchEmails               = "search_emails"
+	opSearchCampaign             = "search_campaign"
+	opCreateCampaign             = "create_campaign"
+	opReadKeywords               = "read_keywords"
+	opReadAudience               = "read_audience"
+	opKeywordActions             = "keyword_actions"
 )
 
 // recordUpstream times one upstream platform call. It is called ONLY after the
@@ -1969,6 +2033,81 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 		return nil, fmt.Errorf("%s account lister returned a nil result with no error", platform)
 	}
 	return accounts, nil
+}
+
+// ReadAccountCampaignMetrics reads every campaign visible on accountID over the trailing
+// `days` days, for the account-scoped monitor endpoints. Modeled directly on ReadAccounts
+// above: type-assert for AccountMetricsReader, bound the call, record it through
+// recordUpstream, and treat (nil, nil) as a contract violation rather than an authoritative
+// empty answer.
+func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrAccountMetricsUnsupported, platform)
+	}
+	reader, ok := d.(AccountMetricsReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrAccountMetricsUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	rows, rerr := reader.ListAccountCampaignMetrics(callCtx, projectID, platform, accountID, days)
+	o.recordUpstream(ctx, platform, opListAccountCampaignMetrics, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if rows == nil {
+		// Same contract-violation guard as ReadAccounts: an AccountMetricsReader returning
+		// (nil, nil) must not be forwarded as an authoritative empty account, or a caller
+		// would render "no campaigns" with no error for what is actually a broken adapter.
+		return nil, fmt.Errorf("%s account campaign metrics reader returned a nil result with no error", platform)
+	}
+	return rows, nil
+}
+
+// errAccountTotalsContractViolation wraps ReadAccountTotals' nil-result contract-violation
+// error, unlike the repo's other seven "(nil, nil) is a contract violation" sites (see the
+// grep for "returned a nil result with no error"): those all fold into a generic upstream-
+// failure path with no severity distinction, but this one's sole caller
+// (connection_monitor.go's monitorAccount) treats any non-nil error from this function as a
+// routine, WARN-level reason to serve the row-summed fallback — the same log line an ordinary
+// timeout or 500 gets. A broken AccountTotalsReader adapter is not that: it deserves an
+// ERROR-level log distinct from "Reddit's API had a bad day," so this sentinel exists solely
+// to let the caller tell the two apart. It is deliberately unexported and local to this one
+// return path rather than a case added to unusableConnectionReason's fixed vocabulary
+// (connection.go), which classifies credential/connection failures, not adapter defects.
+var errAccountTotalsContractViolation = errors.New("account totals reader returned a nil result with no error")
+
+// ReadAccountTotals reads accountID's separately-fetched monitor totals when platform's
+// dispatcher implements AccountTotalsReader, reporting ok=false (with a nil error) when it
+// does not — that is NOT a failure, it means the caller should fall back to summing the rows
+// AccountMetricsReader already returned, exactly as connection_monitor.go does for every
+// platform but Reddit. Modeled on ReadAccountCampaignMetrics, except a missing capability is
+// expected and routine here rather than being reported through ErrAccountMetricsUnsupported:
+// AccountTotalsReader is not a per-platform monitor gate the caller must react to, it is an
+// override only Reddit needs.
+func (o *Orchestrator) ReadAccountTotals(ctx context.Context, projectID string, platform model.Provider, accountID string, days, campaignCount int) (*model.AccountMonitorTotals, bool, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, false, nil
+	}
+	reader, ok := d.(AccountTotalsReader)
+	if !ok {
+		return nil, false, nil
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	totals, rerr := reader.ReadAccountTotals(callCtx, projectID, platform, accountID, days, campaignCount)
+	o.recordUpstream(ctx, platform, opReadAccountTotals, start, rerr)
+	if rerr != nil {
+		return nil, true, rerr
+	}
+	if totals == nil {
+		return nil, true, fmt.Errorf("%s: %w", platform, errAccountTotalsContractViolation)
+	}
+	return totals, true, nil
 }
 
 // SearchCampaigns looks up marketing campaigns by name on platform.

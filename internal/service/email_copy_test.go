@@ -224,7 +224,7 @@ func TestParseEmailCopyResponse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseEmailCopyResponse(tt.raw)
+			got, err := parseEmailCopyResponse(tt.raw, true)
 			if (err != nil) != tt.wantError {
 				t.Errorf("parseEmailCopyResponse() error = %v, wantError %v", err, tt.wantError)
 				return
@@ -233,8 +233,8 @@ func TestParseEmailCopyResponse(t *testing.T) {
 				if got.Subject != tt.wantSubject {
 					t.Errorf("Subject = %q (len %d), want %q (len %d)", got.Subject, len(got.Subject), tt.wantSubject, len(tt.wantSubject))
 				}
-				if got.Cta != tt.wantCta {
-					t.Errorf("Cta = %q, want %q", got.Cta, tt.wantCta)
+				if cta := buttonText(got); cta != tt.wantCta {
+					t.Errorf("Cta = %q, want %q", cta, tt.wantCta)
 				}
 				if tt.wantTruncated && len(got.Subject) != 200 {
 					t.Errorf("Subject not truncated to 200 chars, got %d", len(got.Subject))
@@ -251,6 +251,26 @@ func repeatStr(s string, n int) string {
 		result += s
 	}
 	return result
+}
+
+// buttonText returns the first button section's text, or "" if there is none.
+func buttonText(copy *briefs.EmailCopy) string {
+	for _, sec := range copy.Sections {
+		if sec.Type == "button" && sec.Text != nil {
+			return *sec.Text
+		}
+	}
+	return ""
+}
+
+// richTextHTML returns the first rich_text section's HTML, or "" if there is none.
+func richTextHTML(copy *briefs.EmailCopy) string {
+	for _, sec := range copy.Sections {
+		if sec.Type == "rich_text" && sec.HTML != nil {
+			return *sec.HTML
+		}
+	}
+	return ""
 }
 
 // TestComposeEmailCopyPrompt verifies prompt composition from event details.
@@ -457,11 +477,11 @@ func TestGenerateEmailCopy_HappyPath(t *testing.T) {
 	if result.Preheader != "Save your spot" {
 		t.Errorf("Preheader = %q, want %q", result.Preheader, "Save your spot")
 	}
-	if result.Body != "<p>Register now</p>" {
-		t.Errorf("Body = %q, want %q", result.Body, "<p>Register now</p>")
+	if html := richTextHTML(result); html != "<p>Register now</p>" {
+		t.Errorf("Body = %q, want %q", html, "<p>Register now</p>")
 	}
-	if result.Cta != "Register" {
-		t.Errorf("Cta = %q, want %q", result.Cta, "Register")
+	if cta := buttonText(result); cta != "Register" {
+		t.Errorf("Cta = %q, want %q", cta, "Register")
 	}
 }
 
@@ -475,8 +495,12 @@ func TestGenerateEmailCopy_HappyPath(t *testing.T) {
 // would surface as a send with a blank subject line rather than as an error anyone could act on.
 // A prompt edit or a parsing change is exactly what would regress it.
 //
+// A blank/missing CTA is deliberately NOT covered here: since the sections migration a button
+// is not required on its own (a non-registration CTA can legitimately be plain text — see
+// composeEmailCopyPrompt's WITHHELD registration-URL note), only the message body is.
+//
 // Each field is exercised separately: an `||` chain is easy to narrow to one field by accident,
-// and a test that only blanks the subject would still pass if the other three checks were lost.
+// and a test that only blanks the subject would still pass if the other checks were lost.
 func TestGenerateEmailCopy_RejectsIncompleteCopy(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -485,19 +509,17 @@ func TestGenerateEmailCopy_RejectsIncompleteCopy(t *testing.T) {
 		{"subject", `{"subject":"","preheader":"x","body":"<p>x</p>","cta":"Register"}`},
 		{"preheader", `{"subject":"Join us","preheader":"","body":"<p>x</p>","cta":"Register"}`},
 		{"body", `{"subject":"Join us","preheader":"x","body":"","cta":"Register"}`},
-		{"cta", `{"subject":"Join us","preheader":"x","body":"<p>x</p>","cta":""}`},
 		// Whitespace-only, which is a different case for exactly one field. truncateString
-		// strips trailing whitespace, so a blank-but-not-empty subject, preheader or CTA has
+		// strips trailing whitespace, so a blank-but-not-empty subject or preheader has
 		// already arrived here empty and the == "" test caught it. The body does NOT go
 		// through truncateString — an oversized body is rejected rather than cut, because
 		// truncating HTML at a rune boundary corrupts markup — so a body of spaces was the
 		// one shape that reached this check non-empty, passed it, and returned 200 with a
-		// blank email. All four are exercised so the trim cannot later be narrowed to body
+		// blank email. All three are exercised so the trim cannot later be narrowed to body
 		// alone and still pass.
 		{"whitespace subject", `{"subject":"   ","preheader":"x","body":"<p>x</p>","cta":"Register"}`},
 		{"whitespace preheader", `{"subject":"Join us","preheader":"  ","body":"<p>x</p>","cta":"Register"}`},
 		{"whitespace body", `{"subject":"Join us","preheader":"x","body":"   \n\t ","cta":"Register"}`},
-		{"whitespace cta", `{"subject":"Join us","preheader":"x","body":"<p>x</p>","cta":" "}`},
 	} {
 		t.Run("blank "+tc.name, func(t *testing.T) {
 			repo := newFakeBriefRepo()
@@ -585,7 +607,7 @@ func TestParseEmailCopyResponse_EnforcesMaxLengths(t *testing.T) {
 	tooLongSubject := repeatStr("x", 300)
 	raw := `{"subject":"` + tooLongSubject + `","preheader":"p","body":"b","cta":"c"}`
 
-	result, err := parseEmailCopyResponse(raw)
+	result, err := parseEmailCopyResponse(raw, true)
 	if err != nil {
 		t.Errorf("parseEmailCopyResponse() error = %v, want nil", err)
 		return
@@ -884,7 +906,7 @@ func TestGenerateEmailCopy_StageReachesThePrompt(t *testing.T) {
 				b, _ := io.ReadAll(r.Body)
 				sentBody.Store(string(b))
 				w.Header().Set("Content-Type", "application/json")
-				content, _ := json.Marshal(`{"subject":"s","preheader":"p","body":"<p>b</p>","cta":"c"}`)
+				content, _ := json.Marshal(`{"subject":"s","preheader":"p","sections":[{"type":"rich_text","html":"<p>b</p>"},{"type":"button","text":"c"}]}`)
 				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}]}`))
 			}))
 			defer srv.Close()
@@ -965,7 +987,7 @@ func TestGenerateEmailCopy_ComposedBoundIsReachable(t *testing.T) {
 		Purpose:       "exercise the composed bound",
 		Tone:          "neutral",
 		UrgencyLevel:  1,
-		ContentPrompt: repeatStr("y", 9000),
+		ContentPrompt: repeatStr("y", 12000),
 	}
 	t.Cleanup(func() {
 		if existed {
@@ -1441,7 +1463,7 @@ func TestGenerateEmailCopy_BriefURLBecomesTheCTADestination(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		sentBody.Store(string(b))
 		w.Header().Set("Content-Type", "application/json")
-		content, _ := json.Marshal(`{"subject":"s","preheader":"p","body":"<p>b</p>","cta":"c"}`)
+		content, _ := json.Marshal(`{"subject":"s","preheader":"p","sections":[{"type":"rich_text","html":"<p>b</p>"},{"type":"button","text":"c"}]}`)
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}]}`))
 	}))
 	defer srv.Close()
@@ -1486,19 +1508,33 @@ func worstStageFloor() int {
 // a rune. A derived figure with two sources drifts; this one has one.
 func worstStageFloorNamed() (int, string) {
 	worst, worstName := 0, ""
-	for _, name := range emailstage.Names() {
-		sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name, registrationURL: "x"})
-		floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user)
-		// Subtract the sentinel ONLY from a stage that actually formatted it. A withholding stage
-		// (emailstage.LinksToRegistration=false) never receives the URL, so "x" contributes
-		// nothing to its composition and subtracting one removes a rune that was never added --
-		// understating that stage's floor, and with it every figure derived from this helper.
-		// Measured: Post-Event composes identically with "x" and with "", delta 0.
-		if emailstage.Resolve(name).LinksToRegistration {
-			floor--
-		}
-		if floor > worst {
-			worst, worstName = floor, name
+	// referenceBlock is filled to its full maxReferenceBlockRunes cap: EmailReferenceSource
+	// truncates to that bound before the prompt ever sees it, so a maximally-sized block is the
+	// worst case this bound must clear, and it reaches every stage (never withheld, unlike the
+	// registration URL). See maxReferenceBlockRunes.
+	maxRef := strings.Repeat("x", maxReferenceBlockRunes)
+	// Composed WITH the urgency-fomo variant too: that block is a fixed content addition, same
+	// floor-contributor shape as a stage template (see urgencyFomoVariant), so the worst case this
+	// bound must clear is whichever of variant-on/variant-off is larger for each stage -- not just
+	// the plain stage composition.
+	for _, variant := range []string{"", urgencyFomoVariant} {
+		for _, name := range emailstage.Names() {
+			sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name, variant: variant, registrationURL: "x", referenceBlock: maxRef})
+			floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user)
+			// Subtract the sentinel ONLY from a stage that actually formatted it. A withholding stage
+			// (emailstage.LinksToRegistration=false) never receives the URL, so "x" contributes
+			// nothing to its composition and subtracting one removes a rune that was never added --
+			// understating that stage's floor, and with it every figure derived from this helper.
+			// Measured: Post-Event composes identically with "x" and with "", delta 0.
+			if emailstage.Resolve(name).LinksToRegistration {
+				floor--
+			}
+			if floor > worst {
+				worst, worstName = floor, name
+				if variant != "" {
+					worstName += " +" + variant
+				}
+			}
 		}
 	}
 	return worst, worstName
@@ -1536,7 +1572,7 @@ func TestGenerateEmailCopy_URLCountsOnlyForTheStageAwarePrompt(t *testing.T) {
 		}
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			content := `{"subject":"s","preheader":"p","body":"<p>Register now</p>","cta":"Register"}`
+			content := `{"subject":"s","preheader":"p","sections":[{"type":"rich_text","html":"<p>Register now</p>"},{"type":"button","text":"Register"}]}`
 			encoded, err := json.Marshal(content)
 			if err != nil {
 				t.Fatalf("marshal fake LLM content: %v", err)
@@ -1636,5 +1672,40 @@ func TestComposeEmailCopyPrompt_WithholdsURLForNonRegistrationStages(t *testing.
 				t.Errorf("prompt carries an EMPTY 'Registration URL:' label; the line must be omitted entirely")
 			}
 		})
+	}
+}
+
+// TestParseEmailCopyResponse_RefusesLegacyShapeWhenSectionsWereRequested pins the gate on the
+// legacy repackaging.
+//
+// The repackaging exists for the frozen legacySystemPrompt path, which still asks the model for
+// a flat body/cta pair. Applying it unconditionally made it a fail-open: a stage-aware request
+// whose model output regressed to the legacy shape was silently converted and returned as a
+// normal success, so a prompt or model regression looked exactly like ordinary operation.
+func TestParseEmailCopyResponse_RefusesLegacyShapeWhenSectionsWereRequested(t *testing.T) {
+	raw := `{"subject":"s","preheader":"p","body":"<p>b</p>","cta":"c"}`
+
+	if _, err := parseEmailCopyResponse(raw, false); err == nil {
+		t.Fatal("a legacy body/cta response was accepted for a request that asked for sections")
+	}
+
+	// The same bytes on the legacy path stay valid -- the gate is on what was REQUESTED, not on
+	// the shape being retired.
+	got, err := parseEmailCopyResponse(raw, true)
+	if err != nil {
+		t.Fatalf("the legacy path refused the shape it asks for: %v", err)
+	}
+	if got == nil || len(got.Sections) == 0 {
+		t.Fatal("legacy repackaging produced no sections")
+	}
+}
+
+// TestParseEmailCopyResponse_EmptyResponseIsNotReportedAsAShapeMismatch keeps the new gate from
+// swallowing the pre-existing case: a response with neither sections nor body must still reach
+// the required-field rejection it always had, rather than being blamed on the shape.
+func TestParseEmailCopyResponse_EmptyResponseIsNotReportedAsAShapeMismatch(t *testing.T) {
+	_, err := parseEmailCopyResponse(`{"subject":"s","preheader":"p"}`, false)
+	if err != nil && strings.Contains(err.Error(), "legacy body/cta shape") {
+		t.Fatalf("an empty response was reported as a shape mismatch: %v", err)
 	}
 }

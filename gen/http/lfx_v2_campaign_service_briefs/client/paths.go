@@ -110,3 +110,43 @@ func DeleteCampaignLfxV2CampaignServiceBriefsPath(projectID string, briefID stri
 func GetJobLfxV2CampaignServiceBriefsPath(projectID string, jobID string) string {
 	return fmt.Sprintf("/projects/%v/jobs/%v", projectID, jobID)
 }
+
+// StartEmailWizardPlanLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service start-email-wizard-plan HTTP endpoint.
+func StartEmailWizardPlanLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/wizard/plan-start", projectID, briefID)
+}
+
+// PlanEmailWizardLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service plan-email-wizard HTTP endpoint.
+func PlanEmailWizardLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/wizard/plan", projectID, briefID)
+}
+
+// GenerateWizardContentLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service generate-wizard-content HTTP endpoint.
+func GenerateWizardContentLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/wizard/generate-content", projectID, briefID)
+}
+
+// UpdateWizardSectionsLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service update-wizard-sections HTTP endpoint.
+func UpdateWizardSectionsLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/wizard/update-sections", projectID, briefID)
+}
+
+// CloneWizardEmailLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service clone-wizard-email HTTP endpoint.
+func CloneWizardEmailLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/wizard/clone", projectID, briefID)
+}
+
+// SetWizardSendListLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service set-wizard-send-list HTTP endpoint.
+func SetWizardSendListLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/wizard/set-send-list", projectID, briefID)
+}
+
+// ChatWizardTurnLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service chat-wizard-turn HTTP endpoint.
+func ChatWizardTurnLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/wizard/chat", projectID, briefID)
+}
+
+// GetWizardSessionLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service get-wizard-session HTTP endpoint.
+func GetWizardSessionLfxV2CampaignServiceBriefsPath(projectID string, briefID string, sessionID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/wizard/session/%v", projectID, briefID, sessionID)
+}

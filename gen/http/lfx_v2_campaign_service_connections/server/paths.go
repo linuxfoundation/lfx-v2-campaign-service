@@ -275,3 +275,23 @@ func SearchHubspotCampaignsLfxV2CampaignServiceConnectionsPath(projectID string)
 func CreateHubspotCampaignLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/connection-hubspot/campaigns", projectID)
 }
+
+// MonitorGoogleAdsAccountLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service monitor-google-ads-account HTTP endpoint.
+func MonitorGoogleAdsAccountLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/connection-google-ads/account-monitor", projectID)
+}
+
+// MonitorLinkedinAdsAccountLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service monitor-linkedin-ads-account HTTP endpoint.
+func MonitorLinkedinAdsAccountLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/connection-linkedin-ads/account-monitor", projectID)
+}
+
+// MonitorMetaAdsAccountLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service monitor-meta-ads-account HTTP endpoint.
+func MonitorMetaAdsAccountLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/connection-meta-ads/account-monitor", projectID)
+}
+
+// MonitorRedditAdsAccountLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service monitor-reddit-ads-account HTTP endpoint.
+func MonitorRedditAdsAccountLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/connection-reddit-ads/account-monitor", projectID)
+}

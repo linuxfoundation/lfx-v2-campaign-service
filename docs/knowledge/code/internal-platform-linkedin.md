@@ -539,4 +539,16 @@ PARTIAL_UPDATEs each creative's `intendedStatus`. On a PAUSE, a definite 400 on 
 in-review creative is tolerated (LinkedIn forbids pausing an in-review creative) — the
 campaign is already the effective gate.
 
+## Account-monitor read
+
+`monitor.go`'s `ListAccountCampaigns` backs the account-scoped
+`GET .../connection-linkedin-ads/account-monitor` endpoint, ported from the LFX One
+BFF's `linkedin-ads.service.ts`. It is a read over the WHOLE ad account the resolved
+credential reaches, not one project's own campaigns — see
+[Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md) for the
+credential-scoping (`resolveOwned`, no system-account fallback), the ported rule
+engine (`internal/service/rules/monitor_linkedin.go`, including the deliberately
+preserved `MED`/`MEDIUM` sort-map bug), and the days-1-ending-today window
+convention this dispatcher shares with Google/Reddit/Meta's monitor reads.
+
 See [internal/platform/linkedin](../../../internal/platform/linkedin).

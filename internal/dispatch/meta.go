@@ -1121,6 +1121,24 @@ func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, project
 	return meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{}, d.opts...), nil
 }
 
+// resolveOwnedMetaDiscoveryClient is resolveMetaDiscoveryClient WITHOUT the LF system
+// fallback — the monitor read's equivalent of googleads.go's
+// resolveOwnedGoogleAdsDiscoveryClient (see that function's doc comment for the shared
+// rationale: round-16 review escalated the pre-existing credential-scope gap to Critical, and
+// membership-checking against ListAccounts would not have closed it given the same shared-
+// tenancy exposure through the fallback).
+//
+// It calls resolveMetaCredentials bound to d.creds.resolveOwned instead of d.creds.resolve, so
+// a project with no Meta connection of its own gets domain.ErrNotFound (via noOwnConnection)
+// instead of a credential borrowed from the shared LF system row.
+func (d *MetaDispatcher) resolveOwnedMetaDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*meta.Client, error) {
+	_, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.resolveOwned)
+	if err != nil {
+		return nil, err
+	}
+	return meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{}, d.opts...), nil
+}
+
 // ListAccounts discovers the ad accounts reachable via the project's stored, encrypted
 // Meta connection credential, returning minimal identifying information (the act_-prefixed
 // account id and a display label).
@@ -1148,6 +1166,64 @@ func (d *MetaDispatcher) ListAccounts(ctx context.Context, projectID string, pla
 		accounts = append(accounts, model.AccessibleAccount{ID: a.ID, Label: metaAccountLabel(a)})
 	}
 	return accounts, nil
+}
+
+// ListAccountCampaignMetrics implements service.AccountMetricsReader for Meta, backing the
+// account-monitor endpoint. It resolves the same credentials-only, account-agnostic client
+// ListAccounts uses (a monitor read names its OWN target accountID, distinct from whatever
+// account the project's connection currently points at), then reads every campaign visible
+// on that account via meta.Client.ListAccountCampaigns.
+//
+// Trust boundary (round-16 review, fixed): resolveOwnedMetaDiscoveryClient refuses the LF
+// system fallback entirely, so a project with no Meta connection of its own gets a 404 instead
+// of a read served from a credential that could reach another project's data. See that
+// resolver's doc comment, and GoogleAdsDispatcher.ListAccountCampaignMetrics
+// (internal/dispatch/googleads.go) for the shared rationale.
+func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+	// Validated up front, before any credential is resolved — mirrors googleads.ValidateCustomerID's
+	// ordering (internal/dispatch/googleads.go): an unauthenticated malformed-id caller should never
+	// cost a credential decrypt. The Goa design layer's Pattern already rejects a malformed id at
+	// the HTTP boundary, but this dispatcher method is also reachable directly (e.g. tests or a
+	// future non-HTTP caller), so it re-checks rather than trusting the caller.
+	if err := meta.ValidateAccountID(accountID); err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
+	}
+	if err := validateMonitorDays(days); err != nil {
+		return nil, err
+	}
+	client, err := d.resolveOwnedMetaDiscoveryClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
+	if lerr != nil {
+		// Defense in depth only, mirroring reddit.go's equivalent remap: reachable if
+		// ListAccountCampaigns' own shape check ever diverges from ValidateAccountID's above it.
+		if errors.Is(lerr, meta.ErrInvalidAccountID) {
+			return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, lerr)
+		}
+		return nil, lerr
+	}
+	out := make([]model.AccountCampaignMetrics, 0, len(rows))
+	for _, r := range rows {
+		var conv *float64
+		out = append(out, model.AccountCampaignMetrics{
+			PlatformCampaignID: r.CampaignID,
+			Name:               r.Name,
+			Status:             r.Status,
+			Spend:              r.SpendUSD,
+			Impressions:        r.Impressions,
+			Clicks:             r.Clicks,
+			Ctr:                r.Ctr,
+			Conversions:        conv, // Meta's Insights edge exposes no scalar conversions field — see meta.GetCampaignMetrics's doc comment.
+			BudgetDay:          r.DailyBudget,
+			TotalBudget:        r.LifetimeBudget,
+			StartDate:          r.StartDate,
+			EndDate:            r.EndDate,
+			FetchFailed:        r.FetchFailed,
+		})
+	}
+	return out, nil
 }
 
 // metaAccountLabel builds the string a picker shows for one ad account.

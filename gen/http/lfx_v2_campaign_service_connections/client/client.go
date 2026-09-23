@@ -230,6 +230,22 @@ type Client struct {
 	// create-hubspot-campaign endpoint.
 	CreateHubspotCampaignDoer goahttp.Doer
 
+	// MonitorGoogleAdsAccount Doer is the HTTP client used to make requests to the
+	// monitor-google-ads-account endpoint.
+	MonitorGoogleAdsAccountDoer goahttp.Doer
+
+	// MonitorLinkedinAdsAccount Doer is the HTTP client used to make requests to
+	// the monitor-linkedin-ads-account endpoint.
+	MonitorLinkedinAdsAccountDoer goahttp.Doer
+
+	// MonitorMetaAdsAccount Doer is the HTTP client used to make requests to the
+	// monitor-meta-ads-account endpoint.
+	MonitorMetaAdsAccountDoer goahttp.Doer
+
+	// MonitorRedditAdsAccount Doer is the HTTP client used to make requests to the
+	// monitor-reddit-ads-account endpoint.
+	MonitorRedditAdsAccountDoer goahttp.Doer
+
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -304,6 +320,10 @@ func NewClient(
 		ListHubspotEmailsDoer:         doer,
 		SearchHubspotCampaignsDoer:    doer,
 		CreateHubspotCampaignDoer:     doer,
+		MonitorGoogleAdsAccountDoer:   doer,
+		MonitorLinkedinAdsAccountDoer: doer,
+		MonitorMetaAdsAccountDoer:     doer,
+		MonitorRedditAdsAccountDoer:   doer,
 		RestoreResponseBody:           restoreBody,
 		scheme:                        scheme,
 		host:                          host,
@@ -1585,6 +1605,105 @@ func (c *Client) CreateHubspotCampaign() goa.Endpoint {
 		resp, err := c.CreateHubspotCampaignDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "create-hubspot-campaign", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// MonitorGoogleAdsAccount returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service monitor-google-ads-account
+// server.
+func (c *Client) MonitorGoogleAdsAccount() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeMonitorGoogleAdsAccountRequest(c.encoder)
+		decodeResponse = DecodeMonitorGoogleAdsAccountResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildMonitorGoogleAdsAccountRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.MonitorGoogleAdsAccountDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "monitor-google-ads-account", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// MonitorLinkedinAdsAccount returns an endpoint that makes HTTP requests to
+// the lfx-v2-campaign-service-connections service monitor-linkedin-ads-account
+// server.
+func (c *Client) MonitorLinkedinAdsAccount() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeMonitorLinkedinAdsAccountRequest(c.encoder)
+		decodeResponse = DecodeMonitorLinkedinAdsAccountResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildMonitorLinkedinAdsAccountRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.MonitorLinkedinAdsAccountDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "monitor-linkedin-ads-account", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// MonitorMetaAdsAccount returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service monitor-meta-ads-account server.
+func (c *Client) MonitorMetaAdsAccount() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeMonitorMetaAdsAccountRequest(c.encoder)
+		decodeResponse = DecodeMonitorMetaAdsAccountResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildMonitorMetaAdsAccountRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.MonitorMetaAdsAccountDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "monitor-meta-ads-account", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// MonitorRedditAdsAccount returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service monitor-reddit-ads-account
+// server.
+func (c *Client) MonitorRedditAdsAccount() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeMonitorRedditAdsAccountRequest(c.encoder)
+		decodeResponse = DecodeMonitorRedditAdsAccountResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildMonitorRedditAdsAccountRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.MonitorRedditAdsAccountDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "monitor-reddit-ads-account", err)
 		}
 		return decodeResponse(resp)
 	}

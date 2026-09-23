@@ -431,6 +431,67 @@ func (c *Client) CloneEmail(ctx context.Context, sourceID, cloneName string) (*E
 	return &e, nil
 }
 
+// abTestVariantStateDraft is the state HubSpot sets on the new variant returned by
+// CreateABTestVariant ("DRAFT_AB_VARIANT" in the live API — verified against the
+// prototype's actual response handling, not the platform's general email states).
+const abTestVariantStateDraft = "DRAFT_AB_VARIANT"
+
+// createABTestVariantRequest is the POST /marketing/v3/emails/ab-test/create-variation
+// body. Field names verified against the prototype's shipped integration
+// (backend/integrations/hubspot.py: create_ab_variation), not the platform's own
+// AB_TEST_API_IMPLEMENTATION.md design doc, which describes a different, apparently
+// unshipped endpoint shape (POST .../{email_id}/ab-test-variants, empty body). The doc
+// is stale; this is what the live API actually accepts.
+type createABTestVariantRequest struct {
+	ContentID     string `json:"contentId"`
+	VariationName string `json:"variationName"`
+}
+
+// CreateABTestVariant creates a native HubSpot A/B test variation of parentID and
+// returns the NEW VARIANT's own email (its "id" field is the variant email's id --
+// there is no separate ab-test-id in this API). MUTATING (idempotent=false): a
+// create has no idempotency key, so an ambiguous failure must NOT blind-retry (that
+// could create a second variant). An ambiguous error / a 2xx with no id is surfaced
+// as UNCONFIRMED so the caller verifies.
+//
+// HubSpot documents this as idempotent-ish on its own terms: if parentID already has
+// an active variation, it returns the EXISTING one instead of creating a new one. That
+// behavior lives on HubSpot's side, not this client's -- callers should not assume a
+// second call always mints a second variant.
+func (c *Client) CreateABTestVariant(ctx context.Context, parentID, variationName string) (*Email, error) {
+	if parentID = strings.TrimSpace(parentID); parentID == "" {
+		return nil, fmt.Errorf("hubspot: CreateABTestVariant requires a non-empty parent email id")
+	}
+	if variationName = strings.TrimSpace(variationName); variationName == "" {
+		return nil, fmt.Errorf("hubspot: CreateABTestVariant requires a non-empty variation name")
+	}
+	body := createABTestVariantRequest{ContentID: parentID, VariationName: variationName}
+	raw, err := c.doRequest(ctx, http.MethodPost, emailsPath+"/ab-test/create-variation", body, false)
+	if err != nil {
+		return nil, fmt.Errorf("hubspot: create A/B test variant of %s: %w", parentID, err)
+	}
+	// Value decode, same as CloneEmail: the ID=="" check below covers a JSON `null` body
+	// (unmarshals to a zero-valued Email) as well as a missing id, both UNCONFIRMED.
+	var e Email
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return nil, unconfirmed("hubspot: create A/B test variant UNCONFIRMED (2xx with an undecodable body — a variant may have been created; verify before retrying)", err)
+	}
+	if e.ID == "" {
+		return nil, unconfirmed("hubspot: create A/B test variant UNCONFIRMED (2xx with no id or a null body — a variant may have been created; verify before retrying)", nil)
+	}
+	// The state HubSpot actually returns, checked rather than assumed. A 2xx carrying some
+	// other state means the variant was created as something this code has not modelled — the
+	// caller still gets it (the id is real and a variant exists), but the mismatch is recorded
+	// so a change in the live API surfaces here rather than as confusing behaviour downstream.
+	if e.State != "" && e.State != abTestVariantStateDraft {
+		slog.WarnContext(ctx, "hubspot returned an unexpected A/B variant state",
+			"parent_email_id", parentID, "variant_id", e.ID, "state", e.State,
+			"expected", abTestVariantStateDraft)
+	}
+	e.AppURL = c.emailEditURL(e.ID)
+	return &e, nil
+}
+
 // EmailSettings carries the subject/from fields to patch on a draft. Nil pointers
 // are omitted (a HubSpot PATCH preserves omitted fields).
 //
@@ -876,4 +937,103 @@ func widgetWithHTML(rawWidget json.RawMessage, htmlBody string) (json.RawMessage
 	}
 	w["body"] = encodedBody
 	return json.Marshal(w)
+}
+
+// EmailContentWriter is the narrow slice of *Client that ApplyEmailContent needs.
+//
+// The parameter is an interface rather than *Client for one reason: this function has two
+// callers in different layers — the HubSpot dispatch adapter and the email wizard service —
+// and the wizard's tests must be able to drive it without a live portal. A concrete *Client
+// would force every one of those tests through the HTTP transport, which is exactly the
+// coupling that made the dispatch path's own copy untestable.
+type EmailContentWriter interface {
+	PatchEmailSettings(ctx context.Context, id string, settings EmailSettings) (*Email, error)
+	GetEmailHTMLWidgets(ctx context.Context, id string) ([]EmailHTMLBlock, error)
+	SetEmailHTMLWidgets(ctx context.Context, id string, widgets map[string]string) (*Email, error)
+}
+
+// ApplyEmailContent writes generated copy onto a cloned draft: the subject via
+// PatchEmailSettings, the body into the draft's FIRST rich-text block.
+//
+// It lives HERE, next to the three calls it makes, rather than in the dispatch adapter where it
+// began: the email wizard writes copy onto a draft by the same contract, and internal/dispatch
+// cannot be imported from internal/service (dispatch's own tests import service, so the edge
+// would close a cycle). One implementation in the package that owns the API calls is what keeps
+// the two paths from drifting into two different answers to "which block is the body".
+//
+// BEST-EFFORT, like tagEmailLinks and for the same reason: by the time this runs the email is
+// cloned and pointed at the right audience, so it is already a working campaign. A failure here
+// leaves a draft carrying the TEMPLATE's copy — which is what every campaign had before
+// LFXV2-2775 — so turning it into a dispatch failure would trade a recoverable cosmetic gap for
+// a failed send and an orphaned draft. Every failure is logged and swallowed.
+//
+// FIRST LAYOUT-PLACED BLOCK, in the layout's reading order — the block at the top of the email.
+// (A draft with no layout has no such block; see the classic-template paragraph below.) It used to be
+// "the only block, or nothing": templates carry several rich-text widgets (an intro, keynote
+// copy, a footer note) and the API exposes no marker saying which is "the" body, so writing
+// nothing looked like the safe answer to that ambiguity. It was not. Every real template in the
+// portal has nine or so blocks, so the guard fired on all of them and the generated copy — the
+// copy an operator reviewed in the UI and pressed Stage on — reached the draft for no template
+// at all, with only an info log to say why.
+//
+// The first block is not a heuristic guess at which block "means" body; it is a stated contract
+// the operator can see. The generated copy is a lede written against the brief, the top of the
+// email is where a lede goes, and the other blocks — programme details, sponsor tiers, the
+// unsubscribe footer — are template furniture that the copy was never meant to replace. Picking
+// "the longest" or "the one that looks like prose" WOULD be a guess, and would move between
+// templates; the top block is the same block every time.
+//
+// That contract rests entirely on the position being the LAYOUT's. GetEmailHTMLWidgets orders
+// layout-placed blocks by the drag-and-drop tree and appends everything else in sorted key
+// order, so on a CLASSIC template — no flexAreas at all — blocks[0] is merely whichever opaque
+// module id sorts first, and is as likely the unsubscribe footer as the lede. Writing there
+// would overwrite template furniture with the operator's copy and log it as "the first block",
+// which is why this requires blocks[0].Placed rather than trusting the index. Without a layout
+// there is no top of the email to speak of, so the draft keeps its template body and the log
+// says so — the same conservative answer as the no-rich-text-block case below it.
+//
+// Preview text is deliberately absent: Marketing Emails v3 exposes no preheader property (see
+// EmailSettings), so an operator sets it in HubSpot. Accepting one here would report success
+// while HubSpot silently ignored it.
+func ApplyEmailContent(ctx context.Context, client EmailContentWriter, emailID, subject, bodyHTML string) {
+	if subject = strings.TrimSpace(subject); subject != "" {
+		if _, err := client.PatchEmailSettings(ctx, emailID, EmailSettings{Subject: &subject}); err != nil {
+			slog.WarnContext(ctx, "could not set the generated subject on the email draft; it keeps the template's subject",
+				"email_id", emailID, "error", err)
+		}
+	}
+
+	if bodyHTML = strings.TrimSpace(bodyHTML); bodyHTML == "" {
+		return
+	}
+
+	blocks, err := client.GetEmailHTMLWidgets(ctx, emailID)
+	if err != nil {
+		slog.WarnContext(ctx, "could not read the email draft to set its body; it keeps the template's body",
+			"email_id", emailID, "error", err)
+		return
+	}
+	if len(blocks) == 0 {
+		// An image-only or module-only template. Not an error: there is no rich-text block to
+		// write into, and inventing one would put copy somewhere the layout never placed.
+		slog.InfoContext(ctx, "email draft has no rich-text block to write the generated body into; it keeps the template's content",
+			"email_id", emailID)
+		return
+	}
+
+	target := blocks[0]
+	if !target.Placed {
+		// Sorted key order, not reading order: see the contract note above. Info, not Warn —
+		// a classic template is a legitimate choice by whoever built it, not a failure.
+		slog.InfoContext(ctx, "email draft has no layout-placed rich-text block, so there is no first block to write the generated body into; it keeps the template's content",
+			"email_id", emailID, "block_count", len(blocks))
+		return
+	}
+	if _, perr := client.SetEmailHTMLWidgets(ctx, emailID, map[string]string{target.Key: bodyHTML}); perr != nil {
+		slog.WarnContext(ctx, "could not set the generated body on the email draft; it keeps the template's body",
+			"email_id", emailID, "widget", target.Key, "error", perr)
+		return
+	}
+	slog.InfoContext(ctx, "wrote the generated body into the email draft's first rich-text block",
+		"email_id", emailID, "widget", target.Key, "block_count", len(blocks))
 }
