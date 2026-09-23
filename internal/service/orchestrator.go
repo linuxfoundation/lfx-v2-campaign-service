@@ -975,6 +975,7 @@ type platformResult struct {
 	Skipped    bool   `json:"skipped,omitempty"`
 	CampaignID string `json:"campaign_id,omitempty"`
 	Error      string `json:"error,omitempty"`
+	HubspotURL string `json:"hubspot_url,omitempty"`
 }
 
 // Start creates a queued job for the brief and launches dispatch asynchronously,
@@ -1361,6 +1362,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// terminal, so it falls through to the claim/reconcile path below.
 		res.OK = true
 		res.CampaignID = existing.PlatformCampaignID
+		res.HubspotURL = hubspotURLOrEmpty(existing)
 		return res
 	case lerr == nil:
 		// A row exists but is not a completed campaign — either it has no upstream id
@@ -1405,6 +1407,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// than being reported as a completed campaign.
 			res.OK = true
 			res.CampaignID = existing.PlatformCampaignID
+			res.HubspotURL = hubspotURLOrEmpty(existing)
 			return res
 		}
 		// A retained partial ORPHAN is distinguishable from a claim held by a still-
@@ -1718,6 +1721,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", uerr)
 		res.Error = "created upstream campaign but failed to record it; see logs"
 		res.CampaignID = campaign.PlatformCampaignID
+		res.HubspotURL = hubspotURLOrEmpty(campaign)
 		return res
 	}
 	// The index message co-committed with the row (see campaignIndexPayload), so the campaign
@@ -1726,6 +1730,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 
 	res.OK = true
 	res.CampaignID = campaign.PlatformCampaignID
+	res.HubspotURL = hubspotURLOrEmpty(campaign)
 	return res
 }
 

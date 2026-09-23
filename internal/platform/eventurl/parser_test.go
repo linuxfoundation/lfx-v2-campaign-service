@@ -76,9 +76,9 @@ func TestParse(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// DeepEqual rather than ==: EventDetails carries slice fields (speakers,
-			// sponsors) since the wizard, so the struct is no longer comparable. The
-			// assertion is unchanged in meaning -- every field, including the ones these
-			// fixtures leave empty.
+			// sponsors, audience/inclusion bullets) since the wizard, so the struct is no
+			// longer comparable. The assertion is unchanged in meaning -- every field,
+			// including the ones these fixtures leave empty.
 			if got := NewParser().Parse([]byte(tc.body)); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("Parse() = %+v\nwant %+v", got, tc.want)
 			}

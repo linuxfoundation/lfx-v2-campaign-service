@@ -1103,6 +1103,30 @@ func TestBriefService_GetJob_ValidResultsAndFailedErrorOnly(t *testing.T) {
 	}
 }
 
+// TestBriefService_GetJob_HubspotURLRoundTrips verifies a persisted hubspot_url
+// on a per-platform job result round-trips into the typed response, and is
+// absent for platforms that never had one.
+func TestBriefService_GetJob_HubspotURLRoundTrips(t *testing.T) {
+	s := getJobTestService(&model.CampaignJob{
+		ID: "j1", BriefID: "b1", Status: model.JobSucceeded,
+		Result: []byte(`[{"platform":"hubspot","ok":true,"campaign_id":"104670127234","hubspot_url":"https://app.hubspot.com/email/8112310/edit/104670127234/settings"},{"platform":"google-ads","ok":true,"campaign_id":"pc-1"}]`),
+	})
+	resp, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if len(resp.Result) != 2 {
+		t.Fatalf("decoded result = %+v, want 2 results", resp.Result)
+	}
+	want := "https://app.hubspot.com/email/8112310/edit/104670127234/settings"
+	if resp.Result[0].HubspotURL == nil || *resp.Result[0].HubspotURL != want {
+		t.Errorf("hubspot result HubspotURL = %v, want %q", resp.Result[0].HubspotURL, want)
+	}
+	if resp.Result[1].HubspotURL != nil {
+		t.Errorf("google-ads result HubspotURL = %v, want nil", resp.Result[1].HubspotURL)
+	}
+}
+
 // TestBriefService_GetJob_SkippedSurfacesNonFailure verifies a skipped platform
 // (ok=false, skipped=true) on a succeeded job is surfaced with an explicit
 // non-failure message rather than an unexplained ok=false that reads as a failure.
@@ -5441,5 +5465,53 @@ func TestDeleteBrief_ATransientArchiveFailureDoesNotScrub(t *testing.T) {
 	}
 	if got.CreatedBy == nil {
 		t.Error("created_by was cleared although the delete FAILED and the brief is still live")
+	}
+}
+
+// TestHubspotEmailURL_HubSpotWithPortal covers the one case that actually builds a link:
+// the email channel, a cloned draft's id, and a Result blob naming the portal it was cloned in.
+func TestHubspotEmailURL_HubSpotWithPortal(t *testing.T) {
+	c := &model.Campaign{
+		Platform:           model.ProviderHubSpot,
+		PlatformCampaignID: "104670127234",
+		Result:             []byte(`{"portalId":"8112310"}`),
+	}
+	got := hubspotEmailURL(c)
+	want := "https://app.hubspot.com/email/8112310/edit/104670127234/settings"
+	if got == nil || *got != want {
+		t.Fatalf("hubspotEmailURL = %v, want %q", got, want)
+	}
+}
+
+// TestHubspotEmailURL_NonHubSpotPlatform pins that an ad-platform campaign never gets a
+// HubSpot link, however its Result blob happens to be shaped.
+func TestHubspotEmailURL_NonHubSpotPlatform(t *testing.T) {
+	c := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1",
+		Result:             []byte(`{"portalId":"8112310"}`),
+	}
+	if got := hubspotEmailURL(c); got != nil {
+		t.Fatalf("hubspotEmailURL = %v, want nil for a non-HubSpot platform", *got)
+	}
+}
+
+// TestHubspotEmailURL_NoPortalKnown covers the cases where a link cannot be built: no email
+// id yet (dispatch failed before cloning), and a HubSpot campaign whose Result blob predates
+// carrying a portal id (or was never persisted) -- both must degrade to no link, not a broken
+// one built from an empty portal id.
+func TestHubspotEmailURL_NoPortalKnown(t *testing.T) {
+	tests := map[string]*model.Campaign{
+		"no platform_campaign_id yet": {Platform: model.ProviderHubSpot, Result: []byte(`{"portalId":"8112310"}`)},
+		"no result blob":              {Platform: model.ProviderHubSpot, PlatformCampaignID: "104670127234"},
+		"result blob has no portalId": {Platform: model.ProviderHubSpot, PlatformCampaignID: "104670127234", Result: []byte(`{}`)},
+		"result blob is not JSON":     {Platform: model.ProviderHubSpot, PlatformCampaignID: "104670127234", Result: []byte(`not json`)},
+	}
+	for name, c := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := hubspotEmailURL(c); got != nil {
+				t.Errorf("hubspotEmailURL = %v, want nil", *got)
+			}
+		})
 	}
 }

@@ -95,6 +95,15 @@ type Service interface {
 	// the brief. The AI model is optional — without it configured this endpoint
 	// returns 503.
 	GenerateEmailCopy(context.Context, *GenerateEmailCopyPayload) (res *EmailCopy, err error)
+	// Iterate on a previously-generated email copy draft rather than generating
+	// one from scratch. The caller sends back the exact draft it received from
+	// generate-email-copy (or a prior refine-email-copy call) plus a free-text
+	// instruction describing what to change (e.g. "make the CTA more urgent",
+	// "shorten the second paragraph"), and the model returns a revised draft in
+	// the same structured shape. Returns immediately with the revised text; does
+	// NOT persist to the brief. The AI model is optional -- without it configured
+	// this endpoint returns 503.
+	RefineEmailCopy(context.Context, *RefineEmailCopyPayload) (res *EmailCopy, err error)
 	// Replace a campaign (requires If-Match).
 	UpdateCampaign(context.Context, *UpdateCampaignPayload) (res *Campaign, err error)
 	// Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist
@@ -215,7 +224,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [28]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "apply-keyword-actions", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [29]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "refine-email-copy", "update-campaign", "toggle-campaign-status", "apply-keyword-actions", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AdoptCampaignPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service adopt-campaign method.
@@ -385,6 +394,10 @@ type Campaign struct {
 	Version int64
 	// ETag header value (mirrors version)
 	Etag *string
+	// Deep link to this campaign's email in the HubSpot editor. Present only for
+	// the email (HubSpot) channel, and only once the portal that created it is
+	// known.
+	HubspotURL *string
 }
 
 type CampaignActionItem struct {
@@ -726,6 +739,17 @@ type EventDetails struct {
 	// Which strategy produced this record — the whole record came from exactly one
 	// of them
 	ExtractedFrom string
+	// Speakers or performers named on the page, if any
+	Speakers []string
+	// Sponsors or organizers named on the page, if any
+	Sponsors []string
+	// "Who should attend" bullet points, if the page has such a section
+	AudienceBullets []string
+	// "What's included" bullet points, if the page has such a section
+	InclusionBullets []string
+	// Short free-text summary of ticket pricing tiers/deadlines, if the page
+	// states any
+	TicketPricing *string
 }
 
 // FetchEventURLPayload is the payload type of the
@@ -769,11 +793,14 @@ type GenerateEmailCopyPayload struct {
 	// Registration Push rather than failing, so a misspelling yields registration
 	// copy under a 200 rather than an error.
 	Stage *string
-	// Requests a differently-styled draft of the same stage's copy. Currently one
-	// value is recognised: 'urgency-fomo', which asks for an urgency/FOMO-forward
-	// structure (deadline framing, social proof, a secondary CTA) instead of the
-	// stage's normal copy. Any other value, or absence, produces the normal
-	// stage-based copy.
+	// Requests a differently-styled draft of the same stage's copy. One of:
+	// 'urgency-fomo' (deadline framing, social proof, a secondary CTA),
+	// 'value-focused' (concrete value/benefits over urgency), 'social-proof'
+	// (testimonials, attendee counts, past-edition success, join-others framing),
+	// 'b2b-sponsorship' (reframed for a B2B sponsorship-conversion audience:
+	// decision-makers, ROI, sponsorship tiers/benefits). Matching is
+	// CASE-SENSITIVE and any other value, or absence, produces the normal
+	// stage-based copy rather than failing.
 	Variant *string
 }
 
@@ -980,6 +1007,27 @@ type PlatformResult struct {
 	CampaignID *string
 	// Failure reason (present when not ok)
 	Error *string
+	// Deep link to this campaign's email in the HubSpot editor. Present only for
+	// the email (HubSpot) channel, and only once the portal that created it is
+	// known.
+	HubspotURL *string
+}
+
+// RefineEmailCopyPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service refine-email-copy method.
+type RefineEmailCopyPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// The email copy draft to revise, exactly as previously returned by
+	// generate-email-copy or refine-email-copy
+	PreviousDraft *EmailCopy
+	// Free-text instruction describing what to change about the previous draft,
+	// e.g. 'make the CTA more urgent' or 'shorten the second paragraph'
+	Instruction string
 }
 
 // SetWizardSendListPayload is the payload type of the

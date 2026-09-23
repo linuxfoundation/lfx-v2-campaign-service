@@ -272,11 +272,15 @@ nothing greps for it.
 - **TestComposeEmailCopyPrompt_AbsentRegistrationURLPrintsNoLine**: With no usable URL the prompt offers no slot at all — a blank one reads as supplied-but-empty, which is the shape that produced the placeholder — while the rule telling the model to write plain text still ships.
 - **TestAbsentStageIgnoresTheRegistrationURL**: A brief WITH a url still composes the frozen pre-stage prompt byte for byte. LFXV2-1940 does not bend for an improvement, and this is the case most plausibly "fixed" by mistake.
 - **TestGenerateEmailCopy_BriefURLBecomesTheCTADestination**: End-to-end wiring. The composer tests take the URL as an argument, so a `registrationURL` never populated in `GenerateEmailCopy` would leave all of them green while the endpoint kept generating dead buttons — and the url lives on the brief's own column, outside the blob every other prompt field is decoded from.
+- **TestComposeRefineEmailCopyPrompt**: Validates the refine-specific prompt composer serializes the previous draft's subject/preheader/sections and the caller's instruction into the prompt, distinctly from fresh generation.
+- **TestRenderEmailCopyDraftAsText_Nil**: A nil previous draft renders as empty text rather than panicking.
+- **TestRefineEmailCopy_NoLLMClient**: Validates 503 response when llmClient is nil, mirroring the same guard on the generate path.
+- **TestRefineEmailCopy_NilPreviousDraft**: Validates a request with no previous draft is rejected rather than silently falling back to fresh generation.
 
 Each test is mutation-verified by reverting the corresponding logic and confirming the test fails with a meaningful diagnostic.
 
 ## Architectural Notes
 
 - **No persistence**: `GenerateEmailCopy` returns a result but does NOT write to the brief. A later flow (e.g., a UI that calls both generate and update) would merge the copy into the brief's `Copy` field.
-- **No refinement in scope**: The lfx-one reference includes a "refine" endpoint that skips re-scraping and feeds prior copy back capped at 10k chars. This initial slice omits refinement to keep the PR under the 1000-line cap.
+- **Refinement**: `refine-email-copy` (`RefineEmailCopy`) takes a previously generated `EmailCopy` plus a free-text `instruction` and asks the model for a revision, via a dedicated `composeRefineEmailCopyPrompt` rather than branching the fresh-generation composer. It reuses `parseEmailCopyResponse` and the same size-guard pattern as `GenerateEmailCopy`. It does not persist the result either — same no-persistence rule as generation.
 - **Copy storage**: The generated copy can be stored in the brief's existing `Copy` field (keyed by channel, e.g. `{"email": {...}}`) or as a dedicated column in a future migration. For now, the UI/client is responsible for merge-and-persist if needed.

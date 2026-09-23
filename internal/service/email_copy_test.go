@@ -1513,11 +1513,15 @@ func worstStageFloorNamed() (int, string) {
 	// worst case this bound must clear, and it reaches every stage (never withheld, unlike the
 	// registration URL). See maxReferenceBlockRunes.
 	maxRef := strings.Repeat("x", maxReferenceBlockRunes)
-	// Composed WITH the urgency-fomo variant too: that block is a fixed content addition, same
-	// floor-contributor shape as a stage template (see urgencyFomoVariant), so the worst case this
-	// bound must clear is whichever of variant-on/variant-off is larger for each stage -- not just
-	// the plain stage composition.
-	for _, variant := range []string{"", urgencyFomoVariant} {
+	// Composed WITH every recognised variant too, not just urgency-fomo: each block is a fixed
+	// content addition, same floor-contributor shape as a stage template (see
+	// emailCopyVariantBlocks), so the worst case this bound must clear is whichever of
+	// no-variant/any-variant is largest for each stage -- not just the plain stage composition.
+	variants := []string{""}
+	for v := range emailCopyVariantBlocks {
+		variants = append(variants, v)
+	}
+	for _, variant := range variants {
 		for _, name := range emailstage.Names() {
 			sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name, variant: variant, registrationURL: "x", referenceBlock: maxRef})
 			floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user)
@@ -1707,5 +1711,148 @@ func TestParseEmailCopyResponse_EmptyResponseIsNotReportedAsAShapeMismatch(t *te
 	_, err := parseEmailCopyResponse(`{"subject":"s","preheader":"p"}`, false)
 	if err != nil && strings.Contains(err.Error(), "legacy body/cta shape") {
 		t.Fatalf("an empty response was reported as a shape mismatch: %v", err)
+	}
+}
+
+// TestComposeRefineEmailCopyPrompt verifies the refine prompt carries the event's factual
+// grounding, the caller's instruction, and the previous draft serialized back to readable text
+// (subject/preheader/sections), mirroring TestComposeEmailCopyPrompt's shape for the
+// fresh-generation prompt.
+func TestComposeRefineEmailCopyPrompt(t *testing.T) {
+	html := "<p>Join us in Barcelona for KubeCon EU 2026.</p>"
+	buttonText := "Register Now"
+	buttonURL := "https://events.linuxfoundation.org/kubecon-eu/register/"
+
+	vars := emailCopyRefinePromptVars{
+		eventName:   "KubeCon Europe 2026",
+		location:    "Barcelona",
+		dates:       "June 17 - June 20",
+		instruction: "Make the CTA more urgent and shorten the intro paragraph.",
+		draft: &briefs.EmailCopy{
+			Subject:   "Join Us at KubeCon Europe 2026",
+			Preheader: "Register now and shape the future of cloud native computing",
+			Sections: []*briefs.EmailCopySection{
+				{Type: "rich_text", HTML: &html},
+				{Type: "button", Text: &buttonText, URL: &buttonURL},
+				{Type: "divider"},
+			},
+		},
+	}
+
+	sys, user := composeRefineEmailCopyPrompt(vars)
+
+	// System prompt should frame this as a revision, not a fresh generation, and keep the
+	// same no-invented-facts rule and JSON schema instructions.
+	if !strings.Contains(sys, "REVISE an existing draft") {
+		t.Error("system prompt does not frame the task as a revision")
+	}
+	if !strings.Contains(sys, "ONLY the event details") {
+		t.Error("system prompt missing scrape/no-invented-facts constraint")
+	}
+	if !strings.Contains(sys, "\"subject\"") || !strings.Contains(sys, "\"sections\"") {
+		t.Error("system prompt missing the JSON schema instructions")
+	}
+
+	// User prompt should carry the event details, the instruction, and the previous draft's
+	// subject/preheader/sections rendered as readable text.
+	if !strings.Contains(user, "KubeCon Europe 2026") {
+		t.Error("user prompt missing event name")
+	}
+	if !strings.Contains(user, "Barcelona") {
+		t.Error("user prompt missing location")
+	}
+	if !strings.Contains(user, vars.instruction) {
+		t.Error("user prompt missing the caller's instruction")
+	}
+	if !strings.Contains(user, "Join Us at KubeCon Europe 2026") {
+		t.Error("user prompt missing the previous draft's subject")
+	}
+	if !strings.Contains(user, "Register now and shape the future of cloud native computing") {
+		t.Error("user prompt missing the previous draft's preheader")
+	}
+	if !strings.Contains(user, html) {
+		t.Error("user prompt missing the previous draft's rich_text section HTML")
+	}
+	if !strings.Contains(user, buttonText) || !strings.Contains(user, buttonURL) {
+		t.Error("user prompt missing the previous draft's button text/url")
+	}
+	if !strings.Contains(user, "[divider]") {
+		t.Error("user prompt missing the previous draft's divider section")
+	}
+}
+
+// TestRenderEmailCopyDraftAsText_Nil verifies the serializer degrades gracefully for a nil
+// draft rather than panicking -- defensive, since RefineEmailCopy itself rejects a nil
+// PreviousDraft before ever reaching composeRefineEmailCopyPrompt.
+func TestRenderEmailCopyDraftAsText_Nil(t *testing.T) {
+	if got := renderEmailCopyDraftAsText(nil); got != "" {
+		t.Errorf("renderEmailCopyDraftAsText(nil) = %q, want empty string", got)
+	}
+}
+
+// TestRefineEmailCopy_NoLLMClient verifies the handler returns 503 when no LLM client is wired,
+// mirroring TestGenerateEmailCopy_NoLLMClient.
+func TestRefineEmailCopy_NoLLMClient(t *testing.T) {
+	repo := newFakeBriefRepo()
+	repo.briefs["proj-123/brief-456"] = &model.CampaignBrief{
+		ID:           "brief-456",
+		ProjectID:    "proj-123",
+		EventDetails: json.RawMessage(`{"eventName":"Test","location":"Boston","startDate":"2026-09-01","endDate":"2026-09-02"}`),
+	}
+	svc := newTestBriefService(repo)
+
+	ctx := context.Background()
+	payload := &briefs.RefineEmailCopyPayload{
+		ProjectID:   "proj-123",
+		BriefID:     "brief-456",
+		BearerToken: strPtr("token"),
+		Instruction: "Make the CTA more urgent.",
+		PreviousDraft: &briefs.EmailCopy{
+			Subject:   "Join Us",
+			Preheader: "Preview",
+			Sections:  []*briefs.EmailCopySection{{Type: "rich_text"}},
+		},
+	}
+
+	result, err := svc.RefineEmailCopy(ctx, payload)
+
+	if result != nil {
+		t.Error("expected nil result when llmClient is nil")
+	}
+	var unavail *briefs.ConnServiceUnavailableError
+	if !errors.As(err, &unavail) {
+		t.Errorf("expected ConnServiceUnavailableError, got %T: %v", err, err)
+	}
+}
+
+// TestRefineEmailCopy_NilPreviousDraft verifies the handler rejects a nil previous draft with a
+// 400 rather than reaching the LLM call -- the request is meaningless without one, and the
+// design's Required("previous_draft", ...) is enforced by decoding, not by this service, so a
+// generated client could still construct a payload with a nil pointer.
+func TestRefineEmailCopy_NilPreviousDraft(t *testing.T) {
+	repo := newFakeBriefRepo()
+	repo.briefs["proj-123/brief-456"] = &model.CampaignBrief{
+		ID:           "brief-456",
+		ProjectID:    "proj-123",
+		EventDetails: json.RawMessage(`{"eventName":"Test","location":"Boston","startDate":"2026-09-01","endDate":"2026-09-02"}`),
+	}
+	svc := newTestBriefService(repo)
+	svc.SetLLMClient(newTestLLMClient(t, httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("LLM should not be called when previous_draft is nil")
+	}))))
+
+	ctx := context.Background()
+	payload := &briefs.RefineEmailCopyPayload{
+		ProjectID:     "proj-123",
+		BriefID:       "brief-456",
+		BearerToken:   strPtr("token"),
+		Instruction:   "Make the CTA more urgent.",
+		PreviousDraft: nil,
+	}
+
+	_, err := svc.RefineEmailCopy(ctx, payload)
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Errorf("expected BadRequestError for nil previous_draft, got %T: %v", err, err)
 	}
 }

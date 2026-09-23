@@ -35,6 +35,7 @@ type Server struct {
 	GetCampaignSettings   http.Handler
 	GetBriefMetrics       http.Handler
 	GenerateEmailCopy     http.Handler
+	RefineEmailCopy       http.Handler
 	UpdateCampaign        http.Handler
 	ToggleCampaignStatus  http.Handler
 	ApplyKeywordActions   http.Handler
@@ -92,6 +93,7 @@ func New(
 			{"GetCampaignSettings", "GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/settings"},
 			{"GetBriefMetrics", "GET", "/projects/{project_id}/briefs/{brief_id}/metrics"},
 			{"GenerateEmailCopy", "POST", "/projects/{project_id}/briefs/{brief_id}/email-copy"},
+			{"RefineEmailCopy", "POST", "/projects/{project_id}/briefs/{brief_id}/email-copy/refine"},
 			{"UpdateCampaign", "PUT", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}"},
 			{"ToggleCampaignStatus", "PATCH", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/status"},
 			{"ApplyKeywordActions", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-actions"},
@@ -121,6 +123,7 @@ func New(
 		GetCampaignSettings:   NewGetCampaignSettingsHandler(e.GetCampaignSettings, mux, decoder, encoder, errhandler, formatter),
 		GetBriefMetrics:       NewGetBriefMetricsHandler(e.GetBriefMetrics, mux, decoder, encoder, errhandler, formatter),
 		GenerateEmailCopy:     NewGenerateEmailCopyHandler(e.GenerateEmailCopy, mux, decoder, encoder, errhandler, formatter),
+		RefineEmailCopy:       NewRefineEmailCopyHandler(e.RefineEmailCopy, mux, decoder, encoder, errhandler, formatter),
 		UpdateCampaign:        NewUpdateCampaignHandler(e.UpdateCampaign, mux, decoder, encoder, errhandler, formatter),
 		ToggleCampaignStatus:  NewToggleCampaignStatusHandler(e.ToggleCampaignStatus, mux, decoder, encoder, errhandler, formatter),
 		ApplyKeywordActions:   NewApplyKeywordActionsHandler(e.ApplyKeywordActions, mux, decoder, encoder, errhandler, formatter),
@@ -157,6 +160,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.GetCampaignSettings = m(s.GetCampaignSettings)
 	s.GetBriefMetrics = m(s.GetBriefMetrics)
 	s.GenerateEmailCopy = m(s.GenerateEmailCopy)
+	s.RefineEmailCopy = m(s.RefineEmailCopy)
 	s.UpdateCampaign = m(s.UpdateCampaign)
 	s.ToggleCampaignStatus = m(s.ToggleCampaignStatus)
 	s.ApplyKeywordActions = m(s.ApplyKeywordActions)
@@ -193,6 +197,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountGetCampaignSettingsHandler(mux, h.GetCampaignSettings)
 	MountGetBriefMetricsHandler(mux, h.GetBriefMetrics)
 	MountGenerateEmailCopyHandler(mux, h.GenerateEmailCopy)
+	MountRefineEmailCopyHandler(mux, h.RefineEmailCopy)
 	MountUpdateCampaignHandler(mux, h.UpdateCampaign)
 	MountToggleCampaignStatusHandler(mux, h.ToggleCampaignStatus)
 	MountApplyKeywordActionsHandler(mux, h.ApplyKeywordActions)
@@ -999,6 +1004,60 @@ func NewGenerateEmailCopyHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "generate-email-copy")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountRefineEmailCopyHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "refine-email-copy" endpoint.
+func MountRefineEmailCopyHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/briefs/{brief_id}/email-copy/refine", f)
+}
+
+// NewRefineEmailCopyHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "refine-email-copy" endpoint.
+func NewRefineEmailCopyHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeRefineEmailCopyRequest(mux, decoder)
+		encodeResponse = EncodeRefineEmailCopyResponse(encoder)
+		encodeError    = EncodeRefineEmailCopyError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "refine-email-copy")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
 		payload, err := decodeRequest(r)
 		if err != nil {

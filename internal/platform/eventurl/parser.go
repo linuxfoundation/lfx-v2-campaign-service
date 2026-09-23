@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"mime"
+	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -20,10 +22,10 @@ import (
 const (
 	maxFieldBytes       = 1 << 10 // 1 KiB
 	maxDescriptionBytes = 8 << 10 // 8 KiB
-	// maxListEntries bounds the two LIST fields (speakers, sponsors) by count, which the
-	// per-field byte bounds above cannot do. 64 is chosen to sit above any real event's
-	// headline speaker or sponsor list while keeping the worst case a bounded multiple of
-	// maxFieldBytes rather than a function of the page.
+	// maxListEntries bounds the LIST fields (speakers, sponsors, audience/inclusion bullets)
+	// by count, which the per-field byte bounds above cannot do. 64 is chosen to sit above
+	// any real event's headline speaker or sponsor list while keeping the worst case a
+	// bounded multiple of maxFieldBytes rather than a function of the page.
 	maxListEntries = 64
 )
 
@@ -79,6 +81,19 @@ type EventDetails struct {
 	RegistrationURL string       `json:"registrationUrl,omitempty"`
 
 	ExtractedFrom string `json:"extractedFrom,omitempty"` // "jsonld", "opengraph", or "fallback"
+	// AudienceBullets ("who should attend") and InclusionBullets ("what's included") are
+	// PAGE-WIDE heuristics, not per-strategy fields: schema.org's Event type has no
+	// property for either, so they come from a lightweight scan for a heading matching a
+	// known phrase followed by a bulleted list. Populated the same way regardless of which
+	// naming strategy (JSON-LD, OpenGraph, fallback) wins the rest of the record -- see
+	// Parse.
+	AudienceBullets  []string `json:"audienceBullets,omitempty"`
+	InclusionBullets []string `json:"inclusionBullets,omitempty"`
+	// TicketPricing is a short FREE-TEXT summary of pricing tiers/deadlines, built from
+	// schema.org's Event `offers` (a single Offer, an AggregateOffer, or an array of
+	// either) when JSON-LD supplies one. Deliberately a plain string rather than a
+	// structured price model -- see jsonLDPricing.
+	TicketPricing string `json:"ticketPricing,omitempty"`
 }
 
 // SponsorRef is one sponsor named by an event page's JSON-LD.
@@ -147,7 +162,7 @@ func (d *EventDetails) clampFields() {
 	d.URL = clamp(d.URL, maxFieldBytes)
 	d.RegistrationURL = clamp(d.RegistrationURL, maxFieldBytes)
 
-	// The two LISTS need a count bound as well as a per-entry byte bound, which the
+	// The LISTS need a count bound as well as a per-entry byte bound, which the
 	// scalar fields did not. A single field can only be as long as the page makes one
 	// value; a list is as long as the page makes it, and the whole struct is serialised
 	// into a brief's event_details column, so an adversarial (or merely generated) page
@@ -169,6 +184,30 @@ func (d *EventDetails) clampFields() {
 		d.Sponsors[i].URL = clamp(d.Sponsors[i].URL, maxFieldBytes)
 		d.Sponsors[i].Tier = clamp(d.Sponsors[i].Tier, maxFieldBytes)
 	}
+	d.AudienceBullets = clampList(d.AudienceBullets, maxListEntries, maxFieldBytes)
+	d.InclusionBullets = clampList(d.InclusionBullets, maxListEntries, maxFieldBytes)
+	d.TicketPricing = clamp(d.TicketPricing, maxFieldBytes)
+}
+
+// clampList bounds a scraped list field the same way clamp bounds a scalar one: at most
+// maxItems entries, each sanitized and truncated to at most maxItemBytes. An entry that
+// clamps to empty (e.g. NUL bytes alone) is dropped rather than kept as a blank string, for
+// the same reason Parse judges Name after clamping rather than before -- a value that
+// cannot survive storage is not a value the page supplied.
+func clampList(items []string, maxItems, maxItemBytes int) []string {
+	if len(items) > maxItems {
+		items = items[:maxItems]
+	}
+	out := make([]string, 0, len(items))
+	for _, s := range items {
+		if s := clamp(s, maxItemBytes); s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Parser extracts event details from HTML using structured metadata.
@@ -195,6 +234,14 @@ func (p *Parser) Parse(body []byte) EventDetails {
 		return EventDetails{}
 	}
 
+	// AudienceBullets and InclusionBullets are PAGE-WIDE heuristics, extracted once up
+	// front and attached to whichever strategy below wins: a "Who should attend" section
+	// lives in ordinary body markup, not inside the JSON-LD block or the OpenGraph tags a
+	// naming strategy reads, so there is no per-strategy version of this field to pick
+	// between the way Name or Description have one.
+	audienceBullets := extractBulletSection(doc, audienceHeadingRe)
+	inclusionBullets := extractBulletSection(doc, inclusionHeadingRe)
+
 	// Each strategy fills a FRESH candidate, and only a candidate that wins is adopted.
 	// Sharing one struct across the three would let a losing strategy's fields survive
 	// into the winner's result: JSON-LD that yields a description but no name returns
@@ -215,6 +262,8 @@ func (p *Parser) Parse(body []byte) EventDetails {
 		if !strategy.parse(doc, &candidate) {
 			continue
 		}
+		candidate.AudienceBullets = audienceBullets
+		candidate.InclusionBullets = inclusionBullets
 		// Clamped BEFORE the name is judged usable, not after. sanitize strips NUL bytes
 		// and replaces invalid UTF-8, so a name made only of those is non-empty here and
 		// empty by the time it is returned: judging first meant a page whose first Event
@@ -230,6 +279,8 @@ func (p *Parser) Parse(body []byte) EventDetails {
 
 	details := EventDetails{}
 	p.parseFallback(doc, &details)
+	details.AudienceBullets = audienceBullets
+	details.InclusionBullets = inclusionBullets
 	details.clampFields()
 	if details.Name != "" {
 		details.ExtractedFrom = "fallback"
@@ -684,6 +735,7 @@ func (p *Parser) extractFromJSONLD(ld map[string]interface{}, details *EventDeta
 	// node) as fallback; an ImageObject uses url, or contentUrl for a distribution.
 	setIfEmpty(&details.Location, jsonLDLocation(ld["location"]))
 	setIfEmpty(&details.Image, jsonLDText(ld["image"], "url", "contentUrl"))
+	setIfEmpty(&details.TicketPricing, jsonLDPricing(ld["offers"]))
 
 	// Speakers come from `performer` ONLY, not from `organizer` as well. They are close
 	// enough to conflate by accident and must not be: schema.org's organizer is whoever
@@ -707,6 +759,117 @@ func (p *Parser) extractFromJSONLD(ld map[string]interface{}, details *EventDeta
 	setIfEmpty(&details.RegistrationURL, jsonLDText(ld["offers"], "url"))
 
 	return details.Name != ""
+}
+
+// jsonLDNameList collects display names out of a JSON-LD value that may be a bare string,
+// a single node with a "name", or an array mixing either — the same string-or-node-or-array
+// polymorphism jsonLDText already handles for a single scalar, but returning every name
+// found (bounded) instead of the first.
+func jsonLDNameList(v interface{}) []string {
+	var out []string
+	jsonLDNameListAt(v, 0, &out)
+	return out
+}
+
+func jsonLDNameListAt(v interface{}, depth int, out *[]string) {
+	if depth > maxJSONLDDepth || len(*out) >= maxListEntries {
+		return
+	}
+	switch t := v.(type) {
+	case string:
+		if s := strings.TrimSpace(t); s != "" {
+			*out = append(*out, s)
+		}
+	case map[string]interface{}:
+		if s := jsonLDTextAt(t["name"], depth+1, "name"); s != "" {
+			*out = append(*out, s)
+		}
+	case []interface{}:
+		for _, e := range t {
+			if len(*out) >= maxListEntries {
+				return
+			}
+			jsonLDNameListAt(e, depth+1, out)
+		}
+	}
+}
+
+// jsonLDScalar reads a bare string or number leaf, the shapes schema.org's Offer numeric
+// properties (price, lowPrice, highPrice) are given in; anything else yields "".
+func jsonLDScalar(v interface{}) string {
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t)
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	}
+	return ""
+}
+
+// jsonLDPricing renders schema.org's `offers` (a single Offer/AggregateOffer, or an array of
+// them) into one short free-text summary line per offer, joined with "; ". This is
+// deliberately a summary string and not a structured model: the caller (email-copy prompt
+// assembly) wants a sentence to quote, not a price to compute with, and offers in the wild
+// are inconsistent enough (price XOR a low/high range, currency sometimes absent) that a
+// best-effort rendering is more useful than a rigid schema.
+func jsonLDPricing(v interface{}) string {
+	var offers []interface{}
+	switch t := v.(type) {
+	case []interface{}:
+		offers = t
+	case map[string]interface{}:
+		offers = []interface{}{t}
+	default:
+		return ""
+	}
+	const maxOffers = 5
+	var parts []string
+	for _, o := range offers {
+		if len(parts) >= maxOffers {
+			break
+		}
+		node, ok := o.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name := jsonLDScalar(node["name"])
+		price := jsonLDScalar(node["price"])
+		if price == "" {
+			low, high := jsonLDScalar(node["lowPrice"]), jsonLDScalar(node["highPrice"])
+			switch {
+			case low != "" && high != "" && low != high:
+				price = low + "-" + high
+			case low != "":
+				price = low
+			case high != "":
+				price = high
+			}
+		}
+		if name == "" && price == "" {
+			continue
+		}
+		currency := jsonLDScalar(node["priceCurrency"])
+		deadline := jsonLDScalar(node["validThrough"])
+		var sb strings.Builder
+		if name != "" {
+			sb.WriteString(name)
+			sb.WriteString(": ")
+		}
+		if price != "" {
+			sb.WriteString(price)
+			if currency != "" {
+				sb.WriteString(" ")
+				sb.WriteString(currency)
+			}
+		}
+		if deadline != "" {
+			sb.WriteString(" (through ")
+			sb.WriteString(deadline)
+			sb.WriteString(")")
+		}
+		parts = append(parts, sb.String())
+	}
+	return strings.Join(parts, "; ")
 }
 
 // setIfEmpty fills dst only when still empty, so the FIRST strategy to supply a field wins:
@@ -759,6 +922,116 @@ func (p *Parser) parseOpenGraph(doc *html.Node, details *EventDetails) bool {
 	}
 	walk(doc)
 	return found
+}
+
+// audienceHeadingRe and inclusionHeadingRe match the small set of common phrasings
+// extractBulletSection looks for. Neither schema.org's Event type nor OpenGraph has a
+// property for "who should attend" or "what's included", so this is a best-effort HTML
+// heuristic, not a structured extraction -- it is meant to catch the common event-landing-
+// page pattern, not every way a page could phrase either idea.
+var (
+	audienceHeadingRe  = regexp.MustCompile(`(?i)who should attend|who this (?:event )?is for|is this (?:event )?for you`)
+	inclusionHeadingRe = regexp.MustCompile(`(?i)what'?s included|what you'?ll (?:get|receive)|included in (?:your|this) (?:ticket|registration|pass)`)
+)
+
+// headingTags is the small set of elements extractBulletSection treats as a candidate
+// section heading. A real "Who should attend" caption is short, standalone text, so this
+// deliberately excludes tags like <li> or <a> that would otherwise let the search match
+// its own output or an unrelated link.
+var headingTags = map[string]bool{
+	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
+	"p": true, "div": true, "span": true, "strong": true, "b": true, "legend": true,
+}
+
+// extractBulletSection scans the document for the FIRST element whose own short text
+// matches re, then returns the <li> text of the next <ul>/<ol> that follows it in document
+// order.
+//
+// This is intentionally a narrow, best-effort heuristic and not a general-purpose scraper:
+// real "who should attend" / "what's included" sections vary too much in markup to parse
+// structurally, so this looks for the one shape common enough to be worth it -- a heading-
+// like element followed (not necessarily as its direct sibling) by a bulleted list -- and
+// returns nothing rather than guessing at anything looser.
+func extractBulletSection(doc *html.Node, re *regexp.Regexp) []string {
+	var nodes []*html.Node
+	var flatten func(*html.Node)
+	flatten = func(n *html.Node) {
+		nodes = append(nodes, n)
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			flatten(c)
+		}
+	}
+	flatten(doc)
+
+	headingIdx := -1
+	for i, n := range nodes {
+		if n.Type != html.ElementNode || !headingTags[n.Data] {
+			continue
+		}
+		// Judged on the element's OWN short text, not its full subtree: matching against
+		// an arbitrarily large nested block would let an unrelated paragraph that merely
+		// mentions the phrase in passing anchor the bullet search to the wrong place, and
+		// the length cap keeps a large matched container (e.g. a <div> wrapping the whole
+		// page) from qualifying as "short standalone caption text" at all.
+		text := strings.TrimSpace(directText(n))
+		if text == "" || len(text) > 120 || !re.MatchString(text) {
+			continue
+		}
+		headingIdx = i
+		break
+	}
+	if headingIdx == -1 {
+		return nil
+	}
+
+	// The list is searched for only within a bounded window AFTER the heading, so a page
+	// with no matching list at all does not have this fall through to some unrelated list
+	// much later in the document.
+	const searchWindow = 400
+	end := headingIdx + searchWindow
+	if end > len(nodes) {
+		end = len(nodes)
+	}
+	for _, n := range nodes[headingIdx+1 : end] {
+		if n.Type == html.ElementNode && (n.Data == "ul" || n.Data == "ol") {
+			return listItems(n)
+		}
+	}
+	return nil
+}
+
+// directText concatenates a node's own text, one level of inline markup down -- e.g. a
+// heading wrapping a <span> -- but NOT its full subtree, so a heading candidate is judged
+// on its own caption rather than on an arbitrarily large block nested somewhere beneath it.
+func directText(n *html.Node) string {
+	var sb strings.Builder
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		switch c.Type {
+		case html.TextNode:
+			sb.WriteString(c.Data)
+		case html.ElementNode:
+			for gc := c.FirstChild; gc != nil; gc = gc.NextSibling {
+				if gc.Type == html.TextNode {
+					sb.WriteString(gc.Data)
+				}
+			}
+		}
+	}
+	return sb.String()
+}
+
+// listItems collects the text of a <ul>/<ol>'s direct <li> children, bounded to
+// maxListEntries -- a page cannot inflate this into an unbounded bullet list.
+func listItems(list *html.Node) []string {
+	var out []string
+	for c := list.FirstChild; c != nil && len(out) < maxListEntries; c = c.NextSibling {
+		if c.Type == html.ElementNode && c.Data == "li" {
+			if s := strings.TrimSpace(directText(c)); s != "" {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
 }
 
 // parseFallback extracts <title> and meta[name=description].

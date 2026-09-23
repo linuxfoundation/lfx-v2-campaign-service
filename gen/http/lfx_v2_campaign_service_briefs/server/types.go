@@ -61,6 +61,18 @@ type AdoptCampaignRequestBody struct {
 	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
 }
 
+// RefineEmailCopyRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "refine-email-copy" endpoint HTTP
+// request body.
+type RefineEmailCopyRequestBody struct {
+	// The email copy draft to revise, exactly as previously returned by
+	// generate-email-copy or refine-email-copy
+	PreviousDraft *EmailCopyRequestBody `form:"previous_draft,omitempty" json:"previous_draft,omitempty" xml:"previous_draft,omitempty"`
+	// Free-text instruction describing what to change about the previous draft,
+	// e.g. 'make the CTA more urgent' or 'shorten the second paragraph'
+	Instruction *string `form:"instruction,omitempty" json:"instruction,omitempty" xml:"instruction,omitempty"`
+}
+
 // UpdateCampaignRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // request body.
@@ -384,6 +396,17 @@ type FetchEventURLResponseBody struct {
 	// Which strategy produced this record — the whole record came from exactly one
 	// of them
 	ExtractedFrom string `form:"extracted_from" json:"extracted_from" xml:"extracted_from"`
+	// Speakers or performers named on the page, if any
+	Speakers []string `form:"speakers,omitempty" json:"speakers,omitempty" xml:"speakers,omitempty"`
+	// Sponsors or organizers named on the page, if any
+	Sponsors []string `form:"sponsors,omitempty" json:"sponsors,omitempty" xml:"sponsors,omitempty"`
+	// "Who should attend" bullet points, if the page has such a section
+	AudienceBullets []string `form:"audience_bullets,omitempty" json:"audience_bullets,omitempty" xml:"audience_bullets,omitempty"`
+	// "What's included" bullet points, if the page has such a section
+	InclusionBullets []string `form:"inclusion_bullets,omitempty" json:"inclusion_bullets,omitempty" xml:"inclusion_bullets,omitempty"`
+	// Short free-text summary of ticket pricing tiers/deadlines, if the page
+	// states any
+	TicketPricing *string `form:"ticket_pricing,omitempty" json:"ticket_pricing,omitempty" xml:"ticket_pricing,omitempty"`
 }
 
 // UploadCreativeAssetCreatedResponseBody is the type of the
@@ -466,6 +489,10 @@ type AdoptCampaignResponseBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
+	// Deep link to this campaign's email in the HubSpot editor. Present only for
+	// the email (HubSpot) channel, and only once the portal that created it is
+	// known.
+	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 }
 
 // GetCampaignResponseBody is the type of the "lfx-v2-campaign-service-briefs"
@@ -487,6 +514,10 @@ type GetCampaignResponseBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
+	// Deep link to this campaign's email in the HubSpot editor. Present only for
+	// the email (HubSpot) channel, and only once the portal that created it is
+	// known.
+	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 }
 
 // GetCampaignMetricsResponseBody is the type of the
@@ -604,6 +635,18 @@ type GenerateEmailCopyResponseBody struct {
 	Sections []*EmailCopySectionResponseBody `form:"sections" json:"sections" xml:"sections"`
 }
 
+// RefineEmailCopyResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "refine-email-copy" endpoint HTTP
+// response body.
+type RefineEmailCopyResponseBody struct {
+	// Email subject line
+	Subject string `form:"subject" json:"subject" xml:"subject"`
+	// Email preheader text (preview summary)
+	Preheader string `form:"preheader" json:"preheader" xml:"preheader"`
+	// Ordered content sections making up the email body, in display order
+	Sections []*EmailCopySectionResponseBody `form:"sections" json:"sections" xml:"sections"`
+}
+
 // UpdateCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body.
@@ -624,6 +667,10 @@ type UpdateCampaignResponseBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
+	// Deep link to this campaign's email in the HubSpot editor. Present only for
+	// the email (HubSpot) channel, and only once the portal that created it is
+	// known.
+	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 }
 
 // ToggleCampaignStatusResponseBody is the type of the
@@ -646,6 +693,10 @@ type ToggleCampaignStatusResponseBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
+	// Deep link to this campaign's email in the HubSpot editor. Present only for
+	// the email (HubSpot) channel, and only once the portal that created it is
+	// known.
+	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 }
 
 // ApplyKeywordActionsResponseBody is the type of the
@@ -1967,6 +2018,79 @@ type GenerateEmailCopyUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// RefineEmailCopyBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "refine-email-copy" endpoint HTTP
+// response body for the "BadRequest" error.
+type RefineEmailCopyBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// RefineEmailCopyConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "refine-email-copy" endpoint HTTP
+// response body for the "Conflict" error.
+type RefineEmailCopyConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// RefineEmailCopyServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "refine-email-copy" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type RefineEmailCopyServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// RefineEmailCopyInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "refine-email-copy" endpoint HTTP
+// response body for the "InternalServerError" error.
+type RefineEmailCopyInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// RefineEmailCopyNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "refine-email-copy" endpoint HTTP
+// response body for the "NotFound" error.
+type RefineEmailCopyNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// RefineEmailCopyPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "refine-email-copy" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type RefineEmailCopyPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// RefineEmailCopyUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "refine-email-copy" endpoint HTTP
+// response body for the "Unauthorized" error.
+type RefineEmailCopyUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // UpdateCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -3167,6 +3291,10 @@ type PlatformResultResponseBody struct {
 	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
 	// Failure reason (present when not ok)
 	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
+	// Deep link to this campaign's email in the HubSpot editor. Present only for
+	// the email (HubSpot) channel, and only once the portal that created it is
+	// known.
+	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 }
 
 // WizardSourceEmailResponseBody is used to define fields on response body
@@ -3223,6 +3351,29 @@ type CampaignCreateInputRequestBody struct {
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
 	// Per-platform campaign configuration
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+}
+
+// EmailCopyRequestBody is used to define fields on request body types.
+type EmailCopyRequestBody struct {
+	// Email subject line
+	Subject *string `form:"subject,omitempty" json:"subject,omitempty" xml:"subject,omitempty"`
+	// Email preheader text (preview summary)
+	Preheader *string `form:"preheader,omitempty" json:"preheader,omitempty" xml:"preheader,omitempty"`
+	// Ordered content sections making up the email body, in display order
+	Sections []*EmailCopySectionRequestBody `form:"sections,omitempty" json:"sections,omitempty" xml:"sections,omitempty"`
+}
+
+// EmailCopySectionRequestBody is used to define fields on request body types.
+type EmailCopySectionRequestBody struct {
+	// Which kind of section this is
+	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
+	// Inline HTML for the section (rich_text sections only) -- paragraphs/lists
+	// with inline CSS, no outer <div> or <style> tag
+	HTML *string `form:"html,omitempty" json:"html,omitempty" xml:"html,omitempty"`
+	// Button label (button sections only)
+	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// Button destination URL (button sections only)
+	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 }
 
 // CampaignUpdateInputRequestBody is used to define fields on request body
@@ -3397,6 +3548,31 @@ func NewFetchEventURLResponseBody(res *lfxv2campaignservicebriefs.EventDetails) 
 		Image:         res.Image,
 		URL:           res.URL,
 		ExtractedFrom: res.ExtractedFrom,
+		TicketPricing: res.TicketPricing,
+	}
+	if res.Speakers != nil {
+		body.Speakers = make([]string, len(res.Speakers))
+		for i, val := range res.Speakers {
+			body.Speakers[i] = val
+		}
+	}
+	if res.Sponsors != nil {
+		body.Sponsors = make([]string, len(res.Sponsors))
+		for i, val := range res.Sponsors {
+			body.Sponsors[i] = val
+		}
+	}
+	if res.AudienceBullets != nil {
+		body.AudienceBullets = make([]string, len(res.AudienceBullets))
+		for i, val := range res.AudienceBullets {
+			body.AudienceBullets[i] = val
+		}
+	}
+	if res.InclusionBullets != nil {
+		body.InclusionBullets = make([]string, len(res.InclusionBullets))
+		for i, val := range res.InclusionBullets {
+			body.InclusionBullets[i] = val
+		}
 	}
 	return body
 }
@@ -3465,6 +3641,7 @@ func NewAdoptCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *Ado
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		Version:            res.Version,
+		HubspotURL:         res.HubspotURL,
 	}
 	return body
 }
@@ -3481,6 +3658,7 @@ func NewGetCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *GetCa
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		Version:            res.Version,
+		HubspotURL:         res.HubspotURL,
 	}
 	return body
 }
@@ -3591,6 +3769,29 @@ func NewGenerateEmailCopyResponseBody(res *lfxv2campaignservicebriefs.EmailCopy)
 	return body
 }
 
+// NewRefineEmailCopyResponseBody builds the HTTP response body from the result
+// of the "refine-email-copy" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewRefineEmailCopyResponseBody(res *lfxv2campaignservicebriefs.EmailCopy) *RefineEmailCopyResponseBody {
+	body := &RefineEmailCopyResponseBody{
+		Subject:   res.Subject,
+		Preheader: res.Preheader,
+	}
+	if res.Sections != nil {
+		body.Sections = make([]*EmailCopySectionResponseBody, len(res.Sections))
+		for i, val := range res.Sections {
+			if val == nil {
+				body.Sections[i] = nil
+				continue
+			}
+			body.Sections[i] = marshalLfxv2campaignservicebriefsEmailCopySectionToEmailCopySectionResponseBody(val)
+		}
+	} else {
+		body.Sections = []*EmailCopySectionResponseBody{}
+	}
+	return body
+}
+
 // NewUpdateCampaignResponseBody builds the HTTP response body from the result
 // of the "update-campaign" endpoint of the "lfx-v2-campaign-service-briefs"
 // service.
@@ -3604,6 +3805,7 @@ func NewUpdateCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *Up
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		Version:            res.Version,
+		HubspotURL:         res.HubspotURL,
 	}
 	return body
 }
@@ -3621,6 +3823,7 @@ func NewToggleCampaignStatusResponseBody(res *lfxv2campaignservicebriefs.Campaig
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		Version:            res.Version,
+		HubspotURL:         res.HubspotURL,
 	}
 	return body
 }
@@ -5038,6 +5241,84 @@ func NewGenerateEmailCopyUnauthorizedResponseBody(res *lfxv2campaignservicebrief
 	return body
 }
 
+// NewRefineEmailCopyBadRequestResponseBody builds the HTTP response body from
+// the result of the "refine-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewRefineEmailCopyBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *RefineEmailCopyBadRequestResponseBody {
+	body := &RefineEmailCopyBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewRefineEmailCopyConflictResponseBody builds the HTTP response body from
+// the result of the "refine-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewRefineEmailCopyConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *RefineEmailCopyConflictResponseBody {
+	body := &RefineEmailCopyConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewRefineEmailCopyServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "refine-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewRefineEmailCopyServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *RefineEmailCopyServiceUnavailableResponseBody {
+	body := &RefineEmailCopyServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewRefineEmailCopyInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "refine-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewRefineEmailCopyInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *RefineEmailCopyInternalServerErrorResponseBody {
+	body := &RefineEmailCopyInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewRefineEmailCopyNotFoundResponseBody builds the HTTP response body from
+// the result of the "refine-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewRefineEmailCopyNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *RefineEmailCopyNotFoundResponseBody {
+	body := &RefineEmailCopyNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewRefineEmailCopyPayloadTooLargeResponseBody builds the HTTP response body
+// from the result of the "refine-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewRefineEmailCopyPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *RefineEmailCopyPayloadTooLargeResponseBody {
+	body := &RefineEmailCopyPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewRefineEmailCopyUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "refine-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewRefineEmailCopyUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *RefineEmailCopyUnauthorizedResponseBody {
+	body := &RefineEmailCopyUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewUpdateCampaignBadRequestResponseBody builds the HTTP response body from
 // the result of the "update-campaign" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -6301,6 +6582,20 @@ func NewGenerateEmailCopyPayload(projectID string, briefID string, stage *string
 	return v
 }
 
+// NewRefineEmailCopyPayload builds a lfx-v2-campaign-service-briefs service
+// refine-email-copy endpoint payload.
+func NewRefineEmailCopyPayload(body *RefineEmailCopyRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.RefineEmailCopyPayload {
+	v := &lfxv2campaignservicebriefs.RefineEmailCopyPayload{
+		Instruction: *body.Instruction,
+	}
+	v.PreviousDraft = unmarshalEmailCopyRequestBodyToLfxv2campaignservicebriefsEmailCopy(body.PreviousDraft)
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // NewUpdateCampaignPayload builds a lfx-v2-campaign-service-briefs service
 // update-campaign endpoint payload.
 func NewUpdateCampaignPayload(body *UpdateCampaignRequestBody, projectID string, briefID string, campaignID string, bearerToken *string, ifMatch *string) *lfxv2campaignservicebriefs.UpdateCampaignPayload {
@@ -6609,6 +6904,28 @@ func ValidateAdoptCampaignRequestBody(body *AdoptCampaignRequestBody) (err error
 	return
 }
 
+// ValidateRefineEmailCopyRequestBody runs the validations defined on
+// Refine-Email-CopyRequestBody
+func ValidateRefineEmailCopyRequestBody(body *RefineEmailCopyRequestBody) (err error) {
+	if body.PreviousDraft == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("previous_draft", "body"))
+	}
+	if body.Instruction == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("instruction", "body"))
+	}
+	if body.PreviousDraft != nil {
+		if err2 := ValidateEmailCopyRequestBody(body.PreviousDraft); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Instruction != nil {
+		if utf8.RuneCountInString(*body.Instruction) > 1000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.instruction", *body.Instruction, utf8.RuneCountInString(*body.Instruction), 1000, false))
+		}
+	}
+	return
+}
+
 // ValidateUpdateCampaignRequestBody runs the validations defined on
 // Update-CampaignRequestBody
 func ValidateUpdateCampaignRequestBody(body *UpdateCampaignRequestBody) (err error) {
@@ -6789,6 +7106,67 @@ func ValidateCampaignCreateInputRequestBody(body *CampaignCreateInputRequestBody
 	for _, e := range body.Platforms {
 		if !(e == "google-ads" || e == "linkedin-ads" || e == "meta-ads" || e == "reddit-ads" || e == "twitter-ads" || e == "microsoft-ads" || e == "hubspot") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.platforms[*]", e, []any{"google-ads", "linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads", "microsoft-ads", "hubspot"}))
+		}
+	}
+	return
+}
+
+// ValidateEmailCopyRequestBody runs the validations defined on
+// email-copyRequestBody
+func ValidateEmailCopyRequestBody(body *EmailCopyRequestBody) (err error) {
+	if body.Subject == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("subject", "body"))
+	}
+	if body.Preheader == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("preheader", "body"))
+	}
+	if body.Sections == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("sections", "body"))
+	}
+	if body.Subject != nil {
+		if utf8.RuneCountInString(*body.Subject) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.subject", *body.Subject, utf8.RuneCountInString(*body.Subject), 200, false))
+		}
+	}
+	if body.Preheader != nil {
+		if utf8.RuneCountInString(*body.Preheader) > 150 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.preheader", *body.Preheader, utf8.RuneCountInString(*body.Preheader), 150, false))
+		}
+	}
+	for _, e := range body.Sections {
+		if e != nil {
+			if err2 := ValidateEmailCopySectionRequestBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateEmailCopySectionRequestBody runs the validations defined on
+// email-copy-sectionRequestBody
+func ValidateEmailCopySectionRequestBody(body *EmailCopySectionRequestBody) (err error) {
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	if body.Type != nil {
+		if !(*body.Type == "rich_text" || *body.Type == "button" || *body.Type == "divider") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"rich_text", "button", "divider"}))
+		}
+	}
+	if body.HTML != nil {
+		if utf8.RuneCountInString(*body.HTML) > 8000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.html", *body.HTML, utf8.RuneCountInString(*body.HTML), 8000, false))
+		}
+	}
+	if body.Text != nil {
+		if utf8.RuneCountInString(*body.Text) > 50 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", *body.Text, utf8.RuneCountInString(*body.Text), 50, false))
+		}
+	}
+	if body.URL != nil {
+		if utf8.RuneCountInString(*body.URL) > 2000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.url", *body.URL, utf8.RuneCountInString(*body.URL), 2000, false))
 		}
 	}
 	return

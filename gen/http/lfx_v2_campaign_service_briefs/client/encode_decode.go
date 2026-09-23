@@ -3280,6 +3280,216 @@ func DecodeGenerateEmailCopyResponse(decoder func(*http.Response) goahttp.Decode
 	}
 }
 
+// BuildRefineEmailCopyRequest instantiates a HTTP request object with method
+// and path set to call the "lfx-v2-campaign-service-briefs" service
+// "refine-email-copy" endpoint
+func (c *Client) BuildRefineEmailCopyRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.RefineEmailCopyPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "refine-email-copy", "*lfxv2campaignservicebriefs.RefineEmailCopyPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: RefineEmailCopyLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "refine-email-copy", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeRefineEmailCopyRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs refine-email-copy server.
+func EncodeRefineEmailCopyRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.RefineEmailCopyPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "refine-email-copy", "*lfxv2campaignservicebriefs.RefineEmailCopyPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewRefineEmailCopyRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+		}
+		return nil
+	}
+}
+
+// DecodeRefineEmailCopyResponse returns a decoder for responses returned by
+// the lfx-v2-campaign-service-briefs refine-email-copy endpoint. restoreBody
+// controls whether the response body should be restored after having been read.
+// DecodeRefineEmailCopyResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeRefineEmailCopyResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body RefineEmailCopyResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			err = ValidateRefineEmailCopyResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			res := NewRefineEmailCopyEmailCopyOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body RefineEmailCopyBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			err = ValidateRefineEmailCopyBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			return nil, NewRefineEmailCopyBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body RefineEmailCopyConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			err = ValidateRefineEmailCopyConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			return nil, NewRefineEmailCopyConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body RefineEmailCopyServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			err = ValidateRefineEmailCopyServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			return nil, NewRefineEmailCopyServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body RefineEmailCopyInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			err = ValidateRefineEmailCopyInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			return nil, NewRefineEmailCopyInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body RefineEmailCopyNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			err = ValidateRefineEmailCopyNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			return nil, NewRefineEmailCopyNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body RefineEmailCopyPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			err = ValidateRefineEmailCopyPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			return nil, NewRefineEmailCopyPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body RefineEmailCopyUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			err = ValidateRefineEmailCopyUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "refine-email-copy", err)
+			}
+			return nil, NewRefineEmailCopyUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "refine-email-copy", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildUpdateCampaignRequest instantiates a HTTP request object with method
 // and path set to call the "lfx-v2-campaign-service-briefs" service
 // "update-campaign" endpoint
@@ -6326,6 +6536,82 @@ func unmarshalEmailCopySectionResponseBodyToLfxv2campaignservicebriefsEmailCopyS
 	return res
 }
 
+// marshalLfxv2campaignservicebriefsEmailCopyToEmailCopyRequestBody builds a
+// value of type *EmailCopyRequestBody from a value of type
+// *lfxv2campaignservicebriefs.EmailCopy.
+func marshalLfxv2campaignservicebriefsEmailCopyToEmailCopyRequestBody(v *lfxv2campaignservicebriefs.EmailCopy) *EmailCopyRequestBody {
+	res := &EmailCopyRequestBody{
+		Subject:   v.Subject,
+		Preheader: v.Preheader,
+	}
+	if v.Sections != nil {
+		res.Sections = make([]*EmailCopySectionRequestBody, len(v.Sections))
+		for i, val := range v.Sections {
+			if val == nil {
+				res.Sections[i] = nil
+				continue
+			}
+			res.Sections[i] = marshalLfxv2campaignservicebriefsEmailCopySectionToEmailCopySectionRequestBody(val)
+		}
+	} else {
+		res.Sections = []*EmailCopySectionRequestBody{}
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsEmailCopySectionToEmailCopySectionRequestBody
+// builds a value of type *EmailCopySectionRequestBody from a value of type
+// *lfxv2campaignservicebriefs.EmailCopySection.
+func marshalLfxv2campaignservicebriefsEmailCopySectionToEmailCopySectionRequestBody(v *lfxv2campaignservicebriefs.EmailCopySection) *EmailCopySectionRequestBody {
+	res := &EmailCopySectionRequestBody{
+		Type: v.Type,
+		HTML: v.HTML,
+		Text: v.Text,
+		URL:  v.URL,
+	}
+
+	return res
+}
+
+// marshalEmailCopyRequestBodyToLfxv2campaignservicebriefsEmailCopy builds a
+// value of type *lfxv2campaignservicebriefs.EmailCopy from a value of type
+// *EmailCopyRequestBody.
+func marshalEmailCopyRequestBodyToLfxv2campaignservicebriefsEmailCopy(v *EmailCopyRequestBody) *lfxv2campaignservicebriefs.EmailCopy {
+	res := &lfxv2campaignservicebriefs.EmailCopy{
+		Subject:   v.Subject,
+		Preheader: v.Preheader,
+	}
+	if v.Sections != nil {
+		res.Sections = make([]*lfxv2campaignservicebriefs.EmailCopySection, len(v.Sections))
+		for i, val := range v.Sections {
+			if val == nil {
+				res.Sections[i] = nil
+				continue
+			}
+			res.Sections[i] = marshalEmailCopySectionRequestBodyToLfxv2campaignservicebriefsEmailCopySection(val)
+		}
+	} else {
+		res.Sections = []*lfxv2campaignservicebriefs.EmailCopySection{}
+	}
+
+	return res
+}
+
+// marshalEmailCopySectionRequestBodyToLfxv2campaignservicebriefsEmailCopySection
+// builds a value of type *lfxv2campaignservicebriefs.EmailCopySection from a
+// value of type *EmailCopySectionRequestBody.
+func marshalEmailCopySectionRequestBodyToLfxv2campaignservicebriefsEmailCopySection(v *EmailCopySectionRequestBody) *lfxv2campaignservicebriefs.EmailCopySection {
+	res := &lfxv2campaignservicebriefs.EmailCopySection{
+		Type: v.Type,
+		HTML: v.HTML,
+		Text: v.Text,
+		URL:  v.URL,
+	}
+
+	return res
+}
+
 // marshalLfxv2campaignservicebriefsCampaignUpdateInputToCampaignUpdateInputRequestBody
 // builds a value of type *CampaignUpdateInputRequestBody from a value of type
 // *lfxv2campaignservicebriefs.CampaignUpdateInput.
@@ -6404,6 +6690,7 @@ func unmarshalPlatformResultResponseBodyToLfxv2campaignservicebriefsPlatformResu
 		OK:         *v.OK,
 		CampaignID: v.CampaignID,
 		Error:      v.Error,
+		HubspotURL: v.HubspotURL,
 	}
 
 	return res

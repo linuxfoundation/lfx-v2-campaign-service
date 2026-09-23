@@ -110,7 +110,35 @@ func eventDetailsResult(d eventurl.EventDetails) *briefs.EventDetails {
 		Image:         optStr(d.Image),
 		URL:           optStr(d.URL),
 		ExtractedFrom: d.ExtractedFrom,
+		// Speakers/Sponsors/AudienceBullets/InclusionBullets are already nil (not empty)
+		// when the scraper found none, matching the "absent means the page didn't say"
+		// convention above for the scalar fields -- clampList never returns an empty
+		// non-nil slice.
+		Speakers:         d.Speakers,
+		Sponsors:         sponsorNames(d.Sponsors),
+		AudienceBullets:  d.AudienceBullets,
+		InclusionBullets: d.InclusionBullets,
+		TicketPricing:    optStr(d.TicketPricing),
 	}
+}
+
+// sponsorNames flattens the parser's rich SponsorRef records onto the plain string list
+// the event-details API contract advertises: this endpoint's sponsors field predates the
+// logo/url/tier detail the JSON-LD scraper now collects, and only the name is a name.
+func sponsorNames(sponsors []eventurl.SponsorRef) []string {
+	if len(sponsors) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(sponsors))
+	for _, sp := range sponsors {
+		if sp.Name != "" {
+			names = append(names, sp.Name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return names
 }
 
 // mapEventURLErr maps an eventurl sentinel onto the brief service's advertised errors.

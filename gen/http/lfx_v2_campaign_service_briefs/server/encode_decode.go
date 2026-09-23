@@ -2634,6 +2634,181 @@ func EncodeGenerateEmailCopyError(encoder func(context.Context, http.ResponseWri
 	}
 }
 
+// EncodeRefineEmailCopyResponse returns an encoder for responses returned by
+// the lfx-v2-campaign-service-briefs refine-email-copy endpoint.
+func EncodeRefineEmailCopyResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.EmailCopy)
+		enc := encoder(ctx, w)
+		body := NewRefineEmailCopyResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeRefineEmailCopyRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs refine-email-copy endpoint.
+func DecodeRefineEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.RefineEmailCopyPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.RefineEmailCopyPayload, error) {
+		var payload *lfxv2campaignservicebriefs.RefineEmailCopyPayload
+		var (
+			body RefineEmailCopyRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateRefineEmailCopyRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			briefID     string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewRefineEmailCopyPayload(&body, projectID, briefID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeRefineEmailCopyError returns an encoder for errors returned by the
+// refine-email-copy lfx-v2-campaign-service-briefs endpoint.
+func EncodeRefineEmailCopyError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewRefineEmailCopyBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewRefineEmailCopyConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewRefineEmailCopyServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewRefineEmailCopyInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewRefineEmailCopyNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewRefineEmailCopyPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewRefineEmailCopyUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeUpdateCampaignResponse returns an encoder for responses returned by
 // the lfx-v2-campaign-service-briefs update-campaign endpoint.
 func EncodeUpdateCampaignResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
@@ -5122,6 +5297,40 @@ func marshalLfxv2campaignservicebriefsEmailCopySectionToEmailCopySectionResponse
 	return res
 }
 
+// unmarshalEmailCopyRequestBodyToLfxv2campaignservicebriefsEmailCopy builds a
+// value of type *lfxv2campaignservicebriefs.EmailCopy from a value of type
+// *EmailCopyRequestBody.
+func unmarshalEmailCopyRequestBodyToLfxv2campaignservicebriefsEmailCopy(v *EmailCopyRequestBody) *lfxv2campaignservicebriefs.EmailCopy {
+	res := &lfxv2campaignservicebriefs.EmailCopy{
+		Subject:   *v.Subject,
+		Preheader: *v.Preheader,
+	}
+	res.Sections = make([]*lfxv2campaignservicebriefs.EmailCopySection, len(v.Sections))
+	for i, val := range v.Sections {
+		if val == nil {
+			res.Sections[i] = nil
+			continue
+		}
+		res.Sections[i] = unmarshalEmailCopySectionRequestBodyToLfxv2campaignservicebriefsEmailCopySection(val)
+	}
+
+	return res
+}
+
+// unmarshalEmailCopySectionRequestBodyToLfxv2campaignservicebriefsEmailCopySection
+// builds a value of type *lfxv2campaignservicebriefs.EmailCopySection from a
+// value of type *EmailCopySectionRequestBody.
+func unmarshalEmailCopySectionRequestBodyToLfxv2campaignservicebriefsEmailCopySection(v *EmailCopySectionRequestBody) *lfxv2campaignservicebriefs.EmailCopySection {
+	res := &lfxv2campaignservicebriefs.EmailCopySection{
+		Type: *v.Type,
+		HTML: v.HTML,
+		Text: v.Text,
+		URL:  v.URL,
+	}
+
+	return res
+}
+
 // unmarshalCampaignUpdateInputRequestBodyToLfxv2campaignservicebriefsCampaignUpdateInput
 // builds a value of type *lfxv2campaignservicebriefs.CampaignUpdateInput from
 // a value of type *CampaignUpdateInputRequestBody.
@@ -5174,6 +5383,7 @@ func marshalLfxv2campaignservicebriefsPlatformResultToPlatformResultResponseBody
 		OK:         v.OK,
 		CampaignID: v.CampaignID,
 		Error:      v.Error,
+		HubspotURL: v.HubspotURL,
 	}
 
 	return res

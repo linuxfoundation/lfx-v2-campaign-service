@@ -220,6 +220,9 @@ var PlatformResult = Type("platform-result", func() {
 	Attribute("ok", Boolean, "Whether the campaign was created (or reused) successfully")
 	Attribute("campaign_id", String, "Upstream platform campaign id. Present when ok; also set on the specific failure where the upstream campaign was created but recording it failed, so the orphaned id isn't lost.")
 	Attribute("error", String, "Failure reason (present when not ok)")
+	Attribute("hubspot_url", String, "Deep link to this campaign's email in the HubSpot editor. Present only for the email (HubSpot) channel, and only once the portal that created it is known.", func() {
+		Example("https://app.hubspot.com/email/8112310/edit/104670127234/settings")
+	})
 	Required("platform", "ok")
 })
 
@@ -245,6 +248,9 @@ var Campaign = Type("campaign", func() {
 	Attribute("status", String, "Campaign status")
 	Attribute("version", Int64, "Optimistic-concurrency version")
 	Attribute("etag", String, "ETag header value (mirrors version)")
+	Attribute("hubspot_url", String, "Deep link to this campaign's email in the HubSpot editor. Present only for the email (HubSpot) channel, and only once the portal that created it is known.", func() {
+		Example("https://app.hubspot.com/email/8112310/edit/104670127234/settings")
+	})
 	Required("id", "project_id", "brief_id", "platform", "campaign_name", "status", "version")
 })
 
@@ -869,6 +875,16 @@ var EventDetailsResult = Type("event-details", func() {
 	Attribute("extracted_from", String, "Which strategy produced this record — the whole record came from exactly one of them", func() {
 		Enum("jsonld", "opengraph", "fallback")
 	})
+	// speakers, sponsors, audience_bullets, inclusion_bullets and ticket_pricing are
+	// additional grounding facts for AI email-copy generation, scraped best-effort
+	// alongside the fields above. All optional for the same reason every field but
+	// extracted_from is: a page that supplies none of them is a normal, useful
+	// result, not a validation failure on a response.
+	Attribute("speakers", ArrayOf(String), "Speakers or performers named on the page, if any")
+	Attribute("sponsors", ArrayOf(String), "Sponsors or organizers named on the page, if any")
+	Attribute("audience_bullets", ArrayOf(String), "\"Who should attend\" bullet points, if the page has such a section")
+	Attribute("inclusion_bullets", ArrayOf(String), "\"What's included\" bullet points, if the page has such a section")
+	Attribute("ticket_pricing", String, "Short free-text summary of ticket pricing tiers/deadlines, if the page states any")
 	Required("extracted_from")
 })
 
@@ -1405,7 +1421,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// OPTIONAL, same free-text/lenient-fallback shape as stage: absent or unrecognised
 			// means "no variant requested" rather than an error, so a caller that misspells it
 			// still gets ordinary stage-based copy under a 200 instead of being blocked.
-			Attribute("variant", String, "Requests a differently-styled draft of the same stage's copy. Currently one value is recognised: 'urgency-fomo', which asks for an urgency/FOMO-forward structure (deadline framing, social proof, a secondary CTA) instead of the stage's normal copy. Any other value, or absence, produces the normal stage-based copy.", func() {
+			Attribute("variant", String, "Requests a differently-styled draft of the same stage's copy. One of: 'urgency-fomo' (deadline framing, social proof, a secondary CTA), 'value-focused' (concrete value/benefits over urgency), 'social-proof' (testimonials, attendee counts, past-edition success, join-others framing), 'b2b-sponsorship' (reframed for a B2B sponsorship-conversion audience: decision-makers, ROI, sponsorship tiers/benefits). Matching is CASE-SENSITIVE and any other value, or absence, produces the normal stage-based copy rather than failing.", func() {
 				Example("urgency-fomo")
 			})
 			Required("project_id", "brief_id")
@@ -1420,6 +1436,29 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// against the running service before and after: body-less went 400, then 200.
 			Param("stage")
 			Param("variant")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("refine-email-copy", func() {
+		Description("Iterate on a previously-generated email copy draft rather than generating one from scratch. The caller sends back the exact draft it received from generate-email-copy (or a prior refine-email-copy call) plus a free-text instruction describing what to change (e.g. \"make the CTA more urgent\", \"shorten the second paragraph\"), and the model returns a revised draft in the same structured shape. Returns immediately with the revised text; does NOT persist to the brief. The AI model is optional -- without it configured this endpoint returns 503.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			Attribute("previous_draft", EmailCopy, "The email copy draft to revise, exactly as previously returned by generate-email-copy or refine-email-copy")
+			Attribute("instruction", String, "Free-text instruction describing what to change about the previous draft, e.g. 'make the CTA more urgent' or 'shorten the second paragraph'", func() {
+				MaxLength(1000)
+				Example("Make the subject line more urgent and shorten the second paragraph")
+			})
+			Required("project_id", "brief_id", "previous_draft", "instruction")
+		})
+		Result(EmailCopy)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/email-copy/refine")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()

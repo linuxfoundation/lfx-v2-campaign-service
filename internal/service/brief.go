@@ -23,6 +23,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/emailstage"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/rules"
@@ -1846,6 +1847,7 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			CampaignID string `json:"campaign_id"`
 			Error      string `json:"error"`
 			Skipped    bool   `json:"skipped"`
+			HubspotURL string `json:"hubspot_url"`
 		}
 		if err := json.Unmarshal(j.Result, &stored); err != nil {
 			// A persisted result that won't decode is corruption, not a valid empty
@@ -1869,6 +1871,10 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			if r.CampaignID != "" {
 				id := r.CampaignID
 				pr.CampaignID = &id
+			}
+			if r.HubspotURL != "" {
+				url := r.HubspotURL
+				pr.HubspotURL = &url
 			}
 			switch {
 			case r.Skipped && !r.OK:
@@ -1953,7 +1959,41 @@ func campaignResult(c *model.Campaign) *briefs.Campaign {
 		Status:             c.Status,
 		Version:            c.Version,
 		Etag:               optStr(briefETag(c.Version)),
+		HubspotURL:         hubspotEmailURL(c),
 	}
+}
+
+// hubspotEmailURL builds a deep link to this campaign's email in the HubSpot editor, mirroring
+// hubspot.Client.emailEditURL. Only the email channel has one: an ad-platform
+// platform_campaign_id means nothing to a HubSpot URL, and the portal the email was created in
+// lives in this campaign's own Result blob, not on the model struct (see
+// dispatch.hubSpotCreationPortalID, which this duplicates rather than importing to avoid a
+// service->dispatch dependency).
+func hubspotEmailURL(c *model.Campaign) *string {
+	if c.Platform != model.ProviderHubSpot || c.PlatformCampaignID == "" || len(c.Result) == 0 {
+		return nil
+	}
+	var blob struct {
+		PortalID string `json:"portalId"`
+	}
+	if err := json.Unmarshal(c.Result, &blob); err != nil {
+		return nil
+	}
+	portalID := strings.TrimSpace(blob.PortalID)
+	if portalID == "" {
+		return nil
+	}
+	url := hubspot.AppBaseURL + "/email/" + portalID + "/edit/" + c.PlatformCampaignID + "/settings"
+	return &url
+}
+
+// hubspotURLOrEmpty is hubspotEmailURL for callers (e.g. the orchestrator's
+// per-platform job result) that store a plain string rather than a pointer.
+func hubspotURLOrEmpty(c *model.Campaign) string {
+	if u := hubspotEmailURL(c); u != nil {
+		return *u
+	}
+	return ""
 }
 
 // parseBriefIfMatch converts the If-Match header to a version (428 if missing,

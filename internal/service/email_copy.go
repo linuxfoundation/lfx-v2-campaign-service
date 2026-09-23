@@ -45,6 +45,18 @@ type emailCopyEventDetails struct {
 	// benefit from them.
 	Speakers []string `json:"speakers"`
 	Topics   []string `json:"topics"`
+	// Sponsors, AudienceBullets, InclusionBullets and TicketPricing are OPTIONAL,
+	// opportunistically-decoded fields mirroring Speakers/Topics above: fetch-event-url's
+	// EventDetailsResult now carries them (design/brief.go), but this service's own
+	// pipeline does not write them back into a brief's event_details blob today, so on
+	// every brief built through the current create-brief flow these decode empty and the
+	// prompt omits them entirely -- exactly like Speakers/Topics before some future
+	// producer (a manual edit, a richer scrape stored back through create-brief) sets the
+	// keys.
+	Sponsors         []string `json:"sponsors"`
+	AudienceBullets  []string `json:"audienceBullets"`
+	InclusionBullets []string `json:"inclusionBullets"`
+	TicketPricing    string   `json:"ticketPricing"`
 }
 
 // maxPromptSize bounds the CALLER-supplied fields, checked before composing. That is eventName,
@@ -134,6 +146,14 @@ type emailCopyPromptVars struct {
 	// the frozen legacy prompt cannot grow without breaking LFXV2-1940 byte-identity.
 	speakers []string
 	topics   []string
+	// sponsors, audienceBullets, inclusionBullets and ticketPricing follow the exact same
+	// optional, stage-aware-prompt-only pattern as speakers/topics above -- see
+	// emailCopyEventDetails.Sponsors/AudienceBullets/InclusionBullets/TicketPricing for why
+	// they exist and why they decode empty for every brief today.
+	sponsors         []string
+	audienceBullets  []string
+	inclusionBullets []string
+	ticketPricing    string
 	// referenceBlock is the style/tone corpus EmailReferenceSource builds from up to three past
 	// sent HubSpot emails, already truncated to maxReferenceBlockRunes. EMPTY means none was found
 	// (no HubSpot connection, no published emails, or the lookup failed) — best-effort, never a
@@ -167,10 +187,171 @@ type emailCopyPromptVars struct {
 	variant string
 }
 
-// urgencyFomoVariant is the one recognised value of emailCopyPromptVars.variant today. It asks
-// for the SAME stage's copy restructured toward urgency/FOMO framing -- deadline pressure, social
-// proof, a secondary CTA -- rather than a different stage or a different set of facts.
-const urgencyFomoVariant = "urgency-fomo"
+// The recognised values of emailCopyPromptVars.variant. Each asks for the SAME stage's copy
+// restructured toward a different framing -- never a different stage or a different set of facts.
+// Kept as named constants (rather than inlined map keys) because design/brief.go's attribute
+// description and email_copy_test.go's worst-floor sweep both need to name them without
+// transcribing the literal strings a third time.
+const (
+	urgencyFomoVariant    = "urgency-fomo"
+	valueFocusedVariant   = "value-focused"
+	socialProofVariant    = "social-proof"
+	b2bSponsorshipVariant = "b2b-sponsorship"
+)
+
+// emailCopyVariantBlocks maps a recognised variant value to the fixed prompt block
+// composeEmailCopyPrompt appends when that variant is requested. An empty or unrecognised
+// vars.variant simply misses this map -- composeEmailCopyPrompt appends nothing, same leniency
+// as an unrecognised stage, so a caller that misspells it still gets ordinary copy rather than an
+// error. See emailCopyPromptVars.variant.
+var emailCopyVariantBlocks = map[string]string{
+	urgencyFomoVariant:    urgencyFomoVariantBlock,
+	valueFocusedVariant:   valueFocusedVariantBlock,
+	socialProofVariant:    socialProofVariantBlock,
+	b2bSponsorshipVariant: b2bSponsorshipVariantBlock,
+}
+
+// urgencyFomoVariantBlock restructures the stage's copy toward deadline pressure and social proof.
+const urgencyFomoVariantBlock = `
+
+VARIANT: urgency-fomo -- restructure this stage's copy toward urgency and FOMO (fear of missing
+out), using ONLY the facts supplied above. Never invent a deadline, capacity number, attendee
+count or price that was not given -- if the urgency angle needs a fact you were not given, omit
+that sentence rather than inventing one.
+
+Structure the sections in this order:
+1. Subject: personal, benefit- or curiosity-driven (never generic "Join us at [Event]")
+2. Preheader: supports the subject, does not repeat it
+3. Hero rich_text: event name, date + location, a strong headline, then the primary button
+   ("Register Now" or the stage's own CTA text)
+4. "Why attend" rich_text: 3-5 concrete benefits (learn from named speakers/topics if supplied,
+   see real implementations, network with peers) -- never generic "great event" language
+5. Personal relevance rich_text, ONLY if speakers or topics were supplied: tie a supplied
+   topic or speaker to a specific audience (developers, engineering leads, business leads).
+   Omit this section entirely if no speakers/topics were supplied -- do not invent an audience
+   angle from nothing
+6. Speaker/social-proof rich_text, ONLY if speakers were supplied: name them and their supplied
+   topics as text (no image placeholders, no "[PHOTO]" markers)
+7. Agenda-highlights rich_text, ONLY if topics were supplied: 3-5 sessions, not an exhaustive
+   agenda
+8. "What you'll experience" rich_text as a short emoji-led list (e.g. Keynotes, hands-on
+   sessions, networking, demos) -- only the categories the supplied facts actually support
+9. Urgency rich_text: ONLY genuine urgency from a fact actually supplied (a deadline, a stage
+   whose tone signals lateness, limited capacity) -- omit this section rather than invent one
+10. A secondary button for readers not ready to register (e.g. "View Agenda"), only if the
+    brief supplies a destination for it; otherwise omit rather than link it to Register Now
+    again
+11. A final button repeating the primary call to action
+
+Numbering is for ordering only; do not print "1."/"2." in the output. Every numbered section
+whose supporting fact is missing is OMITTED, per the placeholder rule above -- a shorter email
+that only says what is known is correct, an invented capacity or deadline is not.`
+
+// valueFocusedVariantBlock restructures the stage's copy to foreground concrete value and
+// benefits rather than urgency.
+const valueFocusedVariantBlock = `
+
+VARIANT: value-focused -- restructure this stage's copy to foreground concrete value and
+benefits over urgency, using ONLY the facts supplied above. Never invent a benefit, statistic,
+price or outcome that was not given -- if the value angle needs a fact you were not given, omit
+that sentence rather than inventing one.
+
+Structure the sections in this order:
+1. Subject: benefit-led, naming a concrete outcome or takeaway (never generic "Join us at
+   [Event]")
+2. Preheader: supports the subject, does not repeat it
+3. Hero rich_text: event name, date + location, a benefit-forward headline, then the primary
+   button (the stage's own CTA text)
+4. "What you'll gain" rich_text: 3-5 concrete, specific benefits (skills, connections, insights
+   from named speakers/topics if supplied) -- never vague "great event" language
+5. Content-depth rich_text, ONLY if speakers or topics were supplied: describe what a supplied
+   topic or speaker actually covers, in enough detail that the value is self-evident
+6. Practical-takeaway rich_text: what a reader can apply immediately afterward, grounded only
+   in supplied facts
+7. Agenda-highlights rich_text, ONLY if topics were supplied: 3-5 sessions framed by the
+   benefit of attending each, not an exhaustive agenda
+8. "What you'll experience" rich_text as a short emoji-led list -- only the categories the
+   supplied facts actually support
+9. A secondary button for readers who want more detail first (e.g. "View Agenda"), only if the
+   brief supplies a destination for it; otherwise omit rather than link it to Register Now again
+10. A final button repeating the primary call to action, framed around the value just described
+
+Numbering is for ordering only; do not print "1."/"2." in the output. Every numbered section
+whose supporting fact is missing is OMITTED, per the placeholder rule above -- a shorter email
+that only says what is known is correct, an invented benefit or statistic is not.`
+
+// socialProofVariantBlock restructures the stage's copy to foreground testimonials, attendee
+// counts, past-edition success and "join others" framing.
+const socialProofVariantBlock = `
+
+VARIANT: social-proof -- restructure this stage's copy to foreground testimonials, attendee
+counts, past-edition success and "join others" framing, using ONLY the facts supplied above.
+Never invent a testimonial, attendee count, rating or past-edition detail that was not given --
+if the social-proof angle needs a fact you were not given, omit that sentence rather than
+inventing one.
+
+Structure the sections in this order:
+1. Subject: proof-led, naming a supplied credential (a count, a past edition, a named speaker)
+   if one exists, otherwise benefit-led (never generic "Join us at [Event]")
+2. Preheader: supports the subject, does not repeat it
+3. Hero rich_text: event name, date + location, a headline that signals others are already in,
+   then the primary button (the stage's own CTA text)
+4. "Join a growing community" rich_text: any supplied attendee count, past-edition track
+   record, or named-speaker roster, framed as "others are attending" -- omit entirely if no
+   such fact was supplied
+5. Speaker/credibility rich_text, ONLY if speakers were supplied: name them and their supplied
+   topics as the reason to trust this event
+6. Agenda-highlights rich_text, ONLY if topics were supplied: 3-5 sessions, not an exhaustive
+   agenda
+7. "What you'll experience" rich_text as a short emoji-led list -- only the categories the
+   supplied facts actually support
+8. Urgency rich_text, ONLY if a genuine deadline or capacity fact was actually supplied --
+   omit this section rather than invent one
+9. A secondary button for readers not ready to register (e.g. "View Agenda"), only if the
+   brief supplies a destination for it; otherwise omit rather than link it to Register Now
+   again
+10. A final button repeating the primary call to action, framed as joining others who are
+    already going
+
+Numbering is for ordering only; do not print "1."/"2." in the output. Every numbered section
+whose supporting fact is missing is OMITTED, per the placeholder rule above -- a shorter email
+that only says what is known is correct, an invented count or testimonial is not.`
+
+// b2bSponsorshipVariantBlock reframes the stage's copy for a B2B sponsorship-conversion
+// audience -- decision-makers evaluating a sponsorship, not attendees deciding whether to
+// register.
+const b2bSponsorshipVariantBlock = `
+
+VARIANT: b2b-sponsorship -- reframe this stage's copy for a B2B sponsorship-conversion audience
+(decision-makers evaluating a sponsorship, not attendees deciding whether to register), using
+ONLY the facts supplied above. Never invent a sponsorship tier, price, benefit, attendee count
+or ROI figure that was not given -- if the sponsorship angle needs a fact you were not given,
+omit that sentence rather than inventing one.
+
+Structure the sections in this order:
+1. Subject: decision-maker-oriented, naming the audience or reach if supplied (never generic
+   "Join us at [Event]")
+2. Preheader: supports the subject, does not repeat it
+3. Hero rich_text: event name, date + location, a headline framed around reaching this event's
+   audience, then the primary button (the stage's own CTA text, e.g. "Explore Sponsorship" or
+   the stage's own wording)
+4. "Why sponsor" rich_text: 3-5 concrete reasons framed as ROI for a sponsor -- audience reach,
+   named speakers/topics as a proxy for attendee profile, brand visibility -- never invented
+   reach or attendee numbers
+5. Sponsorship-tiers/benefits rich_text, ONLY if the brief supplies tier or benefit facts: list
+   them plainly; omit entirely if none were supplied rather than inventing tiers
+6. Audience-profile rich_text, ONLY if speakers or topics were supplied: use them to describe
+   who attends and why that matters to a sponsor
+7. "What sponsors get" rich_text as a short list of supplied, concrete deliverables -- only the
+   categories the supplied facts actually support
+8. A secondary button for a sponsor who wants more detail first (e.g. "View Sponsorship
+   Prospectus"), only if the brief supplies a destination for it; otherwise omit rather than
+   link it to the primary CTA again
+9. A final button repeating the primary call to action, addressed to a decision-maker
+
+Numbering is for ordering only; do not print "1."/"2." in the output. Every numbered section
+whose supporting fact is missing is OMITTED, per the placeholder rule above -- a shorter email
+that only says what is known is correct, an invented tier or ROI figure is not.`
 
 // decodeEmailCopyEventDetails pulls the fields email generation needs from the brief's opaque
 // EventDetails blob. Unlike audience_build.go (which skips mismatched shapes), this function
@@ -287,57 +468,26 @@ Call-to-action strategy: %s
 		tpl.SubjectPattern, tpl.PreviewPattern,
 		strings.Join(tpl.CTAStrategy, "; "), tpl.FooterNote)
 
-	// The urgency/FOMO variant restructures THIS stage's copy toward deadline pressure and social
-	// proof; it does not replace the stage's purpose above -- a CFP Launch draft with this variant
-	// is still about the CFP, just framed more urgently. Appended, not swapped in, for the same
+	// The variant block restructures THIS stage's copy toward a different framing; it does not
+	// replace the stage's purpose above -- a CFP Launch draft with the urgency-fomo variant is
+	// still about the CFP, just framed more urgently. Appended, not swapped in, for the same
 	// reason the stage block above is appended to the shared role prompt: the JSON schema, the
-	// no-invented-facts rule and the length limits hold regardless of variant.
+	// no-invented-facts rule and the length limits hold regardless of variant. A blank or
+	// unrecognised vars.variant misses emailCopyVariantBlocks and this appends nothing -- same
+	// leniency as an unrecognised stage.
 	//
-	// "ONLY genuine urgency" restates a rule this file already enforces for every stage (several
-	// ContentPrompt templates explicitly say "NO fake urgency") because this variant is the one
-	// most likely to invite a model to manufacture a deadline that was never supplied -- it is
-	// worth saying twice here.
+	// "ONLY genuine X" (urgency, value, proof, ROI) restates a rule this file already enforces for
+	// every stage (several ContentPrompt templates explicitly say "NO fake urgency") because a
+	// variant is the framing most likely to invite a model to manufacture a fact that was never
+	// supplied -- it is worth saying twice here.
 	//
 	// The schema has no image or card section type (see parseEmailCopyResponse): sections are
 	// rich_text/button/divider only. Speaker photos, sponsor logos and true visual "cards" from a
 	// mockup are approximated as text/emoji structure inside rich_text, not literal images -- that
 	// is a schema limit this prompt cannot work around, so it is stated plainly rather than left
 	// for the model to improvise.
-	if vars.variant == urgencyFomoVariant {
-		systemPrompt += `
-
-VARIANT: urgency-fomo -- restructure this stage's copy toward urgency and FOMO (fear of missing
-out), using ONLY the facts supplied above. Never invent a deadline, capacity number, attendee
-count or price that was not given -- if the urgency angle needs a fact you were not given, omit
-that sentence rather than inventing one.
-
-Structure the sections in this order:
-1. Subject: personal, benefit- or curiosity-driven (never generic "Join us at [Event]")
-2. Preheader: supports the subject, does not repeat it
-3. Hero rich_text: event name, date + location, a strong headline, then the primary button
-   ("Register Now" or the stage's own CTA text)
-4. "Why attend" rich_text: 3-5 concrete benefits (learn from named speakers/topics if supplied,
-   see real implementations, network with peers) -- never generic "great event" language
-5. Personal relevance rich_text, ONLY if speakers or topics were supplied: tie a supplied
-   topic or speaker to a specific audience (developers, engineering leads, business leads).
-   Omit this section entirely if no speakers/topics were supplied -- do not invent an audience
-   angle from nothing
-6. Speaker/social-proof rich_text, ONLY if speakers were supplied: name them and their supplied
-   topics as text (no image placeholders, no "[PHOTO]" markers)
-7. Agenda-highlights rich_text, ONLY if topics were supplied: 3-5 sessions, not an exhaustive
-   agenda
-8. "What you'll experience" rich_text as a short emoji-led list (e.g. Keynotes, hands-on
-   sessions, networking, demos) -- only the categories the supplied facts actually support
-9. Urgency rich_text: ONLY genuine urgency from a fact actually supplied (a deadline, a stage
-   whose tone signals lateness, limited capacity) -- omit this section rather than invent one
-10. A secondary button for readers not ready to register (e.g. "View Agenda"), only if the
-    brief supplies a destination for it; otherwise omit rather than link it to Register Now
-    again
-11. A final button repeating the primary call to action
-
-Numbering is for ordering only; do not print "1."/"2." in the output. Every numbered section
-whose supporting fact is missing is OMITTED, per the placeholder rule above -- a shorter email
-that only says what is known is correct, an invented capacity or deadline is not.`
+	if block, ok := emailCopyVariantBlocks[vars.variant]; ok {
+		systemPrompt += block
 	}
 
 	// User prompt: the specific event details and the stage's own content brief.
@@ -388,6 +538,23 @@ that only says what is known is correct, an invented capacity or deadline is not
 	}
 	if len(vars.topics) > 0 {
 		extra += "\nTopics: " + strings.Join(vars.topics, ", ")
+	}
+	// sponsors/audienceBullets/inclusionBullets/ticketPricing follow the exact same
+	// "omit rather than print empty" rule as speakers/topics above, for the same reason:
+	// an empty "Sponsors:" line reads as supplied-but-blank, and none of these are
+	// populated by any producer today (see emailCopyEventDetails), so this is dormant
+	// until a future one sets the keys.
+	if len(vars.sponsors) > 0 {
+		extra += "\nSponsors: " + strings.Join(vars.sponsors, ", ")
+	}
+	if len(vars.audienceBullets) > 0 {
+		extra += "\nWho should attend:\n- " + strings.Join(vars.audienceBullets, "\n- ")
+	}
+	if len(vars.inclusionBullets) > 0 {
+		extra += "\nWhat's included:\n- " + strings.Join(vars.inclusionBullets, "\n- ")
+	}
+	if strings.TrimSpace(vars.ticketPricing) != "" {
+		extra += "\nTicket pricing: " + strings.TrimSpace(vars.ticketPricing)
 	}
 	// The reference block is style guidance, not fact: it may name a different event, speakers,
 	// prices or dates than this brief's, and the "use ONLY the event details provided" rule above
@@ -791,6 +958,13 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 		registrationURL: resolveRegistrationURL(brief.URL, details),
 		speakers:        details.Speakers,
 		topics:          details.Topics,
+		// sponsors/audienceBullets/inclusionBullets/ticketPricing follow the exact same
+		// opportunistic pattern as speakers/topics above -- see
+		// emailCopyEventDetails.Sponsors/AudienceBullets/InclusionBullets/TicketPricing.
+		sponsors:         details.Sponsors,
+		audienceBullets:  details.AudienceBullets,
+		inclusionBullets: details.InclusionBullets,
+		ticketPricing:    details.TicketPricing,
 		// Absent is not an error: the design leaves `stage` optional. An absent one takes the
 		// frozen legacy prompt (byte-identical to the pre-stage behaviour, LFXV2-1940); only a
 		// non-empty unrecognised value falls through Resolve to Registration Push.
@@ -1073,3 +1247,265 @@ Constraints:
 - CTA: action-oriented, under 50 characters (e.g. "Register Now", "Join Us")
 - Write for a professional Linux Foundation / technology audience
 - Make it about the event and community, not promotional`
+
+// RefineEmailCopy implements the briefs.Service RefineEmailCopy method.
+//
+// It iterates on a previously-generated draft rather than generating one from scratch: the
+// caller sends back the exact draft it received from generate-email-copy (or a prior
+// refine-email-copy call) plus a free-text instruction, and the model returns a revised draft
+// in the same structured shape. It does NOT persist the revised copy to the brief.
+//
+// The brief's event details are still loaded and decoded for factual grounding -- same
+// no-invented-facts rule as GenerateEmailCopy -- but composeRefineEmailCopyPrompt, not
+// composeEmailCopyPrompt, builds the prompt: the shape is a revision instruction plus the
+// previous draft serialized back to text, not a fresh-generation brief.
+func (s *BriefService) RefineEmailCopy(ctx context.Context, p *briefs.RefineEmailCopyPayload) (*briefs.EmailCopy, error) {
+	// Fetch the brief and snapshot the llmClient dependency.
+	briefRepo, _, _, _, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	llmClient := s.snapshotLLMClient()
+	if llmClient == nil {
+		return nil, &briefs.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "AI model is not configured; email copy refinement is unavailable",
+		}
+	}
+
+	if p.PreviousDraft == nil {
+		return nil, &briefs.BadRequestError{
+			Code:    "400",
+			Message: "previous_draft is required to refine email copy",
+		}
+	}
+
+	// Load the brief to extract its event details, for the same factual grounding
+	// GenerateEmailCopy applies.
+	brief, gerr := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID)
+	if gerr != nil {
+		return nil, mapBriefErr(gerr)
+	}
+
+	details, derr := decodeEmailCopyEventDetails(brief.EventDetails)
+	if derr != nil {
+		slog.WarnContext(ctx, "email copy refinement blocked: could not decode event details",
+			"project_id", p.ProjectID, "brief_id", p.BriefID, "error", derr)
+		return nil, &briefs.BadRequestError{
+			Code:    "400",
+			Message: "brief's event details are incomplete or invalid; provide at least eventName before refining copy",
+		}
+	}
+
+	refineVars := emailCopyRefinePromptVars{
+		eventName:   strings.TrimSpace(details.EventName),
+		location:    strings.TrimSpace(details.Location),
+		dates:       resolveEventDates(details),
+		instruction: strings.TrimSpace(p.Instruction),
+		draft:       p.PreviousDraft,
+	}
+
+	// Bound the caller-supplied input the same way GenerateEmailCopy does: the instruction is
+	// caller free text already capped at 1000 runes by the design (MaxLength), but the previous
+	// draft's HTML/subject/preheader are reused from a prior EmailCopy result and are not
+	// re-bounded here, so they are counted explicitly before composing.
+	inputSize := utf8.RuneCountInString(refineVars.eventName) +
+		utf8.RuneCountInString(refineVars.location) +
+		utf8.RuneCountInString(refineVars.dates) +
+		utf8.RuneCountInString(refineVars.instruction) +
+		utf8.RuneCountInString(p.PreviousDraft.Subject) +
+		utf8.RuneCountInString(p.PreviousDraft.Preheader)
+	for _, sec := range p.PreviousDraft.Sections {
+		if sec == nil {
+			continue
+		}
+		if sec.HTML != nil {
+			inputSize += utf8.RuneCountInString(*sec.HTML)
+		}
+		if sec.Text != nil {
+			inputSize += utf8.RuneCountInString(*sec.Text)
+		}
+		if sec.URL != nil {
+			inputSize += utf8.RuneCountInString(*sec.URL)
+		}
+	}
+	if inputSize > maxPromptSize {
+		slog.WarnContext(ctx, "email copy refinement blocked: input exceeds prompt size limit",
+			"project_id", p.ProjectID, "brief_id", p.BriefID,
+			"input_size", inputSize, "limit", maxPromptSize)
+		return nil, &briefs.BadRequestError{
+			Code:    "400",
+			Message: "the previous draft or instruction is too large to refine",
+		}
+	}
+
+	systemPrompt, userPrompt := composeRefineEmailCopyPrompt(refineVars)
+
+	totalPromptSize := utf8.RuneCountInString(systemPrompt) + utf8.RuneCountInString(userPrompt)
+	if totalPromptSize > maxComposedPromptSize {
+		slog.ErrorContext(ctx, "email copy refinement blocked: composed prompt exceeds size limit",
+			"project_id", p.ProjectID, "brief_id", p.BriefID,
+			"prompt_size", totalPromptSize, "limit", maxComposedPromptSize)
+		return nil, &briefs.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "email copy refinement is unavailable for this input; retrying will not help until this service is fixed",
+		}
+	}
+
+	// Call the model. Reuses the same LLM-call plumbing as GenerateEmailCopy.
+	raw, cerr := llmClient.Complete(ctx, systemPrompt, userPrompt)
+	if cerr != nil {
+		if errors.Is(cerr, llm.ErrNotConfigured) {
+			return nil, &briefs.ConnServiceUnavailableError{
+				Code:    "503",
+				Message: "AI model is not configured",
+			}
+		}
+		slog.WarnContext(ctx, "email copy refinement failed on the AI platform",
+			"project_id", p.ProjectID, "brief_id", p.BriefID, "error", safeErrSummary(cerr))
+		return nil, &briefs.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "email copy could not be refined by the AI platform",
+		}
+	}
+
+	// Parse and validate the response using the SAME parser as generate-email-copy: the output
+	// schema is identical (subject/preheader/sections), only the prompt that produced it differs.
+	copy, perr := parseEmailCopyResponse(raw, false)
+	if perr != nil {
+		slog.WarnContext(ctx, "email copy refinement: could not parse model response",
+			"project_id", p.ProjectID, "brief_id", p.BriefID, "error", perr)
+		return nil, &briefs.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "the AI platform returned an unreadable response",
+		}
+	}
+
+	hasContent := false
+	for _, sec := range copy.Sections {
+		if sec.Type == "rich_text" && sec.HTML != nil && strings.TrimSpace(*sec.HTML) != "" {
+			hasContent = true
+			break
+		}
+	}
+	if strings.TrimSpace(copy.Subject) == "" || strings.TrimSpace(copy.Preheader) == "" || !hasContent {
+		slog.WarnContext(ctx, "email copy refinement: model response missing required fields",
+			"project_id", p.ProjectID, "brief_id", p.BriefID)
+		return nil, &briefs.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "the AI platform generated incomplete copy",
+		}
+	}
+
+	return copy, nil
+}
+
+// emailCopyRefinePromptVars holds the inputs composeRefineEmailCopyPrompt needs: the factual
+// grounding (same fields GenerateEmailCopy resolves), the caller's free-text instruction, and
+// the previous draft being revised.
+type emailCopyRefinePromptVars struct {
+	eventName   string
+	location    string
+	dates       string
+	instruction string
+	draft       *briefs.EmailCopy
+}
+
+// renderEmailCopyDraftAsText serializes an EmailCopy result back into readable text, in display
+// order, so the model can read the prior draft the same way a human would -- rather than being
+// handed raw JSON to reinterpret. Section kinds mirror parseEmailCopyResponse's vocabulary:
+// rich_text, button, divider.
+func renderEmailCopyDraftAsText(draft *briefs.EmailCopy) string {
+	if draft == nil {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Subject: %s\n", draft.Subject)
+	fmt.Fprintf(&b, "Preheader: %s\n", draft.Preheader)
+	b.WriteString("Sections:\n")
+	for i, sec := range draft.Sections {
+		if sec == nil {
+			continue
+		}
+		switch sec.Type {
+		case "button":
+			text := ""
+			if sec.Text != nil {
+				text = *sec.Text
+			}
+			url := ""
+			if sec.URL != nil {
+				url = *sec.URL
+			}
+			fmt.Fprintf(&b, "%d. [button] text=%q url=%q\n", i+1, text, url)
+		case "divider":
+			fmt.Fprintf(&b, "%d. [divider]\n", i+1)
+		default: // rich_text and anything else carrying HTML
+			html := ""
+			if sec.HTML != nil {
+				html = *sec.HTML
+			}
+			fmt.Fprintf(&b, "%d. [%s] %s\n", i+1, sec.Type, html)
+		}
+	}
+	return b.String()
+}
+
+// composeRefineEmailCopyPrompt builds the system and user prompts for refining an existing email
+// copy draft, rather than generating one from scratch.
+//
+// Deliberately NOT a branch inside composeEmailCopyPrompt: the prompt shape is meaningfully
+// different -- a revision instruction plus the serialized previous draft, not a fresh-generation
+// brief -- so keeping it as its own function avoids a single composer trying to serve two
+// unrelated call shapes via internal branching.
+//
+// The output schema instructions are the same JSON shape generate-email-copy's prompt asks for
+// (see composeEmailCopyPrompt), since both are parsed by the same parseEmailCopyResponse.
+func composeRefineEmailCopyPrompt(vars emailCopyRefinePromptVars) (systemPrompt, userPrompt string) {
+	systemPrompt = `You are an expert email copywriter for technology events and communities.
+Your task is to REVISE an existing draft of email copy for a campaign brief, according to a
+specific instruction from the caller -- not to write a new email from scratch.
+
+IMPORTANT: Use ONLY the event details provided below; never invent dates, names, locations,
+prices, deadlines, counts, or any other fact not already present in the event details or the
+previous draft.
+
+Keep everything about the previous draft that the instruction does not ask you to change.
+Apply the instruction precisely; do not use it as a license to rewrite unrelated parts of the
+email.
+
+Generate JSON with these fields (no markdown fencing):
+{
+  "subject": "Email subject line (max 60 chars)",
+  "preheader": "Email preheader text (max 100 chars)",
+  "sections": [
+    {"type": "rich_text", "html": "Inline HTML, max 8000 chars total across all rich_text sections"},
+    {"type": "button", "text": "CTA text (max 50 chars)", "url": "the previous draft's button URL, copied exactly, unless the instruction says to change the destination"}
+  ]
+}
+
+Constraints:
+- Subject: punchy, under 60 characters
+- Preheader: summary of the email, under 100 characters
+- Sections, not one HTML blob: "rich_text" (inline HTML, no outer <div>/<style>), "button"
+  (never an <a> inside rich_text instead), "divider" (no other fields)
+- Preserve any button URL from the previous draft exactly, unless the instruction asks to
+  change it -- never invent a new one
+- Write for a professional Linux Foundation / technology audience
+- No sign-off/signature -- the platform appends its own footer after these sections`
+
+	userPrompt = fmt.Sprintf(`Event Name: %s
+Location: %s
+Dates: %s
+
+Previous draft:
+%s
+
+Instruction: %s
+
+Produce the revised email copy as JSON, applying the instruction to the previous draft above.`,
+		vars.eventName, vars.location, vars.dates,
+		renderEmailCopyDraftAsText(vars.draft), vars.instruction)
+
+	return systemPrompt, userPrompt
+}

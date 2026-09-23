@@ -30,6 +30,7 @@ type Client struct {
 	GetCampaignSettingsEndpoint   goa.Endpoint
 	GetBriefMetricsEndpoint       goa.Endpoint
 	GenerateEmailCopyEndpoint     goa.Endpoint
+	RefineEmailCopyEndpoint       goa.Endpoint
 	UpdateCampaignEndpoint        goa.Endpoint
 	ToggleCampaignStatusEndpoint  goa.Endpoint
 	ApplyKeywordActionsEndpoint   goa.Endpoint
@@ -47,7 +48,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, applyKeywordActions, deleteCampaign, getJob, startEmailWizardPlan, planEmailWizard, generateWizardContent, updateWizardSections, cloneWizardEmail, setWizardSendList, chatWizardTurn, getWizardSession goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, refineEmailCopy, updateCampaign, toggleCampaignStatus, applyKeywordActions, deleteCampaign, getJob, startEmailWizardPlan, planEmailWizard, generateWizardContent, updateWizardSections, cloneWizardEmail, setWizardSendList, chatWizardTurn, getWizardSession goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:           createBrief,
 		FindBriefEndpoint:             findBrief,
@@ -64,6 +65,7 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 		GetCampaignSettingsEndpoint:   getCampaignSettings,
 		GetBriefMetricsEndpoint:       getBriefMetrics,
 		GenerateEmailCopyEndpoint:     generateEmailCopy,
+		RefineEmailCopyEndpoint:       refineEmailCopy,
 		UpdateCampaignEndpoint:        updateCampaign,
 		ToggleCampaignStatusEndpoint:  toggleCampaignStatus,
 		ApplyKeywordActionsEndpoint:   applyKeywordActions,
@@ -374,6 +376,26 @@ func (c *Client) GetBriefMetrics(ctx context.Context, p *GetBriefMetricsPayload)
 func (c *Client) GenerateEmailCopy(ctx context.Context, p *GenerateEmailCopyPayload) (res *EmailCopy, err error) {
 	var ires any
 	ires, err = c.GenerateEmailCopyEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*EmailCopy), nil
+}
+
+// RefineEmailCopy calls the "refine-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// RefineEmailCopy may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) RefineEmailCopy(ctx context.Context, p *RefineEmailCopyPayload) (res *EmailCopy, err error) {
+	var ires any
+	ires, err = c.RefineEmailCopyEndpoint(ctx, p)
 	if err != nil {
 		return
 	}
