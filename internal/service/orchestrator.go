@@ -430,11 +430,21 @@ type OrgReferenceVerifier interface {
 	// implementation has verified was complete (see linkedin.VerifyAccountOrgReference's doc
 	// comment) — both are confirmable facts about a broken pairing, not merely an inconclusive
 	// comparison. A failure of the enumeration walk itself is different: it proves nothing
-	// about the pairing, so implementations wrap it in linkedin.ErrOrgVerificationInconclusive,
+	// about the pairing, so implementations wrap it in domain.ErrOrgVerificationInconclusive,
 	// and callers must not treat it the same as a confirmed failure (see TestLinkedinAds).
-	// A stored org id the platform could never have issued (linkedin's must be numeric) is a
-	// REAL error too, decidable without contacting the platform at all: campaign creation on
-	// that connection is already guaranteed to fail.
+	// A stored account id or org id the platform could never have issued (linkedin's must both
+	// be numeric) is a REAL error too, decidable without contacting the platform at all:
+	// campaign creation on that connection is already guaranteed to fail. So is a request the
+	// platform RECEIVED and refused against THIS token's authorization — a 403. It will not
+	// start succeeding on its own, so calling it an incomplete walk would answer "healthy"
+	// for a permanently broken cross-check forever.
+	//
+	// The remaining 4xx refusals (a rate limit aside) are neither: the enumeration request
+	// names no account and no organization, so a 400 or a 404 says this service built the
+	// request wrongly or is calling a path that moved. Implementations report those as
+	// domain.ErrServiceDefect — still never as an incomplete walk, since they do not clear on
+	// their own either, but as a defect the caller pages US for rather than a connection the
+	// operator is told to repair.
 	// Returns nil in exactly two situations, which it cannot distinguish: a confirmed match,
 	// and the platform having no comparable reference on the account to compare against.
 	// Callers that need to tell those apart cannot, by design.
@@ -2098,10 +2108,16 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 
 // orgVerificationRequired names the platforms whose dispatcher MUST implement
 // OrgReferenceVerifier. Membership is a claim about the PLATFORM, not about this service's
-// wiring: LinkedIn's ad-account resource carries a `reference` naming the true sponsoring
-// organization, so the cross-check is always available for it and a build that cannot run it is
-// mis-wired. The other 5 platforms expose no equivalent field, so their absence from
+// wiring: LinkedIn's ad-account resource EXPOSES a `reference` field naming the sponsoring
+// organization, so this service has a cross-check to run for it and a build that cannot run one
+// is mis-wired. The other 5 platforms expose no equivalent field at all, so their absence from
 // VerifyAccountOrg is the designed outcome rather than a defect — see the method's doc comment.
+//
+// Membership says the check must RUN, not that it must reach a verdict. `reference` is optional
+// per account (it can be absent, or name a person rather than an organization), and an account
+// that omits it yields the one inconclusive nil the outcome model documents. Being unable to run
+// the check is a different failure from running it and having nothing to compare, and only the
+// first is a defect.
 var orgVerificationRequired = map[model.Provider]bool{
 	model.ProviderLinkedInAds: true,
 }
@@ -2120,19 +2136,22 @@ var orgVerificationRequired = map[model.Provider]bool{
 // OrgReferenceVerifier — is a wiring defect in THIS service, and returning nil for it would let
 // TestLinkedinAds answer OK: true with the cross-check never run: the same "broken connection
 // reported healthy" outcome the check exists to prevent, and one no operator could diagnose
-// from the response. ErrServiceDefect makes the caller return its typed 500 instead.
+// from the response. ErrServiceDefect makes the caller return its typed 500 instead, wrapped
+// alongside ErrOrgVerificationUnwired as the reason sentinel — per that sentinel's contract, the
+// status and the reason token are separate decisions, and the response carries no detail, so the
+// token is the only thing that tells an operator reading the log that nothing they own is broken.
 func (o *Orchestrator) VerifyAccountOrg(ctx context.Context, projectID string, platform model.Provider) error {
 	d, ok := o.dispatchers[platform]
 	if !ok {
 		if orgVerificationRequired[platform] {
-			return fmt.Errorf("%w: no %s dispatcher is registered, so the org/account cross-check this platform requires could not run", domain.ErrServiceDefect, platform)
+			return fmt.Errorf("%w: %w: no %s dispatcher is registered, so the org/account cross-check this platform requires could not run", domain.ErrServiceDefect, domain.ErrOrgVerificationUnwired, platform)
 		}
 		return nil
 	}
 	verifier, ok := d.(OrgReferenceVerifier)
 	if !ok {
 		if orgVerificationRequired[platform] {
-			return fmt.Errorf("%w: the registered %s dispatcher does not implement OrgReferenceVerifier, so the org/account cross-check this platform requires could not run", domain.ErrServiceDefect, platform)
+			return fmt.Errorf("%w: %w: the registered %s dispatcher does not implement OrgReferenceVerifier, so the org/account cross-check this platform requires could not run", domain.ErrServiceDefect, domain.ErrOrgVerificationUnwired, platform)
 		}
 		return nil
 	}

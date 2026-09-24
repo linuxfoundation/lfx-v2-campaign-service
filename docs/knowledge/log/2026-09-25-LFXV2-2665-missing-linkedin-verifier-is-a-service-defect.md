@@ -16,8 +16,11 @@ nothing in the response or the logs distinguished it from a real pass.
 
 The permissiveness is now scoped by `orgVerificationRequired`, a map naming the platforms whose
 dispatcher MUST implement the interface. Membership is a claim about the PLATFORM, not about this
-service's wiring: LinkedIn's ad-account resource always carries a `reference`, so a build that
-cannot run the check is mis-wired, whereas Google or Reddit being absent is the designed outcome.
+service's wiring: LinkedIn's ad-account resource EXPOSES a `reference` field, so there is a check
+to run and a build that cannot run it is mis-wired, whereas Google or Reddit being absent is the
+designed outcome. Membership says the check must RUN, not that it must reach a verdict —
+`reference` is optional per account, and one that omits it is precisely the inconclusive `nil` the
+outcome model documents.
 For a required platform both paths now return `domain.ErrServiceDefect`, which `TestLinkedinAds`
 already maps to a typed 500 with a log line saying the stored connection is NOT at fault — the
 right destination, because the operator needs to fix a wiring bug, not audit connection fields.

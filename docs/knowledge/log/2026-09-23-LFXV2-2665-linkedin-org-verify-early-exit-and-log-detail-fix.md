@@ -25,7 +25,7 @@ survives a page-2 500, and one proving agreement found on page 1 makes only 1 re
 second-page fetch fails the test via `t.Error`).
 
 **MEDIUM — the structured server-side log field could still leak a request URL.** The prior fix
-(`2026-09-23-linkedin-org-verify-inconclusive-message-leak-fix.md`) stopped concatenating
+(`2026-09-23-LFXV2-2665-linkedin-org-verify-inconclusive-message-leak-fix.md`) stopped concatenating
 `verr.Error()` into the HTTP response, but kept logging it server-side via
 `slog.WarnContext(ctx, ..., "error", verr)` at `internal/service/connection.go:848`. That
 structured field is not actually safe either: `verr` can wrap a `*transportError`

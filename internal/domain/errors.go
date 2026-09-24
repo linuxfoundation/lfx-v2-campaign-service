@@ -475,6 +475,14 @@ var (
 	// grounds (RFC 6749 §5.2 `invalid_request`, `unsupported_grant_type` or
 	// `invalid_scope`), so neither stored credential was ever evaluated.
 	//
+	// It covers the other PERMANENTLY failing token exchanges as well, because they share
+	// both halves of that description: a token endpoint answering a status outside
+	// 400/401/429/5xx, a 2xx whose body yields no usable token, and a request this service
+	// could not build. In each, no stored credential was evaluated on the merits and no
+	// credential edit can help. The alternative — leaving them unclassified — folds them
+	// into the caller's retryable bucket, which for the connection test means reporting a
+	// permanently broken credential path as a healthy connection.
+	//
 	// It is separate from ErrApplicationCredentialsInvalid because the OWNER differs, and
 	// the owner is the whole point of this vocabulary. An invalid application credential is
 	// something an operator stored and can correct. A refused request is something THIS
@@ -492,6 +500,34 @@ var (
 	// PERMANENT, never retryable: nothing about waiting corrects a request this service is
 	// constructing wrongly.
 	ErrTokenRequestRejected = errors.New("the platform rejected the token request itself; this is a service defect")
+
+	// ErrAccountDiscoveryRejected is a second reason in the same family: the platform
+	// received an ACCOUNT-DISCOVERY request this service built and refused it on the merits
+	// with a status that is not about the caller's credentials — LinkedIn answering the ad
+	// account walk with a 400 or a 404.
+	//
+	// It is distinct from ErrTokenRequestRejected because the refused request is a different
+	// one, and an operator grepping the log needs to know which: a rejected token request
+	// points at the refresh parameters, a rejected discovery request at the endpoint path or
+	// the query this service builds. Both remedies are ours, neither is the operator's.
+	//
+	// It is deliberately NOT a verdict on the connection under test. The LinkedIn walk names
+	// neither the account id nor the org id, so a refusal of it proves nothing about the
+	// stored pairing, and reporting one as a failed cross-check would send an operator to
+	// audit fields that were never consulted.
+	//
+	// Wrapped ALONGSIDE ErrServiceDefect, which selects the status; this one is the reason
+	// token. PERMANENT, never retryable.
+	ErrAccountDiscoveryRejected = errors.New("the platform refused the account discovery request itself; this is a service defect")
+
+	// ErrOrgVerificationUnwired is the third: for a platform whose dispatcher MUST implement
+	// the org cross-check, this build has no dispatcher registered at all, or one that does
+	// not implement the capability. Nothing reached the platform and no connection was
+	// examined — the defect is in this service's wiring, discoverable only from this reason
+	// token, since the response deliberately carries no detail.
+	//
+	// Wrapped ALONGSIDE ErrServiceDefect, same arrangement as the two above. PERMANENT.
+	ErrOrgVerificationUnwired = errors.New("this build cannot run the org/account cross-check the platform requires; this is a service defect")
 
 	// ErrServiceDefect marks a failure whose remedy belongs to NOBODY the request can
 	// reach: not the caller, not the operator who configured the connection. This service
@@ -518,6 +554,75 @@ var (
 	// your request" are both wrong and only one audience can act. A 500 that pages us is
 	// the honest answer to a defect that is ours.
 	ErrServiceDefect = errors.New("this service constructed the request wrongly; no caller or operator action can repair it")
+
+	// ErrOrgVerificationInconclusive marks a connection-test cross-check that could not be
+	// run to a verdict — the platform-side enumeration it needs failed for a reason that
+	// proves NOTHING about the stored connection, so the connection must not be called
+	// broken over it.
+	//
+	// It lives here rather than in internal/platform/linkedin for the same reason
+	// ErrKeyUnavailable and ErrConnectionNotUsable do — the service layer classifies
+	// without importing the package that produced the failure. The dispatcher, which is the
+	// one layer that knows both sides, converts the platform client's own inconclusive
+	// error into this one (internal/dispatch/linkedin.go, VerifyAccountOrg).
+	//
+	// That conversion is also the safety boundary, not merely a re-tag. The platform error's
+	// chain can render a full request URL including query parameters, so the dispatcher
+	// attaches only a fixed, classified detail string (linkedin.SafeInconclusiveDetail) and
+	// drops the chain. An error carrying THIS sentinel is therefore safe to render into a
+	// log line verbatim, which is what makes the service arm's job a status decision instead
+	// of a redaction decision it has to remember to make.
+	//
+	// It is NOT a failed test: the credential baseline already passed, and a cross-check
+	// that could not run is not evidence of a mismatch. It maps to OK: true with an advisory
+	// message. Precisely because of that, nothing that IS evidence may carry it — see
+	// VerifyAccountOrgReference, which keeps credential, permission and other 4xx failures
+	// out of this sentinel entirely so they cannot reach this arm — the 4xx refusals carry
+	// the confirmed marker instead, and the credential failures their own sentinels.
+	ErrOrgVerificationInconclusive = errors.New("the account/organization cross-check could not be completed")
+
+	// ErrOrgVerificationFailed marks the opposite outcome: a cross-check that DID reach a
+	// verdict, and the verdict is that this connection cannot create campaigns — a reference
+	// naming a different organization, an account absent from a complete walk, a stored
+	// account or org id of the wrong shape, a non-429 4xx refusal LinkedIn reached on the
+	// merits.
+	//
+	// It exists for the same reason ErrOrgVerificationInconclusive does — to make a property
+	// of the error rather than a rule every caller must remember — but the property here is
+	// "this text was written by us and is safe to show a caller". The connection-test arm in
+	// internal/service echoes the error's own message into the operator-visible result,
+	// which is right for a verdict this service phrased and wrong for anything else: an
+	// unrecognised error can carry a driver string, a request URL or decrypted bytes. So the
+	// echo is now gated on THIS sentinel — an allowlist — and the default arm answers with
+	// fixed text and a log line. Nothing is echoed because it happened to reach the bottom
+	// of a switch.
+	//
+	// Like the inconclusive sentinel it is attached by the dispatcher
+	// (internal/dispatch/linkedin.go, VerifyAccountOrg), the one layer that knows both the
+	// service's contract and the platform client's types. Unlike it, the conversion is
+	// additive and adds NO text of its own: the platform message is the whole value, and a
+	// second rendering of a sentinel sentence beside the service's own prefix would only
+	// make the operator-facing line worse.
+	//
+	// PERMANENT: every verdict it marks is a stored-configuration fact that retrying cannot
+	// change. It maps to OK: false, not to an HTTP error — a failed test is a successful
+	// test call.
+	ErrOrgVerificationFailed = errors.New("the account/organization cross-check returned a confirmed failure")
+
+	// ErrConnectionLoadFailed marks a failure to READ the stored connection row — the
+	// database was unreachable, the query failed. Nothing was learned about the connection,
+	// because it was never retrieved.
+	//
+	// Distinct from ErrNotFound (the row genuinely is not there) and from
+	// ErrConnectionNotUsable (the row was read and its contents are bad). It is the only one
+	// of the three that is RETRYABLE, and the only one where the remedy belongs to whoever
+	// operates the datastore rather than to whoever configured the connection.
+	//
+	// It exists because a connection TEST had no way to tell them apart. A repo outage
+	// arrived as an ordinary opaque error and was reported as OK: false — telling a caller
+	// their connection is broken when this service simply could not look, and putting the
+	// raw datastore error text into the HTTP response to explain it. Maps to 503.
+	ErrConnectionLoadFailed = errors.New("the stored connection could not be read")
 
 	// ErrCredentialsAbsent — the connection row exists but its credential column is
 	// EMPTY. Nothing was decrypted because there was nothing to decrypt.

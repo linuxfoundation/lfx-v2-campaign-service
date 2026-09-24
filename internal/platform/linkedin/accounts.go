@@ -217,7 +217,7 @@ func (c *Client) walkAdAccountPages(ctx context.Context, visit func(page []AdAcc
 		if resp.Elements == nil {
 			return fmt.Errorf("linkedin ad-account discovery returned a 2xx response with no elements field; cannot confirm the token's accounts were enumerated")
 		}
-		page := make([]AdAccount, 0, len(*resp.Elements))
+		pageAccounts := make([]AdAccount, 0, len(*resp.Elements))
 		for _, el := range *resp.Elements {
 			id := strings.TrimSpace(el.ID.String())
 			// accountIDRE is the SAME regexp targeting.go validates a configured account
@@ -230,7 +230,7 @@ func (c *Client) walkAdAccountPages(ctx context.Context, visit func(page []AdAcc
 				// fail the whole walk rather than skipping the row.
 				return fmt.Errorf("linkedin ad-account discovery returned an account with an unusable id")
 			}
-			page = append(page, AdAccount{
+			pageAccounts = append(pageAccounts, AdAccount{
 				ID:              id,
 				Name:            strings.TrimSpace(el.Name),
 				Status:          el.Status,
@@ -241,7 +241,7 @@ func (c *Client) walkAdAccountPages(ctx context.Context, visit func(page []AdAcc
 				OrgID:           referenceOrgID(el.Reference),
 			})
 		}
-		done, err := visit(page)
+		done, err := visit(pageAccounts)
 		if err != nil {
 			return err
 		}
@@ -276,8 +276,11 @@ func (c *Client) walkAdAccountPages(ctx context.Context, visit func(page []AdAcc
 }
 
 // ErrOrgVerificationInconclusive wraps a failure of the underlying ListAdAccounts walk itself
-// (transport, or the walk's own runaway/truncation guards) — deliberately NOT a credential,
-// application-authorization, or permission (HTTP 403) failure; see VerifyAccountOrgReference.
+// that left the walk genuinely unresolved: a pre-send connection failure, a mid-flight transport
+// failure, the walk's own runaway/truncation guards, HTTP 429, and any 5xx. Deliberately NOT any
+// OTHER 4xx — a credential or application-authorization failure, a 403, and equally a 400 or 404
+// — because LinkedIn RECEIVED those and refused them on the merits; see
+// VerifyAccountOrgReference, whose guard is the authority on this split.
 // It is deliberately
 // distinct from a CONFIRMED contradiction (VerifyAccountOrgReference's other error returns):
 // the walk failing to complete proves nothing about the account/org pairing either way, so a
@@ -285,12 +288,76 @@ func (c *Client) walkAdAccountPages(ctx context.Context, visit func(page []AdAcc
 // two outcomes apart should check errors.Is(err, ErrOrgVerificationInconclusive).
 var ErrOrgVerificationInconclusive = errors.New("linkedin ad-account enumeration did not complete; org reference could not be checked")
 
+// ErrOrgVerificationFailed marks the OPPOSITE outcome: a CONFIRMED verdict about the stored
+// pairing — a reference naming a different organization, an account absent from a complete walk,
+// a stored id of the wrong shape, or a 403 refusal LinkedIn reached on the merits against this
+// token. The other 4xx refusals are NOT confirmed verdicts and carry ErrAccountDiscoveryRejected
+// instead — they say nothing about the pairing.
+//
+// It exists so a caller can allowlist the errors whose text is safe to render, instead of
+// echoing by default and relying on every unsafe class having been given an arm first. That
+// inversion is the same one ErrOrgVerificationInconclusive's conversion makes: safety as a
+// property rather than an obligation each future caller must remember. The message on every
+// error carrying this sentinel is built from this package's own vocabulary plus LinkedIn status
+// codes (apiError.Error() deliberately omits the response body), never from a response body, a
+// request URL, or credential material.
+//
+// Callers check errors.Is(err, ErrOrgVerificationFailed).
+var ErrOrgVerificationFailed = errors.New("linkedin account/organization verification returned a confirmed verdict")
+
+// ErrAccountDiscoveryRejected marks the THIRD outcome, which is a verdict about neither the
+// pairing nor the token: LinkedIn refused the ad-account discovery request itself with a non-429,
+// non-403 4xx. The walk embeds no account id and no org id, so such a refusal proves nothing
+// about the stored connection — a 400 means this service built a malformed request, a 404 that
+// the path it targets has moved. Both are defects in THIS service, and callers map them onto
+// whatever they use for that (the dispatcher converts to domain.ErrServiceDefect) rather than
+// failing the operator's connection over them.
+//
+// It is wrapped, not attached as a no-text tag: unlike the confirmed marker, nothing renders this
+// error to an operator, so a sentence naming the class is useful in a log and duplicated nowhere.
+//
+// Callers check errors.Is(err, ErrAccountDiscoveryRejected).
+var ErrAccountDiscoveryRejected = errors.New("linkedin refused the ad account discovery request")
+
+// verdictError attaches ErrOrgVerificationFailed to an error WITHOUT adding any text of its own.
+// A plain fmt.Errorf("%w: %w", ...) wrap would prepend the sentinel's sentence to a message the
+// service layer already introduces with one of its own, so a caller would read the same thing
+// twice. Unwrap keeps the chain intact, so errors.As(*apiError) and every inner sentinel check
+// still works through it.
+type verdictError struct{ err error }
+
+func (e *verdictError) Error() string        { return e.err.Error() }
+func (e *verdictError) Unwrap() error        { return e.err }
+func (e *verdictError) Is(target error) bool { return target == ErrOrgVerificationFailed }
+
+// confirmedVerdict tags err as a confirmed verdict. Applied at every return site in
+// VerifyAccountOrgReference that states a FACT about the pairing or the stored fields — and at
+// none that means the check could not run.
+func confirmedVerdict(err error) error { return &verdictError{err: err} }
+
 // SafeInconclusiveDetail classifies an error wrapped by ErrOrgVerificationInconclusive into a
-// fixed, caller-safe string for logging. The underlying error can be a *transportError, whose
-// Error() renders the raw round-trip failure (a *url.Error includes the full request URL, query
-// parameters included — e.g. a pagination cursor), so callers must not log err.Error() verbatim.
-// This reports only which failure class was hit, never any request- or response-derived text.
+// fixed, caller-safe string for logging. The underlying error can be a *transportError, or the
+// plain error doRequest returns for a pre-send dial failure; either renders the raw round-trip
+// failure, and a *url.Error inside one includes the full request URL, query parameters included
+// (e.g. a pagination cursor). So callers must not log err.Error() verbatim. This reports only
+// which failure class was hit, never any request- or response-derived text.
 func SafeInconclusiveDetail(err error) string {
+	// Checked FIRST, and separately from *transportError. doRequest deliberately does not
+	// wrap a pre-send dial failure (DNS failure, connection refused, no route) as a
+	// *transportError — that type means "may have been sent" — so a plain network outage,
+	// the most common real cause of an inconclusive walk, matched neither branch below and
+	// fell through to the completeness-guard string, telling an operator to go inspect a
+	// LinkedIn response that was never received.
+	// Checked BEFORE the dial branch, because a token exchange that could not dial is a
+	// token-endpoint failure and naming discovery for it points an operator at the wrong
+	// host. Either way no discovery request was ever made.
+	var tre *tokenRefreshError
+	if errors.As(err, &tre) || errors.Is(err, errTokenExchangeFailed) {
+		return "linkedin token exchange failed, so ad-account discovery never ran"
+	}
+	if isPreSendDialError(err) {
+		return "could not reach linkedin ad-account discovery (connection failure)"
+	}
 	var te *transportError
 	if errors.As(err, &te) {
 		return "transport failure contacting linkedin ad-account discovery"
@@ -318,29 +385,53 @@ func SafeInconclusiveDetail(err error) string {
 // reach.
 //
 // It returns an ErrOrgVerificationInconclusive-wrapped error when the page walk itself fails,
-// before finding accountID, for a reason that proves nothing about the pairing (transport
-// failure, page cap on a very large token), so it must not be confused with a confirmed
-// contradiction. A
-// credential failure (ErrCredentialsExpired, ErrApplicationCredentialsInvalid,
-// ErrTokenRequestRejected) or a 403 permission rejection is returned UNWRAPPED instead: each is
-// the reason a broken or under-permissioned connection cannot reach LinkedIn's ad-account list
-// at all, a real and actionable failure, and wrapping it in the inconclusive sentinel let
-// TestLinkedinAds's errors.Is(err, ErrOrgVerificationInconclusive) check — which runs before any
-// other classification — report a broken connection as OK: true.
+// before finding accountID, for a reason that proves nothing about the pairing: a pre-send
+// connection failure, a mid-flight transport failure, the page cap on a very large token or the
+// other runaway/truncation guards, HTTP 429, and any 5xx. Those must not be confused with a
+// confirmed contradiction. A credential failure (ErrCredentialsExpired,
+// ErrApplicationCredentialsInvalid, ErrTokenRequestRejected) and EVERY other 4xx — 403, but 400
+// and 404 just as much — are kept OUT of that sentinel instead: LinkedIn received the request and
+// refused it on the merits, so it will not start succeeding on its own, and wrapping any of them
+// in the inconclusive sentinel let TestLinkedinAds's errors.Is(err,
+// ErrOrgVerificationInconclusive) check — which runs before any other classification — report a
+// broken connection as OK: true. 429 is the one exempt status because a rate limit really does
+// say nothing about the pairing. Those refusals do not all mean the same thing: a credential
+// failure carries its own sentinel, a 403 is a confirmed verdict on this connection, and every
+// remaining 4xx carries ErrAccountDiscoveryRejected because the walk names neither id and so
+// refuses nothing about the pairing.
 //
-// A configuredOrgID that is not a numeric organization id is likewise a CONFIRMED error,
-// returned unwrapped before the walk even starts — see the comment at the guard below.
+// An accountID or configuredOrgID that is not a numeric platform id — the empty string
+// included — is likewise a CONFIRMED error, decided before the walk even starts; see the
+// comment at the guards below. Every confirmed outcome carries ErrOrgVerificationFailed and
+// never ErrOrgVerificationInconclusive; the marker adds no text of its own.
 //
-// Every other outcome returns nil, which covers a confirmed match and one inconclusive case
-// nil cannot distinguish from it: a reference that is empty or person-scoped, where LinkedIn
-// simply has nothing to compare against. This mirrors resolveOrgID's own philosophy in
-// targeting.go — fail closed on an actual contradiction, and only on one this package can
-// actually confirm.
+// Every other outcome returns nil, which covers a confirmed match and the ONE inconclusive
+// case nil cannot distinguish from it: a reference that is empty or person-scoped, where
+// LinkedIn simply has nothing on the account to compare against.
+//
+// This mirrors resolveOrgID's own philosophy in targeting.go — fail closed on an actual
+// contradiction, and only on one this package can actually confirm.
 func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, configuredOrgID string) error {
 	accountID = strings.TrimSpace(accountID)
 	configuredOrgID = strings.TrimSpace(configuredOrgID)
-	if accountID == "" || configuredOrgID == "" {
-		return nil
+	// Both ids are checked for SHAPE, not merely for presence, and both before contacting
+	// LinkedIn — the two halves of the same stored pairing, failing the same way.
+	//
+	// accountIDRE is what targeting.go validates a configured account id against, so an
+	// account id this fails is one CreateCampaign will refuse too: the connection is already
+	// guaranteed to be unusable. Accepting it here instead spent a full enumeration walk to
+	// reach one of two wrong answers — "not found among this token's own ad accounts", which
+	// misdescribes a malformed stored field as a permissions problem, or, if the walk failed
+	// for any other reason, ErrOrgVerificationInconclusive, which TestLinkedinAds reports as
+	// OK: true. Mirrors ValidateAccountID's use in LinkedInDispatcher.ListAccountCampaignMetrics.
+	//
+	// The empty string falls into these guards rather than returning nil. Returning nil for a
+	// caller with nothing to compare looked permissive-but-harmless for a client package, but
+	// VerifyAccountOrgReference is exported and nil is read by every caller as "no mismatch
+	// found"; the only thing keeping that out of a connection test was the dispatcher happening
+	// to reject empty ids one layer up. A stored pairing that is half-absent is not a pairing.
+	if err := ValidateAccountID(accountID); err != nil {
+		return confirmedVerdict(fmt.Errorf("the configured linkedin ad account id is not usable, so campaign creation on this connection cannot succeed: %w", err))
 	}
 	// A non-numeric configuredOrgID is a CONFIRMED defect in the stored connection, decidable
 	// without contacting LinkedIn at all. orgIDRE is this client's configuration invariant:
@@ -355,7 +446,7 @@ func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, confi
 	// organization" would misdescribe the fault and send an operator hunting a tenant mixup
 	// instead of fixing a malformed field.
 	if !orgIDRE.MatchString(configuredOrgID) {
-		return fmt.Errorf("the configured organization id %q is not a valid linkedin organization id (expected digits only), so campaign creation on this connection cannot build a valid organization urn", configuredOrgID)
+		return confirmedVerdict(fmt.Errorf("the configured organization id %q is not a valid linkedin organization id (expected digits only), so campaign creation on this connection cannot build a valid organization urn", configuredOrgID))
 	}
 	// found/matchErr are set from inside visit and read after the walk returns; walk only
 	// ever calls visit synchronously from the same goroutine, so this is not a data race.
@@ -388,20 +479,43 @@ func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, confi
 		if errors.Is(err, ErrCredentialsExpired) || errors.Is(err, ErrApplicationCredentialsInvalid) || errors.Is(err, ErrTokenRequestRejected) {
 			return err
 		}
-		// A 403 reaches here as a plain *apiError (LinkedIn has no dedicated sentinel for
-		// it, unlike the 401/token-exchange failures above), but it proves the same thing
-		// they do: LinkedIn evaluated this credential and refused it permission to
-		// enumerate ad accounts. Unlike a transport failure or the page-cap/runaway
-		// guards, that is not "the walk could not complete" — it is a definite
-		// authorization failure, so it must not fold into the inconclusive sentinel below.
+		// A 4xx reaches here as a plain *apiError (LinkedIn has no dedicated sentinel for
+		// these, unlike the 401/token-exchange failures above), but it proves the same
+		// thing they do: LinkedIn RECEIVED this request, evaluated it, and refused it.
+		// Unlike a transport failure or the page-cap/runaway guards, that is not "the walk
+		// could not complete": none of these improve on their own, and folding a
+		// permanently-failing discovery path into the inconclusive sentinel would report
+		// OK: true for it forever. Only 429 is exempt — rate limiting genuinely is an
+		// interrupted walk a later attempt can complete — and so is 5xx, which is LinkedIn
+		// failing to answer rather than answering with a refusal.
+		//
+		// The refusals then split by WHO can act on them, because the two halves carry
+		// different verdicts and different remedies:
+		//
+		//   - 403 is a definite authorization failure. LinkedIn evaluated THIS token
+		//     against THIS resource and refused it, so it is a confirmed verdict on the
+		//     stored connection and the operator re-authorizes to fix it.
+		//   - Everything else is a statement about the REQUEST, not the connection. The
+		//     discovery walk sends q=search with a page size and cursor and embeds neither
+		//     the account id nor the org id (see the request built above), so a 400 says
+		//     this service built a malformed request and a 404 that the path it targets is
+		//     gone. Neither is evidence about the pairing, and neither is repairable by
+		//     editing connection fields — reporting them as a failed verification would
+		//     send an operator to audit a configuration that was never at fault.
 		var aerr *apiError
-		if errors.As(err, &aerr) && aerr.StatusCode == http.StatusForbidden {
-			return err
+		if errors.As(err, &aerr) && aerr.StatusCode >= 400 && aerr.StatusCode < 500 && aerr.StatusCode != http.StatusTooManyRequests {
+			if aerr.StatusCode == http.StatusForbidden {
+				return confirmedVerdict(err)
+			}
+			return fmt.Errorf("%w: %w", ErrAccountDiscoveryRejected, err)
 		}
 		return fmt.Errorf("%w: %w", ErrOrgVerificationInconclusive, err)
 	}
 	if !found {
-		return fmt.Errorf("linkedin ad account %s was not found among this token's own ad accounts", accountID)
+		return confirmedVerdict(fmt.Errorf("linkedin ad account %s was not found among this token's own ad accounts", accountID))
 	}
-	return matchErr
+	if matchErr != nil {
+		return confirmedVerdict(matchErr)
+	}
+	return nil
 }

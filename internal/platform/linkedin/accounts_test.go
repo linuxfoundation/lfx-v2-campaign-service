@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -476,13 +477,246 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 		}
 	})
 
-	t.Run("missing account or org id is inconclusive, not an error", func(t *testing.T) {
-		c := newAccountsClient(t, "http://unused.invalid")
-		if err := c.VerifyAccountOrgReference(context.Background(), "", "2414183"); err != nil {
-			t.Errorf("VerifyAccountOrgReference with no account id: %v, want nil", err)
+	// Both halves of the stored pairing are shape-checked, and the empty string is one of the
+	// shapes that fails. nil means "no mismatch found" to every caller, and a pairing that is
+	// half-absent or half-malformed is not one this connection can dispatch on — reporting it
+	// as nil made a connection test answer OK: true for a connection already known to be
+	// unusable, which is the whole failure class this verification closes.
+	t.Run("an absent or malformed account or org id is a confirmed error, refused before enumeration", func(t *testing.T) {
+		cases := []struct{ name, accountID, orgID string }{
+			{"absent account id", "", "2414183"},
+			{"absent org id", "507404993", ""},
+			// The full URN is the realistic mistyping on either field: it CONTAINS the
+			// right digits, so a check looking only for the numeric id inside the string
+			// would wrongly pass it.
+			{"account id as a urn", "urn:li:sponsoredAccount:507404993", "2414183"},
+			{"account id with a stray character", "507404993x", "2414183"},
 		}
-		if err := c.VerifyAccountOrgReference(context.Background(), "507404993", ""); err != nil {
-			t.Errorf("VerifyAccountOrgReference with no org id: %v, want nil", err)
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				srv, rec := adAccountsServer(t, `{"elements":[
+					{"id":507404993,"reference":"urn:li:organization:2414183"}
+				],"metadata":{}}`)
+				err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), tc.accountID, tc.orgID)
+				if err == nil {
+					t.Fatal("VerifyAccountOrgReference: want a CONFIRMED error — targeting.go refuses the same value, so this connection cannot dispatch")
+				}
+				// It must NOT be the inconclusive sentinel: TestLinkedinAds maps that to
+				// OK: true, which is the reporting bug this case exists to close.
+				if errors.Is(err, ErrOrgVerificationInconclusive) {
+					t.Errorf("VerifyAccountOrgReference: %v, want a CONFIRMED error, not ErrOrgVerificationInconclusive (which is reported as a healthy connection)", err)
+				}
+				// Decidable from the stored values alone. Spending a LinkedIn round trip to
+				// reach a verdict already known would also make the verdict depend on that
+				// call succeeding — and an id this malformed would otherwise be reported as
+				// "not found among this token's own ad accounts", sending an operator after
+				// a permissions problem that does not exist.
+				if rec.count() != 0 {
+					t.Errorf("requests = %v, want none: a malformed stored id is decidable without contacting linkedin", rec.all())
+				}
+			})
+		}
+	})
+
+	t.Run("a non-429 4xx fails the verification, not folded into inconclusive", func(t *testing.T) {
+		for _, status := range []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict} {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+			}))
+			t.Cleanup(srv.Close)
+			err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "2414183")
+			if err == nil {
+				t.Fatalf("VerifyAccountOrgReference: want an error when discovery returns %d", status)
+			}
+			// LinkedIn received the request and refused it; none of these clear on their
+			// own, so reporting them as an interrupted walk would answer OK: true for a
+			// permanently broken discovery path forever.
+			if errors.Is(err, ErrOrgVerificationInconclusive) {
+				t.Errorf("VerifyAccountOrgReference on %d: %v, want a definite failure — a refusal is not an incomplete walk", status, err)
+			}
+			// …but it is equally not a verdict about the PAIRING. The walk sends neither
+			// id, so these statuses describe the request this service built, and marking
+			// them confirmed would echo "account/organization verification failed" for a
+			// status that checked no account and no organization.
+			if !errors.Is(err, ErrAccountDiscoveryRejected) {
+				t.Errorf("VerifyAccountOrgReference on %d: %v, want ErrAccountDiscoveryRejected", status, err)
+			}
+			if errors.Is(err, ErrOrgVerificationFailed) {
+				t.Errorf("VerifyAccountOrgReference on %d: %v, want NOT ErrOrgVerificationFailed — nothing about the pairing was checked", status, err)
+			}
+		}
+	})
+
+	// The credential unwrap keeps THREE sentinels out of the inconclusive bucket, and only
+	// one of them can come from the ad-accounts API: a 401 there yields ErrCredentialsExpired.
+	// The other two are produced by the TOKEN EXCHANGE, which no ad-accounts fixture reaches,
+	// so a narrowed unwrap would leave both folded into "inconclusive" — a wrong client_id or
+	// a malformed refresh request reported as a healthy connection, forever.
+	t.Run("token-exchange credential failures do not fold into inconclusive", func(t *testing.T) {
+		cases := []struct {
+			name, oauthCode string
+			want            error
+		}{
+			// Operator fault: the stored application credentials are wrong.
+			{"invalid_client", "invalid_client", ErrApplicationCredentialsInvalid},
+			// Service fault: LinkedIn refused the SHAPE of the request this service built,
+			// so neither stored credential was ever evaluated.
+			{"invalid_request", "invalid_request", ErrTokenRequestRejected},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"error":"`+tc.oauthCode+`"}`)
+				}))
+				t.Cleanup(tokenSrv.Close)
+				// The ad-accounts server must never be reached: the exchange fails first.
+				apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					t.Error("ad-account discovery was called after the token exchange failed")
+					w.WriteHeader(http.StatusInternalServerError)
+				}))
+				t.Cleanup(apiSrv.Close)
+
+				c := NewClient(refreshableCreds(), RuntimeConfig{},
+					WithBaseURL(apiSrv.URL), withTokenURL(tokenSrv.URL))
+				err := c.VerifyAccountOrgReference(context.Background(), "507404993", "2414183")
+				if err == nil {
+					t.Fatalf("VerifyAccountOrgReference: want an error when the token exchange returns %s", tc.oauthCode)
+				}
+				if !errors.Is(err, tc.want) {
+					t.Errorf("VerifyAccountOrgReference: %v, want %v to survive the walk's error handling", err, tc.want)
+				}
+				// The bucket that reports OK: true. A credential fault placed in it is the
+				// "broken connection reported healthy" outcome this whole path exists to
+				// close, and neither of these clears on its own.
+				if errors.Is(err, ErrOrgVerificationInconclusive) {
+					t.Errorf("VerifyAccountOrgReference: %v, must NOT be inconclusive — that reports a broken connection as healthy", err)
+				}
+				// Nor is it a verdict about the pairing: the cross-check never ran.
+				if errors.Is(err, ErrOrgVerificationFailed) {
+					t.Errorf("VerifyAccountOrgReference: %v, must NOT be marked a confirmed verdict — no account was compared", err)
+				}
+			})
+		}
+	})
+
+	// The three credential sentinels come only from a 400/401 the OAuth error code classifies.
+	// Every OTHER permanently-failing exchange carried no sentinel at all and fell through to
+	// the inconclusive bucket, which reports OK: true — so a token endpoint answering 403 or
+	// 404, or a 200 with no token in it, reported a connection that can never mint a token as
+	// healthy, forever. Retryability is the axis here, NOT whether a credential is implicated.
+	t.Run("a permanently failing token exchange is not inconclusive", func(t *testing.T) {
+		cases := []struct {
+			name        string
+			status      int
+			body        string
+			wantRetried bool // true: a later attempt really could succeed, so inconclusive is right
+		}{
+			{"403 refusal", http.StatusForbidden, "", false},
+			{"404 wrong endpoint", http.StatusNotFound, "", false},
+			{"410 endpoint retired", http.StatusGone, "", false},
+			{"200 with no access_token", http.StatusOK, `{"expires_in":86400}`, false},
+			{"200 with a malformed body", http.StatusOK, `{"access_token":`, false},
+			// The retryable side of the same split, asserted here so the two can never drift.
+			{"429 rate limit", http.StatusTooManyRequests, "", true},
+			{"503 outage", http.StatusServiceUnavailable, "", true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tc.status)
+					_, _ = io.WriteString(w, tc.body)
+				}))
+				t.Cleanup(tokenSrv.Close)
+				apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					t.Error("ad-account discovery was called after the token exchange failed")
+					w.WriteHeader(http.StatusInternalServerError)
+				}))
+				t.Cleanup(apiSrv.Close)
+
+				c := NewClient(refreshableCreds(), RuntimeConfig{},
+					WithBaseURL(apiSrv.URL), withTokenURL(tokenSrv.URL))
+				err := c.VerifyAccountOrgReference(context.Background(), "507404993", "2414183")
+				if err == nil {
+					t.Fatalf("VerifyAccountOrgReference: want an error when the token exchange fails")
+				}
+				if tc.wantRetried {
+					if !errors.Is(err, ErrOrgVerificationInconclusive) {
+						t.Errorf("VerifyAccountOrgReference: %v, want inconclusive — a later attempt really can succeed", err)
+					}
+					return
+				}
+				if errors.Is(err, ErrOrgVerificationInconclusive) {
+					t.Errorf("VerifyAccountOrgReference: %v, must NOT be inconclusive — that bucket reports OK: true, and this never clears on its own", err)
+				}
+				// Routed onto the existing "the remedy belongs to this service" reason, which
+				// dispatch maps to domain.ErrServiceDefect and logs as token_request_rejected.
+				if !errors.Is(err, ErrTokenRequestRejected) {
+					t.Errorf("VerifyAccountOrgReference: %v, want ErrTokenRequestRejected so it reports as a service defect rather than a verdict", err)
+				}
+				// It is emphatically NOT a verdict about the stored pairing: no account was
+				// ever fetched, let alone compared.
+				if errors.Is(err, ErrOrgVerificationFailed) {
+					t.Errorf("VerifyAccountOrgReference: %v, must NOT be a confirmed verdict — the walk never ran", err)
+				}
+			})
+		}
+	})
+
+	// SafeInconclusiveDetail classifies by TYPE, and a token-exchange failure that is not one
+	// of the three credential sentinels above (an unreachable endpoint, a 503, an unreadable
+	// body) is a plain error — it used to reach the fallback label and tell an operator to go
+	// inspect a discovery response that was never requested, on a host that was never dialled.
+	t.Run("a non-credential token-exchange failure is named as one, not as a completeness guard", func(t *testing.T) {
+		tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		t.Cleanup(tokenSrv.Close)
+		apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("ad-account discovery was called after the token exchange failed")
+		}))
+		t.Cleanup(apiSrv.Close)
+
+		c := NewClient(refreshableCreds(), RuntimeConfig{},
+			WithBaseURL(apiSrv.URL), withTokenURL(tokenSrv.URL))
+		err := c.VerifyAccountOrgReference(context.Background(), "507404993", "2414183")
+		if !errors.Is(err, ErrOrgVerificationInconclusive) {
+			t.Fatalf("VerifyAccountOrgReference: %v, want ErrOrgVerificationInconclusive for a token endpoint that is merely unavailable", err)
+		}
+		if got := SafeInconclusiveDetail(err); !strings.Contains(got, "token exchange") {
+			t.Errorf("SafeInconclusiveDetail = %q, want it to name the token exchange — the discovery request was never made", got)
+		}
+	})
+
+	t.Run("a 403 is a confirmed verdict on the connection, not a rejected request", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+		}))
+		t.Cleanup(srv.Close)
+		err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "2414183")
+		// LinkedIn evaluated THIS token against THIS resource and refused it, which the
+		// operator resolves by re-authorizing — so unlike a 400 or 404 it belongs on the
+		// failed-test path with the connection named, not on the service-defect path.
+		if !errors.Is(err, ErrOrgVerificationFailed) {
+			t.Errorf("VerifyAccountOrgReference on 403: %v, want ErrOrgVerificationFailed", err)
+		}
+		if errors.Is(err, ErrAccountDiscoveryRejected) {
+			t.Errorf("VerifyAccountOrgReference on 403: %v, want NOT ErrAccountDiscoveryRejected — an authorization refusal is about this connection", err)
+		}
+	})
+
+	t.Run("a 429 stays inconclusive, unlike the rest of 4xx", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		t.Cleanup(srv.Close)
+		err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "2414183")
+		// Rate limiting genuinely is a walk that could not complete and that a later attempt
+		// can. Failing the connection over it would call a healthy connection broken.
+		if !errors.Is(err, ErrOrgVerificationInconclusive) {
+			t.Errorf("VerifyAccountOrgReference: %v, want ErrOrgVerificationInconclusive for a 429", err)
 		}
 	})
 
@@ -558,6 +792,79 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 		}
 	})
 
+	// Every confirmed verdict must be POSITIVELY marked, not merely "not inconclusive".
+	// internal/dispatch converts this marker into domain.ErrOrgVerificationFailed, and
+	// internal/service echoes an error's own text into the operator-visible message only for
+	// that domain sentinel — an allowlist, so that a class arriving here later without a
+	// marker gets fixed text rather than inheriting the echo by falling through a switch.
+	// Each case below therefore asserts the mark itself; asserting the absence of the
+	// inconclusive sentinel, as the cases above do, no longer covers the whole contract.
+	t.Run("every confirmed verdict carries ErrOrgVerificationFailed", func(t *testing.T) {
+		agreeing := `{"elements":[{"id":507404993,"reference":"urn:li:organization:2414183"}],"metadata":{}}`
+		cases := []struct {
+			name             string
+			body             string
+			status           int
+			accountID, orgID string
+		}{
+			{"org mismatch", agreeing, 0, "507404993", "999"},
+			{"account absent from a complete walk", `{"elements":[{"id":1,"reference":"urn:li:organization:2414183"}],"metadata":{}}`, 0, "507404993", "2414183"},
+			{"malformed stored account id", agreeing, 0, "urn:li:sponsoredAccount:507404993", "2414183"},
+			{"malformed configured org id", agreeing, 0, "507404993", "urn:li:organization:2414183"},
+			// 403 is the only status among the refusals that is a verdict on the stored
+			// connection: LinkedIn evaluated THIS token and refused it.
+			{"a 403 refusal", "", http.StatusForbidden, "507404993", "2414183"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				var url string
+				if tc.status != 0 {
+					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						w.WriteHeader(tc.status)
+					}))
+					t.Cleanup(srv.Close)
+					url = srv.URL
+				} else {
+					srv, _ := adAccountsServer(t, tc.body)
+					url = srv.URL
+				}
+				err := newAccountsClient(t, url).VerifyAccountOrgReference(context.Background(), tc.accountID, tc.orgID)
+				if err == nil {
+					t.Fatal("VerifyAccountOrgReference: got nil, want a confirmed error")
+				}
+				if !errors.Is(err, ErrOrgVerificationFailed) {
+					t.Errorf("VerifyAccountOrgReference: %v, want ErrOrgVerificationFailed — internal/service shows an unmarked error's text to nobody", err)
+				}
+				// The marker carries no text of its own: dispatch attaches the domain
+				// sentinel additively and the service renders this message behind its own
+				// prefix, so a sentinel sentence here would be read by an operator.
+				if strings.Contains(err.Error(), ErrOrgVerificationFailed.Error()) {
+					t.Errorf("VerifyAccountOrgReference: %v, want the marker attached without rendering its own sentence", err)
+				}
+			})
+		}
+	})
+
+	// The two outcomes that must NOT carry it. A credential failure is classified by its own
+	// sentinels further up the chain, and an inconclusive walk is not a verdict at all — if
+	// either carried the confirmed marker the service would echo a chain it did not write.
+	t.Run("credential and inconclusive outcomes are not marked confirmed", func(t *testing.T) {
+		expired := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		t.Cleanup(expired.Close)
+		if err := newAccountsClient(t, expired.URL).VerifyAccountOrgReference(context.Background(), "507404993", "2414183"); !errors.Is(err, ErrCredentialsExpired) || errors.Is(err, ErrOrgVerificationFailed) {
+			t.Errorf("VerifyAccountOrgReference: %v, want ErrCredentialsExpired and NOT ErrOrgVerificationFailed", err)
+		}
+		limited := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		t.Cleanup(limited.Close)
+		if err := newAccountsClient(t, limited.URL).VerifyAccountOrgReference(context.Background(), "507404993", "2414183"); !errors.Is(err, ErrOrgVerificationInconclusive) || errors.Is(err, ErrOrgVerificationFailed) {
+			t.Errorf("VerifyAccountOrgReference: %v, want ErrOrgVerificationInconclusive and NOT ErrOrgVerificationFailed", err)
+		}
+	})
+
 	t.Run("confirmed mismatch found on an early page is not undone by a later page failing", func(t *testing.T) {
 		rec := &recordedURIs{}
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -587,6 +894,49 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 		}
 		if n := len(rec.all()); n != 1 {
 			t.Errorf("made %d requests, want 1 — the walk must stop once it finds the target account rather than requesting a page it no longer needs", n)
+		}
+	})
+
+	// The mirror of the two subtests above, and the one that pins the OTHER branch: a page
+	// that does not contain the target must keep the walk going. That branch is the only
+	// thing that makes "was not found among this token's own ad accounts" an exhaustive
+	// claim, and nothing else in the suite discriminates it — every other case finds the
+	// target on page one or serves a single page, so stopping after page one passes them all
+	// while turning a real account into a confirmed "not found" for any token with enough
+	// accounts to paginate.
+	t.Run("a page without the target does not end the walk", func(t *testing.T) {
+		srv, rec := adAccountsServer(t,
+			`{"elements":[{"id":111,"reference":"urn:li:organization:2414183"}],"metadata":{"nextPageToken":"tok"}}`,
+			`{"elements":[{"id":507404993,"reference":"urn:li:organization:2414183"}],"metadata":{"nextPageToken":""}}`,
+		)
+		if err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "2414183"); err != nil {
+			t.Errorf("VerifyAccountOrgReference: %v, want nil — the target agrees on page two", err)
+		}
+		if n := len(rec.all()); n != 2 {
+			t.Errorf("made %d requests, want 2: a page that does not hold the target must not end the walk", n)
+		}
+	})
+
+	t.Run("a target on a later page is still compared, not reported absent", func(t *testing.T) {
+		srv, rec := adAccountsServer(t,
+			`{"elements":[{"id":111,"reference":"urn:li:organization:2414183"}],"metadata":{"nextPageToken":"tok"}}`,
+			`{"elements":[{"id":507404993,"reference":"urn:li:organization:999"}],"metadata":{"nextPageToken":""}}`,
+		)
+		err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "2414183")
+		if err == nil {
+			t.Fatal("VerifyAccountOrgReference: want the mismatch on page two to be reported")
+		}
+		// Stopping after page one would report this account as absent from the token's own
+		// accounts — an operator sent after a permissions problem that does not exist,
+		// instead of the org mixup that does.
+		if strings.Contains(err.Error(), "not found") {
+			t.Errorf("error = %v, want the page-two MISMATCH, not an absence verdict", err)
+		}
+		if !strings.Contains(err.Error(), "999") || !strings.Contains(err.Error(), "2414183") {
+			t.Errorf("error = %v, want it to name both org ids", err)
+		}
+		if n := len(rec.all()); n != 2 {
+			t.Errorf("made %d requests, want 2", n)
 		}
 	})
 
@@ -633,6 +983,27 @@ func TestSafeInconclusiveDetail(t *testing.T) {
 		}
 		if !strings.Contains(detail, "500") {
 			t.Errorf("SafeInconclusiveDetail = %q, want it to mention the status code", detail)
+		}
+	})
+
+	// The most common real cause of an inconclusive walk, and the one that was misclassified:
+	// doRequest deliberately does NOT wrap a pre-send dial failure as a *transportError (that
+	// type means "may have been sent"), so it matched neither branch and fell through to the
+	// completeness-guard string — telling an operator to inspect a LinkedIn response that was
+	// never received.
+	t.Run("a pre-send dial failure is reported as a connection failure, not a response-shape guard", func(t *testing.T) {
+		dial := fmt.Errorf("linkedin GET /adAccounts: %w", &url.Error{
+			Op:  "Get",
+			URL: "https://api.linkedin.com/rest/adAccounts?pageToken=super-secret-cursor",
+			Err: &net.DNSError{Err: "no such host", Name: "api.linkedin.com", IsNotFound: true},
+		})
+		err := fmt.Errorf("%w: %w", ErrOrgVerificationInconclusive, dial)
+		detail := SafeInconclusiveDetail(err)
+		if strings.Contains(detail, "super-secret-cursor") {
+			t.Errorf("SafeInconclusiveDetail leaked the request URL: %q", detail)
+		}
+		if strings.Contains(detail, "completeness guard") {
+			t.Errorf("SafeInconclusiveDetail = %q, want a connection-failure classification for a dial error, not a response-shape one", detail)
 		}
 	})
 

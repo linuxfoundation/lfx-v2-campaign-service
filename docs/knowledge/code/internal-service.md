@@ -668,9 +668,25 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
   to prevent, and tagging the error `ErrConnectionNotUsable` reintroduced it while the reason token
   reached only the log. **The reason sentinel and the STATUS sentinel are separate axes.** A 5xx
   because the only actor who can act reads the log, not the response; the body names no remedy
-  because the caller has none. Produced today by `linkedinExpiry` for a token request LinkedIn
-  refused on protocol grounds (`ErrTokenRequestRejected`), and wrapped ALONGSIDE that reason so
-  `unusableConnectionReason` keeps reporting `token_request_rejected`.
+  because the caller has none. Produced today by three arms, each wrapping `ErrServiceDefect`
+  ALONGSIDE its own reason sentinel — never instead of one, or `unusableConnectionReason` logs
+  `unclassified`:
+  - `linkedinExpiry`, for a token request LinkedIn refused on protocol grounds — and, more
+    broadly, for any token exchange that CANNOT succeed on a retry: a status outside
+    400/401/429/5xx, a 2xx whose body yields no usable token, or a request this service could not
+    build (`domain.ErrTokenRequestRejected` → `token_request_rejected`). Retryability is a second
+    axis independent of which credential is implicated; routing the permanent failures here keeps
+    them out of the inconclusive bucket, which reports `OK: true`.
+  - `VerifyAccountOrg` (`internal/dispatch/linkedin.go`), for a **non-429, non-403 4xx** on the ad
+    account discovery walk (`domain.ErrAccountDiscoveryRejected` → `account_discovery_rejected`).
+    LinkedIn received and refused the request THIS SERVICE built, and the walk embeds neither the
+    stored account id nor the configured org id, so the refusal is not a verdict about the pairing
+    and must not reach the operator as one. A 403 is the exception and IS a verdict — see
+    [`internal-platform-linkedin.md`](internal-platform-linkedin.md).
+  - `Orchestrator.VerifyAccountOrg`, for a platform whose dispatcher is unregistered or does not
+    implement `OrgReferenceVerifier` (`domain.ErrOrgVerificationUnwired` →
+    `org_verification_unwired`). A build that cannot run a cross-check the platform requires is a
+    wiring defect in this service; the operator's connection may be perfect.
 - `domain.ErrConnectionNotUsable` → **400** — the connection EXISTS but cannot be used as it
   stands: inactive, an incomplete or undecodable credential blob, or a malformed stored config
   value such as a dashed `login_customer_id`. The platform is never contacted. This arm is what
@@ -712,8 +728,15 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
   carries instead is `reason=`, from `unusableConnectionReason` — a fixed token
   (`connection_inactive`, `credentials_absent`, `credentials_undecodable`,
   `credentials_incomplete`, `provider_config_invalid`, `credential_blob_malformed`,
+  `token_request_rejected`, `account_discovery_rejected`, `org_verification_unwired`,
+  `application_credentials_invalid`, `credentials_expired`,
   `account_not_selected`, `unclassified`) read off the reason
-  sentinel the dispatch layer wraps alongside `ErrConnectionNotUsable`. A closed vocabulary is what
+  sentinel the dispatch layer wraps alongside `ErrConnectionNotUsable`. **The vocabulary is wider
+  than this arm**: the last five are reached carrying `ErrServiceDefect` or a credential fault
+  rather than `ErrConnectionNotUsable`, because the reason token and the status sentinel are
+  separate axes (see the `ErrServiceDefect` bullet above). `unclassified` is what an error with a
+  status sentinel but NO reason sentinel logs, which is why every new status wrap has to carry a
+  reason alongside it rather than instead of it. A closed vocabulary is what
   a log line wants anyway: greppable, alertable, and with no payload to carry a secret in.
 - `ErrAccountIDMalformed` → **400** — a caller-supplied account id, not a stored connection, is
   shape-invalid for its platform. Every dispatcher validates the shape itself before resolving
@@ -925,21 +948,72 @@ test failing is an expected outcome for a caller to see, not a service outage. A
 reserved for `resolveBackendWithOrch` reporting the repo or orchestrator itself unavailable,
 checked before the verification call is attempted.
 
-A failure of the `ListAdAccounts` enumeration walk ITSELF is handled differently: it is wrapped
-in `linkedin.ErrOrgVerificationInconclusive`, and `TestLinkedinAds` checks for that sentinel
-with `errors.Is` before folding an error into `OK: false`. That failure proves nothing about the
-account/org pairing — only that the cross-check couldn't run — so it reports `OK: true` with an
-advisory message instead: the credential baseline already passed, and there is no basis to call
-a connection broken because an optional secondary check happened to fail.
+A failure of the `ListAdAccounts` enumeration walk ITSELF is handled differently: it reaches
+this package as `domain.ErrOrgVerificationInconclusive`, and `TestLinkedinAds` checks for that
+sentinel with `errors.Is` before folding an error into `OK: false`. That failure proves nothing
+about the account/org pairing — only that the cross-check couldn't run — so it reports `OK: true`
+with an advisory message instead: the credential baseline already passed, and there is no basis
+to call a connection broken because an optional secondary check happened to fail.
+
+**That sentinel is a DOMAIN one, not the platform client's**, and the difference is the whole
+safety story. `internal/platform/linkedin` returns its own `ErrOrgVerificationInconclusive`
+wrapping a chain that can render the full discovery request URL, pagination cursor included;
+`internal/dispatch`'s `VerifyAccountOrg` converts it at the boundary — the only layer that knows
+both this package's contract and that client's types — attaching only the fixed, classified
+string `linkedin.SafeInconclusiveDetail` produces and DROPPING the chain. That string is logged
+under the key **`detail`, deliberately not `reason`**: `reason` carries the fixed, greppable token
+vocabulary `unusableConnectionReason` owns, and putting a prose sentence there would break every
+alert that matches on it while making the field mean two different things in two log lines. An
+error carrying the
+domain sentinel is therefore safe to render into a log line verbatim, which is a property of the
+sentinel rather than a redaction rule every future caller has to remember. Consequently no file in package `service` — test files included, since they share the package's
+import graph and an invariant a grep cannot confirm is not an invariant — imports
+`internal/platform/linkedin`. That is the same layering `internal/domain/errors.go` states for
+`ErrKeyUnavailable` and `ErrConnectionNotUsable`: the service layer classifies without importing
+the package that produced the failure.
+
+FOUR arms sit between the inconclusive one and the confirmed-verdict one, and every one of them
+exists because echoing an error's own text into the caller's message is safe only for a verdict
+whose text this service wrote. Two of them answer 500 and predate this sentinel work:
+`domain.ErrCredentialDecryptionFailed`, whose chain can carry ciphertext, and
+`domain.ErrServiceDefect`, which is a defect in this service rather than a verdict on the
+connection. The other two are:
+
+- **`domain.ErrConnectionLoadFailed`** — the stored connection row could not be READ. That is a
+  datastore failure, NOT a verdict on the connection, and it is the one outcome here that
+  retrying can fix, so it is a **503** (`ConnServiceUnavailableError`) rather than a failed test.
+  The cause is logged without its chain, which can carry a query string.
+- **`domain.ErrConnectionNotUsable`** — the row was read but cannot be used as configured
+  (inactive, or an incomplete or undecodable credential blob). That IS a failed test
+  (`OK: false`), but with a FIXED remedy message that quotes no part of the underlying error,
+  because one of those conditions is detected by decoding the decrypted credential blob.
+
+The echo itself is an **allowlist**, matched on `domain.ErrOrgVerificationFailed` — the tag
+`internal/dispatch` attaches to every confirmed verdict (a reference naming a different
+organization, an account absent from a complete walk, a malformed or absent stored account or
+org id, and a `403` refusal). **A `403` is the only 4xx status in that list.** The other non-`429`
+4xx refusals — `400`, `404` and the rest — are NOT verdicts: the discovery walk embeds neither the
+stored account id nor the configured org id, so a refusal of that request says nothing about the
+pairing, and it leaves through the `domain.ErrServiceDefect` arm above carrying
+`domain.ErrAccountDiscoveryRejected` instead. A `403` differs because LinkedIn evaluated THIS
+token and refused it on the merits. Those are the only errors whose own message reaches the
+caller, and it has to: "verification failed" without saying WHICH of those happened leaves an
+operator nothing to repair. The `default` arm below it fails the test with FIXED text and logs
+the detail with `slog.ErrorContext` instead. That inversion is the point — the echo previously
+lived in `default`, so each of the three classes above inherited it by simply not matching an
+arm, and each was found only after it had already reached a response. An unrecognised class is
+now silent by construction rather than by review, which also retires the self-contradicting
+message a repo `ErrNotFound` from a connection deleted mid-test used to produce.
 
 `VerifyAccountOrg`'s `nil` folds a genuinely CONFIRMED match together with exactly one
 inconclusive outcome — LinkedIn having no comparable reference on the account (empty, or
 person-scoped) — see `VerifyAccountOrgReference`'s own doc comment. Neither a MISSING nor a
-MALFORMED configured org id is among them. A missing one never reaches the client at all:
-`LinkedInDispatcher.VerifyAccountOrg` (`internal/dispatch/linkedin.go`) rejects an empty
-account id or org id with a real error before calling it. A non-numeric one is a confirmed
-defect that fails the test with `OK: false`, because `resolveOrgID` refuses the same value and
-the connection therefore cannot dispatch at all. The success message still says only "no
+MALFORMED stored account id or org id is among them: both are refused by shape guards inside
+`VerifyAccountOrgReference` before the walk starts, and fail the test with `OK: false`. The
+empty string is deliberately one of those guards rather than an early `nil` — a stored pairing
+that is half-absent is not a pairing — and folding it in is what keeps `nil` at exactly two
+meanings. A non-numeric value is a confirmed defect for the same reason `resolveOrgID` refuses
+it: the connection cannot dispatch at all, whatever the enumeration would have said. The success message still says only "no
 mismatch found", not "verified": that phrasing is the one that stays true of every `nil`,
 including the one inconclusive case, where "verified" would claim a confidence the call never
 actually establishes.
@@ -957,10 +1031,17 @@ to special-case.
 
 That silence is scoped by `orgVerificationRequired`, a map naming the platforms whose dispatcher
 MUST implement the interface — LinkedIn, and only LinkedIn. Membership is a claim about the
-PLATFORM, not about this service's wiring: the `reference` field is always there, so a build that
-cannot run the check is mis-wired rather than merely unequipped. For a required platform, a
-missing dispatcher or one lacking the interface returns `domain.ErrServiceDefect`, which
-`TestLinkedinAds` already maps to a typed 500. Without that scoping the outlier swallowed its own
+PLATFORM, not about this service's wiring: LinkedIn EXPOSES the `reference` field, so there is a
+check to run and a build that cannot run it is mis-wired rather than merely unequipped. It does
+not claim every account populates that field — `reference` is optional per account, and one that
+omits it produces the single inconclusive `nil` described above. Being unable to run the check is
+a different failure from running it and finding nothing to compare. For a required platform, a
+missing dispatcher or one lacking the interface returns `domain.ErrServiceDefect` wrapped
+alongside `domain.ErrOrgVerificationUnwired`, which `TestLinkedinAds` already maps to a typed 500
+and `unusableConnectionReason` logs as `org_verification_unwired`. The reason sentinel is not
+decoration: `ErrServiceDefect` alone picks the status but leaves the log line `unclassified`,
+and these two arms are precisely the ones an on-call reader has to tell apart from a genuine
+platform refusal. Without that scoping the outlier swallowed its own
 failure mode: `testConn` (`connection_handler.go`) reads only the stored row and never touches a
 dispatcher, and `resolveBackendWithOrch` checks only that the orchestrator pointer is non-nil, so
 a LinkedIn dispatcher missing from the registry would have passed the baseline, skipped the

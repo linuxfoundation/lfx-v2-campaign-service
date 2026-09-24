@@ -20,7 +20,6 @@ import (
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 )
 
 // validateConnectionProjectSlug guards the connection CREATE endpoints: project_id
@@ -171,6 +170,15 @@ func unusableConnectionReason(err error) string {
 		// reporting either of theirs would name a remedy nobody outside this codebase can
 		// apply. It is the only reason token in this vocabulary that points at us.
 		return "token_request_rejected"
+	case errors.Is(err, domain.ErrAccountDiscoveryRejected):
+		// Same family as the arm above and pointing at the same audience: a request THIS
+		// service built was refused. Kept separate because the request differs, and the
+		// token is the only place an operator can see which one.
+		return "account_discovery_rejected"
+	case errors.Is(err, domain.ErrOrgVerificationUnwired):
+		// Nothing was sent and no connection was read. The response says only that the test
+		// could not be completed, so this token is the sole diagnostic for a mis-wired build.
+		return "org_verification_unwired"
 	case errors.Is(err, domain.ErrApplicationCredentialsInvalid):
 		// Before the expired arm: an error carrying both must report the OPERATOR-actionable
 		// reason, since "re-authorize the member" cannot repair an application credential.
@@ -812,7 +820,8 @@ func (s *ConnectionService) DeleteLinkedinAds(ctx context.Context, p *conn.Delet
 // LFXV2-2556 caveat, which still applies to the other 5 platforms), this additionally cross-
 // checks the connection's configured account/org pairing against LinkedIn's OWN record of it
 // (Orchestrator.VerifyAccountOrg -> LinkedInDispatcher.VerifyAccountOrg ->
-// linkedin.Client.VerifyAccountOrgReference). This is the one piece of "org id bootstrap" this
+// linkedin.Client.VerifyAccountOrgReference; the service sees the outcome through domain
+// sentinels, never through that package). This is the one piece of "org id bootstrap" this
 // service can verify today: UpdateLinkedinAds/CreateLinkedinAds persist a caller-supplied
 // org_id with no upstream check at write time, so a manually mistyped org id is otherwise
 // undetectable until it breaks a campaign creation.
@@ -821,7 +830,7 @@ func (s *ConnectionService) DeleteLinkedinAds(ctx context.Context, p *conn.Delet
 // OrgReferenceVerifier's doc comment) is reported as an ordinary FAILED test (OK: false)
 // rather than a 5xx: that is what "test this connection" means for a caller — a service-level
 // 503 is reserved for this endpoint itself being unavailable, not the thing under test not
-// working. A failure of the enumeration walk ITSELF (linkedin.ErrOrgVerificationInconclusive)
+// working. A failure of the enumeration walk ITSELF (domain.ErrOrgVerificationInconclusive)
 // proves nothing about the pairing, so it does not fail the test the same way: the credential
 // baseline above already passed, and this service has no basis to call a connection broken
 // just because the org-reference cross-check could not complete. That gets OK: true with an
@@ -837,15 +846,20 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 	}
 	if verr := orch.VerifyAccountOrg(ctx, p.ProjectID, model.ProviderLinkedInAds); verr != nil {
 		switch {
-		case errors.Is(verr, linkedin.ErrOrgVerificationInconclusive):
-			// Do not concatenate verr.Error() into the response, OR into this server-side
-			// log: it can be built from ListAdAccounts' transport error, which for a
-			// *url.Error renders the full LinkedIn request URL including query parameters
-			// (e.g. a pagination cursor) — not a bearer token, but still not safe to write
-			// to centralized logs verbatim. SafeInconclusiveDetail reports only which
-			// failure class was hit. Return a fixed advisory message to the caller.
+		case errors.Is(verr, domain.ErrOrgVerificationInconclusive):
+			// verr is safe to render here because the dispatcher already reduced the
+			// platform error to a fixed classification when it attached this sentinel
+			// (internal/dispatch/linkedin.go) — the underlying chain, which can carry the
+			// full LinkedIn request URL with its pagination cursor, does not reach this
+			// layer at all. The RESPONSE still gets a fixed advisory: which failure class
+			// LinkedIn's discovery hit is an operator's diagnostic, not the caller's.
 			slog.WarnContext(ctx, "linkedin org/account reference verification could not run to completion; the credential baseline already passed",
-				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds), "reason", linkedin.SafeInconclusiveDetail(verr))
+				// "detail", not "reason": every other `reason` in this file holds a token
+				// from unusableConnectionReason's fixed vocabulary, which is what an
+				// operator greps and what dashboards group on. This value is a sentence
+				// from SafeInconclusiveDetail's classification, so putting it under the
+				// same key would silently make that vocabulary unbounded.
+				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds), "detail", verr.Error())
 			msg := "connection found; linkedin account/organization verification was inconclusive"
 			return &conn.ConnectionTestResult{OK: true, Message: &msg}, nil
 		case errors.Is(verr, domain.ErrCredentialDecryptionFailed):
@@ -867,8 +881,64 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds),
 				"reason", unusableConnectionReason(verr))
 			return nil, &conn.InternalServerError{Code: "500", Message: "linkedin connection test could not be completed"}
-		default:
+		case errors.Is(verr, domain.ErrConnectionLoadFailed):
+			// The datastore could not be read, so NOTHING was learned about the connection.
+			// Without this arm it fell to the default below and was reported as OK: false —
+			// telling the caller their connection is broken because this service could not
+			// look at it, and concatenating the raw datastore error into the response to
+			// explain why. A 503 is the honest answer and the only retryable one here:
+			// unlike every other arm, waiting genuinely does help.
+			//
+			// No error text, same rule as the arms above. A repo error can quote the query
+			// or the row it failed on.
+			slog.ErrorContext(ctx, "the stored linkedin connection could not be read during org verification; this is a datastore failure, NOT a verdict on the connection",
+				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds))
+			return nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "linkedin connection test could not be completed"}
+		case errors.Is(verr, domain.ErrConnectionNotUsable):
+			// A genuinely failed test — the stored connection is inactive, or its credential
+			// blob is incomplete or undecodable — so OK: false is right. What is NOT right is
+			// the default arm's message: one of the conditions behind this sentinel is
+			// detected by decoding the DECRYPTED credential blob, and an unmarshal error
+			// quotes its input, so "verification failed: " + verr.Error() would put
+			// credential-derived bytes into an HTTP body for exactly the connection whose
+			// credentials are malformed. classifyDiscoveryError's own arm refuses this for
+			// the same reason; this is that guard, on this path.
+			//
+			// The response names the remedy surface instead, and the log carries a token
+			// from the FIXED unusableConnectionReason vocabulary — which is what an alert
+			// wants anyway.
+			slog.WarnContext(ctx, "the stored linkedin connection is not usable as configured; org verification could not run against it",
+				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds),
+				"reason", unusableConnectionReason(verr))
+			msg := "connection found, but the stored linkedin connection cannot be used as configured: " +
+				linkedInAdsAccountDiscovery.notUsableRemedy
+			return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
+		case errors.Is(verr, domain.ErrOrgVerificationFailed):
+			// The CONFIRMED verdicts — a reference naming a different organization, an
+			// account absent from a complete walk, a malformed or absent stored account or
+			// org id, a non-429 4xx refusal. Each is a fact about the pairing or the stored
+			// fields, phrased in this service's own words, so the text is safe and is the
+			// whole value of the answer: "verification failed" without saying WHICH of those
+			// happened leaves an operator nothing to repair.
+			//
+			// This is an ALLOWLIST, and that is the point. The echo used to live in the
+			// default arm, where every future error class reaching this switch inherited it
+			// by accident — the arms above exist because three such classes were found
+			// carrying a datastore query, a request URL and decrypted bytes. Gating the echo
+			// on a sentinel the dispatcher attaches deliberately means a new class is
+			// unrecognised by default, and unrecognised now means silent.
 			msg := "connection found, but linkedin account/organization verification failed: " + verr.Error()
+			return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
+		default:
+			// Not a verdict this layer recognises — so its text is not echoed. It could be a
+			// repo ErrNotFound from a connection deleted mid-test, or a class added later by
+			// a path that never considered this endpoint. OK: false is still right (no
+			// cross-check succeeded), but the message is fixed and the detail goes to the log,
+			// where it reaches an operator without reaching an HTTP body.
+			slog.ErrorContext(ctx, "linkedin org verification returned an unclassified error; the connection test is reporting a generic failure",
+				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds),
+				"error", verr)
+			msg := "connection found, but linkedin account/organization verification could not be completed"
 			return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
 		}
 	}

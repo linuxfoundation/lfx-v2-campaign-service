@@ -70,9 +70,13 @@ func TestLinkedIn_PreCreateErrorsReleaseClaim(t *testing.T) {
 // connection's account id and its org id to be present, because verifying a PAIRING needs
 // both.
 //
-// The last two subtests turn LFX_FORCE_SYSTEM_ADS_ACCOUNT on, which is the ONLY condition
-// under which resolve and resolveOwned diverge — and therefore the only condition under which
-// this suite can protect the boundary at all. They pin both halves of it: a project with no
+// The two resolvers diverge in TWO ways, and both are tenant boundaries. With forcing OFF,
+// resolve falls back to the reserved system scope whenever the project has no connection of its
+// own (creds.go), while resolveOwned never falls back. With LFX_FORCE_SYSTEM_ADS_ACCOUNT ON,
+// resolve answers from the LF system row even for a project that HAS one. The last two subtests
+// turn forcing on because that is the stronger of the two — a fixture holding only the system
+// row would discriminate the unforced fallback without t.Setenv, but only the forced path
+// substitutes the LF row for a connection that exists. They pin both halves of it: a project with no
 // connection of its own must not be answered from the LF system row (resolve would have
 // verified an account the project cannot reach and reported the connection healthy), and a
 // project that does have one must be checked against ITS row, not the LF row that forcing
@@ -121,6 +125,94 @@ func TestLinkedIn_VerifyAccountOrg(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "111111111") || !strings.Contains(err.Error(), "987654321") {
 			t.Errorf("error = %v, want it to name both org ids", err)
+		}
+		// The mirror image of the inconclusive conversion below: internal/service echoes
+		// this error's text into the operator-visible message, and it does so ONLY for an
+		// error carrying this sentinel. Without the tag the verdict falls to the default arm
+		// and the operator is told "could not be completed" about a cross-check that
+		// completed and disagreed.
+		if !errors.Is(err, domain.ErrOrgVerificationFailed) {
+			t.Errorf("VerifyAccountOrg: %v, want domain.ErrOrgVerificationFailed — the service echoes only allowlisted verdicts", err)
+		}
+		// The tag is additive and MUST add no text of its own: the service renders this
+		// message after its own prefix, and a sentinel sentence in between would be a third
+		// restatement of "verification failed" before the operator reaches the facts.
+		if strings.Contains(err.Error(), domain.ErrOrgVerificationFailed.Error()) {
+			t.Errorf("VerifyAccountOrg: %v, want the sentinel attached without rendering its own sentence", err)
+		}
+	})
+
+	// A stored pairing missing either id is decided before any request is made, and it is a
+	// verdict in the same sense: stored configuration alone answers it. It must carry the
+	// same tag, or the one message that names the field to repair is replaced by fixed text.
+	t.Run("a half-configured pairing is a confirmed verdict naming the missing fields", func(t *testing.T) {
+		c := activeLinkedInConn(goodLinkedInCreds)
+		c.ProviderConfig = map[string]string{"org_id": ""}
+		d := NewLinkedInDispatcher(fakeConnReader{conn: c}, identityEncryptor{})
+		err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds)
+		if err == nil {
+			t.Fatal("VerifyAccountOrg: want an error when the stored org id is absent")
+		}
+		if !errors.Is(err, domain.ErrOrgVerificationFailed) {
+			t.Errorf("VerifyAccountOrg: %v, want domain.ErrOrgVerificationFailed", err)
+		}
+		if !strings.Contains(err.Error(), "account id or org id") {
+			t.Errorf("VerifyAccountOrg: %v, want the message to name the fields to repair", err)
+		}
+	})
+
+	// The third outcome, and the one that is a verdict about neither the pairing nor the
+	// token: LinkedIn refused the discovery request itself. The walk sends neither id, so a
+	// 400 says this service built a malformed request — reporting that as a failed
+	// verification would send an operator to audit fields that were never consulted.
+	t.Run("a rejected discovery request is a service defect, not a failed verification", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+		}))
+		t.Cleanup(srv.Close)
+		d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+		err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds)
+		if err == nil {
+			t.Fatal("VerifyAccountOrg: want an error when linkedin refuses the discovery request")
+		}
+		if !errors.Is(err, domain.ErrServiceDefect) {
+			t.Errorf("VerifyAccountOrg: %v, want domain.ErrServiceDefect — the stored connection is not at fault and cannot be repaired into a well-formed request", err)
+		}
+		if errors.Is(err, domain.ErrOrgVerificationFailed) {
+			t.Errorf("VerifyAccountOrg: %v, want NOT domain.ErrOrgVerificationFailed — no account and no organization were compared", err)
+		}
+		// And it must not fold into the healthy-reporting bucket either: a 400 does not
+		// clear on its own, so calling the walk incomplete answers OK: true forever.
+		if errors.Is(err, domain.ErrOrgVerificationInconclusive) {
+			t.Errorf("VerifyAccountOrg: %v, want NOT domain.ErrOrgVerificationInconclusive — a refusal is permanent and that sentinel reports OK: true", err)
+		}
+	})
+
+	// The conversion to the domain sentinel is also the redaction boundary: internal/service
+	// logs an error carrying domain.ErrOrgVerificationInconclusive verbatim, which is only
+	// safe because the platform error's chain stops HERE. A *url.Error inside it renders the
+	// full discovery request URL, pagination cursor included.
+	t.Run("an inconclusive walk becomes the domain sentinel and carries no request url", func(t *testing.T) {
+		// A closed server: the dial fails, which is the real inconclusive case and the one
+		// whose error carries the URL.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		closedURL := srv.URL
+		srv.Close()
+		d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(closedURL))
+		err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds)
+		if err == nil {
+			t.Fatal("VerifyAccountOrg: want an error when ad-account discovery cannot be reached")
+		}
+		if !errors.Is(err, domain.ErrOrgVerificationInconclusive) {
+			t.Errorf("VerifyAccountOrg: %v, want domain.ErrOrgVerificationInconclusive — the service classifies on the domain sentinel, not on the platform package's", err)
+		}
+		// The platform sentinel must NOT ride along: a caller matching on it would be
+		// reaching across the layer this conversion exists to close.
+		if errors.Is(err, linkedin.ErrOrgVerificationInconclusive) {
+			t.Errorf("VerifyAccountOrg: %v, want the platform sentinel's chain dropped, not wrapped", err)
+		}
+		if strings.Contains(err.Error(), "adAccounts") || strings.Contains(err.Error(), closedURL) {
+			t.Errorf("VerifyAccountOrg: %v, leaked the discovery request url — internal/service logs this error verbatim", err)
 		}
 	})
 

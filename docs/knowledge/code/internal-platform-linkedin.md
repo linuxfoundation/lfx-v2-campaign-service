@@ -190,6 +190,40 @@ that points at this service rather than at the caller's configuration: the remed
 No sentinel here is wider than its name — each exists because a call site acts on it
 differently.
 
+**Retryability is a SECOND axis, independent of whether a credential is implicated, and a
+token exchange that can never succeed must not be reported as inconclusive.** The classification
+above answers "whose configuration is at fault"; it says nothing about "could a later attempt
+work". Every token-exchange failure that matched none of the §5.2 codes used to carry only
+`errTokenExchangeFailed`, and `VerifyAccountOrgReference` folds that into
+`ErrOrgVerificationInconclusive` — which `TestLinkedinAds` maps to `OK: true`. So a token endpoint
+answering `403`, `404` or `410`, or returning a `2xx` whose body yields no usable token, reported a
+permanently broken connection as healthy, forever: the "try again later" advisory is true of a
+`429` and false of a `410`, and nothing about the connection would ever change to clear it. That
+is the broken-connection-reported-healthy defect the whole path exists to close, reached by a
+different door.
+
+`permanentTokenExchangeError` marks the subset that cannot succeed on a retry. Its `Is` answers
+for TWO targets: `errTokenExchangeFailed`, so `SafeInconclusiveDetail`'s token-exchange branch
+still fires and still describes the failure correctly, and `ErrTokenRequestRejected`, which does
+the routing — `accounts.go`'s credential unwrap already tests for that sentinel, so the failure
+leaves the inconclusive bucket and reaches the operator as a typed 500 with
+`reason=token_request_rejected` through plumbing that already existed. No fourth sentinel was
+invented; instead `ErrTokenRequestRejected`'s documented contract was WIDENED, here and in
+`internal/domain`, to cover a token endpoint answering a status outside 400/401/429/5xx, a `2xx`
+whose body yields no usable token, and a request this service could not build.
+
+| token-exchange failure | retryable | sentinel |
+| --- | --- | --- |
+| request could not be built | no | `ErrTokenRequestRejected` |
+| status outside `429`/`5xx` and not a parsed §5.2 code | no | `ErrTokenRequestRejected` |
+| `2xx` with malformed JSON, or with an empty `access_token` | no | `ErrTokenRequestRejected` |
+| `429`, any `5xx` | yes | `errTokenExchangeFailed` → inconclusive |
+| response body unreadable, or over the size cap | yes | `errTokenExchangeFailed` → inconclusive |
+| dial or transport failure | yes | `*tokenRefreshError` → inconclusive |
+
+The retryable half is asserted in the SAME test table as the permanent half, so the two can never
+drift apart silently.
+
 **One sentinel can still owe two MESSAGES.** `invalid_client` and `unauthorized_client`
 share `ErrApplicationCredentialsInvalid` correctly — both are permanent, both name the
 application registration, both have the same owner — but they do not share a remedy, and
@@ -549,17 +583,21 @@ callers have different needs: `ListAdAccounts` must enumerate everything, while
 early is not just an optimization. A confirmed match or mismatch found on an early page must
 not be undone by a LATER, unrelated page then failing; before this walk stopped as soon as the
 target was found, a mismatch found on page one could be discarded by a page-two failure and
-silently reported as `OK: true` (see the 2026-09-23 log entry below). Follows the same
+silently reported as `OK: true` (see
+[`docs/knowledge/log/2026-09-23-LFXV2-2665-linkedin-org-verify-early-exit-and-log-detail-fix.md`](../log/2026-09-23-LFXV2-2665-linkedin-org-verify-early-exit-and-log-detail-fix.md)). Follows the same
 fail-closed-only-on-a-CONFIRMED-fact discipline as `resolveOrgID` (`targeting.go`): an
-empty/person-scoped reference or a missing configured org id is INCONCLUSIVE (`nil` — nothing
-to confirm or refute). `account.OrgID != configuredOrgID` is one CONFIRMED-fact case and returns
-an error; `accountID` never appearing anywhere in a walk that completed without error is the
-other — a complete walk that never saw the target means this token genuinely cannot reach the
-configured account, not that the walk merely missed it.
+empty or person-scoped reference on the account is INCONCLUSIVE (`nil` — LinkedIn has nothing
+to compare against), and it is the ONLY inconclusive `nil`, which is what makes the "`nil` means
+exactly two things" claim across the bundle true. `account.OrgID != configuredOrgID` is one
+CONFIRMED-fact case and returns an error; `accountID` never appearing anywhere in a walk that
+completed without error is the other — a complete walk that never saw the target means this token
+genuinely cannot reach the configured account, not that the walk merely missed it.
 
-A configured org id that fails `orgIDRE` (non-numeric) is a THIRD confirmed-fact case, and is
+A stored `accountID` that fails `ValidateAccountID` or a configured org id that fails `orgIDRE` —
+non-numeric, the empty string included — is a THIRD confirmed-fact case, and is
 refused BEFORE the walk runs — no request is made, because the verdict follows from the stored
-value alone. It was previously treated as inconclusive on the grounds that a non-numeric value
+value alone. An absent id is deliberately one of these rather than an early `nil` return: a
+stored pairing that is half-absent is not a pairing, and campaign creation on it cannot succeed. It was previously treated as inconclusive on the grounds that a non-numeric value
 can never be the DIFFERENT organization a confirmed disagreement requires. That reasoning
 answers the wrong question: it is sound about *mismatch*, but `orgIDRE` is this client's
 configuration invariant, and `resolveOrgID` refuses the very same value because it cannot build
@@ -568,25 +606,74 @@ creation, and `TestLinkedinAds` was reporting `OK: true` for it. The error delib
 describe it as a mismatch: the value never was a comparable org id, and naming a "different
 organization" would send an operator hunting a tenant mixup instead of fixing a malformed field.
 
-A non-authentication failure of the walk ITSELF (upstream/transport error, the page cap on a
-very large token) is a third, distinct outcome: it proves nothing about the pairing either
-way, so it is wrapped in the exported sentinel `ErrOrgVerificationInconclusive` rather than
+A non-authentication failure of the walk ITSELF (a pre-send connection failure, a mid-flight
+transport error, a `429`, a `5xx`, the page cap on a very large token) is a distinct,
+NON-CONFIRMED outcome that is not a verdict: it proves nothing about the pairing either way, so it is wrapped in the exported sentinel `ErrOrgVerificationInconclusive` rather than
 returned as a bare error — callers must not fold "the check could not run" into the same bucket
 as a confirmed contradiction (see `TestLinkedinAds` below, which reports these two outcomes
 differently). A credential or authorization failure surfacing during that same walk — expired or
-invalid credentials, an application-authorization rejection, or a 403 from LinkedIn — is NOT
-folded into this inconclusive bucket: each proves the credential cannot perform the verification
-at all, a CONFIRMED fact rather than an unresolved one, so `VerifyAccountOrgReference` returns it
-unwrapped instead.
+invalid credentials, an application-authorization rejection, or ANY `4xx` other than `429` — is
+NOT folded into this inconclusive bucket: LinkedIn received the request and refused it on the
+merits, so it will not start succeeding on its own. Calling that an incomplete walk would answer
+"healthy" for a permanently broken cross-check forever. `429` is the one exempt status — a rate
+limit genuinely says nothing about the pairing — and `5xx` likewise stays inconclusive.
+
+Those refusals do not all mean the same thing, and the split is **by who can act on them**, which
+is why the non-`429` `4xx` escape has two arms rather than one:
+
+- **`403` → a confirmed verdict.** LinkedIn evaluated THIS token against its own authorization
+  rules and refused it. That is a fact about the connection, so it carries
+  `ErrOrgVerificationFailed` and the operator sees it.
+- **Every other non-`429` `4xx` (`400`, `404`, …) → `ErrAccountDiscoveryRejected`.** LinkedIn
+  refused the request THIS SERVICE built. The discovery call is
+  `GET adAccounts?q=search&pageSize=…` and embeds **neither the stored account id nor the
+  configured org id** — so a refusal of it cannot be a verdict about the pairing, and reporting one
+  sends an operator to audit a connection that may be perfect. `internal/dispatch` converts this
+  sentinel to `domain.ErrServiceDefect` wrapped alongside `domain.ErrAccountDiscoveryRejected`,
+  which answers a typed 500 and logs `reason=account_discovery_rejected` — a defect routed to the
+  only party who can fix it. It is exported precisely because that conversion happens in another
+  package: callers test it with `errors.Is(err, ErrAccountDiscoveryRejected)`.
+
+Everything not folded in is returned unwrapped instead.
 
 The error wrapped by `ErrOrgVerificationInconclusive` is not safe to log verbatim: it can be a
 `*transportError` whose `Error()` renders the underlying `*url.Error` via `%v`, including the
 full LinkedIn request URL and any query parameters (e.g. a pagination cursor). Exported helper
-`SafeInconclusiveDetail(err) string` classifies it into a fixed string instead (a transport
-failure, an HTTP status code from a non-403 `*apiError`, or a generic completeness-guard
-failure) with no request- or response-derived text, for callers — currently only
-`TestLinkedinAds`'s own server-side advisory log — that want SOME diagnostic detail without
-risking a leak.
+`SafeInconclusiveDetail(err) string` classifies it into a fixed string instead (a pre-send
+connection failure, a mid-flight transport failure, an HTTP status code from an `*apiError`, or a
+generic completeness-guard failure) with no request- or response-derived text. Its FIRST branch is
+the **token exchange**: a failure there means the discovery request was never built, let alone
+sent, so every later branch would describe a response that does not exist. It is detected by TYPE
+(`*tokenRefreshError`, or `errTokenExchangeFailed` — an internal no-text tag `fetchToken` attaches
+to its otherwise-unclassified failures, wrapping rather than replacing the cause so `errors.Is`
+still answers for the credential sentinels underneath). The three credential sentinels never reach
+this helper at all — they are kept out of the inconclusive bucket entirely — so this branch is for
+the REST: an unreachable token endpoint, a `5xx` from it, an unreadable body. The pre-send
+branch is checked next and separately: `doRequest` deliberately does not wrap a pre-send dial
+failure as a `*transportError` — that type means "may have been sent" — so a plain network
+outage, the most common real cause of an inconclusive walk, would otherwise fall through to the
+completeness-guard string and tell an operator to inspect a response that was never received.
+The helper exists for callers — currently only `TestLinkedinAds`'s own server-side advisory
+log — that want SOME diagnostic detail without risking a leak.
+
+The sentinel itself does not cross into `internal/service`: `internal/dispatch`'s
+`VerifyAccountOrg` converts it to `domain.ErrOrgVerificationInconclusive`, attaching only
+`SafeInconclusiveDetail`'s fixed string and DROPPING the original chain, so the service layer
+classifies without importing this package and the redaction is a property of the domain sentinel
+rather than a convention each caller must remember.
+
+The CONFIRMED verdicts carry a marker of their own, `ErrOrgVerificationFailed`: the two shape
+guards, the `403` arm of the `4xx` escape, the not-found return and the mismatch. The escape's
+OTHER arm is deliberately excluded — a rejected request is not a verdict — and
+`accounts_test.go` asserts that direction explicitly rather than only the positive one. It is attached
+through a small unexported error type whose `Error()` forwards to the wrapped error and whose
+`Is` answers for the sentinel, so the marker adds NO text — the verdict's own sentence is the
+whole value, and the service renders it behind its own prefix. `internal/dispatch` converts it
+to `domain.ErrOrgVerificationFailed`, which is the allowlist `internal/service` checks before
+echoing an error's text into an operator-visible message; a class that arrives there without
+the marker gets fixed text and a log line instead of inheriting the echo. The credential
+escapes and the inconclusive wrap are deliberately NOT marked — they are classified by their
+own sentinels — and `accounts_test.go` pins both directions.
 
 This is wired into exactly one place: `TestLinkedinAds`'s connection-test RPC (see
 [internal-service.md](internal-service.md)'s "LinkedIn org/account pairing verification"
@@ -621,7 +708,7 @@ engine (`internal/service/rules/monitor_linkedin.go`, including the deliberately
 preserved `MED`/`MEDIUM` sort-map bug), and the days-1-ending-today window
 convention this dispatcher shares with Google/Reddit/Meta's monitor reads.
 
-`LinkedInDispatcher.VerifyAccountOrg(ctx, projectID, platform)` implements a fifth optional
+`LinkedInDispatcher.VerifyAccountOrg(ctx, projectID, platform)` implements another optional
 capability, `OrgReferenceVerifier` (`internal/service/orchestrator.go`) — LinkedIn is the ONLY
 adapter that does, since it is the only platform with an upstream signal to check (see "Org/account
 reference verification" above). It is the connection-test endpoint's per-project READ, the same

@@ -3,7 +3,7 @@
 **Docs** — A fifth Copilot pass on PR #223 found four places still describing the OLD `nil`
 contract of the LinkedIn org cross-check. The behaviour change that invalidated them landed the
 same day (see
-[2026-09-25-malformed-org-id-fails-the-connection-test.md](2026-09-25-malformed-org-id-fails-the-connection-test.md)),
+[2026-09-25-LFXV2-2665-malformed-org-id-fails-the-connection-test.md](2026-09-25-LFXV2-2665-malformed-org-id-fails-the-connection-test.md)),
 which updated two concept files but left the two Go doc comments and the API catalogue behind.
 All four were genuinely stale, and the stale text was the kind that misleads specifically: it told
 a reader that a broken connection would be reported healthy, which is the exact failure class this

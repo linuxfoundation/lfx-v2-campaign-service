@@ -770,18 +770,91 @@ func (d *LinkedInDispatcher) VerifyAccountOrg(ctx context.Context, projectID str
 		return err
 	}
 
+	// A half-configured pairing FAILS the connection test rather than reporting "nothing to
+	// cross-check yet" — deliberately, and differently from how brief.go treats
+	// ErrAccountNotSelected as a recoverable setup state. The two answer different questions.
+	// brief.go asks "can this request proceed?", where "pick an account first" is the right
+	// remedy. The connection test asks "will campaign creation on this connection succeed?",
+	// and with either id absent the answer is already no: Dispatch refuses the identical
+	// condition a few hundred lines above, and targeting.go cannot bind an account or build an
+	// organization URN from an empty value. Answering OK: true here would report a connection
+	// that cannot create a campaign as healthy — the exact failure class this verification
+	// exists to close. The client applies the same guard independently (see
+	// VerifyAccountOrgReference), so the verdict does not depend on which layer sees it first.
+	// API-created rows always carry both ids (design/connection.go requires them on create and
+	// update); the rows this can fire for are bootstrap-seeded and legacy migration rows, which
+	// is precisely where a silent OK: true would hide a real misconfiguration.
 	orgID := strings.TrimSpace(res.providerConfig["org_id"])
 	accountID := strings.TrimSpace(res.accountID)
 	if accountID == "" || orgID == "" {
-		return fmt.Errorf("linkedin connection for project %s is missing account id or org id", projectID)
+		// Tagged as a confirmed verdict so the service arm echoes this sentence rather than
+		// the fixed fallback text. It is a verdict in exactly the sense that sentinel means:
+		// decided from stored configuration alone, phrased by this service, and naming the
+		// field an operator has to repair.
+		return confirmedOrgVerdict(fmt.Errorf("linkedin connection for project %s is missing account id or org id", projectID))
 	}
 
 	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), linkedin.RuntimeConfig{}, d.opts...)
 	if verr := client.VerifyAccountOrgReference(ctx, accountID, orgID); verr != nil {
-		return res.systemScoped(linkedinExpiry(verr))
+		// The inconclusive outcome is converted HERE, in the only layer that knows both the
+		// service's contract and this client's types — so internal/service classifies it
+		// without importing internal/platform/linkedin, the arrangement the package doc
+		// describes and the one ErrConnectionNotUsable already uses.
+		//
+		// The original chain is deliberately DROPPED rather than wrapped. It can render the
+		// full discovery request URL, pagination cursor included, and a chain that must not
+		// be printed is a redaction obligation handed to every future caller. Replacing it
+		// with SafeInconclusiveDetail's fixed classification makes the resulting error safe
+		// to log verbatim, which is a property, not a convention to remember.
+		if errors.Is(verr, linkedin.ErrOrgVerificationInconclusive) {
+			return fmt.Errorf("%w: %s", domain.ErrOrgVerificationInconclusive, linkedin.SafeInconclusiveDetail(verr))
+		}
+		// LinkedIn refused the discovery request itself for a reason that is about the
+		// REQUEST, not this connection (a non-429, non-403 4xx: a malformed request, or a
+		// path that has moved). Nothing on the stored connection is at fault and nothing on
+		// it can be repaired, so this takes the service-defect path — a typed 500 whose log
+		// line says the connection needs no repair — instead of failing the operator's
+		// test and sending them to audit correct fields.
+		// ErrServiceDefect selects the status; domain.ErrAccountDiscoveryRejected travels
+		// alongside it as the reason token, the arrangement that sentinel's doc requires and
+		// that linkedinExpiry's ErrTokenRequestRejected arm already follows — without it the
+		// operator log reads reason=unclassified for a defect this service owns.
+		if errors.Is(verr, linkedin.ErrAccountDiscoveryRejected) {
+			return fmt.Errorf("%w: %w: %w", domain.ErrServiceDefect, domain.ErrAccountDiscoveryRejected, verr)
+		}
+		verr = res.systemScoped(linkedinExpiry(verr))
+		// The CONFIRMED verdicts get the matching domain tag, for the mirror-image reason:
+		// the service arm echoes the error text into the operator-visible message, which is
+		// only ever safe for a verdict this side phrased. Tagging is additive and adds no
+		// text — the client's sentence is already the whole value, and rendering a second
+		// sentinel sentence next to the service's own prefix would only make the line worse.
+		// Errors that are neither inconclusive nor confirmed (the credential escapes, which
+		// linkedinExpiry has just classified) pass through untagged and are classified by
+		// their own sentinels upstream.
+		if errors.Is(verr, linkedin.ErrOrgVerificationFailed) {
+			return confirmedOrgVerdict(verr)
+		}
+		return verr
 	}
 	return nil
 }
+
+// confirmedOrgVerdict attaches domain.ErrOrgVerificationFailed to err without changing the
+// text err renders.
+//
+// fmt.Errorf("%w: %w", domain.ErrOrgVerificationFailed, err) would prepend the sentinel's own
+// sentence, which the service arm then renders a third time alongside its own prefix; and
+// errors.Join concatenates with a newline, which is worse in a single-line API message. The
+// tag exists to be MATCHED, not read, so Error() forwards and Is() answers for the sentinel.
+type confirmedOrgVerdictError struct{ err error }
+
+func (e *confirmedOrgVerdictError) Error() string { return e.err.Error() }
+func (e *confirmedOrgVerdictError) Unwrap() error { return e.err }
+func (e *confirmedOrgVerdictError) Is(target error) bool {
+	return target == domain.ErrOrgVerificationFailed
+}
+
+func confirmedOrgVerdict(err error) error { return &confirmedOrgVerdictError{err: err} }
 
 // linkedInAccountLabel builds the string a picker shows for one ad account.
 //

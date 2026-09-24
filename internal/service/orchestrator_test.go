@@ -2545,10 +2545,12 @@ func TestOrchestrator_VerifyAccountOrg_NoOpForUnregisteredPlatform(t *testing.T)
 }
 
 // TestOrchestrator_VerifyAccountOrg_MissingRequiredDispatcherIsAServiceDefect pins the
-// boundary the silent no-op above must NOT cross. LinkedIn always has a `reference` to check,
-// so a build that cannot run the check is mis-wired — and nil would make TestLinkedinAds
-// answer OK: true with the cross-check never run, the exact failure this verification exists
-// to prevent. ErrServiceDefect routes it to that handler's typed 500 instead.
+// boundary the silent no-op above must NOT cross. LinkedIn is the platform this service has a
+// cross-check FOR, so a build that cannot run it is mis-wired — and nil would make
+// TestLinkedinAds answer OK: true with the check never run, the exact failure this
+// verification exists to prevent. ErrServiceDefect routes it to that handler's typed 500
+// instead. (Whether a given account populates `reference` is the check's own outcome, not a
+// reason to skip running it — an account that omits it is the documented inconclusive nil.)
 func TestOrchestrator_VerifyAccountOrg_MissingRequiredDispatcherIsAServiceDefect(t *testing.T) {
 	t.Run("no dispatcher registered at all", func(t *testing.T) {
 		orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{})

@@ -147,6 +147,18 @@ kept regardless. The guard tests `campaign == nil` alone, never `PlatformCampaig
 for the reason the bullet above gives: the id-less name-only partial is precisely the shape
 that must retain.
 
+`NoUpstreamCreate` answers only that one question, so it is not a general "this was a repo
+failure" marker and must not be reused as one. `connLoadFailed` (`creds.go`) — the wrap for a
+failure to READ the stored connection row — therefore wraps `domain.ErrConnectionLoadFailed`
+ALONGSIDE `notCreated`, rather than letting a read-only caller infer a datastore outage from a
+claim about the upstream platform it never contacted. The addition is purely additive: every
+existing consumer matches on `NoUpstreamCreate` or lands in a default arm, and neither moves.
+What it buys is a read-only caller — `TestLinkedinAds` — that can now distinguish "the row could
+not be read", a RETRYABLE 503, from a verdict on the connection; see
+[internal-service.md](internal-service.md). It is distinct from `ErrNotFound` (the row is absent,
+a settled fact) and from `ErrConnectionNotUsable` (the row was read and is unusable), and is the
+only one of the three that retrying can fix.
+
 ## Registration
 
 Adapters are registered in `internal/container` (`registerDispatchers`), called from
@@ -1925,9 +1937,11 @@ after adoption could already have bound a campaign. `googleads.CampaignKindSearc
 
 ## `OrgReferenceVerifier` (optional capability)
 
-`OrgReferenceVerifier` is a fifth OPTIONAL dispatcher interface, alongside `StatusToggler`,
-`MetricsReader`, `AccountLister` and `CampaignAdopter`, declared in
-`internal/service/orchestrator.go` and discovered by the same type assertion. **LinkedIn is the
+`OrgReferenceVerifier` is another OPTIONAL dispatcher interface, declared in
+`internal/service/orchestrator.go` and discovered by the same type assertion as the others
+(`StatusToggler`, `MetricsReader`, `AccountLister`, `CampaignAdopter`, `SettingsReader`,
+`AccountMetricsReader`, `AccountTotalsReader`, `EmailSearcher`, `KeywordInsightsReader`,
+`KeywordActioner`). **LinkedIn is the
 only implementation today** — it is the only platform with an upstream signal to cross-check
 a connection's configured account/org pairing against.
 
@@ -1949,11 +1963,65 @@ and wraps the resulting client-call error with `res.systemScoped(linkedinExpiry(
 every sibling LinkedIn call, so an expired or revoked credential is attributed to the
 connection row that owns it and reported as a real `domain.ErrConnectionNotUsable` failure —
 never folded into `linkedin.ErrOrgVerificationInconclusive`, which is reserved for a
-transport/pagination failure of the discovery walk that proves nothing about the pairing (see
-[internal/platform/linkedin](internal-platform-linkedin.md)'s "Org/account reference
-verification" section). Missing `accountID`/`org_id` is checked explicitly, because verifying a
-pairing needs both ids present and the discovery resolver only requires the credential to be
-otherwise usable.
+connection/transport/pagination failure of the discovery walk that proves nothing about the
+pairing (see [internal/platform/linkedin](internal-platform-linkedin.md)'s "Org/account
+reference verification" section).
+
+**This method is also where that platform sentinel is CONVERTED into the domain one**, and the
+conversion is a safety boundary rather than a re-tag. The platform error wraps a chain that can
+render the full discovery request URL, pagination cursor included; `VerifyAccountOrg` returns
+`fmt.Errorf("%w: %s", domain.ErrOrgVerificationInconclusive, linkedin.SafeInconclusiveDetail(verr))`
+— the fixed classified string only, with the original chain deliberately DROPPED. This is the
+only layer that knows both the service's contract and this client's types, so doing it here is
+what lets `internal/service` classify the outcome without importing
+`internal/platform/linkedin` at all, exactly as it does for `ErrKeyUnavailable` and
+`ErrConnectionNotUsable`. `TestLinkedIn_VerifyAccountOrg` pins both halves with a subtest that
+points the client at a closed server and asserts the result `errors.Is`
+`domain.ErrOrgVerificationInconclusive`, is NOT `linkedin.ErrOrgVerificationInconclusive`, and
+carries neither the request path nor the base URL in its text.
+
+The CONFIRMED outcomes are converted in the same place and for the mirror-image reason. The
+client marks each of them with `linkedin.ErrOrgVerificationFailed`, and `VerifyAccountOrg`
+re-tags that as `domain.ErrOrgVerificationFailed` — the sentinel `internal/service` uses as an
+ALLOWLIST before echoing an error's own text into the operator-visible message. That tag is
+additive and adds no text: it is attached through a small unexported error type whose
+`Error()` forwards to the wrapped error and whose `Is` answers for the sentinel, because
+`fmt.Errorf("%w: %w", …)` would render a second "verification failed" sentence in front of the
+facts the operator actually needs, and `errors.Join` would put a newline in a single-line API
+message. The dispatcher's OWN verdict — a stored pairing missing either id — carries the same
+tag for the same reason, so the one message that names the field to repair survives to the
+caller. Errors that are neither inconclusive nor confirmed (the credential escapes that
+`linkedinExpiry` has just classified) pass through untagged and are classified upstream by
+their own sentinels.
+
+A THIRD outcome is converted here too, and it is checked **before** `systemScoped` runs.
+`linkedin.ErrAccountDiscoveryRejected` — a non-`429`, non-`403` `4xx` on the discovery walk —
+becomes `fmt.Errorf("%w: %w: %w", domain.ErrServiceDefect, domain.ErrAccountDiscoveryRejected, verr)`.
+Both domain sentinels are attached because they answer different questions: `ErrServiceDefect`
+selects the typed 500, and `ErrAccountDiscoveryRejected` is the reason token
+`unusableConnectionReason` logs. A status sentinel wrapped WITHOUT a reason sentinel logs
+`unclassified`, so the two travel together on every arm that adds one.
+
+Ordering matters. `res.systemScoped` is a no-op unless the error already carries
+`domain.ErrConnectionNotUsable` (`creds.go`), so it cannot mis-attribute this error — but placing
+the check first also keeps a rejected REQUEST from ever reaching the `ErrOrgVerificationFailed`
+re-tag below it and being echoed to an operator as a verdict about their connection. The walk
+embeds neither the stored account id nor the configured org id; there is no verdict in it to
+report. `TestLinkedIn_VerifyAccountOrg` pins this with a subtest whose handler answers `400` and
+asserts the result is `domain.ErrServiceDefect` and is NEITHER
+`domain.ErrOrgVerificationFailed` nor `domain.ErrOrgVerificationInconclusive` — the two buckets
+it would otherwise silently land in, one of which reports `OK: true`.
+
+Missing `accountID`/`org_id` is checked explicitly here too, because verifying a pairing needs
+both ids present and the discovery resolver only requires the credential to be otherwise usable;
+the client applies its own shape guards independently, so an id that is absent or non-numeric is
+refused whichever way it arrives.
+
+Because the resolver is `resolveOwned` while `Dispatch` uses `resolve`, the two diverge under
+`LFX_FORCE_SYSTEM_ADS_ACCOUNT`: in that mode a create runs on the LF system row while this
+verification still answers about the PROJECT's row. That is the intended reading — the
+connection test reports on the connection it was asked about — but it means a passing test in
+forced mode is not a prediction about the account a create will use.
 
 That resolver choice is pinned by two subtests in `TestLinkedIn_VerifyAccountOrg`
 (`internal/dispatch/linkedin_test.go`) that turn `LFX_FORCE_SYSTEM_ADS_ACCOUNT` on — the only

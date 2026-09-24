@@ -1,7 +1,7 @@
 # 2026-09-23 LinkedIn VerifyAccountOrg: split confirmed failures from inconclusive ones
 
 **Fix** — Follow-up to the same-day review-trio fixes
-(`2026-09-23-linkedin-verify-account-org-review-fixes.md`). The general
+(`2026-09-23-LFXV2-2665-linkedin-verify-account-org-review-fixes.md`). The general
 reviewer flagged two behavior gaps in `VerifyAccountOrgReference`
 (`internal/platform/linkedin/accounts.go`) that were pre-existing shipped
 behavior, not regressions from that round, so they were deferred for
