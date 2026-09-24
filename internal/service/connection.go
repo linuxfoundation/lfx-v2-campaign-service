@@ -838,14 +838,14 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 	if verr := orch.VerifyAccountOrg(ctx, p.ProjectID, model.ProviderLinkedInAds); verr != nil {
 		switch {
 		case errors.Is(verr, linkedin.ErrOrgVerificationInconclusive):
-			// Do not concatenate verr.Error() into the response: it can be built from
-			// ListAdAccounts' transport error, which for a *url.Error renders the full
-			// LinkedIn request URL including query parameters — not a bearer token, but
-			// still not this endpoint's to disclose. Log it server-side only, the same
-			// way the default arm of classifyDiscoveryError above does for an equivalent
-			// upstream failure, and return a fixed advisory message.
+			// Do not concatenate verr.Error() into the response, OR into this server-side
+			// log: it can be built from ListAdAccounts' transport error, which for a
+			// *url.Error renders the full LinkedIn request URL including query parameters
+			// (e.g. a pagination cursor) — not a bearer token, but still not safe to write
+			// to centralized logs verbatim. SafeInconclusiveDetail reports only which
+			// failure class was hit. Return a fixed advisory message to the caller.
 			slog.WarnContext(ctx, "linkedin org/account reference verification could not run to completion; the credential baseline already passed",
-				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds), "error", verr)
+				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds), "reason", linkedin.SafeInconclusiveDetail(verr))
 			msg := "connection found; linkedin account/organization verification was inconclusive"
 			return &conn.ConnectionTestResult{OK: true, Message: &msg}, nil
 		case errors.Is(verr, domain.ErrCredentialDecryptionFailed):

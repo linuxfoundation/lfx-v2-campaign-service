@@ -6,9 +6,11 @@ package linkedin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -537,6 +539,91 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 		}
 		if errors.Is(err, ErrOrgVerificationInconclusive) {
 			t.Errorf("VerifyAccountOrgReference: %v, a 403 must NOT be wrapped as inconclusive — LinkedIn evaluated this credential and refused it permission, which is a definite authorization failure, not an inconclusive walk", err)
+		}
+	})
+
+	t.Run("confirmed mismatch found on an early page is not undone by a later page failing", func(t *testing.T) {
+		rec := &recordedURIs{}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n := rec.add(r.URL.RequestURI())
+			if n == 0 {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"elements":[
+					{"id":507404993,"reference":"urn:li:organization:2414183"}
+				],"metadata":{"nextPageToken":"tok"}}`)
+				return
+			}
+			// A second page must never be requested: the target account was already found
+			// on page one, and its outcome must not depend on whether LinkedIn can serve a
+			// page this walk no longer needs.
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		t.Cleanup(srv.Close)
+		err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "999")
+		if err == nil {
+			t.Fatal("VerifyAccountOrgReference: want an error on a confirmed org mismatch found on the first page")
+		}
+		if errors.Is(err, ErrOrgVerificationInconclusive) {
+			t.Errorf("VerifyAccountOrgReference: %v, a confirmed mismatch found on an earlier page must not be discarded because a LATER page then fails — the walk must stop as soon as the target account is found", err)
+		}
+		if !strings.Contains(err.Error(), "2414183") || !strings.Contains(err.Error(), "999") {
+			t.Errorf("error = %v, want it to name both the platform's and the configured org id", err)
+		}
+		if n := len(rec.all()); n != 1 {
+			t.Errorf("made %d requests, want 1 — the walk must stop once it finds the target account rather than requesting a page it no longer needs", n)
+		}
+	})
+
+	t.Run("agreement found on an early page stops the walk before a later page", func(t *testing.T) {
+		rec := &recordedURIs{}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n := rec.add(r.URL.RequestURI())
+			if n == 0 {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"elements":[
+					{"id":507404993,"reference":"urn:li:organization:2414183"}
+				],"metadata":{"nextPageToken":"tok"}}`)
+				return
+			}
+			t.Error("a second page was requested after the target account was already found")
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		t.Cleanup(srv.Close)
+		err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "2414183")
+		if err != nil {
+			t.Errorf("VerifyAccountOrgReference: %v, want nil on agreement found on the first page", err)
+		}
+		if n := len(rec.all()); n != 1 {
+			t.Errorf("made %d requests, want 1", n)
+		}
+	})
+}
+
+func TestSafeInconclusiveDetail(t *testing.T) {
+	t.Run("transport error never surfaces the underlying request URL", func(t *testing.T) {
+		leak := &url.Error{Op: "Get", URL: "https://api.linkedin.com/rest/adAccounts?pageToken=super-secret-cursor", Err: errors.New("boom")}
+		err := fmt.Errorf("%w: %w", ErrOrgVerificationInconclusive, &transportError{Method: "GET", Path: "/adAccounts", Err: leak})
+		detail := SafeInconclusiveDetail(err)
+		if strings.Contains(detail, "super-secret-cursor") {
+			t.Errorf("SafeInconclusiveDetail leaked the request URL: %q", detail)
+		}
+	})
+
+	t.Run("api error reports only the status code, never the response body", func(t *testing.T) {
+		err := fmt.Errorf("%w: %w", ErrOrgVerificationInconclusive, &apiError{StatusCode: 500, Method: "GET", Path: "/adAccounts", Body: "secret body text"})
+		detail := SafeInconclusiveDetail(err)
+		if strings.Contains(detail, "secret body text") {
+			t.Errorf("SafeInconclusiveDetail leaked the response body: %q", detail)
+		}
+		if !strings.Contains(detail, "500") {
+			t.Errorf("SafeInconclusiveDetail = %q, want it to mention the status code", detail)
+		}
+	})
+
+	t.Run("a completeness-guard failure still gets a fixed classification", func(t *testing.T) {
+		err := fmt.Errorf("%w: %w", ErrOrgVerificationInconclusive, errors.New("linkedin ad-account discovery did not terminate (repeated page cursor)"))
+		if detail := SafeInconclusiveDetail(err); detail == "" {
+			t.Errorf("SafeInconclusiveDetail returned empty for a guard failure")
 		}
 	})
 }

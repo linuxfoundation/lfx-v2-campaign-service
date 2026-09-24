@@ -19,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 const goodLinkedInCreds = `{"AccessToken":"tok"}`
@@ -67,9 +68,16 @@ func TestLinkedIn_PreCreateErrorsReleaseClaim(t *testing.T) {
 // resolveLinkedInOwnedDiscoveryCredentials (d.creds.resolveOwned, the connection-test read's
 // own project only, never the LF system fallback), then additionally requires both the
 // connection's account id and its org id to be present, because verifying a PAIRING needs
-// both. None of these fixtures set LFX_FORCE_SYSTEM_ADS_ACCOUNT, so resolve vs resolveOwned
-// makes no observable difference here — see internal/dispatch/creds_test.go for coverage of
-// that flag's actual effect.
+// both.
+//
+// The last two subtests turn LFX_FORCE_SYSTEM_ADS_ACCOUNT on, which is the ONLY condition
+// under which resolve and resolveOwned diverge — and therefore the only condition under which
+// this suite can protect the boundary at all. They pin both halves of it: a project with no
+// connection of its own must not be answered from the LF system row (resolve would have
+// verified an account the project cannot reach and reported the connection healthy), and a
+// project that does have one must be checked against ITS row, not the LF row that forcing
+// would substitute for dispatch. Without them, swapping resolveOwned for resolve here passes
+// every other case in this file unchanged.
 func TestLinkedIn_VerifyAccountOrg(t *testing.T) {
 	t.Run("resolution failures surface as errors", func(t *testing.T) {
 		cases := []struct {
@@ -113,6 +121,60 @@ func TestLinkedIn_VerifyAccountOrg(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "111111111") || !strings.Contains(err.Error(), "987654321") {
 			t.Errorf("error = %v, want it to name both org ids", err)
+		}
+	})
+
+	// Forcing exists for DISPATCH: it makes paid-ads creates run on the LF-owned account
+	// regardless of the project's own connection. A connection TEST is the opposite question
+	// — "is THIS project's stored connection usable?" — so resolving it through the forced
+	// path would answer about a row the project does not own, and hand back a green result
+	// for a connection that does not exist.
+	t.Run("forced system mode does not answer the check from the LF system row", func(t *testing.T) {
+		t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+		rec := &requestRecorder{}
+		srv := linkedInAccountsServer(t, rec, `{"id":123456789,"reference":"urn:li:organization:987654321"}`)
+		repo := &scopedConnReader{rows: map[string]*model.Connection{
+			// Only the LF row exists. Under resolve this verifies cleanly and the project
+			// is told its (absent) connection is fine; under resolveOwned there is nothing
+			// to verify and the absence is reported.
+			model.SystemProjectID: activeLinkedInConn(goodLinkedInCreds),
+		}}
+		d := NewLinkedInDispatcher(repo, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+		if err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds); err == nil {
+			t.Error("VerifyAccountOrg: want an error for a project with no connection of its own, got nil")
+		}
+		if len(repo.gets) != 1 || repo.gets[0] != "cncf" {
+			t.Errorf("scopes asked = %v, want the project scope ONLY", repo.gets)
+		}
+		// The refusal must happen before any credential reaches LinkedIn: a request here
+		// means the LF token was used to answer a question about another project.
+		if paths, _, _ := rec.all(); len(paths) != 0 {
+			t.Errorf("requests to linkedin = %v, want none", paths)
+		}
+	})
+
+	t.Run("forced system mode still verifies the project's own row, not the LF row", func(t *testing.T) {
+		t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+		rec := &requestRecorder{}
+		srv := linkedInAccountsServer(t, rec, `{"id":123456789,"reference":"urn:li:organization:987654321"}`)
+		repo := &scopedConnReader{rows: map[string]*model.Connection{
+			"cncf": activeLinkedInConn(goodLinkedInCreds), // org 987654321 — agrees
+			// Same account id, DIFFERENT org id: if forcing redirected this read, the
+			// walk would find the same account and report a confirmed mismatch.
+			model.SystemProjectID: &model.Connection{
+				Provider:             model.ProviderLinkedInAds,
+				AccountID:            "123456789",
+				EncryptedCredentials: []byte(goodLinkedInCreds),
+				ProviderConfig:       map[string]string{"org_id": "111111111"},
+				Status:               model.StatusActive,
+			},
+		}}
+		d := NewLinkedInDispatcher(repo, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+		if err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds); err != nil {
+			t.Errorf("VerifyAccountOrg: %v, want nil — the project's own org id agrees", err)
+		}
+		if len(repo.gets) != 1 || repo.gets[0] != "cncf" {
+			t.Errorf("scopes asked = %v, want the project scope ONLY", repo.gets)
 		}
 	})
 }

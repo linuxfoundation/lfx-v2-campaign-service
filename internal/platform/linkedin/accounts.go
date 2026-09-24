@@ -173,6 +173,26 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 	// accounts is an ANSWER, and everything above this needs empty to stay distinguishable
 	// from "no answer" — including on the wire, where nil would serialize as null.
 	accounts := make([]AdAccount, 0, adAccountPageSize)
+	err := c.walkAdAccountPages(ctx, func(page []AdAccount) (bool, error) {
+		accounts = append(accounts, page...)
+		return false, nil // never stop early: this walk's contract is "every account or an error"
+	})
+	if err != nil {
+		return nil, err
+	}
+	return accounts, nil
+}
+
+// walkAdAccountPages issues GET adAccounts pages in cursor order, calling visit with each
+// page's accounts as they arrive. visit returns done=true to stop the walk before requesting
+// the next page — the caller already has what it needs (VerifyAccountOrgReference uses this to
+// stop as soon as it finds the account it is looking for, rather than paying for every
+// remaining page, or discarding what it already found because a LATER page fails). It never
+// stops early on its own: every completeness guard below (elements/metadata presence, cursor
+// repetition, the page cap) still runs for every page visit does not cut short, because "found
+// nothing yet" and "walk failed" must stay distinguishable from "walk didn't run long enough to
+// tell".
+func (c *Client) walkAdAccountPages(ctx context.Context, visit func(page []AdAccount) (done bool, err error)) error {
 	pageToken := ""
 	seen := make(map[string]struct{})
 	for page := 0; page < adAccountMaxPages; page++ {
@@ -188,15 +208,16 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 		}
 		resp, err := c.doRequest(ctx, http.MethodGet, "adAccounts", nil, params, nil)
 		if err != nil {
-			return nil, fmt.Errorf("list linkedin ad accounts: %w", err)
+			return fmt.Errorf("list linkedin ad accounts: %w", err)
 		}
 		// resp.Elements is guaranteed non-nil for a GET: doRequest rejects a 2xx search
 		// body whose `elements` field is absent or null, precisely because such a body
 		// cannot prove a result set. The nil check is retained so a future change to that
 		// guard cannot turn this loop into a silent zero-account answer.
 		if resp.Elements == nil {
-			return nil, fmt.Errorf("linkedin ad-account discovery returned a 2xx response with no elements field; cannot confirm the token's accounts were enumerated")
+			return fmt.Errorf("linkedin ad-account discovery returned a 2xx response with no elements field; cannot confirm the token's accounts were enumerated")
 		}
+		page := make([]AdAccount, 0, len(*resp.Elements))
 		for _, el := range *resp.Elements {
 			id := strings.TrimSpace(el.ID.String())
 			// accountIDRE is the SAME regexp targeting.go validates a configured account
@@ -207,9 +228,9 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 				// A response shape this far from the documented one means it is not the
 				// response we think it is, so the rest of it is not trustworthy either —
 				// fail the whole walk rather than skipping the row.
-				return nil, fmt.Errorf("linkedin ad-account discovery returned an account with an unusable id")
+				return fmt.Errorf("linkedin ad-account discovery returned an account with an unusable id")
 			}
-			accounts = append(accounts, AdAccount{
+			page = append(page, AdAccount{
 				ID:              id,
 				Name:            strings.TrimSpace(el.Name),
 				Status:          el.Status,
@@ -219,6 +240,13 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 				ServingStatuses: el.ServingStatuses,
 				OrgID:           referenceOrgID(el.Reference),
 			})
+		}
+		done, err := visit(page)
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
 		}
 		// NOT trimmed. A page cursor is an opaque server token echoed back verbatim, so
 		// trimming can request a DIFFERENT page than the one offered — and a token that is
@@ -232,19 +260,19 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 		// picker silently — the same false absence the elements guard above prevents,
 		// arriving through the pagination door instead.
 		if resp.Metadata == nil {
-			return nil, fmt.Errorf("linkedin ad-account discovery returned a response with no metadata; cannot confirm the token's accounts were enumerated")
+			return fmt.Errorf("linkedin ad-account discovery returned a response with no metadata; cannot confirm the token's accounts were enumerated")
 		}
 		next := resp.Metadata.NextPageToken
 		if next == "" {
-			return accounts, nil // fully enumerated
+			return nil // fully enumerated
 		}
 		if _, dup := seen[next]; dup {
-			return nil, fmt.Errorf("linkedin ad-account discovery did not terminate (repeated page cursor)")
+			return fmt.Errorf("linkedin ad-account discovery did not terminate (repeated page cursor)")
 		}
 		seen[next] = struct{}{}
 		pageToken = next
 	}
-	return nil, fmt.Errorf("linkedin ad-account discovery exceeded %d pages; too many accounts to enumerate", adAccountMaxPages)
+	return fmt.Errorf("linkedin ad-account discovery exceeded %d pages; too many accounts to enumerate", adAccountMaxPages)
 }
 
 // ErrOrgVerificationInconclusive wraps a failure of the underlying ListAdAccounts walk itself
@@ -257,6 +285,23 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 // two outcomes apart should check errors.Is(err, ErrOrgVerificationInconclusive).
 var ErrOrgVerificationInconclusive = errors.New("linkedin ad-account enumeration did not complete; org reference could not be checked")
 
+// SafeInconclusiveDetail classifies an error wrapped by ErrOrgVerificationInconclusive into a
+// fixed, caller-safe string for logging. The underlying error can be a *transportError, whose
+// Error() renders the raw round-trip failure (a *url.Error includes the full request URL, query
+// parameters included — e.g. a pagination cursor), so callers must not log err.Error() verbatim.
+// This reports only which failure class was hit, never any request- or response-derived text.
+func SafeInconclusiveDetail(err error) string {
+	var te *transportError
+	if errors.As(err, &te) {
+		return "transport failure contacting linkedin ad-account discovery"
+	}
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return fmt.Sprintf("linkedin ad-account discovery returned HTTP %d", ae.StatusCode)
+	}
+	return "linkedin ad-account discovery response failed a completeness guard"
+}
+
 // VerifyAccountOrgReference cross-checks a connection's configured org id against LinkedIn's
 // own record — the `reference` field on accountID — of which organization sponsors that
 // account. It is a connection-test-time signal, not a create-time gate: nothing in this
@@ -264,14 +309,18 @@ var ErrOrgVerificationInconclusive = errors.New("linkedin ad-account enumeration
 // is untouched by it.
 //
 // It returns a CONFIRMED error in two cases: accountID's reference names a DIFFERENT
-// organization than configuredOrgID, and accountID is absent from a walk this package has
-// already verified was complete (ListAdAccounts returns every account or an error — see its
-// own doc comment — so reaching the end of that list without a match means this token
-// genuinely cannot reach the configured account, not that the walk merely missed it).
+// organization than configuredOrgID, and accountID is absent from a walk that reached the end
+// of every page without ever finding it — walkAdAccountPages returns every account or an error
+// (see its own doc comment), so exhausting it without a match means this token genuinely cannot
+// reach the configured account, not that the walk merely missed it. The walk stops as soon as
+// accountID itself is found, on WHATEVER page carries it — a confirmed match or mismatch on an
+// earlier page is not retroactively undone by a later page this verification never needed to
+// reach.
 //
-// It returns an ErrOrgVerificationInconclusive-wrapped error when the ListAdAccounts walk
-// itself fails for a reason that proves nothing about the pairing (transport failure, page cap
-// on a very large token), so it must not be confused with a confirmed contradiction. A
+// It returns an ErrOrgVerificationInconclusive-wrapped error when the page walk itself fails,
+// before finding accountID, for a reason that proves nothing about the pairing (transport
+// failure, page cap on a very large token), so it must not be confused with a confirmed
+// contradiction. A
 // credential failure (ErrCredentialsExpired, ErrApplicationCredentialsInvalid,
 // ErrTokenRequestRejected) or a 403 permission rejection is returned UNWRAPPED instead: each is
 // the reason a broken or under-permissioned connection cannot reach LinkedIn's ad-account list
@@ -297,7 +346,28 @@ func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, confi
 	if !orgIDRE.MatchString(configuredOrgID) {
 		return nil
 	}
-	accounts, err := c.ListAdAccounts(ctx)
+	// found/matchErr are set from inside visit and read after the walk returns; walk only
+	// ever calls visit synchronously from the same goroutine, so this is not a data race.
+	var found bool
+	var matchErr error
+	err := c.walkAdAccountPages(ctx, func(page []AdAccount) (bool, error) {
+		for _, a := range page {
+			if a.ID != accountID {
+				continue
+			}
+			found = true
+			// Stop the walk HERE, on the page that carries the target account, rather than
+			// paying for every remaining page — and, more importantly, rather than letting
+			// a later page's failure discard a confirmed match or mismatch this page already
+			// proved. A confirmed contradiction found on page one is exactly as confirmed
+			// whether or not LinkedIn can enumerate page two.
+			if a.OrgID != "" && a.OrgID != configuredOrgID {
+				matchErr = fmt.Errorf("linkedin ad account %s advertises on behalf of organization %s, not the configured organization %s", accountID, a.OrgID, configuredOrgID)
+			}
+			return true, nil
+		}
+		return false, nil
+	})
 	if err != nil {
 		// A credential or application-authorization failure is a CONFIRMED, actionable
 		// reason this token cannot reach LinkedIn at all — not an inconclusive enumeration
@@ -319,17 +389,8 @@ func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, confi
 		}
 		return fmt.Errorf("%w: %w", ErrOrgVerificationInconclusive, err)
 	}
-	for _, a := range accounts {
-		if a.ID != accountID {
-			continue
-		}
-		if a.OrgID == "" {
-			return nil
-		}
-		if a.OrgID != configuredOrgID {
-			return fmt.Errorf("linkedin ad account %s advertises on behalf of organization %s, not the configured organization %s", accountID, a.OrgID, configuredOrgID)
-		}
-		return nil
+	if !found {
+		return fmt.Errorf("linkedin ad account %s was not found among this token's own ad accounts", accountID)
 	}
-	return fmt.Errorf("linkedin ad account %s was not found among this token's own ad accounts", accountID)
+	return matchErr
 }

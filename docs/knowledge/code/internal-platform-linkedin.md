@@ -537,29 +537,47 @@ sponsored by an organization, `urn:li:person:{id}` for a personal account, or ab
 anything else (person-scoped, malformed, or absent) — a person-scoped reference carries no org
 signal to check, not a signal that disagrees.
 
-`VerifyAccountOrgReference` walks the existing `ListAdAccounts` enumeration (there is no
-single-resource `GET /adAccounts/{id}` — `doRequest`'s GET path requires an `elements`
-envelope, i.e. only the list/search response shape) looking for `accountID`, and follows the
-same fail-closed-only-on-a-CONFIRMED-fact discipline as `resolveOrgID` (`targeting.go`): an
+`ListAdAccounts` and `VerifyAccountOrgReference` both delegate to a shared private helper,
+`walkAdAccountPages(ctx, visit)` (there is no single-resource `GET /adAccounts/{id}` —
+`doRequest`'s GET path requires an `elements` envelope, i.e. only the list/search response
+shape). `visit` is called once per page and can return `done=true` to stop the walk early;
+`ListAdAccounts` never does — it keeps its own "every account or an error" contract — but
+`VerifyAccountOrgReference` stops the walk on the FIRST page that carries `accountID`, rather
+than scanning every page `ListAdAccounts` would have collected. This matters because the two
+callers have different needs: `ListAdAccounts` must enumerate everything, while
+`VerifyAccountOrgReference` only needs the one account, as early as possible — and stopping
+early is not just an optimization. A confirmed match or mismatch found on an early page must
+not be undone by a LATER, unrelated page then failing; before this walk stopped as soon as the
+target was found, a mismatch found on page one could be discarded by a page-two failure and
+silently reported as `OK: true` (see the 2026-09-23 log entry below). Follows the same
+fail-closed-only-on-a-CONFIRMED-fact discipline as `resolveOrgID` (`targeting.go`): an
 empty/person-scoped reference, a missing configured org id, or a configured org id that fails
 `orgIDRE` (non-numeric — LinkedIn's own reference is always numeric, so it can never be the
 DIFFERENT organization a confirmed disagreement requires) are all INCONCLUSIVE (`nil` — nothing
 to confirm or refute). `account.OrgID != configuredOrgID` is one CONFIRMED-fact case and returns
-an error; `accountID` never appearing in the walk is the other — `ListAdAccounts` returns every
-account or an error (see its own doc comment), so reaching the end of a walk that succeeded
-without a match means this token genuinely cannot reach the configured account, not that the
-walk merely missed it.
+an error; `accountID` never appearing anywhere in a walk that completed without error is the
+other — a complete walk that never saw the target means this token genuinely cannot reach the
+configured account, not that the walk merely missed it.
 
-A non-authentication failure of the `ListAdAccounts` walk ITSELF (upstream/transport error, the
-page cap on a very large token) is a third, distinct outcome: it proves nothing about the pairing
-either way, so it is wrapped in the exported sentinel `ErrOrgVerificationInconclusive` rather than
-returned as a bare error — callers must not fold "the check could not run" into the same bucket as
-a confirmed contradiction (see `TestLinkedinAds` below, which reports these two outcomes
+A non-authentication failure of the walk ITSELF (upstream/transport error, the page cap on a
+very large token) is a third, distinct outcome: it proves nothing about the pairing either
+way, so it is wrapped in the exported sentinel `ErrOrgVerificationInconclusive` rather than
+returned as a bare error — callers must not fold "the check could not run" into the same bucket
+as a confirmed contradiction (see `TestLinkedinAds` below, which reports these two outcomes
 differently). A credential or authorization failure surfacing during that same walk — expired or
 invalid credentials, an application-authorization rejection, or a 403 from LinkedIn — is NOT
 folded into this inconclusive bucket: each proves the credential cannot perform the verification
 at all, a CONFIRMED fact rather than an unresolved one, so `VerifyAccountOrgReference` returns it
 unwrapped instead.
+
+The error wrapped by `ErrOrgVerificationInconclusive` is not safe to log verbatim: it can be a
+`*transportError` whose `Error()` renders the underlying `*url.Error` via `%v`, including the
+full LinkedIn request URL and any query parameters (e.g. a pagination cursor). Exported helper
+`SafeInconclusiveDetail(err) string` classifies it into a fixed string instead (a transport
+failure, an HTTP status code from a non-403 `*apiError`, or a generic completeness-guard
+failure) with no request- or response-derived text, for callers — currently only
+`TestLinkedinAds`'s own server-side advisory log — that want SOME diagnostic detail without
+risking a leak.
 
 This is wired into exactly one place: `TestLinkedinAds`'s connection-test RPC (see
 [internal-service.md](internal-service.md)'s "LinkedIn org/account pairing verification"

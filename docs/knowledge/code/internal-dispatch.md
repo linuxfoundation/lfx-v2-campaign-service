@@ -1955,6 +1955,16 @@ verification" section). Missing `accountID`/`org_id` is checked explicitly, beca
 pairing needs both ids present and the discovery resolver only requires the credential to be
 otherwise usable.
 
+That resolver choice is pinned by two subtests in `TestLinkedIn_VerifyAccountOrg`
+(`internal/dispatch/linkedin_test.go`) that turn `LFX_FORCE_SYSTEM_ADS_ACCOUNT` on — the only
+condition under which `resolve` and `resolveOwned` differ, and therefore the only way a test can
+tell them apart. One proves a project with no connection of its own is REFUSED without any
+request reaching LinkedIn (under `resolve` the LF row would answer, and the project would be
+told its absent connection is healthy); the other proves a project that does have one is checked
+against ITS org id, using an LF row carrying the same account id but a different org id so the
+substitution would surface as a confirmed mismatch. Every other case in that file passes
+unchanged with the two resolvers swapped, so without these the boundary is undefended.
+
 ## HubSpot campaign capability
 
 `HubSpotDispatcher` implements `service.CampaignSearcher`: `SearchCampaigns` and
