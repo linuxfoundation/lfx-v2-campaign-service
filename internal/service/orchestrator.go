@@ -432,10 +432,12 @@ type OrgReferenceVerifier interface {
 	// comparison. A failure of the enumeration walk itself is different: it proves nothing
 	// about the pairing, so implementations wrap it in linkedin.ErrOrgVerificationInconclusive,
 	// and callers must not treat it the same as a confirmed failure (see TestLinkedinAds).
-	// Returns nil once resolution has succeeded and the comparison is anything short of a
-	// confirmed contradiction — no reference to compare, a malformed configured org id — which
-	// is folded into the same nil as a genuine confirmed match. Callers that need to
-	// distinguish "confirmed match" from "nothing to compare" cannot, by design.
+	// A stored org id the platform could never have issued (linkedin's must be numeric) is a
+	// REAL error too, decidable without contacting the platform at all: campaign creation on
+	// that connection is already guaranteed to fail.
+	// Returns nil in exactly two situations, which it cannot distinguish: a confirmed match,
+	// and the platform having no comparable reference on the account to compare against.
+	// Callers that need to tell those apart cannot, by design.
 	VerifyAccountOrg(ctx context.Context, projectID string, platform model.Provider) error
 }
 

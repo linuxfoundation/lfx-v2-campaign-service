@@ -328,11 +328,14 @@ func SafeInconclusiveDetail(err error) string {
 // TestLinkedinAds's errors.Is(err, ErrOrgVerificationInconclusive) check — which runs before any
 // other classification — report a broken connection as OK: true.
 //
-// Every other outcome returns nil, and is inconclusive rather than a confirmed pass, but
-// nil cannot say so: a reference that is empty or person-scoped (LinkedIn simply has nothing
-// to compare against), or a malformed configuredOrgID. This mirrors resolveOrgID's own
-// philosophy in targeting.go — fail closed on an actual contradiction, and only on one this
-// package can actually confirm.
+// A configuredOrgID that is not a numeric organization id is likewise a CONFIRMED error,
+// returned unwrapped before the walk even starts — see the comment at the guard below.
+//
+// Every other outcome returns nil, which covers a confirmed match and one inconclusive case
+// nil cannot distinguish from it: a reference that is empty or person-scoped, where LinkedIn
+// simply has nothing to compare against. This mirrors resolveOrgID's own philosophy in
+// targeting.go — fail closed on an actual contradiction, and only on one this package can
+// actually confirm.
 func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, configuredOrgID string) error {
 	accountID = strings.TrimSpace(accountID)
 	configuredOrgID = strings.TrimSpace(configuredOrgID)

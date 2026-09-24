@@ -932,13 +932,16 @@ account/org pairing — only that the cross-check couldn't run — so it reports
 advisory message instead: the credential baseline already passed, and there is no basis to call
 a connection broken because an optional secondary check happened to fail.
 
-`VerifyAccountOrg`'s `nil` folds a genuinely CONFIRMED match together with the remaining
-inconclusive outcomes (no reference to compare, a missing configured org id) — see
-`VerifyAccountOrgReference`'s own doc comment. A MALFORMED (non-numeric) configured org id is
-no longer among them: it is a confirmed defect that fails the test with `OK: false`, because
-`resolveOrgID` refuses the same value and the connection therefore cannot dispatch at all. The success message therefore says only "no ...
+`VerifyAccountOrg`'s `nil` folds a genuinely CONFIRMED match together with exactly one
+inconclusive outcome — LinkedIn having no comparable reference on the account (empty, or
+person-scoped) — see `VerifyAccountOrgReference`'s own doc comment. Neither a MISSING nor a
+MALFORMED configured org id is among them. A missing one never reaches the client at all:
+`LinkedInDispatcher.VerifyAccountOrg` (`internal/dispatch/linkedin.go`) rejects an empty
+account id or org id with a real error before calling it. A non-numeric one is a confirmed
+defect that fails the test with `OK: false`, because `resolveOrgID` refuses the same value and
+the connection therefore cannot dispatch at all. The success message still says only "no
 mismatch found", not "verified": that phrasing is the one that stays true of every `nil`,
-including the inconclusive ones, where "verified" would claim a confidence the call never
+including the one inconclusive case, where "verified" would claim a confidence the call never
 actually establishes.
 
 `OrgReferenceVerifier` (`orchestrator.go`) is the optional-capability outlier among this
