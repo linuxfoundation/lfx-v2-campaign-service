@@ -941,19 +941,31 @@ id bootstrap" the service can verify today: `CreateLinkedinAds`/`UpdateLinkedinA
 caller-supplied `org_id` with no upstream check at write time, so a mistyped org id is otherwise
 undetectable until it breaks a campaign create.
 
-A confirmed mismatch, the configured account being absent from a complete ad-account
-enumeration, or a connection-resolution failure (network, credential, or connection-state) is
-folded into an ordinary FAILED test (`OK: false`) rather than surfaced as a 5xx — a connection
-test failing is an expected outcome for a caller to see, not a service outage. A 503 stays
-reserved for `resolveBackendWithOrch` reporting the repo or orchestrator itself unavailable,
-checked before the verification call is attempted.
+The outcome is not two-way. `TestLinkedinAds` sorts a verification error four ways, and mixing
+them up gives an operator the wrong retry semantics — the failure mode this whole path exists to
+prevent:
 
-A failure of the `ListAdAccounts` enumeration walk ITSELF is handled differently: it reaches
-this package as `domain.ErrOrgVerificationInconclusive`, and `TestLinkedinAds` checks for that
-sentinel with `errors.Is` before folding an error into `OK: false`. That failure proves nothing
-about the account/org pairing — only that the cross-check couldn't run — so it reports `OK: true`
-with an advisory message instead: the credential baseline already passed, and there is no basis
-to call a connection broken because an optional secondary check happened to fail.
+| Outcome | Examples | Result |
+| --- | --- | --- |
+| Confirmed verdict | a reference naming a different org, an account absent from a complete walk, a malformed or absent stored id, a `403` | `OK: false`, the message echoed |
+| Credential / connection-state failure | expired or unrefreshable credentials, an unusable stored blob | `OK: false`, fixed remedy text |
+| Inconclusive | dial, transport, `429`, `5xx`, a completeness guard, a retryable token exchange | **`OK: true`** with a fixed advisory |
+| Service defect | a non-429/non-403 `4xx` on the walk, an unwired verifier, a permanently failing token exchange | typed **500** with a `reason` token |
+
+A 503 is separate again, reserved for `resolveBackendWithOrch` reporting the repo or orchestrator
+itself unavailable — checked before the verification call is attempted — and for a failure to READ
+the connection row (`domain.ErrConnectionLoadFailed`), which is retryable and proves nothing about
+the connection's contents.
+
+The inconclusive row is the one that most needs stating plainly, because it inverts the intuition:
+a failure of the `ListAdAccounts` enumeration walk ITSELF reaches this package as
+`domain.ErrOrgVerificationInconclusive`, and `TestLinkedinAds` checks for that sentinel with
+`errors.Is` FIRST, before folding anything into `OK: false`. That failure proves nothing about the
+account/org pairing — only that the cross-check couldn't run — so it reports `OK: true` with an
+advisory: the credential baseline already passed, and there is no basis to call a connection broken
+because an optional secondary check happened to fail. The corollary is the standing hazard here:
+anything wrongly folded into that sentinel silently reports a BROKEN connection as healthy, which
+is why each of the other three rows exists as its own outcome rather than a fallthrough.
 
 **That sentinel is a DOMAIN one, not the platform client's**, and the difference is the whole
 safety story. `internal/platform/linkedin` returns its own `ErrOrgVerificationInconclusive`

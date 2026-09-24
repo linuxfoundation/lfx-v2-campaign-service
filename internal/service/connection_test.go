@@ -366,6 +366,19 @@ func TestTestLinkedinAds_NoCredentialsSkipsUpstreamVerification(t *testing.T) {
 	if res.OK {
 		t.Error("OK = true for a connection with no stored credentials")
 	}
+	// The message must name the real reason. testConn is shared across providers and its
+	// generic text says upstream verification is "not yet implemented" — false here, since
+	// TestLinkedinAds implements it — so an operator handed that text goes looking for a
+	// missing feature instead of authorizing the connection.
+	if res.Message == nil {
+		t.Fatal("Message = nil; the operator is told nothing about why the test failed")
+	}
+	if strings.Contains(*res.Message, "not yet implemented") {
+		t.Errorf("Message = %q, still claims upstream verification is unimplemented", *res.Message)
+	}
+	if !strings.Contains(*res.Message, "no credentials are stored") {
+		t.Errorf("Message = %q, does not name the absent credential as the reason", *res.Message)
+	}
 }
 
 // TestTestLinkedinAds_UpstreamVerification exercises the new behavior beyond the testConn

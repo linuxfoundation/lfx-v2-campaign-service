@@ -577,15 +577,25 @@ var (
 	// that could not run is not evidence of a mismatch. It maps to OK: true with an advisory
 	// message. Precisely because of that, nothing that IS evidence may carry it — see
 	// VerifyAccountOrgReference, which keeps credential, permission and other 4xx failures
-	// out of this sentinel entirely so they cannot reach this arm — the 4xx refusals carry
-	// the confirmed marker instead, and the credential failures their own sentinels.
+	// out of this sentinel entirely so they cannot reach this arm. Where they go instead
+	// splits three ways: a 403 is a verdict LinkedIn reached on the merits and carries the
+	// confirmed marker; every other non-429 4xx is a request this service built wrong and
+	// carries ErrAccountDiscoveryRejected for a typed 500; the credential failures carry
+	// their own sentinels. Only 429 and 5xx remain inconclusive.
 	ErrOrgVerificationInconclusive = errors.New("the account/organization cross-check could not be completed")
 
 	// ErrOrgVerificationFailed marks the opposite outcome: a cross-check that DID reach a
 	// verdict, and the verdict is that this connection cannot create campaigns — a reference
 	// naming a different organization, an account absent from a complete walk, a stored
-	// account or org id of the wrong shape, a non-429 4xx refusal LinkedIn reached on the
-	// merits.
+	// account or org id of the wrong shape, or a 403 — the one status where LinkedIn
+	// evaluated THIS token on the merits and refused it.
+	//
+	// A 400 or 404 is deliberately NOT here. The discovery walk is
+	// GET adAccounts?q=search&pageSize=… plus an optional page token, and it embeds neither
+	// the stored account id nor the configured org id, so LinkedIn cannot be answering a
+	// question about the pairing — it was never asked one. Those carry
+	// ErrAccountDiscoveryRejected instead and become a typed 500, because echoing them here
+	// would send an operator to audit a connection that may be entirely correct.
 	//
 	// It exists for the same reason ErrOrgVerificationInconclusive does — to make a property
 	// of the error rather than a rule every caller must remember — but the property here is

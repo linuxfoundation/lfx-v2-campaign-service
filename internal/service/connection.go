@@ -837,8 +837,19 @@ func (s *ConnectionService) DeleteLinkedinAds(ctx context.Context, p *conn.Delet
 // advisory message instead.
 func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLinkedinAdsPayload) (*conn.ConnectionTestResult, error) {
 	result, err := s.testConn(ctx, p.ProjectID, model.ProviderLinkedInAds)
-	if err != nil || !result.OK {
+	if err != nil {
 		return result, err
+	}
+	if !result.OK {
+		// testConn is shared across providers and its OK is exactly HasCredentials(), so the
+		// ONLY way to arrive here is a connection row with no stored credential. Its generic
+		// message says upstream verification is "not yet implemented", which is false for
+		// this provider — it runs immediately below — and it names neither the real reason
+		// for OK: false nor a remedy. Both halves mislead: an operator reading it goes
+		// looking for an unimplemented feature instead of authorizing the connection.
+		msg := "no credentials are stored for this LinkedIn Ads connection; authorize it before testing"
+		result.Message = &msg
+		return result, nil
 	}
 	_, _, orch, err := s.resolveBackendWithOrch("connection test")
 	if err != nil {
@@ -916,7 +927,11 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 		case errors.Is(verr, domain.ErrOrgVerificationFailed):
 			// The CONFIRMED verdicts — a reference naming a different organization, an
 			// account absent from a complete walk, a malformed or absent stored account or
-			// org id, a non-429 4xx refusal. Each is a fact about the pairing or the stored
+			// org id, or a 403, the one status LinkedIn reached on the merits. A 400 or 404
+			// is NOT here: the walk embeds neither stored id, so it is a rejected request
+			// (ErrAccountDiscoveryRejected, a typed 500), not a verdict about the pairing.
+			// Keep this list matching the allowlist, or a service defect reaches the echo.
+			// Each is a fact about the pairing or the stored
 			// fields, phrased in this service's own words, so the text is safe and is the
 			// whole value of the answer: "verification failed" without saying WHICH of those
 			// happened leaves an operator nothing to repair.
