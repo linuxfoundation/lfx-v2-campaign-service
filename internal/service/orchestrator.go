@@ -2096,6 +2096,16 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 	return rows, nil
 }
 
+// orgVerificationRequired names the platforms whose dispatcher MUST implement
+// OrgReferenceVerifier. Membership is a claim about the PLATFORM, not about this service's
+// wiring: LinkedIn's ad-account resource carries a `reference` naming the true sponsoring
+// organization, so the cross-check is always available for it and a build that cannot run it is
+// mis-wired. The other 5 platforms expose no equivalent field, so their absence from
+// VerifyAccountOrg is the designed outcome rather than a defect — see the method's doc comment.
+var orgVerificationRequired = map[model.Provider]bool{
+	model.ProviderLinkedInAds: true,
+}
+
 // VerifyAccountOrg cross-checks a project's stored connection against the platform's own
 // record of the org/account pairing it is scoped to, when the platform's dispatcher supports
 // it. Unlike ReadAccounts and the other optional-capability methods above, an unsupported
@@ -2104,13 +2114,26 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 // catch a manually mistyped org id against the platform's own data. The other 5 platforms
 // have no such signal to check, so silently doing nothing for them is the correct, expected
 // outcome, not a degraded one.
+//
+// That permissiveness is scoped to the platforms it is actually correct for. For a platform in
+// orgVerificationRequired, a missing dispatcher — or a registered one that does not implement
+// OrgReferenceVerifier — is a wiring defect in THIS service, and returning nil for it would let
+// TestLinkedinAds answer OK: true with the cross-check never run: the same "broken connection
+// reported healthy" outcome the check exists to prevent, and one no operator could diagnose
+// from the response. ErrServiceDefect makes the caller return its typed 500 instead.
 func (o *Orchestrator) VerifyAccountOrg(ctx context.Context, projectID string, platform model.Provider) error {
 	d, ok := o.dispatchers[platform]
 	if !ok {
+		if orgVerificationRequired[platform] {
+			return fmt.Errorf("%w: no %s dispatcher is registered, so the org/account cross-check this platform requires could not run", domain.ErrServiceDefect, platform)
+		}
 		return nil
 	}
 	verifier, ok := d.(OrgReferenceVerifier)
 	if !ok {
+		if orgVerificationRequired[platform] {
+			return fmt.Errorf("%w: the registered %s dispatcher does not implement OrgReferenceVerifier, so the org/account cross-check this platform requires could not run", domain.ErrServiceDefect, platform)
+		}
 		return nil
 	}
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)

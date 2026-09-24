@@ -2533,11 +2533,40 @@ func TestOrchestrator_VerifyAccountOrg_NoOpForUnsupportedPlatform(t *testing.T) 
 
 // TestOrchestrator_VerifyAccountOrg_NoOpForUnregisteredPlatform mirrors the above for a
 // platform with no dispatcher registered at all.
+//
+// The fixture is deliberately a platform NOT in orgVerificationRequired. Google has no
+// upstream org reference to check, so nothing is skipped by staying silent here. LinkedIn
+// would be the wrong fixture for this claim, and the two tests below say why.
 func TestOrchestrator_VerifyAccountOrg_NoOpForUnregisteredPlatform(t *testing.T) {
 	orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{})
-	if err := orch.VerifyAccountOrg(context.Background(), "proj-1", model.ProviderLinkedInAds); err != nil {
-		t.Errorf("VerifyAccountOrg: %v, want nil when no dispatcher is registered for the platform", err)
+	if err := orch.VerifyAccountOrg(context.Background(), "proj-1", model.ProviderGoogleAds); err != nil {
+		t.Errorf("VerifyAccountOrg: %v, want nil when no dispatcher is registered for a platform with no org signal", err)
 	}
+}
+
+// TestOrchestrator_VerifyAccountOrg_MissingRequiredDispatcherIsAServiceDefect pins the
+// boundary the silent no-op above must NOT cross. LinkedIn always has a `reference` to check,
+// so a build that cannot run the check is mis-wired — and nil would make TestLinkedinAds
+// answer OK: true with the cross-check never run, the exact failure this verification exists
+// to prevent. ErrServiceDefect routes it to that handler's typed 500 instead.
+func TestOrchestrator_VerifyAccountOrg_MissingRequiredDispatcherIsAServiceDefect(t *testing.T) {
+	t.Run("no dispatcher registered at all", func(t *testing.T) {
+		orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{})
+		err := orch.VerifyAccountOrg(context.Background(), "proj-1", model.ProviderLinkedInAds)
+		if !errors.Is(err, domain.ErrServiceDefect) {
+			t.Errorf("VerifyAccountOrg: %v, want a domain.ErrServiceDefect for an unregistered linkedin dispatcher", err)
+		}
+	})
+
+	t.Run("dispatcher registered but not an OrgReferenceVerifier", func(t *testing.T) {
+		orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+			model.ProviderLinkedInAds: plainDispatcher{},
+		})
+		err := orch.VerifyAccountOrg(context.Background(), "proj-1", model.ProviderLinkedInAds)
+		if !errors.Is(err, domain.ErrServiceDefect) {
+			t.Errorf("VerifyAccountOrg: %v, want a domain.ErrServiceDefect for a linkedin dispatcher missing OrgReferenceVerifier", err)
+		}
+	})
 }
 
 // TestOrchestrator_VerifyAccountOrg_DelegatesToTheVerifier pins that a dispatcher which DOES

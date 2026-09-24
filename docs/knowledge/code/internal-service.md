@@ -955,6 +955,18 @@ field gives this service anything to check; the other 5 platforms have no equiva
 signal, and that must read as "nothing to report" rather than a degraded result the caller has
 to special-case.
 
+That silence is scoped by `orgVerificationRequired`, a map naming the platforms whose dispatcher
+MUST implement the interface — LinkedIn, and only LinkedIn. Membership is a claim about the
+PLATFORM, not about this service's wiring: the `reference` field is always there, so a build that
+cannot run the check is mis-wired rather than merely unequipped. For a required platform, a
+missing dispatcher or one lacking the interface returns `domain.ErrServiceDefect`, which
+`TestLinkedinAds` already maps to a typed 500. Without that scoping the outlier swallowed its own
+failure mode: `testConn` (`connection_handler.go`) reads only the stored row and never touches a
+dispatcher, and `resolveBackendWithOrch` checks only that the orchestrator pointer is non-nil, so
+a LinkedIn dispatcher missing from the registry would have passed the baseline, skipped the
+cross-check silently, and answered `OK: true` — the same "broken connection reported healthy"
+outcome the verification exists to prevent, and one invisible in the response.
+
 ## HubSpot email search (LFXV2-3197)
 
 `ListHubspotEmails` serves `GET /projects/{project_id}/connection-hubspot/emails`, returning the

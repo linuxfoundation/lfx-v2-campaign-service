@@ -872,10 +872,11 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 			return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
 		}
 	}
-	// nil here folds together a genuinely CONFIRMED match with several inconclusive outcomes
-	// (see OrgReferenceVerifier's doc comment) — "verified" would overclaim confidence the
-	// nil does not actually carry, so the message only promises what is actually true of
-	// every nil: no mismatch was found.
+	// nil here folds together a genuinely CONFIRMED match with the ONE remaining inconclusive
+	// outcome — LinkedIn having no comparable reference on the account (see
+	// OrgReferenceVerifier's doc comment) — and the two are indistinguishable from here.
+	// "verified" would overclaim confidence the nil does not actually carry, so the message
+	// only promises what is actually true of every nil: no mismatch was found.
 	msg := "connection found; no linkedin account/organization mismatch found"
 	return &conn.ConnectionTestResult{OK: true, Message: &msg}, nil
 }
