@@ -161,7 +161,7 @@ func TestLinkedIn_VerifyAccountOrg(t *testing.T) {
 			"cncf": activeLinkedInConn(goodLinkedInCreds), // org 987654321 — agrees
 			// Same account id, DIFFERENT org id: if forcing redirected this read, the
 			// walk would find the same account and report a confirmed mismatch.
-			model.SystemProjectID: &model.Connection{
+			model.SystemProjectID: {
 				Provider:             model.ProviderLinkedInAds,
 				AccountID:            "123456789",
 				EncryptedCredentials: []byte(goodLinkedInCreds),

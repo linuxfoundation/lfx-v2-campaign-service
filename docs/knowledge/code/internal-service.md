@@ -933,8 +933,10 @@ advisory message instead: the credential baseline already passed, and there is n
 a connection broken because an optional secondary check happened to fail.
 
 `VerifyAccountOrg`'s `nil` folds a genuinely CONFIRMED match together with the remaining
-inconclusive outcomes (no reference to compare, a malformed configured org id) — see
-`VerifyAccountOrgReference`'s own doc comment. The success message therefore says only "no ...
+inconclusive outcomes (no reference to compare, a missing configured org id) — see
+`VerifyAccountOrgReference`'s own doc comment. A MALFORMED (non-numeric) configured org id is
+no longer among them: it is a confirmed defect that fails the test with `OK: false`, because
+`resolveOrgID` refuses the same value and the connection therefore cannot dispatch at all. The success message therefore says only "no ...
 mismatch found", not "verified": that phrasing is the one that stays true of every `nil`,
 including the inconclusive ones, where "verified" would claim a confidence the call never
 actually establishes.

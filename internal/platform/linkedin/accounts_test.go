@@ -486,13 +486,29 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 		}
 	})
 
-	t.Run("malformed configured org id is inconclusive, not a confirmed mismatch", func(t *testing.T) {
-		srv, _ := adAccountsServer(t, `{"elements":[
+	// A configured org id that fails orgIDRE is a CONFIRMED defect, not an inconclusive one:
+	// resolveOrgID (targeting.go) refuses the same value, so campaign creation on this
+	// connection cannot build a valid organization URN. Reporting it as inconclusive made
+	// TestLinkedinAds answer OK: true for a connection already known to be unusable.
+	t.Run("malformed configured org id fails the test, and is refused before enumeration", func(t *testing.T) {
+		// The full URN is the realistic mistyping: it CONTAINS the right digits, so a check
+		// that only looked for the numeric id inside the string would wrongly pass it.
+		srv, rec := adAccountsServer(t, `{"elements":[
 			{"id":507404993,"reference":"urn:li:organization:2414183"}
 		],"metadata":{}}`)
 		err := newAccountsClient(t, srv.URL).VerifyAccountOrgReference(context.Background(), "507404993", "urn:li:organization:2414183")
-		if err != nil {
-			t.Errorf("VerifyAccountOrgReference: %v, want nil for a non-numeric configured org id — it can never equal the platform's numeric reference, so it is not a comparable value, not a confirmed disagreement", err)
+		if err == nil {
+			t.Fatal("VerifyAccountOrgReference: want an error for a non-numeric configured org id — resolveOrgID refuses the same value, so this connection cannot dispatch")
+		}
+		// It must NOT be the inconclusive sentinel: TestLinkedinAds maps that to OK: true,
+		// which is the reporting bug this case exists to close.
+		if errors.Is(err, ErrOrgVerificationInconclusive) {
+			t.Errorf("VerifyAccountOrgReference: %v, want a CONFIRMED error, not ErrOrgVerificationInconclusive (which is reported as a healthy connection)", err)
+		}
+		// Decidable from the stored value alone — spending a LinkedIn round trip to reach a
+		// verdict already known would also make the verdict depend on that call succeeding.
+		if rec.count() != 0 {
+			t.Errorf("requests = %v, want none: a malformed org id is decidable without contacting linkedin", rec.all())
 		}
 	})
 

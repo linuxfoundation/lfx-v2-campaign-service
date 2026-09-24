@@ -339,12 +339,20 @@ func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, confi
 	if accountID == "" || configuredOrgID == "" {
 		return nil
 	}
-	// A non-numeric configuredOrgID can never equal a.OrgID (LinkedIn's reference is always
-	// numeric, per orgIDRE), so comparing it anyway would report a CONFIRMED disagreement for
-	// a value that was never a comparable org id in the first place — exactly the "malformed
-	// configuredOrgID" case the doc comment above already promises stays inconclusive.
+	// A non-numeric configuredOrgID is a CONFIRMED defect in the stored connection, decidable
+	// without contacting LinkedIn at all. orgIDRE is this client's configuration invariant:
+	// resolveOrgID (targeting.go) refuses the same value because it cannot build a valid
+	// "urn:li:organization:<id>" URN, so a campaign creation on this connection is already
+	// guaranteed to fail. Reporting it as inconclusive (nil) made TestLinkedinAds answer
+	// OK: true for a connection known in advance to be unusable — the exact "broken
+	// connection reported healthy" outcome this verification exists to prevent.
+	//
+	// It is deliberately NOT reported as a mismatch. LinkedIn's own reference is always
+	// numeric, so this value never was a comparable org id; calling it a "different
+	// organization" would misdescribe the fault and send an operator hunting a tenant mixup
+	// instead of fixing a malformed field.
 	if !orgIDRE.MatchString(configuredOrgID) {
-		return nil
+		return fmt.Errorf("the configured organization id %q is not a valid linkedin organization id (expected digits only), so campaign creation on this connection cannot build a valid organization urn", configuredOrgID)
 	}
 	// found/matchErr are set from inside visit and read after the walk returns; walk only
 	// ever calls visit synchronously from the same goroutine, so this is not a data race.

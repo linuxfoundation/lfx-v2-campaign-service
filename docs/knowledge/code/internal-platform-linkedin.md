@@ -551,13 +551,22 @@ not be undone by a LATER, unrelated page then failing; before this walk stopped 
 target was found, a mismatch found on page one could be discarded by a page-two failure and
 silently reported as `OK: true` (see the 2026-09-23 log entry below). Follows the same
 fail-closed-only-on-a-CONFIRMED-fact discipline as `resolveOrgID` (`targeting.go`): an
-empty/person-scoped reference, a missing configured org id, or a configured org id that fails
-`orgIDRE` (non-numeric — LinkedIn's own reference is always numeric, so it can never be the
-DIFFERENT organization a confirmed disagreement requires) are all INCONCLUSIVE (`nil` — nothing
+empty/person-scoped reference or a missing configured org id is INCONCLUSIVE (`nil` — nothing
 to confirm or refute). `account.OrgID != configuredOrgID` is one CONFIRMED-fact case and returns
 an error; `accountID` never appearing anywhere in a walk that completed without error is the
 other — a complete walk that never saw the target means this token genuinely cannot reach the
 configured account, not that the walk merely missed it.
+
+A configured org id that fails `orgIDRE` (non-numeric) is a THIRD confirmed-fact case, and is
+refused BEFORE the walk runs — no request is made, because the verdict follows from the stored
+value alone. It was previously treated as inconclusive on the grounds that a non-numeric value
+can never be the DIFFERENT organization a confirmed disagreement requires. That reasoning
+answers the wrong question: it is sound about *mismatch*, but `orgIDRE` is this client's
+configuration invariant, and `resolveOrgID` refuses the very same value because it cannot build
+a valid `urn:li:organization:<id>` — so such a connection is already guaranteed to fail campaign
+creation, and `TestLinkedinAds` was reporting `OK: true` for it. The error deliberately does NOT
+describe it as a mismatch: the value never was a comparable org id, and naming a "different
+organization" would send an operator hunting a tenant mixup instead of fixing a malformed field.
 
 A non-authentication failure of the walk ITSELF (upstream/transport error, the page cap on a
 very large token) is a third, distinct outcome: it proves nothing about the pairing either
