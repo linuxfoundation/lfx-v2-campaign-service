@@ -457,9 +457,14 @@ func (s *ConnectionService) deleteConn(ctx context.Context, projectID string, p 
 	return mapErr(repo.Delete(ctx, projectID, p, actorFromCtx(ctx)))
 }
 
-// testConn verifies the stored credential against the provider. Upstream
-// verification is not yet implemented; it reports the connection exists and is
-// pending real verification (LFXV2-2556 follow-up / provider adapters).
+// testConn reports whether a connection row exists and carries a credential. It performs NO
+// upstream call itself (LFXV2-2556 follow-up / provider adapters), and its OK is exactly
+// HasCredentials().
+//
+// Callers that DO verify upstream layer it on top of this baseline — TestLinkedinAds does —
+// which makes the generic message below wrong for them in the !OK case, since for those
+// providers verification is implemented and the real reason is an absent credential. Such a
+// caller is expected to replace the message before returning it.
 func (s *ConnectionService) testConn(ctx context.Context, projectID string, p model.Provider) (*conn.ConnectionTestResult, error) {
 	if err := rejectSystemScope(projectID); err != nil {
 		return nil, err

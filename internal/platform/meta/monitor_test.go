@@ -368,3 +368,27 @@ func TestListAccountCampaigns_MissingCursor_IsAnError(t *testing.T) {
 		t.Fatal("expected an error for a paging.next with no cursor, got nil")
 	}
 }
+
+// TestListAccountCampaigns_InsightsRowMissingCampaignID_IsRejected pins the round-31 review
+// fix at monitor.go:284-291: an insights row with no campaign_id cannot be attributed to any
+// specific campaign — there is no id to mark FetchFailed on individually, unlike the malformed
+// impressions/clicks/spend cases above. Silently skipping the row instead of rejecting the
+// whole read would let ListAccountCampaigns read that campaign's real activity as a legitimate
+// zero, restoring the exact false-zero-delivery bug Copilot flagged on this range (PR #215
+// post-merge review comment).
+func TestListAccountCampaigns_InsightsRowMissingCampaignID_IsRejected(t *testing.T) {
+	insightsMissingCampaignID := `{"data":[{"campaign_id":"","impressions":"1000","clicks":"50","spend":"12.50"}],"paging":{}}`
+	srv, _ := monitorPageResponses(t,
+		[]string{campaignPage("111", "Campaign One", StatusActive, false)},
+		[]string{insightsMissingCampaignID},
+	)
+	c := newMonitorClient(srv)
+
+	_, err := c.ListAccountCampaigns(context.Background(), "act_123", 30)
+	if err == nil {
+		t.Fatal("an insights row with no campaign_id was accepted, silently attributing its metrics to no campaign")
+	}
+	if !strings.Contains(err.Error(), "campaign_id") {
+		t.Errorf("error = %v, want it to report the missing campaign_id", err)
+	}
+}

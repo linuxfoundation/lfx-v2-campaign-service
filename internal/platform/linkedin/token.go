@@ -113,7 +113,12 @@ func (e *applicationCredentialsError) Unwrap() error { return ErrApplicationCred
 // a service defect, file a bug". Nothing an operator owns is broken.
 //
 // PERMANENT, never retryable: nothing about waiting changes a request this client is
-// building wrongly.
+// building wrongly. That property is what makes this sentinel the right home for the
+// OTHER permanently-failing exchanges too (permanentTokenExchangeError): a token endpoint
+// answering 403/404/410, a 200 carrying no usable token, a request that could not be built.
+// Each shares both halves of this contract — no stored credential was evaluated on the
+// merits, and the remedy belongs to this service — so they report as one greppable reason
+// rather than as a fourth sentinel meaning the same thing.
 var ErrTokenRequestRejected = errors.New("linkedin rejected the token request itself")
 
 // tokenRequestRejectedError names the connection whose refresh could not be attempted
@@ -175,6 +180,64 @@ func (e *credentialsExpiredError) Error() string {
 }
 
 func (e *credentialsExpiredError) Unwrap() error { return ErrCredentialsExpired }
+
+// errTokenExchangeFailed marks every failure of the OAuth2 token exchange that is NOT one of
+// the three classified credential faults: a transport failure, an unreadable or oversized body,
+// a status outside 400/401, a malformed success. All of them share one property callers need —
+// no LinkedIn API request was ever made, so nothing downstream ran.
+//
+// It says nothing about whether a RETRY could help, which is a second, independent question
+// this marker deliberately does not answer: see permanentTokenExchangeError, which carries this
+// same marker for the members that can never succeed.
+//
+// It exists for SafeInconclusiveDetail, which classifies by type and had no way to tell these
+// apart from the ad-account walk's own completeness guards. It therefore labelled a token
+// endpoint that was unreachable or answering 503 as a LinkedIn response that failed a guard,
+// sending an operator to inspect a discovery response that was never requested.
+var errTokenExchangeFailed = errors.New("linkedin token exchange failed")
+
+// tokenExchangeError attaches errTokenExchangeFailed WITHOUT adding text: these messages are
+// already built from classification alone and read correctly as they are, and this package
+// wraps nothing into them that a caller renders.
+type tokenExchangeError struct{ err error }
+
+func (e *tokenExchangeError) Error() string        { return e.err.Error() }
+func (e *tokenExchangeError) Unwrap() error        { return e.err }
+func (e *tokenExchangeError) Is(target error) bool { return target == errTokenExchangeFailed }
+
+func tokenExchangeFailure(err error) error { return &tokenExchangeError{err: err} }
+
+// permanentTokenExchangeError marks the subset of those failures that CANNOT succeed on a
+// retry, and it is the difference between the two that matters.
+//
+// errTokenExchangeFailed alone leaves an error carrying no classified sentinel, and
+// VerifyAccountOrgReference folds every such error into ErrOrgVerificationInconclusive — the
+// bucket TestLinkedinAds maps to OK: true. That is correct for a token endpoint that is
+// unreachable, answering 5xx, rate-limiting, or dropping a body mid-read: a later attempt
+// genuinely may complete. It is WRONG for a token endpoint answering 403 or 404, for a 200
+// carrying no access_token, and for a request this service could not even build — none of those
+// clears on its own, so the connection test would answer "healthy" for a permanently broken
+// credential path forever. That is the same "broken connection reported healthy" defect the
+// discovery walk's 4xx escape exists to close, reached one hop earlier.
+//
+// It answers Is for TWO targets, deliberately. errTokenExchangeFailed keeps
+// SafeInconclusiveDetail's token-exchange branch correct for anything that still reaches it.
+// ErrTokenRequestRejected is what does the real work: VerifyAccountOrgReference's credential
+// unwrap already lets that sentinel out of the inconclusive bucket, linkedinExpiry already maps
+// it to domain.ErrServiceDefect alongside domain.ErrTokenRequestRejected, and
+// unusableConnectionReason already logs token_request_rejected. So this reuses a contract that
+// already says exactly the right thing — the remedy is "fix this service", not "edit the stored
+// credential" — instead of adding a fourth sentinel that would mean the same and split the
+// vocabulary an operator greps.
+type permanentTokenExchangeError struct{ err error }
+
+func (e *permanentTokenExchangeError) Error() string { return e.err.Error() }
+func (e *permanentTokenExchangeError) Unwrap() error { return e.err }
+func (e *permanentTokenExchangeError) Is(target error) bool {
+	return target == errTokenExchangeFailed || target == ErrTokenRequestRejected
+}
+
+func permanentTokenExchangeFailure(err error) error { return &permanentTokenExchangeError{err: err} }
 
 // tokenRefreshError wraps a transport failure of the OAuth2 token exchange. Error()
 // renders only text this package owns; Unwrap preserves the (already-redacted) cause so
@@ -375,7 +438,9 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", fmt.Errorf("build linkedin token request: %w", err)
+		// PERMANENT: the request was never sent, and nothing about a stored credential can
+		// make an unbuildable request buildable. Retrying repeats the same failure.
+		return "", permanentTokenExchangeFailure(fmt.Errorf("build linkedin token request: %w", err))
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
@@ -407,10 +472,10 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// Steps, so the leak would be durable. redactBodyReadError rebuilds the cause from
 		// its classification, preserving context.Canceled/DeadlineExceeded for errors.Is
 		// while rendering no untrusted text.
-		return "", fmt.Errorf("read linkedin token response: %w", redactBodyReadError(err))
+		return "", tokenExchangeFailure(fmt.Errorf("read linkedin token response: %w", redactBodyReadError(err)))
 	}
 	if int64(buf.Len()) > maxResponseBytes {
-		return "", fmt.Errorf("linkedin token response exceeds %d bytes", maxResponseBytes)
+		return "", tokenExchangeFailure(fmt.Errorf("linkedin token response exceeds %d bytes", maxResponseBytes))
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -502,7 +567,16 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 					resp.StatusCode),
 			}
 		}
-		return "", fmt.Errorf("linkedin token refresh -> %d", resp.StatusCode)
+		// 400 and 401 are classified above. What is left splits the same way the ad-account
+		// walk's 4xx escape splits, and for the same reason: a 429 is an interrupted attempt
+		// and a 5xx is LinkedIn failing to answer, so both stay retryable — but a 403, 404 or
+		// 410 is LinkedIn RECEIVING this exchange and refusing it, permanently. Folding those
+		// into the inconclusive bucket reports a connection that can never mint a token as
+		// OK: true, forever.
+		if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < http.StatusInternalServerError {
+			return "", permanentTokenExchangeFailure(fmt.Errorf("linkedin token refresh -> %d", resp.StatusCode))
+		}
+		return "", tokenExchangeFailure(fmt.Errorf("linkedin token refresh -> %d", resp.StatusCode))
 	}
 
 	var tok tokenResponse
@@ -519,11 +593,18 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// is defence in depth, not a demonstrated leak. It matches what the sibling decode
 		// at metrics.go already does for the same reason, and it means every arm of this
 		// function now rebuilds its error from classification rather than forwarding text.
-		return "", fmt.Errorf("decode linkedin token response: malformed JSON (%d bytes)", buf.Len())
+		// PERMANENT, by the repo's own asymmetry rule. A 2xx whose body is not JSON is a
+		// protocol violation, not a busy server; treating it as retryable is what reports the
+		// connection healthy. Over-escalating here is cheap — it answers a 500 that reaches
+		// THIS service's owners, and sends no operator to audit a configuration that is fine.
+		return "", permanentTokenExchangeFailure(fmt.Errorf("decode linkedin token response: malformed JSON (%d bytes)", buf.Len()))
 	}
 	if tok.AccessToken == "" {
-		// Fail closed: never fall back to the stale token on a malformed success.
-		return "", errors.New("linkedin token refresh returned an empty access_token")
+		// Fail closed: never fall back to the stale token on a malformed success. PERMANENT
+		// for the same reason as the decode failure above — a 200 with no access_token is a
+		// contract violation, and calling it inconclusive answers OK: true for a connection
+		// that never actually obtained a token.
+		return "", permanentTokenExchangeFailure(errors.New("linkedin token refresh returned an empty access_token"))
 	}
 
 	// expires_in may be absent or non-positive; default so a missing value neither
