@@ -1359,13 +1359,25 @@ the new sentinel would inherit the default and report `OK: true` with an advisor
 reported as healthy, the exact shape LFXV2-2665 exists to remove.
 
 The fallback is deliberately **conservative**, and that asymmetry is the whole safety argument.
-Only a positively-identified RFC code, or a status no token endpoint answers a well-formed
-refresh with at all (`3xx`, `404`, `405`, anything else), is reclassified. An unrecognised body
+The **status gates the body**, never the reverse: only `400`, `401` and `403` are statuses a
+token endpoint genuinely uses to refuse, so only for those is the body read at all. Everything
+else is the request, whatever arrived with it — an OAuth-shaped body CAN accompany a `404` or a
+`302`, from a proxy, a gateway error page, or whatever now answers at the moved address, and
+reading the body first let `{"error":"invalid_grant"}` on a `404` report a credential the
+platform never evaluated as refused. An unrecognised body
 on a `400`, `401` or `403` stays a credential verdict — promoting it would turn the ordinary
 revoked-token case, the failure this whole endpoint exists to catch, into a `500` that pages us
 instead of an answer the operator can act on. Only the allowlisted `error` code is ever read out
 of the body, and it is compared against rather than rendered: that request carried the client
 secret and the refresh token, and an OAuth or proxy diagnostic body may reflect them.
+
+A body this client cannot use — a read failure, or one past `maxResponseBytes` — must not erase
+the STATUS either. Returning a bare read or size error ahead of the classification dropped the
+failure out of BOTH predicates, so `ProbeInconclusive`'s default answered `true` and a plain
+`401` with an oversized body reported the connection as `OK: true`. The status is kept and
+classified with a **nil** body, which carries no allowlisted code and so takes the conservative
+fallback. The read error is still returned for a `2xx`, where the body IS the answer and there is
+no status to fall back on.
 
 Reddit and Microsoft carry the same pair and the same classifier, duplicated rather than shared
 because each platform package owns its own error vocabulary and the sentinel sets are not

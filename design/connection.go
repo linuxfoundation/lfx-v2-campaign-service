@@ -233,9 +233,21 @@ var ConnServiceUnavailableError = Type("conn-service-unavailable-error", func() 
 	errorAttrs("503", "The service is unavailable.")
 })
 
-// TestResult is the outcome of verifying a credential against the provider.
+// TestResult is the outcome of verifying a connection against the provider.
+//
+// `ok` answers "is this connection usable as configured", which is broader than "did the
+// credential authenticate" and deliberately so (LFXV2-2665). An authenticated credential
+// still fails the test when the connection names no ad account, names one the platform
+// cannot reach as configured, or names one that cannot host a campaign — a Google Ads
+// manager account, or an account Google reports as not enabled. Those verdicts say in
+// `message` that the credential authenticated, precisely so an account-selection failure is
+// not read as a reason to rotate a working credential.
+//
+// `ok` is also true for an INCONCLUSIVE check — a rate limit, a 5xx, a transport failure —
+// where nothing was learned either way; `message` carries the advisory. A client must read
+// `message` rather than treating `ok` alone as proof the connection was verified.
 var TestResult = Type("connection-test-result", func() {
-	Attribute("ok", Boolean, "Whether the credential authenticated against the provider")
+	Attribute("ok", Boolean, "Whether the connection verified as configured: the credential authenticated AND the configured account is usable. Also true when the check could not be completed — read message")
 	Attribute("message", String, "Human-readable detail")
 	Required("ok")
 })

@@ -498,7 +498,9 @@ type CampaignRef struct {
 // ConnectionTestResult is the result type of the
 // lfx-v2-campaign-service-connections service test-google-ads method.
 type ConnectionTestResult struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection verified as configured: the credential authenticated
+	// AND the configured account is usable. Also true when the check could not be
+	// completed — read message
 	OK bool
 	// Human-readable detail
 	Message *string

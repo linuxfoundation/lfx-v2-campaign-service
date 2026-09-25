@@ -131,6 +131,20 @@ const (
 // an answer for the operator. Only a status no token endpoint answers a well-formed refresh
 // with (3xx, 404, 405, anything else) is reclassified on status alone.
 func classifyTokenRefusal(statusCode int, body []byte) error {
+	// The STATUS gates the body, never the other way round. A 3xx, 404 or 405 is not a status
+	// any token endpoint answers a well-formed refresh with, so nothing arriving alongside one
+	// is a verdict on the credential — and an OAuth-shaped body CAN arrive with one, from a
+	// proxy, a gateway error page, or whatever now answers at the moved address. Reading the
+	// body first let a 404 carrying {"error":"invalid_grant"} report a credential the platform
+	// never evaluated as refused, which is the exact misclassification this function exists to
+	// remove.
+	switch statusCode {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
+		// The three statuses a token endpoint genuinely uses to refuse. Only here is the body
+		// worth reading, and only for its allowlisted code.
+	default:
+		return ErrTokenRequestRejected
+	}
 	var envelope struct {
 		Error string `json:"error"`
 	}
@@ -142,10 +156,5 @@ func classifyTokenRefusal(statusCode int, body []byte) error {
 			return ErrTokenRequestRejected
 		}
 	}
-	switch statusCode {
-	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
-		return ErrCredentialRejected
-	default:
-		return ErrTokenRequestRejected
-	}
+	return ErrCredentialRejected
 }

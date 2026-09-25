@@ -683,12 +683,21 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// A body this client cannot use must not erase the STATUS. Returning a bare read or size
+	// error here — ahead of the classification below — drops the failure out of BOTH probe
+	// predicates, so ProbeInconclusive's unrecognised-error default answers true and a plain
+	// 401 with a truncated or oversized body reports the connection as OK: true. That is the
+	// false-positive LFXV2-2665 exists to remove, arriving through the one door left open.
+	// The status is kept and classified; an unusable body is passed as nil, which carries no
+	// allowlisted code and so takes classifyTokenRefusal's conservative fallback. The error is
+	// still reported when the response was a 2xx, where the body IS the answer and there is no
+	// status to fall back on.
 	buf := new(bytes.Buffer)
+	var bodyErr error
 	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
-		return "", fmt.Errorf("read token response: %w", err)
-	}
-	if int64(buf.Len()) > maxResponseBytes {
-		return "", fmt.Errorf("token response exceeds %d bytes", maxResponseBytes)
+		bodyErr = fmt.Errorf("read token response: %w", err)
+	} else if int64(buf.Len()) > maxResponseBytes {
+		bodyErr = fmt.Errorf("token response exceeds %d bytes", maxResponseBytes)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Do NOT echo the token-endpoint body: this request carried the client
@@ -722,8 +731,15 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// rejections they told the operator to replace a credential Microsoft never
 		// looked at. classifyTokenRefusal reads only the allowlisted error CODE and
 		// still renders nothing from the body.
+		var body []byte
+		if bodyErr == nil {
+			body = buf.Bytes()
+		}
 		return "", fmt.Errorf("%w: microsoft-ads token refresh -> %d",
-			classifyTokenRefusal(resp.StatusCode, buf.Bytes()), resp.StatusCode)
+			classifyTokenRefusal(resp.StatusCode, body), resp.StatusCode)
+	}
+	if bodyErr != nil {
+		return "", bodyErr
 	}
 
 	var tok tokenResponse

@@ -248,7 +248,9 @@ type UpdateGoogleAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
 // HTTP response body.
 type TestGoogleAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection verified as configured: the credential authenticated
+	// AND the configured account is usable. Also true when the check could not be
+	// completed — read message
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -327,7 +329,9 @@ type UpdateLinkedinAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
 // HTTP response body.
 type TestLinkedinAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection verified as configured: the credential authenticated
+	// AND the configured account is usable. Also true when the check could not be
+	// completed — read message
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -409,7 +413,9 @@ type UpdateMetaAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
 // response body.
 type TestMetaAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection verified as configured: the credential authenticated
+	// AND the configured account is usable. Also true when the check could not be
+	// completed — read message
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -485,7 +491,9 @@ type UpdateRedditAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
 // HTTP response body.
 type TestRedditAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection verified as configured: the credential authenticated
+	// AND the configured account is usable. Also true when the check could not be
+	// completed — read message
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -561,7 +569,9 @@ type UpdateTwitterAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
 // HTTP response body.
 type TestTwitterAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection verified as configured: the credential authenticated
+	// AND the configured account is usable. Also true when the check could not be
+	// completed — read message
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -637,7 +647,9 @@ type UpdateMicrosoftAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
 // HTTP response body.
 type TestMicrosoftAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection verified as configured: the credential authenticated
+	// AND the configured account is usable. Also true when the check could not be
+	// completed — read message
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -731,7 +743,9 @@ type UpdateHubspotResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
 // response body.
 type TestHubspotResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection verified as configured: the credential authenticated
+	// AND the configured account is usable. Also true when the check could not be
+	// completed — read message
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`

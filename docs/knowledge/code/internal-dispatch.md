@@ -2106,6 +2106,32 @@ Flat mode (no `login_customer_id`) answers only reachable/unreachable, because
 absence there really does mean the credential does not address the account — the answer is
 narrower, not wrong.
 
+### Why the Microsoft probe carries the configured customer and the picker does not
+
+`cachedMicrosoftClient` builds the dispatch client with the stored `customer_id`, and
+`doCustomerRequest` sends it as the `CustomerId` header on every request — so a campaign runs
+under that customer and no other. The probe must therefore enumerate under that customer too.
+
+It used to pass a ZERO `AccountConfig`, which makes `discoveryCustomerIDs` walk every
+`CustomerRole` the credential holds. A connection whose `customer_id` was stale or simply wrong
+then passed its test whenever the configured account was reachable under some OTHER customer, and
+failed at campaign creation under the customer actually stored. `customer_id` is operator-settable
+through the connection config API, so that is a reachable state rather than a theoretical one.
+
+This is **not** the narrowing the Google Ads probe refuses, and the difference is whose filter it
+is. There the filtered walk belonged to the account PICKER and had nothing to do with dispatch, so
+absence from it proved nothing. Here the narrowing IS dispatch's, so absence from the enumeration
+is the true statement "not reachable as this connection is configured" — the verdict the operator
+needs, pointing at the account fields rather than the credential.
+
+With no customer configured the zero `AccountConfig` is still right, for the reason `ListAccounts`
+documents at length: the credential is then the whole question, and only walking every
+`CustomerRole` covers the set.
+
+`ListAccounts` — the account PICKER — keeps the zero config in both cases and deliberately does
+not scope to the stored customer, because its own contract promises every account the credential
+reaches. The two callers ask different questions, so they get different scopes.
+
 ### Why the Reddit probe is the one that builds its own client
 
 Every `ProbeConnection` resolves credentials through `d.creds.resolveOwned`. Reddit's, alone,

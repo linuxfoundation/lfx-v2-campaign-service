@@ -4,10 +4,13 @@
 package googleads
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // TestClassifyTokenRefusal pins the split added in LFXV2-2665: a non-2xx token-endpoint
@@ -38,6 +41,13 @@ func TestClassifyTokenRefusal(t *testing.T) {
 		{"a 302 is a redirect this client refused to follow", http.StatusFound, "", ErrTokenRequestRejected},
 		{"a 404 means the token endpoint moved", http.StatusNotFound, "not found", ErrTokenRequestRejected},
 		{"a 405 means the token endpoint moved", http.StatusMethodNotAllowed, "", ErrTokenRequestRejected},
+		// The status GATES the body. An OAuth-shaped body can arrive with a status no token
+		// endpoint answers a refresh with — from a proxy, a gateway error page, or whatever
+		// now answers at the moved address — and reading it first would report a credential
+		// the platform never evaluated as refused.
+		{"a 302 carrying an OAuth body is still the request, not the credential", http.StatusFound, `{"error":"invalid_grant"}`, ErrTokenRequestRejected},
+		{"a 404 carrying an OAuth body is still the request, not the credential", http.StatusNotFound, `{"error":"invalid_grant"}`, ErrTokenRequestRejected},
+		{"a 405 carrying an OAuth body is still the request, not the credential", http.StatusMethodNotAllowed, `{"error":"invalid_client"}`, ErrTokenRequestRejected},
 		// The conservative fallback. An unrecognised body on a status a token endpoint DOES
 		// use to refuse a credential stays a credential verdict: promoting it would turn the
 		// ordinary revoked-token case — the failure this endpoint exists to catch — into a
@@ -80,5 +90,37 @@ func TestTokenRefusalSentinelsRouteToOppositeOutcomes(t *testing.T) {
 	if ProbeInconclusive(request) {
 		t.Error("a request this service built wrong matched ProbeInconclusive, so probeClass " +
 			"would report OK with an advisory instead of raising the service defect it is")
+	}
+}
+
+// TestFetchToken_UnusableBodyKeepsTheStatusVerdict pins that a token-endpoint body this client
+// cannot use does not erase the STATUS (LFXV2-2665).
+//
+// The read and size guards used to return a bare error ahead of the status classification, and
+// that error matched neither probe predicate — so ProbeInconclusive's unrecognised-error default
+// answered true and a plain 401 with an oversized body reported the connection as OK: true. That
+// is the false positive this endpoint exists to remove, arriving through the one door the
+// classification left open. The status is kept; the unusable body is classified as nil, which
+// carries no allowlisted code and so takes the conservative fallback.
+func TestFetchToken_UnusableBodyKeepsTheStatusVerdict(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		// One byte past the cap, so the size guard fires on a status that IS a refusal.
+		_, _ = w.Write(make([]byte, maxResponseBytes+1))
+	}))
+	defer srv.Close()
+
+	_, err := NewClient(
+		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
+		AccountConfig{CustomerID: "1234567890"},
+		WithTokenURL(srv.URL),
+		WithClock(func() time.Time { return time.Unix(0, 0) }),
+	).fetchToken(context.Background())
+	if err == nil {
+		t.Fatal("fetchToken succeeded on a 401")
+	}
+	if !ProbeCredentialRejected(err) {
+		t.Fatalf("fetchToken = %v; a 401 with an unusable body did not match "+
+			"ProbeCredentialRejected, so a revoked refresh token would report OK: true", err)
 	}
 }

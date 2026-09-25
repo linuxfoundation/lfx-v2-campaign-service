@@ -483,10 +483,27 @@ func (d *MicrosoftDispatcher) ProbeConnection(ctx context.Context, projectID str
 		return res.systemScoped(verr)
 	}
 	subject.accountID = accountID
-	// AccountConfig is left ZERO for the reason ListAccounts documents at length: a
-	// configured CustomerID makes discoveryCustomerIDs treat that one customer as the
-	// complete answer and skip every other, which would narrow the enumeration this probe
-	// checks membership against.
+	// The probe enumerates under the SAME customer dispatch will use, and that is the whole
+	// point of carrying the configured id here.
+	//
+	// discoveryCustomerIDs treats a configured CustomerID as the complete answer and skips
+	// every other customer — which is exactly what cachedMicrosoftClient does for dispatch,
+	// where the id is stashed on the receiver and rides every request as the CustomerId
+	// header. A probe that left AccountConfig zero enumerated EVERY customer the credential
+	// reaches, so a connection whose customer_id is stale or simply wrong still passed its
+	// test whenever the account happened to be reachable under some other customer — and
+	// then failed at campaign creation, under the customer actually stored. customer_id is
+	// operator-settable through the connection config API, so that is a reachable state and
+	// not a theoretical one.
+	//
+	// This is NOT the narrowing Google Ads' probe refuses. There the filter belonged to the
+	// account PICKER and had nothing to do with dispatch, so absence from it proved nothing.
+	// Here the narrowing IS dispatch's, so absence from the enumeration is the true statement
+	// "not reachable as this connection is configured" — the verdict the operator needs.
+	//
+	// With no customer configured the zero AccountConfig is still right, and for the reason
+	// ListAccounts documents at length: the credential is then the whole question, and only
+	// walking every CustomerRole from User/Query covers the set.
 	client := microsoft.NewClient(
 		microsoft.Credentials{
 			ClientID:       creds.ClientID,
@@ -494,7 +511,7 @@ func (d *MicrosoftDispatcher) ProbeConnection(ctx context.Context, projectID str
 			DeveloperToken: creds.DeveloperToken,
 			RefreshToken:   creds.RefreshToken,
 		},
-		microsoft.AccountConfig{},
+		microsoft.AccountConfig{CustomerID: strings.TrimSpace(res.providerConfig["customer_id"])},
 		d.opts...,
 	)
 	adAccounts, lerr := client.ListAdAccounts(ctx)

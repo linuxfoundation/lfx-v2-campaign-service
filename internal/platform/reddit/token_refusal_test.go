@@ -38,6 +38,13 @@ func TestClassifyTokenRefusal(t *testing.T) {
 		{"a 302 is a redirect this client refused to follow", http.StatusFound, "", ErrTokenRequestRejected},
 		{"a 404 means the token endpoint moved", http.StatusNotFound, "not found", ErrTokenRequestRejected},
 		{"a 405 means the token endpoint moved", http.StatusMethodNotAllowed, "", ErrTokenRequestRejected},
+		// The status GATES the body. An OAuth-shaped body can arrive with a status no token
+		// endpoint answers a refresh with — from a proxy, a gateway error page, or whatever
+		// now answers at the moved address — and reading it first would report a credential
+		// the platform never evaluated as refused.
+		{"a 302 carrying an OAuth body is still the request, not the credential", http.StatusFound, `{"error":"invalid_grant"}`, ErrTokenRequestRejected},
+		{"a 404 carrying an OAuth body is still the request, not the credential", http.StatusNotFound, `{"error":"invalid_grant"}`, ErrTokenRequestRejected},
+		{"a 405 carrying an OAuth body is still the request, not the credential", http.StatusMethodNotAllowed, `{"error":"invalid_client"}`, ErrTokenRequestRejected},
 		// The conservative fallback. An unrecognised body on a status a token endpoint DOES
 		// use to refuse a credential stays a credential verdict: promoting it would turn the
 		// ordinary revoked-token case — the failure this endpoint exists to catch — into a
