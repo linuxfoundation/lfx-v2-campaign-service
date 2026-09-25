@@ -898,11 +898,14 @@ tweetId?: string                — An existing promotable tweet id to promote. 
                                   success.
 tweetText?: string               — Used ONLY when tweetId is empty: authors a NEW tweet carrying
                                   this text (the brief's UTM'd registration URL is appended if not
-                                  already embedded), then promotes it. The authored tweet is ALWAYS
-                                  promoted-only (`nullcast=true`, sent explicitly, never relied on
+                                  already embedded — that URL keeps its own existing query string
+                                  verbatim beside the UTM parameters, since it is the ad's real
+                                  click destination; its #fragment is dropped), then promotes it.
+                                  The authored tweet is ALWAYS promoted-only
+                                  (`nullcast=true`, sent explicitly, never relied on
                                   as X's default) — it never appears on the public timeline or to
                                   followers. Rejected pre-create if the composed text (counting any
-                                  embedded URL at X's fixed t.co weight of 23 characters, not its
+                                  embedded URL at X's fixed t.co weight of 23 characters each, not
                                   raw length) exceeds the 280-character cap. An authoring failure is
                                   non-fatal — the campaign + line item still return, degraded — with
                                   three distinct outcomes: a definite rejection (safe to retry/author

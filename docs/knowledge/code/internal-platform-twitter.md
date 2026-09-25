@@ -162,12 +162,24 @@ the caller can pin one. This mirrors the account/funding-instrument validation's
 URL (the real, non-display counterpart of the manual workflow's
 `displayTwitterUtmURL`, built by `buildTwitterUTMURL`) if the caller's text
 doesn't already embed it, then validates the composed text against X's
-280-character cap via `weightedTweetLen`. That helper counts embedded URLs at
-X's fixed t.co weight (23 characters) rather than their raw length — X always
-wraps posted URLs to a t.co link, so a raw-rune count would wrongly reject
-perfectly valid copy carrying a 120+ character UTM'd registration URL. This
-validation runs in the up-front pre-create block, before any mutating call, like
-every other CreateCampaign input check.
+280-character cap via `weightedTweetLen`. That helper SCANS the composed text
+for URLs and counts each at X's fixed t.co weight (23 characters) rather than
+its raw length — X always wraps posted URLs to a t.co link, so a raw-rune count
+would wrongly reject perfectly valid copy carrying a 120+ character UTM'd
+registration URL. It scans rather than being handed the one URL the composer
+appended, because a caller's own text may already embed that URL (the append is
+skipped then) or carry others of its own; weighting only the appended URL would
+reject exactly the copy X would accept. This validation runs in the up-front
+pre-create block, before any mutating call, like every other CreateCampaign
+input check.
+
+`buildTwitterUTMURL` diverges from `displayTwitterUtmURL` in one way that
+matters: it preserves the registration URL's own pre-existing query parameters
+verbatim alongside the UTM ones, because this URL is the ad's actual click
+destination and those parameters are frequently what routes the visitor.
+The display form strips them because its job is safe persistence, not routing.
+The fragment is dropped in both — it never reaches a server, so it cannot carry
+attribution and only widens what gets published.
 
 Authoring happens at **Step 4**, immediately before the `promoted_tweets` POST —
 deliberately NOT alongside the campaign/line-item creation earlier in the flow,
@@ -193,6 +205,16 @@ stays non-fatal exactly like the rest of Step 4 — only a `pace(ctx)` cancellat
 returns an error, and cancellation during authoring is itself split on
 `createOutcomeAmbiguous` first, so an ambiguous cancellation still retains the
 orchestrator's claim via a non-nil partial result.
+
+That partial result carries the authored tweet's id. `authoredTweetID` is
+declared ABOVE the `partialResult` closure rather than beside the other Step 4
+locals, because a published tweet is the only irreversible artifact this flow
+creates: the campaign and line item are `PAUSED` and are found-or-created by
+name on a retry, but a tweet is not, and it sits under the LF handle until
+somebody deletes it. A cancellation between authoring and the `promoted_tweets`
+POST therefore returns `AuthoredTweetID` populated and an error naming the
+tweet as PUBLISHED-but-unpromoted, instead of reporting `""` for a tweet that
+provably exists and leaving the prose Steps entry as its only trace.
 
 The authoring response's id is read by `extractTweetID`, not the generic
 `extractID` every other endpoint on this client uses: `accounts/:id/tweet`

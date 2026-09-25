@@ -9,9 +9,42 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 )
+
+// tweetRecorder captures what the authoring endpoint saw. Both fields are written
+// on the server's goroutine and read from the test goroutine, so they are returned
+// through accessors that take the mutex rather than as bare pointers: a raw
+// *int32/*url.Values pair puts the burden of remembering the edge on every call
+// site, and the url.Values half cannot be made atomic at all.
+type tweetRecorder struct {
+	mu     sync.Mutex
+	calls  int
+	params url.Values
+}
+
+func (r *tweetRecorder) record(q url.Values) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	r.params = q
+}
+
+func (r *tweetRecorder) Calls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
+// Param returns one captured query parameter. Returns "" when the endpoint was
+// never called, which the Calls() assertions distinguish.
+func (r *tweetRecorder) Param(k string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.params.Get(k)
+}
 
 // newAuthorTweetTestServer builds an httptest server that serves the campaign +
 // line item + promotable_users + tweet + promoted_tweets create/list endpoints a
@@ -20,10 +53,9 @@ import (
 // response when non-nil; otherwise it returns a fixed numeric id with its
 // matching id_str, mirroring the real Ads API's legacy v1.1-shaped tweet
 // object (a NUMERIC "id" — extractTweetID reads "id_str" instead).
-func newAuthorTweetTestServer(t *testing.T, handleTweet http.HandlerFunc, promotableUsers string) (*httptest.Server, *int32, *url.Values) {
+func newAuthorTweetTestServer(t *testing.T, handleTweet http.HandlerFunc, promotableUsers string) (*httptest.Server, *tweetRecorder) {
 	t.Helper()
-	var tweetCalls int32
-	var tweetParams url.Values
+	rec := &tweetRecorder{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
@@ -39,8 +71,7 @@ func newAuthorTweetTestServer(t *testing.T, handleTweet http.HandlerFunc, promot
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
 			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "tweet"):
-			atomic.AddInt32(&tweetCalls, 1)
-			tweetParams = r.URL.Query()
+			rec.record(r.URL.Query())
 			if handleTweet != nil {
 				handleTweet(w, r)
 				return
@@ -52,7 +83,7 @@ func newAuthorTweetTestServer(t *testing.T, handleTweet http.HandlerFunc, promot
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
-	return srv, &tweetCalls, &tweetParams
+	return srv, rec
 }
 
 func newAuthorTweetTestClient(baseURL string) *Client {
@@ -84,7 +115,7 @@ func baseAuthorInput(tweetText string) CampaignInput {
 // client authors a nullcast tweet and falls through into the existing
 // promoted_tweets POST with the new tweet id.
 func TestCreateCampaign_AuthorsAndPromotesTweet(t *testing.T) {
-	srv, tweetCalls, tweetParams := newAuthorTweetTestServer(t, nil, `{"data":[{"user_id":"u1","promotable_user_type":"FULL"}]}`)
+	srv, rec := newAuthorTweetTestServer(t, nil, `{"data":[{"user_id":"u1","promotable_user_type":"FULL"}]}`)
 	defer srv.Close()
 
 	c := newAuthorTweetTestClient(srv.URL)
@@ -92,21 +123,21 @@ func TestCreateCampaign_AuthorsAndPromotesTweet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if atomic.LoadInt32(tweetCalls) != 1 {
-		t.Fatalf("expected exactly 1 call to the tweet-authoring endpoint, got %d", *tweetCalls)
+	if rec.Calls() != 1 {
+		t.Fatalf("expected exactly 1 call to the tweet-authoring endpoint, got %d", rec.Calls())
 	}
 	// nullcast must be sent EXPLICITLY, never relied on as a default.
-	if got := tweetParams.Get("nullcast"); got != "true" {
+	if got := rec.Param("nullcast"); got != "true" {
 		t.Errorf("nullcast param = %q, want \"true\"", got)
 	}
-	if got := tweetParams.Get("as_user_id"); got != "u1" {
+	if got := rec.Param("as_user_id"); got != "u1" {
 		t.Errorf("as_user_id param = %q, want the auto-resolved single promotable user \"u1\"", got)
 	}
-	if !strings.Contains(tweetParams.Get("text"), "Join us at KubeCon") {
-		t.Errorf("text param = %q, want it to contain the caller's tweet text", tweetParams.Get("text"))
+	if !strings.Contains(rec.Param("text"), "Join us at KubeCon") {
+		t.Errorf("text param = %q, want it to contain the caller's tweet text", rec.Param("text"))
 	}
-	if !strings.Contains(tweetParams.Get("text"), "https://events.lf.org/kubecon") {
-		t.Errorf("text param = %q, want the destination URL appended", tweetParams.Get("text"))
+	if !strings.Contains(rec.Param("text"), "https://events.lf.org/kubecon") {
+		t.Errorf("text param = %q, want the destination URL appended", rec.Param("text"))
 	}
 	if res.AuthoredTweetID != "123456789" {
 		t.Errorf("AuthoredTweetID = %q, want \"123456789\"", res.AuthoredTweetID)
@@ -124,7 +155,7 @@ func TestCreateCampaign_AuthorsAndPromotesTweet(t *testing.T) {
 // the supplied id is promoted as-is, and a step records that the text was
 // ignored.
 func TestCreateCampaign_ExplicitTweetIDWinsOverText(t *testing.T) {
-	srv, tweetCalls, _ := newAuthorTweetTestServer(t, nil, `{"data":[{"user_id":"u1"}]}`)
+	srv, rec := newAuthorTweetTestServer(t, nil, `{"data":[{"user_id":"u1"}]}`)
 	defer srv.Close()
 
 	c := newAuthorTweetTestClient(srv.URL)
@@ -134,8 +165,8 @@ func TestCreateCampaign_ExplicitTweetIDWinsOverText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if atomic.LoadInt32(tweetCalls) != 0 {
-		t.Fatalf("explicit TweetID must win: expected 0 calls to the tweet-authoring endpoint, got %d", *tweetCalls)
+	if rec.Calls() != 0 {
+		t.Fatalf("explicit TweetID must win: expected 0 calls to the tweet-authoring endpoint, got %d", rec.Calls())
 	}
 	if res.AuthoredTweetID != "" {
 		t.Errorf("AuthoredTweetID = %q, want empty — no tweet was authored", res.AuthoredTweetID)
@@ -185,7 +216,7 @@ func TestCreateCampaign_WeightedLengthRejectionPreMutation(t *testing.T) {
 // published), not a clean success and not a definite failure — mirrors the
 // promoted_tweets 2xx-no-id handling.
 func TestCreateCampaign_AuthorTweet2xxNoIDDegrades(t *testing.T) {
-	srv, _, _ := newAuthorTweetTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	srv, _ := newAuthorTweetTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{}}`))
 	}, `{"data":[{"user_id":"u1"}]}`)
 	defer srv.Close()
@@ -214,7 +245,7 @@ func TestCreateCampaign_AuthorTweet2xxNoIDDegrades(t *testing.T) {
 // so the outcome must be reported UNCONFIRMED (verify before retry), never as a
 // definite failure that invites a blind retry and a duplicate publish.
 func TestCreateCampaign_AuthorTweetAmbiguousIsUnconfirmed(t *testing.T) {
-	srv, _, _ := newAuthorTweetTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	srv, _ := newAuthorTweetTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}, `{"data":[{"user_id":"u1"}]}`)
 	defer srv.Close()
@@ -236,7 +267,7 @@ func TestCreateCampaign_AuthorTweetAmbiguousIsUnconfirmed(t *testing.T) {
 // no tweet was published, so the warning must say so plainly and must NOT say
 // UNCONFIRMED (that wording is reserved for outcomes that may have committed).
 func TestCreateCampaign_AuthorTweetDefiniteFailure(t *testing.T) {
-	srv, _, _ := newAuthorTweetTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+	srv, _ := newAuthorTweetTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 	}, `{"data":[{"user_id":"u1"}]}`)
 	defer srv.Close()
@@ -260,7 +291,7 @@ func TestCreateCampaign_AuthorTweetDefiniteFailure(t *testing.T) {
 // client's postsToDeadPortTransport precedent.
 func TestCreateCampaign_AuthorTweetPreSendDialFailure(t *testing.T) {
 	deadURL := "http://127.0.0.1:1"
-	srv, _, _ := newAuthorTweetTestServer(t, nil, `{"data":[{"user_id":"u1"}]}`)
+	srv, _ := newAuthorTweetTestServer(t, nil, `{"data":[{"user_id":"u1"}]}`)
 	defer srv.Close()
 
 	c := NewClient(

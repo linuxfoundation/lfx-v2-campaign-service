@@ -246,6 +246,10 @@ func TestTwitter_NoTweetIDIsDegradedNotCleanCreated(t *testing.T) {
 // and a fully successful author+promote run must persist as a clean `created`
 // (not created_degraded) — the whole point of closing the manual-tweet gap.
 func TestTwitter_TweetTextIsMappedAndAuthorsCleanCreated(t *testing.T) {
+	// Guarded: the handler runs on the server's goroutine and these are read from the
+	// test goroutine below, so the assertions need a happens-before edge rather than
+	// the incidental one a single in-flight request happens to provide today.
+	var mu sync.Mutex
 	var tweetHit bool
 	var tweetParams string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -261,8 +265,10 @@ func TestTwitter_TweetTextIsMappedAndAuthorsCleanCreated(t *testing.T) {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
 			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "tweet"):
+			mu.Lock()
 			tweetHit = true
 			tweetParams = r.URL.RawQuery
+			mu.Unlock()
 			_, _ = w.Write([]byte(`{"data":{"id":123456789,"id_str":"123456789"}}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
 			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
@@ -281,14 +287,17 @@ func TestTwitter_TweetTextIsMappedAndAuthorsCleanCreated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	if !tweetHit {
+	mu.Lock()
+	gotTweetHit, gotTweetParams := tweetHit, tweetParams
+	mu.Unlock()
+	if !gotTweetHit {
 		t.Fatal("the adapter must POST the tweet-authoring endpoint when tweetText is configured")
 	}
-	if !strings.Contains(tweetParams, "as_user_id=u1") {
-		t.Errorf("tweet authoring request must carry the configured asUserId, got query: %q", tweetParams)
+	if !strings.Contains(gotTweetParams, "as_user_id=u1") {
+		t.Errorf("tweet authoring request must carry the configured asUserId, got query: %q", gotTweetParams)
 	}
-	if !strings.Contains(tweetParams, "nullcast=true") {
-		t.Errorf("tweet authoring request must send nullcast=true explicitly, got query: %q", tweetParams)
+	if !strings.Contains(gotTweetParams, "nullcast=true") {
+		t.Errorf("tweet authoring request must send nullcast=true explicitly, got query: %q", gotTweetParams)
 	}
 	if camp.Status != campaignStatusCreated {
 		t.Errorf("a fully authored+promoted tweet must persist as a clean %q, got %q", campaignStatusCreated, camp.Status)

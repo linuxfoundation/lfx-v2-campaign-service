@@ -1601,11 +1601,22 @@ func twitterUTMParams(in CampaignInput) map[string]string {
 
 // buildTwitterUTMURL builds the REAL destination URL sent to X as part of an
 // authored tweet's text — the non-display counterpart of displayTwitterUtmURL
-// below. Unlike the display helper (which drops the registration URL's
-// original query/fragment for safe persistence), this is not itself persisted
-// raw: it is embedded in TweetText, and TweetText/Steps use the sanitized
-// display form. validateRegistrationURL must be called before this — it does
-// not re-validate.
+// below. It is not itself persisted raw: it is embedded in TweetText, and
+// TweetText/Steps use the sanitized display form. validateRegistrationURL must
+// be called before this — it does not re-validate.
+//
+// THE REGISTRATION URL'S PRE-EXISTING QUERY IS PUBLISHED VERBATIM, and that is a
+// deliberate divergence from displayTwitterUtmURL, which strips it. The display
+// form's job is safe PERSISTENCE, so it can afford to drop params; this one is
+// the ad's actual click destination, and dropping a routing param would send
+// real traffic to the wrong page. The consequence is that a brief's registration
+// URL becomes publicly visible — in the tweet and in X Ads Manager — so it must
+// not carry a secret (a ?token=... style credential). docs/api-catalog.md states
+// the same constraint on the consumer-facing side.
+//
+// The FRAGMENT is dropped: it is never transmitted to a server, so it cannot
+// affect routing or attribution, and carrying it would widen that public exposure
+// for nothing.
 func buildTwitterUTMURL(in CampaignInput) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(in.RegistrationURL))
 	if err != nil || !u.IsAbs() || u.Hostname() == "" {
@@ -1616,25 +1627,48 @@ func buildTwitterUTMURL(in CampaignInput) (string, error) {
 		q.Set(k, v)
 	}
 	u.RawQuery = q.Encode()
+	u.Fragment, u.RawFragment = "", ""
 	return u.String(), nil
 }
 
-// weightedTweetLen counts s the way X counts a Tweet's length: every
-// http/https URL substring is counted at the fixed tcoURLWeight rather than
-// its literal rune length (X always wraps a URL to a t.co link of that
-// weight). This is a best-effort approximation (X's own weighted-length
-// rules cover more than URLs), sufficient to reject an obviously-oversized
-// composed tweet before it reaches the API.
-func weightedTweetLen(s string, urls ...string) int {
+// authoredTweetStatus renders, for a partial-failure error message, whether this
+// call published a tweet — the one artifact in this flow a retry does NOT reuse.
+// Empty when nothing was authored, so it appends nothing to the campaign/line-item
+// status pair it sits beside.
+func authoredTweetStatus(id string) string {
+	if id == "" {
+		return ""
+	}
+	return fmt.Sprintf(" / authored tweet %s PUBLISHED, not yet promoted", id)
+}
+
+// tweetURLRe matches the URL runs X replaces with a t.co link: an http/https
+// scheme through to the next whitespace. Deliberately not a full URL grammar —
+// see weightedTweetLen's best-effort note.
+var tweetURLRe = regexp.MustCompile(`https?://\S+`)
+
+// weightedTweetLen counts s the way X counts a Tweet's length: EVERY http/https
+// URL in s is counted at the fixed tcoURLWeight rather than its literal rune
+// length, because X wraps every URL it finds — not only the destination URL this
+// client appends — to a t.co link of that weight.
+//
+// Scanning s is the point, and is what the helper's contract always claimed. An
+// earlier revision discounted only URLs the caller passed in, so a URL the
+// operator had typed into their OWN copy was counted at full rune length: copy
+// composed to the documented rule, and accepted by X, was rejected before the
+// create. Counting every occurrence rather than the first matters for the same
+// reason — X weights each one.
+//
+// Still a best-effort approximation: X's weighted-length rules cover more than
+// URLs (CJK runes count double, which this does not model). That residue can only
+// make this count LOW relative to X, so it never invents a rejection — an
+// over-long tweet X refuses comes back as a 4xx and degrades non-fatally, which is
+// the safe direction for a guard whose job is catching the obvious case.
+func weightedTweetLen(s string) int {
 	n := utf8.RuneCountInString(s)
-	for _, u := range urls {
-		if u == "" {
-			continue
-		}
-		if idx := strings.Index(s, u); idx >= 0 {
-			n -= utf8.RuneCountInString(u)
-			n += tcoURLWeight
-		}
+	for _, u := range tweetURLRe.FindAllString(s, -1) {
+		n -= utf8.RuneCountInString(u)
+		n += tcoURLWeight
 	}
 	return n
 }
@@ -1657,7 +1691,7 @@ func composeTweetText(callerText, destURL string) (string, error) {
 	if !strings.Contains(full, destURL) {
 		full = trimmed + " " + destURL
 	}
-	if n := weightedTweetLen(full, destURL); n > maxTweetWeightedChars {
+	if n := weightedTweetLen(full); n > maxTweetWeightedChars {
 		return "", fmt.Errorf("invalid tweet text: weighted length %d (including the destination URL) exceeds X's %d-character limit", n, maxTweetWeightedChars)
 	}
 	return full, nil
@@ -1924,8 +1958,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// empty (an explicit TweetID always wins — see CampaignInput's doc). Only
 	// validate it when it will actually be used: if both are supplied, the text
 	// is ignored (a step records that), so a malformed-but-unused TweetText must
-	// not fail an otherwise-valid campaign. composedTweetText/composedDestURL are
-	// precomputed here (before any mutating call) so Step 4 need not re-validate.
+	// not fail an otherwise-valid campaign. composedTweetText is precomputed here
+	// (before any mutating call) so Step 4 need not re-validate.
 	var composedTweetText string
 	if in.TweetID == "" && strings.TrimSpace(in.TweetText) != "" {
 		destURL, err := buildTwitterUTMURL(in)
@@ -2068,16 +2102,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// line item on retry) needs provider idempotency keys / the orchestrator claim,
 	// tracked in LFXV2-2665. Mirrors the meta/reddit clients' partial-result helper.
 	// lineItemID is captured by reference so the returned result includes it once
-	// Step 3 has created it.
+	// Step 3 has created it. authoredTweetID is captured for the same reason and is
+	// the most load-bearing of the three: a published tweet is the only IRREVERSIBLE
+	// artifact this flow creates — a PAUSED campaign and line item are reused by name
+	// on a retry, but a tweet is not, and it sits under the LF handle until someone
+	// deletes it. Declaring it below this closure (as it originally was) meant an
+	// abort between authoring and promotion persisted AuthoredTweetID: "" for a tweet
+	// that provably exists, leaving the prose Steps entry as its only trace.
 	var lineItemID string
 	var lineItemReused bool
+	var authoredTweetID string
 	partialResult := func() *CampaignResult {
 		return &CampaignResult{
-			Platform:     "twitter-ads",
-			CampaignName: campaignName,
-			CampaignID:   campaignID,
-			LineItemName: lineItemName,
-			LineItemID:   lineItemID,
+			Platform:        "twitter-ads",
+			CampaignName:    campaignName,
+			CampaignID:      campaignID,
+			LineItemName:    lineItemName,
+			LineItemID:      lineItemID,
+			AuthoredTweetID: authoredTweetID,
 			// Reused must be set on partial results too, not just the final success —
 			// a downstream error AFTER a campaign/line-item reuse still carries the
 			// config-drift signal (the closure reads the current campaignReused/
@@ -2173,7 +2215,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	tweetID := in.TweetID
 	var promotedTweetID string
 	var promotedTweetWarning string
-	var authoredTweetID string
+	// authoredTweetID is declared above the partialResult closure, not here, so an
+	// abort after a successful authoring still returns the tweet's id.
 
 	if tweetID != "" && strings.TrimSpace(in.TweetText) != "" {
 		// Explicit TweetID always wins (mirrors the reddit client's
@@ -2185,10 +2228,30 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, "Both an explicit tweet ID and tweet text were supplied; the explicit tweet ID is promoted and the tweet text is ignored")
 	}
 
+	// NOT find-or-create, unlike Steps 2 and 3. Authoring is unconditional, so a
+	// repeat CreateCampaign that REUSES the campaign and line item by name still
+	// publishes a second tweet. The orchestrator's claim short-circuits an ordinary
+	// re-dispatch, so the reachable case is an operator-initiated retry after a
+	// partial failure — which is exactly what the UNCONFIRMED warnings below invite.
+	//
+	// Deferred to the LFXV2-2665 idempotency work rather than solved here, because
+	// the guard needs a promoted_tweets read on the reused line item and a decision
+	// about what to do with a tweet that is published but unattached. What makes the
+	// deferral tolerable is the partial-result fix above: the authored tweet's id now
+	// survives every abort on this path, so the operator retrying has the handle to
+	// the existing tweet instead of only a prose Steps line.
 	if tweetID == "" && composedTweetText != "" {
 		if err := c.pace(ctx); err != nil {
 			return partialResult(), fmt.Errorf("x tweet authoring aborted (%s / %s): %w", campaignStatus(), lineItemStatus(), err)
 		}
+		// Resolution stays HERE, after the campaign and line item exist, rather than
+		// moving into the up-front validation block. A resolve failure is a non-fatal
+		// degrade — a PAUSED campaign and line item plus instructions to post the
+		// tweet manually — and that is the same treatment an authoring failure gets
+		// three lines below. Hoisting it would turn one of those two sibling outcomes
+		// into a hard "nothing created" failure while the other kept degrading, for no
+		// gain: the campaign and line item are found-or-created BY NAME, so the retry
+		// this degrade invites reuses them rather than accumulating duplicates.
 		asUserID, resolveErr := c.resolvePromotableUser(ctx, in.AsUserID)
 		if resolveErr != nil {
 			promotedTweetWarning = fmt.Sprintf("could not author a tweet: %s — post one manually, then add it as a promoted tweet in X Ads Manager", resolveErr.Error())
@@ -2227,11 +2290,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	if tweetID != "" {
 		if err := c.pace(ctx); err != nil {
-			// The campaign AND line item are already created (both PAUSED). Returning
-			// a nil result would discard both IDs, preventing cleanup/reconciliation
-			// and letting a caller retry create a duplicate. Return a partial result
-			// carrying both IDs (and the steps so far) alongside the wrapped error.
-			return partialResult(), fmt.Errorf("x promoted tweet creation aborted (%s / %s): %w", campaignStatus(), lineItemStatus(), err)
+			// The campaign AND line item are already created (both PAUSED), and when
+			// this call authored the tweet, so is that. Returning a nil result would
+			// discard every one of those IDs, preventing cleanup/reconciliation and
+			// letting a caller retry create a duplicate. Return a partial result
+			// carrying them (and the steps so far) alongside the wrapped error.
+			//
+			// The authored tweet is named in the message as well as the struct: it is
+			// the one artifact here that a retry will NOT reuse, so an operator
+			// reading only the error still learns a tweet is live and needs either
+			// promoting or deleting.
+			return partialResult(), fmt.Errorf("x promoted tweet creation aborted (%s / %s%s): %w", campaignStatus(), lineItemStatus(), authoredTweetStatus(authoredTweetID), err)
 		}
 		// The promoted_tweets endpoint does not accept entity_status; the API
 		// creates the association ACTIVE. Delivery is still gated by the PAUSED
