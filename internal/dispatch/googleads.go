@@ -890,11 +890,21 @@ func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscovery(ctx context.Context
 // to test. That matters more here than anywhere, because Google Ads is ONE shared customer
 // across every foundation (docs/architecture.md, "Account Tenancy").
 //
-// ListAccessibleCustomers is the right probe rather than merely a convenient one. It runs the
-// token refresh — the exact call that fails for a revoked refresh token, the production
-// failure this endpoint existed and did not catch — and in manager mode it answers with the
-// customers actually addressable THROUGH this client, so membership proves the connection can
-// dispatch rather than that some list mentions the id.
+// It asks via googleads.ProbeAccountReach rather than by checking membership of
+// ListAccessibleCustomers, and the difference is a verdict rather than a refactor. That
+// enumeration is the account PICKER's: in manager mode it is filtered to ENABLED, non-manager
+// clients, because those are the accounts a campaign may be created in. Presence in it does
+// prove the connection can dispatch. Absence proves nothing — a suspended, cancelled or closed
+// account, and a sub-manager account, are all reached perfectly well by the credential and all
+// missing from that list — so reading absence as unreachability reported "the google ads
+// credential authenticates but does not reach account X" about a credential that reaches X,
+// and sent the operator to repoint an account id that was correct. ProbeAccountReach runs the
+// same walk unfiltered and distinguishes the three.
+//
+// It is still the right probe for the half it always answered: it runs the token refresh — the
+// exact call that fails for a revoked refresh token, the production failure this endpoint
+// existed and did not catch — and in manager mode it answers about the customers actually
+// addressable THROUGH this client, rather than about some list that merely mentions the id.
 func (d *GoogleAdsDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
 	client, res, err := d.resolveOwnedGoogleAdsDiscovery(ctx, projectID, platform)
 	if err != nil {
@@ -918,15 +928,23 @@ func (d *GoogleAdsDispatcher) ProbeConnection(ctx context.Context, projectID str
 	if err := googleads.ValidateCustomerID(strings.TrimSpace(res.accountID)); err != nil {
 		return subject.accountIDNotUsable()
 	}
-	customers, lerr := client.ListAccessibleCustomers(ctx)
+	reach, lerr := client.ProbeAccountReach(ctx, strings.TrimSpace(res.accountID))
 	if lerr != nil {
 		return subject.probeClass(lerr, googleads.ProbeCredentialRejected, googleads.ProbeInconclusive)
 	}
-	reachable := make([]string, 0, len(customers))
-	for _, cust := range customers {
-		reachable = append(reachable, strings.TrimPrefix(cust.ResourceName, "customers/"))
+	switch reach {
+	case googleads.AccountReachable:
+		return nil
+	case googleads.AccountIsManager:
+		return subject.accountIsManagerAccount()
+	case googleads.AccountNotEnabled:
+		return subject.accountNotEnabled()
+	default:
+		// googleads.AccountUnreachable, and the zero value with it. Now a true statement: the
+		// walk behind it is unfiltered, so absence is absence from the hierarchy rather than
+		// absence from a list that had already dropped the account for being disabled.
+		return subject.accountNotReachable()
 	}
-	return subject.probeMembership(reachable, nil)
 }
 
 // ListAccountCampaignMetrics implements service.AccountMetricsReader for Google Ads,

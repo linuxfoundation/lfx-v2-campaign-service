@@ -1171,7 +1171,9 @@ So when a manager id is configured, `listManagerClients` expands it with a `cust
 query scoped to the manager (`gaqlSearchForCustomer`, which takes an explicit customer id rather
 than the client's empty one). Manager rows are filtered out of the result: a manager account
 cannot hold campaigns, so offering one would let a caller select an account that fails at the
-first create. Only `status = 'ENABLED'` clients are requested. The expansion also supplies
+first create. Only `status = 'ENABLED'` clients are requested. Both narrowings belong to
+DISCOVERY and not to the connection probe, which walks the same hierarchy unfiltered — see *Why
+Google Ads is the one probe that does not check membership*. The expansion also supplies
 `descriptive_name`, which the flat endpoint does not return at all — so labels appear only for
 accounts reached this way. Without a manager id there is no hierarchy root to walk and the direct
 list is the whole answer.
@@ -2045,7 +2047,7 @@ reached no platform at all, which is the exact defect this work removes.
 
 | Dispatcher | Probe call | Account check |
 | --- | --- | --- |
-| `GoogleAdsDispatcher` | `ListAccessibleCustomers` | configured `CustomerID` ∈ list |
+| `GoogleAdsDispatcher` | `ProbeAccountReach` | reached / reached-but-not-capable / unreachable (see below) |
 | `MetaDispatcher` | `ListAdAccounts` | configured id ∈ list (`trimMetaAccountPrefix` normalizes `act_` on BOTH sides) |
 | `RedditDispatcher` | `VerifyAccount` → `GET /ad_accounts/{id}` | direct — the strongest form |
 | `TwitterDispatcher` | `VerifyAccount` → `GET` account root | direct |
@@ -2069,6 +2071,40 @@ that field as "for account X" on a confirmed verdict, so seeding it with `portal
 value this section documents as routing nothing into the single message an operator reads as
 naming the thing that failed. It is the only probe whose subject is account-free, for the same
 reason it is the only one that checks no account: the token IS the account.
+
+### Why Google Ads is the one probe that does not check membership
+
+The other two membership probes ask a list whether it contains the configured id. Google Ads
+cannot, because the list it would ask is the account **picker's**, and in manager mode that list
+is filtered: `listManagerClients` requests `status = 'ENABLED'` and drops `manager` rows, because
+those are the accounts a campaign may be created in.
+
+Presence in that list is sound — it proves the connection can dispatch. **Absence proves
+nothing.** A suspended, cancelled or closed account, and a sub-manager account, are all reached
+perfectly well by the credential and all missing from it. Read as membership, each produced the
+confirmed, operator-facing verdict *"the google ads credential authenticates but does not reach
+account X"* about a credential that reaches X — sending the operator to repoint an account id
+that was correct, for a problem that lives in the Google Ads UI.
+
+So the probe asks its own question. `googleads.Client.ProbeAccountReach` runs the same
+hierarchy walk **unfiltered** and returns one of four `AccountReach` values, and the dispatcher
+renders three verdicts from them: `accountIsManagerAccount`, `accountNotEnabled`, and
+`accountNotReachable` — which is now a true statement, because the walk behind it no longer
+drops anything. The remedies genuinely differ: a manager account means the connection names the
+wrong LEVEL of the hierarchy, a disabled one means the account needs reinstating upstream, and
+only the third is "this connection points at an account you cannot reach".
+
+The picker's own query is untouched — `listManagerClients` still sends exactly the predicate it
+always did, and both queries are separate consts so neither caller can silently acquire the
+other's filter. `AccountUnreachable` is the **zero value** deliberately, so a reach returned
+alongside a non-nil error never reads as reachable. The platform's `status` string is compared
+against inside the client and never travels to a message: it is upstream text, and the
+confirmed-verdict arm is echoed to the operator verbatim.
+
+Flat mode (no `login_customer_id`) answers only reachable/unreachable, because
+`customers:listAccessibleCustomers` carries neither field. That list is itself unfiltered, so an
+absence there really does mean the credential does not address the account — the answer is
+narrower, not wrong.
 
 ### The two verdicts decided before anything is sent
 

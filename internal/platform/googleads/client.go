@@ -1336,23 +1336,133 @@ type customerClientRow struct {
 	} `json:"customerClient"`
 }
 
-// listManagerClients enumerates the ad accounts beneath a manager (MCC) account.
+// AccountReach is what a connection probe learned about ONE configured customer id.
 //
-// Manager accounts are excluded from the result: they cannot hold campaigns, so offering
-// one as a choice would let a caller select an account that fails at the first create.
-// Only ENABLED clients are requested — a cancelled or closed account is not somewhere a
-// campaign can run either.
-func (c *Client) listManagerClients(ctx context.Context, managerID string) ([]AccessibleCustomer, error) {
-	const query = `SELECT customer_client.id, customer_client.descriptive_name, ` +
+// It exists because "is the id in the list" has three different wrong answers here. The
+// account picker's enumeration is filtered to accounts a campaign can be created in, so an
+// account the credential genuinely reaches is missing from it whenever that account is not
+// ENABLED, or is itself a manager. Read as membership, each of those becomes "the credential
+// does not reach this account" — a confirmed, operator-facing verdict that names the wrong
+// broken part and sends the operator to repoint an account id that is perfectly correct.
+type AccountReach int
+
+const (
+	// AccountUnreachable is the ZERO value deliberately: a reach returned alongside a non-nil
+	// error, or from a caller that forgot to assign one, must never read as reachable.
+	AccountUnreachable AccountReach = iota
+	// AccountReachable: the credential reaches the account and the account can hold campaigns.
+	AccountReachable
+	// AccountIsManager: reached, but it is a manager (MCC) account, which cannot hold campaigns.
+	AccountIsManager
+	// AccountNotEnabled: reached, but not in ENABLED status (suspended, cancelled, closed).
+	AccountNotEnabled
+)
+
+// ProbeAccountReach answers, for one configured customer id, whether this credential reaches
+// it and whether a campaign could run there.
+//
+// This is the connection probe's own question, and it is asked here rather than assembled by
+// the caller from ListAccessibleCustomers because only this package knows that the answer
+// differs by mode:
+//
+//   - Manager mode (a login-customer-id is configured, which is how this service is deployed):
+//     every other request carries that header, so an account is addressable only if it sits
+//     under that manager. The walk runs UNFILTERED, so a reached-but-not-campaign-capable
+//     account is reported as what it is instead of vanishing into an absence.
+//   - Flat mode: customers:listAccessibleCustomers carries neither status nor a manager flag,
+//     so only reachable/unreachable can be told apart. It is also unfiltered, so an absence
+//     there really does mean the credential does not address the account — the answer is
+//     narrower, not wrong.
+//
+// Read-only. The returned value never carries platform-supplied text; it is an enum the
+// caller renders in its own vocabulary.
+func (c *Client) ProbeAccountReach(ctx context.Context, customerID string) (AccountReach, error) {
+	if err := ValidateCustomerID(customerID); err != nil {
+		return AccountUnreachable, err
+	}
+
+	if c.account.LoginCustomerID == "" {
+		customers, err := c.ListAccessibleCustomers(ctx)
+		if err != nil {
+			return AccountUnreachable, err
+		}
+		for _, cust := range customers {
+			if strings.TrimPrefix(cust.ResourceName, "customers/") == customerID {
+				return AccountReachable, nil
+			}
+		}
+		return AccountUnreachable, nil
+	}
+
+	clients, err := c.queryCustomerClients(ctx, c.account.LoginCustomerID, allClientsQuery)
+	if err != nil {
+		return AccountUnreachable, err
+	}
+	for _, client := range clients {
+		if client.ID != customerID {
+			continue
+		}
+		// First match wins, and duplicates are safe to resolve this way for the same reason
+		// expandManagerHierarchy keeps the first: a customer reachable by two hierarchy paths
+		// is the SAME customer, so manager and status are properties of it rather than of the
+		// path taken to reach it.
+		switch {
+		case client.Manager:
+			return AccountIsManager, nil
+		case client.Status != customerStatusEnabled:
+			return AccountNotEnabled, nil
+		default:
+			return AccountReachable, nil
+		}
+	}
+	return AccountUnreachable, nil
+}
+
+// customerStatusEnabled is the one customer_client.status value in which an account can run
+// a campaign. Compared against, never rendered: it is upstream vocabulary, and no message
+// this package produces may carry platform-supplied text.
+const customerStatusEnabled = "ENABLED"
+
+// The two customer_client queries, differing only in the status predicate.
+//
+// They are separate consts rather than one string built at the call site because the
+// difference between them IS the distinction two callers depend on, and a composed query
+// hides which caller gets which. The account picker asks for accounts a campaign can be
+// created in; the connection probe asks whether this credential reaches the configured
+// account AT ALL, and must not read a filtered-out account as an absent one.
+const (
+	campaignCapableClientsQuery = `SELECT customer_client.id, customer_client.descriptive_name, ` +
 		`customer_client.manager, customer_client.status FROM customer_client ` +
 		`WHERE customer_client.status = 'ENABLED'`
+	allClientsQuery = `SELECT customer_client.id, customer_client.descriptive_name, ` +
+		`customer_client.manager, customer_client.status FROM customer_client`
+)
 
+// managerClient is one decoded customer_client row, before any caller's filtering.
+//
+// It carries the two fields the filtering would otherwise destroy. Absence from a FILTERED
+// list is indistinguishable from absence from the hierarchy, and those two mean opposite
+// things to a connection probe — so the walk now returns what it found and each caller
+// narrows it itself.
+type managerClient struct {
+	ID              string
+	DescriptiveName string
+	Manager         bool
+	Status          string
+}
+
+// queryCustomerClients runs one customer_client query beneath a manager and decodes it.
+//
+// The query is the caller's parameter, deliberately: the two callers ask genuinely different
+// questions of the same table, and sharing the decode without sharing the question is the
+// whole point of the split.
+func (c *Client) queryCustomerClients(ctx context.Context, managerID, query string) ([]managerClient, error) {
 	rows, err := c.gaqlSearchForCustomer(ctx, managerID, query)
 	if err != nil {
 		return nil, fmt.Errorf("expand manager %s: %w", managerID, err)
 	}
 
-	out := make([]AccessibleCustomer, 0, len(rows))
+	out := make([]managerClient, 0, len(rows))
 	for _, raw := range rows {
 		var row customerClientRow
 		if uerr := json.Unmarshal(raw, &row); uerr != nil {
@@ -1374,12 +1484,39 @@ func (c *Client) listManagerClients(ctx context.Context, managerID string) ([]Ac
 				Err:    fmt.Errorf("customer_client row id %q is not a numeric customer id", row.CustomerClient.ID),
 			}
 		}
-		if row.CustomerClient.Manager {
+		out = append(out, managerClient{
+			ID:              row.CustomerClient.ID,
+			DescriptiveName: row.CustomerClient.DescriptiveName,
+			Manager:         row.CustomerClient.Manager,
+			Status:          row.CustomerClient.Status,
+		})
+	}
+	return out, nil
+}
+
+// listManagerClients enumerates the ad accounts beneath a manager (MCC) account.
+//
+// Manager accounts are excluded from the result: they cannot hold campaigns, so offering
+// one as a choice would let a caller select an account that fails at the first create.
+// Only ENABLED clients are requested — a cancelled or closed account is not somewhere a
+// campaign can run either.
+//
+// Both exclusions are right for THIS caller, which answers "which accounts may I pick", and
+// wrong for anything asking "does this credential reach account X" — see ProbeAccountReach,
+// which runs the same walk unfiltered for exactly that reason.
+func (c *Client) listManagerClients(ctx context.Context, managerID string) ([]AccessibleCustomer, error) {
+	clients, err := c.queryCustomerClients(ctx, managerID, campaignCapableClientsQuery)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AccessibleCustomer, 0, len(clients))
+	for _, client := range clients {
+		if client.Manager {
 			continue
 		}
 		out = append(out, AccessibleCustomer{
-			ResourceName:    "customers/" + row.CustomerClient.ID,
-			DescriptiveName: row.CustomerClient.DescriptiveName,
+			ResourceName:    "customers/" + client.ID,
+			DescriptiveName: client.DescriptiveName,
 		})
 	}
 	return out, nil

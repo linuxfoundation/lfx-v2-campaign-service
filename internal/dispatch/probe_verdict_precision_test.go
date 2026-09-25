@@ -6,9 +6,11 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -87,6 +89,85 @@ func TestProbe404IsUnreachableNotRejected(t *testing.T) {
 	})
 }
 
+// TestGoogleAdsProbe_ReachedButNotCampaignCapable covers the three ways a manager-mode
+// hierarchy walk can answer about the configured account.
+//
+// The picker's enumeration is filtered to ENABLED, non-manager clients. Read as membership,
+// both of the accounts below are ABSENT from it, and absence was reported as "the google ads
+// credential authenticates but does not reach account 1234567890" — false in both cases, and
+// pointing the operator at an account id that is correct. The remedies differ from each other
+// too, which is why these are two verdicts rather than one.
+func TestGoogleAdsProbe_ReachedButNotCampaignCapable(t *testing.T) {
+	cases := []struct {
+		name string
+		// row is the configured account's customer_client row, as the hierarchy reports it.
+		row string
+		// wantFragment is the service-authored phrase the verdict must carry.
+		wantFragment string
+		// wantNotReach pins that the account is NOT described as unreached.
+		wantNotReach bool
+	}{
+		{
+			name:         "suspended account is reached, not unreachable",
+			row:          `{"customerClient":{"id":"1234567890","descriptiveName":"LF","manager":false,"status":"SUSPENDED"}}`,
+			wantFragment: "is not enabled",
+			wantNotReach: true,
+		},
+		{
+			name:         "manager account is reached but cannot hold campaigns",
+			row:          `{"customerClient":{"id":"1234567890","descriptiveName":"LF MCC","manager":true,"status":"ENABLED"}}`,
+			wantFragment: "manager account and cannot hold campaigns",
+			wantNotReach: true,
+		},
+		{
+			name:         "genuinely absent account is still unreachable",
+			row:          `{"customerClient":{"id":"5555555555","descriptiveName":"Someone Else","manager":false,"status":"ENABLED"}}`,
+			wantFragment: "does not reach",
+			wantNotReach: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var query atomic.Value
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+			}))
+			defer tokenSrv.Close()
+			apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				query.Store(string(b))
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"results":[`+tc.row+`]}`)
+			}))
+			defer apiSrv.Close()
+
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+				googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+			)
+			err := d.ProbeConnection(context.Background(), "tlf", model.ProviderGoogleAds)
+			if !errors.Is(err, domain.ErrConnectionProbeFailed) {
+				t.Fatalf("ProbeConnection = %v, want a confirmed failure; none of these accounts "+
+					"can run a campaign, which is the question the test asks", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantFragment) {
+				t.Errorf("message %q does not carry %q", err, tc.wantFragment)
+			}
+			if tc.wantNotReach && strings.Contains(err.Error(), "does not reach") {
+				t.Errorf("message %q says the credential does not reach the account, but the "+
+					"hierarchy returned that very account; the remedy is not a new account id", err)
+			}
+			// The probe must ask its OWN question. Borrowing the picker's status predicate is
+			// precisely what turned a reached-but-disabled account into an absent one.
+			if q, _ := query.Load().(string); strings.Contains(q, "status = 'ENABLED'") {
+				t.Errorf("probe query %q carries the picker's status filter; a filtered walk "+
+					"cannot tell a disabled account from an absent one", q)
+			}
+		})
+	}
+}
+
 // TestGoogleAdsProbe_DashedAccountIDDoesNotBlameTheCredential covers the one provider config with
 // no Pattern at the design layer.
 //
@@ -97,14 +178,20 @@ func TestProbe404IsUnreachableNotRejected(t *testing.T) {
 // credential that reaches that account perfectly well under the id Google actually uses. The
 // verdict was confirmed, operator-facing, and pointed at the wrong thing.
 func TestGoogleAdsProbe_DashedAccountIDDoesNotBlameTheCredential(t *testing.T) {
-	var reached bool
+	// atomic.Bool for the same reason unreachableUpstream's hit flag is one: the handler runs on
+	// its own goroutine and the assertion below reads this from the test goroutine. The passing
+	// case hides it — the probe short-circuits before any request, so the write never happens —
+	// which is exactly the trap. The moment this guard earns its keep, the write and the read
+	// become concurrent and -race reports a race ON TOP OF the real assertion failure, burying
+	// the regression the guard exists to name.
+	var reached atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "token") {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"access_token":"tok","expires_in":3600}`))
 			return
 		}
-		reached = true
+		reached.Store(true)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -123,7 +210,7 @@ func TestGoogleAdsProbe_DashedAccountIDDoesNotBlameTheCredential(t *testing.T) {
 		t.Errorf("message %q says the credential cannot reach the account; the credential is fine "+
 			"and the stored id is simply not in the shape Google uses", err)
 	}
-	if reached {
+	if reached.Load() {
 		t.Error("the probe enumerated upstream for an id it could have rejected from its own shape")
 	}
 }

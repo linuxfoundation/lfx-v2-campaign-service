@@ -105,6 +105,9 @@ func confirmedProbeVerdict(format string, args ...any) error {
 // probeClass maps a platform probe error onto exactly one of the three service-level outcomes,
 // using that platform's own two predicates. err must be non-nil.
 func (s probeSubject) probeClass(err error, credentialRejected, inconclusive func(error) bool) error {
+	// The arm ORDER is load-bearing, not stylistic: every platform's ProbeInconclusive returns
+	// true for an error it does not recognise, so an inconclusive-first switch would make the
+	// rejection arm unreachable for any error both predicates claim. Do not reorder.
 	switch {
 	case credentialRejected(err):
 		// The ONLY arm whose text reaches the operator verbatim (domain.ErrConnectionProbeFailed
@@ -158,6 +161,28 @@ func (s probeSubject) accountIDNotUsable() error {
 // the walk was cut short.
 func (s probeSubject) accountNotReachable() error {
 	return confirmedProbeVerdict("the %s credential authenticates but does not reach %s",
+		s.platform, s.whichAccount())
+}
+
+// accountIsManagerAccount and accountNotEnabled are the two verdicts for an account the
+// credential DOES reach but which cannot hold a campaign.
+//
+// They exist because accountNotReachable was answering for both, and it is false for both:
+// the credential reaches the account, and telling an operator it does not sends them to
+// repoint an account id that is correct. The remedy differs too — a manager account means the
+// connection names the wrong LEVEL of the hierarchy, a disabled one means the account itself
+// needs reinstating in the Google Ads UI — and neither is "check your credential".
+//
+// Both sentences are authored here, like every other verdict in this file. The platform's own
+// status string is compared against in the client and never travels this far: it is upstream
+// text, and the confirmed-verdict arm is echoed to the operator verbatim.
+func (s probeSubject) accountIsManagerAccount() error {
+	return confirmedProbeVerdict("the %s credential reaches %s, but that is a manager account and cannot hold campaigns",
+		s.platform, s.whichAccount())
+}
+
+func (s probeSubject) accountNotEnabled() error {
+	return confirmedProbeVerdict("the %s credential reaches %s, but that account is not enabled",
 		s.platform, s.whichAccount())
 }
 

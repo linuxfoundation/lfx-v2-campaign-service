@@ -956,6 +956,14 @@ in the expansion too.
 
 The expansion is also the only source of `descriptive_name` — the flat endpoint returns resource
 names alone — so accounts come back labelled in manager mode and unlabelled without one.
+
+**That filter is the picker's, and only the picker's.** `listManagerClients` sends
+`campaignCapableClientsQuery`; `ProbeAccountReach` sends `allClientsQuery`, the same projection
+with no `WHERE`, and does its own `manager`/`status` reading on the rows. The two queries are
+separate constants over one shared decoder (`queryCustomerClients`) rather than one query with a
+flag, so neither caller can silently acquire the other's row set. Why the probe cannot reuse the
+filtered walk is in `internal-dispatch.md` — *Why Google Ads is the one probe that does not check
+membership* — and the short form is that absence from a filtered list is not absence.
 Expansion rows are deduplicated by resource name, since `customer_client` reports a client once
 per path through the hierarchy and a client of a sub-manager that is itself a client of the root
 appears twice. A row with no id is a hard error rather than a silent drop, since dropping it
@@ -965,7 +973,7 @@ Flat-list resource names are validated as `customers/{digits}` in direct mode, w
 persists the value as the connection's account id and interpolates it into later request
 paths. That validation used to run in manager mode too, on rows nothing would consume — which
 only meant the discarded response had one more way to fail the request. Manager-mode ids are
-validated inside `listManagerClients` instead.
+validated inside `queryCustomerClients`, the decoder both manager-mode callers share, instead.
 
 **Only one data source means only one failure mode.** Fetching the flat list and then throwing
 it away spent request quota and whatever deadline the caller passed down, but the behavioural
