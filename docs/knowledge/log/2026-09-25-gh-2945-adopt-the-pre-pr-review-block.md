@@ -5,9 +5,10 @@ which launched `/lfx-skills:lfx-local-review` after every commit and reran a thr
 trio after each fix, is replaced by the central LFX `## Pre-PR review` block. The block points
 at `/lfx-skills:lfx-pre-pr-review`, which runs one review round of the whole branch with three
 reviewers in parallel — general, security and knowledge-base — right before the PR. The
-procedure itself is not restated in this repo; the block carries only the two repo-owned values
-it reads, `KB review skill: /campaign-service-learnings-reviewer` and `Preflight: make check-fmt
-&& make lint && make test && go run ./cmd/okfvalidate ./docs/knowledge`.
+procedure itself is not restated in this repo; the block carries only the two repo-owned values,
+`KB review skill: /campaign-service-learnings-reviewer` (the one value the central skill reads) and
+`Preflight: make check-fmt && make lint && make test && go run ./cmd/okfvalidate ./docs/knowledge`
+(run by the block's own second step, not by the skill).
 
 Deleted, because the central general reviewer now reads this repo's written conventions from
 the repo itself: the repo-owned conventions brain `.claude/skills/campaign-service-code-reviewer`,
@@ -15,8 +16,12 @@ the `local-review-fallback` launch table, and the `local-code-review` / `local-l
 alias symlinks (with their `.agents/skills/` mirrors).
 
 Changed: `/campaign-service-learnings-reviewer` is the one remaining repo-owned review skill and
-is the knowledge-base role of the three-reviewer round; only its frontmatter changed, to say it
-is launched by the central skill per the block rather than by "the trio". [Local pre-PR
+is the knowledge-base role of the three-reviewer round. Its frontmatter now says it is launched by
+the central skill per the block rather than by "the trio", and its body was edited on the same
+points: the two siblings are named as the central general and security reviewers (the retired
+"code reviewer" role is folded into the general one wherever it was cited — sibling roles,
+exclusions, report rules), and `base_sha` is described as the base the central skill pins rather
+than the target's first parent. [Local pre-PR
 review](../architecture/local-pre-pr-review.md) was rewritten to describe the new shape and its
 index bullet updated, and the knowledge-base README's two references to the trio and the retired
 code reviewer were reworded. Historical log entries that mention the post-commit cycle are left

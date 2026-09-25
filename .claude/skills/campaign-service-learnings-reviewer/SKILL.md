@@ -29,9 +29,9 @@ covers it, say nothing — that is the correct outcome.
 ## What you may read
 
 The invoking host pins the revisions before you start and names them to you:
-`target_sha`, the newest commit on the working branch, and `base_sha` — the
-merge-base with `origin/main` that the central pre-PR review skill pins, or a wider base
-the caller supplied, and absent **only** when the target is a root commit. Review exactly
+`target_sha`, the newest commit on the working branch, and `base_sha` — the base
+the central pre-PR review skill pins for the whole branch, or a wider base the
+caller supplied, and absent **only** when the target is a root commit. Review exactly
 `git diff <base_sha> <target_sha>`; when the target is a root commit with no base,
 review the tree it introduced. **Never derive a base yourself** — do not fetch, do
 not consult a remote, and never infer another target or base.

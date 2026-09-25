@@ -250,10 +250,10 @@ before you weaken an entry: read the file, then decide.
   symlinked floor and cannot tell a real absence from a failed lookup.
 
   *Timing, recorded so nobody reads it as a defect.* Under the single-round
-  block the reviewed range is always the pinned pair `base_sha` = the merge-base
-  with `origin/main` and `target_sha` = `HEAD`, so a waiver added anywhere on the
-  branch is absent at `base_sha` and can never suppress a finding about that
-  branch. *(Historical, from the earlier per-commit lifecycle, which no longer
+  block the reviewed range is the pinned pair the central skill supplies —
+  `base_sha`, a base that predates every commit on the branch, and `target_sha`
+  — so a waiver added anywhere on the branch is absent at `base_sha` and can
+  never suppress a finding about that branch. *(Historical, from the earlier per-commit lifecycle, which no longer
   runs locally: a waiver already present at a later delta's supplied base could
   suppress a finding about a different change in that delta — correct rather
   than a leak, because relative to that range the waiver was pre-existing.)* The

@@ -60,19 +60,24 @@ defined by `GO_FILES` in the `Makefile`, `FILTER_REGEX_EXCLUDE` in
 ## Pre-PR review
 
 > **IMPORTANT — follow this exactly.** When the implementation is complete
-> and committed and you are about to open a PR, load
-> `/lfx-skills:lfx-pre-pr-review` with the Skill tool and follow it. It runs
-> **one** review round of the whole branch — general, security and
-> knowledge-base reviewers in parallel — once, right before the PR. Two rules
-> bear repeating here: **all accepted findings from that round land in
-> exactly one fix commit** (none if there is nothing to fix); and **once the
-> PR is open there are no local reviews of any kind** — iterate only on the
-> PR's bot and human feedback, still running tests and checks. Do not work
-> from memory: **reload the skill before each step** of the round — before
-> launching the reviewers, before the fix commit, before opening the PR.
+> and committed and you are about to open a PR:
+>
+> 1. **Review once.** Load `/lfx-skills:lfx-pre-pr-review` with the Skill
+>    tool and follow it. It runs **one** review round of the whole branch —
+>    general, security and knowledge-base reviewers in parallel — and lands
+>    **all accepted findings from that round in exactly one fix commit**
+>    (none if there is nothing to fix). Do not work from memory: **reload the
+>    skill before each step** of the round — before launching the reviewers
+>    and before the fix commit.
+> 2. **Preflight.** Run the `Preflight` value below and make it pass. It is
+>    deterministic checks, not a review: fix what it reports in its own
+>    commit(s), as many as it takes, and rerun it — never the reviewers.
+> 3. **Open the PR.** From then on there are **no local reviews of any
+>    kind** — iterate only on the PR's bot and human feedback, still running
+>    tests and checks.
 
 - KB review skill: `/campaign-service-learnings-reviewer`
 - Preflight: `make check-fmt && make lint && make test && go run ./cmd/okfvalidate ./docs/knowledge`
 
-When the fix commit changes what the code does, the knowledge-bundle rules
-above still apply to it.
+When a fix commit — the review round's or a preflight one — changes what the
+code does, the knowledge-bundle rules above still apply to it.
