@@ -39,6 +39,7 @@ alongside `fallback` to separate the tiers.
 and generic tiers fails the second; moving the partition back before the authoritative read
 fails the second AND `TestLastSent_ABrandOnlyHitIsDroppedWhenTheEventItselfMatched`.
 
-Also `TestLastSent_TheSendDateReadIsCappedAtItsCeiling`, pinning `maxSendDateReads` — the
-ceiling the endpoint's documented cost rests on, previously unreachable through the API and
-untested.
+`TestLastSent_TheSendDateReadIsCappedAtItsCeiling` pins `maxSendDateReads` — the ceiling the
+endpoint's documented cost rests on, previously unreachable through the API and untested. It
+was added by the PRECEDING commit, not this one, and is noted here only because the two
+review findings arrived together.

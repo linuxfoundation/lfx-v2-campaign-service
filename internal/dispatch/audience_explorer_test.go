@@ -1206,7 +1206,7 @@ func TestLastSent_GenericOnlyHitsDoNotDeleteTheBrandFallback(t *testing.T) {
 // The loop can only consult the PROJECTED date, and `sentInTheFuture` treats an absent one as
 // "not future" deliberately. So on a portal that omits publishDate, a PUBLISHED_OR_SCHEDULED
 // row booked for next month survives the loop as a real event match. Partitioning there
-// deleted every fallback row permanently -- and the authoritative re-check then dropped that
+// deleted every fallback row permanently — and the authoritative re-check then dropped that
 // same row as future, leaving the operator with nothing: the false empty history this
 // endpoint exists to prevent, arriving through the one gate that could not yet see the truth.
 func TestLastSent_AFutureEventMatchDoesNotDeleteTheBrandFallback(t *testing.T) {
@@ -1227,7 +1227,7 @@ func TestLastSent_AFutureEventMatchDoesNotDeleteTheBrandFallback(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"brand"}, sentIDs(rows),
-		"the scheduled row is not a send, so it must not outrank -- or delete -- the brand precedent")
+		"the scheduled row is not a send, so it must not outrank — or delete — the brand precedent")
 }
 
 // TestLastSent_TheBrandFallbackOutranksAGenericOnlyHit pins the tier order WITHIN the
@@ -1236,7 +1236,7 @@ func TestLastSent_AFutureEventMatchDoesNotDeleteTheBrandFallback(t *testing.T) {
 // event name made of portfolio-common words and may be an unrelated email entirely.
 //
 // Ranked together by date, a newer "Registration Open Now" outranked the brand precedent that
-// was the honest answer -- the same inversion as this endpoint's headline defect, one tier
+// was the honest answer — the same inversion as this endpoint's headline defect, one tier
 // down.
 func TestLastSent_TheBrandFallbackOutranksAGenericOnlyHit(t *testing.T) {
 	list := `{"results":[
@@ -1262,7 +1262,7 @@ func TestLastSent_TheBrandFallbackOutranksAGenericOnlyHit(t *testing.T) {
 //
 // A `brand_short` covers the whole portfolio and publishes far more often than any one event,
 // so date order alone filled every `limit + 12` slot with recent newsletters and the event's
-// own older send was never even read -- the operator got portfolio mail as "last sent"
+// own older send was never even read — the operator got portfolio mail as "last sent"
 // precedent for their event.
 func TestLastSent_ABusyBrandDoesNotEvictTheEventsOwnSend(t *testing.T) {
 	rows := make([]string, 0, 26)
@@ -1274,7 +1274,7 @@ func TestLastSent_ABusyBrandDoesNotEvictTheEventsOwnSend(t *testing.T) {
 			id, (i%28)+1, (i%28)+1))
 		detail[id] = fmt.Sprintf("2026-09-%02dT09:00:00Z", (i%28)+1)
 	}
-	// One real event send, OLDER than every newsletter -- so date order alone buries it.
+	// One real event send, OLDER than every newsletter — so date order alone buries it.
 	rows = append(rows, `{"id":"event","name":"KubeCon Europe Recap","subject":"x","state":"PUBLISHED","updatedAt":"2026-01-01T00:00:00Z","publishDate":"2026-01-01T09:00:00Z"}`)
 	detail["event"] = "2026-01-01T09:00:00Z"
 
@@ -1287,9 +1287,46 @@ func TestLastSent_ABusyBrandDoesNotEvictTheEventsOwnSend(t *testing.T) {
 		"the event's own send outranks the brand tier however much newer the newsletters are")
 }
 
+// TestLastSent_ALargeScheduledEventTierDoesNotStarveTheBrandFallback pins the RESERVED
+// FLOOR, which plain tier-priority fill does not provide.
+//
+// The companion test above has a top tier of one row against 25 brand rows, so the top tier
+// trivially fits and a naive "concat the tiers in priority order" passes it. This one
+// overflows the shortlist with the top tier alone: 20 provisional event matches, every one a
+// scheduled send with no projected date, so they pass `sentInTheFuture` and consume every
+// slot — and then all evaporate at the authoritative gate. Without a floor the one real
+// brand send never got a slot to be promoted from, and the operator saw an empty history for
+// an event that HAS a prior send.
+//
+// Realistic rather than contrived: an event with a multi-email scheduled campaign produces
+// exactly this shape.
+func TestLastSent_ALargeScheduledEventTierDoesNotStarveTheBrandFallback(t *testing.T) {
+	rows := make([]string, 0, 21)
+	detail := map[string]string{}
+	for i := 0; i < 20; i++ {
+		id := fmt.Sprintf("sched%02d", i)
+		// No projected publishDate, so the provisional future gate passes every one.
+		rows = append(rows, fmt.Sprintf(
+			`{"id":%q,"name":"KubeCon Europe Recap","subject":"x","state":"PUBLISHED_OR_SCHEDULED","updatedAt":"2026-09-%02dT00:00:00Z"}`,
+			id, (i%28)+1))
+		detail[id] = "2026-12-01T09:00:00Z" // authoritative: booked, not sent
+	}
+	rows = append(rows, `{"id":"brand","name":"CNCF Monthly Newsletter","subject":"Roundup","state":"PUBLISHED","updatedAt":"2026-08-01T00:00:00Z"}`)
+	detail["brand"] = "2026-08-01T09:00:00Z" // the one real send in the portal
+
+	x, _ := lastSentPortal(t, fmt.Sprintf(`{"results":[%s]}`, strings.Join(rows, ",")), detail)
+	x.now = func() time.Time { return time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC) }
+
+	got, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 5)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"brand"}, sentIDs(got),
+		"a top tier large enough to fill the shortlist must not starve the tier that holds the only real send")
+}
+
 // TestLastSent_ABoundedSweepEmptiedByTheAuthoritativeReadIsNotAnEmptyHistory pins the second
 // half of the bounded guard. The check before the fan-out cannot see a shortlist emptied by
-// the authoritative future gate -- every row dropped as a booked send -- and a bounded walk
+// the authoritative future gate — every row dropped as a booked send — and a bounded walk
 // that ends that way is the same false absence for the same reason: the portal was never read
 // to the end.
 func TestLastSent_ABoundedSweepEmptiedByTheAuthoritativeReadIsNotAnEmptyHistory(t *testing.T) {

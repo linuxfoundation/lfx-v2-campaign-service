@@ -755,7 +755,7 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 	// a real SEND is not: the loop above could only consult the PROJECTED date, and
 	// `sentInTheFuture` treats an ABSENT one as "not future" on purpose. So on a portal that
 	// omits publishDate, a PUBLISHED_OR_SCHEDULED row booked for next month survives as an
-	// event match -- and partitioning on it here would DELETE every fallback row permanently,
+	// event match — and partitioning on it here would DELETE every fallback row permanently,
 	// only for the authoritative re-check below to then drop that same row as future. The
 	// operator is left with nothing: the false empty history this endpoint exists to prevent,
 	// reintroduced through the one gate that cannot yet see the truth.
@@ -797,7 +797,7 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 	// Tiered BEFORE the truncation, so the shortlist's scarce slots are not spent on evidence
 	// a stronger tier already outranks. A busy `brand_short` publishes far more often than any
 	// one event, so date order alone filled all `limit+12` slots with recent portfolio mail and
-	// the event's own older send never reached the authoritative read at all -- the operator
+	// the event's own older send never reached the authoritative read at all — the operator
 	// got newsletters as "last sent" precedent for their event.
 	//
 	// This is provisional, exactly like the sort above: it runs on the projected date and may
@@ -841,7 +841,7 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 
 	// The bounded guard AGAIN, now that the authoritative read has had its say. The check at
 	// the top of this function runs before the fan-out, so it cannot see a shortlist emptied
-	// HERE -- every row dropped as a booked send at the future gate above. A bounded walk that
+	// HERE — every row dropped as a booked send at the future gate above. A bounded walk that
 	// ends that way is the same false absence for the same reason: the portal was never read
 	// to the end, so "no prior send" is a claim this function has not earned.
 	if searchBounded && len(shortlisted) == 0 {
@@ -857,7 +857,7 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 	// `brand_short`, while a generic-only hit is an accident of an event name made entirely of
 	// portfolio-common words and may be an unrelated email. Ranking the two together by date
 	// let a newer "Registration Open Now" outrank the brand precedent that was the honest
-	// answer -- the same inversion this endpoint's headline defect produced, one tier down.
+	// answer — the same inversion this endpoint's headline defect produced, one tier down.
 	if kept := keepStrongestTier(shortlisted); len(kept) > 0 {
 		shortlisted = kept
 	}
@@ -906,39 +906,64 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 
 // shortlistAcrossTiers picks which candidates get their authoritative send date read.
 //
-// Strongest tier first, but NOT to the exclusion of the others. Two failures have to be
-// avoided at once, and each is the fix for the other taken too far:
+// Strongest tier first, but NEVER to the exclusion of the others. Three failures have to be
+// avoided at once, and each is the fix for the previous one taken too far:
 //
-//   - Take the strongest tier only, and a PROVISIONAL classification decides the answer. The
+//   - Take the strongest tier ONLY, and a PROVISIONAL classification decides the answer. The
 //     rows here carry the projected date, and `sentInTheFuture` passes an absent one, so a
 //     scheduled-but-unsent event match still looks like an event match. Dropping the fallback
 //     rows on its word leaves nothing once the authoritative read discards it.
-//   - Take them in date order only, and a busy `brand_short` -- which publishes far more often
-//     than any one event -- fills every slot with recent portfolio mail, so the event's own
+//   - Take rows in DATE ORDER only, and a busy `brand_short` -- which publishes far more often
+//     than any one event — fills every slot with recent portfolio mail, so the event's own
 //     older send is never read at all.
+//   - Give the strongest tier every slot it ASKS FOR, and a large enough top tier starves the
+//     others outright: an event with a multi-email scheduled campaign produces `shortlist`
+//     provisional event matches that all evaporate at the authoritative gate, and the brand
+//     row that was the honest answer never got a slot to be promoted from.
 //
-// So each tier is given room: the strongest takes what it needs, and whatever remains is
-// offered to the next. An event match can therefore never be evicted by a newsletter, and a
-// fallback row is always still in hand if the event tier evaporates. Within a tier the
-// incoming date order is preserved, which SliceStable established above.
+// So each weaker tier holds a reserved FLOOR that the tiers above it cannot spend, and the
+// floor is returned to the pool when the tier cannot fill it. The floor is deliberately small:
+// it buys one round-trip's worth of insurance against the strongest tier evaporating, not a
+// fair split — when the event tier is genuine it should still take nearly the whole budget.
+// Within a tier the incoming date order is preserved, which SliceStable established above.
 func shortlistAcrossTiers(rows []ranked, shortlist int) []ranked {
 	if shortlist <= 0 || len(rows) <= shortlist {
 		return rows
 	}
-	var event, brand, generic []ranked
+	tiers := [3][]ranked{}
 	for _, r := range rows {
 		switch {
 		case !r.fallback:
-			event = append(event, r)
+			tiers[0] = append(tiers[0], r)
 		case r.brandOnly:
-			brand = append(brand, r)
+			tiers[1] = append(tiers[1], r)
 		default:
-			generic = append(generic, r)
+			tiers[2] = append(tiers[2], r)
 		}
 	}
+
+	// What each tier may take: everything not reserved for the weaker tiers below it.
+	budget := [3]int{}
+	remaining := shortlist
+	for i := range tiers {
+		reservedBelow := 0
+		for j := i + 1; j < len(tiers); j++ {
+			if len(tiers[j]) > 0 {
+				reservedBelow += min(fallbackFloor, len(tiers[j]))
+			}
+		}
+		budget[i] = max(0, remaining-reservedBelow)
+		budget[i] = min(budget[i], len(tiers[i]))
+		remaining -= budget[i]
+	}
+
 	out := make([]ranked, 0, shortlist)
-	for _, tier := range [][]ranked{event, brand, generic} {
-		for _, r := range tier {
+	for i, tier := range tiers {
+		out = append(out, tier[:budget[i]]...)
+	}
+	// Any floor a tier could not fill is spent on whatever is left, strongest first.
+	for i, tier := range tiers {
+		for _, r := range tier[budget[i]:] {
 			if len(out) == shortlist {
 				return out
 			}
@@ -951,8 +976,8 @@ func shortlistAcrossTiers(rows []ranked, shortlist int) []ranked {
 // keepStrongestTier reduces the shortlist to the best evidence tier present: a distinctive
 // event match if any, else the brand fallback, else generic-only hits.
 //
-// Returns nil when there is nothing to choose between -- an empty shortlist, or one already
-// uniform -- so the caller can leave its slice untouched rather than rebuild it.
+// Returns nil when there is nothing to choose between — an empty shortlist, or one already
+// uniform — so the caller can leave its slice untouched rather than rebuild it.
 func keepStrongestTier(rows []sendDateRead) []sendDateRead {
 	var event, brand, generic []sendDateRead
 	for _, r := range rows {
@@ -1017,9 +1042,17 @@ func beforeInSendOrder(a, b ranked) bool {
 // the fan-out (one GET per row), widened past `limit` so that SELECTION does not depend on
 // the projected date arriving; listBriefs, the expensive half, stays at the `limit`
 // survivors. The design caps `limit` at 10, so the worst case is 22 single-email GETs.
+//
+// fallbackFloor is how many slots each weaker tier holds against the tiers above it, so a
+// large provisional top tier cannot starve them outright — see shortlistAcrossTiers. Two,
+// not one: a single reserved row is lost the moment that row is itself unreadable, and the
+// floor exists precisely for the case where the tier above turns out not to be sends.
+// Unfilled floor is returned to the pool, so a genuine event tier still takes nearly the
+// whole budget.
 const (
 	shortlistHeadroom = 12
 	maxSendDateReads  = 22
+	fallbackFloor     = 2
 )
 
 // isPublished reports whether an email state means it actually went out.
