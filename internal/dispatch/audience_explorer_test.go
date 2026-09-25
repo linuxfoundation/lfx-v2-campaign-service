@@ -1199,6 +1199,64 @@ func TestLastSent_GenericOnlyHitsDoNotDeleteTheBrandFallback(t *testing.T) {
 		"a generic-only hit is no stronger than the brand row, so it must not delete it")
 }
 
+// TestLastSent_AFutureEventMatchDoesNotDeleteTheBrandFallback pins why the fallback
+// partition runs AFTER the authoritative send-date read rather than in the classification
+// loop.
+//
+// The loop can only consult the PROJECTED date, and `sentInTheFuture` treats an absent one as
+// "not future" deliberately. So on a portal that omits publishDate, a PUBLISHED_OR_SCHEDULED
+// row booked for next month survives the loop as a real event match. Partitioning there
+// deleted every fallback row permanently -- and the authoritative re-check then dropped that
+// same row as future, leaving the operator with nothing: the false empty history this
+// endpoint exists to prevent, arriving through the one gate that could not yet see the truth.
+func TestLastSent_AFutureEventMatchDoesNotDeleteTheBrandFallback(t *testing.T) {
+	list := `{"results":[
+		{"id":"event","name":"KubeCon Europe Recap","subject":"x","state":"PUBLISHED_OR_SCHEDULED",
+		 "updatedAt":"2026-09-02T00:00:00Z"},
+		{"id":"brand","name":"CNCF Monthly Newsletter","subject":"Roundup","state":"PUBLISHED",
+		 "updatedAt":"2026-09-01T00:00:00Z"}
+	]}`
+	// No projected publishDate on either row; the authoritative read is the only source.
+	x, _ := lastSentPortal(t, list, map[string]string{
+		"event": "2026-12-01T09:00:00Z", // booked for December: not a send
+		"brand": "2026-08-01T09:00:00Z", // a real past send
+	})
+	x.now = func() time.Time { return time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC) }
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 5)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"brand"}, sentIDs(rows),
+		"the scheduled row is not a send, so it must not outrank -- or delete -- the brand precedent")
+}
+
+// TestLastSent_TheBrandFallbackOutranksAGenericOnlyHit pins the tier order WITHIN the
+// fallback bucket. Both are demoted, and they are not equal evidence: the brand is a last
+// resort the operator chose via `brand_short`, while a generic-only hit is an accident of an
+// event name made of portfolio-common words and may be an unrelated email entirely.
+//
+// Ranked together by date, a newer "Registration Open Now" outranked the brand precedent that
+// was the honest answer -- the same inversion as this endpoint's headline defect, one tier
+// down.
+func TestLastSent_TheBrandFallbackOutranksAGenericOnlyHit(t *testing.T) {
+	list := `{"results":[
+		{"id":"generic","name":"Registration Open Now","subject":"Source your summit tickets",
+		 "state":"PUBLISHED","updatedAt":"2026-09-02T00:00:00Z","publishDate":"2026-08-20T09:00:00Z"},
+		{"id":"brand","name":"LinuxFoundation Monthly","subject":"Roundup","state":"PUBLISHED",
+		 "updatedAt":"2026-09-01T00:00:00Z","publishDate":"2026-08-01T09:00:00Z"}
+	]}`
+	x, _ := lastSentPortal(t, list, map[string]string{
+		"generic": "2026-08-20T09:00:00Z", // NEWER, and unrelated
+		"brand":   "2026-08-01T09:00:00Z", // older, and the honest answer
+	})
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "Open Source Summit", "LinuxFoundation", 5)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"brand"}, sentIDs(rows),
+		"a newer unrelated generic hit must not outrank the brand precedent it is weaker than")
+}
+
 // TestLastSent_TheSendDateReadIsCappedAtItsCeiling pins maxSendDateReads, the ONLY bound on
 // the authoritative send-date fan-out. `limit + shortlistHeadroom` is what normally sets the
 // shortlist, and at the design's maximum limit of 10 that is exactly 22 -- so the clamp is

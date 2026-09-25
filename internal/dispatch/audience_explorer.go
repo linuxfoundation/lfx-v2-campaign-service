@@ -703,7 +703,6 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 
 	seen := map[string]struct{}{}
 	candidates := make([]ranked, 0, 8)
-	eventMatches := 0
 	for _, email := range emails {
 		// A single walk cannot repeat an id through a stalled cursor (the client refuses
 		// one), but a portal mutating BETWEEN pages can legitimately surface a row twice.
@@ -720,14 +719,12 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 		// client calls should be pure, and the rule is a map over two strings.
 		m := audience.MatchLastSent(email.Name, email.Subject, terms)
 		candidates = append(candidates, ranked{
-			email:    email,
-			sentAt:   hubspot.ParseEmailTime(string(email.PublishDate)),
-			overlap:  m.Overlap,
-			fallback: m.Fallback,
+			email:     email,
+			sentAt:    hubspot.ParseEmailTime(string(email.PublishDate)),
+			overlap:   m.Overlap,
+			fallback:  m.Fallback,
+			brandOnly: m.BrandOnly,
 		})
-		if !m.Fallback {
-			eventMatches++
-		}
 	}
 
 	// A bounded walk whose candidates were ALL rejected here is a false absence, and the
@@ -754,15 +751,18 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 	// it: the break only suppressed the brand when an EARLIER term had already matched, whereas
 	// this suppresses brand-only rows whenever an event match exists anywhere in the sweep,
 	// regardless of which page it landed on.
-	if eventMatches > 0 {
-		kept := make([]ranked, 0, eventMatches)
-		for _, c := range candidates {
-			if !c.fallback {
-				kept = append(kept, c)
-			}
-		}
-		candidates = kept
-	}
+	// NOT partitioned here, deliberately. The classification is settled, but whether a row is
+	// a real SEND is not: the loop above could only consult the PROJECTED date, and
+	// `sentInTheFuture` treats an ABSENT one as "not future" on purpose. So on a portal that
+	// omits publishDate, a PUBLISHED_OR_SCHEDULED row booked for next month survives as an
+	// event match -- and partitioning on it here would DELETE every fallback row permanently,
+	// only for the authoritative re-check below to then drop that same row as future. The
+	// operator is left with nothing: the false empty history this endpoint exists to prevent,
+	// reintroduced through the one gate that cannot yet see the truth.
+	//
+	// Fallback rows therefore ride through the shortlist, so they are still available to be
+	// promoted if the event matches evaporate. `keepStrongestTier` does the partition below,
+	// on the survivors.
 
 	// Most recently SENT first -- the published contract, and previously not what happened.
 	// Ranking was keyword overlap alone, so a wordy old email outranked a recent send, and the
@@ -830,6 +830,20 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 		shortlisted = append(shortlisted, r)
 	}
 
+	// The fallback partition, run HERE because only now is it known which candidates are real,
+	// non-future sends. Three tiers, strongest first: a distinctive event match, then the
+	// brand, then a generic-only hit.
+	//
+	// Brand ABOVE generic-only, not merged with it. Both are demoted, but they are not equal
+	// evidence: the brand is a deliberate last resort chosen by the operator's own
+	// `brand_short`, while a generic-only hit is an accident of an event name made entirely of
+	// portfolio-common words and may be an unrelated email. Ranking the two together by date
+	// let a newer "Registration Open Now" outrank the brand precedent that was the honest
+	// answer -- the same inversion this endpoint's headline defect produced, one tier down.
+	if kept := keepStrongestTier(shortlisted); len(kept) > 0 {
+		shortlisted = kept
+	}
+
 	// Re-ranked on the authoritative dates the fan-out has now read, THEN truncated. Ordering
 	// and selection are both correct here for any portal, projected dates or not, as long as
 	// the most recent send was inside the shortlist; past maxSendDateReads candidates a portal
@@ -872,12 +886,43 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 	return out, nil
 }
 
+// keepStrongestTier reduces the shortlist to the best evidence tier present: a distinctive
+// event match if any, else the brand fallback, else generic-only hits.
+//
+// Returns nil when there is nothing to choose between -- an empty shortlist, or one already
+// uniform -- so the caller can leave its slice untouched rather than rebuild it.
+func keepStrongestTier(rows []sendDateRead) []sendDateRead {
+	var event, brand, generic []sendDateRead
+	for _, r := range rows {
+		switch {
+		case !r.row.fallback:
+			event = append(event, r)
+		case r.row.brandOnly:
+			brand = append(brand, r)
+		default:
+			generic = append(generic, r)
+		}
+	}
+	for _, tier := range [][]sendDateRead{event, brand, generic} {
+		if len(tier) > 0 {
+			return tier
+		}
+	}
+	return nil
+}
+
 // ranked is one last-sent candidate with the two things it is ordered by.
 type ranked struct {
 	email    hubspot.Email
 	sentAt   time.Time
 	overlap  int
 	fallback bool
+	// brandOnly separates the two FALLBACK tiers. Both are demoted, but they are not
+	// equal: the brand is a deliberate last resort, while a generic-only hit is an
+	// accident of an event name made of portfolio-common words and may be an unrelated
+	// email entirely. Ranking the two together by date lets a newer unrelated row
+	// outrank the brand precedent that was the honest answer.
+	brandOnly bool
 }
 
 // sendDateRead is a shortlisted candidate after its send-list read, which supplies both the
