@@ -29,12 +29,15 @@ covers it, say nothing — that is the correct outcome.
 ## What you may read
 
 The invoking host pins the revisions before you start and names them to you:
-`target_sha`, the newest commit on the working branch, and `base_sha` — the base
-the central pre-PR review skill pins for the whole branch, or a wider base the
-caller supplied, and absent **only** when the target is a root commit. Review exactly
-`git diff <base_sha> <target_sha>`; when the target is a root commit with no base,
-review the tree it introduced. **Never derive a base yourself** — do not fetch, do
-not consult a remote, and never infer another target or base.
+`target_sha`, the newest commit on the working branch, and `base_sha` — the
+merge-base of the branch and the branch the PR will target, which the central
+pre-PR review skill computes with `git merge-base` and pins once for the whole
+branch. There is exactly one round per branch and no caller may substitute a
+wider or different base; `base_sha` is absent **only** when the target is a
+root commit. Review exactly `git diff <base_sha> <target_sha>`; when the target
+is a root commit with no base, review the tree it introduced. **Never derive a
+base yourself** — do not fetch, do not consult a remote, and never infer another
+target or base.
 
 **"No base" arrives as the literal word `none`, not as a blank.** The host writes
 its pins as `key=value` and the prompt carries `key: value`, so an absent base
@@ -187,10 +190,11 @@ PR-open.
    - It **cannot suppress anything in a range whose base predates it** — above all
      the commit that adds the waiver, whose base does not carry it. **A change can
      never waive a finding about itself.**
-   - It **can apply to a later range whose supplied base already carries it.** That
-     is correct, not a leak: relative to that range the waiver is pre-existing,
-     both revisions carry it, and it is suppressing a finding about a change other
-     than the one that introduced it.
+   - It **can apply to a later branch whose merge-base already carries it** — a
+     branch cut after the waiver landed on the PR target. That is correct, not a
+     leak: relative to that branch the waiver is pre-existing, both revisions
+     carry it, and it is suppressing a finding about a change other than the one
+     that introduced it.
 
    **Superseded.** Earlier revisions of this brain read the floor at the base
    only, and stated in as many words that a waiver **removed** in the reviewed

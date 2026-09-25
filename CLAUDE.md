@@ -77,7 +77,7 @@ defined by `GO_FILES` in the `Makefile`, `FILTER_REGEX_EXCLUDE` in
 >    tests and checks.
 
 - KB review skill: `/campaign-service-learnings-reviewer`
-- Preflight: `make check-fmt && make lint && make test && go run ./cmd/okfvalidate ./docs/knowledge`
+- Preflight: `make check-fmt && make lint && make build && make test && go run ./cmd/okfvalidate ./docs/knowledge`
 
 When a fix commit — the review round's or a preflight one — changes what the
 code does, the knowledge-bundle rules above still apply to it.

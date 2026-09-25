@@ -7,7 +7,7 @@ at `/lfx-skills:lfx-pre-pr-review`, which runs one review round of the whole bra
 reviewers in parallel — general, security and knowledge-base — right before the PR. The
 procedure itself is not restated in this repo; the block carries only the two repo-owned values,
 `KB review skill: /campaign-service-learnings-reviewer` (the one value the central skill reads) and
-`Preflight: make check-fmt && make lint && make test && go run ./cmd/okfvalidate ./docs/knowledge`
+`Preflight: make check-fmt && make lint && make build && make test && go run ./cmd/okfvalidate ./docs/knowledge`
 (run by the block's own second step, not by the skill).
 
 Deleted, because the central general reviewer now reads this repo's written conventions from
@@ -37,3 +37,16 @@ a PR thread. Everything else in it — review method, report format, and rules a
 `CLAUDE.md`, `docs/`, the migrations, the chart or the knowledge base — was dropped as
 redundant. No `.claude/rules/` entry was needed: every convention it named is documented
 elsewhere in the tree.
+
+**Update** — PR review round 4: the `Preflight` value gains `make build`, in the position CI runs
+it (`.github/workflows/lfx-v2-campaign-service-build.yaml`: check-fmt, lint, build, test), so the
+block's step 2 catches a compilation failure before the PR; the value is now
+`make check-fmt && make lint && make build && make test && go run ./cmd/okfvalidate ./docs/knowledge`
+in `CLAUDE.md`, [Local pre-PR review](../architecture/local-pre-pr-review.md) and this log. Not
+added, and carried as a CI-parity follow-up for the repo owners: `make apigen` (it regenerates
+`gen/` and copies specs into `kodata/`, so it mutates the tree rather than checking it), and the
+MegaLinter and license-header gates, which are separate CI-only workflows. The retained
+`/campaign-service-learnings-reviewer` skill no longer mentions a "wider base the caller supplied"
+or "a later range whose supplied base" carries a waiver: `base_sha` is the merge-base the central
+skill computes against the PR target and pins once for the branch's single round, and the
+later-waiver case is now stated as a later branch whose merge-base already carries it.

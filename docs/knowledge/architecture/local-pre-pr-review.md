@@ -22,7 +22,7 @@ the procedure — read the block and the skill for that.
 | Value in the block | This repo's setting | What it is |
 |---|---|---|
 | KB review skill | `/campaign-service-learnings-reviewer` | the repo-owned knowledge-base reviewer, launched by the central skill as the knowledge-base role of the round; the only value the central skill reads |
-| Preflight | `make check-fmt && make lint && make test && go run ./cmd/okfvalidate ./docs/knowledge` | the deterministic checks CI also runs; step 2 of the block runs it, the review skill does not |
+| Preflight | `make check-fmt && make lint && make build && make test && go run ./cmd/okfvalidate ./docs/knowledge` | the deterministic checks CI also runs; step 2 of the block runs it, the review skill does not |
 
 These two lines are the only facts about the lifecycle that belong to this
 repo. Everything else about the review round — how it is launched, how the
