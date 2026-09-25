@@ -96,6 +96,12 @@ service:
   # port is the service port
   port: 8080
 
+# networkPolicy restricts ingress to the service pods. Disabled for local development.
+networkPolicy:
+  enabled: false
+  ingress:
+    from: []
+
 # openfga is the configuration for the OpenFGA server
 openfga:
   # enabled is a boolean to determine if the OpenFGA server should be enabled for authorization
