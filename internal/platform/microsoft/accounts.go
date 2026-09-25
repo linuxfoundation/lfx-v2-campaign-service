@@ -213,6 +213,24 @@ func roleIsStrong(roleID int64) bool {
 	}
 }
 
+// ValidateAccountID reports whether a connection's configured account_id is a usable Microsoft
+// Advertising account identity — a positive int64, the same rule numberID applies to every id
+// ListAdAccounts hands back.
+//
+// It is the residual guard the Goa design cannot express. `^[1-9][0-9]*$` with MaxLength(19)
+// refuses "0" and everything obviously too long, but a 19-digit value above MaxInt64 matches
+// the pattern and still is not an int64 — the identical gap ValidateCustomerID exists to close
+// for the other id on this row. Unlike that sibling an empty id is an ERROR here: account_id is
+// Required, so "no account configured" is not a supported state for it.
+func ValidateAccountID(accountID string) error {
+	trimmed := strings.TrimSpace(accountID)
+	n := json.Number(trimmed)
+	if numberID(&n) == "" {
+		return fmt.Errorf("invalid Microsoft Advertising account id %q: must be a positive integer", clipID(trimmed))
+	}
+	return nil
+}
+
 // ErrInvalidCustomerID marks a configured customer_id that is not a Microsoft Advertising
 // identity at all. It is a VERDICT on the connection, not a failure to check one: no request
 // can be built from it, so nothing about the credential is ever learned — and an unrecognised

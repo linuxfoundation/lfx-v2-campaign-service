@@ -978,15 +978,23 @@ var MicrosoftAdsConnectionConfig = Type("microsoft-ads-connection-config", func(
 	// account_id is Required, so "" is a malformed value and the pattern rejects it — this
 	// provider has no credentials-first state (see the force-system guard's note that
 	// LinkedIn, Reddit and Microsoft callers must resend the id they already stored).
-	Attribute("account_id", String, "Microsoft Advertising account ID (digits only)", func() {
+	//
+	// It carries customer_id's STRICTER rule, not accountIDRE's bare `[0-9]+`, for the reason
+	// stated below and for one more: an account_id is an identity, and microsoft.numberID —
+	// the check ListAdAccounts already applies to every id the platform HANDS BACK
+	// (accounts.go) — refuses "0" and anything past MaxInt64 as not naming an account. Holding
+	// a stored id to a weaker rule than a discovered one is backwards: it let the API persist
+	// an id no Microsoft account can have, on an active connection, leaving the header guard
+	// to confirm only that it is made of digits.
+	Attribute("account_id", String, "Microsoft Advertising account ID (positive integer)", func() {
 		Example("1234567")
-		Pattern(`^[0-9]+$`)
-		MaxLength(64)
+		Pattern(`^[1-9][0-9]*$`)
+		MaxLength(19)
 	})
 	// customer_id is held to the STRICTER of the two runtime rules it meets, not to
 	// accountIDRE alone: microsoft.ValidateCustomerID (numberID) requires a POSITIVE int64,
 	// so "0" and a 23-digit number are not customer identities even though both are digits.
-	// Hence `[1-9]` and MaxLength(19) rather than account_id's bare `[0-9]+`.
+	// Hence `[1-9]` and MaxLength(19) — the same rule account_id above now carries.
 	//
 	// The one thing a Pattern cannot express is the int64 RANGE: a 19-digit value above
 	// MaxInt64 matches here and is still refused by ParseInt. That residual gap is why

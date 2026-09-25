@@ -1203,7 +1203,7 @@ type MicrosoftAdsConnection struct {
 type MicrosoftAdsConnectionConfig struct {
 	// Optional friendly name
 	Label *string
-	// Microsoft Advertising account ID (digits only)
+	// Microsoft Advertising account ID (positive integer)
 	AccountID string
 	// Microsoft Advertising customer ID (a positive integer, digits only).
 	// Optional: omit it to let the credential's own customers be discovered.

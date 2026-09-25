@@ -658,6 +658,14 @@ func (d *TwitterDispatcher) ProbeConnection(ctx context.Context, projectID strin
 		if errors.Is(perr, twitter.ErrAccountNotConfigured) {
 			return subject.noAccountConfigured()
 		}
+		// The other pre-send guard, and this one IS reachable: validateTwitterConnection proves
+		// the id non-empty, not that it can address an account-scoped path. Answered here rather
+		// than by either predicate for the reason the Reddit sibling is: the rejection arm would
+		// blame a credential X never saw, and the inconclusive default would answer OK: true for
+		// an id no X request can address.
+		if errors.Is(perr, twitter.ErrInvalidAccountID) {
+			return subject.accountIDNotUsable()
+		}
 		// A 404 on the account resource: these OAuth1 credentials were accepted, the account
 		// was not found. Answered before probeClass because it is a confirmed failure neither
 		// standard predicate can state correctly. ProbeCredentialRejected used to claim it,

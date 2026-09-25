@@ -4,7 +4,12 @@
 package twitter
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -103,6 +108,53 @@ func TestProbePredicates(t *testing.T) {
 			}
 			if got := ProbeAccountUnreachable(tc.err); got != tc.wantUnreachable {
 				t.Errorf("ProbeAccountUnreachable = %v, want %v", got, tc.wantUnreachable)
+			}
+		})
+	}
+}
+
+// TestVerifyAccountRejectsAnUnusableAccountIDBeforeAnyRequest pins the guard that keeps a
+// malformed stored id off the wire.
+//
+// The id is interpolated into the account-scoped path, so "18ce54d4x5t/promoted_tweets" would
+// make VerifyAccount GET a DIFFERENT subresource — and a 2xx from that would report the
+// connection healthy on the strength of a request that answered a different question. The
+// assertion that matters is the call count: a test that only checked the error would still pass
+// if the request were made and then discarded.
+func TestVerifyAccountRejectsAnUnusableAccountIDBeforeAnyRequest(t *testing.T) {
+	for _, id := range []string{
+		"18ce54d4x5t/promoted_tweets", // path injection: the finding's own example
+		"acc?with=query",
+		"acc#frag",
+		"acc 1",
+		"acc-1",
+		strings.Repeat("a", maxAccountIDLen+1), // charset-valid, over the enumeration bound
+	} {
+		t.Run(id, func(t *testing.T) {
+			var calls int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				atomic.AddInt32(&calls, 1)
+				_, _ = w.Write([]byte(`{"data":{"name":"Somebody Else"}}`))
+			}))
+			defer srv.Close()
+
+			c := NewClient(
+				Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+				AccountConfig{AccountID: id},
+				WithBaseURL(srv.URL),
+				WithWriteDelay(0),
+			)
+			err := c.VerifyAccount(context.Background())
+			if !errors.Is(err, ErrInvalidAccountID) {
+				t.Fatalf("VerifyAccount(%q) = %v, want ErrInvalidAccountID", id, err)
+			}
+			if n := atomic.LoadInt32(&calls); n != 0 {
+				t.Errorf("made %d request(s) for an unusable account id; want none", n)
+			}
+			// Neither predicate may claim it: the dispatcher answers it as accountIDNotUsable,
+			// and both a credential rejection and an OK: true advisory would be wrong.
+			if ProbeCredentialRejected(err) {
+				t.Error("an unusable account id classified as a rejected credential")
 			}
 		})
 	}

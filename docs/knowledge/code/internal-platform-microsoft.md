@@ -631,7 +631,19 @@ enumerate under a malformed id, and `internal/dispatch`, which has to decide bef
 anything whether the connection is testable at all. Before the sentinel, the refusal was an
 unsentineled error that neither probe predicate recognised, so `ProbeInconclusive`'s
 unrecognised-error default answered `true` and the connection test reported `OK: true` for a
-connection whose stored `customer_id` makes dispatch impossible. `Id` is decoded as a `json.Number`, not through `any`: Microsoft types
+connection whose stored `customer_id` makes dispatch impossible.
+
+**`account_id` carries the same rule, and used not to.** Its Goa pattern was `^[0-9]+$` with
+`MaxLength(64)` — the transport rule — so the API could persist `0`, or a 64-digit number, on an
+ACTIVE connection, and the header guard then confirmed only that it was made of digits. Holding a
+stored id to a weaker rule than the discovered ones `ListAdAccounts` already runs `numberID` over
+is backwards in exactly the way the paragraph above describes. The design now declares
+`^[1-9][0-9]*$` with `MaxLength(19)`, the same as `customer_id`, and `ValidateAccountID` is the
+exported runtime half closing the one thing a pattern cannot express — a 19-digit value above
+`MaxInt64` — with `Client.validateAccountIDs` calling it instead of `accountIDRE`.
+`TestValidateMicrosoftAdsConnectionConfig_IDPatterns` carries a drift guard for `account_id`
+beside the `customer_id` one, and asserts the overflow case directly so nobody deletes the
+runtime check on the grounds that the design already bounds the length. `Id` is decoded as a `json.Number`, not through `any`: Microsoft types
 it as a `long`, and float64 silently loses precision above 2^53, producing a WRONG
 account id that still looks like one (a test pins 2^53+1 round-tripping exactly).
 

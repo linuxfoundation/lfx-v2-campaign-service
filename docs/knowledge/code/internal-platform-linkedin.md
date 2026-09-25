@@ -209,17 +209,23 @@ the routing — `accounts.go`'s credential unwrap already tests for that sentine
 leaves the inconclusive bucket and reaches the operator as a typed 500 with
 `reason=token_request_rejected` through plumbing that already existed. No fourth sentinel was
 invented; instead `ErrTokenRequestRejected`'s documented contract was WIDENED, here and in
-`internal/domain`, to cover a token endpoint answering a status outside 400/401/429/5xx, a `2xx`
+`internal/domain`, to cover a token endpoint answering a status outside 400/401/408/429/5xx, a `2xx`
 whose body yields no usable token, and a request this service could not build.
 
 | token-exchange failure | retryable | sentinel |
 | --- | --- | --- |
 | request could not be built | no | `ErrTokenRequestRejected` |
-| status outside `429`/`5xx` and not a parsed §5.2 code | no | `ErrTokenRequestRejected` |
+| status outside `408`/`429`/`5xx` and not a parsed §5.2 code | no | `ErrTokenRequestRejected` |
 | `2xx` with malformed JSON, or with an empty `access_token` | no | `ErrTokenRequestRejected` |
-| `429`, any `5xx` | yes | `errTokenExchangeFailed` → inconclusive |
+| `408`, `429`, any `5xx` | yes | `errTokenExchangeFailed` → inconclusive |
 | response body unreadable, or over the size cap | yes | `errTokenExchangeFailed` → inconclusive |
 | dial or transport failure | yes | `*tokenRefreshError` → inconclusive |
+
+`408` joined the retryable half with the same fix that landed it in `googleads`, `microsoft` and
+`reddit`: a `408 Request Timeout` is the endpoint, or an intermediary in front of it, giving up
+waiting for the request, so nothing evaluated the credential and the same exchange can succeed on
+a retry. Classified as permanent it reached the connection test as a typed 500 paging us for a
+timeout, which the probe contract has always called inconclusive.
 
 The retryable half is asserted in the SAME test table as the permanent half, so the two can never
 drift apart silently.

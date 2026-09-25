@@ -14684,10 +14684,10 @@ definitions:
         properties:
             account_id:
                 type: string
-                description: Microsoft Advertising account ID (digits only)
+                description: Microsoft Advertising account ID (positive integer)
                 example: "1234567"
-                pattern: ^[0-9]+$
-                maxLength: 64
+                pattern: ^[1-9][0-9]*$
+                maxLength: 19
             customer_id:
                 type: string
                 description: 'Microsoft Advertising customer ID (a positive integer, digits only). Optional: omit it to let the credential''s own customers be discovered.'

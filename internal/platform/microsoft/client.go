@@ -811,8 +811,12 @@ func (c *Client) AccountID() string { return c.account.AccountID }
 // validateAccountIDs rejects an AccountID (and, when set, CustomerID) that isn't a
 // digits-only id, before any request is built.
 func (c *Client) validateAccountIDs() error {
-	if !accountIDRE.MatchString(c.account.AccountID) {
-		return fmt.Errorf("invalid Microsoft Advertising account id %q: must be digits only", clipID(c.account.AccountID))
+	// numberID's rule, not accountIDRE's. accountIDRE is the TRANSPORT check — is this safe in
+	// a header — and it admits "0" and values past MaxInt64, neither of which can name an
+	// account. Everything numberID accepts accountIDRE accepts too, so this only narrows, and
+	// it holds a STORED id to the same rule ListAdAccounts already holds a discovered one to.
+	if err := ValidateAccountID(c.account.AccountID); err != nil {
+		return err
 	}
 	if c.account.CustomerID != "" && !accountIDRE.MatchString(c.account.CustomerID) {
 		return fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))

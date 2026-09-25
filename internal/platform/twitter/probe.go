@@ -6,6 +6,7 @@ package twitter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -14,6 +15,11 @@ import (
 // names none. It is decided before anything is sent: there is no account to reach, so the
 // connection cannot dispatch, and saying so is a verdict rather than a failure to check.
 var ErrAccountNotConfigured = errors.New("twitter: no ad account is configured on this connection")
+
+// ErrInvalidAccountID marks a stored account id that cannot form a valid X Ads request at all.
+// Like ErrAccountNotConfigured it is decided before anything is sent, from this client's own
+// configuration, so X never evaluated the credential.
+var ErrInvalidAccountID = errors.New("twitter: the configured x ads account id is not usable")
 
 // VerifyAccount reads the ad account this client is configured for, and reports whether the
 // stored credential can reach it. It creates nothing and changes nothing.
@@ -29,8 +35,19 @@ var ErrAccountNotConfigured = errors.New("twitter: no ad account is configured o
 // rendering an upstream-supplied name into a test result would put untrusted response text on
 // a path whose message an operator reads as this service's own.
 func (c *Client) VerifyAccount(ctx context.Context) error {
-	if strings.TrimSpace(c.account.AccountID) == "" {
+	accountID := strings.TrimSpace(c.account.AccountID)
+	if accountID == "" {
 		return ErrAccountNotConfigured
+	}
+	// Validated before the path is built, for the reason accountIDRe exists: the id is
+	// interpolated into the account-scoped path (accountURL), so a value carrying '/', '?' or
+	// '#' would address a DIFFERENT account subresource — and a 2xx from whatever that turns out
+	// to be would report this connection as healthy on the strength of a request it never made.
+	// CreateCampaign applies the charset guard at its own top; the length bound is the one
+	// accounts.go applies to every id it hands back from enumeration, so a stored value is held
+	// to the same rule as a discovered one.
+	if !accountIDRe.MatchString(accountID) || len(accountID) > maxAccountIDLen {
+		return fmt.Errorf("%w: %q", ErrInvalidAccountID, accountID)
 	}
 	if _, err := c.request(ctx, http.MethodGet, ""); err != nil {
 		return err
@@ -47,11 +64,12 @@ func (c *Client) VerifyAccount(ctx context.Context) error {
 // own predicate, ProbeAccountUnreachable, and its own verdict — see
 // probeSubject.accountNotReachable.
 //
-// ErrAccountNotConfigured is deliberately NOT here. VerifyAccount raises it before anything is
-// sent, from this client's own configuration, so X never evaluated the credential; reporting it
-// as a rejected credential would tell an operator to re-authorise a connection whose
-// credentials were never in question. It is still a verdict — see probeSubject.noAccountConfigured
-// — but one the dispatcher authors, next to its ErrAccountNotSelected arm.
+// ErrAccountNotConfigured and ErrInvalidAccountID are deliberately NOT here. VerifyAccount
+// raises both before anything is sent, from this client's own configuration, so X never
+// evaluated the credential; reporting either as a rejected credential would tell an operator to
+// re-authorise a connection whose credentials were never in question. They are still verdicts —
+// see probeSubject.noAccountConfigured and probeSubject.accountIDNotUsable — but ones the
+// dispatcher authors, next to its ErrAccountNotSelected arm.
 //
 // It is one half of the two-predicate probe vocabulary every platform client in this repo
 // exposes; internal/dispatch/probe.go holds the shared rationale and is the only caller.

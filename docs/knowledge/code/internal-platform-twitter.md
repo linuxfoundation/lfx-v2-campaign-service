@@ -362,3 +362,15 @@ this call itself; it consumes the predicate and answers `accountNotReachable`.
 anything is sent, so X never looked at the credential. It is still a verdict — a connection
 naming no account cannot dispatch — but one the dispatcher authors, next to its
 `ErrAccountNotSelected` arm.
+
+This package now carries its own `ErrInvalidAccountID` beside it, and for a sharper reason than
+symmetry. `VerifyAccount` checked only that the stored id was non-empty before interpolating it
+into the account-scoped path, while `CreateCampaign` applied `accountIDRe` — so a stored
+`18ce54d4x5t/promoted_tweets` made the probe GET a DIFFERENT account subresource, and a `2xx`
+from that reported the connection healthy on the strength of a request that answered a different
+question, one campaign creation would then refuse. `VerifyAccount` applies the charset guard and
+`accounts.go`'s length bound before building the path (a stored id held to the same rule as a
+discovered one), and the dispatcher answers the sentinel as `accountIDNotUsable` — the
+pre-send verdict, not a credential rejection and not the inconclusive default.
+`TestVerifyAccountRejectsAnUnusableAccountIDBeforeAnyRequest` asserts the CALL COUNT, because a
+test that only checked the error would still pass if the request were made and discarded.

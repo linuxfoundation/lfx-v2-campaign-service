@@ -379,12 +379,47 @@ func TestValidateMicrosoftAdsConnectionConfig_IDPatterns(t *testing.T) {
 		{name: "header injection in account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("123\r\nX-Injected: 1")}, wantErr: true, errSubstr: "account_id"},
 		{name: "dashed account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("123-4567")}, wantErr: true, errSubstr: "account_id"},
 		{name: "overlong account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp(strings.Repeat("9", 65))}, wantErr: true, errSubstr: "account_id"},
+		// account_id is an IDENTITY as well as header bytes, and carries customer_id's rule:
+		// numberID refuses these in ListAdAccounts, so the API must not persist them either.
+		{name: "zero account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("0")}, wantErr: true, errSubstr: "account_id"},
+		{name: "leading-zero account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("007")}, wantErr: true, errSubstr: "account_id"},
+		{name: "20-digit account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp(strings.Repeat("9", 20))}, wantErr: true, errSubstr: "account_id"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			assertValidation(t, connsrv.ValidateMicrosoftAdsConnectionConfigRequestBody(tc.body), tc.wantErr, tc.errSubstr)
 		})
 	}
+	accountIDAccepted := func(id string) bool {
+		return connsrv.ValidateMicrosoftAdsConnectionConfigRequestBody(
+			&connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp(id)}) == nil
+	}
+
+	// The same drift guard for account_id, against microsoft.ValidateAccountID — the rule
+	// every request path applies to this field once the row is stored. "" is in the list and
+	// both layers must refuse it: account_id has no unselected state on this provider.
+	for _, id := range []string{"", "1234567", "0", "-1", "1.5", "abc", "1e3", "007", "99999999999999999999999"} {
+		if designOK, platformOK := accountIDAccepted(id), microsoft.ValidateAccountID(id) == nil; designOK != platformOK {
+			t.Errorf("account_id %q: design validator accepts=%v, microsoft.ValidateAccountID accepts=%v — "+
+				"the transport check and the client's own have drifted apart", id, designOK, platformOK)
+		}
+	}
+
+	t.Run("a 19-digit account_id above MaxInt64 is the same residual gap", func(t *testing.T) {
+		// The reason ValidateAccountID does a ParseInt rather than only a regexp match. It is
+		// the account-id half of the customer_id case asserted below, and exists so nobody
+		// deletes the runtime check on the grounds that the design already bounds the length.
+		const overflow = "9999999999999999999" // 19 digits, > math.MaxInt64
+		if !accountIDAccepted(overflow) {
+			t.Error("the pattern is expected to admit this; if it no longer does, the comment in " +
+				"design/connection.go about the residual range gap is stale and should be corrected")
+		}
+		if err := microsoft.ValidateAccountID(overflow); err == nil {
+			t.Error("ValidateAccountID must still reject an out-of-int64-range account id — it is the " +
+				"only layer that can")
+		}
+	})
+
 	customerIDAccepted := func(id string) bool {
 		return connsrv.ValidateMicrosoftAdsConnectionConfigRequestBody(
 			&connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567"), CustomerID: strp(id)}) == nil
