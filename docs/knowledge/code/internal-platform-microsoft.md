@@ -643,7 +643,20 @@ exported runtime half closing the one thing a pattern cannot express — a 19-di
 `MaxInt64` — with `Client.validateAccountIDs` calling it instead of `accountIDRE`.
 `TestValidateMicrosoftAdsConnectionConfig_IDPatterns` carries a drift guard for `account_id`
 beside the `customer_id` one, and asserts the overflow case directly so nobody deletes the
-runtime check on the grounds that the design already bounds the length. `Id` is decoded as a `json.Number`, not through `any`: Microsoft types
+runtime check on the grounds that the design already bounds the length.
+
+Adding the exported function was not by itself enough for the probe, and the reason is worth
+recording: `MicrosoftDispatcher.ProbeConnection` builds its discovery client with `CustomerID`
+only, so `Client.validateAccountIDs` — the dispatch-path caller of `ValidateAccountID` — never
+runs on that path. The probe therefore has to call it directly, and does, immediately after
+`subject.accountID` is set and before the `customer_id` check or any upstream call. Without it a
+stored `0` bought an enumeration it could not benefit from, and a transient 5xx on that
+enumeration classified inconclusive and answered `OK: true` for a connection every campaign
+request deterministically rejects.
+`TestMicrosoftProbe_UnusableStoredAccountIDIsRefusedBeforeTheCall` asserts the not-attempted
+marker AND that nothing was sent, against an upstream that would otherwise answer 503.
+
+`Id` is decoded as a `json.Number`, not through `any`: Microsoft types
 it as a `long`, and float64 silently loses precision above 2^53, producing a WRONG
 account id that still looks like one (a test pins 2^53+1 round-tripping exactly).
 

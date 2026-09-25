@@ -2048,7 +2048,7 @@ reached no platform at all, which is the exact defect this work removes.
 | Dispatcher | Probe call | Account check |
 | --- | --- | --- |
 | `GoogleAdsDispatcher` | `ProbeAccountReach` | reached / reached-but-not-capable / unreachable (see below) |
-| `MetaDispatcher` | `ListAdAccounts` | configured id ∈ list (`trimMetaAccountPrefix` normalizes `act_` on BOTH sides) |
+| `MetaDispatcher` | `ListAdAccounts` | `meta.ValidateAccountID` pre-send, then configured id ∈ list (`trimMetaAccountPrefix` still normalizes `act_` on both sides, for the upstream side) |
 | `RedditDispatcher` | `VerifyAccount` → `GET /ad_accounts/{id}` | direct — the strongest form |
 | `TwitterDispatcher` | `VerifyAccount` → `GET` account root | direct |
 | `MicrosoftDispatcher` | `ListAdAccounts` | configured id ∈ list |
@@ -2180,6 +2180,24 @@ credential-rejection arm deliberately, and so are both of X's and Reddit's pre-s
 part is a value they can see on the row. The dispatchers intercept both sentinels next to their
 `ErrAccountNotSelected` arms, which is also what keeps them out of the inconclusive default.
 
+Meta and Microsoft need the same **shape** check, and for a sharper reason: on both, the stored
+id was being held to a WEAKER rule than the one dispatch applies to it. Meta's membership test
+strips `act_` from both sides, so a legacy row storing the bare `123` compared equal to the
+enumerated `act_123` and passed — while `MetaDispatcher.Dispatch` hands the stored id to
+`meta.AccountConfig` untouched and `meta.Client.CreateCampaign` rejects it on `accountIDRE`.
+Microsoft's probe validated `customer_id` but not `account_id`, and builds its discovery client
+with `CustomerID` only, so `Client.validateAccountIDs` — the dispatch-path caller of
+`microsoft.ValidateAccountID` — never ran on the probe path at all; a stored `0` or a 19-digit
+value above `MaxInt64` therefore bought an upstream enumeration whose transient 5xx would
+classify inconclusive and answer `OK: true`. Both now call their platform's `ValidateAccountID`
+before anything is sent and answer `accountIDNotUsable`. The generalisation is the one the
+twitter and microsoft concepts already state: a STORED id must be held to the rule its own
+dispatch path applies, never to the looser one a comparison happens to tolerate.
+`TestMetaProbe_BareNumericStoredIDIsRefusedBeforeTheCall` deliberately serves `act_123` upstream,
+so it fails loudly if the guard is dropped and the normalisation relied on again;
+`TestMetaProbe_CanonicalStoredIDStillPasses` is the other half, pinning that the guard refuses
+only what dispatch refuses.
+
 Google Ads needs a **shape** check there as well as an emptiness check. Its `account_id` accepts
 the dashed form the Google Ads UI displays — `866-674-6580` — which `ListAccessibleCustomers`
 answers in the undashed form and can never contain, so without the check the membership test
@@ -2232,15 +2250,25 @@ the two cannot disagree about what "configured" means. `probe_reddit_pixel_test.
 verdict, its wording (it names the field and says the credential authenticated), the absence of
 the marker, and the ordering.
 
-"Rejects every create" is scoped to the campaigns **this service** builds, and the distinction is
-worth stating because Reddit's pixel can also be carried per campaign:
+"Rejects every create" is scoped to what the **connection** supplies, and the distinction is
+worth stating precisely because Reddit's pixel can also be carried per campaign:
 `reddit.CampaignInput.ConversionPixelID` is preferred over the account config when set, and
-`redditConfig.conversionPixelId` on a brief reaches it, so a caller who supplies the pixel by hand
-dispatches fine on a connection that has none. That override is not deprecated and is pinned by
-`TestCreateCampaign_CampaignPixelOverridesAnAccountWithNone`. The verdict is still `OK: false`:
-the pixel identifies the advertiser and belongs to the ad account, the service's own create path
-never fills the override in, and calling a connection healthy on the strength of a field only a
-hand-written brief can set is exactly the false positive the endpoint removes.
+`RedditDispatcher.Dispatch` passes `redditConfig.conversionPixelId` straight into it
+(`internal/dispatch/reddit.go:178`) — so a brief carrying its own pixel dispatches fine on a
+connection that has none. That override is documented (`docs/api-catalog.md`), is not deprecated,
+is not narrowed by this verdict, and is pinned by
+`TestCreateCampaign_CampaignPixelOverridesAnAccountWithNone`.
+
+The verdict is still `OK: false`, because the override is the exception and not the
+configuration. The pixel identifies the advertiser and belongs to the ad ACCOUNT; the service
+supplies no default for it, so every brief that omits the optional override — which is what
+"optional" means — is refused by `reddit.Client.CreateCampaign` before any upstream call on a
+connection configured this way. Reporting such a connection healthy on the strength of a field
+each individual brief would have to re-supply is the "tests clean, fails on first use" false
+positive the endpoint removes, and the verdict names the field and where to find it either way.
+This is the one probe verdict that is a judgement about the product rather than a certainty
+about the platform, so it is stated as such here rather than presented as the only possible
+reading.
 
 ### The verdict a 404 earns on Reddit and X
 

@@ -243,11 +243,14 @@ func (s probeSubject) accountNotEnabled() error {
 // Reddit's conversion_pixel_id is the only such field today (reddit.Client refuses the create
 // before any upstream call, so the rejection is certain rather than predicted).
 //
-// "EVERY create" is scoped to the campaigns this service builds. A caller may be able to carry
-// the value per campaign in the brief — Reddit's pixel can be — and such a campaign dispatches
-// fine. The verdict stands anyway: the service's own create path never sets those overrides, so
-// no campaign the product builds gets past the platform, and a connection that only works for a
-// hand-written brief is not a healthy connection.
+// "EVERY create" is scoped to what the CONNECTION supplies. A brief may carry the value as a
+// per-campaign override — Reddit's pixel can be, and RedditDispatcher.Dispatch passes it
+// straight through to reddit.CampaignInput — and such a campaign dispatches fine on a
+// connection that sets nothing. The verdict stands anyway, because the override is the
+// exception and not the configuration: the service supplies no default for these fields, so a
+// brief that omits the override is rejected by the platform, and a connection that only works
+// for briefs carrying their own copy of an account-level field is not a healthy connection.
+// The verdict names the field and where to find it, which is the repair either way.
 //
 // It is raised AFTER the reachability check rather than before it, and so is deliberately NOT
 // marked not-attempted: a credential that does not authenticate makes the pixel irrelevant,

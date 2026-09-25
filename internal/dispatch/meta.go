@@ -1161,10 +1161,20 @@ func (d *MetaDispatcher) resolveOwnedMetaDiscovery(ctx context.Context, projectI
 // would have a project with no Meta connection of its own silently verify the shared LF system
 // row and report a connection it does not have as healthy.
 //
-// Both ids are compared with the act_ prefix stripped. The prefixed form is canonical on both
-// sides — a connection's account_id is stored as act_<digits> and ListAdAccounts returns the
-// same node id — so normalising changes nothing for a well-formed pair and only keeps a
-// legacy bare-digits row from being reported as unreachable for a formatting difference.
+// The STORED id is held to meta.ValidateAccountID — the act_<digits> rule — before Meta is
+// contacted, and a row that fails it is refused as accountIDNotUsable. It used to be enough
+// that the id compared equal to an enumerated one with the act_ prefix stripped off both
+// sides, which quietly passed a legacy bare-digits row: stored "123" matched upstream
+// "act_123", the probe answered OK: true, and meta.Client.CreateCampaign then rejected that
+// same stored value on its own accountIDRE (internal/platform/meta/client.go) — because the
+// dispatch path hands the stored id to meta.AccountConfig untouched. That is precisely the
+// "tests clean, fails on dispatch" shape this endpoint exists to remove, so the probe now
+// holds the stored value to the rule dispatch will apply to it.
+//
+// trimMetaAccountPrefix stays on the comparison, but only the UPSTREAM side can now differ:
+// the stored id is already canonical by the time membership is computed, so normalising
+// changes nothing for a well-formed pair and merely keeps an enumerated bare-digits node id
+// from reading as a different account.
 func (d *MetaDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
 	client, res, err := d.resolveOwnedMetaDiscovery(ctx, projectID, platform)
 	if err != nil {
@@ -1174,8 +1184,17 @@ func (d *MetaDispatcher) ProbeConnection(ctx context.Context, projectID string, 
 	// Decided BEFORE the call, for the reason googleads.ProbeConnection states: deferring it
 	// to probeMembership lets an inconclusive failure on the way to the enumeration answer
 	// OK: true for a connection that names no account to dispatch to.
-	if strings.TrimSpace(res.accountID) == "" {
+	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" {
 		return subject.noAccountConfigured()
+	}
+	// The other pre-send guard, and decided from this row alone: a stored id that is not
+	// act_<digits> cannot dispatch, because Dispatch passes it into meta.AccountConfig as
+	// stored and CreateCampaign applies accountIDRE to it. Deciding it here rather than
+	// leaving it to the membership comparison is what keeps a bare-digits row from being
+	// reported healthy on the strength of a prefix-stripped match.
+	if verr := meta.ValidateAccountID(accountID); verr != nil {
+		return subject.accountIDNotUsable()
 	}
 	adAccounts, lerr := client.ListAdAccounts(ctx)
 	if lerr != nil {

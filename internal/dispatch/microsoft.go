@@ -483,6 +483,17 @@ func (d *MicrosoftDispatcher) ProbeConnection(ctx context.Context, projectID str
 		return res.systemScoped(verr)
 	}
 	subject.accountID = accountID
+	// Held to the identity rule before anything is sent, for the reason the customer_id arm
+	// below states at length — and it needs its own arm because the discovery client is built
+	// with CustomerID only, so Client.validateAccountIDs (which calls this same function on
+	// dispatch) never runs on the probe path. validateMicrosoftConnection proves the id
+	// present, not that it names an account: a stored "0", or a 19-digit value above MaxInt64,
+	// would otherwise cost an upstream enumeration and — if that enumeration timed out or
+	// 5xx'd — take ProbeInconclusive's OK: true default for a connection every campaign
+	// request deterministically rejects.
+	if verr := microsoft.ValidateAccountID(accountID); verr != nil {
+		return subject.accountIDNotUsable()
+	}
 	// The probe enumerates under the SAME customer dispatch will use, and that is the whole
 	// point of carrying the configured id here.
 	//

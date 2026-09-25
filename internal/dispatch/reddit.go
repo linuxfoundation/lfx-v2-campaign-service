@@ -667,15 +667,21 @@ func (d *RedditDispatcher) ProbeConnection(ctx context.Context, projectID string
 	// than a prediction. Reporting OK: true here would recreate the exact failure this endpoint
 	// exists to catch: a connection that tests clean and fails on first use.
 	//
-	// Strictly, the connection is not unusable: reddit.CampaignInput carries a per-campaign
-	// ConversionPixelID that the client prefers when set, so a caller who supplies the pixel in
-	// redditConfig.conversionPixelId dispatches fine on this connection — and that override
-	// keeps working, pinned by TestRedditCreateCampaign_CampaignPixelOverridesAnAccountWithNone.
-	// The verdict is still OK: false, because the pixel identifies the advertiser and belongs to
-	// the ad account: the service's own create path never fills that override in, so for every
-	// campaign the product actually builds, a connection without an account pixel fails. Calling
-	// that connection healthy on the strength of a field only a hand-written brief can set is the
-	// false positive this endpoint exists to remove.
+	// Strictly, the connection is not unusable for EVERY campaign: reddit.CampaignInput carries
+	// a per-campaign ConversionPixelID that the client prefers when set, and Dispatch above
+	// passes redditConfig.conversionPixelId straight into it (reddit.go:178), so a brief that
+	// carries its own pixel dispatches fine on this connection. That override keeps working and
+	// is pinned by TestCreateCampaign_CampaignPixelOverridesAnAccountWithNone — this verdict
+	// does not narrow it, and must not be read as saying the override is dead.
+	//
+	// The verdict is still OK: false, because the override is the exception and not the
+	// configuration. The pixel identifies the advertiser and belongs to the ad ACCOUNT; the
+	// service supplies no default for it, so every brief that omits the optional override —
+	// which is what "optional" means at docs/api-catalog.md — is rejected by Reddit before any
+	// upstream call on a connection configured this way. Reporting such a connection healthy
+	// on the strength of a field each individual brief would have to re-supply is the "tests
+	// clean, fails on first use" false positive this endpoint exists to remove, and the
+	// verdict's text names the field and where the operator finds it.
 	//
 	// Read from the same place the client reads it — the account config on the connection row —
 	// rather than from providerConfig directly, so the probe cannot disagree with the create
