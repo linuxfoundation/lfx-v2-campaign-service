@@ -1310,7 +1310,11 @@ This package's token path was split to make the predicates answerable at all. `f
 previously returned one untyped error for every non-2xx from the token endpoint, so a refresh
 Google had permanently revoked fell to `ProbeInconclusive`'s default and the connection test
 reported it healthy. Non-2xx now splits by status: `errTokenEndpointUnavailable` for `5xx`
-(retryable, inconclusive) and `ErrTokenRequestRejected` for `4xx` (permanent, a rejection). The
+**and for `429`** (retryable, inconclusive) and `ErrTokenRequestRejected` for every other `4xx`
+(permanent, a rejection). The `429` sits on the retryable side for the reason a rate limit always
+does in this repo — it is Google declining to answer, not answering — and putting it with the
+refusals made a throttled refresh claim the stored credential had been permanently rejected,
+which `ErrTokenRequestRejected`'s own contract says is a fact that retrying cannot change. The
 token error deliberately carries STATUS ONLY — its request body holds the client secret and the
 refresh token — which is also why the dispatcher authors confirmed-verdict text rather than
 echoing anything from here.

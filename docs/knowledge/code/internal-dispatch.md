@@ -2064,6 +2064,12 @@ into a portal the operator is not looking at, but it is a link-building defect r
 verdict on the connection — failing it would report a working connection as broken, and
 `accountNotReachable`'s "does not reach" would be false on top of that.
 
+HubSpot's `probeSubject` is therefore built with **no `accountID` at all**. `where()` renders
+that field as "for account X" on a confirmed verdict, so seeding it with `portal_id` put the one
+value this section documents as routing nothing into the single message an operator reads as
+naming the thing that failed. It is the only probe whose subject is account-free, for the same
+reason it is the only one that checks no account: the token IS the account.
+
 ### The two verdicts decided before anything is sent
 
 `noAccountConfigured` and `accountIDNotUsable` are verdicts, not failures to check: campaign
@@ -2083,6 +2089,31 @@ credential-rejection arm deliberately, and so are both of X's and Reddit's pre-s
 "your credential was rejected" sends an operator to re-authorise a connection whose only broken
 part is a value they can see on the row. The dispatchers intercept both sentinels next to their
 `ErrAccountNotSelected` arms, which is also what keeps them out of the inconclusive default.
+
+Google Ads needs a **shape** check there as well as an emptiness check, and it is the only
+platform that does. Its `account_id` is the one provider config declared with no `Pattern` at the
+design layer, so the dashed form the Google Ads UI displays — `866-674-6580` — is storable.
+`ListAccessibleCustomers` answers in the undashed form and can never contain it, so without the
+check the membership test missed and the probe answered "the credential authenticates but does
+not reach account 866-674-6580" about a credential that reaches that account perfectly well under
+the id Google actually uses. The dispatcher calls the client's own exported
+`googleads.ValidateCustomerID` rather than restating the pattern, and answers `accountIDNotUsable`.
+
+### The verdict a 404 earns on Reddit and X
+
+`accountNotReachable` is also reached WITHOUT an enumeration on the two probes that name the
+configured account in the request path. Both packages export a third predicate,
+`ProbeAccountUnreachable`, matching a `404` on that account read; the dispatchers consult it
+immediately before `probeClass`.
+
+Neither standard predicate can state that outcome. Claiming it as a rejection — which both
+packages did until this was split out — renders "rejected the stored credential" about a
+credential the platform had just honoured, sending the operator to re-authorise instead of to
+repoint the account. Leaving it to fall through matches NEITHER predicate, because an `apiError`
+is not inconclusive, so it becomes `ErrServiceDefect`: a typed 500 that pages us about a
+connection the operator can fix themselves. The predicate lives in the platform packages because
+`apiError` is unexported in both — the dispatcher cannot read a status code it has no type for.
+`TestProbe404IsUnreachableNotRejected` pins both halves, verified by deleting each arm.
 
 ### Every probe resolves `resolveOwned`, never `resolve`
 

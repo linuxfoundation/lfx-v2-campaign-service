@@ -1571,10 +1571,11 @@ func (s *ConnectionService) DeleteHubspot(ctx context.Context, p *conn.DeleteHub
 
 func (s *ConnectionService) TestHubspot(ctx context.Context, p *conn.TestHubspotPayload) (*conn.ConnectionTestResult, error) {
 	// HubSpot's probe posts the private-app token to the token-info endpoint, so a revoked or
-	// rotated token fails here. It also answers with the hub id the token belongs to, which is
-	// cross-checked against the connection's configured portal_id when one is set: nothing
-	// keeps the two in step, and a token pasted from the wrong portal authenticates perfectly
-	// and then writes to a portal the operator did not choose.
+	// rotated token fails here. That is the entire test: it verifies the token and nothing
+	// else, because HubSpot has no account to check beside the credential — the token IS the
+	// account, and the portal a campaign lands in is the token's own. The connection's
+	// configured portal_id routes nothing and is not compared as a verdict; a stale value only
+	// misdirects app.hubspot.com deep links, which the dispatcher logs as a warning.
 	return s.testConnUpstream(ctx, p.ProjectID, hubspotConnectionDiscovery)
 }
 

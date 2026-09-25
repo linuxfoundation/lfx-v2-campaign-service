@@ -458,11 +458,24 @@ order decides whether the operator is told their connection is broken or that th
 complete. Neither predicate true is a third outcome: the platform refused a request this service
 BUILT, which is a service defect rather than a verdict.
 
-One deliberate departure: a `404` on the configured ad account is a REJECTION here, not a service
-defect. Reddit's probe reads the configured account directly (`GET /ad_accounts/{id}`), so a
-`404` is Reddit answering the exact question asked — this credential cannot see that account —
-rather than refusing a request this service built. `fetchToken` splits non-2xx by status the same
-way Google's does, and its token error carries status only for the same reason.
+One deliberate departure: this package exports a THIRD predicate, `ProbeAccountUnreachable`, for
+a `404` on the configured ad account. Reddit's probe reads that account directly
+(`GET /ad_accounts/{id}`), so a `404` is Reddit answering the exact question asked rather than
+refusing a request this service built — but the answer it gives is *the credential was accepted
+and the account was not found*, which is a different sentence from a rejection and points the
+operator at a different field. Only X's probe shares this shape, and only these two packages
+export the predicate; everywhere else the probe enumerates and checks membership, so a `404`
+there could only mean an endpoint moved. Neither standard predicate can state it: the rejection
+arm reads "reddit ads rejected the stored credential" about a credential Reddit honoured, and
+neither-predicate is the service-defect arm, a typed 500 paging us about a connection the
+operator needs to repoint. `apiError` is unexported, so the classification has to be made here;
+the dispatcher consumes it and answers `accountNotReachable`.
+
+`fetchToken` splits non-2xx by status the same way Google's does, and its token error carries
+status only for the same reason — **except that 429 goes with the 5xx side, not the 4xx side.**
+A rate limit is Reddit declining to answer, not answering, and `/api/v1/access_token` throttles
+routinely; routing it to `ErrTokenRequestRejected` told an operator their stored credential had
+been permanently refused when Reddit had never evaluated it.
 
 `ErrInvalidAccountID` is deliberately outside BOTH predicates. `VerifyAccount` raises it from
 this package's own path guard before anything is sent, so Reddit never evaluated the credential:

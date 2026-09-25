@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -24,10 +25,13 @@ import (
 // advisory. A probe that enumerates before checking whether the connection names an account can
 // therefore be pushed into reporting a provably unusable connection as healthy by an outage that
 // has nothing to do with it.
-func unreachableUpstream(t *testing.T, hit *bool) *httptest.Server {
+func unreachableUpstream(t *testing.T, hit *atomic.Bool) *httptest.Server {
 	t.Helper()
+	// atomic.Bool, not a plain bool: httptest.Server runs each handler in its own goroutine and
+	// the test goroutine reads this value in an assertion, so a plain flag is a data race that
+	// make test (go test -race) fails on.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		*hit = true
+		hit.Store(true)
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(srv.Close)
@@ -44,7 +48,7 @@ func unreachableUpstream(t *testing.T, hit *bool) *httptest.Server {
 // decided it first, through their own ErrAccountNotSelected arms.
 func TestProbeConnection_NoAccountIsDecidedBeforeTheCall(t *testing.T) {
 	t.Run("google ads", func(t *testing.T) {
-		var hit bool
+		var hit atomic.Bool
 		srv := unreachableUpstream(t, &hit)
 		conn := activeGoogleAdsConn(goodGoogleAdsCreds)
 		conn.AccountID = ""
@@ -52,18 +56,18 @@ func TestProbeConnection_NoAccountIsDecidedBeforeTheCall(t *testing.T) {
 			googleads.WithBaseURL(srv.URL), googleads.WithTokenURL(srv.URL))
 
 		err := d.ProbeConnection(context.Background(), "tlf", model.ProviderGoogleAds)
-		assertNoAccountVerdict(t, err, hit)
+		assertNoAccountVerdict(t, err, hit.Load())
 	})
 
 	t.Run("meta", func(t *testing.T) {
-		var hit bool
+		var hit atomic.Bool
 		srv := unreachableUpstream(t, &hit)
 		conn := activeMetaConn(goodMetaCreds)
 		conn.AccountID = ""
 		d := NewMetaDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
 
 		err := d.ProbeConnection(context.Background(), "tlf", model.ProviderMetaAds)
-		assertNoAccountVerdict(t, err, hit)
+		assertNoAccountVerdict(t, err, hit.Load())
 	})
 }
 
@@ -94,7 +98,7 @@ func assertNoAccountVerdict(t *testing.T, err error, upstreamHit bool) {
 // inconclusive default would have been worse still, answering OK: true. The dispatcher decides
 // it instead, and names the field that is actually broken.
 func TestRedditProbe_MalformedAccountIDDoesNotBlameTheCredential(t *testing.T) {
-	var hit bool
+	var hit atomic.Bool
 	srv := unreachableUpstream(t, &hit)
 	conn := activeRedditConn(goodRedditCreds)
 	conn.AccountID = "not/an/id"

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
 // wantProbeConnectionDispatchers names every dispatcher the connection tests route through.
@@ -25,6 +27,27 @@ var wantProbeConnectionDispatchers = []string{
 	"MicrosoftDispatcher",
 	"HubSpotDispatcher",
 }
+
+// The same six must SATISFY service.ConnectionProber, and that is a different claim from the
+// one the AST guard below makes. The guard reads source: it proves a method named
+// ProbeConnection exists and resolves owned credentials, and it would keep passing if the
+// receiver or the signature drifted. Orchestrator.ProbeConnection reaches these through a type
+// assertion (internal/service/orchestrator.go), so a drifted signature misses silently and
+// turns all six connection tests into typed 500s logged reason=probe_unwired — the endpoint
+// exists and always fails, which is the exact hazard the AccountLister assertions in
+// account_discovery_test.go were added for.
+//
+// Unlike that block, this one IS the full roster: ConnectionProber has six implementations and
+// wantProbeConnectionDispatchers above names the same six. LinkedIn is deliberately absent —
+// TestLinkedin does not call ProbeConnection at all.
+var (
+	_ service.ConnectionProber = (*GoogleAdsDispatcher)(nil)
+	_ service.ConnectionProber = (*MetaDispatcher)(nil)
+	_ service.ConnectionProber = (*RedditDispatcher)(nil)
+	_ service.ConnectionProber = (*TwitterDispatcher)(nil)
+	_ service.ConnectionProber = (*MicrosoftDispatcher)(nil)
+	_ service.ConnectionProber = (*HubSpotDispatcher)(nil)
+)
 
 // TestProbeConnection_ResolvesOwnedCredentialsOnly is a source-derived guard on the single
 // design constraint this whole feature rests on (LFXV2-2665).

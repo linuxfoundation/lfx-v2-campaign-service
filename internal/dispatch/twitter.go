@@ -658,6 +658,17 @@ func (d *TwitterDispatcher) ProbeConnection(ctx context.Context, projectID strin
 		if errors.Is(perr, twitter.ErrAccountNotConfigured) {
 			return subject.noAccountConfigured()
 		}
+		// A 404 on the account resource: these OAuth1 credentials were accepted, the account
+		// was not found. Answered before probeClass because it is a confirmed failure neither
+		// standard predicate can state correctly. ProbeCredentialRejected used to claim it,
+		// which read as "x ads rejected the stored credential" and sent the operator to
+		// re-authorise credentials X had just honoured. Dropping it from that predicate without
+		// this arm is no better in a different way: it then matches NEITHER predicate, which is
+		// the service-defect arm — a typed 500 paging us about an account id the operator needs
+		// to repoint. The remedy is the account id, and only this verdict says so.
+		if twitter.ProbeAccountUnreachable(perr) {
+			return subject.accountNotReachable()
+		}
 		return subject.probeClass(perr, twitter.ProbeCredentialRejected, twitter.ProbeInconclusive)
 	}
 	return nil

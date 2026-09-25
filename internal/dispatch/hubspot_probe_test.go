@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -90,5 +91,37 @@ func TestHubSpotProbe_RejectedTokenStillFails(t *testing.T) {
 	)
 	if err := d.ProbeConnection(context.Background(), "tlf", model.ProviderHubSpot); err == nil {
 		t.Fatal("ProbeConnection = nil for a token HubSpot refused; the endpoint would report a dead connection as healthy")
+	}
+}
+
+// TestHubSpotProbe_RejectionNamesNoAccount pins the subject as account-free.
+//
+// probeSubject.where() renders accountID as "for account X" on a confirmed verdict. Seeding it
+// with portal_id put that field into the operator-facing message for a probe that never checked
+// an account — the same field this package documents as routing nothing, in the one message
+// where an operator reads it as the thing that failed. HubSpot is the only platform with
+// nothing to put there, because the token IS the account.
+func TestHubSpotProbe_RejectionNamesNoAccount(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	d := NewHubSpotDispatcher(
+		fakeConnReader{conn: hubspotConnInPortal("8112310")},
+		identityEncryptor{},
+		fakeAudienceReader{},
+		hubspot.WithBaseURL(srv.URL),
+	)
+	err := d.ProbeConnection(context.Background(), "tlf", model.ProviderHubSpot)
+	if err == nil {
+		t.Fatal("ProbeConnection = nil for a refused token")
+	}
+	if strings.Contains(err.Error(), "8112310") {
+		t.Errorf("message %q names the configured portal_id as though it were the account that "+
+			"failed; this probe checked no account", err)
+	}
+	if strings.Contains(err.Error(), "for account") {
+		t.Errorf("message %q claims an account subject; HubSpot's probe has none", err)
 	}
 }

@@ -13,13 +13,16 @@ import (
 // X authenticates with an OAuth 1.0a four-tuple and runs no token exchange, so unlike Google,
 // Reddit and Microsoft there is no refresh arm to classify: every verdict here comes from the
 // account request itself. That probe addresses the configured account root directly, which is
-// why a 404 belongs with the rejections — the same reasoning as Reddit's.
+// why a 404 gets its own predicate rather than joining the rejections — the same reasoning as
+// Reddit's: "X refused your credential" and "X honoured your credential and has no such
+// account" send the operator to different fields.
 func TestProbePredicates(t *testing.T) {
 	cases := []struct {
 		name            string
 		err             error
 		wantRejected    bool
 		wantInconclusiv bool
+		wantUnreachable bool
 	}{
 		{
 			// Decidable without contacting X at all — which is why neither predicate claims
@@ -46,10 +49,11 @@ func TestProbePredicates(t *testing.T) {
 			wantInconclusiv: false,
 		},
 		{
-			name:            "404 on the configured account root",
+			name:            "404 on the configured account root is unreachable, not a rejected credential",
 			err:             &apiError{StatusCode: 404},
-			wantRejected:    true,
+			wantRejected:    false,
 			wantInconclusiv: false,
+			wantUnreachable: true,
 		},
 		{
 			name:            "429",
@@ -96,6 +100,9 @@ func TestProbePredicates(t *testing.T) {
 			}
 			if got := ProbeInconclusive(tc.err); got != tc.wantInconclusiv {
 				t.Errorf("ProbeInconclusive = %v, want %v", got, tc.wantInconclusiv)
+			}
+			if got := ProbeAccountUnreachable(tc.err); got != tc.wantUnreachable {
+				t.Errorf("ProbeAccountUnreachable = %v, want %v", got, tc.wantUnreachable)
 			}
 		})
 	}

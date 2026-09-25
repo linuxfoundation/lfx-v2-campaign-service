@@ -62,12 +62,11 @@ func (c *Client) VerifyAccount(ctx context.Context) error {
 // credential and REFUSING it: a token refresh Reddit itself turned down, or an Ads API call
 // answered 401/403.
 //
-// A 404 on the account read is here too, and is the one place this predicate departs from its
-// siblings. Every other client's probe enumerates and then checks membership, so a 404 could
-// only mean the endpoint moved — our defect. This probe names the configured account IN the
-// path, so a 404 is Reddit answering the question that was asked: this credential does not
-// reach that account. Reporting it as a service defect would page us for a connection the
-// operator needs to repoint.
+// A 404 is deliberately NOT here, even though it is a confirmed failure. It says something
+// this predicate cannot: the credential was accepted and the ACCOUNT was not found. Answering
+// it as a rejection renders "reddit ads rejected the stored credential", which sends an
+// operator to re-authorise a connection whose credential Reddit just honoured. It has its own
+// predicate, ProbeAccountUnreachable, and its own verdict — see probeSubject.accountNotReachable.
 //
 // ErrInvalidAccountID is deliberately NOT here. VerifyAccount raises it before anything is
 // sent, from this client's own guard on the configured id — Reddit never saw the credential, so
@@ -84,9 +83,31 @@ func ProbeCredentialRejected(err error) bool {
 	var ae *apiError
 	if errors.As(err, &ae) {
 		switch ae.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		case http.StatusUnauthorized, http.StatusForbidden:
 			return true
 		}
+	}
+	return false
+}
+
+// ProbeAccountUnreachable reports whether err is Reddit accepting this connection's credential
+// and then failing to find the account it was asked about: HTTP 404 on the account read.
+//
+// It exists on this client and on X's, and on no other, because only these two probes name the
+// configured account IN the request path. Every other client enumerates and checks membership,
+// so a 404 there could only mean the endpoint moved — our defect, and correctly inconclusive.
+// Here the 404 IS the answer to the question asked, and it is a different answer from the one
+// ProbeCredentialRejected gives: the token worked, the account id is the broken half. That
+// distinction is the whole point of splitting it out — the two produce the same OK: false, but
+// only one of them tells the operator to re-authorise, and it would be the wrong one.
+//
+// apiError is unexported, so this classification cannot be made by the dispatcher; like both
+// halves of the standard vocabulary it has to be answered by the package that owns the type.
+// internal/dispatch/probe.go holds the shared rationale and is the only caller.
+func ProbeAccountUnreachable(err error) bool {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return ae.StatusCode == http.StatusNotFound
 	}
 	return false
 }

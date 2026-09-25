@@ -839,8 +839,11 @@ complete. Neither predicate true is a third outcome: the platform refused a requ
 BUILT, which is a service defect rather than a verdict.
 
 `fetchToken` splits non-2xx by status as Google's and Reddit's do — `errTokenEndpointUnavailable`
-for `5xx`, `ErrTokenRequestRejected` for `4xx` — and its token error carries status only, since
-the request body holds the client secret and refresh token.
+for `5xx` and for `429`, `ErrTokenRequestRejected` for every other `4xx` — and its token error
+carries status only, since the request body holds the client secret and refresh token. The `429`
+belongs on the retryable side for the reason a rate limit always does here: it is Microsoft
+declining to answer, not answering, and classifying it as a refusal told an operator to
+re-authorise a credential Microsoft never evaluated.
 
 `ProbeInconclusive` here deliberately OMITS the `isPreSendDialError` arm its Google, Reddit and X
 siblings carry. This client's pre-send arm renders the cause through `safeCause` into a plain

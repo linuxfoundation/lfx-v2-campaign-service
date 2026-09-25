@@ -577,7 +577,14 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// an inconclusive probe respectively; without the split, the dead-refresh-token
 		// failure this service has already hit in production was indistinguishable from
 		// a transient outage and would be reported as a healthy connection.
-		if resp.StatusCode >= 500 {
+		//
+		// 429 is a 4xx that does NOT belong on the refusal side, for the reason a rate
+		// limit never does in this repo: it is Google declining to answer, not Google
+		// answering. Left in the rejected arm it makes a throttled refresh say "the
+		// platform rejected your stored credential" about a credential the platform
+		// never evaluated, and ErrTokenRequestRejected's godoc promise — that the
+		// refusal is permanent and retrying re-sends it — would be false.
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
 			return "", fmt.Errorf("%w: google-ads token refresh -> %d", errTokenEndpointUnavailable, resp.StatusCode)
 		}
 		return "", fmt.Errorf("%w: google-ads token refresh -> %d", ErrTokenRequestRejected, resp.StatusCode)

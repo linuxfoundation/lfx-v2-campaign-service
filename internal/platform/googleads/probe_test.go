@@ -4,8 +4,11 @@
 package googleads
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -113,5 +116,32 @@ func TestProbeCredentialRejected_SeesThroughWrapping(t *testing.T) {
 		fmt.Errorf("%w: google ads token refresh -> 401", ErrTokenRequestRejected))
 	if !ProbeCredentialRejected(err) {
 		t.Fatal("ProbeCredentialRejected = false through a wrapped chain; a revoked refresh token would be reported as a healthy connection")
+	}
+}
+
+// TestTokenRefresh429IsInconclusive pins the classification at its SOURCE rather than on a
+// synthetic error, because the defect it guards was in fetchToken's status split, not in the
+// predicates: a 429 is a 4xx, so splitting on >= 500 alone routed a throttled refresh into
+// ErrTokenRequestRejected. ProbeCredentialRejected matches that first and probeClass evaluates
+// rejection before inconclusive, so the connection test told an operator Google had permanently
+// refused a credential Google had merely declined to evaluate — contradicting this package's
+// own stated rule that a rate limit is the platform declining to answer, and
+// ErrTokenRequestRejected's promise that retrying re-sends the same refusal.
+func TestTokenRefresh429IsInconclusive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.accessTokenValue(context.Background())
+	if err == nil {
+		t.Fatal("expected an error on a 429 token response, got nil")
+	}
+	if ProbeCredentialRejected(err) {
+		t.Errorf("a throttled token refresh classified as a rejected credential: %v", err)
+	}
+	if !ProbeInconclusive(err) {
+		t.Errorf("a throttled token refresh is not inconclusive: %v", err)
 	}
 }

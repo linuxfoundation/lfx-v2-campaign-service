@@ -619,6 +619,17 @@ func (d *RedditDispatcher) ProbeConnection(ctx context.Context, projectID string
 		if errors.Is(verr, reddit.ErrInvalidAccountID) {
 			return subject.accountIDNotUsable()
 		}
+		// A 404 on the account resource: the credential was accepted, the account was not
+		// found. Answered before probeClass because it is a confirmed failure neither standard
+		// predicate can state correctly. ProbeCredentialRejected used to claim it, which read
+		// as "reddit ads rejected the stored credential" and sent the operator to re-authorise
+		// a credential Reddit had just honoured. Dropping it from that predicate without this
+		// arm is no better in a different way: it then matches NEITHER predicate, which is the
+		// service-defect arm — a typed 500 paging us about an account id the operator needs to
+		// repoint. The remedy is the account id, and only this verdict says so.
+		if reddit.ProbeAccountUnreachable(verr) {
+			return subject.accountNotReachable()
+		}
 		return subject.probeClass(verr, reddit.ProbeCredentialRejected, reddit.ProbeInconclusive)
 	}
 	return nil

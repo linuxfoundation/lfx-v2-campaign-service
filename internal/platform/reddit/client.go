@@ -806,8 +806,16 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// token and refusing it (revoked, expired, or issued against different
 		// application credentials), a 5xx is Reddit's token endpoint being unable to
 		// answer at all. See probe.go.
+		//
+		// 429 is a 4xx that does NOT belong on the refusal side, for the reason a rate
+		// limit never does in this repo: it is Reddit declining to answer, not Reddit
+		// answering — and /api/v1/access_token throttles routinely. Left in the rejected
+		// arm it makes a throttled refresh say "the platform rejected your stored
+		// credential" about a credential Reddit never evaluated, and
+		// ErrTokenRequestRejected's godoc promise — that the refusal is permanent and
+		// retrying re-sends it — would be false.
 		tokenErr := ErrTokenRequestRejected
-		if resp.StatusCode >= 500 {
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
 			tokenErr = errTokenEndpointUnavailable
 		}
 		if readErr != nil {

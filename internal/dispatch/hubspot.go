@@ -304,12 +304,15 @@ func (d *HubSpotDispatcher) resolveHubSpotClientVia(ctx context.Context, project
 //
 // The probe call is AuthenticatedPortalID: it posts the private-app token to HubSpot's
 // token-info endpoint, so a revoked, rotated or mistyped token fails here and nowhere else.
-// It also answers with the hub id the token actually belongs to, which makes this the one
-// probe that can cross-check provenance: a token pasted from the wrong portal authenticates
-// perfectly and then writes to a portal the operator did not choose. Nothing keeps
-// providerConfig["portal_id"] in step with the token, so when both are known and they
-// disagree, that is a failed test — reported by this service in its own words, never by
-// echoing the upstream body.
+// That is the whole of the test. HubSpot is the one platform with no account to check
+// alongside the credential, because the token IS the account: the portal a campaign lands in
+// is the token's own, derived by the client.
+//
+// providerConfig["portal_id"] is therefore NOT an account selection and a mismatch against
+// the authenticated hub id is NOT a verdict — see the reasoning at the comparison itself
+// below. Nothing routes on that field; its only readers build app.hubspot.com deep links.
+// The probe's subject is left account-free for the same reason, so a rejected credential
+// never renders "for account <portal_id>" about a value that names nothing.
 //
 // Resolution goes through d.creds.resolveOwned, NEVER d.creds.resolve: the forced-system
 // fallback would let a project with no HubSpot connection of its own silently verify the LF
@@ -320,8 +323,11 @@ func (d *HubSpotDispatcher) ProbeConnection(ctx context.Context, projectID strin
 		return err
 	}
 
+	// configured is read for the deep-link warning below and for NOTHING else. It is
+	// deliberately kept out of the probe subject: accountID is what where() renders as "for
+	// account X" on a confirmed verdict, and portal_id names no account this probe checked.
 	configured := strings.TrimSpace(res.providerConfig["portal_id"])
-	subject := probeSubject{platform: platform, accountID: configured}
+	subject := probeSubject{platform: platform}
 
 	portalID, perr := client.AuthenticatedPortalID(ctx)
 	if perr != nil {

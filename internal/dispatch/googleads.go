@@ -908,6 +908,16 @@ func (d *GoogleAdsDispatcher) ProbeConnection(ctx context.Context, projectID str
 	if strings.TrimSpace(res.accountID) == "" {
 		return subject.noAccountConfigured()
 	}
+	// Decided before the call for the same reason, and needed here in a way it is not for the
+	// other platforms: google-ads account_id is the one provider config with no Pattern at the
+	// design layer (design/connection.go), so the dashed form the Google Ads UI displays —
+	// 866-674-6580 — is storable. ListAccessibleCustomers answers in the undashed form and can
+	// never contain it, so without this the membership check would miss and report "the
+	// credential authenticates but does not reach account 866-674-6580" about a credential that
+	// reaches that account perfectly well under the id Google actually uses.
+	if err := googleads.ValidateCustomerID(strings.TrimSpace(res.accountID)); err != nil {
+		return subject.accountIDNotUsable()
+	}
 	customers, lerr := client.ListAccessibleCustomers(ctx)
 	if lerr != nil {
 		return subject.probeClass(lerr, googleads.ProbeCredentialRejected, googleads.ProbeInconclusive)

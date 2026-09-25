@@ -348,6 +348,15 @@ There is no token-refresh arm: X uses an OAuth 1.0a four-tuple, signed per reque
 exchange to fail. The probe reads the account root directly, so its `404`/`401`/`403` are answers
 about the configured account rather than about a discovery request.
 
+`401`/`403` are rejections, but the `404` gets a THIRD exported predicate,
+`ProbeAccountUnreachable` — this package and Reddit's are the only two that export one, because
+only their probes name the configured account IN the request path. The `404` says the credential
+was accepted and the account was not found, which sends the operator to a different field than
+"X refused your credential" does; and dropping it from the rejection predicate without that arm
+would make it match neither, which is the service-defect arm — a typed 500 about a connection
+the operator merely needs to repoint. `apiError` is unexported, so the dispatcher cannot make
+this call itself; it consumes the predicate and answers `accountNotReachable`.
+
 `ErrAccountNotConfigured` is deliberately outside BOTH predicates, for the reason Reddit's
 `ErrInvalidAccountID` is: `VerifyAccount` raises it from this client's own configuration before
 anything is sent, so X never looked at the credential. It is still a verdict — a connection

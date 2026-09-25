@@ -41,9 +41,11 @@ func (c *Client) VerifyAccount(ctx context.Context) error {
 // ProbeCredentialRejected reports whether err is X evaluating this connection's stored
 // credential and REFUSING it: HTTP 401 or 403.
 //
-// A 404 is here too, for the same reason it is on the Reddit probe: this call names the
-// configured account IN its path, so a 404 is X answering the question asked — these OAuth1
-// credentials do not reach that account — rather than evidence that an endpoint moved.
+// A 404 is deliberately NOT here, for the same reason it is not on the Reddit probe: it says
+// the credential was accepted and the ACCOUNT was not found, which is a different sentence
+// from "X refused your credential" and points the operator at a different field. It has its
+// own predicate, ProbeAccountUnreachable, and its own verdict — see
+// probeSubject.accountNotReachable.
 //
 // ErrAccountNotConfigured is deliberately NOT here. VerifyAccount raises it before anything is
 // sent, from this client's own configuration, so X never evaluated the credential; reporting it
@@ -57,9 +59,30 @@ func ProbeCredentialRejected(err error) bool {
 	var ae *apiError
 	if errors.As(err, &ae) {
 		switch ae.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		case http.StatusUnauthorized, http.StatusForbidden:
 			return true
 		}
+	}
+	return false
+}
+
+// ProbeAccountUnreachable reports whether err is X accepting these OAuth1 credentials and then
+// failing to find the account they were asked about: HTTP 404 on the account read.
+//
+// It exists on this client and on Reddit's, and on no other, because only these two probes name
+// the configured account IN the request path — VerifyAccount's URL is the account resource
+// itself. Every other client enumerates and checks membership, so a 404 there could only mean
+// the endpoint moved — our defect, and correctly inconclusive. Here the 404 IS the answer to
+// the question asked, and distinguishing it from a rejection is what keeps the verdict from
+// telling an operator to re-authorise credentials X just honoured.
+//
+// apiError is unexported, so this classification cannot be made by the dispatcher; like both
+// halves of the standard vocabulary it has to be answered by the package that owns the type.
+// internal/dispatch/probe.go holds the shared rationale and is the only caller.
+func ProbeAccountUnreachable(err error) bool {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return ae.StatusCode == http.StatusNotFound
 	}
 	return false
 }

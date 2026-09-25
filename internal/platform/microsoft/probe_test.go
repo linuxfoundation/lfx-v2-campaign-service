@@ -4,8 +4,11 @@
 package microsoft
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -117,5 +120,31 @@ func TestProbeInconclusive_PreSendDialErrorIsNotClaimed(t *testing.T) {
 	}
 	if !ProbeInconclusive(preSend) {
 		t.Error("ProbeInconclusive = false for a pre-send dial failure; nothing was learned about the credential, so it must not read as a verdict")
+	}
+}
+
+// TestTokenRefresh429IsInconclusive pins the classification at its SOURCE rather than on a
+// synthetic error, because the defect it guards was in fetchToken's status split, not in the
+// predicates: a 429 is a 4xx, so splitting on >= 500 alone routed a throttled refresh into
+// ErrTokenRequestRejected. ProbeCredentialRejected matches that first and probeClass evaluates
+// rejection before inconclusive, so the connection test told an operator Microsoft had
+// permanently refused a credential Microsoft had merely declined to evaluate — contradicting
+// this package's own stated rule that a rate limit is the platform declining to answer.
+func TestTokenRefresh429IsInconclusive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.accessTokenValue(context.Background())
+	if err == nil {
+		t.Fatal("expected an error on a 429 token response, got nil")
+	}
+	if ProbeCredentialRejected(err) {
+		t.Errorf("a throttled token refresh classified as a rejected credential: %v", err)
+	}
+	if !ProbeInconclusive(err) {
+		t.Errorf("a throttled token refresh is not inconclusive: %v", err)
 	}
 }
