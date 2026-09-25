@@ -2106,6 +2106,34 @@ Flat mode (no `login_customer_id`) answers only reachable/unreachable, because
 absence there really does mean the credential does not address the account — the answer is
 narrower, not wrong.
 
+### Why the Reddit probe is the one that builds its own client
+
+Every `ProbeConnection` resolves credentials through `d.creds.resolveOwned`. Reddit's, alone,
+also took its **client** from the shared cache — `resolveRedditClientWithCreds` ends at
+`d.clients.buildOnce`, which holds the built client for the life of the connection row version.
+
+Two caches then compose, and neither is wrong on its own. `reddit.Client` holds its OAuth access
+token until the expiry buffer, so `refreshToken`'s fast path returns the cached token without a
+token-endpoint round trip at all; `buildOnce` keeps that client, and therefore that access token,
+alive past the call that minted it. A probe served from the cache authenticates with a token some
+earlier dispatch obtained and **never presents the stored refresh token**. A refresh token
+revoked an hour ago then answers `OK: true` until the access token ages out — the exact
+production failure this endpoint was built to catch, reproduced by the endpoint that exists to
+catch it.
+
+`resolveRedditClientWithCredsCache` makes the cache a caller's choice rather than an invariant,
+and `ProbeConnection` is the one caller that passes `useCache=false`. A parameter rather than a
+second copy of the function, because every validation above the build — the resolve, the decode,
+the completeness checks — is the part a probe most needs to keep. It does not WRITE the cache
+either: seeding it would hand the next dispatch a token minted for a connection test, and
+re-couple the two lifetimes this separation exists to keep apart.
+
+This is an outlier being corrected, not a new rule. `googleads`, `meta`, `hubspot`, `microsoft`
+and `twitter` each already construct their client inside `ProbeConnection`; Reddit was the only
+one that did not. `probe_fresh_client_test.go` pins both directions — a revoked refresh token
+must fail the probe even with a valid cached access token, and a probe must not decide which
+token the next campaign creation runs on.
+
 ### The two verdicts decided before anything is sent
 
 `noAccountConfigured` and `accountIDNotUsable` are verdicts, not failures to check: campaign

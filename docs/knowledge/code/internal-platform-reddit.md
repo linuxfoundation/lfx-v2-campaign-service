@@ -474,8 +474,21 @@ the dispatcher consumes it and answers `accountNotReachable`.
 `fetchToken` splits non-2xx by status the same way Google's does, and its token error carries
 status only for the same reason — **except that 429 goes with the 5xx side, not the 4xx side.**
 A rate limit is Reddit declining to answer, not answering, and `/api/v1/access_token` throttles
-routinely; routing it to `ErrTokenRequestRejected` told an operator their stored credential had
-been permanently refused when Reddit had never evaluated it.
+routinely; routing it to a refusal told an operator their stored credential had been permanently
+refused when Reddit had never evaluated it.
+
+Everything below `500` that is not a `429` then splits AGAIN, through `classifyTokenRefusal` —
+the same second split Google's package carries, with the same conservative fallback and the same
+reasons, written out in *The two token-refusal sentinels, and why the name changed* in
+`internal-platform-googleads.md`. `ErrCredentialRejected` is Reddit evaluating the stored
+credential and refusing it; `ErrTokenRequestRejected` is the token endpoint refusing the SHAPE of
+the request this service built — a `3xx` the package-wide no-follow policy surfaces rather than
+chases, a `404`/`405` from a moved endpoint, or RFC 6749's three request-shaped codes — and it
+matches neither predicate, so it raises `domain.ErrServiceDefect` instead of blaming a credential
+Reddit never looked at. The sentinel kept its name but reversed its meaning to match
+`domain.ErrTokenRequestRejected`; `ProbeInconclusive` gained an explicit
+`ErrTokenRequestRejected → false` arm because its default for an unrecognised error is `true`.
+A body that could not be read is classified on status alone rather than guessed at.
 
 `ErrInvalidAccountID` is deliberately outside BOTH predicates. `VerifyAccount` raises it from
 this package's own path guard before anything is sent, so Reddit never evaluated the credential:

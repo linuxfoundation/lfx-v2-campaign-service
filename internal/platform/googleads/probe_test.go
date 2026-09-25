@@ -27,7 +27,7 @@ func TestProbePredicates(t *testing.T) {
 	}{
 		{
 			name:         "token endpoint refused the refresh (revoked token)",
-			err:          fmt.Errorf("%w: google ads token refresh -> 400", ErrTokenRequestRejected),
+			err:          fmt.Errorf("%w: google ads token refresh -> 400", ErrCredentialRejected),
 			wantRejected: true,
 			// Deliberately ALSO true: ProbeInconclusive's default is true, and this case is
 			// exactly why the dispatcher consults the rejection predicate FIRST. If the
@@ -113,7 +113,7 @@ func TestProbePredicates(t *testing.T) {
 // verdict back into "inconclusive" for a dead credential.
 func TestProbeCredentialRejected_SeesThroughWrapping(t *testing.T) {
 	err := fmt.Errorf("listing accessible customers: %w",
-		fmt.Errorf("%w: google ads token refresh -> 401", ErrTokenRequestRejected))
+		fmt.Errorf("%w: google ads token refresh -> 401", ErrCredentialRejected))
 	if !ProbeCredentialRejected(err) {
 		t.Fatal("ProbeCredentialRejected = false through a wrapped chain; a revoked refresh token would be reported as a healthy connection")
 	}
@@ -122,11 +122,11 @@ func TestProbeCredentialRejected_SeesThroughWrapping(t *testing.T) {
 // TestTokenRefresh429IsInconclusive pins the classification at its SOURCE rather than on a
 // synthetic error, because the defect it guards was in fetchToken's status split, not in the
 // predicates: a 429 is a 4xx, so splitting on >= 500 alone routed a throttled refresh into
-// ErrTokenRequestRejected. ProbeCredentialRejected matches that first and probeClass evaluates
+// ErrCredentialRejected. ProbeCredentialRejected matches that first and probeClass evaluates
 // rejection before inconclusive, so the connection test told an operator Google had permanently
 // refused a credential Google had merely declined to evaluate — contradicting this package's
 // own stated rule that a rate limit is the platform declining to answer, and
-// ErrTokenRequestRejected's promise that retrying re-sends the same refusal.
+// ErrCredentialRejected's promise that retrying re-sends the same refusal.
 func TestTokenRefresh429IsInconclusive(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)

@@ -1318,11 +1318,55 @@ This package's token path was split to make the predicates answerable at all. `f
 previously returned one untyped error for every non-2xx from the token endpoint, so a refresh
 Google had permanently revoked fell to `ProbeInconclusive`'s default and the connection test
 reported it healthy. Non-2xx now splits by status: `errTokenEndpointUnavailable` for `5xx`
-**and for `429`** (retryable, inconclusive) and `ErrTokenRequestRejected` for every other `4xx`
-(permanent, a rejection). The `429` sits on the retryable side for the reason a rate limit always
-does in this repo — it is Google declining to answer, not answering — and putting it with the
-refusals made a throttled refresh claim the stored credential had been permanently rejected,
-which `ErrTokenRequestRejected`'s own contract says is a fact that retrying cannot change. The
+**and for `429`** (retryable, inconclusive) and, for everything else, whichever sentinel
+`classifyTokenRefusal` picks. The `429` sits on the retryable side for the reason a rate limit
+always does in this repo — it is Google declining to answer, not answering — and putting it with
+the refusals made a throttled refresh claim the stored credential had been permanently rejected,
+which a rejection's own contract says is a fact that retrying cannot change. The
 token error deliberately carries STATUS ONLY — its request body holds the client secret and the
 refresh token — which is also why the dispatcher authors confirmed-verdict text rather than
 echoing anything from here.
+
+### The two token-refusal sentinels, and why the name changed
+
+The status split above is necessary and was not sufficient. Every non-`429` sub-`500` status
+carried ONE sentinel, so three things that are not verdicts on the credential were reported as
+one: a `3xx` (this client does not follow redirects, so a redirect surfaces as a status), a `404`
+or `405` (the endpoint moved), and RFC 6749 §5.2's three REQUEST-shaped error codes
+(`invalid_request`, `unsupported_grant_type`, `invalid_scope`). Each of those is a failure of
+what **this service** sent, and each told the operator to go replace a credential Google never
+looked at — while the defect that actually broke the refresh went unreported.
+
+`classifyTokenRefusal` makes the second split, and the vocabulary now matches the rest of the
+repo:
+
+- **`ErrCredentialRejected`** — Google evaluated the stored credential and refused it. Permanent,
+  the operator's to fix, and the one class reported as a confirmed failed test.
+  `ProbeCredentialRejected` matches it.
+- **`ErrTokenRequestRejected`** — the token endpoint refused the SHAPE of the request. It matches
+  **neither** predicate, which routes it to `domain.ErrServiceDefect`, a typed `500` that pages
+  us, because nobody re-authorising anything can repair a request only this service composes.
+
+The name is the load-bearing part of that change. `domain.ErrTokenRequestRejected` and
+`linkedin.ErrTokenRequestRejected` already meant *service defect, file a bug*; this package used
+the identical name for the opposite meaning, so reading one told you nothing about the other.
+`ErrTokenRequestRejected` now means here what it already meant there, and the credential verdict
+got the name that describes it.
+
+`ProbeInconclusive` has a dedicated `ErrTokenRequestRejected → false` arm, and it is not
+redundant. That function answers `true` for anything it does not recognise, so without the arm
+the new sentinel would inherit the default and report `OK: true` with an advisory — unproven
+reported as healthy, the exact shape LFXV2-2665 exists to remove.
+
+The fallback is deliberately **conservative**, and that asymmetry is the whole safety argument.
+Only a positively-identified RFC code, or a status no token endpoint answers a well-formed
+refresh with at all (`3xx`, `404`, `405`, anything else), is reclassified. An unrecognised body
+on a `400`, `401` or `403` stays a credential verdict — promoting it would turn the ordinary
+revoked-token case, the failure this whole endpoint exists to catch, into a `500` that pages us
+instead of an answer the operator can act on. Only the allowlisted `error` code is ever read out
+of the body, and it is compared against rather than rendered: that request carried the client
+secret and the refresh token, and an OAuth or proxy diagnostic body may reflect them.
+
+Reddit and Microsoft carry the same pair and the same classifier, duplicated rather than shared
+because each platform package owns its own error vocabulary and the sentinel sets are not
+interchangeable.

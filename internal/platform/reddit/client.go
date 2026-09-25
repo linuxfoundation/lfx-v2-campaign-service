@@ -812,11 +812,25 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// answering — and /api/v1/access_token throttles routinely. Left in the rejected
 		// arm it makes a throttled refresh say "the platform rejected your stored
 		// credential" about a credential Reddit never evaluated, and
-		// ErrTokenRequestRejected's godoc promise — that the refusal is permanent and
+		// ErrCredentialRejected's godoc promise — that the refusal is permanent and
 		// retrying re-sends it — would be false.
-		tokenErr := ErrTokenRequestRejected
-		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+		// Everything below 500 that is not a 429 splits AGAIN, by whose fault it is.
+		// Not every such status is Reddit evaluating the credential: a 3xx (the
+		// no-follow policy above surfaces redirects here rather than following them),
+		// a 404 or 405 (the endpoint moved), and RFC 6749's three REQUEST-shaped error
+		// codes are all failures of what this service sent. Reported as credential
+		// rejections they tell the operator to replace a credential Reddit never
+		// looked at. classifyTokenRefusal reads only the allowlisted error CODE out of
+		// the body and still renders nothing from it. A body that could not be read is
+		// passed as nil, so classification falls back to the status alone.
+		var tokenErr error
+		switch {
+		case resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests:
 			tokenErr = errTokenEndpointUnavailable
+		case readErr != nil:
+			tokenErr = classifyTokenRefusal(resp.StatusCode, nil)
+		default:
+			tokenErr = classifyTokenRefusal(resp.StatusCode, body)
 		}
 		if readErr != nil {
 			return "", fmt.Errorf("%w: reddit token refresh failed: HTTP %d (body read error: %v)", tokenErr, resp.StatusCode, readErr)

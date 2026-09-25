@@ -582,12 +582,19 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// limit never does in this repo: it is Google declining to answer, not Google
 		// answering. Left in the rejected arm it makes a throttled refresh say "the
 		// platform rejected your stored credential" about a credential the platform
-		// never evaluated, and ErrTokenRequestRejected's godoc promise — that the
+		// never evaluated, and ErrCredentialRejected's godoc promise — that the
 		// refusal is permanent and retrying re-sends it — would be false.
 		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
 			return "", fmt.Errorf("%w: google-ads token refresh -> %d", errTokenEndpointUnavailable, resp.StatusCode)
 		}
-		return "", fmt.Errorf("%w: google-ads token refresh -> %d", ErrTokenRequestRejected, resp.StatusCode)
+		// Everything else splits again, by WHOSE fault it is. Not every non-429 4xx is Google
+		// evaluating the credential: a 3xx (redirects are not followed), a 404 or 405 (the
+		// endpoint moved), and the three RFC 6749 codes that describe the REQUEST are all
+		// failures of what this service sent. Reported as credential rejections they told the
+		// operator to replace a credential Google never looked at. classifyTokenRefusal reads
+		// only the allowlisted error CODE and still renders nothing from the body.
+		return "", fmt.Errorf("%w: google-ads token refresh -> %d",
+			classifyTokenRefusal(resp.StatusCode, buf.Bytes()), resp.StatusCode)
 	}
 
 	var tok tokenResponse

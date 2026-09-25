@@ -34,7 +34,7 @@ func TestProbePredicates(t *testing.T) {
 	}{
 		{
 			name:         "token endpoint refused the refresh",
-			err:          fmt.Errorf("%w: reddit token refresh -> 400", ErrTokenRequestRejected),
+			err:          fmt.Errorf("%w: reddit token refresh -> 400", ErrCredentialRejected),
 			wantRejected: true,
 			// Also true, because ProbeInconclusive defaults to true — which is exactly why the
 			// dispatcher consults the rejection predicate first.
@@ -129,7 +129,7 @@ func TestProbePredicates(t *testing.T) {
 // TestTokenRefresh429IsInconclusive pins the classification at its SOURCE rather than on a
 // synthetic error, because the defect it guards was in fetchToken's status split, not in the
 // predicates: a 429 is a 4xx, so splitting on >= 500 alone routed a throttled refresh into
-// ErrTokenRequestRejected. ProbeCredentialRejected matches that first and probeClass evaluates
+// ErrCredentialRejected. ProbeCredentialRejected matches that first and probeClass evaluates
 // rejection before inconclusive, so the connection test told an operator Reddit had permanently
 // refused a credential Reddit had merely declined to evaluate. Reddit matters most of the three
 // here: /api/v1/access_token throttles routinely.

@@ -257,6 +257,26 @@ func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID st
 // every reddit path — including the toggle and metrics paths that must follow the account the
 // campaign was CREATED under — silently authenticate as the creation resolver instead.
 func (d *RedditDispatcher) resolveRedditClientWithCreds(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver) (c *reddit.Client, res *resolved, err error) {
+	return d.resolveRedditClientWithCredsCache(ctx, projectID, platform, resolveCreds, true)
+}
+
+// resolveRedditClientWithCredsCache is resolveRedditClientWithCreds with the client cache made a
+// caller's choice rather than an invariant.
+//
+// useCache is false for exactly one caller, ProbeConnection, and the parameter exists rather than
+// a second copy of this function because every validation above the build is the part a probe
+// most needs to keep. reddit.Client holds its OAuth access token for the token's lifetime
+// (refreshToken's fast path at internal/platform/reddit/client.go returns cachedToken whenever it
+// is still inside the expiry buffer), and d.clients.buildOnce holds the CLIENT for the life of the
+// connection row version. Composed, a probe served from that cache authenticates with an access
+// token minted by some earlier dispatch and never presents the stored refresh token at all — so a
+// refresh token revoked an hour ago answers OK: true until the access token ages out. That is the
+// exact production failure this endpoint was built to catch, which is why the one probe that
+// shared a cached client is the one probe that must not.
+//
+// The other five probes never had this to fix: googleads, meta, hubspot, microsoft and twitter
+// each construct a client inside ProbeConnection already. Reddit was the outlier, not the rule.
+func (d *RedditDispatcher) resolveRedditClientWithCredsCache(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver, useCache bool) (c *reddit.Client, res *resolved, err error) {
 	res, err = resolveCreds(ctx, projectID, platform)
 	if err != nil {
 		return nil, nil, err
@@ -308,6 +328,12 @@ func (d *RedditDispatcher) resolveRedditClientWithCreds(ctx context.Context, pro
 			},
 			d.opts...,
 		)
+	}
+	if !useCache {
+		// Deliberately does not WRITE the cache either. Seeding it here would hand the next
+		// dispatch a token minted for a probe, and a probe is the one caller whose client is
+		// built to be thrown away.
+		return build(), res, nil
 	}
 	built, err := d.clients.buildOnce(key, connID, version, func() (any, error) {
 		return build(), nil
@@ -603,7 +629,9 @@ func (d *RedditDispatcher) resolveMonitorClient(ctx context.Context, projectID s
 // translate anyway.
 func (d *RedditDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
 	subject := probeSubject{platform: platform}
-	client, res, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.resolveOwned)
+	// useCache=false: a probe must present the STORED refresh token, not a live access token some
+	// earlier dispatch left in a cached client. See resolveRedditClientWithCredsCache.
+	client, res, err := d.resolveRedditClientWithCredsCache(ctx, projectID, platform, d.creds.resolveOwned, false)
 	if err != nil {
 		if errors.Is(err, domain.ErrAccountNotSelected) {
 			return subject.noAccountConfigured()

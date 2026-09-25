@@ -839,11 +839,24 @@ complete. Neither predicate true is a third outcome: the platform refused a requ
 BUILT, which is a service defect rather than a verdict.
 
 `fetchToken` splits non-2xx by status as Google's and Reddit's do — `errTokenEndpointUnavailable`
-for `5xx` and for `429`, `ErrTokenRequestRejected` for every other `4xx` — and its token error
+for `5xx` and for `429`, and `classifyTokenRefusal` for everything else — and its token error
 carries status only, since the request body holds the client secret and refresh token. The `429`
 belongs on the retryable side for the reason a rate limit always does here: it is Microsoft
 declining to answer, not answering, and classifying it as a refusal told an operator to
 re-authorise a credential Microsoft never evaluated.
+
+The status split alone was not enough, and the second split is the same one Google's package
+carries, for the same reasons and with the same conservative fallback — see
+*The two token-refusal sentinels, and why the name changed* in `internal-platform-googleads.md`.
+In short: `ErrCredentialRejected` is Microsoft evaluating the stored credential and refusing it,
+and is the only class reported as a confirmed failed test; `ErrTokenRequestRejected` is the token
+endpoint refusing the SHAPE of the request this service built (a `3xx` that was not followed, a
+`404`/`405` from a moved endpoint, or RFC 6749's `invalid_request`, `unsupported_grant_type` and
+`invalid_scope`), matches neither predicate, and raises `domain.ErrServiceDefect`. The sentinel
+kept its name but reversed its meaning to match `domain.ErrTokenRequestRejected` and
+`linkedin.ErrTokenRequestRejected`; the credential verdict took the name that describes it.
+`ProbeInconclusive` therefore needs its explicit `ErrTokenRequestRejected → false` arm, since its
+default for an unrecognised error is `true` and would report a service defect as `OK: true`.
 
 `ProbeInconclusive` here deliberately OMITS the `isPreSendDialError` arm its Google, Reddit and X
 siblings carry. This client's pre-send arm renders the cause through `safeCause` into a plain

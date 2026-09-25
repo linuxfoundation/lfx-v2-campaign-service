@@ -27,7 +27,7 @@ func TestProbePredicates(t *testing.T) {
 	}{
 		{
 			name:         "token endpoint refused the refresh (revoked token)",
-			err:          fmt.Errorf("%w: microsoft-ads token refresh -> 400", ErrTokenRequestRejected),
+			err:          fmt.Errorf("%w: microsoft-ads token refresh -> 400", ErrCredentialRejected),
 			wantRejected: true,
 			// Also true: the default is true, which is why the rejection predicate is
 			// consulted first.
@@ -126,7 +126,7 @@ func TestProbeInconclusive_PreSendDialErrorIsNotClaimed(t *testing.T) {
 // TestTokenRefresh429IsInconclusive pins the classification at its SOURCE rather than on a
 // synthetic error, because the defect it guards was in fetchToken's status split, not in the
 // predicates: a 429 is a 4xx, so splitting on >= 500 alone routed a throttled refresh into
-// ErrTokenRequestRejected. ProbeCredentialRejected matches that first and probeClass evaluates
+// ErrCredentialRejected. ProbeCredentialRejected matches that first and probeClass evaluates
 // rejection before inconclusive, so the connection test told an operator Microsoft had
 // permanently refused a credential Microsoft had merely declined to evaluate — contradicting
 // this package's own stated rule that a rate limit is the platform declining to answer.
