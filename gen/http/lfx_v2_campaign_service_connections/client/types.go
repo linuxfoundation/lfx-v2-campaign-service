@@ -4558,11 +4558,11 @@ type MonitorRedditAdsAccountUnauthorizedResponseBody struct {
 type GoogleAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// Google Ads customer ID. Optional: omit it to create the connection with
-	// credentials only, then choose one from GET
+	// Google Ads customer ID (digits only, no dashes). Optional: omit it to create
+	// the connection with credentials only, then choose one from GET
 	// .../connection-google-ads/accounts and set it with PUT.
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// Manager account used for API access
+	// Manager account used for API access (digits only, no dashes)
 	LoginCustomerID *string `form:"login_customer_id,omitempty" json:"login_customer_id,omitempty" xml:"login_customer_id,omitempty"`
 }
 
@@ -4682,9 +4682,10 @@ type TwitterAdsCredentialsRequestBody struct {
 type MicrosoftAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// Microsoft Advertising account ID
+	// Microsoft Advertising account ID (digits only)
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// Microsoft Advertising customer ID
+	// Microsoft Advertising customer ID (a positive integer, digits only).
+	// Optional: omit it to let the credential's own customers be discovered.
 	CustomerID *string `form:"customer_id,omitempty" json:"customer_id,omitempty" xml:"customer_id,omitempty"`
 }
 
@@ -15695,6 +15696,28 @@ func ValidateMonitorRedditAdsAccountUnauthorizedResponseBody(body *MonitorReddit
 	return
 }
 
+// ValidateGoogleAdsConnectionConfigRequestBody runs the validations defined on
+// google-ads-connection-configRequestBody
+func ValidateGoogleAdsConnectionConfigRequestBody(body *GoogleAdsConnectionConfigRequestBody) (err error) {
+	if body.AccountID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^([0-9]+)?$"))
+	}
+	if body.AccountID != nil {
+		if utf8.RuneCountInString(*body.AccountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 64, false))
+		}
+	}
+	if body.LoginCustomerID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.login_customer_id", *body.LoginCustomerID, "^([0-9]+)?$"))
+	}
+	if body.LoginCustomerID != nil {
+		if utf8.RuneCountInString(*body.LoginCustomerID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.login_customer_id", *body.LoginCustomerID, utf8.RuneCountInString(*body.LoginCustomerID), 64, false))
+		}
+	}
+	return
+}
+
 // ValidateLinkedinAdsConnectionConfigRequestBody runs the validations defined
 // on linkedin-ads-connection-configRequestBody
 func ValidateLinkedinAdsConnectionConfigRequestBody(body *LinkedinAdsConnectionConfigRequestBody) (err error) {
@@ -15727,6 +15750,16 @@ func ValidateMetaAdsConnectionConfigRequestBody(body *MetaAdsConnectionConfigReq
 	return
 }
 
+// ValidateRedditAdsConnectionConfigRequestBody runs the validations defined on
+// reddit-ads-connection-configRequestBody
+func ValidateRedditAdsConnectionConfigRequestBody(body *RedditAdsConnectionConfigRequestBody) (err error) {
+	err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", body.AccountID, "^[A-Za-z0-9_]+$"))
+	if utf8.RuneCountInString(body.AccountID) > 64 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", body.AccountID, utf8.RuneCountInString(body.AccountID), 64, false))
+	}
+	return
+}
+
 // ValidateTwitterAdsConnectionConfigRequestBody runs the validations defined
 // on twitter-ads-connection-configRequestBody
 func ValidateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionConfigRequestBody) (err error) {
@@ -15741,6 +15774,24 @@ func ValidateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionCon
 	err = goa.MergeErrors(err, goa.ValidatePattern("body.funding_instrument_id", body.FundingInstrumentID, "^[A-Za-z0-9]+$"))
 	if utf8.RuneCountInString(body.FundingInstrumentID) > 64 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.funding_instrument_id", body.FundingInstrumentID, utf8.RuneCountInString(body.FundingInstrumentID), 64, false))
+	}
+	return
+}
+
+// ValidateMicrosoftAdsConnectionConfigRequestBody runs the validations defined
+// on microsoft-ads-connection-configRequestBody
+func ValidateMicrosoftAdsConnectionConfigRequestBody(body *MicrosoftAdsConnectionConfigRequestBody) (err error) {
+	err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", body.AccountID, "^[0-9]+$"))
+	if utf8.RuneCountInString(body.AccountID) > 64 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", body.AccountID, utf8.RuneCountInString(body.AccountID), 64, false))
+	}
+	if body.CustomerID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.customer_id", *body.CustomerID, "^([1-9][0-9]{0,18})?$"))
+	}
+	if body.CustomerID != nil {
+		if utf8.RuneCountInString(*body.CustomerID) > 19 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.customer_id", *body.CustomerID, utf8.RuneCountInString(*body.CustomerID), 19, false))
+		}
 	}
 	return
 }

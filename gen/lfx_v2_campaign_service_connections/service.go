@@ -806,11 +806,11 @@ type GoogleAdsConnection struct {
 type GoogleAdsConnectionConfig struct {
 	// Optional friendly name
 	Label *string
-	// Google Ads customer ID. Optional: omit it to create the connection with
-	// credentials only, then choose one from GET
+	// Google Ads customer ID (digits only, no dashes). Optional: omit it to create
+	// the connection with credentials only, then choose one from GET
 	// .../connection-google-ads/accounts and set it with PUT.
 	AccountID *string
-	// Manager account used for API access
+	// Manager account used for API access (digits only, no dashes)
 	LoginCustomerID *string
 }
 
@@ -1201,9 +1201,10 @@ type MicrosoftAdsConnection struct {
 type MicrosoftAdsConnectionConfig struct {
 	// Optional friendly name
 	Label *string
-	// Microsoft Advertising account ID
+	// Microsoft Advertising account ID (digits only)
 	AccountID string
-	// Microsoft Advertising customer ID
+	// Microsoft Advertising customer ID (a positive integer, digits only).
+	// Optional: omit it to let the credential's own customers be discovered.
 	CustomerID *string
 }
 

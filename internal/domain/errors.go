@@ -683,6 +683,29 @@ var (
 	// token. PERMANENT, never retryable.
 	ErrConnectionProbeRequestRejected = errors.New("the platform refused the connection-probe request itself; this is a service defect")
 
+	// ErrConnectionProbeNotAttempted marks a probe verdict that was reached BEFORE any request
+	// left this service — the connection names no ad account, or the account id or customer id
+	// it does name cannot form a valid request for its platform at all.
+	//
+	// It is a MARKER, never a status and never an answer on its own. Every error carrying it
+	// also carries ErrConnectionProbeFailed and renders that sentinel's verdict text unchanged:
+	// the operator's answer is the same confirmed failure either way, because a connection that
+	// cannot address an account provably cannot run a campaign. What this sentinel adds is the
+	// one fact the verdict text does not carry — that nothing was sent — and it exists for a
+	// single reader, Orchestrator.ProbeConnection's metrics arm.
+	//
+	// recordUpstream's own contract is that it is "called ONLY after the pre-platform guards
+	// have passed, so the histogram measures actual network work rather than local refusals".
+	// The probe's pre-send verdicts are exactly such local refusals, and they are decided inside
+	// the timed region rather than before it, so recording them would book a near-zero-latency
+	// `error` sample against campaign_upstream_call_duration_seconds for a platform that was
+	// never called — dragging that platform's latency quantiles toward zero and inventing an
+	// upstream error rate out of stored configuration an operator can fix themselves.
+	//
+	// It is attached by internal/dispatch alongside the verdict, for the same reason every other
+	// probe sentinel is: that is the layer which knows whether a request was built and sent.
+	ErrConnectionProbeNotAttempted = errors.New("the connection probe reached its verdict before any request was sent")
+
 	// ErrConnectionProbeUnwired is the wiring defect of the probe path: this build has no
 	// dispatcher registered for a platform whose connection test probes upstream, or one that
 	// does not implement the ConnectionProber capability.

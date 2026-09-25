@@ -504,6 +504,18 @@ func (d *MicrosoftDispatcher) ProbeConnection(ctx context.Context, projectID str
 	// With no customer configured the zero AccountConfig is still right, and for the reason
 	// ListAccounts documents at length: the credential is then the whole question, and only
 	// walking every CustomerRole from User/Query covers the set.
+	// A configured customer_id that is not an identity is a VERDICT, decided before anything
+	// is sent — the same class as noAccountConfigured, and for the same reason. customer_id is
+	// operator-settable through the connection config API and validateMicrosoftConnection does
+	// not constrain it, so "abc" or "0" is a storable state. No request can be built from it,
+	// which means the platform never evaluates the credential: the error surfaced from
+	// discoveryCustomerIDs used to reach probeClass unrecognised, take ProbeInconclusive's
+	// default, and report OK: true for a connection that provably cannot dispatch. Reporting a
+	// connection unusable-as-configured is the answer the test exists to give.
+	customerID := strings.TrimSpace(res.providerConfig["customer_id"])
+	if verr := microsoft.ValidateCustomerID(customerID); verr != nil {
+		return subject.customerIDNotUsable()
+	}
 	client := microsoft.NewClient(
 		microsoft.Credentials{
 			ClientID:       creds.ClientID,
@@ -511,7 +523,7 @@ func (d *MicrosoftDispatcher) ProbeConnection(ctx context.Context, projectID str
 			DeveloperToken: creds.DeveloperToken,
 			RefreshToken:   creds.RefreshToken,
 		},
-		microsoft.AccountConfig{CustomerID: strings.TrimSpace(res.providerConfig["customer_id"])},
+		microsoft.AccountConfig{CustomerID: customerID},
 		d.opts...,
 	)
 	adAccounts, lerr := client.ListAdAccounts(ctx)

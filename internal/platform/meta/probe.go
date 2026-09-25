@@ -40,6 +40,18 @@ func ProbeCredentialRejected(err error) bool {
 	if ae.StatusCode == http.StatusUnauthorized || ae.StatusCode == http.StatusForbidden {
 		return true
 	}
+	// The STATUS gates the code, never the reverse — the same rule the token-refusal
+	// classifiers follow (docs/knowledge/code/internal-platform-googleads.md). HTTP 400 is the
+	// only status Meta uses to deliver these three as a verdict on the credential, and this
+	// predicate is evaluated BEFORE ProbeInconclusive (internal/dispatch/probe.go's probeClass,
+	// whose arm order is load-bearing). So without this gate a 429 or a 5xx that happens to
+	// carry code 190 — a shed or failed request that evaluated nothing — was reported as a
+	// CONFIRMED credential rejection, telling an operator to reauthorize a credential Meta
+	// never looked at. That is the same false verdict the inconclusive arm exists to prevent,
+	// arriving through the code field instead of the status.
+	if ae.StatusCode != http.StatusBadRequest {
+		return false
+	}
 	switch ae.Code {
 	case graphCodeInvalidToken, graphCodePermissionDenied, graphCodeApplicationDenied:
 		return true

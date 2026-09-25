@@ -6,6 +6,7 @@ package microsoft
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -212,6 +213,33 @@ func roleIsStrong(roleID int64) bool {
 	}
 }
 
+// ErrInvalidCustomerID marks a configured customer_id that is not a Microsoft Advertising
+// identity at all. It is a VERDICT on the connection, not a failure to check one: no request
+// can be built from it, so nothing about the credential is ever learned — and an unrecognised
+// error would take ProbeInconclusive's default and report the connection OK.
+var ErrInvalidCustomerID = errors.New("microsoft-ads: invalid customer id on this connection")
+
+// ValidateCustomerID reports whether a connection's configured customer_id is a usable
+// Microsoft Advertising customer identity — a positive int64, the same rule numberID applies
+// to every discovered id.
+//
+// Exported because two callers need the SAME answer and must not each write their own: this
+// package, which cannot enumerate under a malformed id, and internal/dispatch, which has to
+// decide before sending anything whether the connection is testable at all. An empty id is
+// NOT an error here — it means "no customer configured", which is a supported state the
+// caller handles separately (see discoveryCustomerIDs).
+func ValidateCustomerID(customerID string) error {
+	trimmed := strings.TrimSpace(customerID)
+	if trimmed == "" {
+		return nil
+	}
+	n := json.Number(trimmed)
+	if numberID(&n) == "" {
+		return fmt.Errorf("%w: %q must be a positive integer", ErrInvalidCustomerID, clipID(trimmed))
+	}
+	return nil
+}
+
 // discoveryCustomerIDs resolves which customers to enumerate accounts under.
 //
 // A configured CustomerID is taken as the answer: the connection has been scoped on
@@ -248,11 +276,17 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]discoveredCustomer
 		// reinterpretation of the connection record's own field, and the two callers
 		// below (`&role.CustomerID`, `&ai.ID`) take the address of a json.Number that
 		// already is one. Converting first keeps all three sites saying the same thing.
-		customerID := json.Number(c.account.CustomerID)
-		id := numberID(&customerID)
-		if id == "" {
-			return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q on this connection: must be a positive integer", clipID(c.account.CustomerID))
+		// ValidateCustomerID carries the rule, so the probe path (internal/dispatch, which
+		// must refuse this connection BEFORE sending anything) and this enumeration cannot
+		// drift apart on what counts as an identity. It also wraps ErrInvalidCustomerID:
+		// without a sentinel this error was unrecognised by both probe predicates and took
+		// ProbeInconclusive's default, reporting a connection that can never dispatch as a
+		// successful test.
+		if err := ValidateCustomerID(c.account.CustomerID); err != nil {
+			return nil, err
 		}
+		customerID := json.Number(strings.TrimSpace(c.account.CustomerID))
+		id := numberID(&customerID)
 		// Configured customers have no role information: we cannot determine their write
 		// permission without querying User/Query, and scoping that query to the configured
 		// customer is not straightforward. Assign role 0 (no role evidence, fail closed) so

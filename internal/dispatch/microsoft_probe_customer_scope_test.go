@@ -84,6 +84,42 @@ func TestMicrosoftProbe_EnumeratesUnderTheConfiguredCustomer(t *testing.T) {
 	}
 }
 
+// TestMicrosoftProbe_MalformedCustomerIDIsAVerdictNotInconclusive pins the third state of the
+// same field, and it is the one that reported a broken connection as healthy.
+//
+// customer_id is operator-settable through the connection config API and
+// validateMicrosoftConnection does not constrain it, so a non-numeric or zero value is
+// storable. discoveryCustomerIDs refuses it — correctly — but used to refuse it with an
+// unsentineled error, which neither probe predicate recognised, so ProbeInconclusive's
+// unrecognised-error default answered true and the service reported OK: true. Dispatch under
+// that customer cannot work, so the test has to say so.
+func TestMicrosoftProbe_MalformedCustomerIDIsAVerdictNotInconclusive(t *testing.T) {
+	for _, customerID := range []string{"abc", "0", "-1", "1.5", "99999999999999999999999"} {
+		t.Run(customerID, func(t *testing.T) {
+			srv := microsoftTwoCustomerServer(t)
+
+			conn := activeMicrosoftConn(goodMicrosoftCreds)
+			conn.ProviderConfig = map[string]string{"customer_id": customerID, "account_id": "1234567"}
+			d := NewMicrosoftDispatcher(fakeConnReader{conn: conn}, identityEncryptor{},
+				microsoft.WithBaseURL(srv.URL), microsoft.WithCustomerBaseURL(srv.URL), microsoft.WithTokenURL(srv.URL+"/token"))
+
+			err := d.ProbeConnection(context.Background(), "cncf", model.ProviderMicrosoftAds)
+			if err == nil {
+				t.Fatalf("ProbeConnection reported customer_id %q as a healthy connection; it is not a "+
+					"Microsoft customer identity, so no request can be built from it and campaign "+
+					"creation on this connection cannot succeed", customerID)
+			}
+			if errors.Is(err, domain.ErrConnectionProbeInconclusive) {
+				t.Fatalf("ProbeConnection = %v for customer_id %q, want a confirmed verdict: "+
+					"inconclusive maps to OK: true, which is the false positive this ticket removes", err, customerID)
+			}
+			if !errors.Is(err, domain.ErrConnectionProbeFailed) {
+				t.Errorf("ProbeConnection = %v for customer_id %q, want ErrConnectionProbeFailed", err, customerID)
+			}
+		})
+	}
+}
+
 // TestMicrosoftProbe_StillWalksEveryCustomerWithNoneConfigured pins the other half. With no
 // customer_id stored the credential is the whole question, and one AccountsInfo/Query cannot
 // answer it — only walking every CustomerRole from User/Query covers the set. Narrowing here

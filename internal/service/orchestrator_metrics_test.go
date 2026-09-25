@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -619,6 +620,106 @@ func TestPrePlatformGuardsAreNotInstrumented(t *testing.T) {
 				t.Fatalf("a pre-platform guard recorded %d upstream calls, want 0: %+v", len(got), got)
 			}
 		})
+	}
+}
+
+// TestProbeVerdictsDecidedBeforeAnyRequestAreNotInstrumented pins the probe's own version of
+// the guard above, for the guards that cannot be hoisted out of the timed region.
+//
+// ToggleCampaignStatus's refusals are the orchestrator's own and are decided before the timer
+// starts. The probe's three pre-send verdicts — the connection names no ad account, its account
+// id is not usable, its customer id is not usable — are decided by the DISPATCHER, which is
+// already inside the measured call. They are confirmed failures the operator must see, and they
+// are also local refusals that never touched the platform, so they reach
+// Orchestrator.ProbeConnection carrying domain.ErrConnectionProbeNotAttempted and must leave no
+// upstream sample behind: a platform whose connections are misconfigured would otherwise show
+// an upstream error rate and a latency distribution collapsing toward zero for calls it never
+// received.
+func TestProbeVerdictsDecidedBeforeAnyRequestAreNotInstrumented(t *testing.T) {
+	const platform = model.ProviderMicrosoftAds
+
+	// The shape internal/dispatch's preSendProbeVerdict produces: the confirmed-failure status
+	// the operator is answered with, plus the marker saying nothing was sent. That package's own
+	// tests pin that its three pre-send verdicts actually carry it.
+	preSend := fmt.Errorf("%w: %w: the %s connection names no ad account to verify",
+		domain.ErrConnectionProbeFailed, domain.ErrConnectionProbeNotAttempted, platform)
+
+	for _, tc := range []struct {
+		name       string
+		probeErr   error
+		wantCalls  int
+		wantReason string
+	}{
+		{
+			name:       "verdict reached before any request",
+			probeErr:   preSend,
+			wantCalls:  0,
+			wantReason: "no request was built, so there is no upstream call to record",
+		},
+		{
+			name:       "verdict reached by asking the platform",
+			probeErr:   fmt.Errorf("%w: %s rejected the stored credential", domain.ErrConnectionProbeFailed, platform),
+			wantCalls:  1,
+			wantReason: "the platform had to evaluate the credential to refuse it, and that call is the signal an operator watches",
+		},
+		{
+			name:       "probe could not be completed",
+			probeErr:   fmt.Errorf("%w: the %s check could not be completed", domain.ErrConnectionProbeInconclusive, platform),
+			wantCalls:  1,
+			wantReason: "an attempt was made and failed in flight; dropping it would hide a platform outage",
+		},
+		{
+			name:       "healthy connection",
+			probeErr:   nil,
+			wantCalls:  1,
+			wantReason: "a successful probe is a successful upstream call",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMetrics{}
+			orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+				platform: upstreamCapableDispatcher{err: tc.probeErr},
+			})
+			orch.SetMetrics(rec)
+
+			err := orch.ProbeConnection(context.Background(), "p1", platform)
+			if tc.probeErr != nil && err == nil {
+				t.Fatal("ProbeConnection swallowed the dispatcher's verdict")
+			}
+			if tc.probeErr == nil && err != nil {
+				t.Fatalf("ProbeConnection = %v, want nil", err)
+			}
+
+			got := rec.upstreamCalls()
+			if len(got) != tc.wantCalls {
+				t.Fatalf("recorded %d upstream calls, want %d: %s (%+v)", len(got), tc.wantCalls, tc.wantReason, got)
+			}
+			if len(got) == 1 && got[0].operation != opProbeConnection {
+				t.Errorf("operation = %q, want %q", got[0].operation, opProbeConnection)
+			}
+		})
+	}
+}
+
+// TestPreSendProbeVerdictStillReachesTheCaller is the regression half: dropping the metric must
+// not drop the verdict. The connection-test arm renders this error's own text to the operator,
+// so a marker that also suppressed the error would turn a confirmed "no" into a silent "yes".
+func TestPreSendProbeVerdictStillReachesTheCaller(t *testing.T) {
+	const platform = model.ProviderMicrosoftAds
+	preSend := fmt.Errorf("%w: %w: the %s connection names no ad account to verify",
+		domain.ErrConnectionProbeFailed, domain.ErrConnectionProbeNotAttempted, platform)
+
+	orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		platform: upstreamCapableDispatcher{err: preSend},
+	})
+	orch.SetMetrics(&recordingMetrics{})
+
+	err := orch.ProbeConnection(context.Background(), "p1", platform)
+	if !errors.Is(err, domain.ErrConnectionProbeFailed) {
+		t.Fatalf("ProbeConnection = %v, want the dispatcher's confirmed verdict unchanged", err)
+	}
+	if err.Error() != preSend.Error() {
+		t.Errorf("ProbeConnection error text = %q, want %q", err.Error(), preSend.Error())
 	}
 }
 

@@ -482,6 +482,19 @@ func (s *ConnectionService) testConn(ctx context.Context, projectID string, p mo
 	}
 	c, err := repo.Get(ctx, projectID, p)
 	if err != nil {
+		// A failure to READ the row is a 503, not a 500 — docs/api-catalog.md's `/test` row:
+		// "A failure to READ the connection row is a 503 — nothing was learned, and it is the
+		// one outcome here retrying can fix." mapErr's default is InternalServerError, so
+		// every non-sentinel repository failure (a dropped connection, a statement timeout)
+		// was answering 500: a permanent-looking status for the one condition on this endpoint
+		// that a retry resolves, and one that pages whoever owns the code rather than telling
+		// the caller to try again.
+		//
+		// ErrNotFound keeps its 404 — that read SUCCEEDED and returned the absence, which is
+		// an answer about the connection rather than a failure to look.
+		if !errors.Is(err, domain.ErrNotFound) {
+			return nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "connection storage is unavailable"}
+		}
 		return nil, mapErr(err)
 	}
 	// HasCredentials reads c.EncryptedCredentials, so a (nil, nil) read panics here rather

@@ -68,6 +68,28 @@ func TestProbePredicates(t *testing.T) {
 			wantInconclusiv: true,
 		},
 		{
+			// The status gates the code. A shed request that happens to carry 190 evaluated
+			// nothing, so calling it a rejection would tell an operator to reauthorize a
+			// credential Meta never looked at — and ProbeCredentialRejected is consulted
+			// BEFORE ProbeInconclusive, so without the gate this arm won.
+			name:            "a 429 carrying graph code 190 is inconclusive, not a rejection",
+			err:             &APIError{StatusCode: 429, Code: graphCodeInvalidToken},
+			wantRejected:    false,
+			wantInconclusiv: true,
+		},
+		{
+			name:            "a 500 carrying graph code 190 is inconclusive, not a rejection",
+			err:             &APIError{StatusCode: 500, Code: graphCodeInvalidToken},
+			wantRejected:    false,
+			wantInconclusiv: true,
+		},
+		{
+			name:            "a 503 carrying graph code 200 is inconclusive, not a rejection",
+			err:             &APIError{StatusCode: 503, Code: graphCodePermissionDenied},
+			wantRejected:    false,
+			wantInconclusiv: true,
+		},
+		{
 			// Code is absent because the envelope could not be READ, not because Meta omitted
 			// it — so the 400 below must not be read as a clean semantic rejection. Same
 			// reasoning the create path already applies to this field.

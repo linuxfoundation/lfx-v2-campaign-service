@@ -2175,7 +2175,21 @@ func (o *Orchestrator) ProbeConnection(ctx context.Context, projectID string, pl
 	defer cancel()
 	start := time.Now()
 	err := prober.ProbeConnection(callCtx, projectID, platform)
-	o.recordUpstream(ctx, platform, opProbeConnection, start, err)
+	// Not every probe verdict is an upstream call. Three of them — the connection names no ad
+	// account, its account id is not a usable account id, its customer id is not a usable
+	// customer id — are decided by the dispatcher BEFORE it builds a request, and they carry
+	// domain.ErrConnectionProbeNotAttempted to say so. Recording them here would be a
+	// near-zero-latency `error` sample on campaign_upstream_call_duration_seconds for a platform
+	// that was never contacted: exactly the local refusal recordUpstream's own doc says it is
+	// called after the guards to avoid, except these guards live inside the dispatcher and so
+	// cannot be hoisted above the timer.
+	//
+	// The operator-facing answer is untouched — these stay confirmed failures, OK: false, with
+	// their own wording. Only the upstream series changes, and only by losing samples that never
+	// described an upstream call.
+	if !errors.Is(err, domain.ErrConnectionProbeNotAttempted) {
+		o.recordUpstream(ctx, platform, opProbeConnection, start, err)
+	}
 	return err
 }
 

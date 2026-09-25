@@ -2160,9 +2160,9 @@ one that did not. `probe_fresh_client_test.go` pins both directions — a revoke
 must fail the probe even with a valid cached access token, and a probe must not decide which
 token the next campaign creation runs on.
 
-### The two verdicts decided before anything is sent
+### The three verdicts decided before anything is sent
 
-`noAccountConfigured` and `accountIDNotUsable` are verdicts, not failures to check: campaign
+`noAccountConfigured`, `accountIDNotUsable` and `customerIDNotUsable` are verdicts, not failures to check: campaign
 creation on such a connection cannot succeed, which is the question the test asks. Both are
 decided **before** the upstream call on every probe, and the ordering is load-bearing on the two
 enumerating platforms. Google Ads and Meta reach the same empty-account verdict through
@@ -2180,14 +2180,35 @@ credential-rejection arm deliberately, and so are both of X's and Reddit's pre-s
 part is a value they can see on the row. The dispatchers intercept both sentinels next to their
 `ErrAccountNotSelected` arms, which is also what keeps them out of the inconclusive default.
 
-Google Ads needs a **shape** check there as well as an emptiness check, and it is the only
-platform that does. Its `account_id` is the one provider config declared with no `Pattern` at the
-design layer, so the dashed form the Google Ads UI displays — `866-674-6580` — is storable.
-`ListAccessibleCustomers` answers in the undashed form and can never contain it, so without the
-check the membership test missed and the probe answered "the credential authenticates but does
-not reach account 866-674-6580" about a credential that reaches that account perfectly well under
-the id Google actually uses. The dispatcher calls the client's own exported
-`googleads.ValidateCustomerID` rather than restating the pattern, and answers `accountIDNotUsable`.
+Google Ads needs a **shape** check there as well as an emptiness check. Its `account_id` accepts
+the dashed form the Google Ads UI displays — `866-674-6580` — which `ListAccessibleCustomers`
+answers in the undashed form and can never contain, so without the check the membership test
+missed and the probe answered "the credential authenticates but does not reach account
+866-674-6580" about a credential that reaches that account perfectly well under the id Google
+actually uses. The dispatcher calls the client's own exported `googleads.ValidateCustomerID`
+rather than restating the pattern, and answers `accountIDNotUsable`. The design layer now
+declares a `Pattern` on that field as well (see [design](design.md)), which closes the HTTP door
+the dashed id arrived through; the runtime check stays because Goa validates only what comes in
+over HTTP, and because rows stored before the pattern landed still carry the dashed form.
+
+`customerIDNotUsable` is the same class for the OTHER operator-settable identity, Microsoft
+Advertising's `customer_id`, which scopes the whole enumeration rather than naming the account.
+`discoveryCustomerIDs` always refused a non-numeric or non-positive value — correctly — but with
+an unsentineled error, which neither probe predicate recognised, so `ProbeInconclusive`'s
+unrecognised-error default answered `true` and the service reported `OK: true` for a connection
+that can never dispatch. `microsoft.ValidateCustomerID` (exported for exactly this, alongside
+`microsoft.ErrInvalidCustomerID`) is now consulted before the call, and the verdict is kept
+separate from `accountIDNotUsable` because the operator has to know which of the two fields on
+the same row to fix. `TestMicrosoftProbe_MalformedCustomerIDIsAVerdictNotInconclusive` pins it
+over `abc`, `0`, `-1`, `1.5` and an int64 overflow.
+
+All three carry `domain.ErrConnectionProbeNotAttempted` alongside `ErrConnectionProbeFailed`,
+built through `preSendProbeVerdict`. The marker changes nothing an operator sees — same status,
+same sentence — and has exactly one reader, `Orchestrator.ProbeConnection`'s metrics arm, which
+must not book an upstream call for a platform that was never contacted. `probeMembership` renders
+the same no-account sentence WITHOUT the marker, because reaching that line means an enumeration
+completed and a real call belongs in the upstream series;
+`probe_not_attempted_test.go` pins both halves verdict by verdict.
 
 ### The verdict a 404 earns on Reddit and X
 

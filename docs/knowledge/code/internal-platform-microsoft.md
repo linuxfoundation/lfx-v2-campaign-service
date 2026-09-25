@@ -621,7 +621,17 @@ answer to "whose accounts are these", to be enumerated under and offered as a pi
 Trusting a configured id more than a discovered one is backwards. A discovered id arrived
 seconds ago from the API; a configured one has been sitting in a connection record since
 whenever it was written. `discoveryCustomerIDs` therefore runs `numberID` over it and fails
-the call rather than querying under an id that cannot name a customer. `Id` is decoded as a `json.Number`, not through `any`: Microsoft types
+the call rather than querying under an id that cannot name a customer.
+
+That refusal is now **sentineled and exported**. `ValidateCustomerID` applies exactly the
+`numberID` rule (positive `int64`; an EMPTY id is not an error, because "no customer configured"
+is a supported state), and a failure carries `ErrInvalidCustomerID`. Both exist because two
+callers need the same answer and must not each write their own: this package, which cannot
+enumerate under a malformed id, and `internal/dispatch`, which has to decide before sending
+anything whether the connection is testable at all. Before the sentinel, the refusal was an
+unsentineled error that neither probe predicate recognised, so `ProbeInconclusive`'s
+unrecognised-error default answered `true` and the connection test reported `OK: true` for a
+connection whose stored `customer_id` makes dispatch impossible. `Id` is decoded as a `json.Number`, not through `any`: Microsoft types
 it as a `long`, and float64 silently loses precision above 2^53, producing a WRONG
 account id that still looks like one (a test pins 2^53+1 round-tripping exactly).
 

@@ -184,4 +184,33 @@ edited since discovery change what gets created.
 There is no streaming method: Goa v3 has no SSE encoding, so `discover-audience-lists` is a plain
 synchronous POST and any progress reporting belongs to the caller.
 
+## Account ids on connection configs carry a `Pattern` (LFXV2-2665)
+
+`connection.go`'s per-provider config types declare a `Pattern` and a `MaxLength` on every id the
+operator can set — Google Ads `account_id` and `login_customer_id` (`^([0-9]+)?$`), Reddit
+`account_id` (`^[A-Za-z0-9_]+$`), Microsoft `account_id` (`^[0-9]+$`) and `customer_id`
+(`^([1-9][0-9]{0,18})?$`). `Required` alone checks only that the KEY is present, so
+`{"account_id": ""}` was storable on an active connection, and Google's dashed UI form
+`866-674-6580` — which no Google Ads API response can ever contain — was storable too.
+
+Each pattern is the design-layer mirror of a rule the platform client already enforces at
+runtime (`googleads.customerIDRE`, `reddit.accountIDRe`, `microsoft.accountIDRE` /
+`ValidateCustomerID`), and the runtime checks STAY: Goa validates the HTTP transport, and
+non-HTTP callers — bootstrap, migrations, rows written before these patterns landed — bypass it
+entirely. Two deliberate asymmetries are worth knowing before "tightening" either side:
+
+- An **empty** value is admitted where `""` is a supported runtime state (Google's
+  credentials-first `account_not_selected`, Microsoft's "no customer scoped"), and refused where
+  it is not. A pattern stricter than the runtime is the mirror image of the defect being fixed.
+- Whitespace-padded and out-of-`int64`-range values diverge from `microsoft.ValidateCustomerID`,
+  which trims and parses: the design layer is the stricter outer check for padding, and no regex
+  can express the `int64` ceiling, which is why `ParseInt` must stay.
+
+`internal/apivalidation` tests the GENERATED validators from outside `gen/` and includes a drift
+guard per platform that runs the same ids through the design validator and the platform
+validator, asserting they agree except at the named asymmetries.
+
+PUT is a full replace on every provider, and un-selecting an account is expressed by an ABSENT
+`account_id` — which is why a strict pattern on an optional attribute does not break clearing.
+
 See [design](../../../design).

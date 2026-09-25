@@ -591,7 +591,13 @@ complete. Neither predicate true is a third outcome: the platform refused a requ
 BUILT, which is a service defect rather than a verdict.
 
 The classification reads the Graph envelope, not just the status: code `190` under a `400` is a
-credential rejection, while a rate-limit code under the same `400` is inconclusive. An
+credential rejection, while a rate-limit code under the same `400` is inconclusive. **The status
+gates the code, never the reverse** — the same rule the token-refusal classifiers follow. HTTP
+`400` is the only status Meta uses to deliver `190`/`200`/`10` as a verdict on the credential, so
+`ProbeCredentialRejected` refuses to read the code under any other status. Without that gate a
+`429` or a `5xx` that happened to carry code `190` — a shed or failed request that evaluated
+nothing — was a CONFIRMED credential rejection, because this predicate is consulted before the
+inconclusive one; the operator was told to reauthorize a credential Meta never looked at. An
 `APIError` whose envelope could not be read (`EnvelopeUnreadable`) is inconclusive whatever the
 status — nothing was parsed, so nothing was learned. `APIError.Message` falls back to the raw
 response body, which is why the dispatcher never echoes it.

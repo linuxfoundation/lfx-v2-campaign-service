@@ -102,6 +102,31 @@ func confirmedProbeVerdict(format string, args ...any) error {
 	return &confirmedProbeVerdictError{err: fmt.Errorf(format, args...)}
 }
 
+// preSendProbeVerdictError is a confirmed verdict that ALSO answers for
+// domain.ErrConnectionProbeNotAttempted.
+//
+// It renders the same sentence and carries the same ErrConnectionProbeFailed status as any
+// other confirmed verdict — the operator's answer does not change because the verdict was
+// cheap to reach. The extra sentinel is read by exactly one caller,
+// Orchestrator.ProbeConnection, which must not book an upstream-call sample for a platform it
+// never called; see that sentinel's doc for why.
+//
+// It embeds nothing and wraps the confirmed verdict rather than replacing it, so the two
+// sentinels cannot drift apart: an error that is not a confirmed failure can never be built
+// through here.
+type preSendProbeVerdictError struct{ err *confirmedProbeVerdictError }
+
+func (e *preSendProbeVerdictError) Error() string { return e.err.Error() }
+func (e *preSendProbeVerdictError) Unwrap() error { return e.err }
+func (e *preSendProbeVerdictError) Is(target error) bool {
+	return target == domain.ErrConnectionProbeNotAttempted
+}
+
+// preSendProbeVerdict builds a confirmed verdict that was reached before anything was sent.
+func preSendProbeVerdict(format string, args ...any) error {
+	return &preSendProbeVerdictError{err: &confirmedProbeVerdictError{err: fmt.Errorf(format, args...)}}
+}
+
 // probeClass maps a platform probe error onto exactly one of the three service-level outcomes,
 // using that platform's own two predicates. err must be non-nil.
 func (s probeSubject) probeClass(err error, credentialRejected, inconclusive func(error) bool) error {
@@ -134,9 +159,18 @@ func (s probeSubject) probeClass(err error, credentialRejected, inconclusive fun
 // campaign creation on this connection cannot succeed, which is the question the test asks.
 // Answering "inconclusive" — OK: true — for a connection that is provably unusable is the
 // exact defect this whole path removes.
+//
+// It carries domain.ErrConnectionProbeNotAttempted because every caller of THIS method decides
+// it before building a request. probeMembership reaches the same sentence after an enumeration
+// that did happen, and renders it through noAccountConfiguredText without the marker — a call
+// that was made must stay in the upstream series whatever verdict it leads to.
 func (s probeSubject) noAccountConfigured() error {
-	return confirmedProbeVerdict("the %s connection names no ad account to verify", s.platform)
+	return preSendProbeVerdict(noAccountConfiguredText, s.platform)
 }
+
+// noAccountConfiguredText is the single wording behind both renderings above, so the two can
+// never drift into two different sentences for one verdict.
+const noAccountConfiguredText = "the %s connection names no ad account to verify"
 
 // accountIDNotUsable is the verdict for a connection whose configured account id cannot form a
 // valid request for its platform at all.
@@ -147,7 +181,21 @@ func (s probeSubject) noAccountConfigured() error {
 // credential was refused would send them to re-authorise a connection whose only broken part is
 // a value they can see on the row and fix themselves.
 func (s probeSubject) accountIDNotUsable() error {
-	return confirmedProbeVerdict("the %s connection's configured ad account id is not a valid %s account id",
+	return preSendProbeVerdict("the %s connection's configured ad account id is not a valid %s account id",
+		s.platform, s.platform)
+}
+
+// customerIDNotUsable is accountIDNotUsable's sibling for the OTHER operator-settable identity
+// on a connection: Microsoft Advertising's customer_id, which scopes the whole enumeration
+// rather than naming the account.
+//
+// Kept separate from accountIDNotUsable because the operator has to know WHICH field to fix,
+// and the two live on the same row. Like its sibling it is decided before anything is sent and
+// no credential is evaluated, so it must not surface as a credential rejection — nor as
+// inconclusive, which is what an unrecognised error from the enumeration used to produce:
+// OK: true for a connection that can never dispatch.
+func (s probeSubject) customerIDNotUsable() error {
+	return preSendProbeVerdict("the %s connection's configured customer id is not a valid %s customer id",
 		s.platform, s.platform)
 }
 
@@ -194,7 +242,13 @@ func (s probeSubject) accountNotEnabled() error {
 func (s probeSubject) probeMembership(accessible []string, normalize func(string) string) error {
 	want := strings.TrimSpace(s.accountID)
 	if want == "" {
-		return s.noAccountConfigured()
+		// The same verdict noAccountConfigured renders, deliberately WITHOUT the not-attempted
+		// marker: reaching this line means the enumeration above already completed, so an
+		// upstream call was made and belongs in the upstream series. Every caller today checks
+		// for an empty id before calling out, so this arm is defensive — and it has to stay
+		// correct anyway, because the day one stops checking is the day the marker would
+		// silently delete a real call from the metrics.
+		return confirmedProbeVerdict(noAccountConfiguredText, s.platform)
 	}
 	if normalize != nil {
 		want = normalize(want)

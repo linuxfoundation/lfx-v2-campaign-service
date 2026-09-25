@@ -73,6 +73,15 @@ campaign — losing one metric is strictly cheaper. Upstream
 calls are timed only AFTER the pre-platform guards pass, so local refusals (which return
 in nanoseconds) do not drag the latency quantiles toward zero.
 
+`ProbeConnection` is the one path whose local refusals cannot be hoisted above the timer,
+because they are decided inside the DISPATCHER: a connection that names no ad account, or
+whose account id or customer id cannot form a valid request for its platform, is refused
+before anything is built. Those verdicts carry `domain.ErrConnectionProbeNotAttempted`
+alongside their confirmed-failure sentinel, and the metrics arm skips `recordUpstream` when
+it sees it — otherwise a platform with a few misconfigured rows shows an upstream error rate
+and near-zero latency samples for calls it never received. The operator's answer is
+unchanged: these stay `OK: false` with their own wording, and only the metric moves.
+
 The RUNNING and TERMINAL job transitions are recorded with deliberately OPPOSITE rules.
 RUNNING is recorded on **attempt** (dispatch proceeds whether or not the status write
 lands, so gating it would under-count during a database blip). The terminal one is
@@ -1119,6 +1128,16 @@ had a descriptor — `redditAdsAccountDiscovery` (`operation: "account monitor"`
 either would have given the connection test log lines and messages labelled with a surface the
 caller never touched. The per-surface convention is the one `connection_monitor.go` already
 establishes.
+
+A failed READ of the connection row is a **503**, not a 500, and `testConn` now answers it
+directly instead of routing through `mapErr` — whose default arm is `InternalServerError`. The
+rule is `docs/api-catalog.md`'s own `/test` row: nothing was learned, and it is the one outcome
+on this endpoint that retrying can fix, so a permanent-looking 500 both misdescribed it and paged
+whoever owns the code rather than telling the caller to try again. `domain.ErrNotFound` keeps its
+404: that read SUCCEEDED and returned the absence, which is an answer about the connection rather
+than a failure to look. Nothing is sent upstream on the strength of a row nobody could read —
+`TestTestConn_UnreadableRowIs503NotAn500` asserts the prober was not called at all, and its
+sibling pins the 404.
 
 `ConnectionProber` is declared here as a **required** capability, in contrast to
 `OrgReferenceVerifier` directly above it: there is deliberately no per-platform table saying which

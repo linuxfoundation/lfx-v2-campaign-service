@@ -458,3 +458,82 @@ func TestUnusableConnectionReason_ProbeSentinels(t *testing.T) {
 		})
 	}
 }
+
+// TestTestConn_UnreadableRowIs503NotAn500 pins the FIRST read on every connection-test path,
+// the one that happens before any prober is consulted.
+//
+// docs/api-catalog.md's `/test` row states the rule outright: "A failure to READ the connection
+// row is a 503 — nothing was learned, and it is the one outcome here retrying can fix." testConn
+// was routing that read's error through mapErr, whose default arm is InternalServerError, so a
+// dropped connection or a statement timeout answered 500 — a permanent-looking status for the
+// one condition on this endpoint that clears by itself, which sends the caller to file a bug
+// instead of retrying and pages whoever owns the code.
+//
+// Both entry points are asserted because they are separate methods sharing one helper:
+// testConnUpstream (every platform but LinkedIn) and TestLinkedinAds (its own cross-check path).
+// Each returns testConn's error unchanged, so a fix applied in only one place would leave the
+// other on 500.
+func TestTestConn_UnreadableRowIs503NotAn500(t *testing.T) {
+	calls := []struct {
+		name string
+		call func(*ConnectionService) error
+	}{
+		{
+			name: "test-google-ads",
+			call: func(s *ConnectionService) error {
+				_, err := s.TestGoogleAds(context.Background(), &conn.TestGoogleAdsPayload{ProjectID: "tlf"})
+				return err
+			},
+		},
+		{
+			name: "test-linkedin-ads",
+			call: func(s *ConnectionService) error {
+				_, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+				return err
+			},
+		},
+	}
+	for _, c := range calls {
+		t.Run(c.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			stub := &connectionProberStub{}
+			s := newTestService(t, repo)
+			s.SetOrchestrator(&Orchestrator{
+				dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: stub},
+			})
+			repo.getErr = errors.New("connection reset by peer")
+
+			err := c.call(s)
+			if err == nil {
+				t.Fatal("an unreadable connection row cannot be reported as a completed test")
+			}
+			if _, ok := err.(*conn.InternalServerError); ok {
+				t.Fatalf("a failed row READ was reported as a 500: %v\n"+
+					"docs/api-catalog.md: a failure to read the connection row is a 503 — nothing was "+
+					"learned, and it is the one outcome here retrying can fix", err)
+			}
+			if _, ok := err.(*conn.ConnServiceUnavailableError); !ok {
+				t.Fatalf("error = %T (%v), want *conn.ConnServiceUnavailableError", err, err)
+			}
+			// Nothing may be sent upstream on the strength of a row nobody could read.
+			if stub.calls != 0 {
+				t.Errorf("the prober ran %d times after the row read failed", stub.calls)
+			}
+		})
+	}
+}
+
+// TestTestConn_AbsentRowIsStill404 is the other half, and the regression this fix could
+// plausibly have caused.
+//
+// ErrNotFound is not a failure to read — that read SUCCEEDED and returned the absence, which is
+// an answer about the connection rather than an outage of the store. Collapsing it into the new
+// 503 arm would tell a caller with no connection at all to retry forever.
+func TestTestConn_AbsentRowIsStill404(t *testing.T) {
+	s := newTestService(t, newFakeRepo())
+
+	_, err := s.TestGoogleAds(context.Background(), &conn.TestGoogleAdsPayload{ProjectID: "tlf"})
+	if _, ok := err.(*conn.NotFoundError); !ok {
+		t.Fatalf("error = %T (%v), want *conn.NotFoundError: an absent connection is an answer, not an outage", err, err)
+	}
+}
