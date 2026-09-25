@@ -573,7 +573,12 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// 410 is LinkedIn RECEIVING this exchange and refusing it, permanently. Folding those
 		// into the inconclusive bucket reports a connection that can never mint a token as
 		// OK: true, forever.
-		if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < http.StatusInternalServerError {
+		// 408 stays retryable alongside 429 for the same reason the three sibling clients keep
+		// it out of their refusal arm: the endpoint gave up waiting for the request, so it is
+		// an interrupted attempt and not LinkedIn refusing this exchange on the merits.
+		if resp.StatusCode != http.StatusTooManyRequests &&
+			resp.StatusCode != http.StatusRequestTimeout &&
+			resp.StatusCode < http.StatusInternalServerError {
 			return "", permanentTokenExchangeFailure(fmt.Errorf("linkedin token refresh -> %d", resp.StatusCode))
 		}
 		return "", tokenExchangeFailure(fmt.Errorf("linkedin token refresh -> %d", resp.StatusCode))

@@ -2232,6 +2232,16 @@ the two cannot disagree about what "configured" means. `probe_reddit_pixel_test.
 verdict, its wording (it names the field and says the credential authenticated), the absence of
 the marker, and the ordering.
 
+"Rejects every create" is scoped to the campaigns **this service** builds, and the distinction is
+worth stating because Reddit's pixel can also be carried per campaign:
+`reddit.CampaignInput.ConversionPixelID` is preferred over the account config when set, and
+`redditConfig.conversionPixelId` on a brief reaches it, so a caller who supplies the pixel by hand
+dispatches fine on a connection that has none. That override is not deprecated and is pinned by
+`TestCreateCampaign_CampaignPixelOverridesAnAccountWithNone`. The verdict is still `OK: false`:
+the pixel identifies the advertiser and belongs to the ad account, the service's own create path
+never fills the override in, and calling a connection healthy on the strength of a field only a
+hand-written brief can set is exactly the false positive the endpoint removes.
+
 ### The verdict a 404 earns on Reddit and X
 
 `accountNotReachable` is also reached WITHOUT an enumeration on the two probes that name the

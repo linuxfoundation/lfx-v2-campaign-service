@@ -238,10 +238,16 @@ func (s probeSubject) accountNotEnabled() error {
 // credential, but without which the platform rejects EVERY campaign create.
 //
 // It is the one verdict that is not about authentication or reachability, and it exists
-// because those two can both pass on a connection that still cannot dispatch anything —
-// which is precisely the state a connection test is supposed to catch. Reddit's
-// conversion_pixel_id is the only such field today (reddit.Client refuses the create before
-// any upstream call, so the rejection is certain rather than predicted).
+// because those two can both pass on a connection whose every campaign the platform will
+// still reject — which is precisely the state a connection test is supposed to catch.
+// Reddit's conversion_pixel_id is the only such field today (reddit.Client refuses the create
+// before any upstream call, so the rejection is certain rather than predicted).
+//
+// "EVERY create" is scoped to the campaigns this service builds. A caller may be able to carry
+// the value per campaign in the brief — Reddit's pixel can be — and such a campaign dispatches
+// fine. The verdict stands anyway: the service's own create path never sets those overrides, so
+// no campaign the product builds gets past the platform, and a connection that only works for a
+// hand-written brief is not a healthy connection.
 //
 // It is raised AFTER the reachability check rather than before it, and so is deliberately NOT
 // marked not-attempted: a credential that does not authenticate makes the pixel irrelevant,

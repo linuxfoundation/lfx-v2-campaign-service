@@ -721,7 +721,13 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// "the platform rejected your stored credential" about a credential the platform
 		// never evaluated, and ErrCredentialRejected's godoc promise — that the refusal
 		// is permanent and retrying re-sends it — would be false.
-		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+		// 408 joins it for the same reason and is the other 4xx that is not an answer: the
+		// endpoint (or an intermediary) gave up waiting for the request. Nothing evaluated the
+		// credential, and retrying the same refresh can succeed — both of which a rejection
+		// promises the opposite of.
+		if resp.StatusCode >= 500 ||
+			resp.StatusCode == http.StatusTooManyRequests ||
+			resp.StatusCode == http.StatusRequestTimeout {
 			return "", fmt.Errorf("%w: microsoft-ads token refresh -> %d", errTokenEndpointUnavailable, resp.StatusCode)
 		}
 		// Everything else splits again, by WHOSE fault it is. Not every non-429 4xx is

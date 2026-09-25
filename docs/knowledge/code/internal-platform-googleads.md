@@ -1379,6 +1379,14 @@ classified with a **nil** body, which carries no allowlisted code and so takes t
 fallback. The read error is still returned for a `2xx`, where the body IS the answer and there is
 no status to fall back on.
 
+`408 Request Timeout` never reaches that classifier. It joins `5xx` and `429` on the
+`errTokenEndpointUnavailable` arm — the inconclusive one — because a `408` is the endpoint or an
+intermediary giving up waiting for the request, so nothing evaluated the credential and the same
+refresh can succeed on a retry. Classified as a refusal it was neither predicate's, which made it
+`domain.ErrServiceDefect`: a typed `500` paging us for a timeout, when the probe contract says a
+timeout is inconclusive. `TestTokenRefresh408IsInconclusive` pins it beside the `429` sibling in
+all three packages, and `linkedin/token.go` carries the same arm.
+
 Reddit and Microsoft carry the same pair and the same classifier, duplicated rather than shared
 because each platform package owns its own error vocabulary and the sentinel sets are not
 interchangeable.

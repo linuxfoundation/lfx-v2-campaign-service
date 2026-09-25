@@ -148,3 +148,25 @@ func TestTokenRefresh429IsInconclusive(t *testing.T) {
 		t.Errorf("a throttled token refresh is not inconclusive: %v", err)
 	}
 }
+
+// TestTokenRefresh408IsInconclusive is the same guard for the other 4xx that is not an answer.
+// See the googleads sibling: a 408 is the endpoint giving up waiting for the request, so nothing
+// evaluated the credential and the refusal is not permanent.
+func TestTokenRefresh408IsInconclusive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusRequestTimeout)
+	}))
+	defer srv.Close()
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(srv.URL), WithClock(fixedClock()))
+	_, err := c.accessTokenValue(context.Background())
+	if err == nil {
+		t.Fatal("expected an error on a 408 token response, got nil")
+	}
+	if ProbeCredentialRejected(err) {
+		t.Errorf("a timed-out token refresh classified as a rejected credential: %v", err)
+	}
+	if !ProbeInconclusive(err) {
+		t.Errorf("a timed-out token refresh is not inconclusive: %v", err)
+	}
+}

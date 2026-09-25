@@ -660,12 +660,22 @@ func (d *RedditDispatcher) ProbeConnection(ctx context.Context, projectID string
 		}
 		return subject.probeClass(verr, reddit.ProbeCredentialRejected, reddit.ProbeInconclusive)
 	}
-	// The credential authenticates and reaches the account — and the connection still cannot
-	// dispatch anything if it names no conversion pixel. reddit.Client.CreateCampaign refuses
-	// EVERY objective without one (confirmed against the live API on 2026-08-13, not just the
+	// The credential authenticates and reaches the account — and a connection that names no
+	// conversion pixel still fails on first use. reddit.Client.CreateCampaign refuses EVERY
+	// objective without a pixel (confirmed against the live API on 2026-08-13, not just the
 	// documented conversions case), before any upstream call, so this is a certainty rather
 	// than a prediction. Reporting OK: true here would recreate the exact failure this endpoint
 	// exists to catch: a connection that tests clean and fails on first use.
+	//
+	// Strictly, the connection is not unusable: reddit.CampaignInput carries a per-campaign
+	// ConversionPixelID that the client prefers when set, so a caller who supplies the pixel in
+	// redditConfig.conversionPixelId dispatches fine on this connection — and that override
+	// keeps working, pinned by TestRedditCreateCampaign_CampaignPixelOverridesAnAccountWithNone.
+	// The verdict is still OK: false, because the pixel identifies the advertiser and belongs to
+	// the ad account: the service's own create path never fills that override in, so for every
+	// campaign the product actually builds, a connection without an account pixel fails. Calling
+	// that connection healthy on the strength of a field only a hand-written brief can set is the
+	// false positive this endpoint exists to remove.
 	//
 	// Read from the same place the client reads it — the account config on the connection row —
 	// rather than from providerConfig directly, so the probe cannot disagree with the create

@@ -825,7 +825,12 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// passed as nil, so classification falls back to the status alone.
 		var tokenErr error
 		switch {
-		case resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests:
+		// 408 sits with 429 and the 5xx range for the same reason: the endpoint (or an
+		// intermediary) gave up waiting for the request, so nothing evaluated the credential
+		// and retrying the same refresh can succeed.
+		case resp.StatusCode >= 500 ||
+			resp.StatusCode == http.StatusTooManyRequests ||
+			resp.StatusCode == http.StatusRequestTimeout:
 			tokenErr = errTokenEndpointUnavailable
 		case readErr != nil:
 			tokenErr = classifyTokenRefusal(resp.StatusCode, nil)
