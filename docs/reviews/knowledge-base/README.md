@@ -249,13 +249,16 @@ before you weaken an entry: read the file, then decide.
   withdrawn — `git show` returns blob bytes without the mode, so it cannot reject a
   symlinked floor and cannot tell a real absence from a failed lookup.
 
-  *Timing, recorded so nobody reads it as a defect:* a waiver added on a branch
-  cannot suppress anything in a range whose base predates it — the commit that
-  adds it, and the final cumulative branch sweep. It **can** apply to a later
-  post-commit review whose first parent already carries it, which is correct
-  rather than a leak: relative to that delta the waiver is pre-existing and
-  suppresses a finding about a different change. The guarantee that matters is
-  that the cumulative branch range can never approve itself.
+  *Timing, recorded so nobody reads it as a defect (written under the earlier
+  per-commit lifecycle; since the single-round block only the full-branch range
+  is reviewed locally, so the post-commit case below no longer arises):* a
+  waiver added on a branch cannot suppress anything in a range whose base
+  predates it — the commit that adds it, and the final cumulative branch sweep.
+  It **could** apply to a later post-commit review whose first parent already
+  carried it, which was correct rather than a leak: relative to that delta the
+  waiver was pre-existing and suppressed a finding about a different change. The
+  guarantee that matters is that the cumulative branch range can never approve
+  itself.
 
   *Historical — the snapshot-era mechanism:* the learnings reviewer read this
   directory from the *post-patch* snapshot, so the skill had to ignore floor

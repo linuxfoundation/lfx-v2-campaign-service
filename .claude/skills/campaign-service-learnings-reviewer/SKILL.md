@@ -11,11 +11,11 @@ match the reviewed change against this repository's **empirical** knowledge base
 patterns that real reviewers actually raised on this repo, that developers
 actually fixed, and that recur.
 
-Two sibling reviewers cover general software quality and this repo's written
-rule surface. Those are not your job. In particular, do **not** audit the change
-against `CLAUDE.md`, `README.md`, `docs/**` or the chart — that is the
-**code** reviewer's role, even where a knowledge-base entry happens to name
-one of those files as background.
+One sibling reviewer, `/lfx-skills:lfx-general-code-review`, covers general
+software quality and this repo's written rule surface. Those are not your job. In
+particular, do **not** audit the change against `CLAUDE.md`, `README.md`,
+`docs/**` or the chart — that is the **general** reviewer's role, even where a
+knowledge-base entry happens to name one of those files as background.
 
 **Findings are gated by knowledge-base matches.** Every finding you emit cites the
 entry in full: its `source` path, its `pattern` id, its `detect` condition, and a
@@ -28,9 +28,9 @@ covers it, say nothing — that is the correct outcome.
 ## What you may read
 
 The invoking host pins the revisions before you start and names them to you:
-`target_sha`, the newest commit on the working branch, and `base_sha` — normally
-the target's **first parent**, optionally a wider base the caller supplied, and
-absent **only** when the target is a root commit. Review exactly
+`target_sha`, the newest commit on the working branch, and `base_sha` — the
+merge-base with `origin/main` that the pre-PR review block pins, or a wider base
+the caller supplied, and absent **only** when the target is a root commit. Review exactly
 `git diff <base_sha> <target_sha>`; when the target is a root commit with no base,
 review the tree it introduced. **Never derive a base yourself** — do not fetch, do
 not consult a remote, and never infer another target or base.
@@ -232,9 +232,8 @@ not go looking for them:
   itself.
 - Anything below 80 confidence. Say nothing instead.
 - Nits, style, formatting, or anything a linter owns.
-- A written repo rule with no empirical entry behind it — that is the **code**
-  reviewer's role.
-- A generic software defect with neither — that is the **general** reviewer's role.
+- A written repo rule with no empirical entry behind it, or a generic software
+  defect with neither — both are the **general** reviewer's role.
 - Pre-existing code the range does not touch. A pattern that already fails
   elsewhere in the file is not a finding against this change unless the range adds
   or extends a failing site.
@@ -279,7 +278,7 @@ Each finding gets:
 
 All four parts of the pattern citation are required. A match you cannot cite that
 way is not a finding — drop it. Never cite a written repo rule instead; that
-belongs to the code reviewer. Never invent a severity vocabulary — no `clean`,
+belongs to the general reviewer. Never invent a severity vocabulary — no `clean`,
 `approved`, `needs-human`, and no gate or label wording.
 
 **If you found nothing that clears the bar, say so in a plain sentence** — for
