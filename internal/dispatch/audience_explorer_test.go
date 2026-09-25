@@ -1257,6 +1257,80 @@ func TestLastSent_TheBrandFallbackOutranksAGenericOnlyHit(t *testing.T) {
 		"a newer unrelated generic hit must not outrank the brand precedent it is weaker than")
 }
 
+// TestLastSent_ABusyBrandDoesNotEvictTheEventsOwnSend pins why the shortlist reserves room
+// per tier instead of taking rows in date order.
+//
+// A `brand_short` covers the whole portfolio and publishes far more often than any one event,
+// so date order alone filled every `limit + 12` slot with recent newsletters and the event's
+// own older send was never even read -- the operator got portfolio mail as "last sent"
+// precedent for their event.
+func TestLastSent_ABusyBrandDoesNotEvictTheEventsOwnSend(t *testing.T) {
+	rows := make([]string, 0, 26)
+	detail := map[string]string{}
+	for i := 0; i < 25; i++ {
+		id := fmt.Sprintf("brand%02d", i)
+		rows = append(rows, fmt.Sprintf(
+			`{"id":%q,"name":"CNCF Monthly Newsletter","subject":"Roundup","state":"PUBLISHED","updatedAt":"2026-09-%02dT00:00:00Z","publishDate":"2026-09-%02dT09:00:00Z"}`,
+			id, (i%28)+1, (i%28)+1))
+		detail[id] = fmt.Sprintf("2026-09-%02dT09:00:00Z", (i%28)+1)
+	}
+	// One real event send, OLDER than every newsletter -- so date order alone buries it.
+	rows = append(rows, `{"id":"event","name":"KubeCon Europe Recap","subject":"x","state":"PUBLISHED","updatedAt":"2026-01-01T00:00:00Z","publishDate":"2026-01-01T09:00:00Z"}`)
+	detail["event"] = "2026-01-01T09:00:00Z"
+
+	x, _ := lastSentPortal(t, fmt.Sprintf(`{"results":[%s]}`, strings.Join(rows, ",")), detail)
+
+	got, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 2)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"event"}, sentIDs(got),
+		"the event's own send outranks the brand tier however much newer the newsletters are")
+}
+
+// TestLastSent_ABoundedSweepEmptiedByTheAuthoritativeReadIsNotAnEmptyHistory pins the second
+// half of the bounded guard. The check before the fan-out cannot see a shortlist emptied by
+// the authoritative future gate -- every row dropped as a booked send -- and a bounded walk
+// that ends that way is the same false absence for the same reason: the portal was never read
+// to the end.
+func TestLastSent_ABoundedSweepEmptiedByTheAuthoritativeReadIsNotAnEmptyHistory(t *testing.T) {
+	page := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/marketing/v3/emails":
+			page++
+			rows := make([]string, 0, 100)
+			for i := 0; i < 100; i++ {
+				// PUBLISHED with no projected date: passes every pre-fan-out gate.
+				rows = append(rows, fmt.Sprintf(
+					`{"id":"e%d-%d","name":"KubeCon Europe Recap","subject":"x","state":"PUBLISHED","updatedAt":"2026-09-01T00:00:00Z"}`,
+					page, i))
+			}
+			_, _ = fmt.Fprintf(w, `{"results":[%s],"paging":{"next":{"after":"%d"}}}`, strings.Join(rows, ","), page)
+		case strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/"):
+			id := strings.TrimPrefix(r.URL.Path, "/marketing/v3/emails/")
+			// Authoritative date is in the FUTURE for every row, so the fan-out empties it.
+			_, _ = fmt.Fprintf(w, `{"id":%q,"publishDate":"2026-12-01T09:00:00Z","to":{}}`, id)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+	x.now = func() time.Time { return time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC) }
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 5)
+
+	require.Error(t, err, "an unread portal must not be reported as an authoritative absence")
+	assert.ErrorIs(t, err, hubspot.ErrSearchIncomplete)
+	assert.Empty(t, rows)
+}
+
 // TestLastSent_TheSendDateReadIsCappedAtItsCeiling pins maxSendDateReads, the ONLY bound on
 // the authoritative send-date fan-out. `limit + shortlistHeadroom` is what normally sets the
 // shortlist, and at the design's maximum limit of 10 that is exactly 22 -- so the clamp is

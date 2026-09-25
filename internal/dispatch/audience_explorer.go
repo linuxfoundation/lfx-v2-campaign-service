@@ -794,9 +794,18 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 	if shortlist > maxSendDateReads {
 		shortlist = maxSendDateReads
 	}
-	if len(candidates) > shortlist {
-		candidates = candidates[:shortlist]
-	}
+	// Tiered BEFORE the truncation, so the shortlist's scarce slots are not spent on evidence
+	// a stronger tier already outranks. A busy `brand_short` publishes far more often than any
+	// one event, so date order alone filled all `limit+12` slots with recent portfolio mail and
+	// the event's own older send never reached the authoritative read at all -- the operator
+	// got newsletters as "last sent" precedent for their event.
+	//
+	// This is provisional, exactly like the sort above: it runs on the projected date and may
+	// promote a tier that the authoritative read then empties. That is why the partition runs
+	// AGAIN below, on the survivors. Doing it only here would reinstate the defect this
+	// ordering exists to fix; doing it only below lets the shortlist evict the answer before
+	// anything can see it. Both, and for different reasons.
+	candidates = shortlistAcrossTiers(candidates, shortlist)
 
 	shortlisted := make([]sendDateRead, 0, len(candidates))
 	for _, c := range candidates {
@@ -828,6 +837,15 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 			}
 		}
 		shortlisted = append(shortlisted, r)
+	}
+
+	// The bounded guard AGAIN, now that the authoritative read has had its say. The check at
+	// the top of this function runs before the fan-out, so it cannot see a shortlist emptied
+	// HERE -- every row dropped as a booked send at the future gate above. A bounded walk that
+	// ends that way is the same false absence for the same reason: the portal was never read
+	// to the end, so "no prior send" is a claim this function has not earned.
+	if searchBounded && len(shortlisted) == 0 {
+		return nil, fmt.Errorf("last-sent: the email search stopped at its scan bound and every row it matched proved not to be a send, so an empty history cannot be distinguished from an unread one: %w", hubspot.ErrSearchIncomplete)
 	}
 
 	// The fallback partition, run HERE because only now is it known which candidates are real,
@@ -884,6 +902,50 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+// shortlistAcrossTiers picks which candidates get their authoritative send date read.
+//
+// Strongest tier first, but NOT to the exclusion of the others. Two failures have to be
+// avoided at once, and each is the fix for the other taken too far:
+//
+//   - Take the strongest tier only, and a PROVISIONAL classification decides the answer. The
+//     rows here carry the projected date, and `sentInTheFuture` passes an absent one, so a
+//     scheduled-but-unsent event match still looks like an event match. Dropping the fallback
+//     rows on its word leaves nothing once the authoritative read discards it.
+//   - Take them in date order only, and a busy `brand_short` -- which publishes far more often
+//     than any one event -- fills every slot with recent portfolio mail, so the event's own
+//     older send is never read at all.
+//
+// So each tier is given room: the strongest takes what it needs, and whatever remains is
+// offered to the next. An event match can therefore never be evicted by a newsletter, and a
+// fallback row is always still in hand if the event tier evaporates. Within a tier the
+// incoming date order is preserved, which SliceStable established above.
+func shortlistAcrossTiers(rows []ranked, shortlist int) []ranked {
+	if shortlist <= 0 || len(rows) <= shortlist {
+		return rows
+	}
+	var event, brand, generic []ranked
+	for _, r := range rows {
+		switch {
+		case !r.fallback:
+			event = append(event, r)
+		case r.brandOnly:
+			brand = append(brand, r)
+		default:
+			generic = append(generic, r)
+		}
+	}
+	out := make([]ranked, 0, shortlist)
+	for _, tier := range [][]ranked{event, brand, generic} {
+		for _, r := range tier {
+			if len(out) == shortlist {
+				return out
+			}
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // keepStrongestTier reduces the shortlist to the best evidence tier present: a distinctive
