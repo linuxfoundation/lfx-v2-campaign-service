@@ -2354,12 +2354,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				steps = append(steps, fmt.Sprintf("Promoted tweet creation UNCONFIRMED for tweet %s (2xx with no ID, malformed response) — verify in X Ads Manager before retrying", tweetID))
 			}
 		}
-	} else if composedTweetText == "" {
-		// Neither an explicit TweetID nor TweetText was supplied — the historical
-		// manual workflow. When TweetText WAS supplied but authoring failed, the
-		// authoring branch above already recorded a self-contained warning/step;
-		// this generic "no tweet ID provided" message would be misleading there
-		// (it reads as if nothing was even attempted), so it is gated out.
+	} else {
+		// No tweet was promoted, so the operator is in the manual workflow. The two
+		// steps below are gated SEPARATELY, because they answer different questions
+		// and only one of them is specific to how we got here.
+		if composedTweetText == "" {
+			// Neither an explicit TweetID nor TweetText was supplied — the historical
+			// manual workflow. When TweetText WAS supplied but authoring failed, the
+			// authoring branch above already recorded a self-contained warning/step;
+			// this generic "no tweet ID provided" message would be misleading there
+			// (it reads as if nothing was even attempted), so it is gated out.
+			steps = append(steps, "No tweet ID provided — post a tweet manually, then add it as a promoted tweet in X Ads Manager")
+		}
+		// The destination template is NOT gated on that condition. Every degrade above
+		// — authoring refused, failed, or UNCONFIRMED — tells the operator to post a
+		// tweet manually, and this is the only place they are handed the UTM'd
+		// destination to put in it. Gating it alongside the sentence above gave the
+		// tweetText caller strictly LESS than the caller who supplied nothing, in the
+		// very same manual workflow, leaving them to rebuild the utm_* set by hand —
+		// exactly the divergence twitterUTMParams exists to prevent.
 		//
 		// Use the SANITIZED display URL for the persisted step — the raw registration
 		// URL can carry secrets in its userinfo/query/fragment, and Steps is written to
@@ -2367,7 +2380,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// utm_* params survive; the brief URL's original query/fragment are dropped), so
 		// tell the operator to reapply any required routing params from the brief's
 		// original registration URL — mirrors the reddit manual workflow.
-		steps = append(steps, "No tweet ID provided — post a tweet manually, then add it as a promoted tweet in X Ads Manager")
 		steps = append(steps, fmt.Sprintf("Destination URL template (sanitized — utm_* only; reapply any required params from the brief's registration URL): %s", displayTwitterUtmURL(in)))
 	}
 

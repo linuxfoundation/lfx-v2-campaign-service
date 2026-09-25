@@ -5,6 +5,7 @@ package twitter
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 // tweetRecorder captures what the authoring endpoint saw. Both fields are written
@@ -394,4 +397,188 @@ func TestResolvePromotableUser(t *testing.T) {
 			t.Fatal("expected an error: no promotable users to author as")
 		}
 	})
+}
+
+// TestWeightedTweetLen_CountsEveryURLAtTcoWeight pins the scanning behaviour the
+// 280-character pre-create gate depends on. The gate exists to reject only what X
+// itself would reject, so each case below is a shape X accepts and the assertion
+// is that weightedTweetLen agrees about its cost.
+//
+// The pre-existing rejection test uses text with no URL in it at all, so it passes
+// identically against an implementation that weights only the URL the composer
+// appended — which is the bug these cases are here to catch.
+func TestWeightedTweetLen_CountsEveryURLAtTcoWeight(t *testing.T) {
+	t.Parallel()
+
+	const (
+		longURL  = "https://events.linuxfoundation.org/kubecon-cloudnativecon-north-america/register/?utm_source=x"
+		shortURL = "https://lfx.dev" // 15 runes — SHORTER than t.co's fixed 23
+	)
+
+	tests := []struct {
+		name string
+		text string
+		want int
+	}{
+		{
+			name: "no url is a plain rune count",
+			text: "plain copy with no link at all",
+			want: utf8.RuneCountInString("plain copy with no link at all"),
+		},
+		{
+			// A caller whose own text already embeds the destination: the composer
+			// skips the append entirely, so an implementation that weights only
+			// what it appended counts this URL at its raw 95 runes and rejects
+			// copy X would have accepted.
+			name: "single embedded url counts as the t.co weight",
+			text: "Register now " + longURL,
+			want: utf8.RuneCountInString("Register now ") + tcoURLWeight,
+		},
+		{
+			// X wraps EVERY link it posts, so both are discounted. An
+			// implementation that handled only the first occurrence over-counts.
+			name: "two urls are each counted at the t.co weight",
+			text: "See " + longURL + " and " + shortURL,
+			want: utf8.RuneCountInString("See ") + tcoURLWeight +
+				utf8.RuneCountInString(" and ") + tcoURLWeight,
+		},
+		{
+			// t.co is a fixed weight, not a cap: a URL shorter than 23 runes makes
+			// the weighted length go UP. Asserting the direction is what stops a
+			// future "optimisation" to min(raw, 23), which would under-count and
+			// let genuinely over-long copy through to X.
+			name: "url shorter than the t.co weight increases the count",
+			text: shortURL,
+			want: tcoURLWeight,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := weightedTweetLen(tc.text); got != tc.want {
+				t.Fatalf("weightedTweetLen(%q) = %d, want %d", tc.text, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBuildTwitterUTMURL_KeepsQueryDropsFragment pins the deliberate divergence
+// from displayTwitterUtmURL. This URL is the ad's real click destination, so the
+// brief's own routing parameters have to survive alongside the generated utm_*
+// set; the fragment never reaches a server, so it is dropped rather than
+// published.
+func TestBuildTwitterUTMURL_KeepsQueryDropsFragment(t *testing.T) {
+	t.Parallel()
+
+	in := baseAuthorInput("")
+	in.RegistrationURL = "https://events.lf.org/kubecon?ref=partner&lang=de#agenda"
+
+	got, err := buildTwitterUTMURL(in)
+	if err != nil {
+		t.Fatalf("buildTwitterUTMURL: %v", err)
+	}
+
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse %q: %v", got, err)
+	}
+	if u.Fragment != "" || u.RawFragment != "" {
+		t.Errorf("fragment survived: %q (raw %q) in %q", u.Fragment, u.RawFragment, got)
+	}
+	q := u.Query()
+	if q.Get("ref") != "partner" {
+		t.Errorf("pre-existing query param ref dropped: %q", got)
+	}
+	if q.Get("lang") != "de" {
+		t.Errorf("pre-existing query param lang dropped: %q", got)
+	}
+	if q.Get("utm_source") == "" {
+		t.Errorf("utm_source not added: %q", got)
+	}
+
+	// The display form is the counterpart and must still strip the same query —
+	// it is written to the unencrypted campaigns.result column, where the brief's
+	// parameters are a persistence risk rather than a routing need.
+	if disp := displayTwitterUtmURL(in); strings.Contains(disp, "ref=partner") {
+		t.Errorf("displayTwitterUtmURL leaked the brief's query: %q", disp)
+	}
+}
+
+// TestCreateCampaign_AbortBetweenAuthoringAndPromotionRetainsTweetID drives the
+// one window in which a published tweet can be stranded: the pace(ctx) gate that
+// runs AFTER the authoring POST has committed a tweet and BEFORE the
+// promoted_tweets POST associates it. A tweet is the only irreversible artifact
+// this flow creates, so the partial result has to carry its id — the campaign and
+// line item are PAUSED and are found-or-created by name on a retry.
+//
+// Getting the cancellation to land in that window takes some care, and getting it
+// wrong makes the test silently assert nothing:
+//
+//   - Cancelling INLINE in the /tweet handler kills the in-flight authoring POST
+//     itself. That diverts into the UNCONFIRMED branch, which is non-fatal and
+//     returns a nil error — so an assertion on the abort message never runs and
+//     the test passes without having exercised the path at all.
+//   - Cancelling from the test goroutine after the call has started races the
+//     handler with no ordering at all.
+//
+// So the handler spawns a goroutine that sleeps briefly and then cancels, and the
+// client is built with a write delay an order of magnitude larger. The authoring
+// POST completes against a local httptest server in well under a millisecond, the
+// following pace(ctx) then blocks for the whole write delay, and the cancel lands
+// squarely inside it. The margin is in the safe direction: a slow machine delays
+// the cancel further INTO the pace window, it does not move it back into the POST.
+func TestCreateCampaign_AbortBetweenAuthoringAndPromotionRetainsTweetID(t *testing.T) {
+	const (
+		writeDelay  = 500 * time.Millisecond
+		cancelAfter = 50 * time.Millisecond
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	srv, rec := newAuthorTweetTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		go func() {
+			time.Sleep(cancelAfter)
+			cancel()
+		}()
+		_, _ = w.Write([]byte(`{"data":{"id":123456789,"id_str":"123456789"}}`))
+	}, `{"data":[{"user_id":"u1","promotable_user_type":"FULL"}]}`)
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(writeDelay),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	result, err := c.CreateCampaign(ctx, baseAuthorInput("Join us at KubeCon"))
+
+	if rec.Calls() != 1 {
+		t.Fatalf("tweet endpoint called %d times, want exactly 1 (the tweet must have been published for this test to mean anything)", rec.Calls())
+	}
+	if err == nil {
+		t.Fatal("expected an abort error, got nil — the run took the non-fatal degrade path instead of the pace(ctx) abort, so this test verified nothing")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("abort error does not wrap context.Canceled: %v", err)
+	}
+	if result == nil {
+		t.Fatal("abort returned a nil result — the orchestrator's claim and the published tweet's id are both lost")
+	}
+	// The assertion this whole test exists for.
+	if result.AuthoredTweetID != "123456789" {
+		t.Errorf("AuthoredTweetID = %q, want %q — a tweet that provably exists was reported as unpublished", result.AuthoredTweetID, "123456789")
+	}
+	if result.PromotedTweetID != "" {
+		t.Errorf("PromotedTweetID = %q, want empty (promotion never ran)", result.PromotedTweetID)
+	}
+	// The operator has to be told the tweet is live but unattached, by id, or the
+	// only trace of it is a prose Steps entry.
+	if !strings.Contains(err.Error(), "authored tweet 123456789 PUBLISHED, not yet promoted") {
+		t.Errorf("abort error does not name the published tweet: %v", err)
+	}
 }

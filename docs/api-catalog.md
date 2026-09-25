@@ -930,6 +930,11 @@ Destination URL: the ad points at the brief's registration URL. The X client val
 upstream create — it must be an absolute **http/https** URL with a real hostname and carry NO
 embedded userinfo/credentials; a violation fails the dispatch job pre-create. Validation errors
 redact the URL (scheme+host+path only) so a persisted error can't leak a userinfo/query secret.
+**On the `tweetText` path that protection is not sufficient by itself:** the registration URL is
+embedded in the tweet that gets published, INCLUDING its own pre-existing query parameters, which
+are kept verbatim because they are what routes the visitor. It is then publicly visible — in the
+tweet and in X Ads Manager — so the registration URL must not carry a `?token=…`-style credential.
+Redaction protects what is *persisted*; nothing can un-publish what was sent to X.
 
 ### JobCreateResponse (returned immediately from `POST .../campaigns`)
 

@@ -200,11 +200,17 @@ definite 4xx or pre-send failure means nothing was published, so it IS safe to
 compose manually or retry; and a 2xx with no `data.id` (a malformed success) is
 treated the same as the ambiguous case, not as a clean win, for the same reason
 the `promoted_tweets` 2xx-no-id case is: a response X returned successfully but
-whose id this client couldn't read is not proof nothing happened. All of this
-stays non-fatal exactly like the rest of Step 4 — only a `pace(ctx)` cancellation
-returns an error, and cancellation during authoring is itself split on
-`createOutcomeAmbiguous` first, so an ambiguous cancellation still retains the
-orchestrator's claim via a non-nil partial result.
+whose id this client couldn't read is not proof nothing happened. ("No id" means
+no `id_str` — see `extractTweetID` below, which reads X's string-typed field
+rather than the numeric `id` every other endpoint on this client uses.) All of
+this stays non-fatal exactly like the rest of Step 4 — only a `pace(ctx)`
+cancellation returns an error.
+
+That `createOutcomeAmbiguous` split classifies the authoring POST's own outcome.
+It does NOT gate the cancellation path: a `pace(ctx)` abort returns a non-nil
+partial result unconditionally, whatever the classification would have been, so
+the orchestrator's claim is retained in every case rather than only the ambiguous
+one.
 
 That partial result carries the authored tweet's id. `authoredTweetID` is
 declared ABOVE the `partialResult` closure rather than beside the other Step 4
