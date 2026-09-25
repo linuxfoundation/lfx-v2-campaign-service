@@ -827,3 +827,25 @@ Reads are gated behind `MICROSOFT_METRICS_ENABLED` (chart default `"false"`), mi
 `REDDIT_METRICS_ENABLED`: the v13 Reporting contract was implemented from published
 documentation and has not been exercised against a live Microsoft Advertising account, and a
 guessed read returning 200 looks authoritative to every consumer.
+
+## Connection-probe predicates (LFXV2-2665)
+
+`probe.go` exports `ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` over this
+package's own error types. `internal/dispatch` consults them **in that order** for every platform
+— `ProbeInconclusive` defaults to `true` for an unrecognised error (an error nobody classified
+proves nothing about the credential), so a revoked credential usually satisfies both and only the
+order decides whether the operator is told their connection is broken or that the check did not
+complete. Neither predicate true is a third outcome: the platform refused a request this service
+BUILT, which is a service defect rather than a verdict.
+
+`fetchToken` splits non-2xx by status as Google's and Reddit's do — `errTokenEndpointUnavailable`
+for `5xx`, `ErrTokenRequestRejected` for `4xx` — and its token error carries status only, since
+the request body holds the client secret and refresh token.
+
+`ProbeInconclusive` here deliberately OMITS the `isPreSendDialError` arm its Google, Reddit and X
+siblings carry. This client's pre-send arm renders the cause through `safeCause` into a plain
+string rather than wrapping it with `%w`, so the dial classifier cannot see through such an error
+and an arm calling it would assert a match that can never happen. The classification is unchanged
+either way — the default is inconclusive too — only the claim would be false.
+`TestProbeInconclusive_PreSendDialErrorIsNotClaimed` keeps that note executable, and fails if the
+pre-send shape ever changes.

@@ -458,13 +458,20 @@ func (s *ConnectionService) deleteConn(ctx context.Context, projectID string, p 
 }
 
 // testConn reports whether a connection row exists and carries a credential. It performs NO
-// upstream call itself (LFXV2-2556 follow-up / provider adapters), and its OK is exactly
-// HasCredentials().
+// upstream call itself, and its OK is exactly HasCredentials().
 //
-// Callers that DO verify upstream layer it on top of this baseline — TestLinkedinAds does —
-// which makes the generic message below wrong for them in the !OK case, since for those
-// providers verification is implemented and the real reason is an absent credential. Such a
-// caller is expected to replace the message before returning it.
+// It is now a BASELINE ONLY: as of LFXV2-2665 all seven connection-test endpoints verify
+// upstream on top of it — TestLinkedinAds through Orchestrator.VerifyAccountOrg, the other six
+// through testConnUpstream — and every one of them replaces the message below before returning.
+// So no caller surfaces this text, and a new caller that returned it unchanged would be
+// claiming a test it did not run. The message is kept deliberately neutral about what was
+// checked rather than deleted, because a nil Message would make the field's absence the signal
+// instead of a caller's omission being visible in review.
+//
+// Keeping the row/credential check here rather than folding it into each prober is what makes
+// "no credential stored" distinguishable from "the platform rejected the credential". They have
+// different remedies — authorize the connection versus re-authorize it — and a prober handed an
+// empty blob can only report the second.
 func (s *ConnectionService) testConn(ctx context.Context, projectID string, p model.Provider) (*conn.ConnectionTestResult, error) {
 	if err := rejectSystemScope(projectID); err != nil {
 		return nil, err
@@ -482,7 +489,7 @@ func (s *ConnectionService) testConn(ctx context.Context, projectID string, p mo
 	if c == nil {
 		return nil, mapErr(domain.ErrNotFound)
 	}
-	msg := "connection found; upstream verification not yet implemented"
+	msg := "connection found; upstream verification has not been run on this result"
 	return &conn.ConnectionTestResult{OK: c.HasCredentials(), Message: &msg}, nil
 }
 

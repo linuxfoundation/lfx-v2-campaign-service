@@ -1295,3 +1295,22 @@ differential verification), and the ported rule engine
 50/90/100 pacing literals rather than the shared `Thresholds`).
 
 See [internal/platform/googleads](../../../internal/platform/googleads).
+
+## Connection-probe predicates (LFXV2-2665)
+
+`probe.go` exports `ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` over this
+package's own error types. `internal/dispatch` consults them **in that order** for every platform
+— `ProbeInconclusive` defaults to `true` for an unrecognised error (an error nobody classified
+proves nothing about the credential), so a revoked credential usually satisfies both and only the
+order decides whether the operator is told their connection is broken or that the check did not
+complete. Neither predicate true is a third outcome: the platform refused a request this service
+BUILT, which is a service defect rather than a verdict.
+
+This package's token path was split to make the predicates answerable at all. `fetchToken`
+previously returned one untyped error for every non-2xx from the token endpoint, so a refresh
+Google had permanently revoked fell to `ProbeInconclusive`'s default and the connection test
+reported it healthy. Non-2xx now splits by status: `errTokenEndpointUnavailable` for `5xx`
+(retryable, inconclusive) and `ErrTokenRequestRejected` for `4xx` (permanent, a rejection). The
+token error deliberately carries STATUS ONLY — its request body holds the client secret and the
+refresh token — which is also why the dispatcher authors confirmed-verdict text rather than
+echoing anything from here.

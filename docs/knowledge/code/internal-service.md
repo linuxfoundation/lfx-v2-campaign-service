@@ -1060,6 +1060,59 @@ a LinkedIn dispatcher missing from the registry would have passed the baseline, 
 cross-check silently, and answered `OK: true` — the same "broken connection reported healthy"
 outcome the verification exists to prevent, and one invisible in the response.
 
+## The other six connection tests verify upstream too (LFXV2-2665)
+
+Until this change, `TestGoogleAds`, `TestMetaAds`, `TestRedditAds`, `TestTwitterAds`,
+`TestMicrosoftAds` and `TestHubspot` returned the `testConn` baseline unchanged — `OK: true` the
+moment a credential blob existed in the row. Not that it decrypts, not that it authenticates, not
+that it reaches the configured account. A refresh token revoked months earlier tested clean and
+failed at campaign creation, which is the one thing a connection test exists to prevent.
+
+All six now call `Orchestrator.ProbeConnection` through one shared helper,
+`testConnUpstream(ctx, projectID, d accountDiscovery)` (`connection.go`), modelled on the
+LinkedIn switch above and classifying the same way:
+
+| Probe error | Response |
+| --- | --- |
+| `nil` | `OK: true`, "verified against the platform" |
+| `ErrConnectionProbeInconclusive` | `OK: true` with an advisory; nothing was learned and the credential baseline already passed |
+| `ErrConnectionProbeFailed` | `OK: false`, message ECHOED — the only echoable class |
+| `ErrCredentialDecryptionFailed` | typed **500**, no error text (the chain can quote ciphertext and key material) |
+| `ErrServiceDefect` | typed **500**, `reason=` logged; the operator owns nothing here to repair |
+| `ErrConnectionLoadFailed` | **503** — the one outcome retrying can fix |
+| `ErrConnectionNotUsable` | `OK: false` with a FIXED per-provider remedy, quoting no part of the error |
+| anything else | `OK: false` with fixed text, detail to the log |
+
+The echo is an ALLOWLIST, not a default. Every class that reaches this switch without an arm of
+its own used to inherit the echo simply by not matching one, so a class added later must opt in
+rather than leak by omission. The `ErrConnectionNotUsable` arm matters for the same reason: one
+of its conditions is found by decoding the DECRYPTED credential blob, and `encoding/json` quotes
+its input — echoing there would put credential-derived bytes into an HTTP body for exactly the
+connection whose credentials are malformed.
+
+With no credential stored the platform is never contacted and the message names the absent
+credential: "authorize this connection" and "re-authorize this connection" are different
+remedies, and collapsing them sends an operator to the wrong place.
+
+Because all seven endpoints now verify upstream, `testConn`'s own message became a false claim on
+every path. It was made neutral ("upstream verification has not been run on this result") rather
+than removed, since deleting it would make a nil `Message` the signal; every caller replaces it.
+
+Two new `accountDiscovery` descriptors were added rather than reusing existing ones:
+`redditAdsConnectionDiscovery` and `hubspotConnectionDiscovery`. Both name providers that already
+had a descriptor — `redditAdsAccountDiscovery` (`operation: "account monitor"`,
+`connection_monitor.go`) and `hubspotEmailDiscovery` (`operation: "email search"`) — and reusing
+either would have given the connection test log lines and messages labelled with a surface the
+caller never touched. The per-surface convention is the one `connection_monitor.go` already
+establishes.
+
+`ConnectionProber` is declared here as a **required** capability, in contrast to
+`OrgReferenceVerifier` directly above it: there is deliberately no per-platform table saying which
+platforms support it, because every platform can be asked whether its credential still works. A
+missing dispatcher, or a registered dispatcher that does not implement the interface, is
+`ErrServiceDefect` + `ErrConnectionProbeUnwired` — never nil, which would answer `OK: true` having
+verified nothing.
+
 ## HubSpot email search (LFXV2-3197)
 
 `ListHubspotEmails` serves `GET /projects/{project_id}/connection-hubspot/emails`, returning the

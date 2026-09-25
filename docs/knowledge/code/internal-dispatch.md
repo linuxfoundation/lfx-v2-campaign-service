@@ -2033,6 +2033,84 @@ against ITS org id, using an LF row carrying the same account id but a different
 substitution would surface as a confirmed mismatch. Every other case in that file passes
 unchanged with the two resolvers swapped, so without these the boundary is undefended.
 
+## `ConnectionProber` (REQUIRED capability, LFXV2-2665)
+
+All six paid/email dispatchers here implement `service.ConnectionProber`:
+`ProbeConnection(ctx, projectID, platform) error`. Unlike `OrgReferenceVerifier` above, this is
+**not** optional — every platform can be asked whether its stored credential still works, so a
+dispatcher that cannot be asked is mis-wired rather than exempt, and the orchestrator answers a
+missing one with `domain.ErrServiceDefect` + `domain.ErrConnectionProbeUnwired` instead of nil.
+Silence would be the worst possible answer: the connection test would report `OK: true` having
+reached no platform at all, which is the exact defect this work removes.
+
+| Dispatcher | Probe call | Account check |
+| --- | --- | --- |
+| `GoogleAdsDispatcher` | `ListAccessibleCustomers` | configured `CustomerID` ∈ list |
+| `MetaDispatcher` | `ListAdAccounts` | configured id ∈ list (`trimMetaAccountPrefix` normalizes `act_` on BOTH sides) |
+| `RedditDispatcher` | `VerifyAccount` → `GET /ad_accounts/{id}` | direct — the strongest form |
+| `TwitterDispatcher` | `VerifyAccount` → `GET` account root | direct |
+| `MicrosoftDispatcher` | `ListAdAccounts` | configured id ∈ list |
+| `HubSpotDispatcher` | `AuthenticatedPortalID` (token-info) | compare to configured `portal_id` when set |
+
+HubSpot is the one probe that can cross-check **provenance**: the token-info response names the
+hub the token belongs to, so a token pasted from the wrong portal — which authenticates perfectly
+and then writes to a portal the operator did not choose — fails here and nowhere else. It is also
+the one where an unconfigured id is a PASS rather than a failure: its client derives the portal
+from the token when none is configured, so nothing is left unresolved. For the five ad platforms
+an unconfigured `account_id` is a failure, because such a connection cannot run a campaign.
+
+### Every probe resolves `resolveOwned`, never `resolve`
+
+This is the design constraint the whole feature rests on, and it is the same trust boundary
+`VerifyAccountOrg` documents above. Every other dispatch path may fall back to the shared LF
+SYSTEM row under `LFX_FORCE_SYSTEM_ADS_ACCOUNT`; a connection TEST must never take it. "Is this
+project's connection good?" answered from a borrowed row reports a connection the project does
+not have as healthy, and nothing in the response reveals the substitution.
+
+Where a probe needs the dispatcher's existing resolve chain, that chain was **parameterized** by
+its credential entry point (`credsResolver`) rather than copied — the shape the Reddit adapter
+already used, now also in the Google Ads, Meta and HubSpot adapters. Threading the resolver keeps
+the two paths from drifting: a credential rejected at dispatch cannot be accepted by the test,
+which is the property that makes the test worth trusting at all.
+
+`internal/dispatch/probe_owned_resolver_test.go` pins it from SOURCE, via `go/ast`: it walks every
+non-test file here, finds each `ProbeConnection` (plus any `resolve*` helper it calls in the same
+file), and fails if the path reaches `d.creds.resolve` or never reaches `d.creds.resolveOwned`. An
+explicit `wantProbeConnectionDispatchers` list means DELETING a method fails too. The check is on
+source rather than behaviour because the failure is silent by construction — a `resolveOwned`
+swapped for `resolve` compiles, passes every functional test that uses a project WITH its own
+connection, and misbehaves only for the projects that do not.
+
+### The two-predicate vocabulary and why ORDER is load-bearing
+
+Each `internal/platform/*` package exports two predicates over its own error types —
+`ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` — and one shared classifier
+here (`probeSubject.probeClass`) consults them **in that order** for all six platforms:
+
+| Predicate outcome | Sentinel | Result at the service layer |
+| --- | --- | --- |
+| rejected | `domain.ErrConnectionProbeFailed` | `OK: false`, message echoed |
+| not rejected, inconclusive | `domain.ErrConnectionProbeInconclusive` | `OK: true` with an advisory |
+| neither | `domain.ErrServiceDefect` + `domain.ErrConnectionProbeRequestRejected` | typed **500** |
+
+`ProbeInconclusive` returns `true` for an error it does not recognise — it has to, because an
+unrecognised error proves nothing about the credential and the alternative is reporting
+connections broken on guesses. The consequence is that a revoked credential satisfies **both**
+predicates on most platforms, and only the evaluation order decides which verdict the operator
+sees. Reverse it and a revoked refresh token classifies as inconclusive, maps to `OK: true`, and
+restores exactly the bug this change removes. `TestProbeClass_EvaluationOrderIsLoadBearing` exists
+for that one line.
+
+"Neither predicate" is deliberately NOT folded into inconclusive: it means the platform refused a
+request this service BUILT, which is not a verdict on the credential, and treating it as
+inconclusive would silently stop testing anything the day an endpoint moves.
+
+The classifier also **drops** the platform error chain rather than wrapping it. The rejection arm
+is the one class echoed verbatim to the caller, and these clients render request URLs and raw
+response bodies; three of them (`googleads`, `reddit`, `microsoft`) carry the client secret and
+refresh token in the token-request body they would otherwise quote. Confirmed-verdict text is
+authored here, never copied from the platform.
+
 ## HubSpot campaign capability
 
 `HubSpotDispatcher` implements `service.CampaignSearcher`: `SearchCampaigns` and

@@ -447,3 +447,19 @@ hardcoded `conversions: 0` and its underspend threshold/label mismatch (fires at
 `AccountMonitorTotals` come from its own upstream rollup, not a sum of returned rows).
 
 See [internal/platform/reddit](../../../internal/platform/reddit).
+
+## Connection-probe predicates (LFXV2-2665)
+
+`probe.go` exports `ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` over this
+package's own error types. `internal/dispatch` consults them **in that order** for every platform
+— `ProbeInconclusive` defaults to `true` for an unrecognised error (an error nobody classified
+proves nothing about the credential), so a revoked credential usually satisfies both and only the
+order decides whether the operator is told their connection is broken or that the check did not
+complete. Neither predicate true is a third outcome: the platform refused a request this service
+BUILT, which is a service defect rather than a verdict.
+
+One deliberate departure: a `404` on the configured ad account is a REJECTION here, not a service
+defect. Reddit's probe reads the configured account directly (`GET /ad_accounts/{id}`), so a
+`404` is Reddit answering the exact question asked — this credential cannot see that account —
+rather than refusing a request this service built. `fetchToken` splits non-2xx by status the same
+way Google's does, and its token error carries status only for the same reason.

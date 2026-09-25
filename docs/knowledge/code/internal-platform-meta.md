@@ -579,3 +579,19 @@ departures, the credential-scoping (`resolveOwned`, no system-account fallback),
 the ported rule engine (`internal/service/rules/monitor_meta.go`).
 
 See [internal/platform/meta](../../../internal/platform/meta).
+
+## Connection-probe predicates (LFXV2-2665)
+
+`probe.go` exports `ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` over this
+package's own error types. `internal/dispatch` consults them **in that order** for every platform
+— `ProbeInconclusive` defaults to `true` for an unrecognised error (an error nobody classified
+proves nothing about the credential), so a revoked credential usually satisfies both and only the
+order decides whether the operator is told their connection is broken or that the check did not
+complete. Neither predicate true is a third outcome: the platform refused a request this service
+BUILT, which is a service defect rather than a verdict.
+
+The classification reads the Graph envelope, not just the status: code `190` under a `400` is a
+credential rejection, while a rate-limit code under the same `400` is inconclusive. An
+`APIError` whose envelope could not be read (`EnvelopeUnreadable`) is inconclusive whatever the
+status — nothing was parsed, so nothing was learned. `APIError.Message` falls back to the raw
+response body, which is why the dispatcher never echoes it.

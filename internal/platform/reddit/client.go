@@ -800,10 +800,20 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// untrusted and may reflect credential material. Since CreateCampaign can
 		// persist this error into Steps, expose only the status (and a body-read
 		// failure), never the body itself.
-		if readErr != nil {
-			return "", fmt.Errorf("reddit token refresh failed: HTTP %d (body read error: %v)", resp.StatusCode, readErr)
+		//
+		// The status is CLASSIFIED as well as reported, because the two halves mean
+		// opposite things to a connection test: a 4xx is Reddit evaluating this refresh
+		// token and refusing it (revoked, expired, or issued against different
+		// application credentials), a 5xx is Reddit's token endpoint being unable to
+		// answer at all. See probe.go.
+		tokenErr := ErrTokenRequestRejected
+		if resp.StatusCode >= 500 {
+			tokenErr = errTokenEndpointUnavailable
 		}
-		return "", fmt.Errorf("reddit token refresh failed: HTTP %d", resp.StatusCode)
+		if readErr != nil {
+			return "", fmt.Errorf("%w: reddit token refresh failed: HTTP %d (body read error: %v)", tokenErr, resp.StatusCode, readErr)
+		}
+		return "", fmt.Errorf("%w: reddit token refresh failed: HTTP %d", tokenErr, resp.StatusCode)
 	}
 	if readErr != nil {
 		return "", fmt.Errorf("reddit token refresh: %w", readErr)

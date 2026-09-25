@@ -333,3 +333,17 @@ PAUSE. An ACTIVATE with an unknown line-item id is refused as `ErrCampaignNotPro
 (a 409) before any call.
 
 See [internal/platform/twitter](../../../internal/platform/twitter).
+
+## Connection-probe predicates (LFXV2-2665)
+
+`probe.go` exports `ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` over this
+package's own error types. `internal/dispatch` consults them **in that order** for every platform
+— `ProbeInconclusive` defaults to `true` for an unrecognised error (an error nobody classified
+proves nothing about the credential), so a revoked credential usually satisfies both and only the
+order decides whether the operator is told their connection is broken or that the check did not
+complete. Neither predicate true is a third outcome: the platform refused a request this service
+BUILT, which is a service defect rather than a verdict.
+
+There is no token-refresh arm: X uses an OAuth 1.0a four-tuple, signed per request, with no
+exchange to fail. The probe reads the account root directly, so its `404`/`401`/`403` are answers
+about the configured account rather than about a discovery request.

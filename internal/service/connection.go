@@ -14,6 +14,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -120,8 +121,12 @@ func (s *ConnectionService) DeleteGoogleAds(ctx context.Context, p *conn.DeleteG
 	return s.deleteConn(ctx, p.ProjectID, model.ProviderGoogleAds)
 }
 
+// TestGoogleAds tests the stored Google Ads connection against Google (LFXV2-2665): the probe
+// lists the customers this refresh token can actually reach, which runs the token exchange —
+// the exact call that fails for a revoked refresh token, the production failure this endpoint
+// existed and did not catch — and then checks the configured customer id is among them.
 func (s *ConnectionService) TestGoogleAds(ctx context.Context, p *conn.TestGoogleAdsPayload) (*conn.ConnectionTestResult, error) {
-	return s.testConn(ctx, p.ProjectID, model.ProviderGoogleAds)
+	return s.testConnUpstream(ctx, p.ProjectID, googleAdsAccountDiscovery)
 }
 
 func (s *ConnectionService) SetCredentialGoogleAds(ctx context.Context, p *conn.SetCredentialGoogleAdsPayload) error {
@@ -279,6 +284,37 @@ var twitterAdsAccountDiscovery = accountDiscovery{
 		"with consumer_key, consumer_secret, access_token and access_token_secret set",
 }
 
+// redditAdsConnectionDiscovery is the connection-test descriptor for Reddit Ads (LFXV2-2665),
+// distinct from connection_monitor.go's redditAdsAccountDiscovery in exactly the way that file's
+// own per-surface descriptors are distinct from this file's: same provider, different
+// `operation`. This service still has no Reddit account-enumeration path, so neither descriptor
+// is ever passed to listAccounts.
+//
+// The wire names are design/connection.go's RedditAdsCredentials, which is what a caller can
+// act on — not the Go keys the blob is persisted under.
+var redditAdsConnectionDiscovery = accountDiscovery{
+	provider:    model.ProviderRedditAds,
+	displayName: "reddit ads",
+	operation:   "connection test",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with client_id, client_secret and refresh_token set",
+}
+
+// hubspotConnectionDiscovery is the probe-path descriptor for HubSpot (LFXV2-2665). It is
+// separate from hubspotEmailDiscovery below rather than shared, because that one's `operation`
+// says "email search": the two descriptors describe different operations on the same provider,
+// and a reader who found one labelled "email search" on the connection-test path would
+// reasonably conclude the test runs an email search. The notUsableRemedy is identical, and
+// deliberately so — the credential surface an operator can repair does not depend on which
+// call failed.
+var hubspotConnectionDiscovery = accountDiscovery{
+	provider:    model.ProviderHubSpot,
+	displayName: "hubspot",
+	operation:   "connection test",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with private_app_token set",
+}
+
 // hubspotEmailDiscovery reuses the account-discovery status mapping for the email-template
 // search. Not account discovery — HubSpot has no ad account to choose, since the connection is
 // scoped to the portal its token authenticates against — but every arm of that mapping applies
@@ -296,6 +332,138 @@ var hubspotEmailDiscovery = accountDiscovery{
 	// key that appears in no request they can make.
 	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
 		"with private_app_token set",
+}
+
+// testConnUpstream is the connection test for the six platforms that previously had none
+// (LFXV2-2665). It runs the shared testConn baseline — the row exists and carries a credential —
+// and then actually reaches the platform with that credential through
+// Orchestrator.ProbeConnection.
+//
+// Before this, all six answered OK: true whenever a credential blob existed in the row. Not that
+// it decrypts, not that it authenticates, not that it reaches the configured account. A connection
+// whose refresh token had been revoked months earlier tested clean and failed at campaign
+// creation, which is the failure this service has already hit in production.
+//
+// The classification is TestLinkedinAds' switch, generalized. Its arms are not stylistic: each
+// one exists because the arm below it would otherwise have answered wrongly, and three of them
+// exist specifically to keep text that this service did not author out of the HTTP body. There
+// is exactly ONE echoing arm, ErrConnectionProbeFailed, and it is an allowlist — the dispatcher
+// attaches that sentinel deliberately, to messages this service composed itself. Anything
+// unrecognised is silent by default, so a class added later cannot inherit the echo by accident.
+//
+// The caller passes its accountDiscovery descriptor, which supplies displayName for the authored
+// messages and notUsableRemedy for the not-usable arm. Nothing else varies per platform: a
+// provider gets all of the judgements reasoned about here or none of them, exactly as
+// classifyDiscoveryError's contract says below.
+func (s *ConnectionService) testConnUpstream(ctx context.Context, projectID string, d accountDiscovery) (*conn.ConnectionTestResult, error) {
+	result, err := s.testConn(ctx, projectID, d.provider)
+	if err != nil {
+		return result, err
+	}
+	if !result.OK {
+		// testConn is shared across providers and its OK is exactly HasCredentials(), so the
+		// only way to arrive here is a row with no stored credential. Its generic message only
+		// says the probe below was not run on that result, which is true but names neither the
+		// reason for OK: false nor a remedy. This one names both: the remedy is to authorize
+		// the connection, not to re-check a credential that was never stored.
+		msg := fmt.Sprintf("no credentials are stored for this %s connection; authorize it before testing", d.displayName)
+		result.Message = &msg
+		return result, nil
+	}
+	_, _, orch, err := s.resolveBackendWithOrch("connection test")
+	if err != nil {
+		return nil, err
+	}
+	provider := string(d.provider)
+	perr := orch.ProbeConnection(ctx, projectID, d.provider)
+	if perr == nil {
+		msg := fmt.Sprintf("connection found; the stored %s credential was verified against the platform", d.displayName)
+		return &conn.ConnectionTestResult{OK: true, Message: &msg}, nil
+	}
+	switch {
+	case errors.Is(perr, domain.ErrConnectionProbeInconclusive):
+		// The probe could not be completed — a dial failure, a timeout, a rate limit, a
+		// platform 5xx. It proves NOTHING about the connection, and the credential baseline
+		// already passed, so this service has no basis to call the connection broken. OK: true
+		// with an advisory, the same judgement TestLinkedinAds makes for an incomplete walk.
+		//
+		// The response message is fixed rather than built from perr: which failure class the
+		// platform hit is an operator's diagnostic, not the caller's. perr itself is safe to
+		// log because the dispatcher reduced the platform error to a fixed classification when
+		// it attached this sentinel (internal/dispatch/probe.go) and dropped the underlying
+		// chain, which on several of these clients carries the full request URL.
+		slog.WarnContext(ctx, "the connection probe could not be completed; the credential baseline already passed and no verdict was reached",
+			// "detail", not "reason": every `reason` in this file holds a token from
+			// unusableConnectionReason's fixed vocabulary, which is what operators grep and
+			// what dashboards group on. This value is a sentence, so the same key would
+			// silently make that vocabulary unbounded.
+			"project_id", projectID, "provider", provider, "detail", perr.Error())
+		msg := fmt.Sprintf("connection found; %s verification was inconclusive", d.displayName)
+		return &conn.ConnectionTestResult{OK: true, Message: &msg}, nil
+	case errors.Is(perr, domain.ErrCredentialDecryptionFailed):
+		// NO ERROR TEXT. perr's chain is built by domain.Encryptor from ciphertext and key
+		// material, which an implementation is free to quote; concatenating it into this
+		// response would put that material on the wire. And it is a service-side failure, not
+		// evidence that the connection under test is broken.
+		slog.ErrorContext(ctx, "stored credentials failed authenticated decryption during the connection probe; check the application encryption key, and whether this is one row or every connection",
+			"project_id", projectID, "provider", provider)
+		return nil, &conn.InternalServerError{Code: "500", Message: fmt.Sprintf("%s connection test could not be completed", d.displayName)}
+	case errors.Is(perr, domain.ErrServiceDefect):
+		// A defect in THIS service — no dispatcher registered, a dispatcher that does not
+		// implement ConnectionProber, or a probe request the platform refused on grounds that
+		// are not about the stored credential. Per the repo's ErrServiceDefect convention this
+		// is a typed 500, not an ordinary OK: false, which would send an operator to audit
+		// connection fields that were never at fault and that no edit can repair.
+		slog.ErrorContext(ctx, "a defect in this service is blocking the connection probe; the stored connection is NOT at fault and needs no repair",
+			"project_id", projectID, "provider", provider, "reason", unusableConnectionReason(perr))
+		return nil, &conn.InternalServerError{Code: "500", Message: fmt.Sprintf("%s connection test could not be completed", d.displayName)}
+	case errors.Is(perr, domain.ErrConnectionLoadFailed):
+		// The datastore could not be read, so nothing was learned about the connection.
+		// Reporting OK: false here would tell the caller their connection is broken because
+		// this service could not look at it. A 503 is the honest answer and the only retryable
+		// one in this switch: unlike every other arm, waiting genuinely does help. No error
+		// text — a repo error can quote the query or the row it failed on.
+		slog.ErrorContext(ctx, "the stored connection could not be read during the connection probe; this is a datastore failure, NOT a verdict on the connection",
+			"project_id", projectID, "provider", provider)
+		return nil, &conn.ConnServiceUnavailableError{Code: "503", Message: fmt.Sprintf("%s connection test could not be completed", d.displayName)}
+	case errors.Is(perr, domain.ErrConnectionNotUsable):
+		// A genuinely failed test — inactive, or the credential blob is incomplete or
+		// undecodable — so OK: false is right. What is not right is echoing perr: one of the
+		// conditions behind this sentinel is detected by decoding the DECRYPTED blob, and
+		// encoding/json quotes its input, so the echo would put credential-derived bytes into
+		// an HTTP body for exactly the connection whose credentials are malformed. The
+		// response names the remedy surface instead; the log carries a token from the fixed
+		// unusableConnectionReason vocabulary, which is what an alert wants anyway.
+		slog.WarnContext(ctx, "the stored connection is not usable as configured; the probe could not run against it",
+			"project_id", projectID, "provider", provider, "reason", unusableConnectionReason(perr))
+		msg := fmt.Sprintf("connection found, but the stored %s connection cannot be used as configured: %s", d.displayName, d.notUsableRemedy)
+		return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
+	case errors.Is(perr, domain.ErrConnectionProbeFailed):
+		// The CONFIRMED verdicts: the platform rejected the stored credential, or the
+		// credential authenticates but does not reach the configured account, or the
+		// connection names no account to reach. This is the one arm that echoes, and the text
+		// it echoes is authored end to end by internal/dispatch/probe.go from this service's
+		// own vocabulary plus the provider name and the configured account id — never from an
+		// upstream response body. That matters concretely: meta's APIError.Message falls back
+		// to the raw body, and the googleads, reddit and microsoft token errors deliberately
+		// carry status only, because their request bodies hold a client secret and a refresh
+		// token.
+		//
+		// Saying WHICH of those happened is the whole value of the answer — "verification
+		// failed" alone leaves an operator nothing to repair.
+		msg := fmt.Sprintf("connection found, but %s verification failed: %s", d.displayName, perr.Error())
+		return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
+	default:
+		// Not a verdict this layer recognises, so its text is not echoed. It could be a repo
+		// ErrNotFound from a connection deleted mid-test, or a class added later by a path that
+		// never considered this endpoint. OK: false is still right — no probe succeeded — but
+		// the message is fixed and the detail goes to the log, where it reaches an operator
+		// without reaching an HTTP body.
+		slog.ErrorContext(ctx, "the connection probe returned an unclassified error; the connection test is reporting a generic failure",
+			"project_id", projectID, "provider", provider, "error", perr)
+		msg := fmt.Sprintf("connection found, but %s verification could not be completed", d.displayName)
+		return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
+	}
 }
 
 // classifyDiscoveryError maps an orchestrator discovery error onto the connections API's
@@ -843,10 +1011,9 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 	if !result.OK {
 		// testConn is shared across providers and its OK is exactly HasCredentials(), so the
 		// ONLY way to arrive here is a connection row with no stored credential. Its generic
-		// message says upstream verification is "not yet implemented", which is false for
-		// this provider — it runs immediately below — and it names neither the real reason
-		// for OK: false nor a remedy. Both halves mislead: an operator reading it goes
-		// looking for an unimplemented feature instead of authorizing the connection.
+		// message only says the cross-check below was not run on that result, which names
+		// neither the real reason for OK: false nor a remedy. This one names both: the remedy
+		// is to authorize the connection, not to re-check a credential that was never stored.
 		msg := "no credentials are stored for this LinkedIn Ads connection; authorize it before testing"
 		result.Message = &msg
 		return result, nil
@@ -1052,8 +1219,12 @@ func (s *ConnectionService) DeleteMetaAds(ctx context.Context, p *conn.DeleteMet
 	return s.deleteConn(ctx, p.ProjectID, model.ProviderMetaAds)
 }
 
+// TestMetaAds tests the stored Meta connection against the Graph API (LFXV2-2665): the probe
+// enumerates the ad accounts the stored access token can reach and checks the configured
+// account is among them, normalizing Meta's `act_` prefix on both sides so a connection stored
+// without it is not reported broken over a spelling difference.
 func (s *ConnectionService) TestMetaAds(ctx context.Context, p *conn.TestMetaAdsPayload) (*conn.ConnectionTestResult, error) {
-	return s.testConn(ctx, p.ProjectID, model.ProviderMetaAds)
+	return s.testConnUpstream(ctx, p.ProjectID, metaAdsAccountDiscovery)
 }
 
 func (s *ConnectionService) SetCredentialMetaAds(ctx context.Context, p *conn.SetCredentialMetaAdsPayload) error {
@@ -1133,7 +1304,10 @@ func (s *ConnectionService) DeleteRedditAds(ctx context.Context, p *conn.DeleteR
 }
 
 func (s *ConnectionService) TestRedditAds(ctx context.Context, p *conn.TestRedditAdsPayload) (*conn.ConnectionTestResult, error) {
-	return s.testConn(ctx, p.ProjectID, model.ProviderRedditAds)
+	// Reddit's probe is the strongest of the six: it GETs the configured ad account directly
+	// rather than enumerating and checking membership, so a 404 answers "this token does not
+	// reach this account" about the exact account the connection names.
+	return s.testConnUpstream(ctx, p.ProjectID, redditAdsConnectionDiscovery)
 }
 
 func (s *ConnectionService) SetCredentialRedditAds(ctx context.Context, p *conn.SetCredentialRedditAdsPayload) error {
@@ -1211,7 +1385,10 @@ func (s *ConnectionService) DeleteTwitterAds(ctx context.Context, p *conn.Delete
 }
 
 func (s *ConnectionService) TestTwitterAds(ctx context.Context, p *conn.TestTwitterAdsPayload) (*conn.ConnectionTestResult, error) {
-	return s.testConn(ctx, p.ProjectID, model.ProviderTwitterAds)
+	// X's probe addresses the configured account root directly, and the response is discarded
+	// rather than rendered: the body carries an upstream-supplied account name, and this
+	// endpoint's message is read by an operator as this service's own words.
+	return s.testConnUpstream(ctx, p.ProjectID, twitterAdsAccountDiscovery)
 }
 
 func (s *ConnectionService) SetCredentialTwitterAds(ctx context.Context, p *conn.SetCredentialTwitterAdsPayload) error {
@@ -1289,7 +1466,12 @@ func (s *ConnectionService) DeleteMicrosoftAds(ctx context.Context, p *conn.Dele
 }
 
 func (s *ConnectionService) TestMicrosoftAds(ctx context.Context, p *conn.TestMicrosoftAdsPayload) (*conn.ConnectionTestResult, error) {
-	return s.testConn(ctx, p.ProjectID, model.ProviderMicrosoftAds)
+	// The Microsoft probe runs the token refresh and then enumerates the accounts the
+	// credential reaches. Suspended, paused and draft accounts are returned by that
+	// enumeration and the probe deliberately accepts them: "this credential can address this
+	// account" is what a connection test asks, and the account's own lifecycle state is a
+	// separate question this endpoint has never claimed to answer.
+	return s.testConnUpstream(ctx, p.ProjectID, microsoftAdsAccountDiscovery)
 }
 
 func (s *ConnectionService) SetCredentialMicrosoftAds(ctx context.Context, p *conn.SetCredentialMicrosoftAdsPayload) error {
@@ -1376,7 +1558,12 @@ func (s *ConnectionService) DeleteHubspot(ctx context.Context, p *conn.DeleteHub
 }
 
 func (s *ConnectionService) TestHubspot(ctx context.Context, p *conn.TestHubspotPayload) (*conn.ConnectionTestResult, error) {
-	return s.testConn(ctx, p.ProjectID, model.ProviderHubSpot)
+	// HubSpot's probe posts the private-app token to the token-info endpoint, so a revoked or
+	// rotated token fails here. It also answers with the hub id the token belongs to, which is
+	// cross-checked against the connection's configured portal_id when one is set: nothing
+	// keeps the two in step, and a token pasted from the wrong portal authenticates perfectly
+	// and then writes to a portal the operator did not choose.
+	return s.testConnUpstream(ctx, p.ProjectID, hubspotConnectionDiscovery)
 }
 
 func (s *ConnectionService) SetCredentialHubspot(ctx context.Context, p *conn.SetCredentialHubspotPayload) error {

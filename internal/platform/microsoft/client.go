@@ -696,7 +696,19 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// untrusted and may reflect that credential material. This error can be
 		// persisted into a campaign's Steps, so a leaked secret would be durable —
 		// report status only.
-		return "", fmt.Errorf("microsoft-ads token refresh -> %d", resp.StatusCode)
+		//
+		// The status is CLASSIFIED as well as reported, because the two halves mean
+		// opposite things to a connection test. A 4xx is Microsoft evaluating this
+		// refresh token and refusing it — revoked, expired, or issued to different
+		// application credentials — and no amount of waiting reverses that. A 5xx is
+		// Microsoft's token endpoint being unavailable, which says nothing about the
+		// credential at all. See probe.go: without the split, a dead refresh token is
+		// indistinguishable from a transient outage and the connection test would
+		// report a permanently broken connection as healthy.
+		if resp.StatusCode >= 500 {
+			return "", fmt.Errorf("%w: microsoft-ads token refresh -> %d", errTokenEndpointUnavailable, resp.StatusCode)
+		}
+		return "", fmt.Errorf("%w: microsoft-ads token refresh -> %d", ErrTokenRequestRejected, resp.StatusCode)
 	}
 
 	var tok tokenResponse

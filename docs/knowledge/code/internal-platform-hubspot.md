@@ -514,3 +514,24 @@ definite pre-clone failure releases the claim.
 
 It has no `StatusToggler` implementation — the email channel has no run state to pause or
 resume.
+
+## Connection-probe predicates (LFXV2-2665)
+
+`probe.go` exports `ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` over this
+package's own error types. `internal/dispatch` consults them **in that order** for every platform
+— `ProbeInconclusive` defaults to `true` for an unrecognised error (an error nobody classified
+proves nothing about the credential), so a revoked credential usually satisfies both and only the
+order decides whether the operator is told their connection is broken or that the check did not
+complete. Neither predicate true is a third outcome: the platform refused a request this service
+BUILT, which is a service defect rather than a verdict.
+
+HubSpot has no token-refresh arm at all — connections here hold a private-app token, not an OAuth
+pairing — so the token-endpoint sentinels its siblings carry have no analogue, and that absence is
+a documented property rather than an omission. A `403` sits with the rejections rather than the
+defects, because private-app scopes are chosen when the token is issued: a scope refusal is a
+verdict about this token.
+
+`AuthenticatedPortalID` posts the token to HubSpot's token-info endpoint, so a revoked, rotated or
+mistyped token fails here and nowhere else, and the hub id it returns makes this the one probe
+that can cross-check PROVENANCE — a token pasted from the wrong portal authenticates perfectly and
+then writes to a portal the operator did not choose.

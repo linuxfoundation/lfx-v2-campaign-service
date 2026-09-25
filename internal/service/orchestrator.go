@@ -412,6 +412,40 @@ type CampaignAdopter interface {
 	LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error)
 }
 
+// ConnectionProber is a REQUIRED dispatcher capability for every platform whose connection can
+// be tested: reach the platform with the project's OWN stored credential and report what it
+// said. It is the capability the connection-test endpoints were missing — six of the seven
+// answered OK the moment a credential blob existed in the row, never decrypting it, never
+// authenticating, and never reaching the configured account (LFXV2-2665).
+//
+// Unlike OrgReferenceVerifier below, its absence is NOT a designed outcome for any platform.
+// Every platform this service can dispatch to can be asked "does this credential still work",
+// so a dispatcher that does not implement this is mis-wired, and Orchestrator.ProbeConnection
+// says so unconditionally rather than consulting a per-platform table.
+type ConnectionProber interface {
+	// ProbeConnection resolves the project's OWN connection — never the shared LF system row,
+	// whose acceptance would report a connection the project does not have as healthy — and
+	// makes one live call with it.
+	//
+	// nil means the credential authenticated AND the configured account was reached. Every
+	// other outcome is an error carrying exactly one of four meanings, which the implementation
+	// fixes and the caller must not re-derive:
+	//
+	//   - domain.ErrConnectionProbeFailed: a CONFIRMED broken connection — the platform
+	//     rejected the credential, or it authenticated but does not reach the configured
+	//     account, or no account is configured to reach. Its text is authored by this service
+	//     and is the one probe error a caller may echo.
+	//   - domain.ErrConnectionProbeInconclusive: the check could not be completed — a timeout,
+	//     a dial failure, a rate limit, a platform 5xx. It proves nothing about the connection,
+	//     so it must not be rendered as a failed test.
+	//   - domain.ErrServiceDefect (with domain.ErrConnectionProbeRequestRejected, or
+	//     domain.ErrCredentialDecryptionFailed and the other resolution defects): nothing the
+	//     operator owns is at fault.
+	//   - domain.ErrConnectionNotUsable / domain.ErrNotFound and the other resolution
+	//     outcomes, passed through from the credential resolver unchanged.
+	ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error
+}
+
 // OrgReferenceVerifier is an OPTIONAL dispatcher capability: cross-check a project's stored
 // connection against the platform's OWN record of the org/account pairing it is scoped to,
 // for use by a connection-test endpoint. Discovered by type assertion like the other optional
@@ -627,6 +661,7 @@ const (
 	opReadAudience               = "read_audience"
 	opKeywordActions             = "keyword_actions"
 	opVerifyAccountOrg           = "verify_account_org"
+	opProbeConnection            = "probe_connection"
 )
 
 // recordUpstream times one upstream platform call. It is called ONLY after the
@@ -2104,6 +2139,44 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 		return nil, fmt.Errorf("%s account campaign metrics reader returned a nil result with no error", platform)
 	}
 	return rows, nil
+}
+
+// ProbeConnection verifies a project's own stored connection against the platform, for the
+// connection-test endpoints (LFXV2-2665). It is the call that makes those endpoints mean
+// something: before it, six of the seven reported a broken connection as healthy because their
+// answer was "a credential blob exists in the row", not "it decrypts, authenticates, and
+// reaches the configured account".
+//
+// There is deliberately NO per-platform required-capability table here, unlike VerifyAccountOrg
+// above. That table exists because only LinkedIn's ad-account resource exposes a `reference`
+// field to cross-check, so the other platforms' silence is the designed outcome. Nothing
+// analogous is true of a credential probe: every platform this service dispatches to can be
+// asked whether its stored credential still works. So a missing dispatcher, or a registered one
+// that does not implement ConnectionProber, is UNCONDITIONALLY a wiring defect in this service.
+// Returning nil for it would restore the exact bug this work removes — a test that answers
+// OK: true having verified nothing — and the operator would have no way to tell the difference.
+//
+// ErrConnectionProbeUnwired is the reason token; ErrServiceDefect selects the typed 500. Per
+// that sentinel's contract the two are separate decisions, and the response carries no detail,
+// so the token is the only thing telling an operator reading the log that nothing they own is
+// broken and no amount of re-saving the connection will help.
+func (o *Orchestrator) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return fmt.Errorf("%w: %w: no %s dispatcher is registered, so the connection could not be verified against the platform",
+			domain.ErrServiceDefect, domain.ErrConnectionProbeUnwired, platform)
+	}
+	prober, ok := d.(ConnectionProber)
+	if !ok {
+		return fmt.Errorf("%w: %w: the registered %s dispatcher does not implement ConnectionProber, so the connection could not be verified against the platform",
+			domain.ErrServiceDefect, domain.ErrConnectionProbeUnwired, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	err := prober.ProbeConnection(callCtx, projectID, platform)
+	o.recordUpstream(ctx, platform, opProbeConnection, start, err)
+	return err
 }
 
 // orgVerificationRequired names the platforms whose dispatcher MUST implement

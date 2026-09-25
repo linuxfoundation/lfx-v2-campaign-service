@@ -839,17 +839,26 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 // about ownership. Refusing the system fallback outright, rather than checking membership
 // against it, is the only version of this check that actually distinguishes the two projects.
 func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
+	client, _, err := d.resolveOwnedGoogleAdsDiscovery(ctx, projectID, platform)
+	return client, err
+}
+
+// resolveOwnedGoogleAdsDiscovery is the body of the above, returning the resolved row as well
+// as the client. ProbeConnection needs both — the client to make the call, and the row to know
+// WHICH customer id the connection is configured for, which is the half of a connection test
+// that "does the credential authenticate" does not answer.
+func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscovery(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, *resolved, error) {
 	res, err := d.creds.resolveOwned(ctx, projectID, platform)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	creds, err := validateGoogleAdsCredentials(projectID, res)
 	if err != nil {
-		return nil, err
+		return nil, res, err
 	}
 	loginCustomerID, err := validatedLoginCustomerID(res)
 	if err != nil {
-		return nil, err
+		return nil, res, err
 	}
 	return googleads.NewClient(
 		googleads.Credentials{
@@ -863,7 +872,44 @@ func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscoveryClient(ctx context.C
 			Label:           res.label,
 		},
 		d.opts...,
-	), nil
+	), res, nil
+}
+
+// ProbeConnection verifies the project's stored Google Ads connection against Google itself:
+// it refreshes the stored credential and enumerates the customers that credential reaches,
+// then checks the configured customer id is among them.
+//
+// It satisfies the service-side ConnectionProber interface, type-asserted by
+// Orchestrator.ProbeConnection for the connection-test endpoint. Read-only: it creates,
+// changes and deletes nothing.
+//
+// It resolves via resolveOwnedGoogleAdsDiscovery (d.creds.resolveOwned), NOT d.creds.resolve —
+// the same rule LinkedIn's VerifyAccountOrg follows and for the same reason: the forced-system
+// fallback would let a connection test on a project with no Google Ads connection of its own
+// silently verify the shared LF SYSTEM row instead of reporting that this project has nothing
+// to test. That matters more here than anywhere, because Google Ads is ONE shared customer
+// across every foundation (docs/architecture.md, "Account Tenancy").
+//
+// ListAccessibleCustomers is the right probe rather than merely a convenient one. It runs the
+// token refresh — the exact call that fails for a revoked refresh token, the production
+// failure this endpoint existed and did not catch — and in manager mode it answers with the
+// customers actually addressable THROUGH this client, so membership proves the connection can
+// dispatch rather than that some list mentions the id.
+func (d *GoogleAdsDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
+	client, res, err := d.resolveOwnedGoogleAdsDiscovery(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	subject := probeSubject{platform: platform, accountID: res.accountID}
+	customers, lerr := client.ListAccessibleCustomers(ctx)
+	if lerr != nil {
+		return subject.probeClass(lerr, googleads.ProbeCredentialRejected, googleads.ProbeInconclusive)
+	}
+	reachable := make([]string, 0, len(customers))
+	for _, cust := range customers {
+		reachable = append(reachable, strings.TrimPrefix(cust.ResourceName, "customers/"))
+	}
+	return subject.probeMembership(reachable, nil)
 }
 
 // ListAccountCampaignMetrics implements service.AccountMetricsReader for Google Ads,

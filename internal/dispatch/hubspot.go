@@ -241,7 +241,20 @@ func (d *HubSpotDispatcher) ResolveEmailClientWithOrigin(ctx context.Context, pr
 // The resolved is returned even alongside an error, for the same reason as the reddit adapter's
 // variant: a defect found after the fallback was taken still came from the system row.
 func (d *HubSpotDispatcher) resolveHubSpotClientWithCreds(ctx context.Context, projectID string, platform model.Provider) (client *hubspot.Client, res *resolved, err error) {
-	res, err = d.creds.resolve(ctx, projectID, platform)
+	return d.resolveHubSpotClientVia(ctx, projectID, platform, d.creds.resolve)
+}
+
+// resolveHubSpotClientVia is the body of the above with the credential entry point left to the
+// caller (see credsResolver), the same shape the reddit adapter already uses.
+//
+// It exists because ProbeConnection must NOT accept the LF system fallback: a connection test
+// answers "is THIS project's connection good?", and answering it from a borrowed row reports a
+// connection the project does not have as healthy. Threading the resolver rather than copying
+// the status/decode/completeness rules keeps the two paths from drifting — a credential
+// rejected at dispatch cannot be accepted by the test, which is the property that makes the
+// test worth trusting at all.
+func (d *HubSpotDispatcher) resolveHubSpotClientVia(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver) (client *hubspot.Client, res *resolved, err error) {
+	res, err = resolveCreds(ctx, projectID, platform)
 	if err != nil {
 		return nil, nil, err // already a preCreateError
 	}
@@ -282,6 +295,50 @@ func (d *HubSpotDispatcher) resolveHubSpotClientWithCreds(ctx context.Context, p
 		hubspot.AccountConfig{PortalID: res.providerConfig["portal_id"]},
 		d.opts...,
 	), res, nil
+}
+
+// ProbeConnection verifies the project's own HubSpot connection against HubSpot, for the
+// connection test (LFXV2-2665). Before this existed the test answered OK the moment a
+// credential blob was present in the row — it never decrypted it, never authenticated, and
+// never reached the portal.
+//
+// The probe call is AuthenticatedPortalID: it posts the private-app token to HubSpot's
+// token-info endpoint, so a revoked, rotated or mistyped token fails here and nowhere else.
+// It also answers with the hub id the token actually belongs to, which makes this the one
+// probe that can cross-check provenance: a token pasted from the wrong portal authenticates
+// perfectly and then writes to a portal the operator did not choose. Nothing keeps
+// providerConfig["portal_id"] in step with the token, so when both are known and they
+// disagree, that is a failed test — reported by this service in its own words, never by
+// echoing the upstream body.
+//
+// Resolution goes through d.creds.resolveOwned, NEVER d.creds.resolve: the forced-system
+// fallback would let a project with no HubSpot connection of its own silently verify the LF
+// system row and be told it is healthy.
+func (d *HubSpotDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
+	client, res, err := d.resolveHubSpotClientVia(ctx, projectID, platform, d.creds.resolveOwned)
+	if err != nil {
+		return err
+	}
+
+	configured := strings.TrimSpace(res.providerConfig["portal_id"])
+	subject := probeSubject{platform: platform, accountID: configured}
+
+	portalID, perr := client.AuthenticatedPortalID(ctx)
+	if perr != nil {
+		return subject.probeClass(perr, hubspot.ProbeCredentialRejected, hubspot.ProbeInconclusive)
+	}
+
+	// An unconfigured portal_id is NOT a failure here, unlike the ad platforms' missing
+	// account id. HubSpot's client derives the portal from the token when none is configured
+	// — the campaign lands in the token's own portal — so there is nothing unresolved to
+	// report. The token authenticated and the portal it reaches is known; that is a pass.
+	if configured == "" {
+		return nil
+	}
+	if strings.TrimSpace(portalID) != configured {
+		return subject.accountNotReachable()
+	}
+	return nil
 }
 
 // ReadMetrics implements service.MetricsReader for the HubSpot email channel (LFXV2-3058):

@@ -447,6 +447,67 @@ func microsoftAccountLabel(a microsoft.AdAccount) string {
 	return name
 }
 
+// ProbeConnection verifies the project's stored Microsoft Advertising connection against
+// Microsoft itself: it refreshes the stored credential and enumerates every ad account that
+// credential reaches, then checks the configured account is among them.
+//
+// It satisfies the service-side ConnectionProber interface, type-asserted by
+// Orchestrator.ProbeConnection for the connection-test endpoint. Read-only: it creates,
+// changes and deletes nothing.
+//
+// d.creds.resolveOwned, never d.creds.resolve — see GoogleAdsDispatcher.ProbeConnection for
+// the shared rationale. This is a different resolver from ListAccounts above, which keeps the
+// forced-system entry point because discovery and a connection test ask different questions.
+//
+// Membership in ListAdAccounts' answer is a real verdict here because that method fails a
+// partial enumeration rather than returning a short list — its own doc states the rule ("an
+// incomplete answer is an ERROR, never a short list") — so an account absent from a list that
+// was returned at all is genuinely not reachable by this credential.
+//
+// Accounts that are suspended, paused or draft are RETURNED by ListAdAccounts, each carrying
+// the reason it is unusable, and this probe deliberately accepts them. The test asks whether
+// the stored credential authenticates and reaches the configured account; the account's own
+// lifecycle state is a separate fact, already surfaced in the picker's label, and failing the
+// connection over it would send an operator to repair a credential that is perfectly good.
+func (d *MicrosoftDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
+	subject := probeSubject{platform: platform}
+	res, err := d.creds.resolveOwned(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	creds, accountID, verr := validateMicrosoftConnection(projectID, res)
+	if verr != nil {
+		if errors.Is(verr, domain.ErrAccountNotSelected) {
+			return subject.noAccountConfigured()
+		}
+		return res.systemScoped(verr)
+	}
+	subject.accountID = accountID
+	// AccountConfig is left ZERO for the reason ListAccounts documents at length: a
+	// configured CustomerID makes discoveryCustomerIDs treat that one customer as the
+	// complete answer and skip every other, which would narrow the enumeration this probe
+	// checks membership against.
+	client := microsoft.NewClient(
+		microsoft.Credentials{
+			ClientID:       creds.ClientID,
+			ClientSecret:   creds.ClientSecret,
+			DeveloperToken: creds.DeveloperToken,
+			RefreshToken:   creds.RefreshToken,
+		},
+		microsoft.AccountConfig{},
+		d.opts...,
+	)
+	adAccounts, lerr := client.ListAdAccounts(ctx)
+	if lerr != nil {
+		return subject.probeClass(lerr, microsoft.ProbeCredentialRejected, microsoft.ProbeInconclusive)
+	}
+	reachable := make([]string, 0, len(adAccounts))
+	for _, a := range adAccounts {
+		reachable = append(reachable, a.ID)
+	}
+	return subject.probeMembership(reachable, nil)
+}
+
 // resolveMicrosoftClient resolves + validates the project's connection and builds a client
 // for the TOGGLE and METRICS paths (see validateMicrosoftConnection for the shared rules).
 //

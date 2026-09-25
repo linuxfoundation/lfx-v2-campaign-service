@@ -1132,11 +1132,60 @@ func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, project
 // a project with no Meta connection of its own gets domain.ErrNotFound (via noOwnConnection)
 // instead of a credential borrowed from the shared LF system row.
 func (d *MetaDispatcher) resolveOwnedMetaDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*meta.Client, error) {
-	_, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.resolveOwned)
+	client, _, err := d.resolveOwnedMetaDiscovery(ctx, projectID, platform)
+	return client, err
+}
+
+// resolveOwnedMetaDiscovery is the body of the above, returning the resolved row as well as
+// the client. ProbeConnection needs both — the client to make the call, and the row to know
+// WHICH ad account the connection is configured for, which is the half of a connection test
+// that "does the token authenticate" does not answer.
+func (d *MetaDispatcher) resolveOwnedMetaDiscovery(ctx context.Context, projectID string, platform model.Provider) (*meta.Client, *resolved, error) {
+	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.resolveOwned)
 	if err != nil {
-		return nil, err
+		return nil, res, err
 	}
-	return meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{}, d.opts...), nil
+	return meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{}, d.opts...), res, nil
+}
+
+// ProbeConnection verifies the project's stored Meta connection against Meta itself: it reads
+// the ad accounts the stored access token reaches, then checks the configured account is among
+// them.
+//
+// It satisfies the service-side ConnectionProber interface, type-asserted by
+// Orchestrator.ProbeConnection for the connection-test endpoint. Read-only: it creates,
+// changes and deletes nothing.
+//
+// resolveOwnedMetaDiscovery (d.creds.resolveOwned), never d.creds.resolve — see
+// GoogleAdsDispatcher.ProbeConnection for the shared rationale: the forced-system fallback
+// would have a project with no Meta connection of its own silently verify the shared LF system
+// row and report a connection it does not have as healthy.
+//
+// Both ids are compared with the act_ prefix stripped. The prefixed form is canonical on both
+// sides — a connection's account_id is stored as act_<digits> and ListAdAccounts returns the
+// same node id — so normalising changes nothing for a well-formed pair and only keeps a
+// legacy bare-digits row from being reported as unreachable for a formatting difference.
+func (d *MetaDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
+	client, res, err := d.resolveOwnedMetaDiscovery(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	subject := probeSubject{platform: platform, accountID: res.accountID}
+	adAccounts, lerr := client.ListAdAccounts(ctx)
+	if lerr != nil {
+		return subject.probeClass(lerr, meta.ProbeCredentialRejected, meta.ProbeInconclusive)
+	}
+	reachable := make([]string, 0, len(adAccounts))
+	for _, a := range adAccounts {
+		reachable = append(reachable, a.ID)
+	}
+	return subject.probeMembership(reachable, trimMetaAccountPrefix)
+}
+
+// trimMetaAccountPrefix normalises a Meta ad account id to its bare numeric form, so the
+// stored value and the enumerated one compare on identity rather than on formatting.
+func trimMetaAccountPrefix(id string) string {
+	return strings.TrimPrefix(strings.TrimSpace(id), "act_")
 }
 
 // ListAccounts discovers the ad accounts reachable via the project's stored, encrypted

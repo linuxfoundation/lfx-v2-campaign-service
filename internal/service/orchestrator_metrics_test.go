@@ -342,6 +342,10 @@ func (d upstreamCapableDispatcher) VerifyAccountOrg(context.Context, string, mod
 	return d.err
 }
 
+func (d upstreamCapableDispatcher) ProbeConnection(context.Context, string, model.Provider) error {
+	return d.err
+}
+
 // TestUpstreamCallsAreInstrumented drives each instrumented capability path and
 // asserts the upstream call was actually recorded with the right bounded operation
 // token and outcome.
@@ -478,6 +482,17 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opVerifyAccountOrg,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				return o.VerifyAccountOrg(ctx, "p1", platform)
+			},
+		},
+		{
+			// The connection probe is the only upstream call made purely to answer "is this
+			// credential still good". Its failure rate IS the signal an operator wants — a
+			// platform revoking tokens shows up here before it shows up as failed campaign
+			// creations.
+			name: "probe connection",
+			op:   opProbeConnection,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				return o.ProbeConnection(ctx, "p1", platform)
 			},
 		},
 	}

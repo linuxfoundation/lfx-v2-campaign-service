@@ -619,6 +619,85 @@ var (
 	// test call.
 	ErrOrgVerificationFailed = errors.New("the account/organization cross-check returned a confirmed failure")
 
+	// ErrConnectionProbeInconclusive marks a connection-test UPSTREAM PROBE that could not be
+	// run to a verdict — the read-only call it makes failed for a reason that proves nothing
+	// about the stored connection, so the connection must not be called broken over it.
+	//
+	// It is the probe-path twin of ErrOrgVerificationInconclusive and shares its whole rationale;
+	// only the check differs. The org cross-check asks "does the stored org id agree with the
+	// platform's record?" and exists for LinkedIn alone. The probe asks the question the other
+	// six connection tests never asked at all: "does this credential actually authenticate, and
+	// does it actually reach the account this connection is configured for?"
+	//
+	// The classes that land here are fixed by probeClass (internal/dispatch/probe.go): a
+	// pre-send connection failure, a mid-flight transport failure, HTTP 429, and any 5xx.
+	// Nothing that IS evidence about the connection may carry it — a credential the platform
+	// evaluated and refused carries ErrConnectionProbeFailed, and a request this service built
+	// wrongly carries ErrServiceDefect — because this sentinel maps to OK: true with an advisory
+	// message, exactly as the org-verification one does.
+	//
+	// Like that sentinel, it is attached by the DISPATCHER, the one layer that knows both this
+	// service's contract and the platform client's error types, and the conversion is also the
+	// safety boundary: the platform chain is dropped and replaced with a fixed classified
+	// sentence, because several of these clients render a response body or a request URL in
+	// their error text (meta.APIError.Message falls back to the raw body). An error carrying
+	// THIS sentinel is therefore safe to log verbatim.
+	ErrConnectionProbeInconclusive = errors.New("the connection could not be verified against the platform")
+
+	// ErrConnectionProbeFailed marks the opposite outcome: the probe DID reach a verdict, and
+	// the verdict is that this connection cannot be used — the platform evaluated the stored
+	// credential and refused it (401/403, or a token endpoint refusing the refresh on the
+	// merits), or the configured account is absent from an enumeration that completed, or the
+	// connection names no account to reach at all.
+	//
+	// It is an ALLOWLIST for echoing, the same device ErrOrgVerificationFailed is, and for the
+	// same reason: the connection-test arm renders the error's own message to the operator, and
+	// that is only safe for text this service wrote. Every message carrying this sentinel is
+	// authored by internal/dispatch from its own vocabulary plus the configured account id —
+	// never from a platform response body, request URL, or credential material. A class that is
+	// not recognised is therefore silent by default rather than echoed by accident.
+	//
+	// PERMANENT: waiting does not revoke a revocation or re-grant an account. It maps to
+	// OK: false, not to an HTTP error — a failed test is still a successful test call.
+	ErrConnectionProbeFailed = errors.New("the connection failed verification against the platform")
+
+	// ErrConnectionProbeRequestRejected is the third outcome of the probe classification, and
+	// the one the two predicates name by exclusion: the platform answered, and refused the
+	// request THIS SERVICE built, on grounds that are not about the stored credential — a 4xx
+	// that is neither 401/403 nor 429. A moved path, a malformed query, a required parameter
+	// this build stopped sending.
+	//
+	// It is deliberately NOT a verdict on the connection. Nothing the operator owns is at
+	// fault and nothing they can edit repairs it, so reporting it as a failed test would send
+	// them to audit fields the request never consulted; and it is not inconclusive either,
+	// because that answer maps to OK: true and would let a whole platform's connection tests
+	// silently stop testing anything the day an endpoint moves.
+	//
+	// It is the probe-path analogue of ErrAccountDiscoveryRejected, kept separate rather than
+	// reusing it because that sentinel is scoped by its own doc to LinkedIn's account walk,
+	// and an operator grepping the log needs to know WHICH request a platform refused: these
+	// probes also address a single configured account directly (Reddit, X), which no
+	// "discovery" reading covers.
+	//
+	// Wrapped ALONGSIDE ErrServiceDefect, which selects the status; this one is the reason
+	// token. PERMANENT, never retryable.
+	ErrConnectionProbeRequestRejected = errors.New("the platform refused the connection-probe request itself; this is a service defect")
+
+	// ErrConnectionProbeUnwired is the wiring defect of the probe path: this build has no
+	// dispatcher registered for a platform whose connection test probes upstream, or one that
+	// does not implement the ConnectionProber capability.
+	//
+	// Unlike ErrOrgVerificationUnwired — whose platform set is a claim about which platforms
+	// EXPOSE an org reference — every platform reaching Orchestrator.ProbeConnection is required
+	// to implement it, because the only callers are the connection tests that were wired to
+	// probe. Returning nil for a missing prober would restore exactly the defect this work
+	// removes: OK: true with nothing verified.
+	//
+	// Wrapped ALONGSIDE ErrServiceDefect, which selects the status; this one is the reason
+	// token, and the only thing that tells an operator reading the log that nothing they own is
+	// broken, since the response deliberately carries no detail. PERMANENT.
+	ErrConnectionProbeUnwired = errors.New("this build cannot verify connections for this platform; this is a service defect")
+
 	// ErrConnectionLoadFailed marks a failure to READ the stored connection row — the
 	// database was unreachable, the query failed. Nothing was learned about the connection,
 	// because it was never retrieved.

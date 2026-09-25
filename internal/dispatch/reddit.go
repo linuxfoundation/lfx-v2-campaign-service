@@ -576,6 +576,47 @@ func (d *RedditDispatcher) resolveMonitorClient(ctx context.Context, projectID s
 	return client, nil
 }
 
+// ProbeConnection verifies the project's stored Reddit connection against Reddit itself: it
+// refreshes the stored credential and reads the configured ad account.
+//
+// It satisfies the service-side ConnectionProber interface, type-asserted by
+// Orchestrator.ProbeConnection for the connection-test endpoint. Read-only: it creates,
+// changes and deletes nothing.
+//
+// d.creds.resolveOwned, never d.creds.resolve — see GoogleAdsDispatcher.ProbeConnection for
+// the shared rationale.
+//
+// Reddit is the one platform here whose probe addresses the configured account DIRECTLY
+// (GET /ad_accounts/{id}) instead of enumerating and checking membership, because that read
+// already exists as CreateCampaign's Step 1. That makes it the strongest form of the check
+// available — it proves reachability of the account this connection will actually dispatch to,
+// rather than that the account appears in a list — and it is why this arm needed no account
+// enumeration endpoint to be built first. The verdict for a 404 is decided inside
+// reddit.ProbeCredentialRejected, which explains why a 404 is Reddit answering the question
+// asked here and a defect anywhere else.
+//
+// An account-less connection is converted to the probe path's own confirmed verdict rather
+// than passed through as ErrAccountNotSelected. The two sentinels disagree about what the
+// caller should do, and for a connection TEST this one is right: there is nothing to verify
+// and campaign creation on this connection cannot succeed, which is the question being asked,
+// so reporting it as a failed test beats reporting a setup state the test arm would have to
+// translate anyway.
+func (d *RedditDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
+	subject := probeSubject{platform: platform}
+	client, res, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.resolveOwned)
+	if err != nil {
+		if errors.Is(err, domain.ErrAccountNotSelected) {
+			return subject.noAccountConfigured()
+		}
+		return err
+	}
+	subject.accountID = res.accountID
+	if verr := client.VerifyAccount(ctx); verr != nil {
+		return subject.probeClass(verr, reddit.ProbeCredentialRejected, reddit.ProbeInconclusive)
+	}
+	return nil
+}
+
 // redditCreationAccountID reports the ad account the campaign was CREATED under, or "" when
 // the persisted result blob does not record it.
 //
