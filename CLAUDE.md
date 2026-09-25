@@ -48,6 +48,15 @@ The current active speckit feature spec/plan/tasks live under
 See `README.md` for the `make` targets used to build, test, lint, and run
 the service.
 
+For the live schema and layout, the migrations under
+`internal/infrastructure/postgres/migrations/` and `docs/architecture.md` are
+authoritative; `docs/channel-connections-schema.md` and `docs/build-summary.md`
+are dated design-time documents and do not override the code where they
+disagree. What the formatting, MegaLinter and license-header checks cover is
+defined by `GO_FILES` in the `Makefile`, `FILTER_REGEX_EXCLUDE` in
+`.mega-linter.yml` and `exclude_pattern` in
+`.github/workflows/license-header-check.yml`.
+
 ## Pre-PR review
 
 > **IMPORTANT — follow this exactly.** When the implementation is complete

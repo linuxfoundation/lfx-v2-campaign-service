@@ -74,9 +74,8 @@ untouched.
 
 ## Review
 
-Follow the `## Pre-PR review` block in `CLAUDE.md`: one full-branch review before
-the PR, at most one fix commit, then the deterministic checks. No push / PR without
-explicit authorization.
+Follow the `## Pre-PR review` block in `CLAUDE.md`. No push / PR without explicit
+authorization.
 
 ## Verification
 
