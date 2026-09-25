@@ -48,52 +48,43 @@ The current active speckit feature spec/plan/tasks live under
 See `README.md` for the `make` targets used to build, test, lint, and run
 the service.
 
-## Local work cycle — post-commit and pre-PR review
+## Pre-PR review
 
-Run, from this repo, **after every normal signed commit** while working toward a
-pull request:
+Run **one** local review of the whole branch before opening the PR — never
+after individual commits, and never again once the PR exists.
 
-```text
-/lfx-skills:lfx-local-review
-```
+1. When the implementation is complete and committed, run `git fetch origin`
+   and pin the range: `base_sha=$(git merge-base origin/main HEAD)`,
+   `target_sha=$(git rev-parse HEAD)`.
+2. Launch **two** independent background subagents **in parallel**, one per
+   skill, each with `subagent_type: general-purpose`, `model: opus` (Opus 5.5),
+   `run_in_background: true`. Tell each to load exactly one skill with the
+   Skill tool and follow it: one loads `/lfx-skills:lfx-general-code-review`
+   (general quality plus this repo's written conventions, style and rules);
+   the other loads `/campaign-service-learnings-reviewer` (this repo's review knowledge base). Give each
+   the full 40-character `base_sha` and `target_sha`, the instruction to review
+   exactly `git diff <base_sha> <target_sha>`, and the report-only rule: they
+   never edit, commit, push or write GitHub state.
+3. Wait for both reports. A failed, empty or `INCOMPLETE` report is **not** a
+   clean review: fix the cause and relaunch that reviewer once; if it fails
+   again, stop and tell the developer.
+4. Verify every finding against the code. Address every Critical and every
+   reasonable Important finding in **EXACTLY ONE fix commit** (signed and
+   DCO-signed-off). No fix commit if there is nothing to fix. Never one commit
+   per finding.
+5. Run `make check-fmt && make lint && make test && go run ./cmd/okfvalidate ./docs/knowledge`. If it fails, fold the remedy into the fix commit with
+   `git commit --amend` (re-sign and re-sign-off); if review found nothing and
+   there is no fix commit yet, this remedy becomes the one fix commit. Rerun
+   the checks — but **do not rerun the reviewers**. The branch gains **at most one**
+   commit after the implementation — the single fix commit, or none at all —
+   never more.
+6. Open the PR.
 
-It reviews the **newest commit** — by default the range `HEAD^..HEAD`, the diff
-that commit introduces against its first parent — so you can keep editing while it
-runs. A caller that needs a wider range may supply a direct base parameter; the
-review never derives one, never fetches, and never consults a remote.
+**Hard rules.** No local review runs after any individual commit. The
+reviewers are **never** rerun on the fix commit. From the moment the PR is
+open, **no local reviews of any kind**: iterate only on the PR's bot and human
+review feedback, still running tests and checks, and batch each round of fixes
+into as few commits as possible.
 
-Three reviewers run in parallel and each returns an ordinary Markdown review: a
-general reviewer, plus this repo's own two brains —
-`.claude/skills/campaign-service-code-reviewer` (audits the change against this
-repo's written rules and quotes each one) and
-`.claude/skills/campaign-service-learnings-reviewer` (matches it against
-`docs/reviews/knowledge-base/`, the patterns extracted from past review comments
-on this repo). The generic `local-code-review` and `local-learnings-review` names in
-`.claude/skills/` are symlinks to those two directories, and `.agents/skills/`
-exposes the same two physical directories — keep exactly one copy of each brain.
-
-When the host reports that Pi is unavailable it runs the trio as Claude subagents
-instead, following `.claude/skills/local-review-fallback` — this repo's launch
-table for exactly those three reviewers, aliased at
-`.agents/skills/local-review-fallback`. It carries no review criteria of its own.
-
-Read the reports in full. **This session — not the reviewers — fixes what they
-find.** Reviewer children never edit source, commit, push, or touch GitHub beyond
-read-only inspection. Land the fixes as normal signed conventional commits with a
-`fix(<scope>): ...` or `fix: ...` prefix, then **rerun the complete trio**.
-
-A review whose first line is `INCOMPLETE — <reason>`, or a role the host reports
-as failed or empty, makes the **whole cycle incomplete**. Successful siblings do
-not rescue it: two clean reports next to one incomplete one is not a pass. Resolve
-the cause and rerun the complete trio under one harness — never just the failed
-role, and never a mix of Pi and Claude evidence in the same cycle.
-
-Before opening a PR: drain the reviews, then run the repo's normal readiness and
-preflight checks.
-
-This cycle **stops at PR-open.** Pushing and opening the PR happen under the
-coordinator's release instruction, not from the review cycle, which never writes a
-label, status, review or approval.
-
-When a review's findings change what the code does, the knowledge-bundle rules
-above still apply to the follow-up commit.
+When the fix commit changes what the code does, the knowledge-bundle rules
+above still apply to it.

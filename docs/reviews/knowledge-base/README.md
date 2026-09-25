@@ -7,9 +7,9 @@ decisions; the reviewer skill holds the review *method* and loads this path, so
 there is deliberately no second copy of the evidence under the skill's own
 directory.
 
-Read by the `campaign-service-learnings-reviewer` brain (the learnings role of the
-local pre-PR reviewer trio) and by humans deciding whether a pattern still earns
-its place. It is plain documentation: nothing here is wired into `.github/**`, and no
+Read by the `campaign-service-learnings-reviewer` brain (the knowledge-base role of
+the single pre-PR review launched from the `## Pre-PR review` block in `CLAUDE.md`)
+and by humans deciding whether a pattern still earns its place. It is plain documentation: nothing here is wired into `.github/**`, and no
 PR-side tooling in this repo consumes it today.
 
 ## Scope
@@ -17,7 +17,8 @@ PR-side tooling in this repo consumes it today.
 These entries describe **what reviewers of this repo actually caught and
 developers actually fixed**. They are not a style guide, not a restatement of
 `CLAUDE.md`, and not general Go advice. The repo's written rules are the
-`campaign-service-code-reviewer` brain's surface; this one is purely empirical.
+central general reviewer's surface (`/lfx-skills:lfx-general-code-review` reads
+them from the repo); this one is purely empirical.
 Where the two overlap — knowledge-bundle upkeep, contract currency, test
 synchronisation — the entry here exists because it recurred in review practice
 before a PR was ever opened, and it is phrased as a mechanical detect condition
