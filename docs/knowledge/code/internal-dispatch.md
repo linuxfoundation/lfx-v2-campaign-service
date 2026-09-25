@@ -2210,6 +2210,28 @@ the same no-account sentence WITHOUT the marker, because reaching that line mean
 completed and a real call belongs in the upstream series;
 `probe_not_attempted_test.go` pins both halves verdict by verdict.
 
+### The one verdict that is not about the credential or the account
+
+`requiredConfigMissing` answers for a connection field that is neither an id nor a credential but
+without which the platform rejects every campaign create. Reddit's `conversion_pixel_id` is the
+only one today: `reddit.Client.CreateCampaign` refuses EVERY objective when none is configured
+(confirmed against the live API, not just the documented `conversions` case — see
+[reddit](internal-platform-reddit.md)) and refuses it before any upstream call, so the rejection
+is a certainty rather than a prediction. Without this verdict a Reddit connection with a working
+credential and a reachable account answered `OK: true` and then failed on first use — the exact
+"tests clean, fails on dispatch" shape LFXV2-2665 exists to remove.
+
+It runs **after** `VerifyAccount`, not before it, and is therefore the one local refusal that is
+deliberately NOT marked not-attempted. A connection can be broken twice over, and answering the
+pixel first would send an operator to fill in a field on a connection whose real problem is a
+dead credential — they would learn the actual problem on a second round trip. Running reachability
+first also means a real upstream call has happened by the time this verdict is reached, so its
+sample belongs in the upstream series like any other post-call verdict. The probe reads the pixel
+through `reddit.Client.ConversionPixelID()`, the same account config `CreateCampaign` reads, so
+the two cannot disagree about what "configured" means. `probe_reddit_pixel_test.go` pins the
+verdict, its wording (it names the field and says the credential authenticated), the absence of
+the marker, and the ordering.
+
 ### The verdict a 404 earns on Reddit and X
 
 `accountNotReachable` is also reached WITHOUT an enumeration on the two probes that name the

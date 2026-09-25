@@ -168,11 +168,13 @@ func TestGoogleAdsProbe_ReachedButNotCampaignCapable(t *testing.T) {
 	}
 }
 
-// TestGoogleAdsProbe_DashedAccountIDDoesNotBlameTheCredential covers the one provider config with
-// no Pattern at the design layer.
+// TestGoogleAdsProbe_DashedAccountIDDoesNotBlameTheCredential covers a stored id the design layer
+// no longer admits but the datastore can still hold.
 //
-// design/connection.go declares google-ads account_id with an Example and no Pattern, so the
-// dashed form the Google Ads UI displays — 866-674-6580 — is storable. ListAccessibleCustomers
+// design/connection.go declared google-ads account_id with an Example and no Pattern until
+// LFXV2-2665, so the dashed form the Google Ads UI displays — 866-674-6580 — was storable through
+// the API itself; it is still storable by bootstrap, by migrations, and by every row written
+// before that pattern landed, which is why this runtime guard stays. ListAccessibleCustomers
 // answers in the undashed form and can never contain it, so the membership check missed and the
 // probe reported "the credential authenticates but does not reach account 866-674-6580" about a
 // credential that reaches that account perfectly well under the id Google actually uses. The

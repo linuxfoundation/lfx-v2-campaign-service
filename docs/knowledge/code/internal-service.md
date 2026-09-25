@@ -77,10 +77,27 @@ in nanoseconds) do not drag the latency quantiles toward zero.
 because they are decided inside the DISPATCHER: a connection that names no ad account, or
 whose account id or customer id cannot form a valid request for its platform, is refused
 before anything is built. Those verdicts carry `domain.ErrConnectionProbeNotAttempted`
-alongside their confirmed-failure sentinel, and the metrics arm skips `recordUpstream` when
-it sees it — otherwise a platform with a few misconfigured rows shows an upstream error rate
-and near-zero latency samples for calls it never received. The operator's answer is
-unchanged: these stay `OK: false` with their own wording, and only the metric moves.
+alongside their confirmed-failure sentinel — otherwise a platform with a few misconfigured
+rows shows an upstream error rate and near-zero latency samples for calls it never received.
+The operator's answer is unchanged: these stay `OK: false` with their own wording, and only
+the metric moves.
+
+The same is true of everything the dispatcher's own resolver refuses — an unreadable row, an
+undecryptable credential, an inactive connection, a malformed blob — all of which also happen
+inside the measured call, and none of which the platform ever saw. Without excluding those, a
+datastore or key-management incident reads as a provider outage on the one series that is
+supposed to mean the provider.
+
+`probeReachedThePlatform` is the gate, and it names the LOCAL outcomes rather than
+allow-listing the probe vocabulary. The two directions fail differently: an allow-list drops
+whatever it does not recognise, so a post-call error a future dispatcher returns outside the
+probe vocabulary would disappear from the series silently — a real platform failure going
+unseen. Naming the local set keeps the default on *record it*, which is wrong only in the cheap
+direction. What makes that default safe is that the local set is closed and **checked**:
+`TestProbeLocalRefusalsCoverTheResolverVocabulary` scans `internal/dispatch/creds.go` for its
+domain sentinels and requires each to be either in `probeLocalRefusalSentinels` or named in the
+test's exemption map with a reason, so a sentinel added to the resolver later fails loudly
+instead of quietly re-entering the upstream series.
 
 The RUNNING and TERMINAL job transitions are recorded with deliberately OPPOSITE rules.
 RUNNING is recorded on **attempt** (dispatch proceeds whether or not the status write

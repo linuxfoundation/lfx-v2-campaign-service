@@ -2344,6 +2344,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 // Mirrors microsoft.Client.AccountID.
 func (c *Client) AccountID() string { return c.account.AccountID }
 
+// ConversionPixelID reports the account-level conversion pixel this client was built with,
+// unset when the connection names none. Exposed for the connection probe, which must answer
+// whether this connection can dispatch at all: CreateCampaign refuses every objective without
+// a pixel, so a probe that did not check it would report a connection healthy that fails on
+// first use. Returned as stored — the caller decides what an empty value means, exactly as
+// CreateCampaign does.
+func (c *Client) ConversionPixelID() string { return c.account.ConversionPixelID }
+
 // createPromotedPost authors an IMAGE post on the ad account's profile and returns
 // its t3_ post id, for the author-a-post path (see CampaignInput.ImageURL). It
 // POSTs to /profiles/{accountID}/posts — Reddit's profile id IS the ad-account id

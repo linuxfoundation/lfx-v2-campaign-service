@@ -234,6 +234,29 @@ func (s probeSubject) accountNotEnabled() error {
 		s.platform, s.whichAccount())
 }
 
+// requiredConfigMissing is the verdict for a connection field that is neither an id nor a
+// credential, but without which the platform rejects EVERY campaign create.
+//
+// It is the one verdict that is not about authentication or reachability, and it exists
+// because those two can both pass on a connection that still cannot dispatch anything —
+// which is precisely the state a connection test is supposed to catch. Reddit's
+// conversion_pixel_id is the only such field today (reddit.Client refuses the create before
+// any upstream call, so the rejection is certain rather than predicted).
+//
+// It is raised AFTER the reachability check rather than before it, and so is deliberately NOT
+// marked not-attempted: a credential that does not authenticate makes the pixel irrelevant,
+// and answering the pixel first would send an operator to fill in a field on a connection
+// whose real problem is the credential. Running reachability first also means an upstream call
+// genuinely happened by the time this verdict is reached, so it belongs in the upstream series
+// like any other post-call verdict.
+//
+// remedy names where the operator finds the value; it is service-authored text like every
+// other sentence in this file, never anything the platform said.
+func (s probeSubject) requiredConfigMissing(field, remedy string) error {
+	return confirmedProbeVerdict("the %s credential reaches %s, but this connection sets no %s and %s rejects every campaign without one (%s)",
+		s.platform, s.whichAccount(), field, s.platform, remedy)
+}
+
 // probeMembership checks the configured account against a completed enumeration, normalising
 // both sides the way the platform stores them.
 //

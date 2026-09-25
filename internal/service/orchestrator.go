@@ -2175,22 +2175,66 @@ func (o *Orchestrator) ProbeConnection(ctx context.Context, projectID string, pl
 	defer cancel()
 	start := time.Now()
 	err := prober.ProbeConnection(callCtx, projectID, platform)
-	// Not every probe verdict is an upstream call. Three of them — the connection names no ad
-	// account, its account id is not a usable account id, its customer id is not a usable
-	// customer id — are decided by the dispatcher BEFORE it builds a request, and they carry
-	// domain.ErrConnectionProbeNotAttempted to say so. Recording them here would be a
-	// near-zero-latency `error` sample on campaign_upstream_call_duration_seconds for a platform
-	// that was never contacted: exactly the local refusal recordUpstream's own doc says it is
-	// called after the guards to avoid, except these guards live inside the dispatcher and so
-	// cannot be hoisted above the timer.
-	//
-	// The operator-facing answer is untouched — these stay confirmed failures, OK: false, with
-	// their own wording. Only the upstream series changes, and only by losing samples that never
-	// described an upstream call.
-	if !errors.Is(err, domain.ErrConnectionProbeNotAttempted) {
+	if probeReachedThePlatform(err) {
 		o.recordUpstream(ctx, platform, opProbeConnection, start, err)
 	}
 	return err
+}
+
+// probeReachedThePlatform reports whether a ProbeConnection outcome describes work the platform
+// actually saw, and so belongs on campaign_upstream_call_duration_seconds.
+//
+// ProbeConnection is the one orchestrator call whose local guards run INSIDE the dispatcher —
+// loading the connection row, decrypting it, checking it is active, decoding the credential blob,
+// and the three id checks — so they cannot be hoisted above the timer the way every other
+// operation's are. Recording those would put near-zero-latency `error` samples on a platform that
+// was never contacted: exactly the local refusal recordUpstream's own doc says it is called after
+// the guards to avoid. A datastore outage or a batch of misconfigured rows would read as a
+// provider outage on the one series that is supposed to mean the provider.
+//
+// It excludes by naming the LOCAL outcomes rather than allow-listing the probe vocabulary,
+// because the two directions fail differently and only one of them fails safely here. An
+// allow-list drops any outcome it does not recognise, so a post-call error a future dispatcher
+// returns outside the probe vocabulary would vanish from the upstream series silently — the
+// series would simply stop seeing a real platform failure. Naming the local set keeps the default
+// on "record it": an unclassified error still lands, which is wrong in the cheap direction (a
+// visible sample for something that deserves investigation anyway) rather than the expensive one.
+//
+// The local set is closed and checkable, which is what makes that default safe: every credential
+// resolution failure in internal/dispatch/creds.go carries one of these sentinels, and
+// TestProbeLocalRefusalsCoverTheResolverVocabulary derives that list from the source so a sentinel
+// added there later fails this gate loudly instead of quietly re-entering the upstream series.
+func probeReachedThePlatform(err error) bool {
+	if err == nil {
+		return true
+	}
+	for _, local := range probeLocalRefusalSentinels {
+		if errors.Is(err, local) {
+			return false
+		}
+	}
+	return true
+}
+
+// probeLocalRefusalSentinels are the outcomes ProbeConnection can return without any request
+// having left this service.
+//
+// ErrConnectionProbeNotAttempted is the dispatcher's own marker for the three verdicts decided
+// before a request is built (see that sentinel's doc); the rest are the credential resolver's
+// vocabulary, plus the unwired-dispatcher defect the orchestrator raises before the timer even
+// starts. ErrConnectionNotUsable is the family head for the inactive, incomplete, undecodable and
+// no-account-selected cases, which are always wrapped alongside it.
+var probeLocalRefusalSentinels = []error{
+	domain.ErrConnectionProbeNotAttempted,
+	domain.ErrConnectionProbeUnwired,
+	domain.ErrConnectionLoadFailed,
+	domain.ErrNotFound,
+	domain.ErrConnectionNotUsable,
+	domain.ErrCredentialDecryptionFailed,
+	domain.ErrCredentialsAbsent,
+	domain.ErrCredentialsMalformed,
+	domain.ErrSystemConnectionMissing,
+	domain.ErrSystemConnectionNotUsable,
 }
 
 // orgVerificationRequired names the platforms whose dispatcher MUST implement

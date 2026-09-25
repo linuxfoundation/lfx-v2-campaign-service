@@ -213,4 +213,21 @@ validator, asserting they agree except at the named asymmetries.
 PUT is a full replace on every provider, and un-selecting an account is expressed by an ABSENT
 `account_id` — which is why a strict pattern on an optional attribute does not break clearing.
 
+## What `ok` on a connection test promises (LFXV2-2665)
+
+`TestResult.ok` is described as "the credential authenticated AND the configured account passed
+that provider's own check", with an explicit note that **how deep that account check goes is
+provider-specific**. The earlier wording — "the configured account is usable" — promised more
+than any probe delivers and more than several deliberately intend to: Microsoft and Meta test
+membership in an enumeration and knowingly accept accounts the platform reports as suspended,
+paused or draft, because those are recoverable states an operator fixes in the platform's UI and
+not by re-saving a connection this service stored correctly. Google Ads does read the account's
+manager and status fields; Reddit goes further in the other direction and fails a connection
+naming no conversion pixel. A generated client cannot flatten that into one promise, so the
+contract states the shape and points a caller needing lifecycle state at the account resource.
+
+Narrowing the description rather than making every probe enforce lifecycle usability is the
+deliberate half: the alternative changes six probes' behaviour to satisfy a sentence, and
+"suspended account" is not something re-testing a connection repairs.
+
 See [design](../../../design).

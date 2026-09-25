@@ -996,8 +996,9 @@ func (s *ConnectionService) DeleteLinkedinAds(ctx context.Context, p *conn.Delet
 
 // TestLinkedinAds tests the stored LinkedIn connection.
 //
-// Beyond the shared testConn baseline (connection exists, has credentials — see testConn's
-// LFXV2-2556 caveat, which still applies to the other 5 platforms), this additionally cross-
+// Beyond the shared testConn baseline (connection exists, has credentials — testConn's
+// LFXV2-2556 caveat, that the baseline alone verifies nothing about the credential), this
+// additionally cross-
 // checks the connection's configured account/org pairing against LinkedIn's OWN record of it
 // (Orchestrator.VerifyAccountOrg -> LinkedInDispatcher.VerifyAccountOrg ->
 // linkedin.Client.VerifyAccountOrgReference; the service sees the outcome through domain
@@ -1005,6 +1006,13 @@ func (s *ConnectionService) DeleteLinkedinAds(ctx context.Context, p *conn.Delet
 // service can verify today: UpdateLinkedinAds/CreateLinkedinAds persist a caller-supplied
 // org_id with no upstream check at write time, so a manually mistyped org id is otherwise
 // undetectable until it breaks a campaign creation.
+//
+// The other six no longer stop at that baseline either: as of LFXV2-2665 they all run
+// Orchestrator.ProbeConnection through one shared helper, which decrypts the credential and
+// authenticates it against the platform. LinkedIn keeps its own path because the check it runs
+// is a different and stronger one — no other provider's ad-account resource exposes a
+// `reference` field to cross-check an org against, which is why ProbeConnection deliberately
+// carries no per-platform capability table (see its doc).
 //
 // A confirmed mismatch (or an account absent from a complete ad-account enumeration — see
 // OrgReferenceVerifier's doc comment) is reported as an ordinary FAILED test (OK: false)

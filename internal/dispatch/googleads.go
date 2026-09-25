@@ -918,11 +918,13 @@ func (d *GoogleAdsDispatcher) ProbeConnection(ctx context.Context, projectID str
 	if strings.TrimSpace(res.accountID) == "" {
 		return subject.noAccountConfigured()
 	}
-	// Decided before the call for the same reason, and needed here in a way it is not for the
-	// other platforms: google-ads account_id is the one provider config with no Pattern at the
-	// design layer (design/connection.go), so the dashed form the Google Ads UI displays —
-	// 866-674-6580 — is storable. ListAccessibleCustomers answers in the undashed form and can
-	// never contain it, so without this the membership check would miss and report "the
+	// Decided before the call for the same reason. The dashed form the Google Ads UI displays —
+	// 866-674-6580 — is the shape this guards: as of LFXV2-2665 account_id carries a Pattern at
+	// the design layer (design/connection.go), so an HTTP caller can no longer store it, but Goa
+	// validates only the HTTP transport and bootstrap, migrations and rows written before that
+	// pattern existed never passed through it. ListAccessibleCustomers answers in the undashed
+	// form and can never contain the dashed one, so without this the membership check would miss
+	// and report "the
 	// credential authenticates but does not reach account 866-674-6580" about a credential that
 	// reaches that account perfectly well under the id Google actually uses.
 	if err := googleads.ValidateCustomerID(strings.TrimSpace(res.accountID)); err != nil {

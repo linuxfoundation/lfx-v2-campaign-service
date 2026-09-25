@@ -660,6 +660,20 @@ func (d *RedditDispatcher) ProbeConnection(ctx context.Context, projectID string
 		}
 		return subject.probeClass(verr, reddit.ProbeCredentialRejected, reddit.ProbeInconclusive)
 	}
+	// The credential authenticates and reaches the account — and the connection still cannot
+	// dispatch anything if it names no conversion pixel. reddit.Client.CreateCampaign refuses
+	// EVERY objective without one (confirmed against the live API on 2026-08-13, not just the
+	// documented conversions case), before any upstream call, so this is a certainty rather
+	// than a prediction. Reporting OK: true here would recreate the exact failure this endpoint
+	// exists to catch: a connection that tests clean and fails on first use.
+	//
+	// Read from the same place the client reads it — the account config on the connection row —
+	// rather than from providerConfig directly, so the probe cannot disagree with the create
+	// path about what "configured" means.
+	if strings.TrimSpace(client.ConversionPixelID()) == "" {
+		return subject.requiredConfigMissing("conversion pixel id",
+			"Reddit Ads → Events Manager lists the account's pixel")
+	}
 	return nil
 }
 

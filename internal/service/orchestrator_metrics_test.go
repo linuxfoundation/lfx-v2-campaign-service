@@ -12,6 +12,8 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -635,6 +637,11 @@ func TestPrePlatformGuardsAreNotInstrumented(t *testing.T) {
 // upstream sample behind: a platform whose connections are misconfigured would otherwise show
 // an upstream error rate and a latency distribution collapsing toward zero for calls it never
 // received.
+//
+// The same is true of every failure the dispatcher's own resolver returns — an unreadable row,
+// an undecryptable credential, an inactive connection, a malformed blob — which is why
+// probeReachedThePlatform is an allow-list over the probe vocabulary rather than a deny-list
+// over the local sentinels. The table below runs both halves against the one gate.
 func TestProbeVerdictsDecidedBeforeAnyRequestAreNotInstrumented(t *testing.T) {
 	const platform = model.ProviderMicrosoftAds
 
@@ -674,6 +681,45 @@ func TestProbeVerdictsDecidedBeforeAnyRequestAreNotInstrumented(t *testing.T) {
 			wantCalls:  1,
 			wantReason: "a successful probe is a successful upstream call",
 		},
+		{
+			name: "platform refused the request this service built",
+			probeErr: fmt.Errorf("%w: %w: %s refused the probe request",
+				domain.ErrServiceDefect, domain.ErrConnectionProbeRequestRejected, platform),
+			wantCalls:  1,
+			wantReason: "a service defect rather than a verdict, but the platform received the request and answered it",
+		},
+		// The resolver's own failures. Every dispatcher loads the row, decrypts it, checks it is
+		// active and decodes the blob INSIDE ProbeConnection, so these are local refusals sitting
+		// inside the measured call exactly as the three pre-send verdicts are. They carry no probe
+		// sentinel at all, which is what the allow-list keys on: recording them would let a
+		// datastore or key-management incident read as a platform outage on the provider's own
+		// upstream series, and the platform would be the only thing that was not at fault.
+		{
+			name:       "connection row could not be read",
+			probeErr:   fmt.Errorf("%w: reading the %s connection failed", domain.ErrConnectionLoadFailed, platform),
+			wantCalls:  0,
+			wantReason: "the row never opened, so nothing was sent to the platform",
+		},
+		{
+			name:       "credentials could not be decrypted",
+			probeErr:   fmt.Errorf("%w: the %s credential did not decrypt", domain.ErrCredentialDecryptionFailed, platform),
+			wantCalls:  0,
+			wantReason: "decryption is local; the platform never saw a request",
+		},
+		{
+			name: "connection is inactive",
+			probeErr: fmt.Errorf("%w: %w: the %s connection is not active",
+				domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, platform),
+			wantCalls:  0,
+			wantReason: "refused on the row's own status, before a request was built",
+		},
+		{
+			name: "credential blob is malformed",
+			probeErr: fmt.Errorf("%w: %w: the %s credentials are not valid JSON",
+				domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, platform),
+			wantCalls:  0,
+			wantReason: "the blob was never turned into a request",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := &recordingMetrics{}
@@ -698,6 +744,79 @@ func TestProbeVerdictsDecidedBeforeAnyRequestAreNotInstrumented(t *testing.T) {
 				t.Errorf("operation = %q, want %q", got[0].operation, opProbeConnection)
 			}
 		})
+	}
+}
+
+// TestProbeLocalRefusalsCoverTheResolverVocabulary is the drift guard that makes
+// probeReachedThePlatform's "record unless it is a known local refusal" default safe.
+//
+// The gate names the local outcomes instead of allow-listing the probe vocabulary, so anything it
+// does not recognise is recorded as an upstream call. That is the right default — a real platform
+// failure must never vanish from the series — but it only stays correct while the local set is
+// complete. internal/dispatch/creds.go is where every dispatcher resolves a connection, and every
+// failure it can return before a request exists carries one of its domain sentinels. This scans
+// that file for those sentinels and requires each one to be classified: either listed in
+// probeLocalRefusalSentinels, or named below as deliberately not a local refusal.
+//
+// Derived from source on both sides for the reason recordUpstreamOperations is: a hand-kept roster
+// and a hand-kept gate move together only by luck. A sentinel added to the resolver later fails
+// here loudly rather than quietly re-entering campaign_upstream_call_duration_seconds as a
+// platform error the platform never caused.
+func TestProbeLocalRefusalsCoverTheResolverVocabulary(t *testing.T) {
+	// Sentinels the resolver names that are NOT local refusals of a probe, each with the reason
+	// it is exempt. Anything not here and not in the gate is a failure.
+	notALocalRefusal := map[string]string{
+		// Provenance, not a failure: it reports that credentials came from the LF system row.
+		// Probes never resolve through that fallback (they use resolveOwned), and it is not
+		// returned as an error outcome in the first place.
+		"ErrSystemConnectionOrigin": "a provenance marker, not a failure",
+	}
+
+	src, err := os.ReadFile(filepath.Join("..", "dispatch", "creds.go"))
+	if err != nil {
+		t.Fatalf("read the resolver source this gate tracks: %v", err)
+	}
+	gate, err := os.ReadFile("orchestrator.go")
+	if err != nil {
+		t.Fatalf("read orchestrator.go: %v", err)
+	}
+
+	sentinelRE := regexp.MustCompile(`domain\.(Err[A-Za-z0-9_]+)`)
+	found := map[string]bool{}
+	for _, m := range sentinelRE.FindAllStringSubmatch(string(src), -1) {
+		found[m[1]] = true
+	}
+	// A scan that finds nothing would make this gate vacuous, which is the failure mode it exists
+	// to prevent elsewhere.
+	if len(found) == 0 {
+		t.Fatal("found no domain sentinels in internal/dispatch/creds.go; this gate scanned the " +
+			"wrong file or the resolver moved, and it is now asserting nothing")
+	}
+
+	// The gate's own list, read as source so this compares two things that are both derived.
+	block := string(gate)
+	start := strings.Index(block, "var probeLocalRefusalSentinels = []error{")
+	if start < 0 {
+		t.Fatal("probeLocalRefusalSentinels is no longer declared in orchestrator.go; the metrics " +
+			"gate this test guards has moved or been rewritten")
+	}
+	end := strings.Index(block[start:], "}")
+	if end < 0 {
+		t.Fatal("probeLocalRefusalSentinels' declaration is unterminated")
+	}
+	listed := map[string]bool{}
+	for _, m := range sentinelRE.FindAllStringSubmatch(block[start:start+end], -1) {
+		listed[m[1]] = true
+	}
+
+	for name := range found {
+		if listed[name] || notALocalRefusal[name] != "" {
+			continue
+		}
+		t.Errorf("internal/dispatch/creds.go can return domain.%s, but probeReachedThePlatform "+
+			"does not classify it: a probe that fails this way records an upstream call for a "+
+			"platform it never contacted. Add it to probeLocalRefusalSentinels, or to this test's "+
+			"notALocalRefusal map with the reason it is not one.", name)
 	}
 }
 

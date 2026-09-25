@@ -235,19 +235,29 @@ var ConnServiceUnavailableError = Type("conn-service-unavailable-error", func() 
 
 // TestResult is the outcome of verifying a connection against the provider.
 //
-// `ok` answers "is this connection usable as configured", which is broader than "did the
-// credential authenticate" and deliberately so (LFXV2-2665). An authenticated credential
+// `ok` answers "did this connection pass its provider's check", which is broader than "did
+// the credential authenticate" and deliberately so (LFXV2-2665). An authenticated credential
 // still fails the test when the connection names no ad account, names one the platform
 // cannot reach as configured, or names one that cannot host a campaign — a Google Ads
 // manager account, or an account Google reports as not enabled. Those verdicts say in
 // `message` that the credential authenticated, precisely so an account-selection failure is
 // not read as a reason to rotate a working credential.
 //
+// It is NOT a claim that the account is usable in every sense, and the description must not
+// be widened to say so: how deep the account check goes is the provider's to decide, and the
+// providers differ. Google Ads reads the account's own manager and status fields; Microsoft
+// and Meta test membership in an enumeration and deliberately accept accounts their platform
+// reports as suspended, paused or draft, because those are recoverable states an operator
+// fixes in the platform's UI rather than by re-saving a connection this service stored
+// correctly. Reddit goes one step further than membership in the other direction and fails a
+// connection naming no conversion pixel, because Reddit refuses every campaign create without
+// one. A client that needs lifecycle state must read the account resource, not this flag.
+//
 // `ok` is also true for an INCONCLUSIVE check — a rate limit, a 5xx, a transport failure —
 // where nothing was learned either way; `message` carries the advisory. A client must read
 // `message` rather than treating `ok` alone as proof the connection was verified.
 var TestResult = Type("connection-test-result", func() {
-	Attribute("ok", Boolean, "Whether the connection verified as configured: the credential authenticated AND the configured account is usable. Also true when the check could not be completed — read message")
+	Attribute("ok", Boolean, "Whether the connection passed its provider's verification: the credential authenticated AND the configured account passed that provider's own check. How deep that account check goes is provider-specific — it is not a guarantee of account lifecycle state. Also true when the check could not be completed — read message")
 	Attribute("message", String, "Human-readable detail")
 	Required("ok")
 })
