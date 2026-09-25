@@ -612,6 +612,13 @@ func (d *RedditDispatcher) ProbeConnection(ctx context.Context, projectID string
 	}
 	subject.accountID = res.accountID
 	if verr := client.VerifyAccount(ctx); verr != nil {
+		// Raised by the client's own guard before any request is built, so Reddit never saw
+		// the credential. Answered here rather than by either predicate: the rejection arm
+		// would blame the credential, and the inconclusive default would answer OK: true for
+		// an id no Reddit request can address.
+		if errors.Is(verr, reddit.ErrInvalidAccountID) {
+			return subject.accountIDNotUsable()
+		}
 		return subject.probeClass(verr, reddit.ProbeCredentialRejected, reddit.ProbeInconclusive)
 	}
 	return nil

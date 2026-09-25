@@ -421,3 +421,40 @@ func TestTestConnUpstream_AllSixEndpointsProbe(t *testing.T) {
 		})
 	}
 }
+
+// TestUnusableConnectionReason_ProbeSentinels closes the gap the probe path opened in the
+// reason vocabulary.
+//
+// The connection-test response for a service defect deliberately carries no detail — it is a
+// typed 500 with fixed text — so the log's reason token is the ONLY diagnostic anyone gets.
+// Both probe sentinels travel alongside domain.ErrServiceDefect, and without an arm apiece
+// every service-defect probe logged reason=unclassified, which is precisely the reading this
+// vocabulary exists to prevent: an unclassified token says "no sentinel was attached", and
+// there were two.
+func TestUnusableConnectionReason_ProbeSentinels(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "the platform refused the request this service built",
+			err: fmt.Errorf("%w: %w: google ads refused the connection-probe request this service built",
+				domain.ErrServiceDefect, domain.ErrConnectionProbeRequestRejected),
+			want: "probe_request_rejected",
+		},
+		{
+			name: "no dispatcher implements ConnectionProber",
+			err: fmt.Errorf("%w: %w: google ads",
+				domain.ErrServiceDefect, domain.ErrConnectionProbeUnwired),
+			want: "probe_unwired",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := unusableConnectionReason(tc.err); got != tc.want {
+				t.Errorf("unusableConnectionReason = %q, want %q; the response carries no detail, so this token is the whole diagnostic", got, tc.want)
+			}
+		})
+	}
+}

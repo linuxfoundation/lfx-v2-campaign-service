@@ -845,9 +845,12 @@ see — so the drift would have been invisible rather than caught.
 
 Note that `status=active` on such a connection is deliberate, not a gap in the lifecycle.
 **`active` says the connection is ENABLED for credential-based operations — it does not say the
-credentials were verified.** Nothing verifies them: `createConn` serializes, encrypts and
-persists exactly what was supplied, and `testConn` says so itself (upstream verification is not
-implemented), so an active row can hold OAuth material the platform will reject. What `active`
+credentials were verified.** Nothing on the WRITE path verifies them: `createConn` serializes,
+encrypts and persists exactly what was supplied, so an active row can hold OAuth material the
+platform will reject. Verification happens only when a connection test is run — since
+LFXV2-2665 all seven `Test<Platform>Ads` handlers do verify upstream (see "The other six
+connection tests verify upstream too" below), but a row that has never been tested, or was
+tested before its credential was revoked, is `active` all the same. What `active`
 buys is reachability — `validateGoogleAdsCredentials` refuses a non-active connection, so a
 distinct "pending" status would make discovery unreachable for exactly the connections that need
 it, and the bootstrap would dead-end at step two. Readiness to run a campaign is a separate,
@@ -928,10 +931,13 @@ messages a single request can produce always agree.
 
 ## LinkedIn org/account pairing verification (LFXV2-2665)
 
-`TestLinkedinAds` is the one `Test<Platform>Ads` handler that goes beyond the shared `testConn`
-baseline (connection exists, has credentials — testConn itself does not verify upstream; see
-the note above and its LFXV2-2556 follow-up, which still applies unchanged to the other 5
-platforms). It calls `testConn` first and short-circuits on failure or `!result.OK`; only when
+`TestLinkedinAds` verifies something no other handler does. All seven handlers now go beyond the
+shared `testConn` baseline (connection exists, has credentials — `testConn` itself still verifies
+nothing upstream); the other six do it through `ConnectionProber`, described in "The other six
+connection tests verify upstream too" below. LinkedIn's check predates that path and is strictly
+stronger — it verifies the org/account PAIRING, not merely that the credential reaches the
+account — so it was left where it is rather than re-pointed at a weaker check, and it does not
+call `ProbeConnection` at all. It calls `testConn` first and short-circuits on failure or `!result.OK`; only when
 the baseline passes does it call `Orchestrator.VerifyAccountOrg`, which cross-checks the
 connection's stored `org_id` against LinkedIn's own record of which organization sponsors the
 stored `account_id` (`linkedin.Client.VerifyAccountOrgReference`, via
@@ -1082,6 +1088,14 @@ LinkedIn switch above and classifying the same way:
 | `ErrConnectionLoadFailed` | **503** — the one outcome retrying can fix |
 | `ErrConnectionNotUsable` | `OK: false` with a FIXED per-provider remedy, quoting no part of the error |
 | anything else | `OK: false` with fixed text, detail to the log |
+
+The `ErrServiceDefect` row's `reason=` is the WHOLE diagnostic for that outcome — the response
+is fixed text carrying no detail — so `unusableConnectionReason` grew an arm for each probe
+sentinel that travels alongside it: `probe_request_rejected` for
+`domain.ErrConnectionProbeRequestRejected` (the platform refused a request this service built)
+and `probe_unwired` for `domain.ErrConnectionProbeUnwired` (a registered dispatcher that cannot
+be asked). Without them both defects logged `reason=unclassified`, which in that vocabulary
+means "no sentinel was attached" — and there were two.
 
 The echo is an ALLOWLIST, not a default. Every class that reaches this switch without an arm of
 its own used to inherit the echo simply by not matching one, so a class added later must opt in

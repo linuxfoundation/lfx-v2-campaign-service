@@ -69,10 +69,16 @@ func (c *Client) VerifyAccount(ctx context.Context) error {
 // reach that account. Reporting it as a service defect would page us for a connection the
 // operator needs to repoint.
 //
+// ErrInvalidAccountID is deliberately NOT here. VerifyAccount raises it before anything is
+// sent, from this client's own guard on the configured id — Reddit never saw the credential, so
+// answering "the platform rejected your credential" would send an operator to re-authorise a
+// connection whose credential is fine and whose account id is the only broken part. The
+// dispatcher settles that case itself, next to its ErrAccountNotSelected arm.
+//
 // It is one half of the two-predicate probe vocabulary every platform client in this repo
 // exposes; internal/dispatch/probe.go holds the shared rationale and is the only caller.
 func ProbeCredentialRejected(err error) bool {
-	if errors.Is(err, ErrTokenRequestRejected) || errors.Is(err, ErrInvalidAccountID) {
+	if errors.Is(err, ErrTokenRequestRejected) {
 		return true
 	}
 	var ae *apiError

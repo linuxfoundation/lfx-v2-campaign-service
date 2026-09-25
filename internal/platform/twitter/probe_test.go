@@ -22,13 +22,15 @@ func TestProbePredicates(t *testing.T) {
 		wantInconclusiv bool
 	}{
 		{
-			// Decidable without contacting X at all, and campaign creation on this connection
-			// is already guaranteed to fail — a confirmed verdict, not an inconclusive one.
-			name:         "no account configured",
+			// Decidable without contacting X at all — which is why neither predicate claims
+			// it. It IS a confirmed verdict, but one the dispatcher authors
+			// (noAccountConfigured); calling it a credential rejection here would tell an
+			// operator to re-authorise credentials X never looked at.
+			name:         "no account configured is not a credential rejection",
 			err:          ErrAccountNotConfigured,
-			wantRejected: true,
-			// Also true: ProbeInconclusive defaults to true, which is why the dispatcher
-			// consults the rejection predicate first.
+			wantRejected: false,
+			// Still inconclusive by default, which is why the dispatcher intercepts this
+			// sentinel before either predicate is consulted at all.
 			wantInconclusiv: true,
 		},
 		{

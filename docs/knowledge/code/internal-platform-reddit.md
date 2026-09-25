@@ -463,3 +463,9 @@ defect. Reddit's probe reads the configured account directly (`GET /ad_accounts/
 `404` is Reddit answering the exact question asked — this credential cannot see that account —
 rather than refusing a request this service built. `fetchToken` splits non-2xx by status the same
 way Google's does, and its token error carries status only for the same reason.
+
+`ErrInvalidAccountID` is deliberately outside BOTH predicates. `VerifyAccount` raises it from
+this package's own path guard before anything is sent, so Reddit never evaluated the credential:
+claiming a rejection would send an operator to re-authorise a connection whose credential is
+fine, and the inconclusive default would answer `OK: true` for an id no Reddit request can
+address. The dispatcher settles it instead, with `accountIDNotUsable`.

@@ -24,8 +24,9 @@ import (
 //	ProbeCredentialRejected(err) bool  // the platform evaluated the credential and refused it
 //	ProbeInconclusive(err) bool        // nothing was learned about the connection either way
 //
-// This file is the only caller of either, and probeClass below is the only place the two are
-// combined. They are evaluated IN ORDER, and the order is load-bearing: ProbeInconclusive
+// The per-platform ProbeConnection methods pass their own package's pair to probeClass below,
+// which is the only place the two are ever combined and the only place either is evaluated.
+// They are evaluated IN ORDER, and the order is load-bearing: ProbeInconclusive
 // defaults to true for an error it does not recognise, so a class both predicates would claim
 // must be settled by the rejection arm first. "Neither predicate" is the third outcome and is
 // deliberately not a predicate of its own — a 4xx that is not 401/403/429 means the platform
@@ -62,6 +63,45 @@ func (s probeSubject) where() string {
 	return fmt.Sprintf(" for account %s", id)
 }
 
+// whichAccount renders the account as a sentence OBJECT rather than as a trailing clause, for
+// the one verdict that names the account mid-sentence ("does not reach account X"). where()'s
+// " for account X" reads correctly after "rejected the stored credential" and ungrammatically
+// after "does not reach", so the two renderings are kept apart rather than one being bent to
+// serve both.
+func (s probeSubject) whichAccount() string {
+	id := strings.TrimSpace(s.accountID)
+	if id == "" {
+		return "the configured account"
+	}
+	return "account " + id
+}
+
+// confirmedProbeVerdictError attaches domain.ErrConnectionProbeFailed to a message without
+// changing the text that message renders.
+//
+// This is the same device linkedin.go's confirmedOrgVerdictError exists for, and for the same
+// reason: fmt.Errorf("%w: ...", domain.ErrConnectionProbeFailed, ...) prepends the sentinel's
+// own sentence ("the connection failed verification against the platform"), which the service
+// arm then renders a SECOND time alongside its own prefix, producing
+//
+//	connection found, but reddit ads verification failed: the connection failed verification
+//	against the platform: reddit ads rejected the stored credential for account t2_x
+//
+// for the one class whose text reaches the operator verbatim. The tag exists to be MATCHED,
+// not read, so Error() forwards and Is() answers for the sentinel.
+type confirmedProbeVerdictError struct{ err error }
+
+func (e *confirmedProbeVerdictError) Error() string { return e.err.Error() }
+func (e *confirmedProbeVerdictError) Unwrap() error { return e.err }
+func (e *confirmedProbeVerdictError) Is(target error) bool {
+	return target == domain.ErrConnectionProbeFailed
+}
+
+// confirmedProbeVerdict builds a confirmed-failure verdict from service-authored text.
+func confirmedProbeVerdict(format string, args ...any) error {
+	return &confirmedProbeVerdictError{err: fmt.Errorf(format, args...)}
+}
+
 // probeClass maps a platform probe error onto exactly one of the three service-level outcomes,
 // using that platform's own two predicates. err must be non-nil.
 func (s probeSubject) probeClass(err error, credentialRejected, inconclusive func(error) bool) error {
@@ -69,8 +109,7 @@ func (s probeSubject) probeClass(err error, credentialRejected, inconclusive fun
 	case credentialRejected(err):
 		// The ONLY arm whose text reaches the operator verbatim (domain.ErrConnectionProbeFailed
 		// is an echo allowlist), and it is authored entirely here for that reason.
-		return fmt.Errorf("%w: %s rejected the stored credential%s",
-			domain.ErrConnectionProbeFailed, s.platform, s.where())
+		return confirmedProbeVerdict("%s rejected the stored credential%s", s.platform, s.where())
 	case inconclusive(err):
 		// No detail beyond the platform name: there is nothing useful to say that is also safe
 		// to say, and this arm maps to OK: true with an advisory, where a half-explanation
@@ -93,8 +132,20 @@ func (s probeSubject) probeClass(err error, credentialRejected, inconclusive fun
 // Answering "inconclusive" — OK: true — for a connection that is provably unusable is the
 // exact defect this whole path removes.
 func (s probeSubject) noAccountConfigured() error {
-	return fmt.Errorf("%w: the %s connection names no ad account to verify",
-		domain.ErrConnectionProbeFailed, s.platform)
+	return confirmedProbeVerdict("the %s connection names no ad account to verify", s.platform)
+}
+
+// accountIDNotUsable is the verdict for a connection whose configured account id cannot form a
+// valid request for its platform at all.
+//
+// Like noAccountConfigured it is decided before anything is sent, and it is a verdict for the
+// same reason: campaign creation on this connection cannot succeed. It is kept apart from the
+// credential-rejection arm because no credential was evaluated — telling an operator their
+// credential was refused would send them to re-authorise a connection whose only broken part is
+// a value they can see on the row and fix themselves.
+func (s probeSubject) accountIDNotUsable() error {
+	return confirmedProbeVerdict("the %s connection's configured ad account id is not a valid %s account id",
+		s.platform, s.platform)
 }
 
 // accountNotReachable is the verdict for a completed enumeration that did not contain the
@@ -106,8 +157,8 @@ func (s probeSubject) noAccountConfigured() error {
 // that was returned at all means the credential genuinely does not reach the account, not that
 // the walk was cut short.
 func (s probeSubject) accountNotReachable() error {
-	return fmt.Errorf("%w: the %s credential authenticates but does not reach%s",
-		domain.ErrConnectionProbeFailed, s.platform, s.where())
+	return confirmedProbeVerdict("the %s credential authenticates but does not reach %s",
+		s.platform, s.whichAccount())
 }
 
 // probeMembership checks the configured account against a completed enumeration, normalising

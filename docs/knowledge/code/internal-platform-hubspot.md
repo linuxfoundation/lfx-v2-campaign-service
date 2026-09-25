@@ -532,6 +532,11 @@ defects, because private-app scopes are chosen when the token is issued: a scope
 verdict about this token.
 
 `AuthenticatedPortalID` posts the token to HubSpot's token-info endpoint, so a revoked, rotated or
-mistyped token fails here and nowhere else, and the hub id it returns makes this the one probe
-that can cross-check PROVENANCE — a token pasted from the wrong portal authenticates perfectly and
-then writes to a portal the operator did not choose.
+mistyped token fails here and nowhere else. That is the WHOLE probe: the hub id it returns is not
+compared against `providerConfig["portal_id"]` as a verdict, because `portal_id` routes nothing.
+It is optional operator-supplied text whose only readers (`email.go`, `lists.go`) interpolate it
+into `app.hubspot.com` links for assets that already exist, while the portal a campaign lands in
+is the token's own — the same reasoning `ReadMetrics`' provenance guard records. A mismatch is
+therefore logged as a warning about dead deep links, not returned as a failed connection test; a
+token "pasted from the wrong portal" is a token whose portal the operator chose by pasting it,
+and nothing in this package would send a campaign anywhere else.

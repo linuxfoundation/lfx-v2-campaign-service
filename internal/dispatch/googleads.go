@@ -901,6 +901,13 @@ func (d *GoogleAdsDispatcher) ProbeConnection(ctx context.Context, projectID str
 		return err
 	}
 	subject := probeSubject{platform: platform, accountID: res.accountID}
+	// Decided BEFORE the call, not after. probeMembership would reach the same verdict, but
+	// only on the path where the enumeration succeeds: an inconclusive 5xx on the way there
+	// maps to OK: true, which would report a connection that provably cannot run a campaign
+	// as healthy on the strength of an unrelated platform outage.
+	if strings.TrimSpace(res.accountID) == "" {
+		return subject.noAccountConfigured()
+	}
 	customers, lerr := client.ListAccessibleCustomers(ctx)
 	if lerr != nil {
 		return subject.probeClass(lerr, googleads.ProbeCredentialRejected, googleads.ProbeInconclusive)

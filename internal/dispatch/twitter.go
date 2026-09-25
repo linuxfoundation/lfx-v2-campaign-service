@@ -651,6 +651,13 @@ func (d *TwitterDispatcher) ProbeConnection(ctx context.Context, projectID strin
 		d.opts...,
 	)
 	if perr := client.VerifyAccount(ctx); perr != nil {
+		// The client's own pre-send guard, for an accountID this dispatcher has already
+		// proved non-empty — so it is unreachable today and answered anyway, because the
+		// alternative if it ever becomes reachable is the inconclusive default answering
+		// OK: true for a connection that names no account.
+		if errors.Is(perr, twitter.ErrAccountNotConfigured) {
+			return subject.noAccountConfigured()
+		}
 		return subject.probeClass(perr, twitter.ProbeCredentialRejected, twitter.ProbeInconclusive)
 	}
 	return nil

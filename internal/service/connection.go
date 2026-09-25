@@ -180,6 +180,18 @@ func unusableConnectionReason(err error) string {
 		// service built was refused. Kept separate because the request differs, and the
 		// token is the only place an operator can see which one.
 		return "account_discovery_rejected"
+	case errors.Is(err, domain.ErrConnectionProbeRequestRejected):
+		// The connection-probe member of the same family as the two arms above: a read-only
+		// request THIS service built was refused by the platform. Without this arm every
+		// service-defect probe logs reason=unclassified, which is exactly the case the
+		// vocabulary exists to make greppable.
+		return "probe_request_rejected"
+	case errors.Is(err, domain.ErrConnectionProbeUnwired):
+		// Nothing was sent and no platform was reached, the probe counterpart of
+		// org_verification_unwired below. The operator-facing response says only that the
+		// test could not be completed, so this token is the sole diagnostic for a build that
+		// registered a dispatcher without a ProbeConnection.
+		return "probe_unwired"
 	case errors.Is(err, domain.ErrOrgVerificationUnwired):
 		// Nothing was sent and no connection was read. The response says only that the test
 		// could not be completed, so this token is the sole diagnostic for a mis-wired build.

@@ -328,15 +328,23 @@ func (d *HubSpotDispatcher) ProbeConnection(ctx context.Context, projectID strin
 		return subject.probeClass(perr, hubspot.ProbeCredentialRejected, hubspot.ProbeInconclusive)
 	}
 
-	// An unconfigured portal_id is NOT a failure here, unlike the ad platforms' missing
-	// account id. HubSpot's client derives the portal from the token when none is configured
-	// — the campaign lands in the token's own portal — so there is nothing unresolved to
-	// report. The token authenticated and the portal it reaches is known; that is a pass.
-	if configured == "" {
-		return nil
-	}
-	if strings.TrimSpace(portalID) != configured {
-		return subject.accountNotReachable()
+	// portal_id is NOT the account this connection dispatches to, which is why a mismatch is
+	// not a verdict here. Unlike every ad platform's account_id, it routes NOTHING: the only
+	// readers are email.go and lists.go, which interpolate it into app.hubspot.com deep links
+	// for assets that were already created. The portal a campaign lands in is the token's own,
+	// derived by the client, exactly as ReadMetrics' provenance guard already records. So a
+	// blank or stale portal_id describes a connection that works — failing it would report a
+	// healthy connection as broken, and the message ("does not reach") would be false.
+	//
+	// It stays worth SAYING, because a stale value renders deep links into a portal the
+	// operator is not looking at. That is a link-building defect, logged for whoever has to
+	// explain a dead link, and deliberately not part of the operator-facing verdict.
+	if configured != "" && strings.TrimSpace(portalID) != configured {
+		slog.WarnContext(ctx, "the hubspot connection's configured portal_id does not match the portal its token authenticates into; the connection is usable and campaigns land in the token's portal, but app links built for created assets will point at the configured portal",
+			"project_id", projectID,
+			"configured_portal_id", configured,
+			"authenticated_portal_id", strings.TrimSpace(portalID),
+		)
 	}
 	return nil
 }

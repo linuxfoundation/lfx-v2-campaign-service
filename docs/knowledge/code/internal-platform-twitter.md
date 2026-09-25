@@ -347,3 +347,9 @@ BUILT, which is a service defect rather than a verdict.
 There is no token-refresh arm: X uses an OAuth 1.0a four-tuple, signed per request, with no
 exchange to fail. The probe reads the account root directly, so its `404`/`401`/`403` are answers
 about the configured account rather than about a discovery request.
+
+`ErrAccountNotConfigured` is deliberately outside BOTH predicates, for the reason Reddit's
+`ErrInvalidAccountID` is: `VerifyAccount` raises it from this client's own configuration before
+anything is sent, so X never looked at the credential. It is still a verdict — a connection
+naming no account cannot dispatch — but one the dispatcher authors, next to its
+`ErrAccountNotSelected` arm.

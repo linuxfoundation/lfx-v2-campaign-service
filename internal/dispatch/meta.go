@@ -1171,6 +1171,12 @@ func (d *MetaDispatcher) ProbeConnection(ctx context.Context, projectID string, 
 		return err
 	}
 	subject := probeSubject{platform: platform, accountID: res.accountID}
+	// Decided BEFORE the call, for the reason googleads.ProbeConnection states: deferring it
+	// to probeMembership lets an inconclusive failure on the way to the enumeration answer
+	// OK: true for a connection that names no account to dispatch to.
+	if strings.TrimSpace(res.accountID) == "" {
+		return subject.noAccountConfigured()
+	}
 	adAccounts, lerr := client.ListAdAccounts(ctx)
 	if lerr != nil {
 		return subject.probeClass(lerr, meta.ProbeCredentialRejected, meta.ProbeInconclusive)

@@ -2050,14 +2050,39 @@ reached no platform at all, which is the exact defect this work removes.
 | `RedditDispatcher` | `VerifyAccount` → `GET /ad_accounts/{id}` | direct — the strongest form |
 | `TwitterDispatcher` | `VerifyAccount` → `GET` account root | direct |
 | `MicrosoftDispatcher` | `ListAdAccounts` | configured id ∈ list |
-| `HubSpotDispatcher` | `AuthenticatedPortalID` (token-info) | compare to configured `portal_id` when set |
+| `HubSpotDispatcher` | `AuthenticatedPortalID` (token-info) | **none** — the token IS the account |
 
-HubSpot is the one probe that can cross-check **provenance**: the token-info response names the
-hub the token belongs to, so a token pasted from the wrong portal — which authenticates perfectly
-and then writes to a portal the operator did not choose — fails here and nowhere else. It is also
-the one where an unconfigured id is a PASS rather than a failure: its client derives the portal
-from the token when none is configured, so nothing is left unresolved. For the five ad platforms
-an unconfigured `account_id` is a failure, because such a connection cannot run a campaign.
+For the five ad platforms an unconfigured `account_id` is a **failure**, because such a
+connection cannot run a campaign at all. HubSpot is the exception in both directions, and the
+reason is that `portal_id` is not an account selection: **nothing routes on it.** Its only
+readers are `email.go` and `lists.go`, which interpolate it into `app.hubspot.com` deep links
+for assets that already exist; the portal a campaign lands in is the token's own, derived by the
+client — the same fact `ReadMetrics`' provenance guard records above. So HubSpot's probe asks
+only whether the token authenticates, and a `portal_id` that is blank, stale, or mismatched
+answers `OK: true`. A mismatch is logged as a warning, because a stale value builds deep links
+into a portal the operator is not looking at, but it is a link-building defect rather than a
+verdict on the connection — failing it would report a working connection as broken, and
+`accountNotReachable`'s "does not reach" would be false on top of that.
+
+### The two verdicts decided before anything is sent
+
+`noAccountConfigured` and `accountIDNotUsable` are verdicts, not failures to check: campaign
+creation on such a connection cannot succeed, which is the question the test asks. Both are
+decided **before** the upstream call on every probe, and the ordering is load-bearing on the two
+enumerating platforms. Google Ads and Meta reach the same empty-account verdict through
+`probeMembership`, but only on the path where the enumeration SUCCEEDS — deferring the check let
+an unrelated 5xx classify inconclusive and answer `OK: true` for a connection naming no ad
+account at all. `TestProbeConnection_NoAccountIsDecidedBeforeTheCall` asserts both the verdict
+and that nothing was sent.
+
+`accountIDNotUsable` covers the narrower case Reddit's client can raise from its own path guard:
+an account id that cannot be concatenated into a request at all. It is kept apart from the
+credential-rejection arm deliberately, and so are both of X's and Reddit's pre-send sentinels —
+`ProbeCredentialRejected` claims neither `reddit.ErrInvalidAccountID` nor
+`twitter.ErrAccountNotConfigured`, because the platform never evaluated the credential, and
+"your credential was rejected" sends an operator to re-authorise a connection whose only broken
+part is a value they can see on the row. The dispatchers intercept both sentinels next to their
+`ErrAccountNotSelected` arms, which is also what keeps them out of the inconclusive default.
 
 ### Every probe resolves `resolveOwned`, never `resolve`
 

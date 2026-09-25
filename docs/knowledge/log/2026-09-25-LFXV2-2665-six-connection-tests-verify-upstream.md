@@ -11,13 +11,10 @@ Each of the six dispatchers now implements `service.ConnectionProber` and runs a
 the stored credential: Google Ads `ListAccessibleCustomers`, Meta and Microsoft `ListAdAccounts`,
 Reddit `GET /ad_accounts/{id}`, X the account root, HubSpot the private-app token-info endpoint.
 Where the platform enumerates, the configured `account_id` must appear in the answer; Reddit and X
-read the configured account directly, which is the stronger check. HubSpot is the only probe that
-can cross-check PROVENANCE — the token-info response names the hub the token belongs to, so a
-token pasted from the wrong portal, which authenticates perfectly and then writes to a portal the
-operator did not choose, fails here and nowhere else. It is also the only one where an
-unconfigured id is a PASS: its client derives the portal from the token, so nothing is left
-unresolved. For the five ad platforms an unconfigured `account_id` is a failure, since such a
-connection cannot run a campaign at all.
+read the configured account directly, which is the stronger check. HubSpot checks no account:
+`portal_id` routes nothing, so its probe asks only whether the token authenticates. For the five
+ad platforms an unconfigured `account_id` is a failure, since such a connection cannot run a
+campaign at all, and it is decided before the upstream call rather than after it.
 
 ## Every probe resolves the project's OWN credential
 

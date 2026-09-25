@@ -69,11 +69,13 @@ func TestProbePredicates(t *testing.T) {
 		},
 		{
 			// A stored account id Reddit could never have issued is decidable without
-			// contacting Reddit at all, and campaign creation on it is already guaranteed to
-			// fail — so it is a confirmed verdict, not an inconclusive one.
-			name:            "a malformed stored account id is a rejection",
+			// contacting Reddit at all — which is exactly why NEITHER predicate claims it.
+			// Reddit never evaluated the credential, so "rejected" would name the wrong
+			// remedy; the dispatcher answers this one itself with accountIDNotUsable, and
+			// this case exists to keep the predicate from taking it back.
+			name:            "a malformed stored account id is not a credential rejection",
 			err:             fmt.Errorf("%w: invalid reddit account id %q", ErrInvalidAccountID, "not-an-id"),
-			wantRejected:    true,
+			wantRejected:    false,
 			wantInconclusiv: true,
 		},
 		{

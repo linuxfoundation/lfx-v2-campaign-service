@@ -45,12 +45,15 @@ func (c *Client) VerifyAccount(ctx context.Context) error {
 // configured account IN its path, so a 404 is X answering the question asked — these OAuth1
 // credentials do not reach that account — rather than evidence that an endpoint moved.
 //
+// ErrAccountNotConfigured is deliberately NOT here. VerifyAccount raises it before anything is
+// sent, from this client's own configuration, so X never evaluated the credential; reporting it
+// as a rejected credential would tell an operator to re-authorise a connection whose
+// credentials were never in question. It is still a verdict — see probeSubject.noAccountConfigured
+// — but one the dispatcher authors, next to its ErrAccountNotSelected arm.
+//
 // It is one half of the two-predicate probe vocabulary every platform client in this repo
 // exposes; internal/dispatch/probe.go holds the shared rationale and is the only caller.
 func ProbeCredentialRejected(err error) bool {
-	if errors.Is(err, ErrAccountNotConfigured) {
-		return true
-	}
 	var ae *apiError
 	if errors.As(err, &ae) {
 		switch ae.StatusCode {
