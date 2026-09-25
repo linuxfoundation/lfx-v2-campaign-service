@@ -748,10 +748,12 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 	// The brand tier and a generic-only hit are both FALLBACK, admissible only when nothing
 	// matched the event DISTINCTIVELY. Gating on brand-only alone left the generic case
 	// counting as an event match, so for an event whose whole name is portfolio-common every
-	// row was a full match and the brand rows were deleted by rows no stronger than they were. This replaces the old loop's break-on-first-matching-term,
-	// and is strictly stronger than it: the break only suppressed the brand when an
-	// EARLIER term had already matched, whereas this suppresses brand-only rows whenever
-	// an event match exists anywhere in the sweep, regardless of which page it landed on.
+	// row was a full match and the brand rows were deleted by rows no stronger than they were.
+	//
+	// This replaces the old loop's break-on-first-matching-term, and is strictly stronger than
+	// it: the break only suppressed the brand when an EARLIER term had already matched, whereas
+	// this suppresses brand-only rows whenever an event match exists anywhere in the sweep,
+	// regardless of which page it landed on.
 	if eventMatches > 0 {
 		kept := make([]ranked, 0, eventMatches)
 		for _, c := range candidates {

@@ -1199,6 +1199,59 @@ func TestLastSent_GenericOnlyHitsDoNotDeleteTheBrandFallback(t *testing.T) {
 		"a generic-only hit is no stronger than the brand row, so it must not delete it")
 }
 
+// TestLastSent_TheSendDateReadIsCappedAtItsCeiling pins maxSendDateReads, the ONLY bound on
+// the authoritative send-date fan-out. `limit + shortlistHeadroom` is what normally sets the
+// shortlist, and at the design's maximum limit of 10 that is exactly 22 -- so the clamp is
+// unreachable through the API today and no other test can reach it either.
+//
+// It is still worth pinning: it is the ceiling the endpoint's documented cost rests on ("the
+// worst case is 22 single-email GETs"), and a refactor that raised shortlistHeadroom, relaxed
+// the design's Maximum, or flipped this comparison would silently turn a bounded fan-out into
+// one row per candidate against a rate-limited API. Calling with a limit ABOVE the design cap
+// is how the clamp becomes reachable from a test without weakening the transport validation
+// that normally prevents it.
+func TestLastSent_TheSendDateReadIsCappedAtItsCeiling(t *testing.T) {
+	var detailReads atomic.Int64
+	rows := make([]string, 0, 40)
+	detail := map[string]string{}
+	for i := 0; i < 40; i++ {
+		id := fmt.Sprintf("e%02d", i)
+		rows = append(rows, fmt.Sprintf(
+			`{"id":%q,"name":"KubeCon Europe Recap","subject":"x","state":"PUBLISHED","updatedAt":"2026-09-%02dT00:00:00Z"}`,
+			id, (i%28)+1))
+		detail[id] = fmt.Sprintf("2026-08-%02dT09:00:00Z", (i%28)+1)
+	}
+	listBody := fmt.Sprintf(`{"results":[%s]}`, strings.Join(rows, ","))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/marketing/v3/emails":
+			_, _ = io.WriteString(w, listBody)
+		case strings.HasPrefix(r.URL.Path, "/marketing/v3/emails/"):
+			detailReads.Add(1)
+			id := strings.TrimPrefix(r.URL.Path, "/marketing/v3/emails/")
+			_, _ = fmt.Fprintf(w, `{"id":%q,"publishDate":%q,"to":{}}`, id, detail[id])
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	// ABOVE the design's Maximum(10), which is the only way to drive shortlist past the cap.
+	_, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 30)
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(maxSendDateReads), detailReads.Load(),
+		"the send-date fan-out is bounded by maxSendDateReads, not by the caller's limit")
+}
+
 // draftsOnlyPortal serves `pages` pages of 100 rows, every one a DRAFT whose name matches
 // the event. Passing a page count past maxFilteredPages makes the walk stop at its scan
 // bound; passing 1 lets it read the portal to the end.

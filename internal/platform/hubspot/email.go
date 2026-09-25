@@ -229,7 +229,7 @@ var ErrSearchIncomplete = errors.New("hubspot: email search reached its scan bou
 // search follows paging.next.after across pages, so a match beyond the first page is not
 // missed, up to maxFilteredScan rows or maxFilteredPages pages -- past which the walk stops
 // and logs that its results may be incomplete. An UNFILTERED one (empty query) is bounded to maxUnfilteredEmails rows taken
-// in server order -- see that constant for why the two cases differ and what the bound does
+// in server order — see that constant for why the two cases differ and what the bound does
 // and does not promise.
 //
 // The walk itself lives in walkEmails, shared with SearchEmailsMatching. This function is
@@ -237,7 +237,7 @@ var ErrSearchIncomplete = errors.New("hubspot: email search reached its scan bou
 // published contract for the template picker, so re-expressing it as a predicate keeps that
 // caller's behaviour identical by construction rather than by inspection.
 func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error) {
-	// Trim before matching -- a padded term like " kubecon " must still match
+	// Trim before matching — a padded term like " kubecon " must still match
 	// "KubeCon Invite" rather than silently returning no results.
 	needle := strings.ToLower(strings.TrimSpace(query))
 	if needle == "" {
@@ -250,7 +250,7 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 	return c.walkEmails(ctx, "SearchEmails", func(e Email) bool {
 		// Match the query in name OR subject INDEPENDENTLY. Concatenating them and
 		// searching the joined string would also match a query that spans the field
-		// boundary (name "Sale", subject "Invite", query "e i") -- a false positive.
+		// boundary (name "Sale", subject "Invite", query "e i") — a false positive.
 		return strings.Contains(strings.ToLower(e.Name), needle) ||
 			strings.Contains(strings.ToLower(e.Subject), needle)
 	}, nil)
@@ -311,7 +311,7 @@ func (c *Client) walkEmails(ctx context.Context, caller string, accept EmailFilt
 		q := url.Values{}
 		q.Set("limit", "100")
 		// `sort` IS a valid GET /marketing/v3/emails param (verified against HubSpot's
-		// v3 docs) -- request most-recently-updated first as a server hint. We STILL
+		// v3 docs) — request most-recently-updated first as a server hint. We STILL
 		// re-sort client-side (sortEmailsByUpdatedDesc, below) as the guarantee, because
 		// the aggregated multi-page result must be ordered as a whole and mixed
 		// offsets/fractional seconds need a parsed comparison.
@@ -322,7 +322,7 @@ func (c *Client) walkEmails(ctx context.Context, caller string, accept EmailFilt
 		// entries (not a CRM-style comma-separated `properties` string). We only need
 		// name/subject/updatedAt for search + ordering (id always comes back), plus `state`
 		// since LFXV2-3197: the email picker surfaces it so a caller can see that a template
-		// is a draft before cloning it. It is REQUESTED rather than assumed -- `Email.State`
+		// is a draft before cloning it. It is REQUESTED rather than assumed — `Email.State`
 		// decodes to "" for any field not named here, so a consumer promised a lifecycle
 		// state would have received an empty string from every row.
 		//
@@ -346,7 +346,7 @@ func (c *Client) walkEmails(ctx context.Context, caller string, accept EmailFilt
 		}
 		// A malformed 2xx body such as `{}` or `null` decodes with Results==nil (a
 		// genuinely empty portal returns `{"results":[]}`, which is non-nil). A missing
-		// results array is malformed on ANY page -- on a LATER page it would otherwise
+		// results array is malformed on ANY page — on a LATER page it would otherwise
 		// silently end the walk and return a TRUNCATED result. Treat nil Results as a
 		// decode error regardless of page.
 		if resp.Results == nil {
@@ -393,7 +393,7 @@ func (c *Client) walkEmails(ctx context.Context, caller string, accept EmailFilt
 			// ZERO matches at the bound is a FALSE ABSENCE, and must not be returned as one.
 			//
 			// `(out, nil)` with an empty `out` says "the portal authoritatively has no such
-			// email" -- the published contract for this endpoint prefers a recoverable 503 over
+			// email" — the published contract for this endpoint prefers a recoverable 503 over
 			// exactly that claim, because the caller acts on the absence by concluding the
 			// template does not exist. The warning above reaches an operator's logs; it does not
 			// reach the caller, so on its own it moved the confusion rather than removing it.
@@ -408,7 +408,7 @@ func (c *Client) walkEmails(ctx context.Context, caller string, accept EmailFilt
 		}
 		if lastPage || enoughScanned || (!filtered && len(out) >= maxUnfilteredEmails) {
 			// SORT then trim, deliberately, and not the other way round. The trim is only
-			// reachable when a page carries `out` past the cap -- i.e. when the provider ignored
+			// reachable when a page carries `out` past the cap — i.e. when the provider ignored
 			// `limit`. If it ignored `limit` it may well have ignored `sort=-updatedAt` too, and
 			// in that case truncating first keeps the provider's FIRST 500, which for an
 			// oldest-first response is the 500 OLDEST emails: the worst possible answer for a
@@ -423,7 +423,7 @@ func (c *Client) walkEmails(ctx context.Context, caller string, accept EmailFilt
 			}
 			return out, nil
 		}
-		// `paging.next.after` is an OPAQUE token from the JSON body -- a JSON string field
+		// `paging.next.after` is an OPAQUE token from the JSON body — a JSON string field
 		// is NOT percent-encoded, so it arrives as the server's raw value and must be
 		// forwarded VERBATIM. url.Values.Encode below applies exactly one round of
 		// percent-encoding on the wire, which the server decodes once back to this raw
@@ -432,7 +432,7 @@ func (c *Client) walkEmails(ctx context.Context, caller string, accept EmailFilt
 		next := resp.Paging.Next.After
 		// A non-advancing cursor (HubSpot or a proxy echoing the same raw `after`) would
 		// otherwise re-fetch the same page every iteration, duplicating results until the
-		// page cap. Refuse to loop on it -- the raw-to-raw compare is exact.
+		// page cap. Refuse to loop on it — the raw-to-raw compare is exact.
 		if next == after {
 			return nil, fmt.Errorf("hubspot: %s marketing-email walk cursor did not advance (repeated after token)", caller)
 		}
