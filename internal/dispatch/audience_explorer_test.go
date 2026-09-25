@@ -1171,6 +1171,102 @@ func TestLastSent_ABrandOnlyHitSurvivesWhenNothingMatchedTheEvent(t *testing.T) 
 	assert.Equal(t, "brand", rows[0].EmailID)
 }
 
+// TestLastSent_GenericOnlyHitsDoNotDeleteTheBrandFallback pins the CONSEQUENCE of the
+// generic-only demotion, at the layer where the damage happened. "Open Source Summit" is all
+// portfolio-common words, so its distinctive tier is empty and every hit it can produce is a
+// generic-only one. Before the demotion those counted as event matches, so `eventMatches > 0`
+// held and the partition deleted the brand row -- the honest answer -- in favour of
+// "Registration Open Now", which is not this event at all.
+//
+// The unit-level twin is TestMatchLastSent_AGenericOnlyHitIsFlaggedAsFallback; this one proves
+// the flag actually reaches the partition rather than being set and ignored.
+func TestLastSent_GenericOnlyHitsDoNotDeleteTheBrandFallback(t *testing.T) {
+	list := `{"results":[
+		{"id":"generic","name":"Registration Open Now","subject":"Source your summit tickets",
+		 "state":"PUBLISHED","updatedAt":"2026-09-02T00:00:00Z","publishDate":"2026-08-02T09:00:00Z"},
+		{"id":"brand","name":"LinuxFoundation Monthly","subject":"Roundup","state":"PUBLISHED",
+		 "updatedAt":"2026-09-01T00:00:00Z","publishDate":"2026-08-01T09:00:00Z"}
+	]}`
+	x, _ := lastSentPortal(t, list, map[string]string{
+		"generic": "2026-08-02T09:00:00Z",
+		"brand":   "2026-08-01T09:00:00Z",
+	})
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "Open Source Summit", "LinuxFoundation", 5)
+	require.NoError(t, err)
+
+	assert.Contains(t, sentIDs(rows), "brand",
+		"a generic-only hit is no stronger than the brand row, so it must not delete it")
+}
+
+// draftsOnlyPortal serves `pages` pages of 100 rows, every one a DRAFT whose name matches
+// the event. Passing a page count past maxFilteredPages makes the walk stop at its scan
+// bound; passing 1 lets it read the portal to the end.
+func draftsOnlyPortal(t *testing.T, pages int) *AudienceExplorer {
+	t.Helper()
+	page := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case "/marketing/v3/emails":
+			page++
+			rows := make([]string, 0, 100)
+			for i := 0; i < 100; i++ {
+				rows = append(rows, fmt.Sprintf(
+					`{"id":"d%d-%d","name":"KubeCon Europe Recap","subject":"x","state":"DRAFT","updatedAt":"2026-09-01T00:00:00Z"}`,
+					page, i))
+			}
+			if page >= pages {
+				_, _ = fmt.Fprintf(w, `{"results":[%s]}`, strings.Join(rows, ","))
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"results":[%s],"paging":{"next":{"after":"%d"}}}`, strings.Join(rows, ","), page)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	return NewAudienceExplorer(builder, nil, nil, nil)
+}
+
+// TestLastSent_ABoundedSweepWhoseMatchesAreAllDraftsIsNotAnEmptyHistory pins the half of the
+// predicate/loop split that is NOT self-evident. Admitting drafts in the predicate is what
+// lets ErrSearchIncomplete keep measuring "nothing matched this event" instead of "nothing
+// had gone out" -- but it also means the walk's guard counts rows this loop then throws away.
+//
+// A portal holding 2000 matching drafts past the scan bound satisfied the walk, emptied here,
+// and returned (empty, nil): the operator is told the event has never been emailed about a
+// portal the walk never finished reading. The guard below measures the surviving population,
+// which is the one the caller actually sees.
+func TestLastSent_ABoundedSweepWhoseMatchesAreAllDraftsIsNotAnEmptyHistory(t *testing.T) {
+	x := draftsOnlyPortal(t, 999)
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 5)
+
+	require.Error(t, err, "an unread portal must not be reported as an authoritative absence")
+	assert.ErrorIs(t, err, hubspot.ErrSearchIncomplete,
+		"the caller distinguishes a recoverable sweep failure from a true empty history by this sentinel")
+	assert.Empty(t, rows)
+}
+
+// TestLastSent_ACompleteSweepWhoseMatchesAreAllDraftsIsAnEmptyHistory is the other half, and
+// the reason the guard above is conditioned on the walk being INCOMPLETE rather than on the
+// candidate list being empty. An event whose only emails are drafts genuinely has no prior
+// send; raising here would restore the 503 the predicate/loop split exists to remove.
+func TestLastSent_ACompleteSweepWhoseMatchesAreAllDraftsIsAnEmptyHistory(t *testing.T) {
+	x := draftsOnlyPortal(t, 1)
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "KubeCon Europe 2026", "CNCF", 5)
+
+	require.NoError(t, err, "a portal read to the end whose matches are all drafts is a true absence")
+	assert.Empty(t, rows)
+}
+
 // TestLastSent_AFutureDatedPublishDateIsNotASend pins the gate on the one allowed state
 // that does not settle the question. PUBLISHED_OR_SCHEDULED covers a send that has gone out
 // AND one merely booked, and a scheduled send has no audience precedent because nobody has

@@ -131,6 +131,25 @@ func TestMatchLastSent_ABrandOnlyHitIsFlaggedAsFallback(t *testing.T) {
 	assert.Zero(t, m.Overlap, "nothing in the event name matched, so there is nothing to rank on")
 }
 
+// TestMatchLastSent_AGenericOnlyHitIsFlaggedAsFallback pins the demotion this endpoint's
+// headline defect turned on. An event named entirely in portfolio-common words has an EMPTY
+// distinctive tier, so every hit it can ever produce arrives through the Overlap>=2 arm. Left
+// unflagged, those hits counted as event matches -- and the caller's `if eventMatches > 0`
+// partition then DELETED the brand fallback rows that were the honest answer, on exactly the
+// event names that have no distinctive token to find.
+func TestMatchLastSent_AGenericOnlyHitIsFlaggedAsFallback(t *testing.T) {
+	oss := NewLastSentTerms("Open Source Summit", "LinuxFoundation")
+	require.Empty(t, oss.Event,
+		"precondition: an all-common name has no distinctive tier, so only the generic arm can admit")
+
+	m := MatchLastSent("Open Source Newsletter", "Summit highlights", oss)
+
+	require.True(t, m.Matched, "two generic tokens are specific enough to admit")
+	assert.True(t, m.Fallback,
+		"an unflagged generic hit counts as an event match and deletes the brand rows that were the real answer")
+	assert.False(t, m.BrandOnly, "it arrived on the event's own generic tokens, not on the brand")
+}
+
 // TestNewLastSentTerms_DropsTheYearAndTheStopwords pins what the tiers are built from. The
 // year has to go: "KubeCon Europe 2026" would otherwise find only THIS year's emails, and
 // this year's is precisely the edition that has not been sent yet.

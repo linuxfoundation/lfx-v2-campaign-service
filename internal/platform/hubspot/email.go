@@ -245,7 +245,7 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		// returns true for everything: the bounds differ between the two cases
 		// (maxUnfilteredEmails vs maxFilteredScan), and the walk tells them apart by
 		// whether a filter was supplied at all.
-		return c.walkEmails(ctx, "SearchEmails", nil)
+		return c.walkEmails(ctx, "SearchEmails", nil, nil)
 	}
 	return c.walkEmails(ctx, "SearchEmails", func(e Email) bool {
 		// Match the query in name OR subject INDEPENDENTLY. Concatenating them and
@@ -253,7 +253,7 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		// boundary (name "Sale", subject "Invite", query "e i") -- a false positive.
 		return strings.Contains(strings.ToLower(e.Name), needle) ||
 			strings.Contains(strings.ToLower(e.Subject), needle)
-	})
+	}, nil)
 }
 
 // EmailFilter decides which rows a walk collects. A nil filter collects every row and
@@ -270,7 +270,24 @@ type EmailFilter func(Email) bool
 // or subject" therefore gains nothing from calling SearchEmails once per term: every term
 // re-reads the SAME pages. One walk with the caller's own predicate costs one walk.
 func (c *Client) SearchEmailsMatching(ctx context.Context, accept EmailFilter) ([]Email, error) {
-	return c.walkEmails(ctx, "SearchEmailsMatching", accept)
+	return c.walkEmails(ctx, "SearchEmailsMatching", accept, nil)
+}
+
+// SearchEmailsMatchingBounded is SearchEmailsMatching, plus whether the walk stopped at its
+// scan bound rather than reading the portal to the end.
+//
+// It exists for a caller that FILTERS FURTHER after the walk. ErrSearchIncomplete fires only
+// when the walk itself accepted nothing, and a caller whose own filter then empties a
+// non-empty result has a zero the walk never saw -- indistinguishable, to an operator, from
+// "the portal authoritatively holds no such email". That is the precise claim
+// ErrSearchIncomplete exists to refuse, so such a caller has to re-raise it for itself; this
+// reports the one fact it needs to.
+//
+// A complete walk whose rows the caller all rejects is a TRUE absence and must stay one.
+func (c *Client) SearchEmailsMatchingBounded(ctx context.Context, accept EmailFilter) ([]Email, bool, error) {
+	bounded := false
+	out, err := c.walkEmails(ctx, "SearchEmailsMatching", accept, &bounded)
+	return out, bounded, err
 }
 
 // walkEmails is the paginated marketing-email walk both search entrypoints share.
@@ -283,7 +300,7 @@ func (c *Client) SearchEmailsMatching(ctx context.Context, accept EmailFilter) (
 // template picker and the last-sent listing -- and the stricter last-sent predicate makes
 // the bound MORE likely to be reached, so a line that cannot say which endpoint produced it
 // is the one piece of attribution an operator needs and cannot recover.
-func (c *Client) walkEmails(ctx context.Context, caller string, accept EmailFilter) ([]Email, error) {
+func (c *Client) walkEmails(ctx context.Context, caller string, accept EmailFilter, bounded *bool) ([]Email, error) {
 	// Whether a filter was supplied, not whether it matches anything, is what selects
 	// between the two bounds below.
 	filtered := accept != nil
@@ -362,6 +379,16 @@ func (c *Client) walkEmails(ctx context.Context, caller string, accept EmailFilt
 		if enoughScanned && !lastPage {
 			slog.WarnContext(ctx, "hubspot email search stopped at its scan bound; results may be incomplete",
 				"caller", caller, "scanned", scanned, "pages", page+1, "matched", len(out))
+
+			// Reported to the caller, not just to the logs. `len(out)` counts rows the
+			// PREDICATE accepted, which is no longer the same population as the rows the
+			// caller keeps: a predicate that admits drafts so the walk can tell "nothing
+			// matched" from "matches existed" leaves the caller filtering afterwards. A
+			// caller whose post-filter empties a non-empty `out` needs to know the walk was
+			// INCOMPLETE, or it reports a false absence the guard below cannot see.
+			if bounded != nil {
+				*bounded = true
+			}
 
 			// ZERO matches at the bound is a FALSE ABSENCE, and must not be returned as one.
 			//

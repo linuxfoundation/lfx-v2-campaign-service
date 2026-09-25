@@ -687,7 +687,7 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 	// TRUE absence, an event whose only emails are drafts, into a 503 on any portal past the
 	// scan bound. Accepting the draft here and rejecting it below keeps the walk's
 	// false-absence guard measuring the thing it exists to measure.
-	emails, serr := client.SearchEmailsMatching(ctx, func(e hubspot.Email) bool {
+	emails, searchBounded, serr := client.SearchEmailsMatchingBounded(ctx, func(e hubspot.Email) bool {
 		return audience.MatchLastSent(e.Name, e.Subject, terms).Matched
 	})
 	if serr != nil {
@@ -720,14 +720,29 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 		// client calls should be pure, and the rule is a map over two strings.
 		m := audience.MatchLastSent(email.Name, email.Subject, terms)
 		candidates = append(candidates, ranked{
-			email:     email,
-			sentAt:    hubspot.ParseEmailTime(string(email.PublishDate)),
-			overlap:   m.Overlap,
-			fallback:  m.Fallback,
+			email:    email,
+			sentAt:   hubspot.ParseEmailTime(string(email.PublishDate)),
+			overlap:  m.Overlap,
+			fallback: m.Fallback,
 		})
 		if !m.Fallback {
 			eventMatches++
 		}
+	}
+
+	// A bounded walk whose candidates were ALL rejected here is a false absence, and the
+	// layer below cannot see it. `ErrSearchIncomplete` fires on a bound reached with nothing
+	// ACCEPTED BY THE PREDICATE -- and the predicate deliberately admits drafts so that the
+	// guard keeps measuring "nothing matched this event" rather than "nothing had gone out".
+	// The cost of that split is this case: 2000 matching drafts past the bound satisfied the
+	// walk, emptied here, and returned `(empty, nil)` -- the operator reads "this event has
+	// never been emailed" while the portal holds 2000 matching rows it never finished reading.
+	//
+	// Only when the walk was INCOMPLETE. A walk that read the portal to the end and whose rows
+	// were all drafts is a TRUE absence: there is genuinely no prior send, and that is the very
+	// case the predicate split exists to report honestly rather than as a 503.
+	if searchBounded && len(candidates) == 0 {
+		return nil, fmt.Errorf("last-sent: the email search stopped at its scan bound and every row it matched was a draft or a scheduled send, so an empty history cannot be distinguished from an unread one: %w", hubspot.ErrSearchIncomplete)
 	}
 
 	// The brand tier and a generic-only hit are both FALLBACK, admissible only when nothing
@@ -857,10 +872,10 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 
 // ranked is one last-sent candidate with the two things it is ordered by.
 type ranked struct {
-	email     hubspot.Email
-	sentAt    time.Time
-	overlap   int
-	fallback  bool
+	email    hubspot.Email
+	sentAt   time.Time
+	overlap  int
+	fallback bool
 }
 
 // sendDateRead is a shortlisted candidate after its send-list read, which supplies both the
