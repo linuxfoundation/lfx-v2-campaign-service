@@ -704,8 +704,16 @@ func noOwnConnection(projectID string, provider model.Provider) error {
 // connLoadFailed reports a repo failure loading a connection. A DB error is NOT a pre-create
 // signal we can prove, but no upstream call was made either — the create never started — so
 // it is not-created and a transient blip does not wedge the claim.
+//
+// domain.ErrConnectionLoadFailed is wrapped ALONGSIDE that, and answers a different question.
+// NoUpstreamCreate means "no campaign was created" — a claim about the upstream platform,
+// which the create paths are the only ones that need. A read-only caller such as a connection
+// test never created anything to begin with, so that claim tells it nothing, and without this
+// sentinel a datastore outage was indistinguishable from a verdict on the connection itself.
+// Additive: every existing consumer matches on NoUpstreamCreate or lands in a default arm, and
+// neither changes.
 func connLoadFailed(provider model.Provider, err error) error {
-	return notCreated(fmt.Errorf("load %s connection: %w", provider, err))
+	return notCreated(fmt.Errorf("load %s connection: %w: %w", provider, domain.ErrConnectionLoadFailed, err))
 }
 
 // systemConn loads the reserved system-scope connection: (nil, nil) when no system account

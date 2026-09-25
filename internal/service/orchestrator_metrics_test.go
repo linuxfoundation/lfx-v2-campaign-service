@@ -338,6 +338,10 @@ func (d upstreamCapableDispatcher) ReadAccountTotals(context.Context, string, mo
 	return &model.AccountMonitorTotals{}, nil
 }
 
+func (d upstreamCapableDispatcher) VerifyAccountOrg(context.Context, string, model.Provider) error {
+	return d.err
+}
+
 // TestUpstreamCallsAreInstrumented drives each instrumented capability path and
 // asserts the upstream call was actually recorded with the right bounded operation
 // token and outcome.
@@ -467,6 +471,13 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, _, err := o.ReadAccountTotals(ctx, "p1", platform, "acct-1", 30, 5)
 				return err
+			},
+		},
+		{
+			name: "verify account org",
+			op:   opVerifyAccountOrg,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				return o.VerifyAccountOrg(ctx, "p1", platform)
 			},
 		},
 	}
