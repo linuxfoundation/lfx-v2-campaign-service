@@ -50,41 +50,20 @@ the service.
 
 ## Pre-PR review
 
-Run **one** local review of the whole branch before opening the PR — never
-after individual commits, and never again once the PR exists.
+> **IMPORTANT — follow this exactly.** When the implementation is complete
+> and committed and you are about to open a PR, load
+> `/lfx-skills:lfx-pre-pr-review` with the Skill tool and follow it. It runs
+> **one** review round of the whole branch — general, security and
+> knowledge-base reviewers in parallel — once, right before the PR. Two rules
+> bear repeating here: **all accepted findings from that round land in
+> exactly one fix commit** (none if there is nothing to fix); and **once the
+> PR is open there are no local reviews of any kind** — iterate only on the
+> PR's bot and human feedback, still running tests and checks. Do not work
+> from memory: **reload the skill before each step** of the round — before
+> launching the reviewers, before the fix commit, before opening the PR.
 
-1. When the implementation is complete and committed, run `git fetch origin`
-   and pin the range: `base_sha=$(git merge-base origin/main HEAD)`,
-   `target_sha=$(git rev-parse HEAD)`.
-2. Launch **two** independent background subagents **in parallel**, one per
-   skill, each with `subagent_type: general-purpose`, `model: opus` (Opus 5.5),
-   `run_in_background: true`. Tell each to load exactly one skill with the
-   Skill tool and follow it: one loads `/lfx-skills:lfx-general-code-review`
-   (general quality plus this repo's written conventions, style and rules);
-   the other loads `/campaign-service-learnings-reviewer` (this repo's review knowledge base). Give each
-   the full 40-character `base_sha` and `target_sha`, the instruction to review
-   exactly `git diff <base_sha> <target_sha>`, and the report-only rule: they
-   never edit, commit, push or write GitHub state.
-3. Wait for both reports. A failed, empty or `INCOMPLETE` report is **not** a
-   clean review: fix the cause and relaunch that reviewer once; if it fails
-   again, stop and tell the developer.
-4. Verify every finding against the code. Address every Critical and every
-   reasonable Important finding in **EXACTLY ONE fix commit** (signed and
-   DCO-signed-off). No fix commit if there is nothing to fix. Never one commit
-   per finding.
-5. Run `make check-fmt && make lint && make test && go run ./cmd/okfvalidate ./docs/knowledge`. If it fails, fold the remedy into the fix commit with
-   `git commit --amend` (re-sign and re-sign-off); if review found nothing and
-   there is no fix commit yet, this remedy becomes the one fix commit. Rerun
-   the checks — but **do not rerun the reviewers**. The branch gains **at most one**
-   commit after the implementation — the single fix commit, or none at all —
-   never more.
-6. Open the PR.
-
-**Hard rules.** No local review runs after any individual commit. The
-reviewers are **never** rerun on the fix commit. From the moment the PR is
-open, **no local reviews of any kind**: iterate only on the PR's bot and human
-review feedback, still running tests and checks, and batch each round of fixes
-into as few commits as possible.
+- KB review skill: `/campaign-service-learnings-reviewer`
+- Preflight: `make check-fmt && make lint && make test && go run ./cmd/okfvalidate ./docs/knowledge`
 
 When the fix commit changes what the code does, the knowledge-bundle rules
 above still apply to it.

@@ -8,7 +8,9 @@ Do not re-raise it in different wording, and do not argue with the rebuttal.
 Every entry below was refuted by a developer on a real thread and re-verified
 against `origin/main` `588cce6cd8a7fbee0f06d0672bff593e4512be18`. The repository
 had no false-positive record before this file; these are the ones the evidence
-supports.
+supports. The two exceptions are entries 9 and 10, carried over on 2026-09-25
+from the calibration of the retired repo conventions reviewer; each says so and
+carries present-day proof in place of a thread.
 
 ---
 
@@ -184,6 +186,66 @@ godoc-placement issue re-raised after it was fixed.
 **The rule for this reviewer:** verify every candidate against the **snapshot at
 the target commit**, not against a remembered or diff-anchored line. If the code
 at the cited path and line no longer has the defect, there is no finding.
+
+---
+
+## 9. Doc/code disagreement read as a code defect — known drift
+
+**The claim:** the change contradicts `docs/channel-connections-schema.md`,
+`docs/build-summary.md` or the `Makefile`'s Go pin, so the code (or the
+migration, or the chart) is wrong.
+
+**Why it is wrong:** those documents describe a **target design** and have
+drifted from the live contract; none of them claims authority over the code. A
+doc/code disagreement is therefore not by itself a finding. Drift confirmed as
+deliberate, which must not be raised:
+
+- **`project_id` is `TEXT`, not `UUID`.** `docs/channel-connections-schema.md:29`
+  and `:55` still show `UUID NOT NULL UNIQUE`; every connection table in
+  `internal/infrastructure/postgres/migrations/000001_create_connection_tables.up.sql`
+  creates `project_id TEXT NOT NULL`, and `docs/architecture.md:491` records why
+  (a project is addressed by UUID **or** slug). The migration wins.
+- **Provider singletons are a *partial* unique index**, `(project_id) WHERE
+  status <> 'deleted'` (`000001_create_connection_tables.up.sql:135-139`), not the
+  flat `UNIQUE (project_id)` the schema doc shows — deliberately, so a project can
+  reconnect a provider after disconnecting it.
+- **`docs/build-summary.md` is a dated status snapshot, not a rule source.** Its
+  header reads `**Status:** Architecture Review` / `**Date:** 2026-06-30`, and its
+  layout section describes a `cmd/campaign-api/` tree that does not exist (the
+  binary is `cmd/campaign-service`). Do not cite it for layout, middleware or
+  structure.
+- **`Makefile:21` `GO_VERSION := 1.24.2` is an unused duplicate pin.** Nothing in
+  the Makefile reads it; `go.mod` (`go 1.25.0`) and the workflows'
+  `go-version-file: go.mod` resolve the toolchain. A go.mod bump that leaves it
+  behind is not a finding.
+
+**What remains a finding:** the direction matters. A change that *itself* makes a
+doc stale is real — that lane is
+[`api-contract-and-docs-currency.md`](api-contract-and-docs-currency.md).
+Pre-existing drift the change merely sits near is not the change's defect.
+
+**Provenance:** carried over 2026-09-25 from the retired
+`.claude/skills/campaign-service-code-reviewer` skill, which recorded these as
+drift it must not mistake for a violation. No PR thread; the present-day proof
+is the cited lines.
+
+---
+
+## 10. Formatting, lint or license-header findings inside `gen/`, `specs/` or `.specify/`
+
+**The claim:** a file under one of those trees lacks the license header, is
+unformatted, or trips a linter rule.
+
+**Why it is wrong:** all three trees are excluded by design. `Makefile:24-25`
+builds `GO_FILES` with `-not -path './gen/*'`, so `make fmt`/`check-fmt` never
+touch `gen/`; `.mega-linter.yml:46` sets `FILTER_REGEX_EXCLUDE` over `gen/.*` and
+`\.specify/.*`; `.github/workflows/license-header-check.yml:18` sets
+`exclude_pattern: "gen,specs,.specify"`. A finding of this shape asks for
+something the repo's own tooling deliberately does not require.
+
+**Provenance:** carried over 2026-09-25 from the retired
+`.claude/skills/campaign-service-code-reviewer` skill. No PR thread; the
+present-day proof is the cited configuration lines.
 
 ---
 
