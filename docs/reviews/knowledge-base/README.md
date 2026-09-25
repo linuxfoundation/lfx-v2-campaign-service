@@ -7,9 +7,9 @@ decisions; the reviewer skill holds the review *method* and loads this path, so
 there is deliberately no second copy of the evidence under the skill's own
 directory.
 
-Read by the `campaign-service-learnings-reviewer` brain (the learnings role of the
-local pre-PR reviewer trio) and by humans deciding whether a pattern still earns
-its place. It is plain documentation: nothing here is wired into `.github/**`, and no
+Read by the `/campaign-service-learnings-reviewer` brain (the knowledge-base role of
+the single pre-PR review launched from the `## Pre-PR review` block in `CLAUDE.md`)
+and by humans deciding whether a pattern still earns its place. It is plain documentation: nothing here is wired into `.github/**`, and no
 PR-side tooling in this repo consumes it today.
 
 ## Scope
@@ -17,7 +17,8 @@ PR-side tooling in this repo consumes it today.
 These entries describe **what reviewers of this repo actually caught and
 developers actually fixed**. They are not a style guide, not a restatement of
 `CLAUDE.md`, and not general Go advice. The repo's written rules are the
-`campaign-service-code-reviewer` brain's surface; this one is purely empirical.
+central general reviewer's surface (`/lfx-skills:lfx-general-code-review` reads
+them from the repo); this one is purely empirical.
 Where the two overlap — knowledge-bundle upkeep, contract currency, test
 synchronisation — the entry here exists because it recurred in review practice
 before a PR was ever opened, and it is phrased as a mechanical detect condition
@@ -248,13 +249,16 @@ before you weaken an entry: read the file, then decide.
   withdrawn — `git show` returns blob bytes without the mode, so it cannot reject a
   symlinked floor and cannot tell a real absence from a failed lookup.
 
-  *Timing, recorded so nobody reads it as a defect:* a waiver added on a branch
-  cannot suppress anything in a range whose base predates it — the commit that
-  adds it, and the final cumulative branch sweep. It **can** apply to a later
-  post-commit review whose first parent already carries it, which is correct
-  rather than a leak: relative to that delta the waiver is pre-existing and
-  suppresses a finding about a different change. The guarantee that matters is
-  that the cumulative branch range can never approve itself.
+  *Timing, recorded so nobody reads it as a defect.* Under the single-round
+  block the reviewed range is the pinned pair the central skill supplies —
+  `base_sha`, a base that predates every commit on the branch, and `target_sha`
+  — so a waiver added anywhere on the branch is absent at `base_sha` and can
+  never suppress a finding about that branch. *(Historical, from the earlier per-commit lifecycle, which no longer
+  runs locally: a waiver already present at a later delta's supplied base could
+  suppress a finding about a different change in that delta — correct rather
+  than a leak, because relative to that range the waiver was pre-existing.)* The
+  guarantee that matters is that the cumulative branch range can never approve
+  itself.
 
   *Historical — the snapshot-era mechanism:* the learnings reviewer read this
   directory from the *post-patch* snapshot, so the skill had to ignore floor
@@ -279,7 +283,11 @@ before you weaken an entry: read the file, then decide.
 
 Add an entry only with its full provenance chain intact: thread URL, readable
 fixing hunk on a merged PR, present-day confirmation, and a detect condition. Add
-a floor entry only with the maintainer's rebuttal and the current proof intact.
+a floor entry only with the maintainer's rebuttal and the current proof intact —
+with one sanctioned exception: a dated floor entry carried over from the retired
+repo conventions reviewer on 2026-09-25 (`known-false-positives.md` entries 9 and
+10), marked as such in its provenance and carrying present-day proof in place of
+a thread. No further thread-less entries are added under that exception.
 When an entry stops matching the code, say so in the entry rather than deleting
 its history. Removing a pattern changes which findings the local reviewer can emit, and
 removing a floor entry lets it surface that claim again — so either is a
