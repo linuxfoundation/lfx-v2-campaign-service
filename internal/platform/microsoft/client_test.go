@@ -537,6 +537,97 @@ func TestValidateAccountIDs(t *testing.T) {
 	}
 }
 
+// TestRequestBoundaryRejectsUnusableIDs pins the dispatch choke point against ids that pass the
+// digits-only transport regexp but name no account a customer can have. Before this, the account
+// half was held to both rules and the customer half to the raw regexp alone, so "0", "007" and a
+// value above MaxInt64 reached the CustomerId header while the API, the bootstrap installer and
+// the connection probe all refused them.
+//
+// Both rules, on both ids, and both are load-bearing: the identity validators TrimSpace before
+// parsing, and the headers are set from the RAW stored value, so "\n123" is an id the identity
+// rule accepts and the transport rule must catch.
+func TestRequestBoundaryRejectsUnusableIDs(t *testing.T) {
+	const overflow = "9999999999999999999" // 19 digits, above MaxInt64
+
+	for _, bad := range []string{"0", "007", overflow, "\n123", "12 34"} {
+		t.Run("account/"+bad, func(t *testing.T) {
+			if err := (&Client{account: AccountConfig{AccountID: bad}}).validateAccountIDs(); err == nil {
+				t.Errorf("account id %q was accepted at the request boundary", bad)
+			}
+		})
+		t.Run("customer/"+bad, func(t *testing.T) {
+			c := &Client{account: AccountConfig{AccountID: "1234567", CustomerID: bad}}
+			if err := c.validateAccountIDs(); err == nil {
+				t.Errorf("customer id %q was accepted by validateAccountIDs", bad)
+			}
+		})
+	}
+
+	// ...and a valid pair still passes, so the tightening did not close the door on real ids.
+	if err := (&Client{account: AccountConfig{AccountID: "1234567", CustomerID: "9876543"}}).validateAccountIDs(); err != nil {
+		t.Errorf("a valid account/customer pair must pass: %v", err)
+	}
+	// An absent customer id remains valid — it is optional, and discovery runs without one.
+	if err := (&Client{account: AccountConfig{AccountID: "1234567"}}).validateAccountIDs(); err != nil {
+		t.Errorf("an empty customer id must remain valid: %v", err)
+	}
+}
+
+// TestRequestBoundaryRejectsBeforeAnyHTTPCall is the half that matters operationally: the refusal
+// happens before a request leaves the process, so an unusable id never reaches Microsoft and never
+// spends a token refresh. Both request paths are covered — doCustomerRequest deliberately skips
+// validateAccountIDs (discovery must run without an account id) and so carries its own copy of the
+// customer-id pair.
+func TestRequestBoundaryRejectsBeforeAnyHTTPCall(t *testing.T) {
+	const overflow = "9999999999999999999"
+
+	t.Run("doRequest", func(t *testing.T) {
+		var hits int
+		tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits++
+			tokenHandler(w, r)
+		}))
+		t.Cleanup(tok.Close)
+		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			hits++
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(api.Close)
+		acct := testAccount()
+		acct.CustomerID = overflow
+		c := NewClient(testCreds(), acct, WithTokenURL(tok.URL), WithBaseURL(api.URL), WithClock(fixedClock()))
+		if _, err := c.doRequest(context.Background(), http.MethodPost, "Campaigns", nil, false); err == nil {
+			t.Fatal("doRequest accepted a customer id above MaxInt64")
+		}
+		if hits != 0 {
+			t.Errorf("%d HTTP calls were made; the id must be refused before anything is sent", hits)
+		}
+	})
+
+	t.Run("doCustomerRequest", func(t *testing.T) {
+		var hits int
+		tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits++
+			tokenHandler(w, r)
+		}))
+		t.Cleanup(tok.Close)
+		cust := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			hits++
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(cust.Close)
+		acct := testAccount()
+		acct.CustomerID = "007"
+		c := NewClient(testCreds(), acct, WithTokenURL(tok.URL), WithCustomerBaseURL(cust.URL), WithClock(fixedClock()))
+		if _, err := c.doCustomerRequest(context.Background(), http.MethodGet, "User/Query", nil, true); err == nil {
+			t.Fatal("doCustomerRequest accepted a leading-zero customer id")
+		}
+		if hits != 0 {
+			t.Errorf("%d HTTP calls were made; the id must be refused before anything is sent", hits)
+		}
+	})
+}
+
 func TestIsPreSendDialError(t *testing.T) {
 	if !isPreSendDialError(&net.DNSError{Err: "no such host"}) {
 		t.Error("a DNS error must be pre-send")

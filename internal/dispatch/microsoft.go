@@ -447,6 +447,115 @@ func microsoftAccountLabel(a microsoft.AdAccount) string {
 	return name
 }
 
+// ProbeConnection verifies the project's stored Microsoft Advertising connection against
+// Microsoft itself: it refreshes the stored credential and enumerates every ad account that
+// credential reaches, then checks the configured account is among them.
+//
+// It satisfies the service-side ConnectionProber interface, type-asserted by
+// Orchestrator.ProbeConnection for the connection-test endpoint. Read-only: it creates,
+// changes and deletes nothing.
+//
+// d.creds.resolveOwned, never d.creds.resolve — see GoogleAdsDispatcher.ProbeConnection for
+// the shared rationale. This is a different resolver from ListAccounts above, which keeps the
+// forced-system entry point because discovery and a connection test ask different questions.
+//
+// Membership in ListAdAccounts' answer is a real verdict here because that method fails a
+// partial enumeration rather than returning a short list — its own doc states the rule ("an
+// incomplete answer is an ERROR, never a short list") — so an account absent from a list that
+// was returned at all is genuinely not reachable by this credential.
+//
+// Accounts that are suspended, paused or draft are RETURNED by ListAdAccounts, each carrying
+// the reason it is unusable, and this probe deliberately accepts them. The test asks whether
+// the stored credential authenticates and reaches the configured account; the account's own
+// lifecycle state is a separate fact, already surfaced in the picker's label, and failing the
+// connection over it would send an operator to repair a credential that is perfectly good.
+func (d *MicrosoftDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
+	subject := probeSubject{platform: platform}
+	res, err := d.creds.resolveOwned(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	creds, accountID, verr := validateMicrosoftConnection(projectID, res)
+	if verr != nil {
+		if errors.Is(verr, domain.ErrAccountNotSelected) {
+			return subject.noAccountConfigured()
+		}
+		return res.systemScoped(verr)
+	}
+	subject.accountID = accountID
+	// Held to the identity rule before anything is sent, for the reason the customer_id arm
+	// below states at length — and it needs its own arm because the discovery client is built
+	// with CustomerID only, so Client.validateAccountIDs (which calls this same function on
+	// dispatch) never runs on the probe path. validateMicrosoftConnection proves the id
+	// present, not that it names an account: a stored "0", or a 19-digit value above MaxInt64,
+	// would otherwise cost an upstream enumeration and — if that enumeration timed out or
+	// 5xx'd — take ProbeInconclusive's default and report "microsoft could not be reached" for
+	// a connection every campaign request deterministically rejects: an outage to wait out
+	// instead of a field on the row to correct.
+	if verr := microsoft.ValidateAccountID(accountID); verr != nil {
+		return subject.accountIDNotUsable()
+	}
+	// The probe enumerates under the SAME customer dispatch will use, and that is the whole
+	// point of carrying the configured id here.
+	//
+	// discoveryCustomerIDs treats a configured CustomerID as the complete answer and skips
+	// every other customer — which is exactly what cachedMicrosoftClient does for dispatch,
+	// where the id is stashed on the receiver and rides every request as the CustomerId
+	// header. A probe that left AccountConfig zero enumerated EVERY customer the credential
+	// reaches, so a connection whose customer_id is stale or simply wrong still passed its
+	// test whenever the account happened to be reachable under some other customer — and
+	// then failed at campaign creation, under the customer actually stored. customer_id is
+	// operator-settable through the connection config API, so that is a reachable state and
+	// not a theoretical one.
+	//
+	// This is NOT the narrowing Google Ads' probe refuses. There the filter belonged to the
+	// account PICKER and had nothing to do with dispatch, so absence from it proved nothing.
+	// Here the narrowing IS dispatch's, so absence from the enumeration is the true statement
+	// "not reachable as this connection is configured" — the verdict the operator needs.
+	//
+	// With no customer configured the zero AccountConfig is still right, and for the reason
+	// ListAccounts documents at length: the credential is then the whole question, and only
+	// walking every CustomerRole from User/Query covers the set.
+	// A configured customer_id that is not an identity is a VERDICT, decided before anything
+	// is sent — the same class as noAccountConfigured, and for the same reason. customer_id is
+	// operator-settable through the connection config API and validateMicrosoftConnection does
+	// not constrain it, so "abc" or "0" is a storable state. No request can be built from it,
+	// which means the platform never evaluates the credential: the error surfaced from
+	// discoveryCustomerIDs used to reach probeClass unrecognised and take ProbeInconclusive's
+	// default — originally reporting OK: true, and since the `ok` contract moved, "microsoft
+	// could not be reached". Both are wrong in the same way: the platform was never the
+	// problem, and neither answer names the operator-settable field that is. Reporting a
+	// connection unusable-as-configured is the answer the test exists to give.
+	customerID := strings.TrimSpace(res.providerConfig["customer_id"])
+	if verr := microsoft.ValidateCustomerID(customerID); verr != nil {
+		return subject.customerIDNotUsable()
+	}
+	client := microsoft.NewClient(
+		microsoft.Credentials{
+			ClientID:       creds.ClientID,
+			ClientSecret:   creds.ClientSecret,
+			DeveloperToken: creds.DeveloperToken,
+			RefreshToken:   creds.RefreshToken,
+		},
+		microsoft.AccountConfig{CustomerID: customerID},
+		// This client is built here, used for one enumeration and dropped, so its
+		// token refresh has no other waiter to protect and no later caller to serve.
+		// Left detached it would run on the platform's own request timeout — longer
+		// than the bound ProbeConnection puts on the probe — and keep a goroutine and
+		// its socket alive past a probe the orchestrator already gave up on.
+		append(append([]microsoft.Option(nil), d.opts...), microsoft.WithCallerScopedTokenRefresh())...,
+	)
+	adAccounts, lerr := client.ListAdAccounts(ctx)
+	if lerr != nil {
+		return subject.probeClass(lerr, microsoft.ProbeCredentialRejected, microsoft.ProbeInconclusive, microsoft.ProbeNotSent)
+	}
+	reachable := make([]string, 0, len(adAccounts))
+	for _, a := range adAccounts {
+		reachable = append(reachable, a.ID)
+	}
+	return subject.probeMembership(reachable, nil)
+}
+
 // resolveMicrosoftClient resolves + validates the project's connection and builds a client
 // for the TOGGLE and METRICS paths (see validateMicrosoftConnection for the shared rules).
 //

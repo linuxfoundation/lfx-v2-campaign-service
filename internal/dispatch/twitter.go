@@ -600,6 +600,88 @@ func (d *TwitterDispatcher) ListAccounts(ctx context.Context, projectID string, 
 	return accounts, nil
 }
 
+// ProbeConnection verifies the project's stored X Ads connection against X itself: it signs a
+// read of the configured ad account with the stored OAuth1 credentials.
+//
+// It satisfies the service-side ConnectionProber interface, type-asserted by
+// Orchestrator.ProbeConnection for the connection-test endpoint. Read-only: it creates,
+// changes and deletes nothing.
+//
+// d.creds.resolveOwned, never d.creds.resolve — see GoogleAdsDispatcher.ProbeConnection for
+// the shared rationale. Note this is a DIFFERENT resolver from ListAccounts a few lines above,
+// which keeps the forced-system entry point because discovery answers "what could this project
+// use?"; a connection test answers "is THIS project's connection good?", and borrowing the
+// shared LF system row to answer it would report a connection the project does not have as
+// healthy.
+//
+// Unlike ListAccounts the client is built WITH the account id, deliberately: that call asks
+// what the credential reaches, while this one asks whether the credential reaches the account
+// the connection is configured for, and twitter.Client.VerifyAccount addresses the account
+// root through AccountConfig. Addressing it directly rather than enumerating and checking
+// membership is the same choice Reddit's probe makes, for the same reason — it proves the
+// account this connection will actually dispatch to is reachable.
+//
+// ErrAccountNotSelected becomes the probe path's confirmed verdict rather than propagating —
+// see RedditDispatcher.ProbeConnection for why a connection test answers that state with a
+// failed test rather than a setup prompt.
+func (d *TwitterDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
+	subject := probeSubject{platform: platform}
+	res, err := d.creds.resolveOwned(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	creds, accountID, verr := validateTwitterConnection(projectID, res)
+	if verr != nil {
+		if errors.Is(verr, domain.ErrAccountNotSelected) {
+			return subject.noAccountConfigured()
+		}
+		return res.systemScoped(verr)
+	}
+	subject.accountID = accountID
+	client := twitter.NewClient(
+		twitter.Credentials{
+			ConsumerKey:       creds.ConsumerKey,
+			ConsumerSecret:    creds.ConsumerSecret,
+			AccessToken:       creds.AccessToken,
+			AccessTokenSecret: creds.AccessTokenSecret,
+		},
+		// FundingInstrumentID is deliberately omitted: it is a create-only field, and a
+		// connection test that demanded one would refuse a connection that can be tested.
+		twitter.AccountConfig{AccountID: accountID},
+		d.opts...,
+	)
+	if perr := client.VerifyAccount(ctx); perr != nil {
+		// The client's own pre-send guard, for an accountID this dispatcher has already
+		// proved non-empty — so it is unreachable today and answered anyway, because the
+		// alternative if it ever becomes reachable is the inconclusive default reporting X as
+		// unreachable for a connection that names no account to reach.
+		if errors.Is(perr, twitter.ErrAccountNotConfigured) {
+			return subject.noAccountConfigured()
+		}
+		// The other pre-send guard, and this one IS reachable: validateTwitterConnection proves
+		// the id non-empty, not that it can address an account-scoped path. Answered here rather
+		// than by either predicate for the reason the Reddit sibling is: the rejection arm would
+		// blame a credential X never saw, and the inconclusive default would blame X's
+		// availability for an id no X request can address.
+		if errors.Is(perr, twitter.ErrInvalidAccountID) {
+			return subject.accountIDNotUsable()
+		}
+		// A 404 on the account resource: these OAuth1 credentials were accepted, the account
+		// was not found. Answered before probeClass because it is a confirmed failure neither
+		// standard predicate can state correctly. ProbeCredentialRejected used to claim it,
+		// which read as "x ads rejected the stored credential" and sent the operator to
+		// re-authorise credentials X had just honoured. Dropping it from that predicate without
+		// this arm is no better in a different way: it then matches NEITHER predicate, which is
+		// the service-defect arm — a typed 500 paging us about an account id the operator needs
+		// to repoint. The remedy is the account id, and only this verdict says so.
+		if twitter.ProbeAccountUnreachable(perr) {
+			return subject.accountNotReachable()
+		}
+		return subject.probeClass(perr, twitter.ProbeCredentialRejected, twitter.ProbeInconclusive, twitter.ProbeNotSent)
+	}
+	return nil
+}
+
 // twitterAccountLabel builds the string a picker shows for one X Ads account.
 //
 // It never returns "" for an account carrying any identifying information: Name may be

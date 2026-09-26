@@ -1586,6 +1586,48 @@ func TestCreateCampaign_PixelFallsBackToTheAccountConfig(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_CampaignPixelOverridesAnAccountWithNone is the other half of the fallback:
+// a connection carrying NO pixel still dispatches when the campaign supplies one itself.
+//
+// This is the case the connection probe's requiredConfigMissing verdict deliberately reports as
+// OK: false (internal/dispatch/reddit.go). The verdict is a judgement about the campaigns this
+// service builds -- its own create path never fills ConversionPixelID in, so every campaign the
+// product builds on such a connection is rejected by Reddit. It is NOT a claim that the override
+// stopped working, and this test exists so that distinction cannot rot into one: if the override
+// is ever dropped, the probe's reasoning has to be re-read, not just this test deleted.
+func TestCreateCampaign_CampaignPixelOverridesAnAccountWithNone(t *testing.T) {
+	c, bodies, cleanup := newBodyCaptureServers(t)
+	defer cleanup()
+
+	// The connection names no pixel -- exactly the state the probe fails.
+	c.account.ConversionPixelID = ""
+
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:         "Campaign Pixel",
+		Project:           "tlf",
+		RegistrationURL:   "https://example.com/reg",
+		BudgetUSD:         100,
+		StartDate:         "2026-09-01",
+		EndDate:           "2026-09-10",
+		GeoTargets:        []string{"us"},
+		Keywords:          []string{"k8s"},
+		Objective:         "traffic",
+		ConversionPixelID: "pixel_from_brief",
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign with a campaign-level pixel and no account pixel: %v", err)
+	}
+	campaignBody, adGroupBody := bodies()
+	if campaignBody["conversion_pixel_id"] != "pixel_from_brief" {
+		t.Errorf("campaign conversion_pixel_id = %v, want the CAMPAIGN's pixel %q",
+			campaignBody["conversion_pixel_id"], "pixel_from_brief")
+	}
+	if adGroupBody["conversion_pixel_id"] != "pixel_from_brief" {
+		t.Errorf("ad group conversion_pixel_id = %v, want the CAMPAIGN's pixel %q",
+			adGroupBody["conversion_pixel_id"], "pixel_from_brief")
+	}
+}
+
 // TestCreateCampaign_VideoGoalRejectedBeforeNetwork verifies the video_views
 // objective rejects a missing/invalid video goal BEFORE any network call, so a
 // bare "VIDEO_VIEWS" optimization goal is never sent to Reddit.

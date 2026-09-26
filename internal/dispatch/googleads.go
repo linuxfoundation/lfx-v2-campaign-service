@@ -839,17 +839,31 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 // about ownership. Refusing the system fallback outright, rather than checking membership
 // against it, is the only version of this check that actually distinguishes the two projects.
 func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
+	client, _, err := d.resolveOwnedGoogleAdsDiscovery(ctx, projectID, platform)
+	return client, err
+}
+
+// resolveOwnedGoogleAdsDiscovery is the body of the above, returning the resolved row as well
+// as the client. ProbeConnection needs both — the client to make the call, and the row to know
+// WHICH customer id the connection is configured for, which is the half of a connection test
+// that "does the credential authenticate" does not answer.
+//
+// extra appends per-caller client options. It exists because the two callers want DIFFERENT
+// token-refresh lifetimes off one construction path: the probe's client is used once and
+// dropped, so its refresh must stay bounded by the probe's context, while the monitor read
+// keeps the default detached refresh.
+func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscovery(ctx context.Context, projectID string, platform model.Provider, extra ...googleads.Option) (*googleads.Client, *resolved, error) {
 	res, err := d.creds.resolveOwned(ctx, projectID, platform)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	creds, err := validateGoogleAdsCredentials(projectID, res)
 	if err != nil {
-		return nil, err
+		return nil, res, err
 	}
 	loginCustomerID, err := validatedLoginCustomerID(res)
 	if err != nil {
-		return nil, err
+		return nil, res, err
 	}
 	return googleads.NewClient(
 		googleads.Credentials{
@@ -862,8 +876,90 @@ func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscoveryClient(ctx context.C
 			LoginCustomerID: loginCustomerID,
 			Label:           res.label,
 		},
-		d.opts...,
-	), nil
+		// Copied rather than appended in place: d.opts is shared by every call on this
+		// dispatcher, and appending to it could publish one caller's extra options to
+		// the next through a reused backing array.
+		append(append([]googleads.Option(nil), d.opts...), extra...)...,
+	), res, nil
+}
+
+// ProbeConnection verifies the project's stored Google Ads connection against Google itself:
+// it refreshes the stored credential and enumerates the customers that credential reaches,
+// then checks the configured customer id is among them.
+//
+// It satisfies the service-side ConnectionProber interface, type-asserted by
+// Orchestrator.ProbeConnection for the connection-test endpoint. Read-only: it creates,
+// changes and deletes nothing.
+//
+// It resolves via resolveOwnedGoogleAdsDiscovery (d.creds.resolveOwned), NOT d.creds.resolve —
+// the same rule LinkedIn's VerifyAccountOrg follows and for the same reason: the forced-system
+// fallback would let a connection test on a project with no Google Ads connection of its own
+// silently verify the shared LF SYSTEM row instead of reporting that this project has nothing
+// to test. That matters more here than anywhere, because Google Ads is ONE shared customer
+// across every foundation (docs/architecture.md, "Account Tenancy").
+//
+// It asks via googleads.ProbeAccountReach rather than by checking membership of
+// ListAccessibleCustomers, and the difference is a verdict rather than a refactor. That
+// enumeration is the account PICKER's: in manager mode it is filtered to ENABLED, non-manager
+// clients, because those are the accounts a campaign may be created in. Presence in it does
+// prove the connection can dispatch. Absence proves nothing — a suspended, cancelled or closed
+// account, and a sub-manager account, are all reached perfectly well by the credential and all
+// missing from that list — so reading absence as unreachability reported "the google ads
+// credential authenticates but does not reach account X" about a credential that reaches X,
+// and sent the operator to repoint an account id that was correct. ProbeAccountReach runs the
+// same walk unfiltered and distinguishes the three.
+//
+// It is still the right probe for the half it always answered: it runs the token refresh — the
+// exact call that fails for a revoked refresh token, the production failure this endpoint
+// existed and did not catch — and in manager mode it answers about the customers actually
+// addressable THROUGH this client, rather than about some list that merely mentions the id.
+func (d *GoogleAdsDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
+	// The client is built here, used for one enumeration and dropped, so its token refresh
+	// has no other waiter to protect and no later caller to serve. Left detached it would run
+	// on the platform's own request timeout — longer than the bound ProbeConnection puts on
+	// the probe — and keep a goroutine and its socket alive past a probe already given up on.
+	client, res, err := d.resolveOwnedGoogleAdsDiscovery(ctx, projectID, platform, googleads.WithCallerScopedTokenRefresh())
+	if err != nil {
+		return err
+	}
+	subject := probeSubject{platform: platform, accountID: res.accountID}
+	// Decided BEFORE the call, not after. probeMembership would reach the same verdict, but
+	// only on the path where the enumeration succeeds: an inconclusive 5xx on the way there
+	// would answer "google ads could not be reached, try again" about a connection that names
+	// no account to reach — sending the operator to wait out an unrelated platform outage
+	// instead of to the empty field on their own row, which is the thing they can fix.
+	if strings.TrimSpace(res.accountID) == "" {
+		return subject.noAccountConfigured()
+	}
+	// Decided before the call for the same reason. The dashed form the Google Ads UI displays —
+	// 866-674-6580 — is the shape this guards: as of LFXV2-2665 account_id carries a Pattern at
+	// the design layer (design/connection.go), so an HTTP caller can no longer store it, but Goa
+	// validates only the HTTP transport and bootstrap, migrations and rows written before that
+	// pattern existed never passed through it. ListAccessibleCustomers answers in the undashed
+	// form and can never contain the dashed one, so without this the membership check would miss
+	// and report "the
+	// credential authenticates but does not reach account 866-674-6580" about a credential that
+	// reaches that account perfectly well under the id Google actually uses.
+	if err := googleads.ValidateCustomerID(strings.TrimSpace(res.accountID)); err != nil {
+		return subject.accountIDNotUsable()
+	}
+	reach, lerr := client.ProbeAccountReach(ctx, strings.TrimSpace(res.accountID))
+	if lerr != nil {
+		return subject.probeClass(lerr, googleads.ProbeCredentialRejected, googleads.ProbeInconclusive, googleads.ProbeNotSent)
+	}
+	switch reach {
+	case googleads.AccountReachable:
+		return nil
+	case googleads.AccountIsManager:
+		return subject.accountIsManagerAccount()
+	case googleads.AccountNotEnabled:
+		return subject.accountNotEnabled()
+	default:
+		// googleads.AccountUnreachable, and the zero value with it. Now a true statement: the
+		// walk behind it is unfiltered, so absence is absence from the hierarchy rather than
+		// absence from a list that had already dropped the account for being disabled.
+		return subject.accountNotReachable()
+	}
 }
 
 // ListAccountCampaignMetrics implements service.AccountMetricsReader for Google Ads,

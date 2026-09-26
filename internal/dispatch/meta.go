@@ -1132,11 +1132,86 @@ func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, project
 // a project with no Meta connection of its own gets domain.ErrNotFound (via noOwnConnection)
 // instead of a credential borrowed from the shared LF system row.
 func (d *MetaDispatcher) resolveOwnedMetaDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*meta.Client, error) {
-	_, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.resolveOwned)
+	client, _, err := d.resolveOwnedMetaDiscovery(ctx, projectID, platform)
+	return client, err
+}
+
+// resolveOwnedMetaDiscovery is the body of the above, returning the resolved row as well as
+// the client. ProbeConnection needs both — the client to make the call, and the row to know
+// WHICH ad account the connection is configured for, which is the half of a connection test
+// that "does the token authenticate" does not answer.
+func (d *MetaDispatcher) resolveOwnedMetaDiscovery(ctx context.Context, projectID string, platform model.Provider) (*meta.Client, *resolved, error) {
+	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform, d.creds.resolveOwned)
 	if err != nil {
-		return nil, err
+		return nil, res, err
 	}
-	return meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{}, d.opts...), nil
+	return meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{}, d.opts...), res, nil
+}
+
+// ProbeConnection verifies the project's stored Meta connection against Meta itself: it reads
+// the ad accounts the stored access token reaches, then checks the configured account is among
+// them.
+//
+// It satisfies the service-side ConnectionProber interface, type-asserted by
+// Orchestrator.ProbeConnection for the connection-test endpoint. Read-only: it creates,
+// changes and deletes nothing.
+//
+// resolveOwnedMetaDiscovery (d.creds.resolveOwned), never d.creds.resolve — see
+// GoogleAdsDispatcher.ProbeConnection for the shared rationale: the forced-system fallback
+// would have a project with no Meta connection of its own silently verify the shared LF system
+// row and report a connection it does not have as healthy.
+//
+// The STORED id is held to meta.ValidateAccountID — the act_<digits> rule — before Meta is
+// contacted, and a row that fails it is refused as accountIDNotUsable. It used to be enough
+// that the id compared equal to an enumerated one with the act_ prefix stripped off both
+// sides, which quietly passed a legacy bare-digits row: stored "123" matched upstream
+// "act_123", the probe answered OK: true, and meta.Client.CreateCampaign then rejected that
+// same stored value on its own accountIDRE (internal/platform/meta/client.go) — because the
+// dispatch path hands the stored id to meta.AccountConfig untouched. That is precisely the
+// "tests clean, fails on dispatch" shape this endpoint exists to remove, so the probe now
+// holds the stored value to the rule dispatch will apply to it.
+//
+// trimMetaAccountPrefix stays on the comparison, but only the UPSTREAM side can now differ:
+// the stored id is already canonical by the time membership is computed, so normalising
+// changes nothing for a well-formed pair and merely keeps an enumerated bare-digits node id
+// from reading as a different account.
+func (d *MetaDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
+	client, res, err := d.resolveOwnedMetaDiscovery(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	subject := probeSubject{platform: platform, accountID: res.accountID}
+	// Decided BEFORE the call, for the reason googleads.ProbeConnection states: deferring it
+	// to probeMembership lets an inconclusive failure on the way to the enumeration answer
+	// "meta could not be reached" about a connection that names no account to dispatch to,
+	// pointing the operator at an outage instead of at the empty field on their own row.
+	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" {
+		return subject.noAccountConfigured()
+	}
+	// The other pre-send guard, and decided from this row alone: a stored id that is not
+	// act_<digits> cannot dispatch, because Dispatch passes it into meta.AccountConfig as
+	// stored and CreateCampaign applies accountIDRE to it. Deciding it here rather than
+	// leaving it to the membership comparison is what keeps a bare-digits row from being
+	// reported healthy on the strength of a prefix-stripped match.
+	if verr := meta.ValidateAccountID(accountID); verr != nil {
+		return subject.accountIDNotUsable()
+	}
+	adAccounts, lerr := client.ListAdAccounts(ctx)
+	if lerr != nil {
+		return subject.probeClass(lerr, meta.ProbeCredentialRejected, meta.ProbeInconclusive, meta.ProbeNotSent)
+	}
+	reachable := make([]string, 0, len(adAccounts))
+	for _, a := range adAccounts {
+		reachable = append(reachable, a.ID)
+	}
+	return subject.probeMembership(reachable, trimMetaAccountPrefix)
+}
+
+// trimMetaAccountPrefix normalises a Meta ad account id to its bare numeric form, so the
+// stored value and the enumerated one compare on identity rather than on formatting.
+func trimMetaAccountPrefix(id string) string {
+	return strings.TrimPrefix(strings.TrimSpace(id), "act_")
 }
 
 // ListAccounts discovers the ad accounts reachable via the project's stored, encrypted

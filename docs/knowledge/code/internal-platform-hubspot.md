@@ -514,3 +514,39 @@ definite pre-clone failure releases the claim.
 
 It has no `StatusToggler` implementation — the email channel has no run state to pause or
 resume.
+
+## Connection-probe predicates (LFXV2-2665)
+
+`probe.go` exports `ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` over this
+package's own error types. `internal/dispatch` consults them **in that order** for every platform
+— `ProbeInconclusive` defaults to `true` for an unrecognised error (an error nobody classified
+proves nothing about the credential), so a revoked credential usually satisfies both and only the
+order decides whether the operator is told their connection is broken or that the check did not
+complete. Neither predicate true is a third outcome: the platform refused a request this service
+BUILT, which is a service defect rather than a verdict.
+
+`probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
+vocabulary: it answers only whether the failure ever left this process, and it changes nothing an
+operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error
+chain is DROPPED there, so no later layer could tell a provider that answered badly from one that
+was never contacted; the answer reaches `Orchestrator.ProbeConnection`'s metrics arm alone, which
+keeps a local DNS or dial failure off `campaign_upstream_call_duration_seconds` rather than
+charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInconclusive`'s on
+purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
+series instead of vanishing from it.
+
+HubSpot has no token-refresh arm at all — connections here hold a private-app token, not an OAuth
+pairing — so the token-endpoint sentinels its siblings carry have no analogue, and that absence is
+a documented property rather than an omission. A `403` sits with the rejections rather than the
+defects, because private-app scopes are chosen when the token is issued: a scope refusal is a
+verdict about this token.
+
+`AuthenticatedPortalID` posts the token to HubSpot's token-info endpoint, so a revoked, rotated or
+mistyped token fails here and nowhere else. That is the WHOLE probe: the hub id it returns is not
+compared against `providerConfig["portal_id"]` as a verdict, because `portal_id` routes nothing.
+It is optional operator-supplied text whose only readers (`email.go`, `lists.go`) interpolate it
+into `app.hubspot.com` links for assets that already exist, while the portal a campaign lands in
+is the token's own — the same reasoning `ReadMetrics`' provenance guard records. A mismatch is
+therefore logged as a warning about dead deep links, not returned as a failed connection test; a
+token "pasted from the wrong portal" is a token whose portal the operator chose by pasting it,
+and nothing in this package would send a campaign anywhere else.

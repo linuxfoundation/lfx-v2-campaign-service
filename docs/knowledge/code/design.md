@@ -184,4 +184,52 @@ edited since discovery change what gets created.
 There is no streaming method: Goa v3 has no SSE encoding, so `discover-audience-lists` is a plain
 synchronous POST and any progress reporting belongs to the caller.
 
+## Account ids on connection configs carry a `Pattern` (LFXV2-2665)
+
+`connection.go`'s per-provider config types declare a `Pattern` and a `MaxLength` on every id the
+operator can set — Google Ads `account_id` and `login_customer_id` (`^([0-9]+)?$`), Reddit
+`account_id` (`^[A-Za-z0-9_]+$`), Microsoft `account_id` (`^[1-9][0-9]{0,17}$`) and `customer_id`
+(`^([1-9][0-9]{0,17})?$`, both `MaxLength(18)` — eighteen digits, not nineteen, so that every
+value the pattern admits is a valid int64 and the design's rule is a subset of the runtime's
+rather than overlapping it). `Required` alone checks only that the KEY is present, so
+`{"account_id": ""}` was storable on an active connection, and Google's dashed UI form
+`866-674-6580` — which no Google Ads API response can ever contain — was storable too.
+
+Each pattern is the design-layer mirror of a rule the platform client already enforces at
+runtime (`googleads.customerIDRE`, `reddit.accountIDRe`, `microsoft.ValidateAccountID` /
+`ValidateCustomerID`), and the runtime checks STAY: Goa validates the HTTP transport, and
+non-HTTP callers — bootstrap, migrations, rows written before these patterns landed — bypass it
+entirely. Two deliberate asymmetries are worth knowing before "tightening" either side:
+
+- An **empty** value is admitted where `""` is a supported runtime state (Google's
+  credentials-first `account_not_selected`, Microsoft's "no customer scoped"), and refused where
+  it is not. A pattern stricter than the runtime is the mirror image of the defect being fixed.
+- Whitespace-padded and out-of-`int64`-range values diverge from `microsoft.ValidateCustomerID`,
+  which trims and parses: the design layer is the stricter outer check for padding, and no regex
+  can express the `int64` ceiling, which is why `ParseInt` must stay.
+
+`internal/apivalidation` tests the GENERATED validators from outside `gen/` and includes a drift
+guard per platform that runs the same ids through the design validator and the platform
+validator, asserting they agree except at the named asymmetries.
+
+PUT is a full replace on every provider, and un-selecting an account is expressed by an ABSENT
+`account_id` — which is why a strict pattern on an optional attribute does not break clearing.
+
+## What `ok` on a connection test promises (LFXV2-2665)
+
+`TestResult.ok` is described as "the credential authenticated AND the configured account passed
+that provider's own check", with an explicit note that **how deep that account check goes is
+provider-specific**. The earlier wording — "the configured account is usable" — promised more
+than any probe delivers and more than several deliberately intend to: Microsoft and Meta test
+membership in an enumeration and knowingly accept accounts the platform reports as suspended,
+paused or draft, because those are recoverable states an operator fixes in the platform's UI and
+not by re-saving a connection this service stored correctly. Google Ads does read the account's
+manager and status fields; Reddit goes further in the other direction and fails a connection
+naming no conversion pixel. A generated client cannot flatten that into one promise, so the
+contract states the shape and points a caller needing lifecycle state at the account resource.
+
+Narrowing the description rather than making every probe enforce lifecycle usability is the
+deliberate half: the alternative changes six probes' behaviour to satisfy a sentence, and
+"suspended account" is not something re-testing a connection repairs.
+
 See [design](../../../design).

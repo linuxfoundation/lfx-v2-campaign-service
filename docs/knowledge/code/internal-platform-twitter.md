@@ -333,3 +333,54 @@ PAUSE. An ACTIVATE with an unknown line-item id is refused as `ErrCampaignNotPro
 (a 409) before any call.
 
 See [internal/platform/twitter](../../../internal/platform/twitter).
+
+## Connection-probe predicates (LFXV2-2665)
+
+`probe.go` exports `ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` over this
+package's own error types. `internal/dispatch` consults them **in that order** for every platform
+— `ProbeInconclusive` defaults to `true` for an unrecognised error (an error nobody classified
+proves nothing about the credential), so a revoked credential usually satisfies both and only the
+order decides whether the operator is told their connection is broken or that the check did not
+complete. Neither predicate true is a third outcome: the platform refused a request this service
+BUILT, which is a service defect rather than a verdict.
+
+`probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
+vocabulary: it answers only whether the failure ever left this process, and it changes nothing an
+operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error
+chain is DROPPED there, so no later layer could tell a provider that answered badly from one that
+was never contacted; the answer reaches `Orchestrator.ProbeConnection`'s metrics arm alone, which
+keeps a local DNS or dial failure off `campaign_upstream_call_duration_seconds` rather than
+charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInconclusive`'s on
+purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
+series instead of vanishing from it.
+
+There is no token-refresh arm: X uses an OAuth 1.0a four-tuple, signed per request, with no
+exchange to fail. The probe reads the account root directly, so its `404`/`401`/`403` are answers
+about the configured account rather than about a discovery request.
+
+`401`/`403` are rejections, but the `404` gets a THIRD exported predicate,
+`ProbeAccountUnreachable` — this package and Reddit's are the only two that export one, because
+only their probes name the configured account IN the request path. The `404` says the credential
+was accepted and the account was not found, which sends the operator to a different field than
+"X refused your credential" does; and dropping it from the rejection predicate without that arm
+would make it match neither, which is the service-defect arm — a typed 500 about a connection
+the operator merely needs to repoint. `apiError` is unexported, so the dispatcher cannot make
+this call itself; it consumes the predicate and answers `accountNotReachable`.
+
+`ErrAccountNotConfigured` is deliberately outside BOTH predicates, for the reason Reddit's
+`ErrInvalidAccountID` is: `VerifyAccount` raises it from this client's own configuration before
+anything is sent, so X never looked at the credential. It is still a verdict — a connection
+naming no account cannot dispatch — but one the dispatcher authors, next to its
+`ErrAccountNotSelected` arm.
+
+This package now carries its own `ErrInvalidAccountID` beside it, and for a sharper reason than
+symmetry. `VerifyAccount` checked only that the stored id was non-empty before interpolating it
+into the account-scoped path, while `CreateCampaign` applied `accountIDRe` — so a stored
+`18ce54d4x5t/promoted_tweets` made the probe GET a DIFFERENT account subresource, and a `2xx`
+from that reported the connection healthy on the strength of a request that answered a different
+question, one campaign creation would then refuse. `VerifyAccount` applies the charset guard and
+`accounts.go`'s length bound before building the path (a stored id held to the same rule as a
+discovered one), and the dispatcher answers the sentinel as `accountIDNotUsable` — the
+pre-send verdict, not a credential rejection and not the inconclusive default.
+`TestVerifyAccountRejectsAnUnusableAccountIDBeforeAnyRequest` asserts the CALL COUNT, because a
+test that only checked the error would still pass if the request were made and discarded.

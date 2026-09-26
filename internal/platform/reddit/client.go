@@ -236,6 +236,30 @@ func WithNowFunc(now func() time.Time) Option {
 	}
 }
 
+// WithCallerScopedTokenRefresh ties the token refresh's lifetime to the caller
+// that triggers it, instead of detaching it with context.WithoutCancel.
+//
+// Detaching is the right default for a client that OUTLIVES a request and is
+// shared by many — the cached clients resolveRedditClientWithCredsCache hands
+// out: one caller's cancellation must not tear down a refresh the other waiters
+// are parked on, and the token it produces is reused long after that caller is
+// gone. Neither reason holds for a client built for ONE call and dropped — a
+// connection probe's. Nothing else will ever read its cache, so a detached
+// refresh buys nobody anything, and it outruns its caller: the refresh runs on
+// its own redditRequestTimeout deadline, which is longer than the bound the
+// probe orchestrator puts on the whole probe. Cancel the probe and the
+// goroutine, its socket and its file descriptor stay alive to finish work whose
+// result is already unreachable — per probe, on every connection, on a platform
+// whose token endpoint is the thing that is slow.
+//
+// Set this ONLY on a client no other caller shares. On a shared one it
+// reintroduces exactly the tear-down the single-flight exists to prevent.
+func WithCallerScopedTokenRefresh() Option {
+	return func(c *Client) {
+		c.callerScopedRefresh = true
+	}
+}
+
 // withRetryBaseDelay overrides the exponential-backoff base for 429 retries.
 // Unexported: only tests use it, to keep retry runs fast (no real multi-second
 // sleeps). Mirrors the Meta client's withRetryBaseDelay.
@@ -294,6 +318,12 @@ type Client struct {
 	// current waiters, so a failed refresh fails all of them rather than each
 	// follower re-leading a fresh refresh in series. Guarded by mu.
 	inflight *tokenRefresh
+
+	// callerScopedRefresh keeps the leader's refresh derived from the CALLING
+	// context instead of detaching it. Off by default, because detaching is what
+	// makes the single-flight above safe for a client many callers share. See
+	// WithCallerScopedTokenRefresh.
+	callerScopedRefresh bool
 }
 
 // tokenRefresh holds the shared result of one in-flight token refresh. done is
@@ -715,6 +745,12 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 		// transport can still correlate the token request with the campaign
 		// operation. A fresh bounded timeout replaces the caller's deadline.
 		refreshValuesCtx := context.WithoutCancel(ctx)
+		if c.callerScopedRefresh {
+			// A one-shot client: nothing outlives this caller to benefit from the
+			// detach, so the refresh stays bounded by the caller's own deadline
+			// rather than leaking past it. See WithCallerScopedTokenRefresh.
+			refreshValuesCtx = ctx
+		}
 		go func() {
 			fetchCtx, cancel := context.WithTimeout(refreshValuesCtx, redditRequestTimeout)
 			token, err := c.fetchToken(fetchCtx)
@@ -800,10 +836,47 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// untrusted and may reflect credential material. Since CreateCampaign can
 		// persist this error into Steps, expose only the status (and a body-read
 		// failure), never the body itself.
-		if readErr != nil {
-			return "", fmt.Errorf("reddit token refresh failed: HTTP %d (body read error: %v)", resp.StatusCode, readErr)
+		//
+		// The status is CLASSIFIED as well as reported, because the two halves mean
+		// opposite things to a connection test: a 4xx is Reddit evaluating this refresh
+		// token and refusing it (revoked, expired, or issued against different
+		// application credentials), a 5xx is Reddit's token endpoint being unable to
+		// answer at all. See probe.go.
+		//
+		// 429 is a 4xx that does NOT belong on the refusal side, for the reason a rate
+		// limit never does in this repo: it is Reddit declining to answer, not Reddit
+		// answering — and /api/v1/access_token throttles routinely. Left in the rejected
+		// arm it makes a throttled refresh say "the platform rejected your stored
+		// credential" about a credential Reddit never evaluated, and
+		// ErrCredentialRejected's godoc promise — that the refusal is permanent and
+		// retrying re-sends it — would be false.
+		// Everything below 500 that is not a 429 splits AGAIN, by whose fault it is.
+		// Not every such status is Reddit evaluating the credential: a 3xx (the
+		// no-follow policy above surfaces redirects here rather than following them),
+		// a 404 or 405 (the endpoint moved), and RFC 6749's three REQUEST-shaped error
+		// codes are all failures of what this service sent. Reported as credential
+		// rejections they tell the operator to replace a credential Reddit never
+		// looked at. classifyTokenRefusal reads only the allowlisted error CODE out of
+		// the body and still renders nothing from it. A body that could not be read is
+		// passed as nil, so classification falls back to the status alone.
+		var tokenErr error
+		switch {
+		// 408 sits with 429 and the 5xx range for the same reason: the endpoint (or an
+		// intermediary) gave up waiting for the request, so nothing evaluated the credential
+		// and retrying the same refresh can succeed.
+		case resp.StatusCode >= 500 ||
+			resp.StatusCode == http.StatusTooManyRequests ||
+			resp.StatusCode == http.StatusRequestTimeout:
+			tokenErr = errTokenEndpointUnavailable
+		case readErr != nil:
+			tokenErr = classifyTokenRefusal(resp.StatusCode, nil)
+		default:
+			tokenErr = classifyTokenRefusal(resp.StatusCode, body)
 		}
-		return "", fmt.Errorf("reddit token refresh failed: HTTP %d", resp.StatusCode)
+		if readErr != nil {
+			return "", fmt.Errorf("%w: reddit token refresh failed: HTTP %d (body read error: %v)", tokenErr, resp.StatusCode, readErr)
+		}
+		return "", fmt.Errorf("%w: reddit token refresh failed: HTTP %d", tokenErr, resp.StatusCode)
 	}
 	if readErr != nil {
 		return "", fmt.Errorf("reddit token refresh: %w", readErr)
@@ -2311,6 +2384,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 // dispatcher's redditCreationAccountID and the account-provenance guard that uses it.
 // Mirrors microsoft.Client.AccountID.
 func (c *Client) AccountID() string { return c.account.AccountID }
+
+// ConversionPixelID reports the account-level conversion pixel this client was built with,
+// unset when the connection names none. Exposed for the connection probe, which must answer
+// whether this connection can dispatch at all: CreateCampaign refuses every objective without
+// a pixel, so a probe that did not check it would report a connection healthy that fails on
+// first use. Returned as stored — the caller decides what an empty value means, exactly as
+// CreateCampaign does.
+func (c *Client) ConversionPixelID() string { return c.account.ConversionPixelID }
 
 // createPromotedPost authors an IMAGE post on the ad account's profile and returns
 // its t3_ post id, for the author-a-post path (see CampaignInput.ImageURL). It

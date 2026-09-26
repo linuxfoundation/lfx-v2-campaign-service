@@ -34,6 +34,20 @@ whether or not its body arrives) and would hold the rejected token available to 
 concurrent caller for the rest of the attempt timeout, so the unreadable and oversized arms
 need no guard of their own.
 
+**`WithCallerScopedTokenRefresh()` opts one client out of that detach.** Detaching is right for a
+client that OUTLIVES a request and is shared by many: one caller's cancellation must not tear down
+a refresh the other waiters are parked on, and the token it produces is reused long after that
+caller is gone. Neither reason holds for the client `resolveRedditClientWithCredsCache`
+builds on its cache-bypassing probe branch and drops — nothing else will ever read its cache, so the detached refresh buys
+nobody anything while it OUTRUNS its caller, running on `redditRequestTimeout`, which is longer than the bound
+`ProbeConnection` puts on the whole probe. Cancel the probe and the goroutine, its socket and its
+file descriptor stay alive to finish work whose result is already unreachable, per probe, on every
+connection. With the option set, the leader's refresh stays derived from the calling context
+instead. It is safe ONLY on a client no other caller shares; on a shared one it reintroduces
+exactly the tear-down the single-flight exists to prevent. `token_refresh_scope_test.go` asserts
+both directions — that the option cancels the in-flight token request and that the default does
+not — because flipping the default would be as much a regression as the leak.
+
 Invalidation is **compare-and-clear**, not an unconditional clear: it takes the token the
 rejected request actually presented and drops the cache only if it still holds that token.
 With a shared client, request A can leave carrying `tok_1`, request B can refresh and cache
@@ -447,3 +461,61 @@ hardcoded `conversions: 0` and its underspend threshold/label mismatch (fires at
 `AccountMonitorTotals` come from its own upstream rollup, not a sum of returned rows).
 
 See [internal/platform/reddit](../../../internal/platform/reddit).
+
+## Connection-probe predicates (LFXV2-2665)
+
+`probe.go` exports `ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` over this
+package's own error types. `internal/dispatch` consults them **in that order** for every platform
+— `ProbeInconclusive` defaults to `true` for an unrecognised error (an error nobody classified
+proves nothing about the credential), so a revoked credential usually satisfies both and only the
+order decides whether the operator is told their connection is broken or that the check did not
+complete. Neither predicate true is a third outcome: the platform refused a request this service
+BUILT, which is a service defect rather than a verdict.
+
+`probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
+vocabulary: it answers only whether the failure ever left this process, and it changes nothing an
+operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error
+chain is DROPPED there, so no later layer could tell a provider that answered badly from one that
+was never contacted; the answer reaches `Orchestrator.ProbeConnection`'s metrics arm alone, which
+keeps a local DNS or dial failure off `campaign_upstream_call_duration_seconds` rather than
+charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInconclusive`'s on
+purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
+series instead of vanishing from it.
+
+One deliberate departure: this package exports a THIRD predicate, `ProbeAccountUnreachable`, for
+a `404` on the configured ad account. Reddit's probe reads that account directly
+(`GET /ad_accounts/{id}`), so a `404` is Reddit answering the exact question asked rather than
+refusing a request this service built — but the answer it gives is *the credential was accepted
+and the account was not found*, which is a different sentence from a rejection and points the
+operator at a different field. Only X's probe shares this shape, and only these two packages
+export the predicate; everywhere else the probe enumerates and checks membership, so a `404`
+there could only mean an endpoint moved. Neither standard predicate can state it: the rejection
+arm reads "reddit ads rejected the stored credential" about a credential Reddit honoured, and
+neither-predicate is the service-defect arm, a typed 500 paging us about a connection the
+operator needs to repoint. `apiError` is unexported, so the classification has to be made here;
+the dispatcher consumes it and answers `accountNotReachable`.
+
+`fetchToken` splits non-2xx by status the same way Google's does, and its token error carries
+status only for the same reason — **except that 429 goes with the 5xx side, not the 4xx side.**
+A rate limit is Reddit declining to answer, not answering, and `/api/v1/access_token` throttles
+routinely; routing it to a refusal told an operator their stored credential had been permanently
+refused when Reddit had never evaluated it.
+
+Everything below `500` that is not a `429` then splits AGAIN, through `classifyTokenRefusal` —
+the same second split Google's package carries, with the same conservative fallback and the same
+reasons, written out in *The two token-refusal sentinels, and why the name changed* in
+`internal-platform-googleads.md`. `ErrCredentialRejected` is Reddit evaluating the stored
+credential and refusing it; `ErrTokenRequestRejected` is the token endpoint refusing the SHAPE of
+the request this service built — a `3xx` the package-wide no-follow policy surfaces rather than
+chases, a `404`/`405` from a moved endpoint, or RFC 6749's three request-shaped codes — and it
+matches neither predicate, so it raises `domain.ErrServiceDefect` instead of blaming a credential
+Reddit never looked at. The sentinel kept its name but reversed its meaning to match
+`domain.ErrTokenRequestRejected`; `ProbeInconclusive` gained an explicit
+`ErrTokenRequestRejected → false` arm because its default for an unrecognised error is `true`.
+A body that could not be read is classified on status alone rather than guessed at.
+
+`ErrInvalidAccountID` is deliberately outside BOTH predicates. `VerifyAccount` raises it from
+this package's own path guard before anything is sent, so Reddit never evaluated the credential:
+claiming a rejection would send an operator to re-authorise a connection whose credential is
+fine, and the inconclusive default would blame an unreachable platform for an id no Reddit
+request can address. The dispatcher settles it instead, with `accountIDNotUsable`.

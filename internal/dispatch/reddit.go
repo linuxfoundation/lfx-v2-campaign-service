@@ -257,6 +257,26 @@ func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID st
 // every reddit path — including the toggle and metrics paths that must follow the account the
 // campaign was CREATED under — silently authenticate as the creation resolver instead.
 func (d *RedditDispatcher) resolveRedditClientWithCreds(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver) (c *reddit.Client, res *resolved, err error) {
+	return d.resolveRedditClientWithCredsCache(ctx, projectID, platform, resolveCreds, true)
+}
+
+// resolveRedditClientWithCredsCache is resolveRedditClientWithCreds with the client cache made a
+// caller's choice rather than an invariant.
+//
+// useCache is false for exactly one caller, ProbeConnection, and the parameter exists rather than
+// a second copy of this function because every validation above the build is the part a probe
+// most needs to keep. reddit.Client holds its OAuth access token for the token's lifetime
+// (refreshToken's fast path at internal/platform/reddit/client.go returns cachedToken whenever it
+// is still inside the expiry buffer), and d.clients.buildOnce holds the CLIENT for the life of the
+// connection row version. Composed, a probe served from that cache authenticates with an access
+// token minted by some earlier dispatch and never presents the stored refresh token at all — so a
+// refresh token revoked an hour ago answers OK: true until the access token ages out. That is the
+// exact production failure this endpoint was built to catch, which is why the one probe that
+// shared a cached client is the one probe that must not.
+//
+// The other five probes never had this to fix: googleads, meta, hubspot, microsoft and twitter
+// each construct a client inside ProbeConnection already. Reddit was the outlier, not the rule.
+func (d *RedditDispatcher) resolveRedditClientWithCredsCache(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver, useCache bool) (c *reddit.Client, res *resolved, err error) {
 	res, err = resolveCreds(ctx, projectID, platform)
 	if err != nil {
 		return nil, nil, err
@@ -294,7 +314,10 @@ func (d *RedditDispatcher) resolveRedditClientWithCreds(ctx context.Context, pro
 	// cachedMicrosoftClient's shape. Written twice, the two copies can drift: a later
 	// AccountConfig change (a new field, a different pixel source) has to be made in both, and
 	// the compiler cannot notice if it is not.
-	build := func() *reddit.Client {
+	//
+	// extra is how the two branches below differ: the cached client is shared and long-lived,
+	// the probe's is used once and dropped, and they want opposite token-refresh lifetimes.
+	build := func(extra ...reddit.Option) *reddit.Client {
 		return reddit.NewClient(
 			reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
 			// The pixel travels with the ACCOUNT, matching where it is stored. An absent key
@@ -306,8 +329,22 @@ func (d *RedditDispatcher) resolveRedditClientWithCreds(ctx context.Context, pro
 				Label:             res.label,
 				ConversionPixelID: res.providerConfig["conversion_pixel_id"],
 			},
-			d.opts...,
+			// Copied rather than appended in place: d.opts is shared by every call on this
+			// dispatcher, and appending to it could publish one caller's extra options to
+			// the next through a reused backing array.
+			append(append([]reddit.Option(nil), d.opts...), extra...)...,
 		)
+	}
+	if !useCache {
+		// Deliberately does not WRITE the cache either. Seeding it here would hand the next
+		// dispatch a token minted for a probe, and a probe is the one caller whose client is
+		// built to be thrown away.
+		//
+		// Which is also why its token refresh stays bound to the probe's context: with no
+		// other waiter to protect and no later caller to serve, a detached refresh would only
+		// outlive the probe, running on redditRequestTimeout after the orchestrator's shorter
+		// bound has already released the caller.
+		return build(reddit.WithCallerScopedTokenRefresh()), res, nil
 	}
 	built, err := d.clients.buildOnce(key, connID, version, func() (any, error) {
 		return build(), nil
@@ -574,6 +611,97 @@ func (d *RedditDispatcher) resolveMonitorClient(ctx context.Context, projectID s
 			domain.ErrAccountNotManagedByConnection, projectID, got, want)
 	}
 	return client, nil
+}
+
+// ProbeConnection verifies the project's stored Reddit connection against Reddit itself: it
+// refreshes the stored credential and reads the configured ad account.
+//
+// It satisfies the service-side ConnectionProber interface, type-asserted by
+// Orchestrator.ProbeConnection for the connection-test endpoint. Read-only: it creates,
+// changes and deletes nothing.
+//
+// d.creds.resolveOwned, never d.creds.resolve — see GoogleAdsDispatcher.ProbeConnection for
+// the shared rationale.
+//
+// Reddit is the one platform here whose probe addresses the configured account DIRECTLY
+// (GET /ad_accounts/{id}) instead of enumerating and checking membership, because that read
+// already exists as CreateCampaign's Step 1. That makes it the strongest form of the check
+// available — it proves reachability of the account this connection will actually dispatch to,
+// rather than that the account appears in a list — and it is why this arm needed no account
+// enumeration endpoint to be built first. The verdict for a 404 is decided inside
+// reddit.ProbeCredentialRejected, which explains why a 404 is Reddit answering the question
+// asked here and a defect anywhere else.
+//
+// An account-less connection is converted to the probe path's own confirmed verdict rather
+// than passed through as ErrAccountNotSelected. The two sentinels disagree about what the
+// caller should do, and for a connection TEST this one is right: there is nothing to verify
+// and campaign creation on this connection cannot succeed, which is the question being asked,
+// so reporting it as a failed test beats reporting a setup state the test arm would have to
+// translate anyway.
+func (d *RedditDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
+	subject := probeSubject{platform: platform}
+	// useCache=false: a probe must present the STORED refresh token, not a live access token some
+	// earlier dispatch left in a cached client. See resolveRedditClientWithCredsCache.
+	client, res, err := d.resolveRedditClientWithCredsCache(ctx, projectID, platform, d.creds.resolveOwned, false)
+	if err != nil {
+		if errors.Is(err, domain.ErrAccountNotSelected) {
+			return subject.noAccountConfigured()
+		}
+		return err
+	}
+	subject.accountID = res.accountID
+	if verr := client.VerifyAccount(ctx); verr != nil {
+		// Raised by the client's own guard before any request is built, so Reddit never saw
+		// the credential. Answered here rather than by either predicate: the rejection arm
+		// would blame the credential, and the inconclusive default would blame Reddit's
+		// availability for an id no Reddit request can address.
+		if errors.Is(verr, reddit.ErrInvalidAccountID) {
+			return subject.accountIDNotUsable()
+		}
+		// A 404 on the account resource: the credential was accepted, the account was not
+		// found. Answered before probeClass because it is a confirmed failure neither standard
+		// predicate can state correctly. ProbeCredentialRejected used to claim it, which read
+		// as "reddit ads rejected the stored credential" and sent the operator to re-authorise
+		// a credential Reddit had just honoured. Dropping it from that predicate without this
+		// arm is no better in a different way: it then matches NEITHER predicate, which is the
+		// service-defect arm — a typed 500 paging us about an account id the operator needs to
+		// repoint. The remedy is the account id, and only this verdict says so.
+		if reddit.ProbeAccountUnreachable(verr) {
+			return subject.accountNotReachable()
+		}
+		return subject.probeClass(verr, reddit.ProbeCredentialRejected, reddit.ProbeInconclusive, reddit.ProbeNotSent)
+	}
+	// The credential authenticates and reaches the account — and a connection that names no
+	// conversion pixel still fails on first use. reddit.Client.CreateCampaign refuses EVERY
+	// objective without a pixel (confirmed against the live API on 2026-08-13, not just the
+	// documented conversions case), before any upstream call, so this is a certainty rather
+	// than a prediction. Reporting OK: true here would recreate the exact failure this endpoint
+	// exists to catch: a connection that tests clean and fails on first use.
+	//
+	// Strictly, the connection is not unusable for EVERY campaign: reddit.CampaignInput carries
+	// a per-campaign ConversionPixelID that the client prefers when set, and Dispatch above
+	// passes redditConfig.conversionPixelId straight into it (reddit.go:178), so a brief that
+	// carries its own pixel dispatches fine on this connection. That override keeps working and
+	// is pinned by TestCreateCampaign_CampaignPixelOverridesAnAccountWithNone — this verdict
+	// does not narrow it, and must not be read as saying the override is dead.
+	//
+	// The verdict is still OK: false, because the override is the exception and not the
+	// configuration. The pixel identifies the advertiser and belongs to the ad ACCOUNT; the
+	// service supplies no default for it, so every brief that omits the optional override —
+	// which is what "optional" means at docs/api-catalog.md — is rejected by Reddit before any
+	// upstream call on a connection configured this way. Reporting such a connection healthy
+	// on the strength of a field each individual brief would have to re-supply is the "tests
+	// clean, fails on first use" false positive this endpoint exists to remove, and the
+	// verdict's text names the field and where the operator finds it.
+	//
+	// Read from the same place the client reads it — the account config on the connection row —
+	// rather than from providerConfig directly, so the probe cannot disagree with the create
+	// path about what "configured" means.
+	if strings.TrimSpace(client.ConversionPixelID()) == "" {
+		return subject.requiredConfigMissing("conversion pixel id",
+			"Reddit Ads → Events Manager lists the account's pixel")
+	}
+	return nil
 }
 
 // redditCreationAccountID reports the ad account the campaign was CREATED under, or "" when

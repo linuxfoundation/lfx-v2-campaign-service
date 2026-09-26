@@ -233,9 +233,44 @@ var ConnServiceUnavailableError = Type("conn-service-unavailable-error", func() 
 	errorAttrs("503", "The service is unavailable.")
 })
 
-// TestResult is the outcome of verifying a credential against the provider.
+// TestResult is the outcome of verifying a connection against the provider.
+//
+// `ok` answers "did this connection pass its provider's check", which is broader than "did
+// the credential authenticate" and deliberately so (LFXV2-2665). An authenticated credential
+// still fails the test when the connection names no ad account, names one the platform
+// cannot reach as configured, or names one that cannot host a campaign — a Google Ads
+// manager account, or an account Google reports as not enabled. Those verdicts say in
+// `message` that the credential authenticated, precisely so an account-selection failure is
+// not read as a reason to rotate a working credential.
+//
+// It is NOT a claim that the account is usable in every sense, and the description must not
+// be widened to say so: how deep the account check goes is the provider's to decide, and the
+// providers differ. Google Ads reads the account's own manager and status fields; Microsoft
+// and Meta test membership in an enumeration and deliberately accept accounts their platform
+// reports as suspended, paused or draft, because those are recoverable states an operator
+// fixes in the platform's UI rather than by re-saving a connection this service stored
+// correctly. Reddit goes one step further than membership in the other direction and fails a
+// connection naming no conversion pixel, because Reddit refuses every campaign create without
+// one. A client that needs lifecycle state must read the account resource, not this flag.
+//
+// `ok` is FALSE for an INCONCLUSIVE check — a rate limit, a 5xx, a transport failure — because
+// this field reports a CONJUNCTION (the credential authenticated AND the account passed the
+// provider's check), and an incomplete check establishes neither half as a whole. It is
+// deliberately not justified as "the credential did not authenticate": several providers are
+// probed on two legs, a token refresh and then an account read, and a refresh that SUCCEEDED
+// before the account read timed out did authenticate the credential. What failed is the
+// conjunction, which is the thing this field names. Answering true here widened the field's
+// definition to fit the behaviour instead of the reverse, and handed a client that reads `ok`
+// alone — which this declaration entitles it to do — a green check for a connection nothing
+// verified, followed by a failure at campaign creation.
+//
+// `message` still separates the two cases, and the distinction is the operator's whole
+// instruction: an unreachable platform says nothing about the stored credential and warrants a
+// retry, whereas a confirmed failure names what the provider refused and warrants a repair. A
+// client that treats an inconclusive result as "do not rely on this connection yet" behaves
+// correctly; one that treats it as "re-authorize" has been told otherwise in the same string.
 var TestResult = Type("connection-test-result", func() {
-	Attribute("ok", Boolean, "Whether the credential authenticated against the provider")
+	Attribute("ok", Boolean, "Whether the connection passed its provider's verification: the credential authenticated AND the configured account passed that provider's own check. How deep that account check goes is provider-specific — it is not a guarantee of account lifecycle state. False when the check could not be completed against the provider, because an incomplete check establishes neither half of that conjunction — read message to tell that case apart from a confirmed failure")
 	Attribute("message", String, "Human-readable detail")
 	Required("ok")
 })
@@ -592,8 +627,36 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // non-empty, and the operations that need it say so with reason=account_not_selected.
 var GoogleAdsConnectionConfig = Type("google-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name", func() { Example("TLF Main") })
-	Attribute("account_id", String, "Google Ads customer ID. Optional: omit it to create the connection with credentials only, then choose one from GET .../connection-google-ads/accounts and set it with PUT.", func() { Example("8666746580") })
-	Attribute("login_customer_id", String, "Manager account used for API access", func() { Example("9746983954") })
+	// The pattern states what the RUNTIME already enforces: googleads.customerIDRE is
+	// `^[0-9]+$` and the client rejects anything else before a request is built, so a dashed
+	// id ("866-674-6580" — the form the Google Ads UI displays), a padded one, or one
+	// carrying a control character could be stored on an active connection and could never
+	// create a campaign. Declaring it here refuses it as a 4xx at the connection boundary
+	// instead of as a dispatch failure later, which is the same trade Meta's account_id and
+	// page_id patterns make.
+	//
+	// The EMPTY string is admitted deliberately, which is why this is not Meta's bare
+	// `^[0-9]+$`. account_id is optional on this provider because a credentials-first
+	// connection has not chosen an account yet, and "" is that state as the row stores it —
+	// a supported lifecycle state the dispatch path names explicitly
+	// (reason=account_not_selected), not a malformed id. A pattern that rejected it would
+	// make the design STRICTER than the runtime, which is the mirror image of the defect
+	// being fixed here.
+	Attribute("account_id", String, "Google Ads customer ID (digits only, no dashes). Optional: omit it to create the connection with credentials only, then choose one from GET .../connection-google-ads/accounts and set it with PUT.", func() {
+		Example("8666746580")
+		Pattern(`^([0-9]+)?$`)
+		// The pattern bounds shape but not length; cap the stored size so an arbitrarily
+		// long digit string cannot be persisted (real customer ids are 10 digits).
+		MaxLength(64)
+	})
+	// login_customer_id is validated by the same customerIDRE at runtime
+	// (googleads.Client.validateLoginCustomerID) and is optional in exactly the same way —
+	// absent means "no manager account", and so does "".
+	Attribute("login_customer_id", String, "Manager account used for API access (digits only, no dashes)", func() {
+		Example("9746983954")
+		Pattern(`^([0-9]+)?$`)
+		MaxLength(64)
+	})
 })
 
 var GoogleAdsConnection = Type("google-ads-connection", func() {
@@ -787,7 +850,23 @@ var RedditAdsCredentials = Type("reddit-ads-credentials", func() {
 
 var RedditAdsConnectionConfig = Type("reddit-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
-	Attribute("account_id", String, "Reddit advertiser ID", func() { Example("t2_gv9wtbfa") })
+	// The pattern is reddit.accountIDRe verbatim. That guard is not cosmetic upstream: the
+	// account id is CONCATENATED into every request path ("/ad_accounts/"+accountID+"/..."),
+	// so the charset is what stops an id carrying "/" or ".." from addressing a different
+	// resource, and the client refuses a non-matching id before sending anything.
+	//
+	// Required alone only checks that the KEY is present — the generated field is a plain
+	// string — so `{"account_id": ""}` passed, was stored on an active connection, and then
+	// failed every dispatch. Unlike Google Ads and Meta, Reddit has no credentials-first
+	// state for "" to mean: account_id is Required here, so an empty one is a malformed
+	// value rather than a deferred selection, and the pattern says so at the 4xx boundary.
+	Attribute("account_id", String, "Reddit advertiser ID", func() {
+		Example("t2_gv9wtbfa")
+		Pattern(`^[A-Za-z0-9_]+$`)
+		// The pattern bounds charset but not length; cap the stored size, as every other
+		// provider's id does (real advertiser ids are far shorter).
+		MaxLength(64)
+	})
 	// Reddit requires a conversion pixel on EVERY campaign create -- including Traffic and
 	// Awareness, not only Conversions as the API docs describe (observed against the live LF
 	// account, 2026-08-13). It identifies the advertiser's pixel, which is one per ad account,
@@ -900,8 +979,63 @@ var MicrosoftAdsCredentials = Type("microsoft-ads-credentials", func() {
 
 var MicrosoftAdsConnectionConfig = Type("microsoft-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
-	Attribute("account_id", String, "Microsoft Advertising account ID")
-	Attribute("customer_id", String, "Microsoft Advertising customer ID")
+	// Both ids carry microsoft.accountIDRE's rule, and that regex's own comment names this
+	// gap as the reason it exists: "The connection's account_id is user-supplied and its Goa
+	// design only checks presence, so it must be validated here before being placed in a
+	// header — a padded/dashed id yields an invalid request, and control characters could
+	// inject a header." Both values travel as REQUEST HEADERS (CustomerAccountId and
+	// CustomerId), so the charset is a header-injection boundary, not a formatting
+	// preference. Declaring the same rule here refuses a malformed id at connection time
+	// rather than storing it on an active connection that can never dispatch.
+	//
+	// account_id is Required, so "" is a malformed value and the pattern rejects it — this
+	// provider has no credentials-first state (see the force-system guard's note that
+	// LinkedIn, Reddit and Microsoft callers must resend the id they already stored).
+	//
+	// It carries customer_id's STRICTER rule, not accountIDRE's bare `[0-9]+`, for the reason
+	// stated below and for one more: an account_id is an identity, and microsoft.numberID —
+	// the check ListAdAccounts already applies to every id the platform HANDS BACK
+	// (accounts.go) — refuses "0" and anything past MaxInt64 as not naming an account. Holding
+	// a stored id to a weaker rule than a discovered one is backwards: it let the API persist
+	// an id no Microsoft account can have, on an active connection, leaving the header guard
+	// to confirm only that it is made of digits.
+	//
+	// The bound is EIGHTEEN digits, not nineteen. A Pattern cannot express the int64 range,
+	// and at 19 digits it does not have to: it would admit values above MaxInt64 that
+	// numberID refuses, which is the API accepting and storing an id that can never dispatch.
+	// Eighteen digits is the widest length every value of which is a valid int64, so the
+	// design's rule is now a SUBSET of the runtime's rather than overlapping it. What that
+	// gives up is 19-digit ids at or below MaxInt64; Microsoft account ids are seven to nine
+	// digits, so that range names nothing real, and refusing it at connection time is the
+	// cheaper error than persisting an active connection that fails on first use.
+	//
+	// The runtime validators stay regardless — a row written by bootstrap, by a migration, or
+	// before this pattern existed never passed through Goa at all.
+	Attribute("account_id", String, "Microsoft Advertising account ID (positive integer)", func() {
+		Example("1234567")
+		Pattern(`^[1-9][0-9]{0,17}$`)
+		MaxLength(18)
+	})
+	// customer_id is held to the STRICTER of the two runtime rules it meets, not to
+	// accountIDRE alone: microsoft.ValidateCustomerID (numberID) requires a POSITIVE int64,
+	// so "0" and a 23-digit number are not customer identities even though both are digits.
+	// Hence `[1-9]` and MaxLength(18) — the same rule account_id above now carries, bounded at
+	// eighteen digits for the reason given there: nineteen would admit values above MaxInt64
+	// that ParseInt refuses, and a Pattern cannot express the int64 range itself.
+	//
+	// ValidateCustomerID is still what enforces the range, and is still asserted directly —
+	// see TestValidateMicrosoftAdsConnectionConfig_IDPatterns — because this pattern binds the
+	// HTTP transport alone and rows reach the repository by other routes.
+	//
+	// "" is a SUPPORTED state, which is why the whole group is optional: it means no
+	// customer is configured, and discoveryCustomerIDs then walks every customer the
+	// credential reaches. ValidateCustomerID accepts it for the same reason, so the two
+	// layers agree on the empty case rather than one tolerating it.
+	Attribute("customer_id", String, "Microsoft Advertising customer ID (a positive integer, digits only). Optional: omit it to let the credential's own customers be discovered.", func() {
+		Example("9999999")
+		Pattern(`^([1-9][0-9]{0,17})?$`)
+		MaxLength(18)
+	})
 	Required("account_id")
 })
 

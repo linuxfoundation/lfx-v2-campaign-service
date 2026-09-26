@@ -248,7 +248,13 @@ type UpdateGoogleAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
 // HTTP response body.
 type TestGoogleAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection passed its provider's verification: the credential
+	// authenticated AND the configured account passed that provider's own check.
+	// How deep that account check goes is provider-specific — it is not a
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK bool `form:"ok" json:"ok" xml:"ok"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -327,7 +333,13 @@ type UpdateLinkedinAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
 // HTTP response body.
 type TestLinkedinAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection passed its provider's verification: the credential
+	// authenticated AND the configured account passed that provider's own check.
+	// How deep that account check goes is provider-specific — it is not a
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK bool `form:"ok" json:"ok" xml:"ok"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -409,7 +421,13 @@ type UpdateMetaAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
 // response body.
 type TestMetaAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection passed its provider's verification: the credential
+	// authenticated AND the configured account passed that provider's own check.
+	// How deep that account check goes is provider-specific — it is not a
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK bool `form:"ok" json:"ok" xml:"ok"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -485,7 +503,13 @@ type UpdateRedditAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
 // HTTP response body.
 type TestRedditAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection passed its provider's verification: the credential
+	// authenticated AND the configured account passed that provider's own check.
+	// How deep that account check goes is provider-specific — it is not a
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK bool `form:"ok" json:"ok" xml:"ok"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -561,7 +585,13 @@ type UpdateTwitterAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
 // HTTP response body.
 type TestTwitterAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection passed its provider's verification: the credential
+	// authenticated AND the configured account passed that provider's own check.
+	// How deep that account check goes is provider-specific — it is not a
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK bool `form:"ok" json:"ok" xml:"ok"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -637,7 +667,13 @@ type UpdateMicrosoftAdsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
 // HTTP response body.
 type TestMicrosoftAdsResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection passed its provider's verification: the credential
+	// authenticated AND the configured account passed that provider's own check.
+	// How deep that account check goes is provider-specific — it is not a
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK bool `form:"ok" json:"ok" xml:"ok"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -731,7 +767,13 @@ type UpdateHubspotResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
 // response body.
 type TestHubspotResponseBody struct {
-	// Whether the credential authenticated against the provider
+	// Whether the connection passed its provider's verification: the credential
+	// authenticated AND the configured account passed that provider's own check.
+	// How deep that account check goes is provider-specific — it is not a
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK bool `form:"ok" json:"ok" xml:"ok"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -4774,11 +4816,11 @@ type AccountMonitorTotalsResponseBody struct {
 type GoogleAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// Google Ads customer ID. Optional: omit it to create the connection with
-	// credentials only, then choose one from GET
+	// Google Ads customer ID (digits only, no dashes). Optional: omit it to create
+	// the connection with credentials only, then choose one from GET
 	// .../connection-google-ads/accounts and set it with PUT.
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// Manager account used for API access
+	// Manager account used for API access (digits only, no dashes)
 	LoginCustomerID *string `form:"login_customer_id,omitempty" json:"login_customer_id,omitempty" xml:"login_customer_id,omitempty"`
 }
 
@@ -4898,9 +4940,10 @@ type TwitterAdsCredentialsRequestBody struct {
 type MicrosoftAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// Microsoft Advertising account ID
+	// Microsoft Advertising account ID (positive integer)
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// Microsoft Advertising customer ID
+	// Microsoft Advertising customer ID (a positive integer, digits only).
+	// Optional: omit it to let the credential's own customers be discovered.
 	CustomerID *string `form:"customer_id,omitempty" json:"customer_id,omitempty" xml:"customer_id,omitempty"`
 }
 
@@ -10352,6 +10395,11 @@ func ValidateCreateGoogleAdsRequestBody(body *CreateGoogleAdsRequestBody) (err e
 	if body.Credentials == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
 	}
+	if body.Config != nil {
+		if err2 := ValidateGoogleAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
 	if body.Credentials != nil {
 		if err2 := ValidateGoogleAdsCredentialsRequestBody(body.Credentials); err2 != nil {
 			err = goa.MergeErrors(err, err2)
@@ -10365,6 +10413,11 @@ func ValidateCreateGoogleAdsRequestBody(body *CreateGoogleAdsRequestBody) (err e
 func ValidateUpdateGoogleAdsRequestBody(body *UpdateGoogleAdsRequestBody) (err error) {
 	if body.Config == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
+	}
+	if body.Config != nil {
+		if err2 := ValidateGoogleAdsConnectionConfigRequestBody(body.Config); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
 	}
 	return
 }
@@ -10705,6 +10758,28 @@ func ValidateCreateHubspotCampaignRequestBody(body *CreateHubspotCampaignRequest
 	return
 }
 
+// ValidateGoogleAdsConnectionConfigRequestBody runs the validations defined on
+// google-ads-connection-configRequestBody
+func ValidateGoogleAdsConnectionConfigRequestBody(body *GoogleAdsConnectionConfigRequestBody) (err error) {
+	if body.AccountID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^([0-9]+)?$"))
+	}
+	if body.AccountID != nil {
+		if utf8.RuneCountInString(*body.AccountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 64, false))
+		}
+	}
+	if body.LoginCustomerID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.login_customer_id", *body.LoginCustomerID, "^([0-9]+)?$"))
+	}
+	if body.LoginCustomerID != nil {
+		if utf8.RuneCountInString(*body.LoginCustomerID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.login_customer_id", *body.LoginCustomerID, utf8.RuneCountInString(*body.LoginCustomerID), 64, false))
+		}
+	}
+	return
+}
+
 // ValidateGoogleAdsCredentialsRequestBody runs the validations defined on
 // google-ads-credentialsRequestBody
 func ValidateGoogleAdsCredentialsRequestBody(body *GoogleAdsCredentialsRequestBody) (err error) {
@@ -10803,6 +10878,14 @@ func ValidateRedditAdsConnectionConfigRequestBody(body *RedditAdsConnectionConfi
 	if body.AccountID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
 	}
+	if body.AccountID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^[A-Za-z0-9_]+$"))
+	}
+	if body.AccountID != nil {
+		if utf8.RuneCountInString(*body.AccountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 64, false))
+		}
+	}
 	return
 }
 
@@ -10869,6 +10952,22 @@ func ValidateTwitterAdsCredentialsRequestBody(body *TwitterAdsCredentialsRequest
 func ValidateMicrosoftAdsConnectionConfigRequestBody(body *MicrosoftAdsConnectionConfigRequestBody) (err error) {
 	if body.AccountID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.AccountID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^[1-9][0-9]{0,17}$"))
+	}
+	if body.AccountID != nil {
+		if utf8.RuneCountInString(*body.AccountID) > 18 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 18, false))
+		}
+	}
+	if body.CustomerID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.customer_id", *body.CustomerID, "^([1-9][0-9]{0,17})?$"))
+	}
+	if body.CustomerID != nil {
+		if utf8.RuneCountInString(*body.CustomerID) > 18 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.customer_id", *body.CustomerID, utf8.RuneCountInString(*body.CustomerID), 18, false))
+		}
 	}
 	return
 }

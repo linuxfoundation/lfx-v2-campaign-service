@@ -385,6 +385,20 @@ func TestInstallRejectsMisshapenValues(t *testing.T) {
 		"google ads values in shape":              {model.ProviderGoogleAds, "8666746580", map[string]string{"login_customer_id": "9746983954"}, gaCreds, false},
 		"microsoft customer id not numeric":       {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "cus-9"}, msCreds, true},
 		"microsoft values in shape":               {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "9"}, msCreds, false},
+		// Both Microsoft ids are IDENTITY claims — positive int64, no leading zero — at the
+		// design and at runtime, and this installer writes past the API straight to the
+		// repository. The digits-only shape admitted every row below onto the SHARED fallback
+		// that every project without its own connection dispatches through, where the probe
+		// and the create path then refuse it.
+		"microsoft account id zero":                 {model.ProviderMicrosoftAds, "0", map[string]string{"customer_id": "9"}, msCreds, true},
+		"microsoft account id leading zero":         {model.ProviderMicrosoftAds, "007", map[string]string{"customer_id": "9"}, msCreds, true},
+		"microsoft account id over nineteen digits": {model.ProviderMicrosoftAds, "12345678901234567890", map[string]string{"customer_id": "9"}, msCreds, true},
+		// Nineteen digits, so it matches the pattern; above MaxInt64, so only the runtime
+		// validator catches it. This is the case a regexp cannot express, and the reason
+		// valueValidators exists beside valueShapes rather than being folded into it.
+		"microsoft account id nineteen digits above MaxInt64": {model.ProviderMicrosoftAds, "9999999999999999999", map[string]string{"customer_id": "9"}, msCreds, true},
+		"microsoft customer id zero":                          {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "0"}, msCreds, true},
+		"microsoft customer id above MaxInt64":                {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "9999999999999999999"}, msCreds, true},
 		// Reddit now REQUIRES conversion_pixel_id (see requiredConfigKeys), so the in-shape
 		// case must supply one -- these rows assert the ACCOUNT ID's shape, and omitting the
 		// pixel would make them fail for an unrelated reason and stop testing what they name.

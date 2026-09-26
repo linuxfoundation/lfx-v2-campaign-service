@@ -241,7 +241,20 @@ func (d *HubSpotDispatcher) ResolveEmailClientWithOrigin(ctx context.Context, pr
 // The resolved is returned even alongside an error, for the same reason as the reddit adapter's
 // variant: a defect found after the fallback was taken still came from the system row.
 func (d *HubSpotDispatcher) resolveHubSpotClientWithCreds(ctx context.Context, projectID string, platform model.Provider) (client *hubspot.Client, res *resolved, err error) {
-	res, err = d.creds.resolve(ctx, projectID, platform)
+	return d.resolveHubSpotClientVia(ctx, projectID, platform, d.creds.resolve)
+}
+
+// resolveHubSpotClientVia is the body of the above with the credential entry point left to the
+// caller (see credsResolver), the same shape the reddit adapter already uses.
+//
+// It exists because ProbeConnection must NOT accept the LF system fallback: a connection test
+// answers "is THIS project's connection good?", and answering it from a borrowed row reports a
+// connection the project does not have as healthy. Threading the resolver rather than copying
+// the status/decode/completeness rules keeps the two paths from drifting — a credential
+// rejected at dispatch cannot be accepted by the test, which is the property that makes the
+// test worth trusting at all.
+func (d *HubSpotDispatcher) resolveHubSpotClientVia(ctx context.Context, projectID string, platform model.Provider, resolveCreds credsResolver) (client *hubspot.Client, res *resolved, err error) {
+	res, err = resolveCreds(ctx, projectID, platform)
 	if err != nil {
 		return nil, nil, err // already a preCreateError
 	}
@@ -282,6 +295,64 @@ func (d *HubSpotDispatcher) resolveHubSpotClientWithCreds(ctx context.Context, p
 		hubspot.AccountConfig{PortalID: res.providerConfig["portal_id"]},
 		d.opts...,
 	), res, nil
+}
+
+// ProbeConnection verifies the project's own HubSpot connection against HubSpot, for the
+// connection test (LFXV2-2665). Before this existed the test answered OK the moment a
+// credential blob was present in the row — it never decrypted it, never authenticated, and
+// never reached the portal.
+//
+// The probe call is AuthenticatedPortalID: it posts the private-app token to HubSpot's
+// token-info endpoint, so a revoked, rotated or mistyped token fails here and nowhere else.
+// That is the whole of the test. HubSpot is the one platform with no account to check
+// alongside the credential, because the token IS the account: the portal a campaign lands in
+// is the token's own, derived by the client.
+//
+// providerConfig["portal_id"] is therefore NOT an account selection and a mismatch against
+// the authenticated hub id is NOT a verdict — see the reasoning at the comparison itself
+// below. Nothing routes on that field; its only readers build app.hubspot.com deep links.
+// The probe's subject is left account-free for the same reason, so a rejected credential
+// never renders "for account <portal_id>" about a value that names nothing.
+//
+// Resolution goes through d.creds.resolveOwned, NEVER d.creds.resolve: the forced-system
+// fallback would let a project with no HubSpot connection of its own silently verify the LF
+// system row and be told it is healthy.
+func (d *HubSpotDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
+	client, res, err := d.resolveHubSpotClientVia(ctx, projectID, platform, d.creds.resolveOwned)
+	if err != nil {
+		return err
+	}
+
+	// configured is read for the deep-link warning below and for NOTHING else. It is
+	// deliberately kept out of the probe subject: accountID is what where() renders as "for
+	// account X" on a confirmed verdict, and portal_id names no account this probe checked.
+	configured := strings.TrimSpace(res.providerConfig["portal_id"])
+	subject := probeSubject{platform: platform}
+
+	portalID, perr := client.AuthenticatedPortalID(ctx)
+	if perr != nil {
+		return subject.probeClass(perr, hubspot.ProbeCredentialRejected, hubspot.ProbeInconclusive, hubspot.ProbeNotSent)
+	}
+
+	// portal_id is NOT the account this connection dispatches to, which is why a mismatch is
+	// not a verdict here. Unlike every ad platform's account_id, it routes NOTHING: the only
+	// readers are email.go and lists.go, which interpolate it into app.hubspot.com deep links
+	// for assets that were already created. The portal a campaign lands in is the token's own,
+	// derived by the client, exactly as ReadMetrics' provenance guard already records. So a
+	// blank or stale portal_id describes a connection that works — failing it would report a
+	// healthy connection as broken, and the message ("does not reach") would be false.
+	//
+	// It stays worth SAYING, because a stale value renders deep links into a portal the
+	// operator is not looking at. That is a link-building defect, logged for whoever has to
+	// explain a dead link, and deliberately not part of the operator-facing verdict.
+	if configured != "" && strings.TrimSpace(portalID) != configured {
+		slog.WarnContext(ctx, "the hubspot connection's configured portal_id does not match the portal its token authenticates into; the connection is usable and campaigns land in the token's portal, but app links built for created assets will point at the configured portal",
+			"project_id", projectID,
+			"configured_portal_id", configured,
+			"authenticated_portal_id", strings.TrimSpace(portalID),
+		)
+	}
+	return nil
 }
 
 // ReadMetrics implements service.MetricsReader for the HubSpot email channel (LFXV2-3058):

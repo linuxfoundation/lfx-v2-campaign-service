@@ -1171,7 +1171,9 @@ So when a manager id is configured, `listManagerClients` expands it with a `cust
 query scoped to the manager (`gaqlSearchForCustomer`, which takes an explicit customer id rather
 than the client's empty one). Manager rows are filtered out of the result: a manager account
 cannot hold campaigns, so offering one would let a caller select an account that fails at the
-first create. Only `status = 'ENABLED'` clients are requested. The expansion also supplies
+first create. Only `status = 'ENABLED'` clients are requested. Both narrowings belong to
+DISCOVERY and not to the connection probe, which walks the same hierarchy unfiltered — see *Why
+Google Ads is the one probe that does not check membership*. The expansion also supplies
 `descriptive_name`, which the flat endpoint does not return at all — so labels appear only for
 accounts reached this way. Without a manager id there is no hierarchy root to walk and the direct
 list is the whole answer.
@@ -2010,7 +2012,8 @@ embeds neither the stored account id nor the configured org id; there is no verd
 report. `TestLinkedIn_VerifyAccountOrg` pins this with a subtest whose handler answers `400` and
 asserts the result is `domain.ErrServiceDefect` and is NEITHER
 `domain.ErrOrgVerificationFailed` nor `domain.ErrOrgVerificationInconclusive` — the two buckets
-it would otherwise silently land in, one of which reports `OK: true`.
+it would otherwise silently land in, neither of which names this service as the party who has to
+act.
 
 Missing `accountID`/`org_id` is checked explicitly here too, because verifying a pairing needs
 both ids present and the discovery resolver only requires the credential to be otherwise usable;
@@ -2032,6 +2035,386 @@ told its absent connection is healthy); the other proves a project that does hav
 against ITS org id, using an LF row carrying the same account id but a different org id so the
 substitution would surface as a confirmed mismatch. Every other case in that file passes
 unchanged with the two resolvers swapped, so without these the boundary is undefended.
+
+## `ConnectionProber` (REQUIRED capability, LFXV2-2665)
+
+All six paid/email dispatchers here implement `service.ConnectionProber`:
+`ProbeConnection(ctx, projectID, platform) error`. Unlike `OrgReferenceVerifier` above, this is
+**not** optional — every platform can be asked whether its stored credential still works, so a
+dispatcher that cannot be asked is mis-wired rather than exempt, and the orchestrator answers a
+missing one with `domain.ErrServiceDefect` + `domain.ErrConnectionProbeUnwired` instead of nil.
+Silence would be the worst possible answer: the connection test would report `OK: true` having
+reached no platform at all, which is the exact defect this work removes.
+
+| Dispatcher | Probe call | Account check |
+| --- | --- | --- |
+| `GoogleAdsDispatcher` | `ProbeAccountReach` | reached / reached-but-not-capable / unreachable (see below) |
+| `MetaDispatcher` | `ListAdAccounts` | `meta.ValidateAccountID` pre-send, then configured id ∈ list (`trimMetaAccountPrefix` still normalizes `act_` on both sides, for the upstream side) |
+| `RedditDispatcher` | `VerifyAccount` → `GET /ad_accounts/{id}` | direct — the strongest form |
+| `TwitterDispatcher` | `VerifyAccount` → `GET` account root | direct |
+| `MicrosoftDispatcher` | `ListAdAccounts` | configured id ∈ list |
+| `HubSpotDispatcher` | `AuthenticatedPortalID` (token-info) | **none** — the token IS the account |
+
+For the five ad platforms an unconfigured `account_id` is a **failure**, because such a
+connection cannot run a campaign at all. HubSpot is the exception in both directions, and the
+reason is that `portal_id` is not an account selection: **nothing routes on it.** Its only
+readers are `email.go` and `lists.go`, which interpolate it into `app.hubspot.com` deep links
+for assets that already exist; the portal a campaign lands in is the token's own, derived by the
+client — the same fact `ReadMetrics`' provenance guard records above. So HubSpot's probe asks
+only whether the token authenticates, and a `portal_id` that is blank, stale, or mismatched
+answers `OK: true`. A mismatch is logged as a warning, because a stale value builds deep links
+into a portal the operator is not looking at, but it is a link-building defect rather than a
+verdict on the connection — failing it would report a working connection as broken, and
+`accountNotReachable`'s "does not reach" would be false on top of that.
+
+HubSpot's `probeSubject` is therefore built with **no `accountID` at all**. `where()` renders
+that field as "for account X" on a confirmed verdict, so seeding it with `portal_id` put the one
+value this section documents as routing nothing into the single message an operator reads as
+naming the thing that failed. It is the only probe whose subject is account-free, for the same
+reason it is the only one that checks no account: the token IS the account.
+
+### Why Google Ads is the one probe that does not check membership
+
+The other two membership probes ask a list whether it contains the configured id. Google Ads
+cannot, because the list it would ask is the account **picker's**, and in manager mode that list
+is filtered: `listManagerClients` requests `status = 'ENABLED'` and drops `manager` rows, because
+those are the accounts a campaign may be created in.
+
+Presence in that list is sound — it proves the connection can dispatch. **Absence proves
+nothing.** A suspended, cancelled or closed account, and a sub-manager account, are all reached
+perfectly well by the credential and all missing from it. Read as membership, each produced the
+confirmed, operator-facing verdict *"the google ads credential authenticates but does not reach
+account X"* about a credential that reaches X — sending the operator to repoint an account id
+that was correct, for a problem that lives in the Google Ads UI.
+
+So the probe asks its own question. `googleads.Client.ProbeAccountReach` runs the same
+hierarchy walk **unfiltered** and returns one of four `AccountReach` values, and the dispatcher
+renders three verdicts from them: `accountIsManagerAccount`, `accountNotEnabled`, and
+`accountNotReachable` — which is now a true statement, because the walk behind it no longer
+drops anything. The remedies genuinely differ: a manager account means the connection names the
+wrong LEVEL of the hierarchy, a disabled one means the account needs reinstating upstream, and
+only the third is "this connection points at an account you cannot reach".
+
+The picker's own query is untouched — `listManagerClients` still sends exactly the predicate it
+always did, and both queries are separate consts so neither caller can silently acquire the
+other's filter. `AccountUnreachable` is the **zero value** deliberately, so a reach returned
+alongside a non-nil error never reads as reachable. The platform's `status` string is compared
+against inside the client and never travels to a message: it is upstream text, and the
+confirmed-verdict arm is echoed to the operator verbatim.
+
+Flat mode (no `login_customer_id`) gets the same four values, in two legs.
+`customers:listAccessibleCustomers` is itself unfiltered, so an absence there really does mean
+the credential does not address the account — but it carries neither the manager flag nor the
+status, and membership ALONE was a false success: a manager account appears in that list and
+cannot hold a campaign, so a connection naming one tested green and failed at the first create.
+That is the production failure this endpoint exists to catch, produced by the endpoint meant to
+catch it. Presence is therefore followed by `selfReach`, a `customer_client` read scoped to the
+configured customer and narrowed to its own row by id — `customer_client` queried under a
+customer includes that customer, which is what makes the read work with no manager in the
+picture, and asking by id is what stops it reading an entire hierarchy when the configured
+account turns out to BE a manager.
+
+The second leg's failures stay errors rather than becoming verdicts. Neither `AccountReachable`
+(a success nothing established) nor `AccountUnreachable` (a confirmed verdict contradicting the
+enumeration that just named the account) is honest for "reached, properties unknown", so the
+error reaches `probeClass`, where `ProbeInconclusive`'s default for an error the package does not
+recognise makes it inconclusive. `TestProbeAccountReach_FlatMode` pins all of it.
+
+### Why the Microsoft probe carries the configured customer and the picker does not
+
+`cachedMicrosoftClient` builds the dispatch client with the stored `customer_id`, and
+`doCustomerRequest` sends it as the `CustomerId` header on every request — so a campaign runs
+under that customer and no other. The probe must therefore enumerate under that customer too.
+
+It used to pass a ZERO `AccountConfig`, which makes `discoveryCustomerIDs` walk every
+`CustomerRole` the credential holds. A connection whose `customer_id` was stale or simply wrong
+then passed its test whenever the configured account was reachable under some OTHER customer, and
+failed at campaign creation under the customer actually stored. `customer_id` is operator-settable
+through the connection config API, so that is a reachable state rather than a theoretical one.
+
+This is **not** the narrowing the Google Ads probe refuses, and the difference is whose filter it
+is. There the filtered walk belonged to the account PICKER and had nothing to do with dispatch, so
+absence from it proved nothing. Here the narrowing IS dispatch's, so absence from the enumeration
+is the true statement "not reachable as this connection is configured" — the verdict the operator
+needs, pointing at the account fields rather than the credential.
+
+With no customer configured the zero `AccountConfig` is still right, for the reason `ListAccounts`
+documents at length: the credential is then the whole question, and only walking every
+`CustomerRole` covers the set.
+
+`ListAccounts` — the account PICKER — keeps the zero config in both cases and deliberately does
+not scope to the stored customer, because its own contract promises every account the credential
+reaches. The two callers ask different questions, so they get different scopes.
+
+### Why the Reddit probe is the one that builds its own client
+
+Every `ProbeConnection` resolves credentials through `d.creds.resolveOwned`. Reddit's, alone,
+also took its **client** from the shared cache — `resolveRedditClientWithCreds` ends at
+`d.clients.buildOnce`, which holds the built client for the life of the connection row version.
+
+Two caches then compose, and neither is wrong on its own. `reddit.Client` holds its OAuth access
+token until the expiry buffer, so `refreshToken`'s fast path returns the cached token without a
+token-endpoint round trip at all; `buildOnce` keeps that client, and therefore that access token,
+alive past the call that minted it. A probe served from the cache authenticates with a token some
+earlier dispatch obtained and **never presents the stored refresh token**. A refresh token
+revoked an hour ago then answers `OK: true` until the access token ages out — the exact
+production failure this endpoint was built to catch, reproduced by the endpoint that exists to
+catch it.
+
+**One-shot probe clients also scope their token refresh to the probe.** `googleads`, `microsoft`
+and `reddit` run their token refresh under a single-flight whose leader detaches the call with
+`context.WithoutCancel` — the right default for a client that OUTLIVES a request and is shared by
+many waiters, since one caller's cancellation must not tear down a refresh the others are parked
+on. Neither reason holds for the client a probe builds, uses for one enumeration and drops: nothing
+else will ever read its cache, and the detached refresh runs on the platform's own request timeout,
+which is LONGER than the bound `ProbeConnection` puts on the whole probe — so cancelling the probe
+left a goroutine, a socket and a file descriptor alive to finish work already unreachable, per
+probe, on every connection, on platforms whose token endpoint is the slow part. Each of the three
+packages therefore exports `WithCallerScopedTokenRefresh()`, and the probe construction paths here
+pass it: `GoogleAdsDispatcher.resolveOwnedGoogleAdsDiscovery` takes variadic `extra` options for
+exactly this (the monitor read keeps the detached default), `MicrosoftDispatcher.ProbeConnection`
+appends it at construction, and `resolveRedditClientWithCredsCache`'s `!useCache` branch — the one
+that already refuses to read or write the cache — passes it too. Every one of those call sites
+COPIES `d.opts` (`append(append([]X(nil), d.opts...), extra...)`) rather than appending in place,
+because appending to a slice the dispatcher shares can publish one caller's extra option to the
+next through a reused backing array. The option is documented as safe only on a client no other
+caller shares; on a shared one it reintroduces exactly the tear-down the single-flight exists to
+prevent. `token_refresh_scope_test.go` in each of the three packages asserts BOTH directions.
+
+`resolveRedditClientWithCredsCache` makes the cache a caller's choice rather than an invariant,
+and `ProbeConnection` is the one caller that passes `useCache=false`. A parameter rather than a
+second copy of the function, because every validation above the build — the resolve, the decode,
+the completeness checks — is the part a probe most needs to keep. It does not WRITE the cache
+either: seeding it would hand the next dispatch a token minted for a connection test, and
+re-couple the two lifetimes this separation exists to keep apart.
+
+This is an outlier being corrected, not a new rule. `googleads`, `meta`, `hubspot`, `microsoft`
+and `twitter` each already construct their client inside `ProbeConnection`; Reddit was the only
+one that did not. `probe_fresh_client_test.go` pins both directions — a revoked refresh token
+must fail the probe even with a valid cached access token, and a probe must not decide which
+token the next campaign creation runs on.
+
+### The three verdicts decided before anything is sent
+
+`noAccountConfigured`, `accountIDNotUsable` and `customerIDNotUsable` are verdicts, not failures to check: campaign
+creation on such a connection cannot succeed, which is the question the test asks. Both are
+decided **before** the upstream call on every probe, and the ordering is load-bearing on the two
+enumerating platforms. Google Ads and Meta reach the same empty-account verdict through
+`probeMembership`, but only on the path where the enumeration SUCCEEDS — deferring the check let
+an unrelated 5xx classify inconclusive and answer with a platform that could not be reached — an
+outage to wait out — for a connection naming no ad account at all. `TestProbeConnection_NoAccountIsDecidedBeforeTheCall` asserts both the verdict
+and that nothing was sent.
+
+`accountIDNotUsable` covers the narrower case Reddit's client can raise from its own path guard:
+an account id that cannot be concatenated into a request at all. It is kept apart from the
+credential-rejection arm deliberately, and so are both of X's and Reddit's pre-send sentinels —
+`ProbeCredentialRejected` claims neither `reddit.ErrInvalidAccountID` nor
+`twitter.ErrAccountNotConfigured`, because the platform never evaluated the credential, and
+"your credential was rejected" sends an operator to re-authorise a connection whose only broken
+part is a value they can see on the row. The dispatchers intercept both sentinels next to their
+`ErrAccountNotSelected` arms, which is also what keeps them out of the inconclusive default.
+
+Meta and Microsoft need the same **shape** check, and for a sharper reason: on both, the stored
+id was being held to a WEAKER rule than the one dispatch applies to it. Meta's membership test
+strips `act_` from both sides, so a legacy row storing the bare `123` compared equal to the
+enumerated `act_123` and passed — while `MetaDispatcher.Dispatch` hands the stored id to
+`meta.AccountConfig` untouched and `meta.Client.CreateCampaign` rejects it on `accountIDRE`.
+Microsoft's probe validated `customer_id` but not `account_id`, and builds its discovery client
+with `CustomerID` only, so `Client.validateAccountIDs` — the dispatch-path caller of
+`microsoft.ValidateAccountID` — never ran on the probe path at all; a stored `0` or a 19-digit
+value above `MaxInt64` therefore bought an upstream enumeration whose transient 5xx would
+classify inconclusive and blame an unreachable platform. Both now call their platform's `ValidateAccountID`
+before anything is sent and answer `accountIDNotUsable`. The generalisation is the one the
+twitter and microsoft concepts already state: a STORED id must be held to the rule its own
+dispatch path applies, never to the looser one a comparison happens to tolerate.
+`TestMetaProbe_BareNumericStoredIDIsRefusedBeforeTheCall` deliberately serves `act_123` upstream,
+so it fails loudly if the guard is dropped and the normalisation relied on again;
+`TestMetaProbe_CanonicalStoredIDStillPasses` is the other half, pinning that the guard refuses
+only what dispatch refuses.
+
+Google Ads needs a **shape** check there as well as an emptiness check. Its `account_id` accepts
+the dashed form the Google Ads UI displays — `866-674-6580` — which `ListAccessibleCustomers`
+answers in the undashed form and can never contain, so without the check the membership test
+missed and the probe answered "the credential authenticates but does not reach account
+866-674-6580" about a credential that reaches that account perfectly well under the id Google
+actually uses. The dispatcher calls the client's own exported `googleads.ValidateCustomerID`
+rather than restating the pattern, and answers `accountIDNotUsable`. The design layer now
+declares a `Pattern` on that field as well (see [design](design.md)), which closes the HTTP door
+the dashed id arrived through; the runtime check stays because Goa validates only what comes in
+over HTTP, and because rows stored before the pattern landed still carry the dashed form.
+
+`customerIDNotUsable` is the same class for the OTHER operator-settable identity, Microsoft
+Advertising's `customer_id`, which scopes the whole enumeration rather than naming the account.
+`discoveryCustomerIDs` always refused a non-numeric or non-positive value — correctly — but with
+an unsentineled error, which neither probe predicate recognised, so `ProbeInconclusive`'s
+unrecognised-error default answered `true` and the service reported an unreachable platform for a
+connection that can never dispatch — an outage in place of the field on the row that can be fixed. `microsoft.ValidateCustomerID` (exported for exactly this, alongside
+`microsoft.ErrInvalidCustomerID`) is now consulted before the call, and the verdict is kept
+separate from `accountIDNotUsable` because the operator has to know which of the two fields on
+the same row to fix. `TestMicrosoftProbe_MalformedCustomerIDIsAVerdictNotInconclusive` pins it
+over `abc`, `0`, `-1`, `1.5` and an int64 overflow.
+
+All three carry `domain.ErrConnectionProbeNotAttempted` alongside `ErrConnectionProbeFailed`,
+built through `preSendProbeVerdict`. The marker changes nothing an operator sees — same status,
+same sentence — and has exactly one reader, `Orchestrator.ProbeConnection`'s metrics arm, which
+must not book an upstream call for a platform that was never contacted. `probeMembership` renders
+the same no-account sentence WITHOUT the marker, because reaching that line means an enumeration
+completed and a real call belongs in the upstream series;
+`probe_not_attempted_test.go` pins both halves verdict by verdict.
+
+### The one verdict that is not about the credential or the account
+
+`requiredConfigMissing` answers for a connection field that is neither an id nor a credential but
+without which the platform rejects every campaign create. Reddit's `conversion_pixel_id` is the
+only one today: `reddit.Client.CreateCampaign` refuses EVERY objective when none is configured
+(confirmed against the live API, not just the documented `conversions` case — see
+[reddit](internal-platform-reddit.md)) and refuses it before any upstream call, so the rejection
+is a certainty rather than a prediction. Without this verdict a Reddit connection with a working
+credential and a reachable account answered `OK: true` and then failed on first use — the exact
+"tests clean, fails on dispatch" shape LFXV2-2665 exists to remove.
+
+It runs **after** `VerifyAccount`, not before it, and is therefore the one local refusal that is
+deliberately NOT marked not-attempted. A connection can be broken twice over, and answering the
+pixel first would send an operator to fill in a field on a connection whose real problem is a
+dead credential — they would learn the actual problem on a second round trip. Running reachability
+first also means a real upstream call has happened by the time this verdict is reached, so its
+sample belongs in the upstream series like any other post-call verdict. The probe reads the pixel
+through `reddit.Client.ConversionPixelID()`, the same account config `CreateCampaign` reads, so
+the two cannot disagree about what "configured" means. `probe_reddit_pixel_test.go` pins the
+verdict, its wording (it names the field and says the credential authenticated), the absence of
+the marker, and the ordering.
+
+"Rejects every create" is scoped to what the **connection** supplies, and the distinction is
+worth stating precisely because Reddit's pixel can also be carried per campaign:
+`reddit.CampaignInput.ConversionPixelID` is preferred over the account config when set, and
+`RedditDispatcher.Dispatch` passes `redditConfig.conversionPixelId` straight into it
+(`internal/dispatch/reddit.go:178`) — so a brief carrying its own pixel dispatches fine on a
+connection that has none. That override is documented (`docs/api-catalog.md`), is not deprecated,
+is not narrowed by this verdict, and is pinned by
+`TestCreateCampaign_CampaignPixelOverridesAnAccountWithNone`.
+
+The verdict is still `OK: false`, because the override is the exception and not the
+configuration. The pixel identifies the advertiser and belongs to the ad ACCOUNT; the service
+supplies no default for it, so every brief that omits the optional override — which is what
+"optional" means — is refused by `reddit.Client.CreateCampaign` before any upstream call on a
+connection configured this way. Reporting such a connection healthy on the strength of a field
+each individual brief would have to re-supply is the "tests clean, fails on first use" false
+positive the endpoint removes, and the verdict names the field and where to find it either way.
+This is the one probe verdict that is a judgement about the product rather than a certainty
+about the platform, so it is stated as such here rather than presented as the only possible
+reading.
+
+### The verdict a 404 earns on Reddit and X
+
+`accountNotReachable` is also reached WITHOUT an enumeration on the two probes that name the
+configured account in the request path. Both packages export a third predicate,
+`ProbeAccountUnreachable`, matching a `404` on that account read; the dispatchers consult it
+immediately before `probeClass`.
+
+Neither standard predicate can state that outcome. Claiming it as a rejection — which both
+packages did until this was split out — renders "rejected the stored credential" about a
+credential the platform had just honoured, sending the operator to re-authorise instead of to
+repoint the account. Leaving it to fall through matches NEITHER predicate, because an `apiError`
+is not inconclusive, so it becomes `ErrServiceDefect`: a typed 500 that pages us about a
+connection the operator can fix themselves. The predicate lives in the platform packages because
+`apiError` is unexported in both — the dispatcher cannot read a status code it has no type for.
+`TestProbe404IsUnreachableNotRejected` pins both halves, verified by deleting each arm.
+
+### Every probe resolves `resolveOwned`, never `resolve`
+
+This is the design constraint the whole feature rests on, and it is the same trust boundary
+`VerifyAccountOrg` documents above. Every other dispatch path may fall back to the shared LF
+SYSTEM row under `LFX_FORCE_SYSTEM_ADS_ACCOUNT`; a connection TEST must never take it. "Is this
+project's connection good?" answered from a borrowed row reports a connection the project does
+not have as healthy, and nothing in the response reveals the substitution.
+
+Where a probe needs the dispatcher's existing resolve chain, that chain was **parameterized** by
+its credential entry point (`credsResolver`) rather than copied — the shape the Reddit adapter
+already used, now also in the Google Ads, Meta and HubSpot adapters. Threading the resolver keeps
+the two paths from drifting: a credential rejected at dispatch cannot be accepted by the test,
+which is the property that makes the test worth trusting at all.
+
+`internal/dispatch/probe_owned_resolver_test.go` pins it from SOURCE, via `go/ast`: it walks every
+non-test file here, finds each `ProbeConnection` (plus any `resolve*` helper it calls in the same
+file), and fails if the path reaches `d.creds.resolve` or never reaches `d.creds.resolveOwned`. An
+explicit `wantProbeConnectionDispatchers` list means DELETING a method fails too. The check is on
+source rather than behaviour because the failure is silent by construction — a `resolveOwned`
+swapped for `resolve` compiles, passes every functional test that uses a project WITH its own
+connection, and misbehaves only for the projects that do not.
+
+### The three-predicate vocabulary and why ORDER is load-bearing
+
+Each `internal/platform/*` package exports three predicates over its own error types —
+`ProbeCredentialRejected(err) bool`, `ProbeInconclusive(err) bool` and `ProbeNotSent(err) bool` —
+and one shared classifier here (`probeSubject.probeClass`) consults them **in that order** for all
+six platforms. Only the first two decide anything an operator sees:
+
+| Predicate outcome | Sentinel | Result at the service layer |
+| --- | --- | --- |
+| rejected | `domain.ErrConnectionProbeFailed` | `OK: false`, message echoed |
+| not rejected, inconclusive | `domain.ErrConnectionProbeInconclusive` | `OK: false`, with a message naming the unreachability rather than the credential |
+| neither | `domain.ErrServiceDefect` + `domain.ErrConnectionProbeRequestRejected` | typed **500** |
+
+`ProbeInconclusive` returns `true` for an error it does not recognise — it has to, because an
+unrecognised error proves nothing about the credential and the alternative is reporting
+connections broken on guesses. The consequence is that a revoked credential satisfies **both**
+predicates on most platforms, and only the evaluation order decides which verdict the operator
+sees. Reverse it and a revoked refresh token classifies as inconclusive and is reported as a
+platform that could not be reached — sending the operator to wait out an outage that is not
+happening instead of to re-authorise, which hides exactly the verdict this change exists to
+surface. `TestProbeClass_EvaluationOrderIsLoadBearing` exists
+for that one line.
+
+"Neither predicate" is deliberately NOT folded into inconclusive: it means the platform refused a
+request this service BUILT, which is not a verdict on the credential, and treating it as
+inconclusive would silently stop testing anything the day an endpoint moves.
+
+`ProbeNotSent` is the third and lowest-stakes member, and it decides nothing an operator sees. It
+answers only whether the request whose failure ENDED the probe left this process at all, and it
+has to be asked HERE because the
+platform error chain is dropped at this boundary: past `probeClass` nothing downstream can tell a
+request a provider answered badly from one no provider ever received. When it matches, the
+inconclusive outcome is wrapped in `notSentInconclusiveError`, which answers `errors.Is` for
+`domain.ErrConnectionProbeNotAttempted` and is read by exactly one caller —
+`Orchestrator.ProbeConnection`'s metrics arm. A DNS failure or a refused connection is a real
+fault, but it is this deployment's network at fault rather than the provider, and recording it on
+`campaign_upstream_call_duration_seconds` inflates that provider's error rate for something no
+provider did. The operator-facing answer does not move: the connection still could not be
+verified, and the advisory still says so.
+
+The predicate's subject is the FAILING request, not "no bytes at all", and the difference is
+load-bearing on `googleads`, `microsoft` and `reddit`, which probe on two legs — a token refresh,
+then an account read. A refresh that SUCCEEDS before the account read fails to dial still carries
+the marker. That is deliberate and it is the cheap direction: `recordUpstream` is handed the
+probe's non-nil error, so the sample suppressed here would be an **error** sample, and recording
+it books this deployment's own DNS or egress fault against the provider's error rate — the exact
+inflation the marker exists to prevent. What is given up instead is one SUCCESSFUL token call,
+which hides no provider failure from anyone. Narrowing the marker to a never-sent FIRST leg trades
+a harmless undercount for the miscount the mechanism was built to stop.
+
+A `408` belongs with `429` and `5xx` in `ProbeInconclusive`, not with the refusals, and this was
+true on the token leg before it was true on the account leg. A `408` means the endpoint or an
+intermediary gave up waiting for the request: nothing evaluated the credential, and the same call
+can succeed on a retry — both of which a rejection promises the opposite of. `googleads`,
+`microsoft` and `reddit` already read it that way when refreshing a token, but every platform's
+`apiError` arm recognised only `429` and `>= 500`, so an account-read `408` matched NEITHER
+predicate, fell through `probeClass`'s default arm and reached the operator as a typed **500**
+service defect — paging us for a timeout.
+
+Its default runs **opposite** to `ProbeInconclusive`'s, on purpose. `ProbeInconclusive` answers
+`true` for an error it does not recognise, so an unproven connection is never reported as proven;
+`ProbeNotSent` answers `false`, so an unrecognised error stays on the upstream series rather than
+vanishing from it. `notSentInconclusiveError` is kept separate from its sibling
+`preSendProbeVerdictError` — which carries the same marker for a CONFIRMED pre-send verdict —
+because each enforces the opposite invariant: that one may only ever wrap a confirmed verdict, this
+one only ever an inconclusive outcome, so a probe that reached nothing can never harden into a
+failure just because the wrapper made it convenient.
+
+The classifier also **drops** the platform error chain rather than wrapping it. The rejection arm
+is the one class echoed verbatim to the caller, and these clients render request URLs and raw
+response bodies; three of them (`googleads`, `reddit`, `microsoft`) carry the client secret and
+refresh token in the token-request body they would otherwise quote. Confirmed-verdict text is
+authored here, never copied from the platform.
 
 ## HubSpot campaign capability
 

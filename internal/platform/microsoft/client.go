@@ -221,6 +221,12 @@ type Client struct {
 	// refresh fails all current waiters at once rather than each re-leading a serial
 	// refresh. Mirrors the google-ads client.
 	inflight *tokenRefresh
+
+	// callerScopedRefresh keeps the leader's refresh derived from the CALLING
+	// context instead of detaching it. Off by default, because detaching is what
+	// makes the single-flight above safe for a client many callers share. See
+	// WithCallerScopedTokenRefresh.
+	callerScopedRefresh bool
 }
 
 // tokenRefresh holds the shared result of one in-flight token refresh. done is
@@ -300,6 +306,29 @@ func WithClock(now func() time.Time) Option {
 		if now != nil {
 			c.now = now
 		}
+	}
+}
+
+// WithCallerScopedTokenRefresh ties the token refresh's lifetime to the caller
+// that triggers it, instead of detaching it with context.WithoutCancel.
+//
+// Detaching is the right default for a client that OUTLIVES a request and is
+// shared by many: one caller's cancellation must not tear down a refresh the
+// other waiters are parked on, and the token it produces is reused long after
+// that caller is gone. Neither reason holds for a client built for ONE call and
+// dropped — a connection probe's. Nothing else will ever read its cache, so a
+// detached refresh buys nobody anything, and it outruns its caller: the refresh
+// runs on its own msAdsRequestTimeout deadline, which is longer than the bound
+// the probe orchestrator puts on the whole probe. Cancel the probe and the
+// goroutine, its socket and its file descriptor stay alive to finish work whose
+// result is already unreachable — per probe, on every connection, on a platform
+// whose token endpoint is the thing that is slow.
+//
+// Set this ONLY on a client no other caller shares. On a shared one it
+// reintroduces exactly the tear-down the single-flight exists to prevent.
+func WithCallerScopedTokenRefresh() Option {
+	return func(c *Client) {
+		c.callerScopedRefresh = true
 	}
 }
 
@@ -396,6 +425,28 @@ func (e *transportError) Error() string {
 }
 
 func (e *transportError) Unwrap() error { return e.err }
+
+// errRequestNotSent marks transportError's opposite: the request provably never left this
+// process. It is unexported because it is a MATCH target and never a message — ProbeNotSent is
+// the only reader — and it exists because this client cannot be classified the way its siblings
+// can. Google, Meta, Reddit and X return the raw dial error on the pre-send arm, so
+// isPreSendDialError still sees through the returned error; this client renders the cause
+// through safeCause into a plain string, deliberately, so a custom RoundTripper's error text
+// can never reach a persisted campaign step. That rendering also erases the *net.OpError the
+// classifier matches on, so the fact has to be carried explicitly instead.
+var errRequestNotSent = errors.New("microsoft-ads: the request was not sent")
+
+// notSentError renders an already-safe message and answers for errRequestNotSent.
+//
+// It wraps NOTHING: the point of the pre-send arm is that the cause is rendered and dropped, so
+// a type that unwrapped to it would reopen the leak this whole arrangement closes. Error()
+// therefore returns exactly the text the arm built, unchanged from before this marker existed.
+type notSentError struct{ msg string }
+
+func (e *notSentError) Error() string { return e.msg }
+func (e *notSentError) Is(target error) bool {
+	return target == errRequestNotSent
+}
 
 // tokenTransportError wraps a Do error from the OAuth2 token exchange. That request's BODY
 // carries the client_id/client_secret/refresh_token, and because WithHTTPClient accepts a
@@ -607,6 +658,12 @@ func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 		inflight = &tokenRefresh{done: make(chan struct{})}
 		c.inflight = inflight
 		refreshValuesCtx := context.WithoutCancel(ctx)
+		if c.callerScopedRefresh {
+			// A one-shot client: nothing outlives this caller to benefit from the
+			// detach, so the refresh stays bounded by the caller's own deadline
+			// rather than leaking past it. See WithCallerScopedTokenRefresh.
+			refreshValuesCtx = ctx
+		}
 		go func() {
 			fetchCtx, cancel := context.WithTimeout(refreshValuesCtx, msAdsRequestTimeout)
 			token, err := c.fetchToken(fetchCtx)
@@ -683,12 +740,23 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// A body this client cannot use must not erase the STATUS. Returning a bare read or size
+	// error here — ahead of the classification below — drops the failure out of BOTH probe
+	// predicates, so ProbeInconclusive's unrecognised-error default answers true and a plain
+	// 401 with a truncated or oversized body is reported as Microsoft having been
+	// unreachable — telling the operator to retry, when Microsoft answered plainly and
+	// refused their credential. That is the misdirection LFXV2-2665 exists to remove,
+	// arriving through the one door left open.
+	// The status is kept and classified; an unusable body is passed as nil, which carries no
+	// allowlisted code and so takes classifyTokenRefusal's conservative fallback. The error is
+	// still reported when the response was a 2xx, where the body IS the answer and there is no
+	// status to fall back on.
 	buf := new(bytes.Buffer)
+	var bodyErr error
 	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
-		return "", fmt.Errorf("read token response: %w", err)
-	}
-	if int64(buf.Len()) > maxResponseBytes {
-		return "", fmt.Errorf("token response exceeds %d bytes", maxResponseBytes)
+		bodyErr = fmt.Errorf("read token response: %w", err)
+	} else if int64(buf.Len()) > maxResponseBytes {
+		bodyErr = fmt.Errorf("token response exceeds %d bytes", maxResponseBytes)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Do NOT echo the token-endpoint body: this request carried the client
@@ -696,7 +764,47 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// untrusted and may reflect that credential material. This error can be
 		// persisted into a campaign's Steps, so a leaked secret would be durable —
 		// report status only.
-		return "", fmt.Errorf("microsoft-ads token refresh -> %d", resp.StatusCode)
+		//
+		// The status is CLASSIFIED as well as reported, because the two halves mean
+		// opposite things to a connection test. A 4xx is Microsoft evaluating this
+		// refresh token and refusing it — revoked, expired, or issued to different
+		// application credentials — and no amount of waiting reverses that. A 5xx is
+		// Microsoft's token endpoint being unavailable, which says nothing about the
+		// credential at all. See probe.go: without the split, a dead refresh token is
+		// indistinguishable from a transient outage and the connection test would
+		// report a permanently broken connection as healthy.
+		//
+		// 429 is a 4xx that does NOT belong on the refusal side, for the reason a rate
+		// limit never does in this repo: it is Microsoft declining to answer, not
+		// Microsoft answering. Left in the rejected arm it makes a throttled refresh say
+		// "the platform rejected your stored credential" about a credential the platform
+		// never evaluated, and ErrCredentialRejected's godoc promise — that the refusal
+		// is permanent and retrying re-sends it — would be false.
+		// 408 joins it for the same reason and is the other 4xx that is not an answer: the
+		// endpoint (or an intermediary) gave up waiting for the request. Nothing evaluated the
+		// credential, and retrying the same refresh can succeed — both of which a rejection
+		// promises the opposite of.
+		if resp.StatusCode >= 500 ||
+			resp.StatusCode == http.StatusTooManyRequests ||
+			resp.StatusCode == http.StatusRequestTimeout {
+			return "", fmt.Errorf("%w: microsoft-ads token refresh -> %d", errTokenEndpointUnavailable, resp.StatusCode)
+		}
+		// Everything else splits again, by WHOSE fault it is. Not every non-429 4xx is
+		// Microsoft evaluating the credential: a 3xx (redirects are not followed), a 404
+		// or 405 (the endpoint moved), and the three RFC 6749 codes that describe the
+		// REQUEST are all failures of what this service sent. Reported as credential
+		// rejections they told the operator to replace a credential Microsoft never
+		// looked at. classifyTokenRefusal reads only the allowlisted error CODE and
+		// still renders nothing from the body.
+		var body []byte
+		if bodyErr == nil {
+			body = buf.Bytes()
+		}
+		return "", fmt.Errorf("%w: microsoft-ads token refresh -> %d",
+			classifyTokenRefusal(resp.StatusCode, body), resp.StatusCode)
+	}
+	if bodyErr != nil {
+		return "", bodyErr
 	}
 
 	var tok tokenResponse
@@ -762,11 +870,32 @@ func (c *Client) AccountID() string { return c.account.AccountID }
 // validateAccountIDs rejects an AccountID (and, when set, CustomerID) that isn't a
 // digits-only id, before any request is built.
 func (c *Client) validateAccountIDs() error {
+	// BOTH rules, on both ids, and they are not redundant. accountIDRE is the TRANSPORT check
+	// — is this safe in a header — and it is applied to the value AS STORED, anchored and
+	// untrimmed, because the raw string is what reaches Header.Set below. ValidateAccountID and
+	// ValidateCustomerID are the IDENTITY check: they reject "0", "007" and anything past
+	// MaxInt64, none of which can name an account, holding a STORED id to the same rule
+	// ListAdAccounts already holds a discovered one to.
+	//
+	// Dropping either one loses something real. The identity rule alone would admit "\n123",
+	// since it trims before parsing and the header would still carry the untrimmed bytes. The
+	// transport rule alone is what this customer-id check used to be, and it let "0", "007" and
+	// a value above MaxInt64 through the dispatch choke point while the API, the bootstrap
+	// installer and the connection probe all refused them — the account half of this same
+	// function was already held to both.
 	if !accountIDRE.MatchString(c.account.AccountID) {
 		return fmt.Errorf("invalid Microsoft Advertising account id %q: must be digits only", clipID(c.account.AccountID))
 	}
-	if c.account.CustomerID != "" && !accountIDRE.MatchString(c.account.CustomerID) {
-		return fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
+	if err := ValidateAccountID(c.account.AccountID); err != nil {
+		return err
+	}
+	if c.account.CustomerID != "" {
+		if !accountIDRE.MatchString(c.account.CustomerID) {
+			return fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
+		}
+		if err := ValidateCustomerID(c.account.CustomerID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -818,8 +947,16 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 // is a header whose contents must be checked, and the AccountID half of that helper is the
 // only part this path can afford to drop.
 func (c *Client) doCustomerRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
-	if c.account.CustomerID != "" && !accountIDRE.MatchString(c.account.CustomerID) {
-		return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
+	if c.account.CustomerID != "" {
+		// Both rules, for the reasons validateAccountIDs gives in full: the transport check on
+		// the raw stored bytes that reach the header, and the identity check that refuses an id
+		// no customer can have. This path drops only the ACCOUNT half of that helper.
+		if !accountIDRE.MatchString(c.account.CustomerID) {
+			return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
+		}
+		if err := ValidateCustomerID(c.account.CustomerID); err != nil {
+			return nil, err
+		}
 	}
 	return c.do(ctx, method, c.customerBaseURL+"/CustomerManagement/"+c.apiVersion+"/"+path, path, body, idempotent, false)
 }
@@ -967,8 +1104,9 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 	resp, derr := c.httpClient.Do(req)
 	if derr != nil {
 		if isPreSendDialError(derr) {
-			// The request never left the host: a mutation definitely did not happen.
-			return nil, 0, false, fmt.Errorf("microsoft-ads %s %s: %s", method, path, safeCause(derr))
+			// The request never left the host: a mutation definitely did not happen, and the
+			// probe path must not book an upstream-call sample for a platform nothing reached.
+			return nil, 0, false, &notSentError{msg: fmt.Sprintf("microsoft-ads %s %s: %s", method, path, safeCause(derr))}
 		}
 		// Ambiguous: the request may have been received before the failure.
 		return nil, 0, false, &transportError{Method: method, Path: path, err: derr}

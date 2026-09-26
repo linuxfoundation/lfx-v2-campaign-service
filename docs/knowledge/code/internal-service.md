@@ -73,6 +73,32 @@ campaign — losing one metric is strictly cheaper. Upstream
 calls are timed only AFTER the pre-platform guards pass, so local refusals (which return
 in nanoseconds) do not drag the latency quantiles toward zero.
 
+`ProbeConnection` is the one path whose local refusals cannot be hoisted above the timer,
+because they are decided inside the DISPATCHER: a connection that names no ad account, or
+whose account id or customer id cannot form a valid request for its platform, is refused
+before anything is built. Those verdicts carry `domain.ErrConnectionProbeNotAttempted`
+alongside their confirmed-failure sentinel — otherwise a platform with a few misconfigured
+rows shows an upstream error rate and near-zero latency samples for calls it never received.
+The operator's answer is unchanged: these stay `OK: false` with their own wording, and only
+the metric moves.
+
+The same is true of everything the dispatcher's own resolver refuses — an unreadable row, an
+undecryptable credential, an inactive connection, a malformed blob — all of which also happen
+inside the measured call, and none of which the platform ever saw. Without excluding those, a
+datastore or key-management incident reads as a provider outage on the one series that is
+supposed to mean the provider.
+
+`probeReachedThePlatform` is the gate, and it names the LOCAL outcomes rather than
+allow-listing the probe vocabulary. The two directions fail differently: an allow-list drops
+whatever it does not recognise, so a post-call error a future dispatcher returns outside the
+probe vocabulary would disappear from the series silently — a real platform failure going
+unseen. Naming the local set keeps the default on *record it*, which is wrong only in the cheap
+direction. What makes that default safe is that the local set is closed and **checked**:
+`TestProbeLocalRefusalsCoverTheResolverVocabulary` scans `internal/dispatch/creds.go` for its
+domain sentinels and requires each to be either in `probeLocalRefusalSentinels` or named in the
+test's exemption map with a reason, so a sentinel added to the resolver later fails loudly
+instead of quietly re-entering the upstream series.
+
 The RUNNING and TERMINAL job transitions are recorded with deliberately OPPOSITE rules.
 RUNNING is recorded on **attempt** (dispatch proceeds whether or not the status write
 lands, so gating it would under-count during a database blip). The terminal one is
@@ -676,7 +702,8 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
     400/401/429/5xx, a 2xx whose body yields no usable token, or a request this service could not
     build (`domain.ErrTokenRequestRejected` → `token_request_rejected`). Retryability is a second
     axis independent of which credential is implicated; routing the permanent failures here keeps
-    them out of the inconclusive bucket, which reports `OK: true`.
+    them out of the inconclusive bucket, which reports a platform that could not be reached and so
+    invites a retry that can never succeed.
   - `VerifyAccountOrg` (`internal/dispatch/linkedin.go`), for a **non-429, non-403 4xx** on the ad
     account discovery walk (`domain.ErrAccountDiscoveryRejected` → `account_discovery_rejected`).
     LinkedIn received and refused the request THIS SERVICE built, and the walk embeds neither the
@@ -845,9 +872,12 @@ see — so the drift would have been invisible rather than caught.
 
 Note that `status=active` on such a connection is deliberate, not a gap in the lifecycle.
 **`active` says the connection is ENABLED for credential-based operations — it does not say the
-credentials were verified.** Nothing verifies them: `createConn` serializes, encrypts and
-persists exactly what was supplied, and `testConn` says so itself (upstream verification is not
-implemented), so an active row can hold OAuth material the platform will reject. What `active`
+credentials were verified.** Nothing on the WRITE path verifies them: `createConn` serializes,
+encrypts and persists exactly what was supplied, so an active row can hold OAuth material the
+platform will reject. Verification happens only when a connection test is run — since
+LFXV2-2665 all seven `Test<Platform>Ads` handlers do verify upstream (see "The other six
+connection tests verify upstream too" below), but a row that has never been tested, or was
+tested before its credential was revoked, is `active` all the same. What `active`
 buys is reachability — `validateGoogleAdsCredentials` refuses a non-active connection, so a
 distinct "pending" status would make discovery unreachable for exactly the connections that need
 it, and the bootstrap would dead-end at step two. Readiness to run a campaign is a separate,
@@ -928,10 +958,13 @@ messages a single request can produce always agree.
 
 ## LinkedIn org/account pairing verification (LFXV2-2665)
 
-`TestLinkedinAds` is the one `Test<Platform>Ads` handler that goes beyond the shared `testConn`
-baseline (connection exists, has credentials — testConn itself does not verify upstream; see
-the note above and its LFXV2-2556 follow-up, which still applies unchanged to the other 5
-platforms). It calls `testConn` first and short-circuits on failure or `!result.OK`; only when
+`TestLinkedinAds` verifies something no other handler does. All seven handlers now go beyond the
+shared `testConn` baseline (connection exists, has credentials — `testConn` itself still verifies
+nothing upstream); the other six do it through `ConnectionProber`, described in "The other six
+connection tests verify upstream too" below. LinkedIn's check predates that path and is strictly
+stronger — it verifies the org/account PAIRING, not merely that the credential reaches the
+account — so it was left where it is rather than re-pointed at a weaker check, and it does not
+call `ProbeConnection` at all. It calls `testConn` first and short-circuits on failure or `!result.OK`; only when
 the baseline passes does it call `Orchestrator.VerifyAccountOrg`, which cross-checks the
 connection's stored `org_id` against LinkedIn's own record of which organization sponsors the
 stored `account_id` (`linkedin.Client.VerifyAccountOrgReference`, via
@@ -949,7 +982,7 @@ prevent:
 | --- | --- | --- |
 | Confirmed verdict | a reference naming a different org, an account absent from a complete walk, a malformed or absent stored id, a `403` | `OK: false`, the message echoed |
 | Credential / connection-state failure | expired or unrefreshable credentials, an unusable stored blob | `OK: false`, fixed remedy text |
-| Inconclusive | dial, transport, `429`, `5xx`, a completeness guard, a retryable token exchange | **`OK: true`** with a fixed advisory |
+| Inconclusive | dial, transport, `429`, `5xx`, a completeness guard, a retryable token exchange | **`OK: false`** with a fixed advisory naming the unreachability, never the pairing |
 | Service defect | a non-429/non-403 `4xx` on the walk, an unwired verifier, a permanently failing token exchange | typed **500** with a `reason` token |
 
 A 503 is separate again, reserved for `resolveBackendWithOrch` reporting the repo or orchestrator
@@ -957,15 +990,20 @@ itself unavailable — checked before the verification call is attempted — and
 the connection row (`domain.ErrConnectionLoadFailed`), which is retryable and proves nothing about
 the connection's contents.
 
-The inconclusive row is the one that most needs stating plainly, because it inverts the intuition:
-a failure of the `ListAdAccounts` enumeration walk ITSELF reaches this package as
+The inconclusive row is the one that most needs stating plainly, because it is the row that moved.
+A failure of the `ListAdAccounts` enumeration walk ITSELF reaches this package as
 `domain.ErrOrgVerificationInconclusive`, and `TestLinkedinAds` checks for that sentinel with
-`errors.Is` FIRST, before folding anything into `OK: false`. That failure proves nothing about the
-account/org pairing — only that the cross-check couldn't run — so it reports `OK: true` with an
-advisory: the credential baseline already passed, and there is no basis to call a connection broken
-because an optional secondary check happened to fail. The corollary is the standing hazard here:
-anything wrongly folded into that sentinel silently reports a BROKEN connection as healthy, which
-is why each of the other three rows exists as its own outcome rather than a fallthrough.
+`errors.Is` FIRST, before folding anything into the echoing `OK: false` arm. It answers `OK: false`
+too — `ok` is declared as a CONJUNCTION, the credential authenticated AND the configured account
+passed that provider's own check, and an incomplete walk establishes neither half of it; this arm
+is where the older credential-only justification was plainly false, because reaching it REQUIRES
+the credential baseline to have already passed, so LinkedIn had demonstrably accepted the
+credential and only the org-reference cross-check failed to finish — but its message names the
+unreachability and says nothing about the stored pairing, so no operator is told a pairing is wrong on the strength of a walk that
+never compared it. The corollary is the standing hazard here: anything wrongly folded into that
+sentinel is reported as somebody else's outage to wait out, and the remedy the operator does own is
+never named — which is why each of the other three rows exists as its own outcome rather than a
+fallthrough.
 
 **That sentinel is a DOMAIN one, not the platform client's**, and the difference is the whole
 safety story. `internal/platform/linkedin` returns its own `ErrOrgVerificationInconclusive`
@@ -1059,6 +1097,122 @@ dispatcher, and `resolveBackendWithOrch` checks only that the orchestrator point
 a LinkedIn dispatcher missing from the registry would have passed the baseline, skipped the
 cross-check silently, and answered `OK: true` — the same "broken connection reported healthy"
 outcome the verification exists to prevent, and one invisible in the response.
+
+## The other six connection tests verify upstream too (LFXV2-2665)
+
+Until this change, `TestGoogleAds`, `TestMetaAds`, `TestRedditAds`, `TestTwitterAds`,
+`TestMicrosoftAds` and `TestHubspot` returned the `testConn` baseline unchanged — `OK: true` the
+moment a credential blob existed in the row. Not that it decrypts, not that it authenticates, not
+that it reaches the configured account. A refresh token revoked months earlier tested clean and
+failed at campaign creation, which is the one thing a connection test exists to prevent.
+
+All six now call `Orchestrator.ProbeConnection` through one shared helper,
+`testConnUpstream(ctx, projectID, d accountDiscovery)` (`connection.go`), modelled on the
+LinkedIn switch above and classifying the same way:
+
+| Probe error | Response |
+| --- | --- |
+| `nil` | `OK: true`, "verified against the platform" |
+| `ErrConnectionProbeInconclusive` | `OK: false` with an advisory naming the unreachability and never the credential; the verification CONJUNCTION was not established, which is what the field reports — never that the credential failed to authenticate, since on a two-leg probe it may already have |
+| `ErrConnectionProbeFailed` | `OK: false`, message ECHOED — the only echoable class |
+| `ErrCredentialDecryptionFailed` | typed **500**, no error text (the chain can quote ciphertext and key material) |
+| `ErrServiceDefect` | typed **500**, `reason=` logged; the operator owns nothing here to repair |
+| `ErrConnectionLoadFailed` | **503** — the one outcome retrying can fix |
+| `ErrConnectionNotUsable` | `OK: false` with a FIXED per-provider remedy, quoting no part of the error |
+| `ErrNotFound` | **404** — the row was deleted between the baseline read and the prober's own |
+| anything else | `OK: false` with fixed text, detail to the log |
+
+**The `ErrNotFound` row is about a window, not about a platform.** This endpoint reads the
+connection TWICE — the `testConn` baseline, then the prober's own `resolveOwned` — and a delete
+landing between them makes the second read answer `domain.ErrNotFound`. Left in the default arm
+that became a 200 saying "connection found, but ... verification could not be completed", whose
+first clause is the half that stopped being true: the caller is told a connection it no longer
+has is merely untested. The baseline read already maps this sentinel to 404, so the arm exists to
+keep the two reads answering alike. Reading it as the CONNECTION's absence rather than some
+platform-side 404 is safe because every prober resolves through `creds.resolveOwned`, which never
+consults the LF system scope — so on this path the sentinel can only mean the project's own row
+is gone.
+
+**`TestLinkedinAds` carries the same arm, because it makes the same two reads.** LinkedIn is the
+one test endpoint that does not route through `testConnUpstream`: its second read happens behind
+`Orchestrator.VerifyAccountOrg`. Adding the arm to `testConnUpstream` alone left that endpoint
+answering 200 for the identical race, and two endpoints answering the same question about the same
+row must not diverge on it. `TestTestLinkedinAds_DeletedMidTestIs404` pins the LinkedIn half
+beside `TestTestConnUpstream_DeletedMidTestIs404`.
+
+**The inconclusive row answers `OK: false`, and it did not always.** The field is declared as a
+CONJUNCTION — the credential authenticated AND the configured account passed the provider's own
+check — and a probe that was rate-limited, met a `5xx`, or never reached the platform at all did
+not establish that as a whole, so `true` was a claim the service had not earned.
+
+The conjunction is the load-bearing word, and getting it wrong in the JUSTIFICATION was a
+round-9 finding even though the verdict was right. Saying `ok` is false "because the credential
+did not authenticate" is untrue on the paths that reach this arm most often: `googleads`,
+`microsoft` and `reddit` probe on two legs, a token refresh and then an account read, and a
+refresh that SUCCEEDED before the account read timed out means the provider accepted the
+credential outright. `OK: false` still holds — the conjunction was not established — but the
+message may claim only that the check is INCOMPLETE, never that the credential was left
+untouched. The `TestLinkedinAds` arm is where the old wording was most plainly false: reaching it
+requires the credential baseline to have already passed, so LinkedIn had demonstrably accepted
+the credential and only the org cross-check failed to finish. Both messages now assert the
+narrower fact, and `connection_test.go` and `connection_probe_test.go` each carry an INVERSE
+guard asserting the overclaim has not come back. Reporting it as `true` with an advisory also depended on the caller reading
+`message` — and a caller that branches on `ok` alone (a badge, a gate on "can this connection run a
+campaign") got "fine" for a connection nothing had verified. The two sentinels moved TOGETHER,
+`domain.ErrConnectionProbeInconclusive` here and `domain.ErrOrgVerificationInconclusive` in
+`TestLinkedinAds`, so that `ok` cannot mean one thing on LinkedIn and another on the other six.
+What keeps this honest rather than merely strict is the MESSAGE: an inconclusive outcome says the
+platform could not be reached and says nothing about the stored credential or pairing, while a
+confirmed rejection names the credential or the field. Both are `OK: false`; they are never
+confused for one another, and only the rejection class echoes the underlying text.
+
+The `ErrServiceDefect` row's `reason=` is the WHOLE diagnostic for that outcome — the response
+is fixed text carrying no detail — so `unusableConnectionReason` grew an arm for each probe
+sentinel that travels alongside it: `probe_request_rejected` for
+`domain.ErrConnectionProbeRequestRejected` (the platform refused a request this service built)
+and `probe_unwired` for `domain.ErrConnectionProbeUnwired` (a registered dispatcher that cannot
+be asked). Without them both defects logged `reason=unclassified`, which in that vocabulary
+means "no sentinel was attached" — and there were two.
+
+The echo is an ALLOWLIST, not a default. Every class that reaches this switch without an arm of
+its own used to inherit the echo simply by not matching one, so a class added later must opt in
+rather than leak by omission. The `ErrConnectionNotUsable` arm matters for the same reason: one
+of its conditions is found by decoding the DECRYPTED credential blob, and `encoding/json` quotes
+its input — echoing there would put credential-derived bytes into an HTTP body for exactly the
+connection whose credentials are malformed.
+
+With no credential stored the platform is never contacted and the message names the absent
+credential: "authorize this connection" and "re-authorize this connection" are different
+remedies, and collapsing them sends an operator to the wrong place.
+
+Because all seven endpoints now verify upstream, `testConn`'s own message became a false claim on
+every path. It was made neutral ("upstream verification has not been run on this result") rather
+than removed, since deleting it would make a nil `Message` the signal; every caller replaces it.
+
+Two new `accountDiscovery` descriptors were added rather than reusing existing ones:
+`redditAdsConnectionDiscovery` and `hubspotConnectionDiscovery`. Both name providers that already
+had a descriptor — `redditAdsAccountDiscovery` (`operation: "account monitor"`,
+`connection_monitor.go`) and `hubspotEmailDiscovery` (`operation: "email search"`) — and reusing
+either would have given the connection test log lines and messages labelled with a surface the
+caller never touched. The per-surface convention is the one `connection_monitor.go` already
+establishes.
+
+A failed READ of the connection row is a **503**, not a 500, and `testConn` now answers it
+directly instead of routing through `mapErr` — whose default arm is `InternalServerError`. The
+rule is `docs/api-catalog.md`'s own `/test` row: nothing was learned, and it is the one outcome
+on this endpoint that retrying can fix, so a permanent-looking 500 both misdescribed it and paged
+whoever owns the code rather than telling the caller to try again. `domain.ErrNotFound` keeps its
+404: that read SUCCEEDED and returned the absence, which is an answer about the connection rather
+than a failure to look. Nothing is sent upstream on the strength of a row nobody could read —
+`TestTestConn_UnreadableRowIs503NotAn500` asserts the prober was not called at all, and its
+sibling pins the 404.
+
+`ConnectionProber` is declared here as a **required** capability, in contrast to
+`OrgReferenceVerifier` directly above it: there is deliberately no per-platform table saying which
+platforms support it, because every platform can be asked whether its credential still works. A
+missing dispatcher, or a registered dispatcher that does not implement the interface, is
+`ErrServiceDefect` + `ErrConnectionProbeUnwired` — never nil, which would answer `OK: true` having
+verified nothing.
 
 ## HubSpot email search (LFXV2-3197)
 
