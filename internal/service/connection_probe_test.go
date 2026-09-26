@@ -61,6 +61,30 @@ func testGoogle(t *testing.T, s *ConnectionService) (*conn.ConnectionTestResult,
 	return s.TestGoogleAds(context.Background(), &conn.TestGoogleAdsPayload{ProjectID: "tlf"})
 }
 
+// TestTestConnUpstream_DeletedMidTestIs404 pins the arm for a connection deleted between the
+// two reads this endpoint makes: the testConn baseline reads the row, and then the prober's own
+// resolveOwned reads it again. A delete landing in that window makes the second read answer
+// domain.ErrNotFound.
+//
+// Without its own arm that lands in the default arm and answers 200 "connection found, but
+// google ads verification could not be completed" — and "connection found" is exactly the half
+// that stopped being true, so the caller is told a connection it no longer has is merely
+// untested. The endpoint declares 404 for an absent connection and the baseline read already
+// maps this sentinel that way; the two reads have to answer alike.
+func TestTestConnUpstream_DeletedMidTestIs404(t *testing.T) {
+	stub := &connectionProberStub{err: fmt.Errorf("resolve owned connection: %w", domain.ErrNotFound)}
+	s := newProbeService(t, stub)
+
+	res, err := testGoogle(t, s)
+	if res != nil {
+		t.Fatalf("result = %+v for a connection deleted mid-test; a 200 here reports a deleted connection as present", res)
+	}
+	var nf *conn.NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("err = %v (%T), want a 404 NotFoundError — the connection is gone, which is what the endpoint declares 404 for", err, err)
+	}
+}
+
 // TestTestConnUpstream_ProbeRuns is the headline assertion of LFXV2-2665: the connection test
 // no longer answers from the presence of a credential blob in the row. It reaches the platform.
 //

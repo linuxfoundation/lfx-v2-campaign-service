@@ -301,11 +301,17 @@ var valueValidators = map[model.Provider]map[string]func(string) error{
 // typed it.
 //
 // Two sources, because the constraint lives in different places per provider, and mirroring
-// only one of them was the bug: design/connection.go carries a Pattern() for LinkedIn, Meta
-// and X, and for Google Ads, Microsoft and Reddit the constraint exists only as a RUNTIME
-// validator (dispatch's storedCustomerIDRE, microsoft's accountIDRE, reddit's accountIDRe —
-// the last two also guard header and path interpolation). Taking the design as the whole
-// contract let `-provider google-ads -account-id foo` install cleanly and exit 0.
+// only one of them was the bug: design/connection.go now carries a Pattern() for every id in
+// this map — LFXV2-2665 added Google Ads' and Reddit's, which previously existed only as
+// RUNTIME validators (dispatch's storedCustomerIDRE, microsoft's accountIDRE, reddit's
+// accountIDRe — the last two also guard header and path interpolation). Taking the design as
+// the whole contract let `-provider google-ads -account-id foo` install cleanly and exit 0.
+//
+// The two sources have NOT collapsed into one, and this installer still needs both: a Pattern
+// binds the HTTP transport, and this path writes past it straight to the repository, so a row
+// written by bootstrap, a migration, or before a pattern existed never passed through Goa at
+// all. Microsoft is where they also differ in substance — see valueValidators below, whose
+// positive-int64 rule states the one thing a regexp cannot.
 //
 // A provider/key absent here is unconstrained at BOTH sources — HubSpot's list id, Meta's
 // app_id — not merely absent from the design.
@@ -314,7 +320,7 @@ var valueShapes = map[model.Provider]map[string]*regexp.Regexp{
 	model.ProviderLinkedInAds: {"account_id": numericID, "org_id": numericID},
 	model.ProviderMetaAds:     {"account_id": regexp.MustCompile(`^act_[0-9]+$`), "page_id": numericID},
 	model.ProviderTwitterAds:  {"account_id": alnumID, "funding_instrument_id": alnumID},
-	// Runtime validators only — the design checks presence alone for these.
+	// design/connection.go Pattern() as of LFXV2-2665; runtime validators before that.
 	model.ProviderGoogleAds: {"account_id": numericID, "login_customer_id": numericID},
 	// positiveID, not numericID: both Microsoft ids are held to `^[1-9][0-9]*$` with
 	// MaxLength(19) at the design and to a positive-int64 rule at runtime. The digits-only

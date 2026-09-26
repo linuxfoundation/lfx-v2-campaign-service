@@ -496,10 +496,27 @@ func (s *ConnectionService) testConnUpstream(ctx context.Context, projectID stri
 		// failed" alone leaves an operator nothing to repair.
 		msg := fmt.Sprintf("connection found, but %s verification failed: %s", d.displayName, perr.Error())
 		return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
+	case errors.Is(perr, domain.ErrNotFound):
+		// The row was read once by the testConn baseline above and again by the prober's own
+		// resolveOwned, and it was there the first time and gone the second: it was deleted
+		// between the two reads. The default arm below would answer 200 with "connection found,
+		// but ... verification could not be completed", and "connection found" is precisely the
+		// half that stopped being true — a caller would be told a connection it no longer has is
+		// merely untested. The endpoint declares 404 for a connection that is not there, and
+		// testConn's own baseline read already maps this sentinel that way, so this arm only
+		// keeps the two reads answering alike.
+		//
+		// Safe to read as the CONNECTION's absence rather than some platform-side 404: every
+		// prober resolves through creds.resolveOwned, which never consults the LF system scope
+		// (probe_owned_resolver_test.go pins that), so this sentinel on this path can only mean
+		// the project's own row is gone.
+		slog.WarnContext(ctx, "the connection was deleted while its test was running; reporting it as not found",
+			"project_id", projectID, "provider", provider)
+		return nil, mapErr(perr)
 	default:
-		// Not a verdict this layer recognises, so its text is not echoed. It could be a repo
-		// ErrNotFound from a connection deleted mid-test, or a class added later by a path that
-		// never considered this endpoint. OK: false is still right — no probe succeeded — but
+		// Not a verdict this layer recognises, so its text is not echoed: a class added later by
+		// a path that never considered this endpoint. OK: false is still right — no probe
+		// succeeded — but
 		// the message is fixed and the detail goes to the log, where it reaches an operator
 		// without reaching an HTTP body.
 		slog.ErrorContext(ctx, "the connection probe returned an unclassified error; the connection test is reporting a generic failure",

@@ -475,8 +475,11 @@ func TestTestLinkedinAds_UpstreamVerification(t *testing.T) {
 			t.Fatalf("TestLinkedinAds: %v", err)
 		}
 		// Same contract as testConnUpstream's inconclusive arm, and it has to be the same on
-		// both or `ok` means one thing on linkedin and another everywhere else: the credential
-		// did not authenticate against linkedin, which is what the field reports, so OK: false.
+		// both or `ok` means one thing on linkedin and another everywhere else: the walk did not
+		// establish the CONJUNCTION the field reports — the credential authenticated AND the
+		// configured account passed linkedin's own check — so OK: false. Not "the credential did
+		// not authenticate": reaching this arm REQUIRES the credential baseline to have passed,
+		// so on this path linkedin demonstrably accepted it and only the cross-check stalled.
 		if res.OK {
 			t.Errorf("OK = true for a walk that reached no verdict; a caller reading ok alone gets a " +
 				"green check for a pairing nothing verified")

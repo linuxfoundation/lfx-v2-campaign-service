@@ -1113,13 +1113,25 @@ LinkedIn switch above and classifying the same way:
 | Probe error | Response |
 | --- | --- |
 | `nil` | `OK: true`, "verified against the platform" |
-| `ErrConnectionProbeInconclusive` | `OK: false` with an advisory naming the unreachability and never the credential; nothing was learned, so the credential did not authenticate against the provider |
+| `ErrConnectionProbeInconclusive` | `OK: false` with an advisory naming the unreachability and never the credential; the verification CONJUNCTION was not established, which is what the field reports — never that the credential failed to authenticate, since on a two-leg probe it may already have |
 | `ErrConnectionProbeFailed` | `OK: false`, message ECHOED — the only echoable class |
 | `ErrCredentialDecryptionFailed` | typed **500**, no error text (the chain can quote ciphertext and key material) |
 | `ErrServiceDefect` | typed **500**, `reason=` logged; the operator owns nothing here to repair |
 | `ErrConnectionLoadFailed` | **503** — the one outcome retrying can fix |
 | `ErrConnectionNotUsable` | `OK: false` with a FIXED per-provider remedy, quoting no part of the error |
+| `ErrNotFound` | **404** — the row was deleted between the baseline read and the prober's own |
 | anything else | `OK: false` with fixed text, detail to the log |
+
+**The `ErrNotFound` row is about a window, not about a platform.** This endpoint reads the
+connection TWICE — the `testConn` baseline, then the prober's own `resolveOwned` — and a delete
+landing between them makes the second read answer `domain.ErrNotFound`. Left in the default arm
+that became a 200 saying "connection found, but ... verification could not be completed", whose
+first clause is the half that stopped being true: the caller is told a connection it no longer
+has is merely untested. The baseline read already maps this sentinel to 404, so the arm exists to
+keep the two reads answering alike. Reading it as the CONNECTION's absence rather than some
+platform-side 404 is safe because every prober resolves through `creds.resolveOwned`, which never
+consults the LF system scope — so on this path the sentinel can only mean the project's own row
+is gone.
 
 **The inconclusive row answers `OK: false`, and it did not always.** The field is declared as a
 CONJUNCTION — the credential authenticated AND the configured account passed the provider's own

@@ -94,10 +94,14 @@ enforced on the system row:
   row installs unchanged. The required-key loop was swept for the same shape: it cannot leak,
   because every outcome there is fatal with no escape hatch, but it reported a mistyped key as
   "missing", so it now separates the two for the message alone.
-- **Shape rules** (`valueShapes`) come from TWO sources, because that is where they live:
-  `design/connection.go` `Pattern()` for LinkedIn, Meta, X and Microsoft, and the runtime
-  validators for Google Ads and Reddit, whose designs check presence alone. Mirroring only the
-  design let `-provider google-ads -account-id foo` install and poison the shared fallback.
+- **Shape rules** (`valueShapes`) come from TWO sources, because that is where they live.
+  `design/connection.go` now carries a `Pattern()` for every id in the map — LFXV2-2665 added
+  Google Ads' and Reddit's, which until then were runtime validators only, and mirroring just
+  the design let `-provider google-ads -account-id foo` install and poison the shared fallback.
+  Both sources are still needed: a `Pattern` binds the HTTP transport, and this installer writes
+  past it straight to the repository, so a row written by bootstrap, by a migration, or before
+  the pattern existed never passed through Goa. Where the two differ in SUBSTANCE is Microsoft,
+  below.
 - **Some rules a regexp cannot state at all**, so `valueValidators` runs the real validator as a
   second pass after the pattern. Microsoft's `account_id` and `customer_id` are the case: both are
   `^[1-9][0-9]{0,18}$` in the design AND positive-int64 at runtime, and the int64 RANGE is the
