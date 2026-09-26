@@ -10954,19 +10954,19 @@ func ValidateMicrosoftAdsConnectionConfigRequestBody(body *MicrosoftAdsConnectio
 		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
 	}
 	if body.AccountID != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^[1-9][0-9]*$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^[1-9][0-9]{0,17}$"))
 	}
 	if body.AccountID != nil {
-		if utf8.RuneCountInString(*body.AccountID) > 19 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 19, false))
+		if utf8.RuneCountInString(*body.AccountID) > 18 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 18, false))
 		}
 	}
 	if body.CustomerID != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.customer_id", *body.CustomerID, "^([1-9][0-9]{0,18})?$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.customer_id", *body.CustomerID, "^([1-9][0-9]{0,17})?$"))
 	}
 	if body.CustomerID != nil {
-		if utf8.RuneCountInString(*body.CustomerID) > 19 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.customer_id", *body.CustomerID, utf8.RuneCountInString(*body.CustomerID), 19, false))
+		if utf8.RuneCountInString(*body.CustomerID) > 18 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.customer_id", *body.CustomerID, utf8.RuneCountInString(*body.CustomerID), 18, false))
 		}
 	}
 	return

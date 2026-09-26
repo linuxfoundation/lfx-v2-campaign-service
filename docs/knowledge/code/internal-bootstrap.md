@@ -104,8 +104,12 @@ enforced on the system row:
   below.
 - **Some rules a regexp cannot state at all**, so `valueValidators` runs the real validator as a
   second pass after the pattern. Microsoft's `account_id` and `customer_id` are the case: both are
-  `^[1-9][0-9]{0,18}$` in the design AND positive-int64 at runtime, and the int64 RANGE is the
-  half no pattern expresses — `9999999999999999999` is nineteen digits and matches, but overflows.
+  positive-int64 at runtime, and the int64 RANGE is the half no pattern expresses —
+  `9999999999999999999` is nineteen digits and a valid digit string, but overflows. The design
+  closes that gap by bounding its own pattern at EIGHTEEN digits (`^[1-9][0-9]{0,17}$`), the
+  widest length every value of which is a valid int64, because the HTTP transport has no platform
+  package to call. This installer does, so `positiveID` stays a digit wider and `valueValidators`
+  supplies the range rule from `microsoft` itself rather than approximating it.
   Holding the two ids to bare digits was the bug: `0`, `007`, a twenty-digit value and an
   above-`MaxInt64` value all installed onto the SHARED fallback row, which every project without
   its own Microsoft connection then dispatches through, and every probe and dispatch there

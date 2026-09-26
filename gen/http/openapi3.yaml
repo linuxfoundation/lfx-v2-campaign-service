@@ -19503,14 +19503,14 @@ components:
                     type: string
                     description: Microsoft Advertising account ID (positive integer)
                     example: "1234567"
-                    pattern: ^[1-9][0-9]*$
-                    maxLength: 19
+                    pattern: ^[1-9][0-9]{0,17}$
+                    maxLength: 18
                 customer_id:
                     type: string
                     description: 'Microsoft Advertising customer ID (a positive integer, digits only). Optional: omit it to let the credential''s own customers be discovered.'
                     example: "9999999"
-                    pattern: ^([1-9][0-9]{0,18})?$
-                    maxLength: 19
+                    pattern: ^([1-9][0-9]{0,17})?$
+                    maxLength: 18
                 label:
                     type: string
                     description: Optional friendly name

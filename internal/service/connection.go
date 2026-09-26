@@ -1201,10 +1201,21 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 			// unrecognised by default, and unrecognised now means silent.
 			msg := "connection found, but linkedin account/organization verification failed: " + verr.Error()
 			return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
+		case errors.Is(verr, domain.ErrNotFound):
+			// The same window testConnUpstream's ErrNotFound arm covers, on the one endpoint
+			// that does not route through it: LinkedIn makes the same two reads — the testConn
+			// baseline, then the verifier's own resolveOwned — and a delete landing between them
+			// makes the second answer this sentinel. Without this arm the default below answers
+			// 200 "connection found, but ... could not be completed" about a connection that is
+			// gone, which is the half that stopped being true. Kept in step with that arm
+			// deliberately: the two endpoints answer the same question about the same row and
+			// must not diverge on the same race.
+			slog.WarnContext(ctx, "the connection was deleted while its test was running; reporting it as not found",
+				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds))
+			return nil, mapErr(verr)
 		default:
-			// Not a verdict this layer recognises — so its text is not echoed. It could be a
-			// repo ErrNotFound from a connection deleted mid-test, or a class added later by
-			// a path that never considered this endpoint. OK: false is still right (no
+			// Not a verdict this layer recognises — so its text is not echoed: a class added
+			// later by a path that never considered this endpoint. OK: false is still right (no
 			// cross-check succeeded), but the message is fixed and the detail goes to the log,
 			// where it reaches an operator without reaching an HTTP body.
 			slog.ErrorContext(ctx, "linkedin org verification returned an unclassified error; the connection test is reporting a generic failure",
@@ -1214,11 +1225,27 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 			return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
 		}
 	}
-	// nil here folds together a genuinely CONFIRMED match with the ONE remaining inconclusive
-	// outcome — LinkedIn having no comparable reference on the account (see
-	// OrgReferenceVerifier's doc comment) — and the two are indistinguishable from here.
-	// "verified" would overclaim confidence the nil does not actually carry, so the message
-	// only promises what is actually true of every nil: no mismatch was found.
+	// nil here folds together a genuinely CONFIRMED reference match with the one outcome it
+	// cannot be told apart from: LinkedIn having no comparable reference on the account, i.e.
+	// an empty or person-scoped one (see OrgReferenceVerifier's doc comment). "verified" would
+	// overclaim confidence the nil does not carry, so the message only promises what is true of
+	// every nil: no mismatch was found.
+	//
+	// OK: true is nonetheless right on BOTH, and this is worth stating because the opposite
+	// reading looks principled: `ok` is the conjunction "the credential authenticated AND the
+	// configured account passed that provider's own check", and a missing reference can be read
+	// as the account check not having happened. It did happen. The walk only ever returns nil
+	// once it has FOUND the configured account among this token's own ad accounts — `!found` is
+	// a confirmed failure one branch above — which is exactly the check the other six providers
+	// apply, and design/connection.go says in as many words that how deep the account check goes
+	// is provider-specific. What is missing on this path is LinkedIn's EXTRA cross-check, the one
+	// no other provider offers at all.
+	//
+	// Answering OK: false here would report a working connection as broken, permanently and with
+	// no remedy an operator could apply: a person-scoped ad account has no organization reference
+	// to supply and never will, and it dispatches campaigns perfectly well. That is the inverse
+	// of the defect this ticket exists to remove, and strictly worse — a false failure is acted
+	// on, where this nil is merely not boasted about.
 	msg := "connection found; no linkedin account/organization mismatch found"
 	return &conn.ConnectionTestResult{OK: true, Message: &msg}, nil
 }

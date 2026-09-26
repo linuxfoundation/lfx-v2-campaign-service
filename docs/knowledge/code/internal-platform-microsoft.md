@@ -653,12 +653,27 @@ wait out in place of the one field on the row that can be corrected.
 ACTIVE connection, and the header guard then confirmed only that it was made of digits. Holding a
 stored id to a weaker rule than the discovered ones `ListAdAccounts` already runs `numberID` over
 is backwards in exactly the way the paragraph above describes. The design now declares
-`^[1-9][0-9]*$` with `MaxLength(19)`, the same as `customer_id`, and `ValidateAccountID` is the
-exported runtime half closing the one thing a pattern cannot express — a 19-digit value above
-`MaxInt64` — with `Client.validateAccountIDs` calling it instead of `accountIDRE`.
-`TestValidateMicrosoftAdsConnectionConfig_IDPatterns` carries a drift guard for `account_id`
-beside the `customer_id` one, and asserts the overflow case directly so nobody deletes the
-runtime check on the grounds that the design already bounds the length.
+`^[1-9][0-9]{0,17}$` with `MaxLength(18)`, the same as `customer_id`. Eighteen rather than
+nineteen: a `Pattern` cannot express the int64 RANGE, and at nineteen digits it admitted values
+above `MaxInt64` that `numberID` refuses — the API storing an id on an ACTIVE connection that
+every probe and dispatch then rejects. Eighteen is the widest length every value of which is a
+valid int64, so the design's rule is now a SUBSET of the runtime's. What it gives up is 19-digit
+ids at or below `MaxInt64`, a range no Microsoft account id (seven to nine digits) occupies.
+
+`ValidateAccountID` and `ValidateCustomerID` stay regardless, because the pattern binds the HTTP
+transport alone and a row written by bootstrap, by a migration, or before the pattern existed
+never met it. `TestValidateMicrosoftAdsConnectionConfig_IDPatterns` now asserts the overflow is
+refused at BOTH layers, and asserts the new deliberate mismatch — a 19-digit value BELOW
+`MaxInt64`, which both runtime validators accept and the pattern does not — so nobody widens the
+pattern back on the grounds that it rejects something the platform layer allows.
+
+**Both rules run on both ids at the request boundary.** `validateAccountIDs` applies the raw
+anchored `accountIDRE` AND the identity validator to `AccountID` and to a set `CustomerID`, and
+`doCustomerRequest` carries the customer-id pair inline (it drops only the ACCOUNT half, because
+discovery must run for a connection that has no account id yet). Neither rule subsumes the other:
+the identity validators `TrimSpace` before parsing while the headers are set from the RAW stored
+value, so `"\n123"` is an id only the anchored regexp catches; and the regexp bounds charset
+alone, so `0`, `007` and an above-`MaxInt64` value are ids only the validators catch.
 
 Adding the exported function was not by itself enough for the probe, and the reason is worth
 recording: `MicrosoftDispatcher.ProbeConnection` builds its discovery client with `CustomerID`

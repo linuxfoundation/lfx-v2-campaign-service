@@ -85,6 +85,38 @@ func TestTestConnUpstream_DeletedMidTestIs404(t *testing.T) {
 	}
 }
 
+// TestTestLinkedinAds_DeletedMidTestIs404 is the same window on the one endpoint that does not
+// route through testConnUpstream. LinkedIn makes the same two reads — the testConn baseline, then
+// the dispatcher's own resolve behind VerifyAccountOrg — so a delete landing between them answers
+// domain.ErrNotFound there too, and before its own arm that fell to the unclassified-error arm
+// and returned 200 with the fixed "verification could not be completed" text.
+//
+// The two endpoints answer the same question about the same row and must not diverge on the same
+// race, which is what fixing only testConnUpstream left behind.
+func TestTestLinkedinAds_DeletedMidTestIs404(t *testing.T) {
+	s := newTestService(t, newFakeRepo())
+	if _, err := s.CreateLinkedinAds(context.Background(), &conn.CreateLinkedinAdsPayload{
+		ProjectID:   "tlf",
+		Config:      &conn.LinkedinAdsConnectionConfig{AccountID: "538170226", OrgID: "208777"},
+		Credentials: &conn.LinkedinAdsCredentials{AccessToken: "tok"},
+	}); err != nil {
+		t.Fatalf("CreateLinkedinAds: %v", err)
+	}
+	verifier := &orgReferenceVerifierStub{err: fmt.Errorf("resolve owned connection: %w", domain.ErrNotFound)}
+	s.SetOrchestrator(&Orchestrator{
+		dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: verifier},
+	})
+
+	res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+	if res != nil {
+		t.Fatalf("result = %+v for a connection deleted mid-test; a 200 here reports a deleted connection as present", res)
+	}
+	var nf *conn.NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("err = %v (%T), want a 404 NotFoundError, as the six testConnUpstream providers give for this race", err, err)
+	}
+}
+
 // TestTestConnUpstream_ProbeRuns is the headline assertion of LFXV2-2665: the connection test
 // no longer answers from the presence of a credential blob in the row. It reaches the platform.
 //

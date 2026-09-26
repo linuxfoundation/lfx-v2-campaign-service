@@ -870,15 +870,32 @@ func (c *Client) AccountID() string { return c.account.AccountID }
 // validateAccountIDs rejects an AccountID (and, when set, CustomerID) that isn't a
 // digits-only id, before any request is built.
 func (c *Client) validateAccountIDs() error {
-	// numberID's rule, not accountIDRE's. accountIDRE is the TRANSPORT check — is this safe in
-	// a header — and it admits "0" and values past MaxInt64, neither of which can name an
-	// account. Everything numberID accepts accountIDRE accepts too, so this only narrows, and
-	// it holds a STORED id to the same rule ListAdAccounts already holds a discovered one to.
+	// BOTH rules, on both ids, and they are not redundant. accountIDRE is the TRANSPORT check
+	// — is this safe in a header — and it is applied to the value AS STORED, anchored and
+	// untrimmed, because the raw string is what reaches Header.Set below. ValidateAccountID and
+	// ValidateCustomerID are the IDENTITY check: they reject "0", "007" and anything past
+	// MaxInt64, none of which can name an account, holding a STORED id to the same rule
+	// ListAdAccounts already holds a discovered one to.
+	//
+	// Dropping either one loses something real. The identity rule alone would admit "\n123",
+	// since it trims before parsing and the header would still carry the untrimmed bytes. The
+	// transport rule alone is what this customer-id check used to be, and it let "0", "007" and
+	// a value above MaxInt64 through the dispatch choke point while the API, the bootstrap
+	// installer and the connection probe all refused them — the account half of this same
+	// function was already held to both.
+	if !accountIDRE.MatchString(c.account.AccountID) {
+		return fmt.Errorf("invalid Microsoft Advertising account id %q: must be digits only", clipID(c.account.AccountID))
+	}
 	if err := ValidateAccountID(c.account.AccountID); err != nil {
 		return err
 	}
-	if c.account.CustomerID != "" && !accountIDRE.MatchString(c.account.CustomerID) {
-		return fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
+	if c.account.CustomerID != "" {
+		if !accountIDRE.MatchString(c.account.CustomerID) {
+			return fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
+		}
+		if err := ValidateCustomerID(c.account.CustomerID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -930,8 +947,16 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 // is a header whose contents must be checked, and the AccountID half of that helper is the
 // only part this path can afford to drop.
 func (c *Client) doCustomerRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
-	if c.account.CustomerID != "" && !accountIDRE.MatchString(c.account.CustomerID) {
-		return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
+	if c.account.CustomerID != "" {
+		// Both rules, for the reasons validateAccountIDs gives in full: the transport check on
+		// the raw stored bytes that reach the header, and the identity check that refuses an id
+		// no customer can have. This path drops only the ACCOUNT half of that helper.
+		if !accountIDRE.MatchString(c.account.CustomerID) {
+			return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
+		}
+		if err := ValidateCustomerID(c.account.CustomerID); err != nil {
+			return nil, err
+		}
 	}
 	return c.do(ctx, method, c.customerBaseURL+"/CustomerManagement/"+c.apiVersion+"/"+path, path, body, idempotent, false)
 }

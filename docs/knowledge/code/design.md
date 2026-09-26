@@ -188,8 +188,10 @@ synchronous POST and any progress reporting belongs to the caller.
 
 `connection.go`'s per-provider config types declare a `Pattern` and a `MaxLength` on every id the
 operator can set — Google Ads `account_id` and `login_customer_id` (`^([0-9]+)?$`), Reddit
-`account_id` (`^[A-Za-z0-9_]+$`), Microsoft `account_id` (`^[1-9][0-9]*$`) and `customer_id`
-(`^([1-9][0-9]{0,18})?$`). `Required` alone checks only that the KEY is present, so
+`account_id` (`^[A-Za-z0-9_]+$`), Microsoft `account_id` (`^[1-9][0-9]{0,17}$`) and `customer_id`
+(`^([1-9][0-9]{0,17})?$`, both `MaxLength(18)` — eighteen digits, not nineteen, so that every
+value the pattern admits is a valid int64 and the design's rule is a subset of the runtime's
+rather than overlapping it). `Required` alone checks only that the KEY is present, so
 `{"account_id": ""}` was storable on an active connection, and Google's dashed UI form
 `866-674-6580` — which no Google Ads API response can ever contain — was storable too.
 

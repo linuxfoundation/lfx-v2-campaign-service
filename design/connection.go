@@ -999,20 +999,33 @@ var MicrosoftAdsConnectionConfig = Type("microsoft-ads-connection-config", func(
 	// a stored id to a weaker rule than a discovered one is backwards: it let the API persist
 	// an id no Microsoft account can have, on an active connection, leaving the header guard
 	// to confirm only that it is made of digits.
+	//
+	// The bound is EIGHTEEN digits, not nineteen. A Pattern cannot express the int64 range,
+	// and at 19 digits it does not have to: it would admit values above MaxInt64 that
+	// numberID refuses, which is the API accepting and storing an id that can never dispatch.
+	// Eighteen digits is the widest length every value of which is a valid int64, so the
+	// design's rule is now a SUBSET of the runtime's rather than overlapping it. What that
+	// gives up is 19-digit ids at or below MaxInt64; Microsoft account ids are seven to nine
+	// digits, so that range names nothing real, and refusing it at connection time is the
+	// cheaper error than persisting an active connection that fails on first use.
+	//
+	// The runtime validators stay regardless — a row written by bootstrap, by a migration, or
+	// before this pattern existed never passed through Goa at all.
 	Attribute("account_id", String, "Microsoft Advertising account ID (positive integer)", func() {
 		Example("1234567")
-		Pattern(`^[1-9][0-9]*$`)
-		MaxLength(19)
+		Pattern(`^[1-9][0-9]{0,17}$`)
+		MaxLength(18)
 	})
 	// customer_id is held to the STRICTER of the two runtime rules it meets, not to
 	// accountIDRE alone: microsoft.ValidateCustomerID (numberID) requires a POSITIVE int64,
 	// so "0" and a 23-digit number are not customer identities even though both are digits.
-	// Hence `[1-9]` and MaxLength(19) — the same rule account_id above now carries.
+	// Hence `[1-9]` and MaxLength(18) — the same rule account_id above now carries, bounded at
+	// eighteen digits for the reason given there: nineteen would admit values above MaxInt64
+	// that ParseInt refuses, and a Pattern cannot express the int64 range itself.
 	//
-	// The one thing a Pattern cannot express is the int64 RANGE: a 19-digit value above
-	// MaxInt64 matches here and is still refused by ParseInt. That residual gap is why
-	// ValidateCustomerID exists and is asserted directly rather than being papered over —
-	// see TestValidateMicrosoftAdsConnectionConfig_IDPatterns.
+	// ValidateCustomerID is still what enforces the range, and is still asserted directly —
+	// see TestValidateMicrosoftAdsConnectionConfig_IDPatterns — because this pattern binds the
+	// HTTP transport alone and rows reach the repository by other routes.
 	//
 	// "" is a SUPPORTED state, which is why the whole group is optional: it means no
 	// customer is configured, and discoveryCustomerIDs then walks every customer the
@@ -1020,8 +1033,8 @@ var MicrosoftAdsConnectionConfig = Type("microsoft-ads-connection-config", func(
 	// layers agree on the empty case rather than one tolerating it.
 	Attribute("customer_id", String, "Microsoft Advertising customer ID (a positive integer, digits only). Optional: omit it to let the credential's own customers be discovered.", func() {
 		Example("9999999")
-		Pattern(`^([1-9][0-9]{0,18})?$`)
-		MaxLength(19)
+		Pattern(`^([1-9][0-9]{0,17})?$`)
+		MaxLength(18)
 	})
 	Required("account_id")
 })

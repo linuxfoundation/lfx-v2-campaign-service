@@ -275,7 +275,10 @@ var (
 	alnumID   = regexp.MustCompile(`^[A-Za-z0-9]+$`)
 	// positiveID is numericID's identity-claim sibling: no leading zero and not zero itself.
 	// A regexp cannot express the other half of that rule — a 19-digit value above MaxInt64 —
-	// so valueValidators below carries the runtime check beside it.
+	// so valueValidators below carries the runtime check beside it. design/connection.go closes
+	// the same gap differently, by bounding the pattern at EIGHTEEN digits, because the HTTP
+	// transport has no platform package to call; here the real validator is in reach, so this
+	// pattern stays a shape check and does not duplicate the range rule badly.
 	positiveID = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
 )
 
@@ -322,8 +325,11 @@ var valueShapes = map[model.Provider]map[string]*regexp.Regexp{
 	model.ProviderTwitterAds:  {"account_id": alnumID, "funding_instrument_id": alnumID},
 	// design/connection.go Pattern() as of LFXV2-2665; runtime validators before that.
 	model.ProviderGoogleAds: {"account_id": numericID, "login_customer_id": numericID},
-	// positiveID, not numericID: both Microsoft ids are held to `^[1-9][0-9]*$` with
-	// MaxLength(19) at the design and to a positive-int64 rule at runtime. The digits-only
+	// positiveID, not numericID: both Microsoft ids are held to `^[1-9][0-9]{0,17}$` with
+	// MaxLength(18) at the design and to a positive-int64 rule at runtime. positiveID is a
+	// digit wider than the design's bound and deliberately so — it is the SHAPE half only, and
+	// valueValidators supplies the range half straight from the platform package, which is the
+	// authority a length bound is only approximating. The digits-only
 	// spelling let `0`, `007` and a 64-digit number install into the SHARED fallback row,
 	// which every project without its own connection then dispatches through.
 	model.ProviderMicrosoftAds: {"account_id": positiveID, "customer_id": positiveID},

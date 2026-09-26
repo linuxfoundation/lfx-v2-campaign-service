@@ -405,18 +405,20 @@ func TestValidateMicrosoftAdsConnectionConfig_IDPatterns(t *testing.T) {
 		}
 	}
 
-	t.Run("a 19-digit account_id above MaxInt64 is the same residual gap", func(t *testing.T) {
-		// The reason ValidateAccountID does a ParseInt rather than only a regexp match. It is
-		// the account-id half of the customer_id case asserted below, and exists so nobody
-		// deletes the runtime check on the grounds that the design already bounds the length.
+	t.Run("a 19-digit account_id above MaxInt64 is now refused at BOTH layers", func(t *testing.T) {
+		// This used to be asserted as a deliberate residual gap: the pattern admitted the value
+		// and only ValidateAccountID refused it, so the API could store an id on an ACTIVE
+		// connection that every probe and dispatch deterministically rejects. A Pattern still
+		// cannot express the int64 range, so the design closes it by LENGTH instead — eighteen
+		// digits, every one of which is a valid int64.
 		const overflow = "9999999999999999999" // 19 digits, > math.MaxInt64
-		if !accountIDAccepted(overflow) {
-			t.Error("the pattern is expected to admit this; if it no longer does, the comment in " +
-				"design/connection.go about the residual range gap is stale and should be corrected")
+		if accountIDAccepted(overflow) {
+			t.Error("the transport accepted an account_id above MaxInt64; it can never dispatch, and " +
+				"storing it on an active connection is the defect the 18-digit bound exists to prevent")
 		}
 		if err := microsoft.ValidateAccountID(overflow); err == nil {
-			t.Error("ValidateAccountID must still reject an out-of-int64-range account id — it is the " +
-				"only layer that can")
+			t.Error("ValidateAccountID must still reject an out-of-int64-range account id — the design " +
+				"pattern binds HTTP alone, and bootstrap, migrations and pre-pattern rows never met it")
 		}
 	})
 
@@ -450,18 +452,35 @@ func TestValidateMicrosoftAdsConnectionConfig_IDPatterns(t *testing.T) {
 			t.Errorf("ValidateCustomerID must keep trimming a stored value: %v", err)
 		}
 	})
-	t.Run("a 19-digit value above MaxInt64 is the residual gap a Pattern cannot close", func(t *testing.T) {
-		// This is why ValidateCustomerID does a ParseInt rather than only a regexp match, and
-		// why removing it in favour of "the design already validates that" would reopen
-		// finding #1: a regular expression can bound digit COUNT but not integer RANGE.
+	t.Run("a 19-digit customer_id above MaxInt64 is now refused at BOTH layers", func(t *testing.T) {
 		const overflow = "9999999999999999999" // 19 digits, > math.MaxInt64
-		if !customerIDAccepted(overflow) {
-			t.Error("the pattern is expected to admit this; if it no longer does, the comment in " +
-				"design/connection.go about the residual range gap is stale and should be corrected")
+		if customerIDAccepted(overflow) {
+			t.Error("the transport accepted a customer_id above MaxInt64; the probe refuses it, so the " +
+				"API would be storing a value it then reports the connection as broken for")
 		}
 		if err := microsoft.ValidateCustomerID(overflow); err == nil {
-			t.Error("ValidateCustomerID must still reject an out-of-int64-range customer id — it is the " +
-				"only layer that can, and the probe's verdict depends on it")
+			t.Error("ValidateCustomerID must still reject an out-of-int64-range customer id — removing it " +
+				"in favour of \"the design already validates that\" would reopen the gap for every " +
+				"non-HTTP writer, and the probe's verdict depends on it")
+		}
+	})
+	t.Run("a 19-digit value at or below MaxInt64 is the new deliberate mismatch", func(t *testing.T) {
+		// The cost of closing the range gap by length: this value IS a valid int64, so both
+		// runtime validators accept it, and the 18-digit pattern does not. Asserted rather than
+		// left implicit so nobody "fixes" the pattern back to nineteen digits on the grounds
+		// that it rejects something the platform layer allows — that is the trade, and the
+		// range it gives up (10^18 .. MaxInt64) names no Microsoft account, which are seven to
+		// nine digits.
+		const nineteenOK = "1234567890123456789" // 19 digits, < math.MaxInt64
+		if accountIDAccepted(nineteenOK) || customerIDAccepted(nineteenOK) {
+			t.Error("the pattern admitted a 19-digit id; it is bounded at 18 so that every value it " +
+				"accepts is a valid int64")
+		}
+		if err := microsoft.ValidateAccountID(nineteenOK); err != nil {
+			t.Errorf("ValidateAccountID must still accept a valid int64: %v", err)
+		}
+		if err := microsoft.ValidateCustomerID(nineteenOK); err != nil {
+			t.Errorf("ValidateCustomerID must still accept a valid int64: %v", err)
 		}
 	})
 }

@@ -15809,16 +15809,16 @@ func ValidateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionCon
 // ValidateMicrosoftAdsConnectionConfigRequestBody runs the validations defined
 // on microsoft-ads-connection-configRequestBody
 func ValidateMicrosoftAdsConnectionConfigRequestBody(body *MicrosoftAdsConnectionConfigRequestBody) (err error) {
-	err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", body.AccountID, "^[1-9][0-9]*$"))
-	if utf8.RuneCountInString(body.AccountID) > 19 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", body.AccountID, utf8.RuneCountInString(body.AccountID), 19, false))
+	err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", body.AccountID, "^[1-9][0-9]{0,17}$"))
+	if utf8.RuneCountInString(body.AccountID) > 18 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", body.AccountID, utf8.RuneCountInString(body.AccountID), 18, false))
 	}
 	if body.CustomerID != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.customer_id", *body.CustomerID, "^([1-9][0-9]{0,18})?$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.customer_id", *body.CustomerID, "^([1-9][0-9]{0,17})?$"))
 	}
 	if body.CustomerID != nil {
-		if utf8.RuneCountInString(*body.CustomerID) > 19 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.customer_id", *body.CustomerID, utf8.RuneCountInString(*body.CustomerID), 19, false))
+		if utf8.RuneCountInString(*body.CustomerID) > 18 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.customer_id", *body.CustomerID, utf8.RuneCountInString(*body.CustomerID), 18, false))
 		}
 	}
 	return

@@ -1133,6 +1133,13 @@ platform-side 404 is safe because every prober resolves through `creds.resolveOw
 consults the LF system scope — so on this path the sentinel can only mean the project's own row
 is gone.
 
+**`TestLinkedinAds` carries the same arm, because it makes the same two reads.** LinkedIn is the
+one test endpoint that does not route through `testConnUpstream`: its second read happens behind
+`Orchestrator.VerifyAccountOrg`. Adding the arm to `testConnUpstream` alone left that endpoint
+answering 200 for the identical race, and two endpoints answering the same question about the same
+row must not diverge on it. `TestTestLinkedinAds_DeletedMidTestIs404` pins the LinkedIn half
+beside `TestTestConnUpstream_DeletedMidTestIs404`.
+
 **The inconclusive row answers `OK: false`, and it did not always.** The field is declared as a
 CONJUNCTION — the credential authenticated AND the configured account passed the provider's own
 check — and a probe that was rate-limited, met a `5xx`, or never reached the platform at all did
