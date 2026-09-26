@@ -575,8 +575,11 @@ var (
 	//
 	// It is not evidence of a MISMATCH: the credential baseline already passed, and a
 	// cross-check that could not run establishes nothing about the pairing. It still answers
-	// OK: false, because `ok` is declared as whether the credential authenticated against the
-	// provider and an incomplete walk did not establish that — but its message names the
+	// OK: false, because `ok` is declared as a CONJUNCTION — the credential authenticated AND
+	// the configured account passed that provider's own check — and an incomplete walk
+	// establishes neither half of it. The justification cannot be "the credential did not
+	// authenticate", because on this path it demonstrably DID: the baseline named one line
+	// above is what gates entry to this arm — but its message names the
 	// unreachability and says nothing about the stored pairing, which is the distinction that
 	// keeps "try again" and "repoint this connection" apart. Precisely because it makes no
 	// claim about the pairing, nothing that IS evidence may carry it — see

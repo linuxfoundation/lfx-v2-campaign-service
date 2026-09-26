@@ -398,9 +398,14 @@ func (s *ConnectionService) testConnUpstream(ctx context.Context, projectID stri
 		// platform 5xx. It proves NOTHING about the connection.
 		//
 		// OK: false, and the reason is the field's own definition rather than a product
-		// judgement: `ok` is declared in design/connection.go as whether the credential
-		// AUTHENTICATED against the provider, and on a 5xx it did not. Answering true here
-		// contradicts the schema, and a caller reading only `ok` — which the design entitles
+		// judgement: `ok` is declared in design/connection.go as a CONJUNCTION — the
+		// credential authenticated AND the configured account passed that provider's own
+		// check — and an incomplete probe establishes neither half of it. It is deliberately
+		// NOT justified as "the credential did not authenticate": on googleads, microsoft and
+		// reddit the probe reaches the platform on two legs, and a refresh that SUCCEEDS
+		// before the account read hits a 429, a 5xx or a transport failure means the provider
+		// accepted the stored credential outright. Answering true here contradicts the
+		// schema, and a caller reading only `ok` — which the design entitles
 		// it to do — gets a green check for a connection nothing verified, then a failure at
 		// create. That is the same shape as the Meta bare-id and Microsoft account-id defects
 		// this endpoint exists to remove, arrived at from the service layer instead of a

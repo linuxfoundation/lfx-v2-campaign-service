@@ -92,7 +92,16 @@ func TestCallerScopedTokenRefresh_BindsTheRefreshToItsCaller(t *testing.T) {
 
 			// Cancel only once the refresh is genuinely in flight; cancelling earlier would
 			// be refused by accessTokenValue's own already-done guard and prove nothing.
-			<-reached
+			//
+			// Bounded, like the two receives below it. A bare receive here hangs the whole
+			// package if a regression stops the request ever leaving this client — and under
+			// `go test -race`, which `make test` runs, that surfaces as some unrelated test
+			// timing out on a loaded runner rather than as this one failing.
+			select {
+			case <-reached:
+			case <-time.After(refreshScopeObservationWindow + 2*time.Second):
+				t.Fatal("the token endpoint was never reached, so the refresh never went in flight")
+			}
 			cancel()
 
 			// The CALLER returns promptly either way — that is the select on its own ctx, and

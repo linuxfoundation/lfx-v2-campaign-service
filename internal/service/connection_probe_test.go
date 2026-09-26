@@ -151,8 +151,11 @@ func TestTestConnUpstream_Classification(t *testing.T) {
 	})
 
 	t.Run("inconclusive reports OK: false, and says the platform was unreachable", func(t *testing.T) {
-		// `ok` is declared as whether the credential AUTHENTICATED against the provider, and
-		// on a rate limit or a 5xx it did not. This arm used to answer true, which widened the
+		// `ok` is declared as a CONJUNCTION — the credential authenticated AND the configured
+		// account passed that provider's own check — and a rate limit or a 5xx establishes
+		// neither half of it. Not "the credential did not authenticate": google-ads probes on
+		// two legs, and the refresh may well have succeeded before the account read failed.
+		// This arm used to answer true, which widened the
 		// field's meaning to fit the behaviour: a caller reading `ok` alone — which the design
 		// entitles it to do — got a green check for a connection nothing verified, then a
 		// failure at campaign creation. That is the defect this endpoint exists to remove.

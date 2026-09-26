@@ -994,9 +994,12 @@ The inconclusive row is the one that most needs stating plainly, because it is t
 A failure of the `ListAdAccounts` enumeration walk ITSELF reaches this package as
 `domain.ErrOrgVerificationInconclusive`, and `TestLinkedinAds` checks for that sentinel with
 `errors.Is` FIRST, before folding anything into the echoing `OK: false` arm. It answers `OK: false`
-too — `ok` is declared as whether the credential authenticated against the provider, and an
-incomplete walk did not establish that — but its message names the unreachability and says nothing
-about the stored pairing, so no operator is told a pairing is wrong on the strength of a walk that
+too — `ok` is declared as a CONJUNCTION, the credential authenticated AND the configured account
+passed that provider's own check, and an incomplete walk establishes neither half of it; this arm
+is where the older credential-only justification was plainly false, because reaching it REQUIRES
+the credential baseline to have already passed, so LinkedIn had demonstrably accepted the
+credential and only the org-reference cross-check failed to finish — but its message names the
+unreachability and says nothing about the stored pairing, so no operator is told a pairing is wrong on the strength of a walk that
 never compared it. The corollary is the standing hazard here: anything wrongly folded into that
 sentinel is reported as somebody else's outage to wait out, and the remedy the operator does own is
 never named — which is why each of the other three rows exists as its own outcome rather than a
