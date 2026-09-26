@@ -2102,10 +2102,23 @@ alongside a non-nil error never reads as reachable. The platform's `status` stri
 against inside the client and never travels to a message: it is upstream text, and the
 confirmed-verdict arm is echoed to the operator verbatim.
 
-Flat mode (no `login_customer_id`) answers only reachable/unreachable, because
-`customers:listAccessibleCustomers` carries neither field. That list is itself unfiltered, so an
-absence there really does mean the credential does not address the account — the answer is
-narrower, not wrong.
+Flat mode (no `login_customer_id`) gets the same four values, in two legs.
+`customers:listAccessibleCustomers` is itself unfiltered, so an absence there really does mean
+the credential does not address the account — but it carries neither the manager flag nor the
+status, and membership ALONE was a false success: a manager account appears in that list and
+cannot hold a campaign, so a connection naming one tested green and failed at the first create.
+That is the production failure this endpoint exists to catch, produced by the endpoint meant to
+catch it. Presence is therefore followed by `selfReach`, a `customer_client` read scoped to the
+configured customer and narrowed to its own row by id — `customer_client` queried under a
+customer includes that customer, which is what makes the read work with no manager in the
+picture, and asking by id is what stops it reading an entire hierarchy when the configured
+account turns out to BE a manager.
+
+The second leg's failures stay errors rather than becoming verdicts. Neither `AccountReachable`
+(a success nothing established) nor `AccountUnreachable` (a confirmed verdict contradicting the
+enumeration that just named the account) is honest for "reached, properties unknown", so the
+error reaches `probeClass`, where `ProbeInconclusive`'s default for an error the package does not
+recognise makes it inconclusive. `TestProbeAccountReach_FlatMode` pins all of it.
 
 ### Why the Microsoft probe carries the configured customer and the picker does not
 

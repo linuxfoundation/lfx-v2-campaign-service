@@ -975,8 +975,13 @@ names alone — so accounts come back labelled in manager mode and unlabelled wi
 `campaignCapableClientsQuery`; `ProbeAccountReach` sends `allClientsQuery`, the same projection
 with no `WHERE`, and does its own `manager`/`status` reading on the rows. The two queries are
 separate constants over one shared decoder (`queryCustomerClients`) rather than one query with a
-flag, so neither caller can silently acquire the other's row set. Why the probe cannot reuse the
-filtered walk is in `internal-dispatch.md` — *Why Google Ads is the one probe that does not check
+flag, so neither caller can silently acquire the other's row set. Flat mode uses a third form of
+the same query — `selfClientQuery`, `allClientsQuery` with `WHERE customer_client.id = <id>` —
+because there it is not a hierarchy walk at all but a read of one account's own row, which is how
+the manager flag and status are obtained where no manager exists to walk. The id is interpolated
+because GAQL has no parameter binding, and every caller validates it against `customerIDRE`
+first, which admits digits alone. Why the probe cannot reuse the filtered walk is in
+`internal-dispatch.md` — *Why Google Ads is the one probe that does not check
 membership* — and the short form is that absence from a filtered list is not absence.
 Expansion rows are deduplicated by resource name, since `customer_client` reports a client once
 per path through the hierarchy and a client of a sub-manager that is itself a client of the root

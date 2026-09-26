@@ -1435,10 +1435,13 @@ const (
 //     every other request carries that header, so an account is addressable only if it sits
 //     under that manager. The walk runs UNFILTERED, so a reached-but-not-campaign-capable
 //     account is reported as what it is instead of vanishing into an absence.
-//   - Flat mode: customers:listAccessibleCustomers carries neither status nor a manager flag,
-//     so only reachable/unreachable can be told apart. It is also unfiltered, so an absence
-//     there really does mean the credential does not address the account — the answer is
-//     narrower, not wrong.
+//   - Flat mode: customers:listAccessibleCustomers is unfiltered, so an absence there really
+//     does mean the credential does not address the account. But it carries neither status nor
+//     a manager flag, and membership ALONE is a false success: a manager account appears in it
+//     and cannot hold a campaign, so a connection naming one tested green and failed at the
+//     first create — the production failure this endpoint exists to catch. Presence is
+//     therefore followed by a self-scoped customer_client read for the two properties that
+//     enumeration cannot carry, which is the same pair manager mode reads from the walk.
 //
 // Read-only. The returned value never carries platform-supplied text; it is an enum the
 // caller renders in its own vocabulary.
@@ -1454,7 +1457,7 @@ func (c *Client) ProbeAccountReach(ctx context.Context, customerID string) (Acco
 		}
 		for _, cust := range customers {
 			if strings.TrimPrefix(cust.ResourceName, "customers/") == customerID {
-				return AccountReachable, nil
+				return c.selfReach(ctx, customerID)
 			}
 		}
 		return AccountUnreachable, nil
@@ -1496,6 +1499,61 @@ const customerStatusEnabled = "ENABLED"
 // hides which caller gets which. The account picker asks for accounts a campaign can be
 // created in; the connection probe asks whether this credential reaches the configured
 // account AT ALL, and must not read a filtered-out account as an absent one.
+// selfReach reads the manager flag and status of ONE customer from that customer's own
+// customer_client table, and is flat mode's second leg.
+//
+// customer_client queried under a customer includes that customer's own row, so this works with
+// no manager in the picture — which is the whole point, since flat mode is the mode with no
+// manager. It asks for the single row by id rather than reading the table, because under a
+// manager account that table is the entire hierarchy and being a manager is exactly the case
+// this call exists to detect.
+//
+// A failure here is returned rather than folded into a verdict. The caller classifies it through
+// the probe predicates, and an error this package does not recognise is INCONCLUSIVE by default
+// — which is the right answer for "reached, properties unknown": the credential demonstrably
+// reaches the account, so neither AccountReachable (a success nothing established) nor
+// AccountUnreachable (a confirmed verdict contradicting the enumeration) is honest.
+func (c *Client) selfReach(ctx context.Context, customerID string) (AccountReach, error) {
+	// customerID is validated by ProbeAccountReach above and again inside
+	// gaqlSearchForCustomer; it is interpolated into the GAQL text here, where neither check
+	// would reach it.
+	if !customerIDRE.MatchString(customerID) {
+		return AccountUnreachable, fmt.Errorf("invalid Google Ads customer id %q: must be digits only (no dashes)", customerID)
+	}
+	clients, err := c.queryCustomerClients(ctx, customerID, selfClientQuery(customerID))
+	if err != nil {
+		return AccountUnreachable, err
+	}
+	for _, client := range clients {
+		if client.ID != customerID {
+			continue
+		}
+		switch {
+		case client.Manager:
+			return AccountIsManager, nil
+		case client.Status != customerStatusEnabled:
+			return AccountNotEnabled, nil
+		default:
+			return AccountReachable, nil
+		}
+	}
+	// The enumeration named this customer and its own table does not. Nothing here is a
+	// verdict: see the doc comment — this reaches the caller as an inconclusive probe.
+	return AccountUnreachable, errSelfRowMissing
+}
+
+// errSelfRowMissing is deliberately a plain error of this package: it matches neither probe
+// predicate by name, and ProbeInconclusive's default for an error it does not recognise is
+// true, which is the classification this case wants.
+var errSelfRowMissing = errors.New("google-ads: the account did not appear in its own customer_client table")
+
+// selfClientQuery asks for one customer's own row. The id is interpolated rather than bound
+// because GAQL has no parameter binding; every caller validates it against customerIDRE first,
+// which admits digits alone.
+func selfClientQuery(customerID string) string {
+	return allClientsQuery + ` WHERE customer_client.id = ` + customerID
+}
+
 const (
 	campaignCapableClientsQuery = `SELECT customer_client.id, customer_client.descriptive_name, ` +
 		`customer_client.manager, customer_client.status FROM customer_client ` +
