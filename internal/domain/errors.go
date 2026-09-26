@@ -693,19 +693,31 @@ var (
 	// token. PERMANENT, never retryable.
 	ErrConnectionProbeRequestRejected = errors.New("the platform refused the connection-probe request itself; this is a service defect")
 
-	// ErrConnectionProbeNotAttempted marks a probe outcome reached without any request leaving
-	// this service. Two kinds of outcome qualify, and the sentinel says the same thing about
-	// both — nothing was sent — while saying nothing about what the probe concluded:
+	// ErrConnectionProbeNotAttempted marks a probe outcome whose DECIDING failure happened
+	// before its request left this service. Two kinds of outcome qualify, and the sentinel says
+	// the same thing about both — the thing that ended this probe was local — while saying
+	// nothing about what the probe concluded:
 	//
 	//   - A VERDICT decided before a request was built: the connection names no ad account, or
 	//     the account id or customer id it does name cannot form a valid request for its
 	//     platform at all. These also carry ErrConnectionProbeFailed and render its verdict text
 	//     unchanged, because a connection that cannot address an account provably cannot run a
 	//     campaign.
-	//   - An INCONCLUSIVE outcome whose platform error proves the request never left the process
-	//     — a DNS failure, a refused connection, a request that would not build. These carry
-	//     ErrConnectionProbeInconclusive, and the operator's answer is unchanged by the marker:
-	//     the check still could not be completed, and the advisory still says so.
+	//   - An INCONCLUSIVE outcome whose platform error proves the failing request never left the
+	//     process — a DNS failure, a refused connection, a request that would not build. These
+	//     carry ErrConnectionProbeInconclusive, and the operator's answer is unchanged by the
+	//     marker: the check still could not be completed, and the advisory still says so.
+	//
+	// "The failing request", not "no bytes at all", and the distinction is load-bearing on the
+	// three providers probed on TWO legs — a token refresh, then an account read. A refresh that
+	// SUCCEEDS before the account read fails to dial means one request did reach the platform,
+	// and this marker is still attached. That is deliberate, and it is the cheap direction: the
+	// suppressed sample would be an ERROR sample (recordUpstream is handed the probe's non-nil
+	// err), so recording it books this deployment's own DNS or egress fault against the
+	// provider's error rate — the precise inflation this marker exists to prevent. What is lost
+	// instead is one SUCCESSFUL token call, which hides no provider failure from anyone. Do not
+	// "fix" this by narrowing the marker to a never-sent FIRST leg; that trades a harmless
+	// undercount for the miscount the mechanism was built to stop.
 	//
 	// It is a MARKER, never a status and never an answer on its own, and it exists for a single
 	// reader, Orchestrator.ProbeConnection's metrics arm.
@@ -722,7 +734,7 @@ var (
 	// It is attached by internal/dispatch alongside the outcome, for the same reason every other
 	// probe sentinel is: that is the layer which knows whether a request was built and sent, and
 	// the layer past which the platform's own error chain is no longer available to ask.
-	ErrConnectionProbeNotAttempted = errors.New("the connection probe reached its outcome before any request was sent")
+	ErrConnectionProbeNotAttempted = errors.New("the connection probe reached its outcome on a failure that occurred before its request was sent")
 
 	// ErrConnectionProbeUnwired is the wiring defect of the probe path: this build has no
 	// dispatcher registered for a platform whose connection test probes upstream, or one that

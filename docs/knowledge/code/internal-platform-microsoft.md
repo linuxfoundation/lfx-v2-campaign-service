@@ -889,14 +889,24 @@ complete. Neither predicate true is a third outcome: the platform refused a requ
 BUILT, which is a service defect rather than a verdict.
 
 `probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
-vocabulary: it answers only whether the failure ever left this process, and it changes nothing an
-operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error
+vocabulary: it answers only whether the request whose failure ENDED the probe ever left this
+process, and it changes nothing an operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error
 chain is DROPPED there, so no later layer could tell a provider that answered badly from one that
 was never contacted; the answer reaches `Orchestrator.ProbeConnection`'s metrics arm alone, which
 keeps a local DNS or dial failure off `campaign_upstream_call_duration_seconds` rather than
 charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInconclusive`'s on
 purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
 series instead of vanishing from it.
+
+The subject is the FAILING request, not "no bytes at all". This client probes on two legs — a
+token refresh, then an account read — so a refresh that SUCCEEDED before the account read failed
+to dial still answers true here, and the sample is still suppressed. That is deliberate and it is
+the cheap direction: `recordUpstream` is handed the probe's non-nil error, so the suppressed
+sample is an ERROR sample, and recording it would book this deployment's own DNS or egress fault
+against Microsoft's error rate — the exact inflation the predicate exists to prevent. What is
+given up instead is one SUCCESSFUL token call, which hides no Microsoft failure from anyone. See
+`domain.ErrConnectionProbeNotAttempted`, which carries the same reasoning and an explicit warning
+against narrowing the marker to a never-sent FIRST leg.
 
 **This is the one platform whose `ProbeNotSent` reads TWO markers, because this client reaches the
 network on two legs that fail through different machinery.** `errRequestNotSent` carries the REST

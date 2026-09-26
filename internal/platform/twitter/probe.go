@@ -126,14 +126,24 @@ func ProbeInconclusive(err error) bool {
 	}
 	var ae *apiError
 	if errors.As(err, &ae) {
-		return ae.StatusCode == http.StatusTooManyRequests || ae.StatusCode >= 500
+		// 408 sits with 429 and 5xx rather than with the refusals: it means the endpoint — or
+		// an intermediary in front of it — gave up waiting for the request, so nothing evaluated
+		// the credential and the same call can succeed on a retry. Both of those are what a
+		// refusal promises the opposite of. Left out, a 408 matched neither predicate, fell
+		// through probeClass's default arm and became a typed 500 that pages us for a timeout —
+		// which the probe contract calls inconclusive. The three token-refreshing clients read
+		// 408 this way on their token leg already; this is the same rule on the only leg this
+		// client has.
+		return ae.StatusCode == http.StatusTooManyRequests ||
+			ae.StatusCode == http.StatusRequestTimeout ||
+			ae.StatusCode >= 500
 	}
 	// Not from the round trip at all — a malformed response this client refused to trust.
 	// It proves nothing about the credential.
 	return true
 }
 
-// ProbeNotSent reports whether err PROVES nothing left this process — a DNS failure, a
+// ProbeNotSent reports whether err PROVES the FAILING request never left this process — a DNS failure, a
 // connect-time dial refusal, or this client's own preSendError — so the probe's outcome belongs
 // to no platform at all.
 //
@@ -151,6 +161,10 @@ func ProbeInconclusive(err error) bool {
 // default and for the same reason that one defaults true: each defaults to the answer that is
 // wrong in the cheap direction. Here that is recording a sample for a call that may have
 // happened, rather than silently dropping a real platform failure out of the series.
+//
+// The shared contract is "the FAILING request never left this process", not "no bytes at all" —
+// a distinction that only bites on the providers probed on two legs, which this client is not.
+// See domain.ErrConnectionProbeNotAttempted for why the marker is scoped that way.
 func ProbeNotSent(err error) bool {
 	if isPreSendDialError(err) {
 		return true

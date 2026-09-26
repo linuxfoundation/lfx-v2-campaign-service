@@ -73,6 +73,18 @@ func TestProbePredicates(t *testing.T) {
 			wantInconclusiv: true,
 		},
 		{
+			// The OTHER 4xx that is not an answer. A 408 means the endpoint, or an intermediary
+			// in front of it, gave up waiting for the request: nothing evaluated the credential
+			// and the same call can succeed on a retry. This package's token leg already read it
+			// that way; the account leg did not, so an account-read 408 matched NEITHER predicate,
+			// fell through probeClass's default arm and reached the operator as a typed 500
+			// service defect — paging us for a timeout.
+			name:            "api 408",
+			err:             &apiError{StatusCode: 408},
+			wantRejected:    false,
+			wantInconclusiv: true,
+		},
+		{
 			name:            "503",
 			err:             &apiError{StatusCode: 503},
 			wantRejected:    false,

@@ -106,7 +106,18 @@ func ProbeInconclusive(err error) bool {
 	}
 	var ae *apiError
 	if errors.As(err, &ae) {
-		return ae.StatusCode == http.StatusTooManyRequests || ae.StatusCode >= 500
+		// 408 sits with 429 and 5xx rather than with the refusals, for the reason this
+		// package's own token path already gives: a 408 means the endpoint — or an
+		// intermediary in front of it — gave up waiting for the request, so nothing evaluated
+		// the credential and the same call can succeed on a retry. Both of those are what a
+		// refusal promises the opposite of.
+		//
+		// Only the TOKEN leg carried that reading. An account-read 408 arrives as an apiError
+		// and matched neither predicate, so it fell through probeClass's default arm and became
+		// a typed 500 that pages us — for a timeout, which the probe contract calls inconclusive.
+		return ae.StatusCode == http.StatusTooManyRequests ||
+			ae.StatusCode == http.StatusRequestTimeout ||
+			ae.StatusCode >= 500
 	}
 	// Not from the round trip at all — a malformed response this client refused to trust, or
 	// one of the completeness guards ListAdAccounts documents ("an incomplete answer is an
@@ -114,7 +125,7 @@ func ProbeInconclusive(err error) bool {
 	return true
 }
 
-// ProbeNotSent reports whether err PROVES nothing left this process, so the probe's outcome
+// ProbeNotSent reports whether err PROVES the FAILING request never left this process, so the outcome
 // belongs to no platform at all.
 //
 // It is the third member of the probe vocabulary, and unlike the other two it is not about the
@@ -137,6 +148,12 @@ func ProbeInconclusive(err error) bool {
 // which is precisely what this predicate exists to prevent. isPreSendDialError matches only
 // DNS failures and dial-op ECONNREFUSED/EHOSTUNREACH/ENETUNREACH, so a TLS handshake failure —
 // a real conversation with a real host — stays off it and remains the platform's sample.
+//
+// "The failing request", not "no bytes at all": on a two-leg probe a token refresh may have
+// SUCCEEDED before the account read failed to dial, and this still answers true. See
+// domain.ErrConnectionProbeNotAttempted, which explains why that is the cheap direction — the
+// suppressed sample is an ERROR sample, so recording it would charge this deployment's own DNS
+// fault to the provider.
 func ProbeNotSent(err error) bool {
 	return errors.Is(err, errRequestNotSent) || isPreSendDialError(err)
 }

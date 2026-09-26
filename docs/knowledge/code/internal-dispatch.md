@@ -2357,7 +2357,8 @@ request this service BUILT, which is not a verdict on the credential, and treati
 inconclusive would silently stop testing anything the day an endpoint moves.
 
 `ProbeNotSent` is the third and lowest-stakes member, and it decides nothing an operator sees. It
-answers only whether the failure left this process at all, and it has to be asked HERE because the
+answers only whether the request whose failure ENDED the probe left this process at all, and it
+has to be asked HERE because the
 platform error chain is dropped at this boundary: past `probeClass` nothing downstream can tell a
 request a provider answered badly from one no provider ever received. When it matches, the
 inconclusive outcome is wrapped in `notSentInconclusiveError`, which answers `errors.Is` for
@@ -2367,6 +2368,25 @@ fault, but it is this deployment's network at fault rather than the provider, an
 `campaign_upstream_call_duration_seconds` inflates that provider's error rate for something no
 provider did. The operator-facing answer does not move: the connection still could not be
 verified, and the advisory still says so.
+
+The predicate's subject is the FAILING request, not "no bytes at all", and the difference is
+load-bearing on `googleads`, `microsoft` and `reddit`, which probe on two legs — a token refresh,
+then an account read. A refresh that SUCCEEDS before the account read fails to dial still carries
+the marker. That is deliberate and it is the cheap direction: `recordUpstream` is handed the
+probe's non-nil error, so the sample suppressed here would be an **error** sample, and recording
+it books this deployment's own DNS or egress fault against the provider's error rate — the exact
+inflation the marker exists to prevent. What is given up instead is one SUCCESSFUL token call,
+which hides no provider failure from anyone. Narrowing the marker to a never-sent FIRST leg trades
+a harmless undercount for the miscount the mechanism was built to stop.
+
+A `408` belongs with `429` and `5xx` in `ProbeInconclusive`, not with the refusals, and this was
+true on the token leg before it was true on the account leg. A `408` means the endpoint or an
+intermediary gave up waiting for the request: nothing evaluated the credential, and the same call
+can succeed on a retry — both of which a rejection promises the opposite of. `googleads`,
+`microsoft` and `reddit` already read it that way when refreshing a token, but every platform's
+`apiError` arm recognised only `429` and `>= 500`, so an account-read `408` matched NEITHER
+predicate, fell through `probeClass`'s default arm and reached the operator as a typed **500**
+service defect — paging us for a timeout.
 
 Its default runs **opposite** to `ProbeInconclusive`'s, on purpose. `ProbeInconclusive` answers
 `true` for an error it does not recognise, so an unproven connection is never reported as proven;
