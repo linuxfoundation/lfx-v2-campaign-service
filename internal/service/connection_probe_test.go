@@ -150,21 +150,30 @@ func TestTestConnUpstream_Classification(t *testing.T) {
 		}
 	})
 
-	t.Run("inconclusive reports OK: true, not a failed test", func(t *testing.T) {
-		// Nothing was learned about the connection, and the credential baseline already
-		// passed. Reporting OK: false here would tell an operator their working connection is
-		// broken every time the platform throttles or times out.
+	t.Run("inconclusive reports OK: false, and says the platform was unreachable", func(t *testing.T) {
+		// `ok` is declared as whether the credential AUTHENTICATED against the provider, and
+		// on a rate limit or a 5xx it did not. This arm used to answer true, which widened the
+		// field's meaning to fit the behaviour: a caller reading `ok` alone — which the design
+		// entitles it to do — got a green check for a connection nothing verified, then a
+		// failure at campaign creation. That is the defect this endpoint exists to remove.
 		probeErr := fmt.Errorf("%w: the google-ads check could not be completed", domain.ErrConnectionProbeInconclusive)
 		s := newProbeService(t, &connectionProberStub{err: probeErr})
 		res, err := testGoogle(t, s)
 		if err != nil {
 			t.Fatalf("TestGoogleAds: %v", err)
 		}
-		if !res.OK {
-			t.Fatalf("OK = false for an inconclusive probe; message = %v", res.Message)
+		if res.OK {
+			t.Fatalf("OK = true for a probe that reached no verdict; message = %v", res.Message)
 		}
-		if res.Message == nil || !strings.Contains(*res.Message, "inconclusive") {
-			t.Errorf("message = %v, does not tell the caller the check did not complete", res.Message)
+		// OK: false must not collapse the two failure shapes together. "Could not be reached"
+		// and "the platform refused your credential" are different operator instructions, so
+		// the message has to carry the distinction `ok` no longer does.
+		if res.Message == nil || !strings.Contains(*res.Message, "could not be reached") {
+			t.Errorf("message = %v, does not tell the caller the platform was unreachable", res.Message)
+		}
+		if res.Message != nil && !strings.Contains(*res.Message, "neither accepted nor rejected") {
+			t.Errorf("message = %v, does not clear the stored credential; an operator reading this "+
+				"would re-authorize a connection that was never refused", res.Message)
 		}
 	})
 

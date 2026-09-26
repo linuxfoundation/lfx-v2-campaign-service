@@ -27,8 +27,8 @@ import (
 // because the platform never evaluated the credential and an operator sent to re-authorise a
 // perfectly good credential is worse than no answer. And nothing may have been sent: a test that
 // checked only the error would still pass if the request were made and its answer discarded,
-// which is exactly the state that lets an unrelated outage classify inconclusive and answer
-// OK: true.
+// which is exactly the state that lets an unrelated outage classify inconclusive and answer with a
+// platform that could not be reached.
 func assertStoredIDNotUsable(t *testing.T, err error, upstreamHit bool) {
 	t.Helper()
 	if !errors.Is(err, domain.ErrConnectionProbeFailed) {
@@ -116,11 +116,11 @@ func TestMetaProbe_CanonicalStoredIDStillPasses(t *testing.T) {
 // that it names an account, and account_id is operator-settable through the connection config
 // API, so "0" and a 19-digit value above MaxInt64 are both storable. Both cost an upstream
 // enumeration they cannot benefit from, and a transient 503 on that enumeration classifies
-// inconclusive — reporting OK: true for a connection every campaign request deterministically
-// rejects.
+// inconclusive — reporting an unreachable platform for a connection every campaign request
+// deterministically rejects.
 func TestMicrosoftProbe_UnusableStoredAccountIDIsRefusedBeforeTheCall(t *testing.T) {
 	// The upstream is the canonical inconclusive failure, so a probe that enumerated first would
-	// answer OK: true rather than merely reaching the right verdict by a longer route.
+	// blame that outage rather than merely reaching the right verdict by a longer route.
 	for _, accountID := range []string{"0", "007", "-1", "abc", "1.5", "9999999999999999999"} {
 		t.Run(accountID, func(t *testing.T) {
 			var hit atomic.Bool

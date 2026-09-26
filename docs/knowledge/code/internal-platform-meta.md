@@ -590,6 +590,16 @@ order decides whether the operator is told their connection is broken or that th
 complete. Neither predicate true is a third outcome: the platform refused a request this service
 BUILT, which is a service defect rather than a verdict.
 
+`probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
+vocabulary: it answers only whether the failure ever left this process, and it changes nothing an
+operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error
+chain is DROPPED there, so no later layer could tell a provider that answered badly from one that
+was never contacted; the answer reaches `Orchestrator.ProbeConnection`'s metrics arm alone, which
+keeps a local DNS or dial failure off `campaign_upstream_call_duration_seconds` rather than
+charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInconclusive`'s on
+purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
+series instead of vanishing from it.
+
 The classification reads the Graph envelope, not just the status: code `190` under a `400` is a
 credential rejection, while a rate-limit code under the same `400` is inconclusive. **The status
 gates the code, never the reverse** — the same rule the token-refusal classifiers follow. HTTP

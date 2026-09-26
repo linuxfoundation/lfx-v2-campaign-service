@@ -638,10 +638,19 @@ func TestPrePlatformGuardsAreNotInstrumented(t *testing.T) {
 // an upstream error rate and a latency distribution collapsing toward zero for calls it never
 // received.
 //
+// The fourth carrier of that marker is not a verdict at all: an INCONCLUSIVE outcome whose
+// platform error proves the request never left the process — an unresolvable host, a refused
+// connection. It is the same local refusal wearing the other status, and it is the one an
+// operator is most likely to meet in bulk, because a DNS or egress fault hits every connection
+// on the platform at once. Recording those would read as a provider outage caused entirely by
+// this deployment's own network.
+//
 // The same is true of every failure the dispatcher's own resolver returns — an unreadable row,
 // an undecryptable credential, an inactive connection, a malformed blob — which is why
-// probeReachedThePlatform is an allow-list over the probe vocabulary rather than a deny-list
-// over the local sentinels. The table below runs both halves against the one gate.
+// probeReachedThePlatform is a deny-list over the local sentinels rather than an allow-list
+// over the probe vocabulary: an outcome it does not recognise is still recorded, so a real
+// platform failure can never vanish from the series by going unnamed. The table below runs both
+// halves against the one gate.
 func TestProbeVerdictsDecidedBeforeAnyRequestAreNotInstrumented(t *testing.T) {
 	const platform = model.ProviderMicrosoftAds
 
@@ -676,6 +685,15 @@ func TestProbeVerdictsDecidedBeforeAnyRequestAreNotInstrumented(t *testing.T) {
 			wantReason: "an attempt was made and failed in flight; dropping it would hide a platform outage",
 		},
 		{
+			// The shape internal/dispatch's probeClass produces when the platform's own
+			// ProbeNotSent predicate recognises the error as never having left the process.
+			name: "probe could not be completed because nothing was sent",
+			probeErr: fmt.Errorf("%w: %w: the %s check could not be completed",
+				domain.ErrConnectionProbeInconclusive, domain.ErrConnectionProbeNotAttempted, platform),
+			wantCalls:  0,
+			wantReason: "an unresolvable host or a refused connection is this deployment's fault, not the provider's, and every connection on the platform fails it at once",
+		},
+		{
 			name:       "healthy connection",
 			probeErr:   nil,
 			wantCalls:  1,
@@ -691,7 +709,7 @@ func TestProbeVerdictsDecidedBeforeAnyRequestAreNotInstrumented(t *testing.T) {
 		// The resolver's own failures. Every dispatcher loads the row, decrypts it, checks it is
 		// active and decodes the blob INSIDE ProbeConnection, so these are local refusals sitting
 		// inside the measured call exactly as the three pre-send verdicts are. They carry no probe
-		// sentinel at all, which is what the allow-list keys on: recording them would let a
+		// sentinel at all, which is what the deny-list keys on: recording them would let a
 		// datastore or key-management incident read as a platform outage on the provider's own
 		// upstream series, and the platform would be the only thing that was not at fault.
 		{

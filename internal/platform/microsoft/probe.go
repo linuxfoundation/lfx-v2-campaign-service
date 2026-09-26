@@ -73,7 +73,8 @@ func ProbeCredentialRejected(err error) bool {
 // campaign step — so the dial classifier cannot see through the returned error and calling it
 // here would assert a match that can never happen. Such an error falls to the default below,
 // which is inconclusive anyway, so the classification is unchanged; only the claim would have
-// been false.
+// been false. ProbeNotSent below reads the explicit errRequestNotSent marker instead, which is
+// why that marker had to exist here and nowhere else.
 func ProbeInconclusive(err error) bool {
 	// ErrTokenRequestRejected is the one error this package recognises that is NEITHER
 	// predicate, and it has to say so EXPLICITLY, because the fall-through at the bottom of
@@ -104,6 +105,22 @@ func ProbeInconclusive(err error) bool {
 	// one of the completeness guards ListAdAccounts documents ("an incomplete answer is an
 	// ERROR, never a short list"). It proves nothing about the credential.
 	return true
+}
+
+// ProbeNotSent reports whether err PROVES nothing left this process, so the probe's outcome
+// belongs to no platform at all.
+//
+// It is the third member of the probe vocabulary, and unlike the other two it is not about the
+// operator's answer: an inconclusive probe reads the same either way. It exists for the metrics
+// arm alone — see internal/dispatch/probe.go and domain.ErrConnectionProbeNotAttempted — so an
+// unresolvable host or a refused connection does not land on this platform's upstream-call
+// series as a near-zero-latency error sample.
+//
+// It defaults FALSE for anything it does not recognise, the opposite of ProbeInconclusive's
+// default and for the same reason that one defaults true: the safe direction here is to record
+// a sample for a call that may have happened, not to silently drop a real platform failure.
+func ProbeNotSent(err error) bool {
+	return errors.Is(err, errRequestNotSent)
 }
 
 // RFC 6749 §5.2 defines exactly six token-endpoint `error` codes, and they split by REMEDY —

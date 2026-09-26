@@ -236,6 +236,30 @@ func WithNowFunc(now func() time.Time) Option {
 	}
 }
 
+// WithCallerScopedTokenRefresh ties the token refresh's lifetime to the caller
+// that triggers it, instead of detaching it with context.WithoutCancel.
+//
+// Detaching is the right default for a client that OUTLIVES a request and is
+// shared by many — the cached clients resolveRedditClientWithCredsCache hands
+// out: one caller's cancellation must not tear down a refresh the other waiters
+// are parked on, and the token it produces is reused long after that caller is
+// gone. Neither reason holds for a client built for ONE call and dropped — a
+// connection probe's. Nothing else will ever read its cache, so a detached
+// refresh buys nobody anything, and it outruns its caller: the refresh runs on
+// its own redditRequestTimeout deadline, which is longer than the bound the
+// probe orchestrator puts on the whole probe. Cancel the probe and the
+// goroutine, its socket and its file descriptor stay alive to finish work whose
+// result is already unreachable — per probe, on every connection, on a platform
+// whose token endpoint is the thing that is slow.
+//
+// Set this ONLY on a client no other caller shares. On a shared one it
+// reintroduces exactly the tear-down the single-flight exists to prevent.
+func WithCallerScopedTokenRefresh() Option {
+	return func(c *Client) {
+		c.callerScopedRefresh = true
+	}
+}
+
 // withRetryBaseDelay overrides the exponential-backoff base for 429 retries.
 // Unexported: only tests use it, to keep retry runs fast (no real multi-second
 // sleeps). Mirrors the Meta client's withRetryBaseDelay.
@@ -294,6 +318,12 @@ type Client struct {
 	// current waiters, so a failed refresh fails all of them rather than each
 	// follower re-leading a fresh refresh in series. Guarded by mu.
 	inflight *tokenRefresh
+
+	// callerScopedRefresh keeps the leader's refresh derived from the CALLING
+	// context instead of detaching it. Off by default, because detaching is what
+	// makes the single-flight above safe for a client many callers share. See
+	// WithCallerScopedTokenRefresh.
+	callerScopedRefresh bool
 }
 
 // tokenRefresh holds the shared result of one in-flight token refresh. done is
@@ -715,6 +745,12 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 		// transport can still correlate the token request with the campaign
 		// operation. A fresh bounded timeout replaces the caller's deadline.
 		refreshValuesCtx := context.WithoutCancel(ctx)
+		if c.callerScopedRefresh {
+			// A one-shot client: nothing outlives this caller to benefit from the
+			// detach, so the refresh stays bounded by the caller's own deadline
+			// rather than leaking past it. See WithCallerScopedTokenRefresh.
+			refreshValuesCtx = ctx
+		}
 		go func() {
 			fetchCtx, cancel := context.WithTimeout(refreshValuesCtx, redditRequestTimeout)
 			token, err := c.fetchToken(fetchCtx)

@@ -314,7 +314,10 @@ func (d *RedditDispatcher) resolveRedditClientWithCredsCache(ctx context.Context
 	// cachedMicrosoftClient's shape. Written twice, the two copies can drift: a later
 	// AccountConfig change (a new field, a different pixel source) has to be made in both, and
 	// the compiler cannot notice if it is not.
-	build := func() *reddit.Client {
+	//
+	// extra is how the two branches below differ: the cached client is shared and long-lived,
+	// the probe's is used once and dropped, and they want opposite token-refresh lifetimes.
+	build := func(extra ...reddit.Option) *reddit.Client {
 		return reddit.NewClient(
 			reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
 			// The pixel travels with the ACCOUNT, matching where it is stored. An absent key
@@ -326,14 +329,22 @@ func (d *RedditDispatcher) resolveRedditClientWithCredsCache(ctx context.Context
 				Label:             res.label,
 				ConversionPixelID: res.providerConfig["conversion_pixel_id"],
 			},
-			d.opts...,
+			// Copied rather than appended in place: d.opts is shared by every call on this
+			// dispatcher, and appending to it could publish one caller's extra options to
+			// the next through a reused backing array.
+			append(append([]reddit.Option(nil), d.opts...), extra...)...,
 		)
 	}
 	if !useCache {
 		// Deliberately does not WRITE the cache either. Seeding it here would hand the next
 		// dispatch a token minted for a probe, and a probe is the one caller whose client is
 		// built to be thrown away.
-		return build(), res, nil
+		//
+		// Which is also why its token refresh stays bound to the probe's context: with no
+		// other waiter to protect and no later caller to serve, a detached refresh would only
+		// outlive the probe, running on redditRequestTimeout after the orchestrator's shorter
+		// bound has already released the caller.
+		return build(reddit.WithCallerScopedTokenRefresh()), res, nil
 	}
 	built, err := d.clients.buildOnce(key, connID, version, func() (any, error) {
 		return build(), nil
@@ -642,8 +653,8 @@ func (d *RedditDispatcher) ProbeConnection(ctx context.Context, projectID string
 	if verr := client.VerifyAccount(ctx); verr != nil {
 		// Raised by the client's own guard before any request is built, so Reddit never saw
 		// the credential. Answered here rather than by either predicate: the rejection arm
-		// would blame the credential, and the inconclusive default would answer OK: true for
-		// an id no Reddit request can address.
+		// would blame the credential, and the inconclusive default would blame Reddit's
+		// availability for an id no Reddit request can address.
 		if errors.Is(verr, reddit.ErrInvalidAccountID) {
 			return subject.accountIDNotUsable()
 		}
@@ -658,7 +669,7 @@ func (d *RedditDispatcher) ProbeConnection(ctx context.Context, projectID string
 		if reddit.ProbeAccountUnreachable(verr) {
 			return subject.accountNotReachable()
 		}
-		return subject.probeClass(verr, reddit.ProbeCredentialRejected, reddit.ProbeInconclusive)
+		return subject.probeClass(verr, reddit.ProbeCredentialRejected, reddit.ProbeInconclusive, reddit.ProbeNotSent)
 	}
 	// The credential authenticates and reaches the account — and a connection that names no
 	// conversion pixel still fails on first use. reddit.Client.CreateCampaign refuses EVERY

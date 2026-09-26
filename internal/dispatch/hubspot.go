@@ -331,7 +331,7 @@ func (d *HubSpotDispatcher) ProbeConnection(ctx context.Context, projectID strin
 
 	portalID, perr := client.AuthenticatedPortalID(ctx)
 	if perr != nil {
-		return subject.probeClass(perr, hubspot.ProbeCredentialRejected, hubspot.ProbeInconclusive)
+		return subject.probeClass(perr, hubspot.ProbeCredentialRejected, hubspot.ProbeInconclusive, hubspot.ProbeNotSent)
 	}
 
 	// portal_id is NOT the account this connection dispatches to, which is why a mismatch is

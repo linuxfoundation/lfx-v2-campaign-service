@@ -20,15 +20,16 @@ import (
 // satisfies BOTH predicates on most platforms, and only the evaluation order decides which
 // verdict the operator sees.
 //
-// Get the order wrong and a revoked refresh token classifies as inconclusive, which maps to
-// OK: true — restoring, exactly, the bug this whole change removes.
+// Get the order wrong and a revoked refresh token classifies as inconclusive, which sends the
+// operator to wait out an outage that is not happening instead of to re-authorise — hiding,
+// exactly, the verdict this whole change exists to surface.
 func TestProbeClass_EvaluationOrderIsLoadBearing(t *testing.T) {
 	s := probeSubject{platform: model.ProviderGoogleAds, accountID: "8666746580"}
 	boom := errors.New("token refresh refused")
 
 	// Both predicates say yes, which is the real shape of a revoked token on every platform
 	// whose ProbeInconclusive defaults to true.
-	got := s.probeClass(boom, alwaysTrue, alwaysTrue)
+	got := s.probeClass(boom, alwaysTrue, alwaysTrue, alwaysFalse)
 	if !errors.Is(got, domain.ErrConnectionProbeFailed) {
 		t.Fatalf("probeClass = %v; with both predicates true the rejection must win, or a revoked credential is reported as a healthy connection", got)
 	}
@@ -45,7 +46,7 @@ func TestProbeClass(t *testing.T) {
 	boom := errors.New("upstream boom")
 
 	t.Run("rejected", func(t *testing.T) {
-		err := s.probeClass(boom, alwaysTrue, alwaysFalse)
+		err := s.probeClass(boom, alwaysTrue, alwaysFalse, alwaysFalse)
 		if !errors.Is(err, domain.ErrConnectionProbeFailed) {
 			t.Fatalf("err = %v, want ErrConnectionProbeFailed", err)
 		}
@@ -61,7 +62,7 @@ func TestProbeClass(t *testing.T) {
 	})
 
 	t.Run("inconclusive", func(t *testing.T) {
-		err := s.probeClass(boom, alwaysFalse, alwaysTrue)
+		err := s.probeClass(boom, alwaysFalse, alwaysTrue, alwaysFalse)
 		if !errors.Is(err, domain.ErrConnectionProbeInconclusive) {
 			t.Fatalf("err = %v, want ErrConnectionProbeInconclusive", err)
 		}
@@ -71,7 +72,7 @@ func TestProbeClass(t *testing.T) {
 	})
 
 	t.Run("neither predicate is a service defect, not a verdict", func(t *testing.T) {
-		err := s.probeClass(boom, alwaysFalse, alwaysFalse)
+		err := s.probeClass(boom, alwaysFalse, alwaysFalse, alwaysFalse)
 		if !errors.Is(err, domain.ErrServiceDefect) {
 			t.Fatalf("err = %v, want ErrServiceDefect so the service returns a typed 500 rather than telling the operator to audit fields the request never consulted", err)
 		}
@@ -79,16 +80,16 @@ func TestProbeClass(t *testing.T) {
 			t.Error("the reason token is missing; ErrServiceDefect selects the status, and the response carries no detail, so the token is all an operator reading the log gets")
 		}
 		if errors.Is(err, domain.ErrConnectionProbeInconclusive) {
-			t.Error("classified as inconclusive, which maps to OK: true — a whole platform's connection tests would silently stop testing anything the day an endpoint moves")
+			t.Error("classified as inconclusive — a whole platform's connection tests would silently start blaming an outage rather than testing anything, the day an endpoint moves")
 		}
 	})
 
 	t.Run("the platform error chain is dropped, not wrapped", func(t *testing.T) {
 		const canary = "DO-NOT-LEAK https://graph.facebook.com/v21.0/me/adaccounts?access_token=SECRET"
 		for _, err := range []error{
-			s.probeClass(errors.New(canary), alwaysTrue, alwaysFalse),
-			s.probeClass(errors.New(canary), alwaysFalse, alwaysTrue),
-			s.probeClass(errors.New(canary), alwaysFalse, alwaysFalse),
+			s.probeClass(errors.New(canary), alwaysTrue, alwaysFalse, alwaysFalse),
+			s.probeClass(errors.New(canary), alwaysFalse, alwaysTrue, alwaysFalse),
+			s.probeClass(errors.New(canary), alwaysFalse, alwaysFalse, alwaysFalse),
 		} {
 			if strings.Contains(err.Error(), "DO-NOT-LEAK") {
 				t.Errorf("classified error %q carries the platform chain; the rejection arm is echoed verbatim to the caller, and several of these clients render request URLs and raw bodies", err)
@@ -189,7 +190,7 @@ func TestProbeSubjectWhichAccount(t *testing.T) {
 func TestConfirmedProbeVerdicts_DoNotStutterTheSentinel(t *testing.T) {
 	s := probeSubject{platform: model.ProviderRedditAds, accountID: "t2_gv9wtbfa"}
 	verdicts := map[string]error{
-		"rejection":          s.probeClass(errors.New("boom"), alwaysTrue, alwaysFalse),
+		"rejection":          s.probeClass(errors.New("boom"), alwaysTrue, alwaysFalse, alwaysFalse),
 		"no account":         s.noAccountConfigured(),
 		"account unreached":  s.accountNotReachable(),
 		"account id invalid": s.accountIDNotUsable(),

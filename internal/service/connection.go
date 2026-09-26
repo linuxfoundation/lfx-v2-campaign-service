@@ -395,9 +395,24 @@ func (s *ConnectionService) testConnUpstream(ctx context.Context, projectID stri
 	switch {
 	case errors.Is(perr, domain.ErrConnectionProbeInconclusive):
 		// The probe could not be completed — a dial failure, a timeout, a rate limit, a
-		// platform 5xx. It proves NOTHING about the connection, and the credential baseline
-		// already passed, so this service has no basis to call the connection broken. OK: true
-		// with an advisory, the same judgement TestLinkedinAds makes for an incomplete walk.
+		// platform 5xx. It proves NOTHING about the connection.
+		//
+		// OK: false, and the reason is the field's own definition rather than a product
+		// judgement: `ok` is declared in design/connection.go as whether the credential
+		// AUTHENTICATED against the provider, and on a 5xx it did not. Answering true here
+		// contradicts the schema, and a caller reading only `ok` — which the design entitles
+		// it to do — gets a green check for a connection nothing verified, then a failure at
+		// create. That is the same shape as the Meta bare-id and Microsoft account-id defects
+		// this endpoint exists to remove, arrived at from the service layer instead of a
+		// dispatcher.
+		//
+		// This does NOT collapse into the failure verdicts. "Could not be reached" and "the
+		// platform rejected your credential" are different operator instructions, and the
+		// message keeps them apart: this arm names the unreachability and says nothing about
+		// the credential, while ErrConnectionProbeFailed below echoes the dispatcher's
+		// authored sentence naming what was actually refused. A caller treating this as
+		// "do not rely on this yet" behaves correctly; one treating it as "re-authorize" has
+		// been told otherwise in the same string.
 		//
 		// The response message is fixed rather than built from perr: which failure class the
 		// platform hit is an operator's diagnostic, not the caller's. perr itself is safe to
@@ -410,8 +425,9 @@ func (s *ConnectionService) testConnUpstream(ctx context.Context, projectID stri
 			// what dashboards group on. This value is a sentence, so the same key would
 			// silently make that vocabulary unbounded.
 			"project_id", projectID, "provider", provider, "detail", perr.Error())
-		msg := fmt.Sprintf("connection found; %s verification was inconclusive", d.displayName)
-		return &conn.ConnectionTestResult{OK: true, Message: &msg}, nil
+		msg := fmt.Sprintf("connection found, but %s could not be reached to verify it (timeout, rate limit or a platform error); "+
+			"the stored credential was neither accepted nor rejected, so nothing is known to be wrong with this connection — try again shortly", d.displayName)
+		return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
 	case errors.Is(perr, domain.ErrCredentialDecryptionFailed):
 		// NO ERROR TEXT. perr's chain is built by domain.Encryptor from ciphertext and key
 		// material, which an implementation is free to quote; concatenating it into this
@@ -1058,8 +1074,16 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 				// from SafeInconclusiveDetail's classification, so putting it under the
 				// same key would silently make that vocabulary unbounded.
 				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds), "detail", verr.Error())
-			msg := "connection found; linkedin account/organization verification was inconclusive"
-			return &conn.ConnectionTestResult{OK: true, Message: &msg}, nil
+			// OK: false for the reason testConnUpstream's inconclusive arm states in full:
+			// `ok` is declared as whether the credential authenticated against the provider,
+			// and an incomplete walk did not establish that. This arm is the one that used to
+			// set the precedent the other followed, so it moves with it — leaving the two
+			// disagreeing would make `ok` mean one thing on linkedin and another everywhere
+			// else, which is worse than either answer.
+			msg := "connection found, but linkedin could not be reached to verify the account/organization reference " +
+				"(timeout, rate limit or a platform error); the stored credential was neither accepted nor rejected, " +
+				"so nothing is known to be wrong with this connection — try again shortly"
+			return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
 		case errors.Is(verr, domain.ErrCredentialDecryptionFailed):
 			// NO ERROR TEXT, same guard as classifyDiscoveryError's identical arm above:
 			// verr's chain is built by domain.Encryptor from ciphertext and key material,
@@ -1241,8 +1265,15 @@ func (s *ConnectionService) DeleteMetaAds(ctx context.Context, p *conn.DeleteMet
 
 // TestMetaAds tests the stored Meta connection against the Graph API (LFXV2-2665): the probe
 // enumerates the ad accounts the stored access token can reach and checks the configured
-// account is among them, normalizing Meta's `act_` prefix on both sides so a connection stored
-// without it is not reported broken over a spelling difference.
+// account is among them.
+//
+// The STORED account id must already be canonical `act_<digits>` and is validated against
+// meta.ValidateAccountID before the Graph API is contacted; a connection stored without the
+// prefix is refused as not-usable, not rescued. That is deliberate — MetaDispatcher.Dispatch
+// hands the stored id to the client untouched and campaign creation applies the same rule, so
+// accepting a bare id here would pass a connection that fails on first use. The `act_` prefix
+// normalization still runs on the membership comparison, but only to absorb the representation
+// the UPSTREAM enumeration returns.
 func (s *ConnectionService) TestMetaAds(ctx context.Context, p *conn.TestMetaAdsPayload) (*conn.ConnectionTestResult, error) {
 	return s.testConnUpstream(ctx, p.ProjectID, metaAdsAccountDiscovery)
 }

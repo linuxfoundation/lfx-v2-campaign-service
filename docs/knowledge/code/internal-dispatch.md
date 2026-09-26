@@ -2012,7 +2012,8 @@ embeds neither the stored account id nor the configured org id; there is no verd
 report. `TestLinkedIn_VerifyAccountOrg` pins this with a subtest whose handler answers `400` and
 asserts the result is `domain.ErrServiceDefect` and is NEITHER
 `domain.ErrOrgVerificationFailed` nor `domain.ErrOrgVerificationInconclusive` — the two buckets
-it would otherwise silently land in, one of which reports `OK: true`.
+it would otherwise silently land in, neither of which names this service as the party who has to
+act.
 
 Missing `accountID`/`org_id` is checked explicitly here too, because verifying a pairing needs
 both ids present and the discovery resolver only requires the credential to be otherwise usable;
@@ -2147,6 +2148,26 @@ revoked an hour ago then answers `OK: true` until the access token ages out — 
 production failure this endpoint was built to catch, reproduced by the endpoint that exists to
 catch it.
 
+**One-shot probe clients also scope their token refresh to the probe.** `googleads`, `microsoft`
+and `reddit` run their token refresh under a single-flight whose leader detaches the call with
+`context.WithoutCancel` — the right default for a client that OUTLIVES a request and is shared by
+many waiters, since one caller's cancellation must not tear down a refresh the others are parked
+on. Neither reason holds for the client a probe builds, uses for one enumeration and drops: nothing
+else will ever read its cache, and the detached refresh runs on the platform's own request timeout,
+which is LONGER than the bound `ProbeConnection` puts on the whole probe — so cancelling the probe
+left a goroutine, a socket and a file descriptor alive to finish work already unreachable, per
+probe, on every connection, on platforms whose token endpoint is the slow part. Each of the three
+packages therefore exports `WithCallerScopedTokenRefresh()`, and the probe construction paths here
+pass it: `GoogleAdsDispatcher.resolveOwnedGoogleAdsDiscovery` takes variadic `extra` options for
+exactly this (the monitor read keeps the detached default), `MicrosoftDispatcher.ProbeConnection`
+appends it at construction, and `resolveRedditClientWithCredsCache`'s `!useCache` branch — the one
+that already refuses to read or write the cache — passes it too. Every one of those call sites
+COPIES `d.opts` (`append(append([]X(nil), d.opts...), extra...)`) rather than appending in place,
+because appending to a slice the dispatcher shares can publish one caller's extra option to the
+next through a reused backing array. The option is documented as safe only on a client no other
+caller shares; on a shared one it reintroduces exactly the tear-down the single-flight exists to
+prevent. `token_refresh_scope_test.go` in each of the three packages asserts BOTH directions.
+
 `resolveRedditClientWithCredsCache` makes the cache a caller's choice rather than an invariant,
 and `ProbeConnection` is the one caller that passes `useCache=false`. A parameter rather than a
 second copy of the function, because every validation above the build — the resolve, the decode,
@@ -2167,8 +2188,8 @@ creation on such a connection cannot succeed, which is the question the test ask
 decided **before** the upstream call on every probe, and the ordering is load-bearing on the two
 enumerating platforms. Google Ads and Meta reach the same empty-account verdict through
 `probeMembership`, but only on the path where the enumeration SUCCEEDS — deferring the check let
-an unrelated 5xx classify inconclusive and answer `OK: true` for a connection naming no ad
-account at all. `TestProbeConnection_NoAccountIsDecidedBeforeTheCall` asserts both the verdict
+an unrelated 5xx classify inconclusive and answer with a platform that could not be reached — an
+outage to wait out — for a connection naming no ad account at all. `TestProbeConnection_NoAccountIsDecidedBeforeTheCall` asserts both the verdict
 and that nothing was sent.
 
 `accountIDNotUsable` covers the narrower case Reddit's client can raise from its own path guard:
@@ -2189,7 +2210,7 @@ Microsoft's probe validated `customer_id` but not `account_id`, and builds its d
 with `CustomerID` only, so `Client.validateAccountIDs` — the dispatch-path caller of
 `microsoft.ValidateAccountID` — never ran on the probe path at all; a stored `0` or a 19-digit
 value above `MaxInt64` therefore bought an upstream enumeration whose transient 5xx would
-classify inconclusive and answer `OK: true`. Both now call their platform's `ValidateAccountID`
+classify inconclusive and blame an unreachable platform. Both now call their platform's `ValidateAccountID`
 before anything is sent and answer `accountIDNotUsable`. The generalisation is the one the
 twitter and microsoft concepts already state: a STORED id must be held to the rule its own
 dispatch path applies, never to the looser one a comparison happens to tolerate.
@@ -2213,8 +2234,8 @@ over HTTP, and because rows stored before the pattern landed still carry the das
 Advertising's `customer_id`, which scopes the whole enumeration rather than naming the account.
 `discoveryCustomerIDs` always refused a non-numeric or non-positive value — correctly — but with
 an unsentineled error, which neither probe predicate recognised, so `ProbeInconclusive`'s
-unrecognised-error default answered `true` and the service reported `OK: true` for a connection
-that can never dispatch. `microsoft.ValidateCustomerID` (exported for exactly this, alongside
+unrecognised-error default answered `true` and the service reported an unreachable platform for a
+connection that can never dispatch — an outage in place of the field on the row that can be fixed. `microsoft.ValidateCustomerID` (exported for exactly this, alongside
 `microsoft.ErrInvalidCustomerID`) is now consulted before the call, and the verdict is kept
 separate from `accountIDNotUsable` because the operator has to know which of the two fields on
 the same row to fix. `TestMicrosoftProbe_MalformedCustomerIDIsAVerdictNotInconclusive` pins it
@@ -2308,29 +2329,53 @@ source rather than behaviour because the failure is silent by construction — a
 swapped for `resolve` compiles, passes every functional test that uses a project WITH its own
 connection, and misbehaves only for the projects that do not.
 
-### The two-predicate vocabulary and why ORDER is load-bearing
+### The three-predicate vocabulary and why ORDER is load-bearing
 
-Each `internal/platform/*` package exports two predicates over its own error types —
-`ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` — and one shared classifier
-here (`probeSubject.probeClass`) consults them **in that order** for all six platforms:
+Each `internal/platform/*` package exports three predicates over its own error types —
+`ProbeCredentialRejected(err) bool`, `ProbeInconclusive(err) bool` and `ProbeNotSent(err) bool` —
+and one shared classifier here (`probeSubject.probeClass`) consults them **in that order** for all
+six platforms. Only the first two decide anything an operator sees:
 
 | Predicate outcome | Sentinel | Result at the service layer |
 | --- | --- | --- |
 | rejected | `domain.ErrConnectionProbeFailed` | `OK: false`, message echoed |
-| not rejected, inconclusive | `domain.ErrConnectionProbeInconclusive` | `OK: true` with an advisory |
+| not rejected, inconclusive | `domain.ErrConnectionProbeInconclusive` | `OK: false`, with a message naming the unreachability rather than the credential |
 | neither | `domain.ErrServiceDefect` + `domain.ErrConnectionProbeRequestRejected` | typed **500** |
 
 `ProbeInconclusive` returns `true` for an error it does not recognise — it has to, because an
 unrecognised error proves nothing about the credential and the alternative is reporting
 connections broken on guesses. The consequence is that a revoked credential satisfies **both**
 predicates on most platforms, and only the evaluation order decides which verdict the operator
-sees. Reverse it and a revoked refresh token classifies as inconclusive, maps to `OK: true`, and
-restores exactly the bug this change removes. `TestProbeClass_EvaluationOrderIsLoadBearing` exists
+sees. Reverse it and a revoked refresh token classifies as inconclusive and is reported as a
+platform that could not be reached — sending the operator to wait out an outage that is not
+happening instead of to re-authorise, which hides exactly the verdict this change exists to
+surface. `TestProbeClass_EvaluationOrderIsLoadBearing` exists
 for that one line.
 
 "Neither predicate" is deliberately NOT folded into inconclusive: it means the platform refused a
 request this service BUILT, which is not a verdict on the credential, and treating it as
 inconclusive would silently stop testing anything the day an endpoint moves.
+
+`ProbeNotSent` is the third and lowest-stakes member, and it decides nothing an operator sees. It
+answers only whether the failure left this process at all, and it has to be asked HERE because the
+platform error chain is dropped at this boundary: past `probeClass` nothing downstream can tell a
+request a provider answered badly from one no provider ever received. When it matches, the
+inconclusive outcome is wrapped in `notSentInconclusiveError`, which answers `errors.Is` for
+`domain.ErrConnectionProbeNotAttempted` and is read by exactly one caller —
+`Orchestrator.ProbeConnection`'s metrics arm. A DNS failure or a refused connection is a real
+fault, but it is this deployment's network at fault rather than the provider, and recording it on
+`campaign_upstream_call_duration_seconds` inflates that provider's error rate for something no
+provider did. The operator-facing answer does not move: the connection still could not be
+verified, and the advisory still says so.
+
+Its default runs **opposite** to `ProbeInconclusive`'s, on purpose. `ProbeInconclusive` answers
+`true` for an error it does not recognise, so an unproven connection is never reported as proven;
+`ProbeNotSent` answers `false`, so an unrecognised error stays on the upstream series rather than
+vanishing from it. `notSentInconclusiveError` is kept separate from its sibling
+`preSendProbeVerdictError` — which carries the same marker for a CONFIRMED pre-send verdict —
+because each enforces the opposite invariant: that one may only ever wrap a confirmed verdict, this
+one only ever an inconclusive outcome, so a probe that reached nothing can never harden into a
+failure just because the wrapper made it convenient.
 
 The classifier also **drops** the platform error chain rather than wrapping it. The rejection arm
 is the one class echoed verbatim to the caller, and these clients render request URLs and raw

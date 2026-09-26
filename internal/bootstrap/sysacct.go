@@ -22,6 +22,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 )
 
 // systemActor is stamped as created_by/updated_by: the reserved scope has no bearer token.
@@ -272,7 +273,26 @@ func validateConditionalGroups(provider model.Provider, folded map[string]json.R
 var (
 	numericID = regexp.MustCompile(`^[0-9]+$`)
 	alnumID   = regexp.MustCompile(`^[A-Za-z0-9]+$`)
+	// positiveID is numericID's identity-claim sibling: no leading zero and not zero itself.
+	// A regexp cannot express the other half of that rule — a 19-digit value above MaxInt64 —
+	// so valueValidators below carries the runtime check beside it.
+	positiveID = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
 )
+
+// valueValidators carries the shape rules a regexp cannot express, applied AFTER the pattern
+// in valueShapes and for the same reason: this installer writes straight to the repository, so
+// a value the rest of the system refuses would otherwise land on an active system row.
+//
+// Microsoft's two ids are decoded as `long` and validated as positive int64 at runtime
+// (microsoft.ValidateAccountID / ValidateCustomerID). `9999999999999999999` is nineteen digits
+// and matches positiveID, but overflows int64 — so the pattern alone still admitted a value
+// every probe and every dispatch then rejects.
+var valueValidators = map[model.Provider]map[string]func(string) error{
+	model.ProviderMicrosoftAds: {
+		"account_id":  microsoft.ValidateAccountID,
+		"customer_id": microsoft.ValidateCustomerID,
+	},
+}
 
 // valueShapes is the shape rule each non-secret id is ALREADY held to at the two places it
 // is read, gathered where it is WRITTEN. This installer writes past the API straight to the
@@ -295,8 +315,12 @@ var valueShapes = map[model.Provider]map[string]*regexp.Regexp{
 	model.ProviderMetaAds:     {"account_id": regexp.MustCompile(`^act_[0-9]+$`), "page_id": numericID},
 	model.ProviderTwitterAds:  {"account_id": alnumID, "funding_instrument_id": alnumID},
 	// Runtime validators only — the design checks presence alone for these.
-	model.ProviderGoogleAds:    {"account_id": numericID, "login_customer_id": numericID},
-	model.ProviderMicrosoftAds: {"account_id": numericID, "customer_id": numericID},
+	model.ProviderGoogleAds: {"account_id": numericID, "login_customer_id": numericID},
+	// positiveID, not numericID: both Microsoft ids are held to `^[1-9][0-9]*$` with
+	// MaxLength(19) at the design and to a positive-int64 rule at runtime. The digits-only
+	// spelling let `0`, `007` and a 64-digit number install into the SHARED fallback row,
+	// which every project without its own connection then dispatches through.
+	model.ProviderMicrosoftAds: {"account_id": positiveID, "customer_id": positiveID},
 	model.ProviderRedditAds:    {"account_id": regexp.MustCompile(`^[A-Za-z0-9_]+$`)},
 }
 
@@ -328,6 +352,19 @@ func requireShapes(provider model.Provider, accountID string, cfg map[string]str
 		if len(v) > maxValueLen || !re.MatchString(v) {
 			return fmt.Errorf("bootstrap: %s %s %q does not match the shape this value is held to elsewhere (%s, at most %d chars) — see valueShapes",
 				provider, key, v, re, maxValueLen)
+		}
+	}
+	// Second pass, not folded into the loop above: a key may carry a runtime rule the pattern
+	// cannot express, and the pattern must run first so the error names the simpler violation
+	// when both apply.
+	for key, validate := range valueValidators[provider] {
+		v, ok := supplied[key]
+		if !ok {
+			continue
+		}
+		if err := validate(v); err != nil {
+			return fmt.Errorf("bootstrap: %s %s %q is refused by the same runtime validator the probe and dispatch paths apply: %w",
+				provider, key, v, err)
 		}
 	}
 	return nil

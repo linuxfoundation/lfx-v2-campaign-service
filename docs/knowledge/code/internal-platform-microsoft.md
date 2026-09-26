@@ -50,6 +50,20 @@ and the refresh runs on a `WithoutCancel`-detached context so one caller's
 cancellation can't tear down a shared refresh). The OAuth response body is never
 echoed into errors (it can carry the `client_secret`/`refresh_token` back).
 
+**`WithCallerScopedTokenRefresh()` opts one client out of that detach.** Detaching is right for a
+client that OUTLIVES a request and is shared by many: one caller's cancellation must not tear down
+a refresh the other waiters are parked on, and the token it produces is reused long after that
+caller is gone. Neither reason holds for the client `internal/dispatch` builds for a single
+connection probe and drops — nothing else will ever read its cache, so the detached refresh buys
+nobody anything while it OUTRUNS its caller, running on `msAdsRequestTimeout`, which is longer than the bound
+`ProbeConnection` puts on the whole probe. Cancel the probe and the goroutine, its socket and its
+file descriptor stay alive to finish work whose result is already unreachable, per probe, on every
+connection. With the option set, the leader's refresh stays derived from the calling context
+instead. It is safe ONLY on a client no other caller shares; on a shared one it reintroduces
+exactly the tear-down the single-flight exists to prevent. `token_refresh_scope_test.go` asserts
+both directions — that the option cancels the in-flight token request and that the default does
+not — because flipping the default would be as much a regression as the leak.
+
 A resource-server **401 invalidates the cached access token**, on the STATUS LINE and before
 the response body is read. Expiry alone is not enough: a revoked or rotated token keeps its
 advertised `expires_in`, so the fast path would go on serving it long after the platform
@@ -630,8 +644,9 @@ callers need the same answer and must not each write their own: this package, wh
 enumerate under a malformed id, and `internal/dispatch`, which has to decide before sending
 anything whether the connection is testable at all. Before the sentinel, the refusal was an
 unsentineled error that neither probe predicate recognised, so `ProbeInconclusive`'s
-unrecognised-error default answered `true` and the connection test reported `OK: true` for a
-connection whose stored `customer_id` makes dispatch impossible.
+unrecognised-error default answered `true` and the connection test reported an unreachable
+platform for a connection whose stored `customer_id` makes dispatch impossible — an outage to
+wait out in place of the one field on the row that can be corrected.
 
 **`account_id` carries the same rule, and used not to.** Its Goa pattern was `^[0-9]+$` with
 `MaxLength(64)` — the transport rule — so the API could persist `0`, or a 64-digit number, on an
@@ -651,8 +666,8 @@ only, so `Client.validateAccountIDs` — the dispatch-path caller of `ValidateAc
 runs on that path. The probe therefore has to call it directly, and does, immediately after
 `subject.accountID` is set and before the `customer_id` check or any upstream call. Without it a
 stored `0` bought an enumeration it could not benefit from, and a transient 5xx on that
-enumeration classified inconclusive and answered `OK: true` for a connection every campaign
-request deterministically rejects.
+enumeration classified inconclusive and blamed an unreachable platform for a connection every
+campaign request deterministically rejects.
 `TestMicrosoftProbe_UnusableStoredAccountIDIsRefusedBeforeTheCall` asserts the not-attempted
 marker AND that nothing was sent, against an upstream that would otherwise answer 503.
 
@@ -873,6 +888,16 @@ order decides whether the operator is told their connection is broken or that th
 complete. Neither predicate true is a third outcome: the platform refused a request this service
 BUILT, which is a service defect rather than a verdict.
 
+`probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
+vocabulary: it answers only whether the failure ever left this process, and it changes nothing an
+operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error
+chain is DROPPED there, so no later layer could tell a provider that answered badly from one that
+was never contacted; the answer reaches `Orchestrator.ProbeConnection`'s metrics arm alone, which
+keeps a local DNS or dial failure off `campaign_upstream_call_duration_seconds` rather than
+charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInconclusive`'s on
+purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
+series instead of vanishing from it.
+
 `fetchToken` splits non-2xx by status as Google's and Reddit's do — `errTokenEndpointUnavailable`
 for `5xx` and for `429`, and `classifyTokenRefusal` for everything else — and its token error
 carries status only, since the request body holds the client secret and refresh token. The `429`
@@ -891,7 +916,8 @@ endpoint refusing the SHAPE of the request this service built (a `3xx` that was 
 kept its name but reversed its meaning to match `domain.ErrTokenRequestRejected` and
 `linkedin.ErrTokenRequestRejected`; the credential verdict took the name that describes it.
 `ProbeInconclusive` therefore needs its explicit `ErrTokenRequestRejected → false` arm, since its
-default for an unrecognised error is `true` and would report a service defect as `OK: true`.
+default for an unrecognised error is `true` and would report a service defect as an unreachable
+platform.
 
 `ProbeInconclusive` here deliberately OMITS the `isPreSendDialError` arm its Google, Reddit and X
 siblings carry. This client's pre-send arm renders the cause through `safeCause` into a plain

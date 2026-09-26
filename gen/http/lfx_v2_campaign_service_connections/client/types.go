@@ -251,8 +251,9 @@ type TestGoogleAdsResponseBody struct {
 	// Whether the connection passed its provider's verification: the credential
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
-	// guarantee of account lifecycle state. Also true when the check could not be
-	// completed — read message
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because no credential authenticated — read
+	// message to tell that case apart from a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -334,8 +335,9 @@ type TestLinkedinAdsResponseBody struct {
 	// Whether the connection passed its provider's verification: the credential
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
-	// guarantee of account lifecycle state. Also true when the check could not be
-	// completed — read message
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because no credential authenticated — read
+	// message to tell that case apart from a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -420,8 +422,9 @@ type TestMetaAdsResponseBody struct {
 	// Whether the connection passed its provider's verification: the credential
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
-	// guarantee of account lifecycle state. Also true when the check could not be
-	// completed — read message
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because no credential authenticated — read
+	// message to tell that case apart from a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -500,8 +503,9 @@ type TestRedditAdsResponseBody struct {
 	// Whether the connection passed its provider's verification: the credential
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
-	// guarantee of account lifecycle state. Also true when the check could not be
-	// completed — read message
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because no credential authenticated — read
+	// message to tell that case apart from a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -580,8 +584,9 @@ type TestTwitterAdsResponseBody struct {
 	// Whether the connection passed its provider's verification: the credential
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
-	// guarantee of account lifecycle state. Also true when the check could not be
-	// completed — read message
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because no credential authenticated — read
+	// message to tell that case apart from a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -660,8 +665,9 @@ type TestMicrosoftAdsResponseBody struct {
 	// Whether the connection passed its provider's verification: the credential
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
-	// guarantee of account lifecycle state. Also true when the check could not be
-	// completed — read message
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because no credential authenticated — read
+	// message to tell that case apart from a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -758,8 +764,9 @@ type TestHubspotResponseBody struct {
 	// Whether the connection passed its provider's verification: the credential
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
-	// guarantee of account lifecycle state. Also true when the check could not be
-	// completed — read message
+	// guarantee of account lifecycle state. False when the check could not be
+	// completed against the provider, because no credential authenticated — read
+	// message to tell that case apart from a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`

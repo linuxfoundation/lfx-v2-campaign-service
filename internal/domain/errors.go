@@ -573,9 +573,13 @@ var (
 	// log line verbatim, which is what makes the service arm's job a status decision instead
 	// of a redaction decision it has to remember to make.
 	//
-	// It is NOT a failed test: the credential baseline already passed, and a cross-check
-	// that could not run is not evidence of a mismatch. It maps to OK: true with an advisory
-	// message. Precisely because of that, nothing that IS evidence may carry it — see
+	// It is not evidence of a MISMATCH: the credential baseline already passed, and a
+	// cross-check that could not run establishes nothing about the pairing. It still answers
+	// OK: false, because `ok` is declared as whether the credential authenticated against the
+	// provider and an incomplete walk did not establish that — but its message names the
+	// unreachability and says nothing about the stored pairing, which is the distinction that
+	// keeps "try again" and "repoint this connection" apart. Precisely because it makes no
+	// claim about the pairing, nothing that IS evidence may carry it — see
 	// VerifyAccountOrgReference, which keeps credential, permission and other 4xx failures
 	// out of this sentinel entirely so they cannot reach this arm. Where they go instead
 	// splits three ways: a 403 is a verdict LinkedIn reached on the merits and carries the
@@ -633,8 +637,10 @@ var (
 	// pre-send connection failure, a mid-flight transport failure, HTTP 429, and any 5xx.
 	// Nothing that IS evidence about the connection may carry it — a credential the platform
 	// evaluated and refused carries ErrConnectionProbeFailed, and a request this service built
-	// wrongly carries ErrServiceDefect — because this sentinel maps to OK: true with an advisory
-	// message, exactly as the org-verification one does.
+	// wrongly carries ErrServiceDefect — because this sentinel makes no claim about the stored
+	// connection at all. It answers OK: false (an unverified credential is not an authenticated
+	// one) with a message naming only the unreachability, exactly as the org-verification one
+	// does; an error that IS a verdict, carried here, would be reported as a platform outage.
 	//
 	// Like that sentinel, it is attached by the DISPATCHER, the one layer that knows both this
 	// service's contract and the platform client's error types, and the conversion is also the
@@ -670,8 +676,9 @@ var (
 	// It is deliberately NOT a verdict on the connection. Nothing the operator owns is at
 	// fault and nothing they can edit repairs it, so reporting it as a failed test would send
 	// them to audit fields the request never consulted; and it is not inconclusive either,
-	// because that answer maps to OK: true and would let a whole platform's connection tests
-	// silently stop testing anything the day an endpoint moves.
+	// because that answer blames the platform's availability and would let a whole platform's
+	// connection tests silently stop testing anything the day an endpoint moves, reporting an
+	// outage that is not happening rather than the defect that is.
 	//
 	// It is the probe-path analogue of ErrAccountDiscoveryRejected, kept separate rather than
 	// reusing it because that sentinel is scoped by its own doc to LinkedIn's account walk,
@@ -683,28 +690,36 @@ var (
 	// token. PERMANENT, never retryable.
 	ErrConnectionProbeRequestRejected = errors.New("the platform refused the connection-probe request itself; this is a service defect")
 
-	// ErrConnectionProbeNotAttempted marks a probe verdict that was reached BEFORE any request
-	// left this service — the connection names no ad account, or the account id or customer id
-	// it does name cannot form a valid request for its platform at all.
+	// ErrConnectionProbeNotAttempted marks a probe outcome reached without any request leaving
+	// this service. Two kinds of outcome qualify, and the sentinel says the same thing about
+	// both — nothing was sent — while saying nothing about what the probe concluded:
 	//
-	// It is a MARKER, never a status and never an answer on its own. Every error carrying it
-	// also carries ErrConnectionProbeFailed and renders that sentinel's verdict text unchanged:
-	// the operator's answer is the same confirmed failure either way, because a connection that
-	// cannot address an account provably cannot run a campaign. What this sentinel adds is the
-	// one fact the verdict text does not carry — that nothing was sent — and it exists for a
-	// single reader, Orchestrator.ProbeConnection's metrics arm.
+	//   - A VERDICT decided before a request was built: the connection names no ad account, or
+	//     the account id or customer id it does name cannot form a valid request for its
+	//     platform at all. These also carry ErrConnectionProbeFailed and render its verdict text
+	//     unchanged, because a connection that cannot address an account provably cannot run a
+	//     campaign.
+	//   - An INCONCLUSIVE outcome whose platform error proves the request never left the process
+	//     — a DNS failure, a refused connection, a request that would not build. These carry
+	//     ErrConnectionProbeInconclusive, and the operator's answer is unchanged by the marker:
+	//     the check still could not be completed, and the advisory still says so.
+	//
+	// It is a MARKER, never a status and never an answer on its own, and it exists for a single
+	// reader, Orchestrator.ProbeConnection's metrics arm.
 	//
 	// recordUpstream's own contract is that it is "called ONLY after the pre-platform guards
 	// have passed, so the histogram measures actual network work rather than local refusals".
-	// The probe's pre-send verdicts are exactly such local refusals, and they are decided inside
+	// The probe's pre-send outcomes are exactly such local refusals, and they are decided inside
 	// the timed region rather than before it, so recording them would book a near-zero-latency
 	// `error` sample against campaign_upstream_call_duration_seconds for a platform that was
 	// never called — dragging that platform's latency quantiles toward zero and inventing an
-	// upstream error rate out of stored configuration an operator can fix themselves.
+	// upstream error rate out of stored configuration an operator can fix themselves, or out of
+	// a DNS or network fault in this deployment that no provider caused.
 	//
-	// It is attached by internal/dispatch alongside the verdict, for the same reason every other
-	// probe sentinel is: that is the layer which knows whether a request was built and sent.
-	ErrConnectionProbeNotAttempted = errors.New("the connection probe reached its verdict before any request was sent")
+	// It is attached by internal/dispatch alongside the outcome, for the same reason every other
+	// probe sentinel is: that is the layer which knows whether a request was built and sent, and
+	// the layer past which the platform's own error chain is no longer available to ask.
+	ErrConnectionProbeNotAttempted = errors.New("the connection probe reached its outcome before any request was sent")
 
 	// ErrConnectionProbeUnwired is the wiring defect of the probe path: this build has no
 	// dispatcher registered for a platform whose connection test probes upstream, or one that

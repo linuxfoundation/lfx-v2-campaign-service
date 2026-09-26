@@ -21,10 +21,10 @@ import (
 
 // unreachableUpstream answers everything with 503 and records that it was reached at all.
 //
-// 503 is the point: it is the canonical INCONCLUSIVE failure, which maps to OK: true with an
-// advisory. A probe that enumerates before checking whether the connection names an account can
-// therefore be pushed into reporting a provably unusable connection as healthy by an outage that
-// has nothing to do with it.
+// 503 is the point: it is the canonical INCONCLUSIVE failure, which answers with an advisory about
+// a platform that could not be reached. A probe that enumerates before checking whether the
+// connection names an account can therefore be pushed by an unrelated outage into sending the
+// operator to wait that outage out, instead of naming the empty field on their own row.
 func unreachableUpstream(t *testing.T, hit *atomic.Bool) *httptest.Server {
 	t.Helper()
 	// atomic.Bool, not a plain bool: httptest.Server runs each handler in its own goroutine and
@@ -43,8 +43,9 @@ func unreachableUpstream(t *testing.T, hit *atomic.Bool) *httptest.Server {
 //
 // probeMembership reaches the same verdict, but only on the path where the enumeration
 // SUCCEEDS. Deferring the check meant an unrelated 5xx classified inconclusive and answered
-// OK: true for a connection that names no ad account at all — a connection that cannot run a
-// campaign under any circumstances, reported as healthy. Microsoft, Reddit and X already
+// "the platform could not be reached" for a connection that names no ad account at all — a
+// connection that cannot run a campaign under any circumstances, whose one broken field goes
+// unnamed while the operator waits out an outage that has nothing to do with it. Microsoft, Reddit and X already
 // decided it first, through their own ErrAccountNotSelected arms.
 func TestProbeConnection_NoAccountIsDecidedBeforeTheCall(t *testing.T) {
 	t.Run("google ads", func(t *testing.T) {
@@ -75,8 +76,8 @@ func assertNoAccountVerdict(t *testing.T, err error, upstreamHit bool) {
 	t.Helper()
 	if !errors.Is(err, domain.ErrConnectionProbeFailed) {
 		t.Fatalf("ProbeConnection = %v, want a confirmed failure; an unconfigured account is a verdict, "+
-			"and letting an upstream outage classify it inconclusive reports OK: true for a connection "+
-			"that cannot dispatch", err)
+			"and letting an upstream outage classify it inconclusive sends the operator to wait out that "+
+			"outage instead of to the empty field on a connection that cannot dispatch", err)
 	}
 	if errors.Is(err, domain.ErrConnectionProbeInconclusive) {
 		t.Error("the inconclusive sentinel reached a connection that names no account")
@@ -95,7 +96,7 @@ func assertNoAccountVerdict(t *testing.T, err error, upstreamHit bool) {
 // its own guard, before anything is sent — so the credential was never evaluated. Classifying
 // that as ProbeCredentialRejected told the operator their stored credential had been refused
 // and sent them to re-authorise a connection whose credential is fine; leaving it to the
-// inconclusive default would have been worse still, answering OK: true. The dispatcher decides
+// inconclusive default would have been worse still, blaming an outage instead. The dispatcher decides
 // it instead, and names the field that is actually broken.
 func TestRedditProbe_MalformedAccountIDDoesNotBlameTheCredential(t *testing.T) {
 	var hit atomic.Bool
@@ -108,7 +109,7 @@ func TestRedditProbe_MalformedAccountIDDoesNotBlameTheCredential(t *testing.T) {
 	err := d.ProbeConnection(context.Background(), "tlf", model.ProviderRedditAds)
 	if !errors.Is(err, domain.ErrConnectionProbeFailed) {
 		t.Fatalf("ProbeConnection = %v, want a confirmed failure; an id no Reddit request can address "+
-			"cannot dispatch a campaign, and the inconclusive default would report OK: true", err)
+			"cannot dispatch a campaign, and the inconclusive default would blame an unreachable platform", err)
 	}
 	if strings.Contains(err.Error(), "credential") {
 		t.Errorf("message %q blames the stored credential, which Reddit never saw; the remedy is the "+

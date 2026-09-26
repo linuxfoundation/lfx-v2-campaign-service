@@ -65,19 +65,21 @@ func TestPreSendVerdictsAreMarkedNotAttempted(t *testing.T) {
 		},
 		{
 			name: "credential rejected",
-			err:  s.probeClass(errors.New("boom"), func(error) bool { return true }, func(error) bool { return false }),
+			err:  s.probeClass(errors.New("boom"), func(error) bool { return true }, func(error) bool { return false }, func(error) bool { return false }),
 			want: false,
 			why:  "the platform evaluated the credential, which it can only do over a request",
 		},
 		{
 			name: "inconclusive",
-			err:  s.probeClass(errors.New("boom"), func(error) bool { return false }, func(error) bool { return true }),
+			err:  s.probeClass(errors.New("boom"), func(error) bool { return false }, func(error) bool { return true }, func(error) bool { return false }),
 			want: false,
-			why:  "a call was attempted and failed on the way; that attempt is exactly what the error series counts",
+			why: "a call was attempted and failed on the way; that attempt is exactly what the error series counts. " +
+				"The notSent stub answers false here, which is the default for an error no classifier recognises — " +
+				"the pre-send half is driven by the platforms' real predicates in TestProbeClass_PreSendFailuresKeepTheirProvenance",
 		},
 		{
 			name: "service defect",
-			err:  s.probeClass(errors.New("boom"), func(error) bool { return false }, func(error) bool { return false }),
+			err:  s.probeClass(errors.New("boom"), func(error) bool { return false }, func(error) bool { return false }, func(error) bool { return false }),
 			want: false,
 			why:  "the platform answered and refused the request this service sent it",
 		},
@@ -134,8 +136,8 @@ func TestPreSendVerdictsAreStillConfirmedFailures(t *testing.T) {
 					"instead of the confirmed OK: false verdict this text describes", tc.err)
 			}
 			if errors.Is(tc.err, domain.ErrConnectionProbeInconclusive) {
-				t.Errorf("%v matches ErrConnectionProbeInconclusive, which maps to OK: true — the false positive "+
-					"this whole path removes", tc.err)
+				t.Errorf("%v matches ErrConnectionProbeInconclusive, which answers with a platform that could "+
+					"not be reached — an outage to wait out in place of the verdict this path establishes", tc.err)
 			}
 			if got := tc.err.Error(); got != tc.wantText {
 				t.Errorf("Error() = %q, want %q: the marker must not change the sentence the operator reads", got, tc.wantText)

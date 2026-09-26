@@ -847,7 +847,12 @@ func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscoveryClient(ctx context.C
 // as the client. ProbeConnection needs both — the client to make the call, and the row to know
 // WHICH customer id the connection is configured for, which is the half of a connection test
 // that "does the credential authenticate" does not answer.
-func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscovery(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, *resolved, error) {
+//
+// extra appends per-caller client options. It exists because the two callers want DIFFERENT
+// token-refresh lifetimes off one construction path: the probe's client is used once and
+// dropped, so its refresh must stay bounded by the probe's context, while the monitor read
+// keeps the default detached refresh.
+func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscovery(ctx context.Context, projectID string, platform model.Provider, extra ...googleads.Option) (*googleads.Client, *resolved, error) {
 	res, err := d.creds.resolveOwned(ctx, projectID, platform)
 	if err != nil {
 		return nil, nil, err
@@ -871,7 +876,10 @@ func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscovery(ctx context.Context
 			LoginCustomerID: loginCustomerID,
 			Label:           res.label,
 		},
-		d.opts...,
+		// Copied rather than appended in place: d.opts is shared by every call on this
+		// dispatcher, and appending to it could publish one caller's extra options to
+		// the next through a reused backing array.
+		append(append([]googleads.Option(nil), d.opts...), extra...)...,
 	), res, nil
 }
 
@@ -906,15 +914,20 @@ func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsDiscovery(ctx context.Context
 // existed and did not catch — and in manager mode it answers about the customers actually
 // addressable THROUGH this client, rather than about some list that merely mentions the id.
 func (d *GoogleAdsDispatcher) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
-	client, res, err := d.resolveOwnedGoogleAdsDiscovery(ctx, projectID, platform)
+	// The client is built here, used for one enumeration and dropped, so its token refresh
+	// has no other waiter to protect and no later caller to serve. Left detached it would run
+	// on the platform's own request timeout — longer than the bound ProbeConnection puts on
+	// the probe — and keep a goroutine and its socket alive past a probe already given up on.
+	client, res, err := d.resolveOwnedGoogleAdsDiscovery(ctx, projectID, platform, googleads.WithCallerScopedTokenRefresh())
 	if err != nil {
 		return err
 	}
 	subject := probeSubject{platform: platform, accountID: res.accountID}
 	// Decided BEFORE the call, not after. probeMembership would reach the same verdict, but
 	// only on the path where the enumeration succeeds: an inconclusive 5xx on the way there
-	// maps to OK: true, which would report a connection that provably cannot run a campaign
-	// as healthy on the strength of an unrelated platform outage.
+	// would answer "google ads could not be reached, try again" about a connection that names
+	// no account to reach — sending the operator to wait out an unrelated platform outage
+	// instead of to the empty field on their own row, which is the thing they can fix.
 	if strings.TrimSpace(res.accountID) == "" {
 		return subject.noAccountConfigured()
 	}
@@ -932,7 +945,7 @@ func (d *GoogleAdsDispatcher) ProbeConnection(ctx context.Context, projectID str
 	}
 	reach, lerr := client.ProbeAccountReach(ctx, strings.TrimSpace(res.accountID))
 	if lerr != nil {
-		return subject.probeClass(lerr, googleads.ProbeCredentialRejected, googleads.ProbeInconclusive)
+		return subject.probeClass(lerr, googleads.ProbeCredentialRejected, googleads.ProbeInconclusive, googleads.ProbeNotSent)
 	}
 	switch reach {
 	case googleads.AccountReachable:

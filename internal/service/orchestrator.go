@@ -2219,8 +2219,10 @@ func probeReachedThePlatform(err error) bool {
 // probeLocalRefusalSentinels are the outcomes ProbeConnection can return without any request
 // having left this service.
 //
-// ErrConnectionProbeNotAttempted is the dispatcher's own marker for the three verdicts decided
-// before a request is built (see that sentinel's doc); the rest are the credential resolver's
+// ErrConnectionProbeNotAttempted is the dispatcher's own marker for an outcome reached with
+// nothing sent — the verdicts decided before a request is built, and an inconclusive outcome
+// whose platform error proves the request never left the process (see that sentinel's doc, and
+// the ProbeNotSent predicate each platform package exposes). The rest are the credential resolver's
 // vocabulary, plus the unwired-dispatcher defect the orchestrator raises before the timer even
 // starts. ErrConnectionNotUsable is the family head for the inactive, incomplete, undecodable and
 // no-account-selected cases, which are always wrapped alongside it.

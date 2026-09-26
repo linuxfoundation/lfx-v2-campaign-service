@@ -17,7 +17,8 @@ import (
 // The case that matters most is the token-endpoint 4xx. That is the failure this service has
 // already hit in production — a revoked refresh token — and before the split in fetchToken it
 // was indistinguishable from a transient outage, so it fell to ProbeInconclusive's default and
-// the connection test answered OK: true for a permanently broken connection.
+// the connection test blamed a platform it could not reach — sending the operator to wait out an
+// outage instead of to re-authorise a permanently broken connection.
 func TestProbePredicates(t *testing.T) {
 	cases := []struct {
 		name            string

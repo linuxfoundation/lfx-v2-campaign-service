@@ -53,7 +53,7 @@ func assertUnreachableVerdict(t *testing.T, err error) {
 	if !errors.Is(err, domain.ErrConnectionProbeFailed) {
 		t.Fatalf("ProbeConnection = %v, want a confirmed failure; a 404 on the configured account "+
 			"is the platform answering the question asked, and the inconclusive default would "+
-			"report OK: true for an account it just said it cannot find", err)
+			"report an unreachable platform for an account it just said it cannot find", err)
 	}
 	if errors.Is(err, domain.ErrConnectionProbeInconclusive) {
 		t.Error("the inconclusive sentinel reached a 404 on the configured account")

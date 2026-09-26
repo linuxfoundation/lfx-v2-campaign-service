@@ -152,7 +152,7 @@ func TestVerifyAccountRejectsAnUnusableAccountIDBeforeAnyRequest(t *testing.T) {
 				t.Errorf("made %d request(s) for an unusable account id; want none", n)
 			}
 			// Neither predicate may claim it: the dispatcher answers it as accountIDNotUsable,
-			// and both a credential rejection and an OK: true advisory would be wrong.
+			// and both a credential rejection and an unreachable-platform advisory would be wrong.
 			if ProbeCredentialRejected(err) {
 				t.Error("an unusable account id classified as a rejected credential")
 			}

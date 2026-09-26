@@ -36,6 +36,20 @@ refresh runs on a `WithoutCancel`-detached context so one caller's cancellation
 can't tear down a shared refresh). The OAuth response body is never echoed into
 errors (it can carry the `client_secret`/`refresh_token` back).
 
+**`WithCallerScopedTokenRefresh()` opts one client out of that detach.** Detaching is right for a
+client that OUTLIVES a request and is shared by many: one caller's cancellation must not tear down
+a refresh the other waiters are parked on, and the token it produces is reused long after that
+caller is gone. Neither reason holds for the client `internal/dispatch` builds for a single
+connection probe and drops — nothing else will ever read its cache, so the detached refresh buys
+nobody anything while it OUTRUNS its caller, running on `googleAdsRequestTimeout`, which is longer than the bound
+`ProbeConnection` puts on the whole probe. Cancel the probe and the goroutine, its socket and its
+file descriptor stay alive to finish work whose result is already unreachable, per probe, on every
+connection. With the option set, the leader's refresh stays derived from the calling context
+instead. It is safe ONLY on a client no other caller shares; on a shared one it reintroduces
+exactly the tear-down the single-flight exists to prevent. `token_refresh_scope_test.go` asserts
+both directions — that the option cancels the in-flight token request and that the default does
+not — because flipping the default would be as much a regression as the leak.
+
 A resource-server **401 invalidates the cached access token**, on the STATUS LINE and before
 the response body is read. Expiry alone is not enough: a revoked or rotated token keeps its
 advertised `expires_in`, so the fast path would go on serving it long after the platform
@@ -1314,6 +1328,16 @@ order decides whether the operator is told their connection is broken or that th
 complete. Neither predicate true is a third outcome: the platform refused a request this service
 BUILT, which is a service defect rather than a verdict.
 
+`probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
+vocabulary: it answers only whether the failure ever left this process, and it changes nothing an
+operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error
+chain is DROPPED there, so no later layer could tell a provider that answered badly from one that
+was never contacted; the answer reaches `Orchestrator.ProbeConnection`'s metrics arm alone, which
+keeps a local DNS or dial failure off `campaign_upstream_call_duration_seconds` rather than
+charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInconclusive`'s on
+purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
+series instead of vanishing from it.
+
 This package's token path was split to make the predicates answerable at all. `fetchToken`
 previously returned one untyped error for every non-2xx from the token endpoint, so a refresh
 Google had permanently revoked fell to `ProbeInconclusive`'s default and the connection test
@@ -1355,8 +1379,9 @@ got the name that describes it.
 
 `ProbeInconclusive` has a dedicated `ErrTokenRequestRejected → false` arm, and it is not
 redundant. That function answers `true` for anything it does not recognise, so without the arm
-the new sentinel would inherit the default and report `OK: true` with an advisory — unproven
-reported as healthy, the exact shape LFXV2-2665 exists to remove.
+the new sentinel would inherit the default and be answered as a platform that could not be
+reached — a defect in a request this service built, rendered to the operator as somebody else's
+outage to wait out instead of the `500` that names its owner.
 
 The fallback is deliberately **conservative**, and that asymmetry is the whole safety argument.
 The **status gates the body**, never the reverse: only `400`, `401` and `403` are statuses a
@@ -1374,7 +1399,8 @@ secret and the refresh token, and an OAuth or proxy diagnostic body may reflect 
 A body this client cannot use — a read failure, or one past `maxResponseBytes` — must not erase
 the STATUS either. Returning a bare read or size error ahead of the classification dropped the
 failure out of BOTH predicates, so `ProbeInconclusive`'s default answered `true` and a plain
-`401` with an oversized body reported the connection as `OK: true`. The status is kept and
+`401` with an oversized body reported the connection as an unreachable platform, hiding the
+refusal this endpoint exists to surface. The status is kept and
 classified with a **nil** body, which carries no allowlisted code and so takes the conservative
 fallback. The read error is still returned for a `2xx`, where the body IS the answer and there is
 no status to fall back on.

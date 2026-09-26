@@ -66,7 +66,7 @@ func TestRedditProbe_MissingConversionPixelFailsTheTest(t *testing.T) {
 			"is known for certain, not something an inconclusive answer should hedge", err)
 	}
 	if errors.Is(err, domain.ErrConnectionProbeInconclusive) {
-		t.Errorf("ProbeConnection = %v, must not be inconclusive: that maps to OK: true", err)
+		t.Errorf("ProbeConnection = %v, must not be inconclusive: that reports an unreachable platform", err)
 	}
 
 	// The verdict must name the missing field and must NOT read as a credential problem — the

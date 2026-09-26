@@ -702,7 +702,8 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
     400/401/429/5xx, a 2xx whose body yields no usable token, or a request this service could not
     build (`domain.ErrTokenRequestRejected` → `token_request_rejected`). Retryability is a second
     axis independent of which credential is implicated; routing the permanent failures here keeps
-    them out of the inconclusive bucket, which reports `OK: true`.
+    them out of the inconclusive bucket, which reports a platform that could not be reached and so
+    invites a retry that can never succeed.
   - `VerifyAccountOrg` (`internal/dispatch/linkedin.go`), for a **non-429, non-403 4xx** on the ad
     account discovery walk (`domain.ErrAccountDiscoveryRejected` → `account_discovery_rejected`).
     LinkedIn received and refused the request THIS SERVICE built, and the walk embeds neither the
@@ -981,7 +982,7 @@ prevent:
 | --- | --- | --- |
 | Confirmed verdict | a reference naming a different org, an account absent from a complete walk, a malformed or absent stored id, a `403` | `OK: false`, the message echoed |
 | Credential / connection-state failure | expired or unrefreshable credentials, an unusable stored blob | `OK: false`, fixed remedy text |
-| Inconclusive | dial, transport, `429`, `5xx`, a completeness guard, a retryable token exchange | **`OK: true`** with a fixed advisory |
+| Inconclusive | dial, transport, `429`, `5xx`, a completeness guard, a retryable token exchange | **`OK: false`** with a fixed advisory naming the unreachability, never the pairing |
 | Service defect | a non-429/non-403 `4xx` on the walk, an unwired verifier, a permanently failing token exchange | typed **500** with a `reason` token |
 
 A 503 is separate again, reserved for `resolveBackendWithOrch` reporting the repo or orchestrator
@@ -989,15 +990,17 @@ itself unavailable — checked before the verification call is attempted — and
 the connection row (`domain.ErrConnectionLoadFailed`), which is retryable and proves nothing about
 the connection's contents.
 
-The inconclusive row is the one that most needs stating plainly, because it inverts the intuition:
-a failure of the `ListAdAccounts` enumeration walk ITSELF reaches this package as
+The inconclusive row is the one that most needs stating plainly, because it is the row that moved.
+A failure of the `ListAdAccounts` enumeration walk ITSELF reaches this package as
 `domain.ErrOrgVerificationInconclusive`, and `TestLinkedinAds` checks for that sentinel with
-`errors.Is` FIRST, before folding anything into `OK: false`. That failure proves nothing about the
-account/org pairing — only that the cross-check couldn't run — so it reports `OK: true` with an
-advisory: the credential baseline already passed, and there is no basis to call a connection broken
-because an optional secondary check happened to fail. The corollary is the standing hazard here:
-anything wrongly folded into that sentinel silently reports a BROKEN connection as healthy, which
-is why each of the other three rows exists as its own outcome rather than a fallthrough.
+`errors.Is` FIRST, before folding anything into the echoing `OK: false` arm. It answers `OK: false`
+too — `ok` is declared as whether the credential authenticated against the provider, and an
+incomplete walk did not establish that — but its message names the unreachability and says nothing
+about the stored pairing, so no operator is told a pairing is wrong on the strength of a walk that
+never compared it. The corollary is the standing hazard here: anything wrongly folded into that
+sentinel is reported as somebody else's outage to wait out, and the remedy the operator does own is
+never named — which is why each of the other three rows exists as its own outcome rather than a
+fallthrough.
 
 **That sentinel is a DOMAIN one, not the platform client's**, and the difference is the whole
 safety story. `internal/platform/linkedin` returns its own `ErrOrgVerificationInconclusive`
@@ -1107,13 +1110,26 @@ LinkedIn switch above and classifying the same way:
 | Probe error | Response |
 | --- | --- |
 | `nil` | `OK: true`, "verified against the platform" |
-| `ErrConnectionProbeInconclusive` | `OK: true` with an advisory; nothing was learned and the credential baseline already passed |
+| `ErrConnectionProbeInconclusive` | `OK: false` with an advisory naming the unreachability and never the credential; nothing was learned, so the credential did not authenticate against the provider |
 | `ErrConnectionProbeFailed` | `OK: false`, message ECHOED — the only echoable class |
 | `ErrCredentialDecryptionFailed` | typed **500**, no error text (the chain can quote ciphertext and key material) |
 | `ErrServiceDefect` | typed **500**, `reason=` logged; the operator owns nothing here to repair |
 | `ErrConnectionLoadFailed` | **503** — the one outcome retrying can fix |
 | `ErrConnectionNotUsable` | `OK: false` with a FIXED per-provider remedy, quoting no part of the error |
 | anything else | `OK: false` with fixed text, detail to the log |
+
+**The inconclusive row answers `OK: false`, and it did not always.** The field is declared as
+whether the credential authenticated against the provider; a probe that was rate-limited, met a
+`5xx`, or never reached the platform at all did not establish that, so `true` was a claim the
+service had not earned. Reporting it as `true` with an advisory also depended on the caller reading
+`message` — and a caller that branches on `ok` alone (a badge, a gate on "can this connection run a
+campaign") got "fine" for a connection nothing had verified. The two sentinels moved TOGETHER,
+`domain.ErrConnectionProbeInconclusive` here and `domain.ErrOrgVerificationInconclusive` in
+`TestLinkedinAds`, so that `ok` cannot mean one thing on LinkedIn and another on the other six.
+What keeps this honest rather than merely strict is the MESSAGE: an inconclusive outcome says the
+platform could not be reached and says nothing about the stored credential or pairing, while a
+confirmed rejection names the credential or the field. Both are `OK: false`; they are never
+confused for one another, and only the rejection class echoes the underlying text.
 
 The `ErrServiceDefect` row's `reason=` is the WHOLE diagnostic for that outcome — the response
 is fixed text carrying no detail — so `unusableConnectionReason` grew an arm for each probe

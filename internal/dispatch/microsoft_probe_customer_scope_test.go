@@ -91,7 +91,7 @@ func TestMicrosoftProbe_EnumeratesUnderTheConfiguredCustomer(t *testing.T) {
 // validateMicrosoftConnection does not constrain it, so a non-numeric or zero value is
 // storable. discoveryCustomerIDs refuses it — correctly — but used to refuse it with an
 // unsentineled error, which neither probe predicate recognised, so ProbeInconclusive's
-// unrecognised-error default answered true and the service reported OK: true. Dispatch under
+// unrecognised-error default answered true and the service reported an unreachable platform. Dispatch under
 // that customer cannot work, so the test has to say so.
 func TestMicrosoftProbe_MalformedCustomerIDIsAVerdictNotInconclusive(t *testing.T) {
 	for _, customerID := range []string{"abc", "0", "-1", "1.5", "99999999999999999999999"} {
@@ -111,7 +111,7 @@ func TestMicrosoftProbe_MalformedCustomerIDIsAVerdictNotInconclusive(t *testing.
 			}
 			if errors.Is(err, domain.ErrConnectionProbeInconclusive) {
 				t.Fatalf("ProbeConnection = %v for customer_id %q, want a confirmed verdict: "+
-					"inconclusive maps to OK: true, which is the false positive this ticket removes", err, customerID)
+					"inconclusive names an outage to wait out instead of the field to correct", err, customerID)
 			}
 			if !errors.Is(err, domain.ErrConnectionProbeFailed) {
 				t.Errorf("ProbeConnection = %v for customer_id %q, want ErrConnectionProbeFailed", err, customerID)

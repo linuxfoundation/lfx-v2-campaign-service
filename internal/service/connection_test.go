@@ -463,7 +463,7 @@ func TestTestLinkedinAds_UpstreamVerification(t *testing.T) {
 		}
 	})
 
-	t.Run("inconclusive enumeration failure reports OK: true, not a failed test", func(t *testing.T) {
+	t.Run("inconclusive enumeration failure reports OK: false, and says linkedin was unreachable", func(t *testing.T) {
 		s := newConn(t)
 		inconclusive := fmt.Errorf("%w: %v", domain.ErrOrgVerificationInconclusive, "transport failure contacting linkedin ad-account discovery")
 		verifier := &orgReferenceVerifierStub{err: inconclusive}
@@ -474,11 +474,19 @@ func TestTestLinkedinAds_UpstreamVerification(t *testing.T) {
 		if err != nil {
 			t.Fatalf("TestLinkedinAds: %v", err)
 		}
-		if !res.OK {
-			t.Errorf("OK = false, want true: an enumeration failure proves nothing about the org pairing")
+		// Same contract as testConnUpstream's inconclusive arm, and it has to be the same on
+		// both or `ok` means one thing on linkedin and another everywhere else: the credential
+		// did not authenticate against linkedin, which is what the field reports, so OK: false.
+		if res.OK {
+			t.Errorf("OK = true for a walk that reached no verdict; a caller reading ok alone gets a " +
+				"green check for a pairing nothing verified")
 		}
-		if res.Message == nil || !strings.Contains(*res.Message, "inconclusive") {
-			t.Errorf("message = %v, want it to say the check was inconclusive", res.Message)
+		if res.Message == nil || !strings.Contains(*res.Message, "could not be reached") {
+			t.Errorf("message = %v, does not tell the caller linkedin was unreachable", res.Message)
+		}
+		if res.Message != nil && !strings.Contains(*res.Message, "neither accepted nor rejected") {
+			t.Errorf("message = %v, does not clear the stored credential; the operator's repair for an "+
+				"unreachable platform is to retry, not to re-authorize", res.Message)
 		}
 	})
 

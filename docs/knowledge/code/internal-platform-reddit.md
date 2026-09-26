@@ -34,6 +34,20 @@ whether or not its body arrives) and would hold the rejected token available to 
 concurrent caller for the rest of the attempt timeout, so the unreadable and oversized arms
 need no guard of their own.
 
+**`WithCallerScopedTokenRefresh()` opts one client out of that detach.** Detaching is right for a
+client that OUTLIVES a request and is shared by many: one caller's cancellation must not tear down
+a refresh the other waiters are parked on, and the token it produces is reused long after that
+caller is gone. Neither reason holds for the client `resolveRedditClientWithCredsCache`
+builds on its cache-bypassing probe branch and drops — nothing else will ever read its cache, so the detached refresh buys
+nobody anything while it OUTRUNS its caller, running on `redditRequestTimeout`, which is longer than the bound
+`ProbeConnection` puts on the whole probe. Cancel the probe and the goroutine, its socket and its
+file descriptor stay alive to finish work whose result is already unreachable, per probe, on every
+connection. With the option set, the leader's refresh stays derived from the calling context
+instead. It is safe ONLY on a client no other caller shares; on a shared one it reintroduces
+exactly the tear-down the single-flight exists to prevent. `token_refresh_scope_test.go` asserts
+both directions — that the option cancels the in-flight token request and that the default does
+not — because flipping the default would be as much a regression as the leak.
+
 Invalidation is **compare-and-clear**, not an unconditional clear: it takes the token the
 rejected request actually presented and drops the cache only if it still holds that token.
 With a shared client, request A can leave carrying `tok_1`, request B can refresh and cache
@@ -458,6 +472,16 @@ order decides whether the operator is told their connection is broken or that th
 complete. Neither predicate true is a third outcome: the platform refused a request this service
 BUILT, which is a service defect rather than a verdict.
 
+`probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
+vocabulary: it answers only whether the failure ever left this process, and it changes nothing an
+operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error
+chain is DROPPED there, so no later layer could tell a provider that answered badly from one that
+was never contacted; the answer reaches `Orchestrator.ProbeConnection`'s metrics arm alone, which
+keeps a local DNS or dial failure off `campaign_upstream_call_duration_seconds` rather than
+charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInconclusive`'s on
+purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
+series instead of vanishing from it.
+
 One deliberate departure: this package exports a THIRD predicate, `ProbeAccountUnreachable`, for
 a `404` on the configured ad account. Reddit's probe reads that account directly
 (`GET /ad_accounts/{id}`), so a `404` is Reddit answering the exact question asked rather than
@@ -493,5 +517,5 @@ A body that could not be read is classified on status alone rather than guessed 
 `ErrInvalidAccountID` is deliberately outside BOTH predicates. `VerifyAccount` raises it from
 this package's own path guard before anything is sent, so Reddit never evaluated the credential:
 claiming a rejection would send an operator to re-authorise a connection whose credential is
-fine, and the inconclusive default would answer `OK: true` for an id no Reddit request can
-address. The dispatcher settles it instead, with `accountIDNotUsable`.
+fine, and the inconclusive default would blame an unreachable platform for an id no Reddit
+request can address. The dispatcher settles it instead, with `accountIDNotUsable`.

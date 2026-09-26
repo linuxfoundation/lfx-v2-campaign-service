@@ -489,8 +489,9 @@ func (d *MicrosoftDispatcher) ProbeConnection(ctx context.Context, projectID str
 	// dispatch) never runs on the probe path. validateMicrosoftConnection proves the id
 	// present, not that it names an account: a stored "0", or a 19-digit value above MaxInt64,
 	// would otherwise cost an upstream enumeration and — if that enumeration timed out or
-	// 5xx'd — take ProbeInconclusive's OK: true default for a connection every campaign
-	// request deterministically rejects.
+	// 5xx'd — take ProbeInconclusive's default and report "microsoft could not be reached" for
+	// a connection every campaign request deterministically rejects: an outage to wait out
+	// instead of a field on the row to correct.
 	if verr := microsoft.ValidateAccountID(accountID); verr != nil {
 		return subject.accountIDNotUsable()
 	}
@@ -520,8 +521,10 @@ func (d *MicrosoftDispatcher) ProbeConnection(ctx context.Context, projectID str
 	// operator-settable through the connection config API and validateMicrosoftConnection does
 	// not constrain it, so "abc" or "0" is a storable state. No request can be built from it,
 	// which means the platform never evaluates the credential: the error surfaced from
-	// discoveryCustomerIDs used to reach probeClass unrecognised, take ProbeInconclusive's
-	// default, and report OK: true for a connection that provably cannot dispatch. Reporting a
+	// discoveryCustomerIDs used to reach probeClass unrecognised and take ProbeInconclusive's
+	// default — originally reporting OK: true, and since the `ok` contract moved, "microsoft
+	// could not be reached". Both are wrong in the same way: the platform was never the
+	// problem, and neither answer names the operator-settable field that is. Reporting a
 	// connection unusable-as-configured is the answer the test exists to give.
 	customerID := strings.TrimSpace(res.providerConfig["customer_id"])
 	if verr := microsoft.ValidateCustomerID(customerID); verr != nil {
@@ -535,11 +538,16 @@ func (d *MicrosoftDispatcher) ProbeConnection(ctx context.Context, projectID str
 			RefreshToken:   creds.RefreshToken,
 		},
 		microsoft.AccountConfig{CustomerID: customerID},
-		d.opts...,
+		// This client is built here, used for one enumeration and dropped, so its
+		// token refresh has no other waiter to protect and no later caller to serve.
+		// Left detached it would run on the platform's own request timeout — longer
+		// than the bound ProbeConnection puts on the probe — and keep a goroutine and
+		// its socket alive past a probe the orchestrator already gave up on.
+		append(append([]microsoft.Option(nil), d.opts...), microsoft.WithCallerScopedTokenRefresh())...,
 	)
 	adAccounts, lerr := client.ListAdAccounts(ctx)
 	if lerr != nil {
-		return subject.probeClass(lerr, microsoft.ProbeCredentialRejected, microsoft.ProbeInconclusive)
+		return subject.probeClass(lerr, microsoft.ProbeCredentialRejected, microsoft.ProbeInconclusive, microsoft.ProbeNotSent)
 	}
 	reachable := make([]string, 0, len(adAccounts))
 	for _, a := range adAccounts {

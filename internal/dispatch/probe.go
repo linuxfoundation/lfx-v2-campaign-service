@@ -23,6 +23,15 @@ import (
 //
 //	ProbeCredentialRejected(err) bool  // the platform evaluated the credential and refused it
 //	ProbeInconclusive(err) bool        // nothing was learned about the connection either way
+//	ProbeNotSent(err) bool             // nothing left this process, so no platform was reached
+//
+// The first two decide the outcome. The third decides nothing an operator sees — it is
+// provenance for the metrics arm, and it has to be asked here because the platform error chain
+// is DROPPED at this boundary (below), so no later layer can distinguish a platform that
+// answered badly from one that was never contacted. The two defaults run OPPOSITE ways on
+// purpose: ProbeInconclusive answers true for an error it does not recognise, so an unproven
+// connection is never reported as proven, while ProbeNotSent answers false, so an unrecognised
+// error still lands on the upstream series rather than vanishing from it.
 //
 // The per-platform ProbeConnection methods pass their own package's pair to probeClass below,
 // which is the only place the two are ever combined and the only place either is evaluated.
@@ -127,9 +136,38 @@ func preSendProbeVerdict(format string, args ...any) error {
 	return &preSendProbeVerdictError{err: &confirmedProbeVerdictError{err: fmt.Errorf(format, args...)}}
 }
 
+// notSentInconclusiveError is an INCONCLUSIVE outcome that also answers for
+// domain.ErrConnectionProbeNotAttempted.
+//
+// preSendProbeVerdictError is its sibling and carries the same marker for a CONFIRMED verdict;
+// the two are kept apart rather than generalised into one because the invariant each enforces
+// is the opposite of the other's. That one may only ever wrap a confirmed verdict, so a
+// pre-send verdict can never be built without its status. This one may only ever wrap an
+// inconclusive outcome, for the same reason in reverse: a probe that never reached the platform
+// has learned nothing, and the operator's answer must stay "could not be verified" rather than
+// hardening into a failure because the wrapper made it convenient.
+//
+// The marker is read by exactly one caller, Orchestrator.ProbeConnection's metrics arm. A DNS
+// failure or a refused connection is a real fault, but it is a fault of this deployment's
+// network rather than of the provider, and recording it on
+// campaign_upstream_call_duration_seconds inflates that provider's error rate for something no
+// provider did. The operator-facing answer is unchanged — the connection still could not be
+// verified, and the advisory still says so.
+type notSentInconclusiveError struct{ err error }
+
+func (e *notSentInconclusiveError) Error() string { return e.err.Error() }
+func (e *notSentInconclusiveError) Unwrap() error { return e.err }
+func (e *notSentInconclusiveError) Is(target error) bool {
+	return target == domain.ErrConnectionProbeNotAttempted
+}
+
 // probeClass maps a platform probe error onto exactly one of the three service-level outcomes,
-// using that platform's own two predicates. err must be non-nil.
-func (s probeSubject) probeClass(err error, credentialRejected, inconclusive func(error) bool) error {
+// using that platform's own predicates. err must be non-nil.
+//
+// notSent is the third and lowest-stakes member of the vocabulary: it never changes which of
+// the three outcomes is chosen, and is consulted only inside the inconclusive arm to record
+// that no request reached the platform. It may be nil for a platform that cannot tell.
+func (s probeSubject) probeClass(err error, credentialRejected, inconclusive, notSent func(error) bool) error {
 	// The arm ORDER is load-bearing, not stylistic: every platform's ProbeInconclusive returns
 	// true for an error it does not recognise, so an inconclusive-first switch would make the
 	// rejection arm unreachable for any error both predicates claim. Do not reorder.
@@ -140,9 +178,16 @@ func (s probeSubject) probeClass(err error, credentialRejected, inconclusive fun
 		return confirmedProbeVerdict("%s rejected the stored credential%s", s.platform, s.where())
 	case inconclusive(err):
 		// No detail beyond the platform name: there is nothing useful to say that is also safe
-		// to say, and this arm maps to OK: true with an advisory, where a half-explanation
-		// reads as a diagnosis.
-		return fmt.Errorf("%w: the %s check could not be completed", domain.ErrConnectionProbeInconclusive, s.platform)
+		// to say, and this arm maps to OK: false with an advisory that the platform could not
+		// be reached, where a half-explanation reads as a diagnosis.
+		out := fmt.Errorf("%w: the %s check could not be completed", domain.ErrConnectionProbeInconclusive, s.platform)
+		// The provenance is captured HERE or not at all: the platform error chain is dropped at
+		// this boundary (see this file's header), so past this line nothing downstream can tell
+		// a request that was answered badly from one that was never sent.
+		if notSent != nil && notSent(err) {
+			return &notSentInconclusiveError{err: out}
+		}
+		return out
 	default:
 		// ErrServiceDefect selects the status; ErrConnectionProbeRequestRejected travels
 		// alongside it as the reason token, the arrangement both sentinels' docs require and
@@ -157,8 +202,10 @@ func (s probeSubject) probeClass(err error, credentialRejected, inconclusive fun
 //
 // It is decided before anything is sent, and it is a VERDICT rather than a failure to check:
 // campaign creation on this connection cannot succeed, which is the question the test asks.
-// Answering "inconclusive" — OK: true — for a connection that is provably unusable is the
-// exact defect this whole path removes.
+// Answering "inconclusive" for a connection that is provably unusable is the exact defect this
+// whole path removes. It was the sharpest kind of wrong while inconclusive meant OK: true, and
+// it stays wrong now that it means OK: false: "the platform could not be reached" sends the
+// operator to retry, when the remedy is a field on their own connection row.
 //
 // It carries domain.ErrConnectionProbeNotAttempted because every caller of THIS method decides
 // it before building a request. probeMembership reaches the same sentence after an enumeration
@@ -192,8 +239,9 @@ func (s probeSubject) accountIDNotUsable() error {
 // Kept separate from accountIDNotUsable because the operator has to know WHICH field to fix,
 // and the two live on the same row. Like its sibling it is decided before anything is sent and
 // no credential is evaluated, so it must not surface as a credential rejection — nor as
-// inconclusive, which is what an unrecognised error from the enumeration used to produce:
-// OK: true for a connection that can never dispatch.
+// inconclusive, which is what an unrecognised error from the enumeration used to produce: an
+// unreachable-platform answer about a connection that can never dispatch, whatever Microsoft
+// does.
 func (s probeSubject) customerIDNotUsable() error {
 	return preSendProbeVerdict("the %s connection's configured customer id is not a valid %s customer id",
 		s.platform, s.platform)

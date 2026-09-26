@@ -132,3 +132,29 @@ func ProbeInconclusive(err error) bool {
 	// It proves nothing about the credential.
 	return true
 }
+
+// ProbeNotSent reports whether err PROVES nothing left this process — a DNS failure, a
+// connect-time dial refusal, or this client's own preSendError — so the probe's outcome belongs
+// to no platform at all.
+//
+// It is the third member of the probe vocabulary and the only one that is not about the
+// operator's answer: an inconclusive probe reads identically either way. It exists for the
+// metrics arm alone — see internal/dispatch/probe.go and domain.ErrConnectionProbeNotAttempted
+// — so an unresolvable host does not land on X's upstream-call series as a near-zero-latency
+// error sample and invent a provider outage out of a local network fault.
+//
+// preSendError is matched as well as isPreSendDialError for the same reason ProbeInconclusive
+// matches both: this client wraps a dial failure in preSendError to strip the URL, and the
+// wrapper keeps the cause reachable, so either route can present the same fact.
+//
+// It defaults FALSE for anything it does not recognise, the OPPOSITE of ProbeInconclusive's
+// default and for the same reason that one defaults true: each defaults to the answer that is
+// wrong in the cheap direction. Here that is recording a sample for a call that may have
+// happened, rather than silently dropping a real platform failure out of the series.
+func ProbeNotSent(err error) bool {
+	if isPreSendDialError(err) {
+		return true
+	}
+	var pse *preSendError
+	return errors.As(err, &pse)
+}

@@ -653,16 +653,16 @@ func (d *TwitterDispatcher) ProbeConnection(ctx context.Context, projectID strin
 	if perr := client.VerifyAccount(ctx); perr != nil {
 		// The client's own pre-send guard, for an accountID this dispatcher has already
 		// proved non-empty — so it is unreachable today and answered anyway, because the
-		// alternative if it ever becomes reachable is the inconclusive default answering
-		// OK: true for a connection that names no account.
+		// alternative if it ever becomes reachable is the inconclusive default reporting X as
+		// unreachable for a connection that names no account to reach.
 		if errors.Is(perr, twitter.ErrAccountNotConfigured) {
 			return subject.noAccountConfigured()
 		}
 		// The other pre-send guard, and this one IS reachable: validateTwitterConnection proves
 		// the id non-empty, not that it can address an account-scoped path. Answered here rather
 		// than by either predicate for the reason the Reddit sibling is: the rejection arm would
-		// blame a credential X never saw, and the inconclusive default would answer OK: true for
-		// an id no X request can address.
+		// blame a credential X never saw, and the inconclusive default would blame X's
+		// availability for an id no X request can address.
 		if errors.Is(perr, twitter.ErrInvalidAccountID) {
 			return subject.accountIDNotUsable()
 		}
@@ -677,7 +677,7 @@ func (d *TwitterDispatcher) ProbeConnection(ctx context.Context, projectID strin
 		if twitter.ProbeAccountUnreachable(perr) {
 			return subject.accountNotReachable()
 		}
-		return subject.probeClass(perr, twitter.ProbeCredentialRejected, twitter.ProbeInconclusive)
+		return subject.probeClass(perr, twitter.ProbeCredentialRejected, twitter.ProbeInconclusive, twitter.ProbeNotSent)
 	}
 	return nil
 }

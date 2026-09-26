@@ -98,9 +98,9 @@ func TestTokenRefusalSentinelsRouteToOppositeOutcomes(t *testing.T) {
 //
 // The read and size guards used to return a bare error ahead of the status classification, and
 // that error matched neither probe predicate — so ProbeInconclusive's unrecognised-error default
-// answered true and a plain 401 with an oversized body reported the connection as OK: true. That
-// is the false positive this endpoint exists to remove, arriving through the one door the
-// classification left open. The status is kept; the unusable body is classified as nil, which
+// answered true and a plain 401 with an oversized body reported the connection as an unreachable
+// platform. That hides the refusal this endpoint exists to surface, arriving through the one door
+// the classification left open. The status is kept; the unusable body is classified as nil, which
 // carries no allowlisted code and so takes the conservative fallback.
 func TestFetchToken_UnusableBodyKeepsTheStatusVerdict(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -121,6 +121,6 @@ func TestFetchToken_UnusableBodyKeepsTheStatusVerdict(t *testing.T) {
 	}
 	if !ProbeCredentialRejected(err) {
 		t.Fatalf("fetchToken = %v; a 401 with an unusable body did not match "+
-			"ProbeCredentialRejected, so a revoked refresh token would report OK: true", err)
+			"ProbeCredentialRejected, so a revoked refresh token would report an unreachable platform", err)
 	}
 }

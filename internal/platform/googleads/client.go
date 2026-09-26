@@ -165,6 +165,12 @@ type Client struct {
 	// failed refresh fails all current waiters at once rather than each re-leading
 	// a serial refresh.
 	inflight *tokenRefresh
+
+	// callerScopedRefresh keeps the leader's refresh derived from the CALLING
+	// context instead of detaching it. Off by default, because detaching is what
+	// makes the single-flight above safe for a client many callers share. See
+	// WithCallerScopedTokenRefresh for when it is the right trade.
+	callerScopedRefresh bool
 }
 
 // tokenRefresh holds the shared result of one in-flight token refresh. done is
@@ -233,6 +239,29 @@ func WithClock(now func() time.Time) Option {
 		if now != nil {
 			c.now = now
 		}
+	}
+}
+
+// WithCallerScopedTokenRefresh ties the token refresh's lifetime to the caller
+// that triggers it, instead of detaching it with context.WithoutCancel.
+//
+// Detaching is the right default for a client that OUTLIVES a request and is
+// shared by many: one caller's cancellation must not tear down a refresh the
+// other waiters are parked on, and the token it produces is reused long after
+// that caller is gone. Neither reason holds for a client built for ONE call and
+// dropped — a connection probe's. Nothing else will ever read its cache, so a
+// detached refresh buys nobody anything, and it outruns its caller: the refresh
+// runs on its own googleAdsRequestTimeout deadline, which is longer than the
+// bound the probe orchestrator puts on the whole probe. Cancel the probe and
+// the goroutine, its socket and its file descriptor stay alive to finish work
+// whose result is already unreachable — per probe, on every connection, on a
+// platform whose token endpoint is the thing that is slow.
+//
+// Set this ONLY on a client no other caller shares. On a shared one it
+// reintroduces exactly the tear-down the single-flight exists to prevent.
+func WithCallerScopedTokenRefresh() Option {
+	return func(c *Client) {
+		c.callerScopedRefresh = true
 	}
 }
 
@@ -482,6 +511,12 @@ func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 		inflight = &tokenRefresh{done: make(chan struct{})}
 		c.inflight = inflight
 		refreshValuesCtx := context.WithoutCancel(ctx)
+		if c.callerScopedRefresh {
+			// A one-shot client: nothing outlives this caller to benefit from the
+			// detach, so the refresh stays bounded by the caller's own deadline
+			// rather than leaking past it. See WithCallerScopedTokenRefresh.
+			refreshValuesCtx = ctx
+		}
 		go func() {
 			fetchCtx, cancel := context.WithTimeout(refreshValuesCtx, googleAdsRequestTimeout)
 			token, err := c.fetchToken(fetchCtx)
@@ -557,8 +592,10 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	// A body this client cannot use must not erase the STATUS. Returning a bare read or size
 	// error here — ahead of the classification below — drops the failure out of BOTH probe
 	// predicates, so ProbeInconclusive's unrecognised-error default answers true and a plain
-	// 401 with a truncated or oversized body reports the connection as OK: true. That is the
-	// false-positive LFXV2-2665 exists to remove, arriving through the one door left open.
+	// 401 with a truncated or oversized body is reported as Google Ads having been
+	// unreachable — telling the operator to retry, when Google answered plainly and refused
+	// their credential. That is the misdirection LFXV2-2665 exists to remove, arriving
+	// through the one door left open.
 	// The status is kept and classified; an unusable body is passed as nil, which carries no
 	// allowlisted code and so takes classifyTokenRefusal's conservative fallback. The error is
 	// still reported when the response was a 2xx, where the body IS the answer and there is no

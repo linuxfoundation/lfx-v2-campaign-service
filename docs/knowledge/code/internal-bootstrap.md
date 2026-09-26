@@ -95,9 +95,17 @@ enforced on the system row:
   because every outcome there is fatal with no escape hatch, but it reported a mistyped key as
   "missing", so it now separates the two for the message alone.
 - **Shape rules** (`valueShapes`) come from TWO sources, because that is where they live:
-  `design/connection.go` `Pattern()` for LinkedIn, Meta and X, and the runtime validators for
-  Google Ads, Microsoft and Reddit, whose designs check presence alone. Mirroring only the design
-  let `-provider google-ads -account-id foo` install and poison the shared fallback.
+  `design/connection.go` `Pattern()` for LinkedIn, Meta, X and Microsoft, and the runtime
+  validators for Google Ads and Reddit, whose designs check presence alone. Mirroring only the
+  design let `-provider google-ads -account-id foo` install and poison the shared fallback.
+- **Some rules a regexp cannot state at all**, so `valueValidators` runs the real validator as a
+  second pass after the pattern. Microsoft's `account_id` and `customer_id` are the case: both are
+  `^[1-9][0-9]{0,18}$` in the design AND positive-int64 at runtime, and the int64 RANGE is the
+  half no pattern expresses — `9999999999999999999` is nineteen digits and matches, but overflows.
+  Holding the two ids to bare digits was the bug: `0`, `007`, a twenty-digit value and an
+  above-`MaxInt64` value all installed onto the SHARED fallback row, which every project without
+  its own Microsoft connection then dispatches through, and every probe and dispatch there
+  refuses. The pattern runs first so the error names the simpler violation when both apply.
 - **Required non-secret config** (`requiredConfigKeys`) is checked against the map about to be
   WRITTEN, not the flags as typed, so a key already on the row satisfies a rotation.
 

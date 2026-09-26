@@ -60,3 +60,26 @@ func ProbeInconclusive(err error) bool {
 	// successful call that established nothing, which is the definition of inconclusive.
 	return true
 }
+
+// ProbeNotSent reports whether err PROVES nothing left this process — this client's own
+// preSendError (a DNS or dial failure, a request that would not build, or a context already
+// cancelled when the call began), or a bare dial failure — so the probe's outcome belongs to no
+// platform at all.
+//
+// It is the third member of the probe vocabulary and the only one that is not about the
+// operator's answer: an inconclusive probe reads identically either way. It exists for the
+// metrics arm alone — see internal/dispatch/probe.go and domain.ErrConnectionProbeNotAttempted
+// — so an unresolvable host does not land on HubSpot's upstream-call series as a near-zero-
+// latency error sample and invent a provider outage out of a local network fault.
+//
+// It is IsNeverSent asked for the one purpose that predicate was already written to answer;
+// the wrapper exists so every platform package presents the same probe vocabulary under the
+// same name, rather than internal/dispatch carrying a per-platform exception.
+//
+// It defaults FALSE for anything it does not recognise, the OPPOSITE of ProbeInconclusive's
+// default and for the same reason that one defaults true: each defaults to the answer that is
+// wrong in the cheap direction. Here that is recording a sample for a call that may have
+// happened, rather than silently dropping a real platform failure out of the series.
+func ProbeNotSent(err error) bool {
+	return IsNeverSent(err) || isPreSendDialError(err)
+}

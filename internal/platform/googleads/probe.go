@@ -100,6 +100,23 @@ func ProbeInconclusive(err error) bool {
 	return true
 }
 
+// ProbeNotSent reports whether err PROVES nothing left this process — a DNS failure, or a
+// connect-time dial refusal — so the probe's outcome belongs to no platform at all.
+//
+// It is the third member of the probe vocabulary and the only one that is not about the
+// operator's answer: an inconclusive probe reads identically either way. It exists for the
+// metrics arm alone — see internal/dispatch/probe.go and domain.ErrConnectionProbeNotAttempted
+// — so an unresolvable host does not land on Google's upstream-call series as a near-zero-
+// latency error sample and invent a provider outage out of a local network fault.
+//
+// It defaults FALSE for anything it does not recognise, the OPPOSITE of ProbeInconclusive's
+// default and for the same reason that one defaults true: each defaults to the answer that is
+// wrong in the cheap direction. Here that is recording a sample for a call that may have
+// happened, rather than silently dropping a real platform failure out of the series.
+func ProbeNotSent(err error) bool {
+	return isPreSendDialError(err)
+}
+
 // RFC 6749 §5.2 defines exactly six token-endpoint `error` codes, and they split by REMEDY —
 // the only thing this classification needs from them. The set is CLOSED, so enumerating it once
 // means any body carrying one of the six is classified and only something outside the RFC

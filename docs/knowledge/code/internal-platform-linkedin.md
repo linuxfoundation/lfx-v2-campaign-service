@@ -195,12 +195,12 @@ token exchange that can never succeed must not be reported as inconclusive.** Th
 above answers "whose configuration is at fault"; it says nothing about "could a later attempt
 work". Every token-exchange failure that matched none of the §5.2 codes used to carry only
 `errTokenExchangeFailed`, and `VerifyAccountOrgReference` folds that into
-`ErrOrgVerificationInconclusive` — which `TestLinkedinAds` maps to `OK: true`. So a token endpoint
-answering `403`, `404` or `410`, or returning a `2xx` whose body yields no usable token, reported a
-permanently broken connection as healthy, forever: the "try again later" advisory is true of a
-`429` and false of a `410`, and nothing about the connection would ever change to clear it. That
-is the broken-connection-reported-healthy defect the whole path exists to close, reached by a
-different door.
+`ErrOrgVerificationInconclusive` — which `TestLinkedinAds` reports as a platform it could not
+reach. So a token endpoint answering `403`, `404` or `410`, or returning a `2xx` whose body yields
+no usable token, sends the operator away to try again later, forever: that advisory is true of a
+`429` and false of a `410`, and nothing about the connection would ever change to clear it. The
+remedy the operator needs — re-authorise, or fix the field — is never named. That is the same
+defect the whole path exists to close, reached by a different door.
 
 `permanentTokenExchangeError` marks the subset that cannot succeed on a retry. Its `Is` answers
 for TWO targets: `errTokenExchangeFailed`, so `SafeInconclusiveDetail`'s token-exchange branch
@@ -589,7 +589,7 @@ callers have different needs: `ListAdAccounts` must enumerate everything, while
 early is not just an optimization. A confirmed match or mismatch found on an early page must
 not be undone by a LATER, unrelated page then failing; before this walk stopped as soon as the
 target was found, a mismatch found on page one could be discarded by a page-two failure and
-silently reported as `OK: true` (see
+silently reported as an unreachable platform to retry, burying a mismatch already proven (see
 [`docs/knowledge/log/2026-09-23-LFXV2-2665-linkedin-org-verify-early-exit-and-log-detail-fix.md`](../log/2026-09-23-LFXV2-2665-linkedin-org-verify-early-exit-and-log-detail-fix.md)). Follows the same
 fail-closed-only-on-a-CONFIRMED-fact discipline as `resolveOrgID` (`targeting.go`): an
 empty or person-scoped reference on the account is INCONCLUSIVE (`nil` — LinkedIn has nothing
@@ -608,7 +608,8 @@ can never be the DIFFERENT organization a confirmed disagreement requires. That 
 answers the wrong question: it is sound about *mismatch*, but `orgIDRE` is this client's
 configuration invariant, and `resolveOrgID` refuses the very same value because it cannot build
 a valid `urn:li:organization:<id>` — so such a connection is already guaranteed to fail campaign
-creation, and `TestLinkedinAds` was reporting `OK: true` for it. The error deliberately does NOT
+creation, and `TestLinkedinAds` — under the `ok` contract of the time, which reported an
+inconclusive walk as `OK: true` — was calling it healthy. The error deliberately does NOT
 describe it as a mismatch: the value never was a comparable org id, and naming a "different
 organization" would send an operator hunting a tenant mixup instead of fixing a malformed field.
 

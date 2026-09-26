@@ -480,8 +480,8 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 	// Both halves of the stored pairing are shape-checked, and the empty string is one of the
 	// shapes that fails. nil means "no mismatch found" to every caller, and a pairing that is
 	// half-absent or half-malformed is not one this connection can dispatch on — reporting it
-	// as nil made a connection test answer OK: true for a connection already known to be
-	// unusable, which is the whole failure class this verification closes.
+	// as nil made a connection test report a healthy connection already known to be unusable,
+	// which is the whole failure class this verification closes.
 	t.Run("an absent or malformed account or org id is a confirmed error, refused before enumeration", func(t *testing.T) {
 		cases := []struct{ name, accountID, orgID string }{
 			{"absent account id", "", "2414183"},
@@ -501,10 +501,10 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 				if err == nil {
 					t.Fatal("VerifyAccountOrgReference: want a CONFIRMED error — targeting.go refuses the same value, so this connection cannot dispatch")
 				}
-				// It must NOT be the inconclusive sentinel: TestLinkedinAds maps that to
-				// OK: true, which is the reporting bug this case exists to close.
+				// It must NOT be the inconclusive sentinel: TestLinkedinAds reports that as
+				// a platform it could not reach, which names no field the operator can fix.
 				if errors.Is(err, ErrOrgVerificationInconclusive) {
-					t.Errorf("VerifyAccountOrgReference: %v, want a CONFIRMED error, not ErrOrgVerificationInconclusive (which is reported as a healthy connection)", err)
+					t.Errorf("VerifyAccountOrgReference: %v, want a CONFIRMED error, not ErrOrgVerificationInconclusive (which is reported as an unreachable platform to retry)", err)
 				}
 				// Decidable from the stored values alone. Spending a LinkedIn round trip to
 				// reach a verdict already known would also make the verdict depend on that
@@ -529,8 +529,8 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 				t.Fatalf("VerifyAccountOrgReference: want an error when discovery returns %d", status)
 			}
 			// LinkedIn received the request and refused it; none of these clear on their
-			// own, so reporting them as an interrupted walk would answer OK: true for a
-			// permanently broken discovery path forever.
+			// own, so reporting them as an interrupted walk would invite a retry of a
+			// permanently broken discovery path, forever.
 			if errors.Is(err, ErrOrgVerificationInconclusive) {
 				t.Errorf("VerifyAccountOrgReference on %d: %v, want a definite failure — a refusal is not an incomplete walk", status, err)
 			}
@@ -587,11 +587,11 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 				if !errors.Is(err, tc.want) {
 					t.Errorf("VerifyAccountOrgReference: %v, want %v to survive the walk's error handling", err, tc.want)
 				}
-				// The bucket that reports OK: true. A credential fault placed in it is the
-				// "broken connection reported healthy" outcome this whole path exists to
-				// close, and neither of these clears on its own.
+				// The bucket that blames the platform instead of the credential. A credential
+				// fault placed in it sends the operator to wait out an outage that is not
+				// happening, and neither of these clears on its own.
 				if errors.Is(err, ErrOrgVerificationInconclusive) {
-					t.Errorf("VerifyAccountOrgReference: %v, must NOT be inconclusive — that reports a broken connection as healthy", err)
+					t.Errorf("VerifyAccountOrgReference: %v, must NOT be inconclusive — that blames an unreachable platform for a credential fault", err)
 				}
 				// Nor is it a verdict about the pairing: the cross-check never ran.
 				if errors.Is(err, ErrOrgVerificationFailed) {
@@ -603,9 +603,9 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 
 	// The three credential sentinels come only from a 400/401 the OAuth error code classifies.
 	// Every OTHER permanently-failing exchange carried no sentinel at all and fell through to
-	// the inconclusive bucket, which reports OK: true — so a token endpoint answering 403 or
-	// 404, or a 200 with no token in it, reported a connection that can never mint a token as
-	// healthy, forever. Retryability is the axis here, NOT whether a credential is implicated.
+	// the inconclusive bucket, which blames the platform — so a token endpoint answering 403 or
+	// 404, or a 200 with no token in it, told the operator to retry a connection that can never
+	// mint a token, forever. Retryability is the axis here, NOT whether a credential is implicated.
 	t.Run("a permanently failing token exchange is not inconclusive", func(t *testing.T) {
 		cases := []struct {
 			name        string
@@ -649,7 +649,7 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 					return
 				}
 				if errors.Is(err, ErrOrgVerificationInconclusive) {
-					t.Errorf("VerifyAccountOrgReference: %v, must NOT be inconclusive — that bucket reports OK: true, and this never clears on its own", err)
+					t.Errorf("VerifyAccountOrgReference: %v, must NOT be inconclusive — that bucket invites a retry, and this never clears on its own", err)
 				}
 				// Routed onto the existing "the remedy belongs to this service" reason, which
 				// dispatch maps to domain.ErrServiceDefect and logs as token_request_rejected.
@@ -722,8 +722,8 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 
 	// A configured org id that fails orgIDRE is a CONFIRMED defect, not an inconclusive one:
 	// resolveOrgID (targeting.go) refuses the same value, so campaign creation on this
-	// connection cannot build a valid organization URN. Reporting it as inconclusive made
-	// TestLinkedinAds answer OK: true for a connection already known to be unusable.
+	// connection cannot build a valid organization URN. Reporting it as inconclusive makes
+	// TestLinkedinAds blame an unreachable platform for a value stored on the operator's own row.
 	t.Run("malformed configured org id fails the test, and is refused before enumeration", func(t *testing.T) {
 		// The full URN is the realistic mistyping: it CONTAINS the right digits, so a check
 		// that only looked for the numeric id inside the string would wrongly pass it.
@@ -734,10 +734,10 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 		if err == nil {
 			t.Fatal("VerifyAccountOrgReference: want an error for a non-numeric configured org id — resolveOrgID refuses the same value, so this connection cannot dispatch")
 		}
-		// It must NOT be the inconclusive sentinel: TestLinkedinAds maps that to OK: true,
-		// which is the reporting bug this case exists to close.
+		// It must NOT be the inconclusive sentinel: TestLinkedinAds reports that as a platform
+		// it could not reach, which names no field the operator can fix.
 		if errors.Is(err, ErrOrgVerificationInconclusive) {
-			t.Errorf("VerifyAccountOrgReference: %v, want a CONFIRMED error, not ErrOrgVerificationInconclusive (which is reported as a healthy connection)", err)
+			t.Errorf("VerifyAccountOrgReference: %v, want a CONFIRMED error, not ErrOrgVerificationInconclusive (which is reported as an unreachable platform to retry)", err)
 		}
 		// Decidable from the stored value alone — spending a LinkedIn round trip to reach a
 		// verdict already known would also make the verdict depend on that call succeeding.
