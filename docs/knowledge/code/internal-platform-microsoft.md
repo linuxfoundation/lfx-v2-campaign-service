@@ -898,6 +898,32 @@ charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInc
 purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
 series instead of vanishing from it.
 
+**This is the one platform whose `ProbeNotSent` reads TWO markers, because this client reaches the
+network on two legs that fail through different machinery.** `errRequestNotSent` carries the REST
+leg, whose pre-send arm flattens the cause through `safeCause` into a plain string — deliberately,
+so a custom RoundTripper's text can never reach a persisted campaign step — which also erases the
+`*net.OpError` a classifier would match on. That erasure is why the marker had to exist here and in
+no sibling package.
+
+The TOKEN leg is the opposite, and reading the paragraph above onto it was the defect. A fresh
+probe refreshes before it reads, so the token endpoint is the FIRST host this client dials and the
+first that can be unreachable; a dial failure there returns `tokenTransportError`, which renders
+only `safeCause` but whose `Unwrap` DOES preserve the cause — so `isPreSendDialError` sees through
+it perfectly well, while `errRequestNotSent` is never attached, because the REST arm is what
+attaches it and the probe never got that far. Reading only the marker therefore answered `false`
+for a token host that does not resolve, and `Orchestrator.ProbeConnection` booked an upstream-call
+sample against Microsoft for a probe that never left the deployment — inflating Microsoft's error
+rate on `campaign_upstream_call_duration_seconds` with this network's own fault, which is the one
+thing the predicate exists to stop. It now answers
+`errors.Is(err, errRequestNotSent) || isPreSendDialError(err)`.
+
+`ProbeInconclusive` needed no equivalent change — its `tokenTransportError` arm already answers
+true — but its doc comment had generalised the REST leg's "the dial classifier cannot see through
+this" to the whole client, which is what made the gap look intended. The claim is now scoped to the
+leg it is true of. `isPreSendDialError` matches only DNS failures and dial-op
+`ECONNREFUSED`/`EHOSTUNREACH`/`ENETUNREACH`, so a TLS handshake failure — a real conversation with a
+real host — stays off it and remains Microsoft's sample.
+
 `fetchToken` splits non-2xx by status as Google's and Reddit's do — `errTokenEndpointUnavailable`
 for `5xx` and for `429`, and `classifyTokenRefusal` for everything else — and its token error
 carries status only, since the request body holds the client secret and refresh token. The `429`

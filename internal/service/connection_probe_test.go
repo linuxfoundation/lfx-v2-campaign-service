@@ -171,9 +171,18 @@ func TestTestConnUpstream_Classification(t *testing.T) {
 		if res.Message == nil || !strings.Contains(*res.Message, "could not be reached") {
 			t.Errorf("message = %v, does not tell the caller the platform was unreachable", res.Message)
 		}
-		if res.Message != nil && !strings.Contains(*res.Message, "neither accepted nor rejected") {
-			t.Errorf("message = %v, does not clear the stored credential; an operator reading this "+
-				"would re-authorize a connection that was never refused", res.Message)
+		if res.Message != nil && !strings.Contains(*res.Message, "nothing is known to be wrong") {
+			t.Errorf("message = %v, does not steer the operator to retry; without that they "+
+				"re-authorize a connection that was never refused", res.Message)
+		}
+		// The inverse guard. googleads, microsoft and reddit probe on two legs, and a token
+		// refresh that SUCCEEDED before the account read timed out did authenticate the
+		// credential — so a message asserting it was "neither accepted nor rejected" is false on
+		// exactly the paths that reach this arm most often. The message may claim only that the
+		// check is incomplete.
+		if res.Message != nil && strings.Contains(*res.Message, "neither accepted nor rejected") {
+			t.Errorf("message = %v, asserts the credential was never evaluated; this layer cannot "+
+				"know that, and on a two-leg probe it is wrong", res.Message)
 		}
 	})
 

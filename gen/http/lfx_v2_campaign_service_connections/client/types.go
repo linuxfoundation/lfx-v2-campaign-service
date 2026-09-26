@@ -252,8 +252,9 @@ type TestGoogleAdsResponseBody struct {
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
 	// guarantee of account lifecycle state. False when the check could not be
-	// completed against the provider, because no credential authenticated — read
-	// message to tell that case apart from a confirmed failure
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -336,8 +337,9 @@ type TestLinkedinAdsResponseBody struct {
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
 	// guarantee of account lifecycle state. False when the check could not be
-	// completed against the provider, because no credential authenticated — read
-	// message to tell that case apart from a confirmed failure
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -423,8 +425,9 @@ type TestMetaAdsResponseBody struct {
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
 	// guarantee of account lifecycle state. False when the check could not be
-	// completed against the provider, because no credential authenticated — read
-	// message to tell that case apart from a confirmed failure
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -504,8 +507,9 @@ type TestRedditAdsResponseBody struct {
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
 	// guarantee of account lifecycle state. False when the check could not be
-	// completed against the provider, because no credential authenticated — read
-	// message to tell that case apart from a confirmed failure
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -585,8 +589,9 @@ type TestTwitterAdsResponseBody struct {
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
 	// guarantee of account lifecycle state. False when the check could not be
-	// completed against the provider, because no credential authenticated — read
-	// message to tell that case apart from a confirmed failure
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -666,8 +671,9 @@ type TestMicrosoftAdsResponseBody struct {
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
 	// guarantee of account lifecycle state. False when the check could not be
-	// completed against the provider, because no credential authenticated — read
-	// message to tell that case apart from a confirmed failure
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
@@ -765,8 +771,9 @@ type TestHubspotResponseBody struct {
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
 	// guarantee of account lifecycle state. False when the check could not be
-	// completed against the provider, because no credential authenticated — read
-	// message to tell that case apart from a confirmed failure
+	// completed against the provider, because an incomplete check establishes
+	// neither half of that conjunction — read message to tell that case apart from
+	// a confirmed failure
 	OK *bool `form:"ok,omitempty" json:"ok,omitempty" xml:"ok,omitempty"`
 	// Human-readable detail
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`

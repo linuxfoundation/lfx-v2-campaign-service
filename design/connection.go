@@ -253,12 +253,16 @@ var ConnServiceUnavailableError = Type("conn-service-unavailable-error", func() 
 // connection naming no conversion pixel, because Reddit refuses every campaign create without
 // one. A client that needs lifecycle state must read the account resource, not this flag.
 //
-// `ok` is FALSE for an INCONCLUSIVE check — a rate limit, a 5xx, a transport failure — where
-// nothing was learned either way, because on such a check the credential did not authenticate
-// against the provider, which is what this field says it reports. Answering true there widened
-// the field's definition to fit the behaviour instead of the reverse, and handed a client that
-// reads `ok` alone — which this declaration entitles it to do — a green check for a connection
-// nothing verified, followed by a failure at campaign creation.
+// `ok` is FALSE for an INCONCLUSIVE check — a rate limit, a 5xx, a transport failure — because
+// this field reports a CONJUNCTION (the credential authenticated AND the account passed the
+// provider's check), and an incomplete check establishes neither half as a whole. It is
+// deliberately not justified as "the credential did not authenticate": several providers are
+// probed on two legs, a token refresh and then an account read, and a refresh that SUCCEEDED
+// before the account read timed out did authenticate the credential. What failed is the
+// conjunction, which is the thing this field names. Answering true here widened the field's
+// definition to fit the behaviour instead of the reverse, and handed a client that reads `ok`
+// alone — which this declaration entitles it to do — a green check for a connection nothing
+// verified, followed by a failure at campaign creation.
 //
 // `message` still separates the two cases, and the distinction is the operator's whole
 // instruction: an unreachable platform says nothing about the stored credential and warrants a
@@ -266,7 +270,7 @@ var ConnServiceUnavailableError = Type("conn-service-unavailable-error", func() 
 // client that treats an inconclusive result as "do not rely on this connection yet" behaves
 // correctly; one that treats it as "re-authorize" has been told otherwise in the same string.
 var TestResult = Type("connection-test-result", func() {
-	Attribute("ok", Boolean, "Whether the connection passed its provider's verification: the credential authenticated AND the configured account passed that provider's own check. How deep that account check goes is provider-specific — it is not a guarantee of account lifecycle state. False when the check could not be completed against the provider, because no credential authenticated — read message to tell that case apart from a confirmed failure")
+	Attribute("ok", Boolean, "Whether the connection passed its provider's verification: the credential authenticated AND the configured account passed that provider's own check. How deep that account check goes is provider-specific — it is not a guarantee of account lifecycle state. False when the check could not be completed against the provider, because an incomplete check establishes neither half of that conjunction — read message to tell that case apart from a confirmed failure")
 	Attribute("message", String, "Human-readable detail")
 	Required("ok")
 })

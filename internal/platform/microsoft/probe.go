@@ -67,14 +67,21 @@ func ProbeCredentialRejected(err error) bool {
 // learned about the connection either way: the token endpoint being unavailable, a mid-flight
 // transport failure, a token-exchange round-trip failure, HTTP 429, or any 5xx.
 //
-// Unlike its siblings this predicate does NOT consult isPreSendDialError. This client's
-// pre-send arm renders the cause through safeCause into a plain string rather than wrapping it
-// with %w — deliberately, so a custom RoundTripper's error text can never reach a persisted
-// campaign step — so the dial classifier cannot see through the returned error and calling it
-// here would assert a match that can never happen. Such an error falls to the default below,
-// which is inconclusive anyway, so the classification is unchanged; only the claim would have
-// been false. ProbeNotSent below reads the explicit errRequestNotSent marker instead, which is
-// why that marker had to exist here and nowhere else.
+// Unlike its siblings this predicate does NOT consult isPreSendDialError, and the reason is
+// specific to ONE of this client's two legs. The REST pre-send arm renders the cause through
+// safeCause into a plain string rather than wrapping it with %w — deliberately, so a custom
+// RoundTripper's error text can never reach a persisted campaign step — so the dial classifier
+// cannot see through that error and calling it for that leg would assert a match that can never
+// happen. Such an error falls to the default below, which is inconclusive anyway, so the
+// classification is unchanged; only the claim would have been false. The explicit
+// errRequestNotSent marker carries that leg instead, which is why the marker had to exist here
+// and nowhere else.
+//
+// The TOKEN leg is the opposite and must not be read into the paragraph above:
+// tokenTransportError renders only safeCause but its Unwrap DOES preserve the cause, so the dial
+// classifier sees through it perfectly well. This predicate needs nothing extra for that — the
+// tokenTransportError arm below already answers true — but ProbeNotSent does, and the two legs
+// are why it consults both markers rather than one.
 func ProbeInconclusive(err error) bool {
 	// ErrTokenRequestRejected is the one error this package recognises that is NEITHER
 	// predicate, and it has to say so EXPLICITLY, because the fall-through at the bottom of
@@ -119,8 +126,19 @@ func ProbeInconclusive(err error) bool {
 // It defaults FALSE for anything it does not recognise, the opposite of ProbeInconclusive's
 // default and for the same reason that one defaults true: the safe direction here is to record
 // a sample for a call that may have happened, not to silently drop a real platform failure.
+//
+// It reads BOTH markers because this client reaches the network on two legs and they fail
+// differently. errRequestNotSent covers the REST leg, whose pre-send arm flattens the cause to a
+// string the dial classifier cannot see through. isPreSendDialError covers the TOKEN leg: a
+// fresh probe refreshes before it reads, and a DNS failure or refused connection there comes
+// back as a tokenTransportError whose Unwrap preserves the dial error but which carries no
+// errRequestNotSent — that marker is attached by the REST path alone. Reading only the marker
+// therefore charged Microsoft an upstream-call sample for a probe that never left this process,
+// which is precisely what this predicate exists to prevent. isPreSendDialError matches only
+// DNS failures and dial-op ECONNREFUSED/EHOSTUNREACH/ENETUNREACH, so a TLS handshake failure —
+// a real conversation with a real host — stays off it and remains the platform's sample.
 func ProbeNotSent(err error) bool {
-	return errors.Is(err, errRequestNotSent)
+	return errors.Is(err, errRequestNotSent) || isPreSendDialError(err)
 }
 
 // RFC 6749 §5.2 defines exactly six token-endpoint `error` codes, and they split by REMEDY —

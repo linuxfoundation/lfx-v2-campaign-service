@@ -1118,10 +1118,23 @@ LinkedIn switch above and classifying the same way:
 | `ErrConnectionNotUsable` | `OK: false` with a FIXED per-provider remedy, quoting no part of the error |
 | anything else | `OK: false` with fixed text, detail to the log |
 
-**The inconclusive row answers `OK: false`, and it did not always.** The field is declared as
-whether the credential authenticated against the provider; a probe that was rate-limited, met a
-`5xx`, or never reached the platform at all did not establish that, so `true` was a claim the
-service had not earned. Reporting it as `true` with an advisory also depended on the caller reading
+**The inconclusive row answers `OK: false`, and it did not always.** The field is declared as a
+CONJUNCTION — the credential authenticated AND the configured account passed the provider's own
+check — and a probe that was rate-limited, met a `5xx`, or never reached the platform at all did
+not establish that as a whole, so `true` was a claim the service had not earned.
+
+The conjunction is the load-bearing word, and getting it wrong in the JUSTIFICATION was a
+round-9 finding even though the verdict was right. Saying `ok` is false "because the credential
+did not authenticate" is untrue on the paths that reach this arm most often: `googleads`,
+`microsoft` and `reddit` probe on two legs, a token refresh and then an account read, and a
+refresh that SUCCEEDED before the account read timed out means the provider accepted the
+credential outright. `OK: false` still holds — the conjunction was not established — but the
+message may claim only that the check is INCOMPLETE, never that the credential was left
+untouched. The `TestLinkedinAds` arm is where the old wording was most plainly false: reaching it
+requires the credential baseline to have already passed, so LinkedIn had demonstrably accepted
+the credential and only the org cross-check failed to finish. Both messages now assert the
+narrower fact, and `connection_test.go` and `connection_probe_test.go` each carry an INVERSE
+guard asserting the overclaim has not come back. Reporting it as `true` with an advisory also depended on the caller reading
 `message` — and a caller that branches on `ok` alone (a badge, a gate on "can this connection run a
 campaign") got "fine" for a connection nothing had verified. The two sentinels moved TOGETHER,
 `domain.ErrConnectionProbeInconclusive` here and `domain.ErrOrgVerificationInconclusive` in

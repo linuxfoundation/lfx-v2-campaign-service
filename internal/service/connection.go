@@ -425,8 +425,18 @@ func (s *ConnectionService) testConnUpstream(ctx context.Context, projectID stri
 			// what dashboards group on. This value is a sentence, so the same key would
 			// silently make that vocabulary unbounded.
 			"project_id", projectID, "provider", provider, "detail", perr.Error())
-		msg := fmt.Sprintf("connection found, but %s could not be reached to verify it (timeout, rate limit or a platform error); "+
-			"the stored credential was neither accepted nor rejected, so nothing is known to be wrong with this connection — try again shortly", d.displayName)
+		// The message claims only that the CHECK did not finish — never that the credential
+		// was left untouched. Several of these probes reach the platform on two legs: a token
+		// refresh, then an account read. On googleads, microsoft and reddit the refresh can
+		// SUCCEED — the provider accepting the stored credential outright — before the account
+		// read hits a 429, a 5xx or a transport failure and lands here. Saying the credential
+		// "was neither accepted nor rejected" is therefore false on exactly the paths that reach
+		// this arm most often, and false in the direction that matters: it tells an operator that
+		// nothing was learned about their credential when something was. What this layer
+		// genuinely knows is narrower, and is all the message asserts — the verification is
+		// incomplete, so no conclusion was reached either way.
+		msg := fmt.Sprintf("connection found, but %s could not be reached to finish verifying it (timeout, rate limit or a platform error); "+
+			"the check did not complete, so no conclusion was reached about this connection and nothing is known to be wrong with it — try again shortly", d.displayName)
 		return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
 	case errors.Is(perr, domain.ErrCredentialDecryptionFailed):
 		// NO ERROR TEXT. perr's chain is built by domain.Encryptor from ciphertext and key
@@ -1035,10 +1045,18 @@ func (s *ConnectionService) DeleteLinkedinAds(ctx context.Context, p *conn.Delet
 // rather than a 5xx: that is what "test this connection" means for a caller — a service-level
 // 503 is reserved for this endpoint itself being unavailable, not the thing under test not
 // working. A failure of the enumeration walk ITSELF (domain.ErrOrgVerificationInconclusive)
-// proves nothing about the pairing, so it does not fail the test the same way: the credential
-// baseline above already passed, and this service has no basis to call a connection broken
-// just because the org-reference cross-check could not complete. That gets OK: true with an
-// advisory message instead.
+// proves nothing about the pairing, and it is kept DISTINCT from a confirmed mismatch — but it
+// is not a pass. It answers OK: false too, because `ok` reports that the credential
+// authenticated AND the configured account passed LinkedIn's own check, and a walk that never
+// completed established the second half of that for nobody. The credential baseline above
+// having passed is not the whole field.
+//
+// What separates the two is the MESSAGE, not the boolean: this arm names the walk as
+// incomplete and says nothing about the stored pairing, so it reads as "retry", while a
+// confirmed mismatch names the disagreement and reads as "repair". Answering OK: true here
+// would have sent a caller that reads `ok` alone — which the design entitles it to do — away
+// with a green check for a pairing nothing verified. That is the same defect this endpoint
+// exists to remove, reached through the LinkedIn-only door.
 func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLinkedinAdsPayload) (*conn.ConnectionTestResult, error) {
 	result, err := s.testConn(ctx, p.ProjectID, model.ProviderLinkedInAds)
 	if err != nil {
@@ -1075,14 +1093,20 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 				// same key would silently make that vocabulary unbounded.
 				"project_id", p.ProjectID, "provider", string(model.ProviderLinkedInAds), "detail", verr.Error())
 			// OK: false for the reason testConnUpstream's inconclusive arm states in full:
-			// `ok` is declared as whether the credential authenticated against the provider,
-			// and an incomplete walk did not establish that. This arm is the one that used to
-			// set the precedent the other followed, so it moves with it — leaving the two
-			// disagreeing would make `ok` mean one thing on linkedin and another everywhere
-			// else, which is worse than either answer.
-			msg := "connection found, but linkedin could not be reached to verify the account/organization reference " +
-				"(timeout, rate limit or a platform error); the stored credential was neither accepted nor rejected, " +
-				"so nothing is known to be wrong with this connection — try again shortly"
+			// `ok` reports that the credential authenticated AND the configured account passed
+			// the provider's own check, and an incomplete walk did not establish the second
+			// half. This arm is the one that used to set the precedent the other followed, so
+			// it moves with it — leaving the two disagreeing would make `ok` mean one thing on
+			// linkedin and another everywhere else, which is worse than either answer.
+			//
+			// The message must NOT say the credential was neither accepted nor rejected, and
+			// this arm is where that would be most plainly false: reaching here means the
+			// credential baseline above already PASSED — linkedin accepted it — and only the
+			// org-reference cross-check failed to complete. It is the same correction the
+			// shared inconclusive arm carries, with the evidence sitting one log line above.
+			msg := "connection found, but linkedin could not be reached to finish verifying the account/organization reference " +
+				"(timeout, rate limit or a platform error); the check did not complete, so no conclusion was reached " +
+				"about this connection and nothing is known to be wrong with it — try again shortly"
 			return &conn.ConnectionTestResult{OK: false, Message: &msg}, nil
 		case errors.Is(verr, domain.ErrCredentialDecryptionFailed):
 			// NO ERROR TEXT, same guard as classifyDiscoveryError's identical arm above:

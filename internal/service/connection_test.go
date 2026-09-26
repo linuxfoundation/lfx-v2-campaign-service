@@ -484,9 +484,17 @@ func TestTestLinkedinAds_UpstreamVerification(t *testing.T) {
 		if res.Message == nil || !strings.Contains(*res.Message, "could not be reached") {
 			t.Errorf("message = %v, does not tell the caller linkedin was unreachable", res.Message)
 		}
-		if res.Message != nil && !strings.Contains(*res.Message, "neither accepted nor rejected") {
-			t.Errorf("message = %v, does not clear the stored credential; the operator's repair for an "+
-				"unreachable platform is to retry, not to re-authorize", res.Message)
+		if res.Message != nil && !strings.Contains(*res.Message, "nothing is known to be wrong") {
+			t.Errorf("message = %v, does not steer the operator to retry; the repair for an "+
+				"unreachable platform is to try again, not to re-authorize", res.Message)
+		}
+		// ...and it must not overclaim in the other direction. Reaching this arm means the
+		// credential baseline ALREADY PASSED — linkedin accepted the credential — and only the
+		// org cross-check failed to finish. A message saying the credential was "neither
+		// accepted nor rejected" states the opposite of what this path knows.
+		if res.Message != nil && strings.Contains(*res.Message, "neither accepted nor rejected") {
+			t.Errorf("message = %v, claims the credential was never evaluated; it was accepted, "+
+				"which is how the walk this arm reports on came to run at all", res.Message)
 		}
 	})
 
