@@ -15,7 +15,11 @@ import (
 //
 // A connection test asks two questions of the stored credential — does it authenticate, and
 // does it reach the account this connection is configured for — by making one read-only call
-// per platform. What the six platforms do NOT share is how they report a failure: Google and
+// per platform. The second question is asked only where there IS a configured account to ask
+// it about: HubSpot has none, since portal_id is not one — nothing routes on it, and the
+// portal a campaign lands in is the token's own — so its probe verifies the private-app token
+// and stops there. docs/api-catalog.md carries that exception as the endpoint's contract.
+// What the six platforms do NOT share is how they report a failure: Google and
 // Reddit answer a dead refresh token from a token endpoint, Meta reports a revoked token as an
 // HTTP 400 carrying code 190, Microsoft renders its pre-send failures into a URL-free string,
 // HubSpot has no refresh exchange at all. Each platform client therefore owns the reading of

@@ -437,7 +437,12 @@ type ConnectionProber interface {
 	// whose acceptance would report a connection the project does not have as healthy — and
 	// makes one live call with it.
 	//
-	// nil means the credential authenticated AND the configured account was reached. Every
+	// nil means the credential authenticated and, where the connection HAS a configured
+	// account, that the account was reached. HubSpot is the one exception, and deliberately:
+	// it has no configured account to check, because portal_id is not one — nothing routes on
+	// it, and the portal a campaign lands in is the token's own (docs/api-catalog.md). nil
+	// from that implementation means the private-app token authenticated and claims no more
+	// than that. Every
 	// other outcome is an error carrying exactly one of four meanings, which the implementation
 	// fixes and the caller must not re-derive:
 	//

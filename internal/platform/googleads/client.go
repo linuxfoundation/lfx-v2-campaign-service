@@ -1460,7 +1460,6 @@ const (
 //     a manager flag, and membership ALONE is a false success: a manager account appears in it
 //     and cannot hold a campaign, so a connection naming one tested green and failed at the
 //     first create — the production failure this endpoint exists to catch. Presence is
-//     therefore followed by a self-scoped customer_client read for the two properties that
 //     therefore followed by a self-scoped read of the account's own `customer` record for the
 //     two properties that enumeration cannot carry, which is the same pair manager mode reads
 //     from the walk.

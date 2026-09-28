@@ -493,13 +493,21 @@ func TestTestLinkedinAds_UpstreamVerification(t *testing.T) {
 			t.Errorf("message = %v, does not steer the operator to retry; the repair for an "+
 				"unreachable platform is to try again, not to re-authorize", res.Message)
 		}
-		// ...and it must not overclaim in the other direction. Reaching this arm means the
-		// credential baseline ALREADY PASSED — linkedin accepted the credential — and only the
-		// org cross-check failed to finish. A message saying the credential was "neither
-		// accepted nor rejected" states the opposite of what this path knows.
-		if res.Message != nil && strings.Contains(*res.Message, "neither accepted nor rejected") {
-			t.Errorf("message = %v, claims the credential was never evaluated; it was accepted, "+
-				"which is how the walk this arm reports on came to run at all", res.Message)
+		// ...and it must not overclaim in EITHER direction. This arm reached no verdict on
+		// the credential at all: the baseline gating entry is testConn's local row read, and
+		// the inconclusive class covers a walk that failed before send, where linkedin
+		// received nothing to evaluate. So the message may assert neither half of the
+		// conjunction. The guard runs both ways on purpose — round 9 removed the "did not
+		// authenticate" claim and the correction replaced it with its negation, which is the
+		// same mistake pointed the other way.
+		for _, claim := range []string{
+			"did not authenticate", "was rejected", "is invalid", "failed to authenticate",
+			"authenticated", "was accepted", "accepted the credential",
+		} {
+			if res.Message != nil && strings.Contains(*res.Message, claim) {
+				t.Errorf("message = %v, says %q about a credential this walk reached no verdict "+
+					"on; an incomplete walk establishes neither half of the conjunction", res.Message, claim)
+			}
 		}
 	})
 
