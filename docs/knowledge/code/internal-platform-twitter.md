@@ -354,6 +354,16 @@ charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInc
 purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
 series instead of vanishing from it.
 
+The one error it claims beyond a dial failure is a caller that had ALREADY given up:
+`Client.doRequestAbs` checks `ctx.Err()` at its entry and returns `errRequestContextAlreadyDone`
+wrapped around it, and `ProbeNotSent` matches that marker alongside `preSendError`. X has no token
+leg for the sibling clients' `errTokenContextAlreadyDone` to guard, and `doRequestAbs` is the
+single path every Ads API call takes, so its entry is where the equivalent check belongs. The
+marker is deliberately NOT a `preSendError`: that type names a DIAL failure and exists to strip a
+URL out of the cause, and there is no URL and no dial here. Only that entry is marked — a context
+error out of `http.Client.Do`, or on a retry attempt after the first, can arrive with bytes
+already sent.
+
 There is no token-refresh arm: X uses an OAuth 1.0a four-tuple, signed per request, with no
 exchange to fail. The probe reads the account root directly, so its `404`/`401`/`403` are answers
 about the configured account rather than about a discovery request.

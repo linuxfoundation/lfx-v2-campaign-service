@@ -600,6 +600,15 @@ charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInc
 purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
 series instead of vanishing from it.
 
+The one error it claims beyond a dial failure is a caller that had ALREADY given up: `Client.do`
+checks `ctx.Err()` at its entry and returns `errRequestContextAlreadyDone` wrapped around it, and
+`ProbeNotSent` matches that marker. Meta has no token leg for the sibling clients'
+`errTokenContextAlreadyDone` to guard — the access token is long-lived and travels as a header —
+and `do` is the single path every Graph call takes, so its entry is where the equivalent check
+belongs. Only that entry is marked. A context error out of `http.Client.Do`, or on a retry
+attempt after the first, can arrive with bytes already sent, and the marker's whole value is that
+it PROVES otherwise.
+
 The classification reads the Graph envelope, not just the status: code `190` under a `400` is a
 credential rejection, while a rate-limit code under the same `400` is inconclusive. **The status
 gates the code, never the reverse** — the same rule the token-refusal classifiers follow. HTTP

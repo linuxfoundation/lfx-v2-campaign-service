@@ -116,6 +116,15 @@ func ProbeInconclusive(err error) bool {
 // The shared contract is "the FAILING request never left this process", not "no bytes at all" —
 // a distinction that only bites on the providers probed on two legs, which this client is not.
 // See domain.ErrConnectionProbeNotAttempted for why the marker is scoped that way.
+//
+// errRequestContextAlreadyDone is matched as well as the dial classifier, because a caller that
+// cancels before the probe starts is the same fact arriving by a different route: do observed
+// the done context at its entry and built no request at all. That marker is attached at that one
+// check precisely so matching it here stays a proof rather than a guess — a context error seen
+// later can belong to a request already on the wire.
 func ProbeNotSent(err error) bool {
+	if errors.Is(err, errRequestContextAlreadyDone) {
+		return true
+	}
 	return isPreSendDialError(err)
 }

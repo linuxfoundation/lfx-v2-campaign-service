@@ -159,6 +159,12 @@ func ProbeInconclusive(err error) bool {
 // matches both: this client wraps a dial failure in preSendError to strip the URL, and the
 // wrapper keeps the cause reachable, so either route can present the same fact.
 //
+// errRequestContextAlreadyDone is matched too, because a caller that cancels before the probe
+// starts is the same fact arriving by a different route: doRequestAbs observed the done context
+// at its entry and built no request at all. That marker is attached at that one check precisely
+// so matching it here stays a proof rather than a guess — a context error seen later can belong
+// to a request already on the wire.
+//
 // It defaults FALSE for anything it does not recognise, the OPPOSITE of ProbeInconclusive's
 // default and for the same reason that one defaults true: each defaults to the answer that is
 // wrong in the cheap direction. Here that is recording a sample for a call that may have
@@ -168,7 +174,7 @@ func ProbeInconclusive(err error) bool {
 // a distinction that only bites on the providers probed on two legs, which this client is not.
 // See domain.ErrConnectionProbeNotAttempted for why the marker is scoped that way.
 func ProbeNotSent(err error) bool {
-	if isPreSendDialError(err) {
+	if isPreSendDialError(err) || errors.Is(err, errRequestContextAlreadyDone) {
 		return true
 	}
 	var pse *preSendError

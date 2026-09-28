@@ -1465,11 +1465,36 @@ func readCappedBody(body io.ReadCloser) ([]byte, error) {
 	return raw, readErr
 }
 
+// errRequestContextAlreadyDone marks a request this client never attempted because the
+// CALLER's context was already cancelled or past its deadline when do was entered.
+//
+// It is attached at THAT check and nowhere else. A context error observed any later — out
+// of http.Client.Do, or on a retry attempt after the first — can land with bytes already on
+// the wire, and this marker's whole value is that it PROVES the failing request never left
+// this process. Widening it to any context error would turn that proof into a guess.
+//
+// It mirrors googleads.errTokenContextAlreadyDone, which guards that client's token leg for
+// the same reason. Meta has no token leg — the access token is long-lived and carried as a
+// header — so the entry to do is where the equivalent check belongs, and do is the single
+// path every Graph call in this client takes.
+//
+// It WRAPS the context error rather than replacing it, so errors.Is(err, context.Canceled)
+// and context.DeadlineExceeded keep answering for every existing caller.
+var errRequestContextAlreadyDone = errors.New("meta: the request was not attempted; the caller's context was already done")
+
 // do is the shared workhorse. retryThrottle=false suppresses ONLY the throttle retry;
 // every other classification (transport ambiguity, oversized/unreadable bodies, the
 // Retry-After abort) is identical, so a create and a read disagree about repeating a
 // request and about nothing else.
 func (c *Client) do(ctx context.Context, method, path string, body map[string]any, out any, retryThrottle bool) error {
+	// Entry-time only — see errRequestContextAlreadyDone. Without it a caller that had
+	// already cancelled got the context error back out of http.Client.Do wrapped as a
+	// transportError, which ProbeNotSent does not recognise: the probe then charged Meta's
+	// upstream-call series with an error sample for a request Meta never received.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", errRequestContextAlreadyDone, err)
+	}
+
 	if c.creds.AccessToken == "" {
 		return fmt.Errorf("meta access token is not configured")
 	}

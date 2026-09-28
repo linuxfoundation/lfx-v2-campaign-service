@@ -704,6 +704,24 @@ func (e *transportError) Error() string {
 
 func (e *transportError) Unwrap() error { return e.Err }
 
+// errRequestContextAlreadyDone marks a request this client never attempted because the
+// CALLER's context was already cancelled or past its deadline when doRequestAbs was entered.
+//
+// It is attached at THAT check and nowhere else. A context error observed any later — out of
+// http.Client.Do, or on a retry attempt after the first — can land with bytes already on the
+// wire, and this marker's whole value is that it PROVES the failing request never left this
+// process. Widening it to any context error would turn that proof into a guess.
+//
+// It mirrors googleads.errTokenContextAlreadyDone, which guards that client's token leg for the
+// same reason. This client has no token leg — it signs each request with OAuth1 — so the entry
+// to doRequestAbs is where the equivalent check belongs, and every X Ads call routes through it.
+//
+// It is deliberately NOT a preSendError: that type names a DIAL failure and carries the cause
+// for safeTransportCause to strip a URL out of, and there is no URL and no dial here. It WRAPS
+// the context error rather than replacing it, so errors.Is(err, context.Canceled) and
+// context.DeadlineExceeded keep answering for every existing caller.
+var errRequestContextAlreadyDone = errors.New("x ads api: the request was not attempted; the caller's context was already done")
+
 // preSendError wraps a failure that clearly happened BEFORE the request was sent
 // (DNS/connect-time dial failure — see isPreSendDialError): the outcome is DEFINITE
 // (the request never reached X, so a mutation did not happen), unlike the ambiguous
@@ -916,6 +934,14 @@ func drainAndClose(resp *http.Response) {
 // Path field), so callers whose reqURL isn't accountURL()-rooted can still
 // pass a meaningful label. queryParams, when non-nil, are appended to reqURL.
 func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath string, queryParams map[string]string) (*apiResponse, error) {
+	// Entry-time only — see errRequestContextAlreadyDone. Without it a caller that had
+	// already cancelled got the context error back out of http.Client.Do wrapped as a
+	// transportError, which ProbeNotSent does not recognise: the probe then charged X's
+	// upstream-call series with an error sample for a request X never received.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %w", errRequestContextAlreadyDone, err)
+	}
+
 	path := logPath
 
 	if len(queryParams) > 0 {

@@ -2110,11 +2110,14 @@ the credential does not address the account — but it carries neither the manag
 status, and membership ALONE was a false success: a manager account appears in that list and
 cannot hold a campaign, so a connection naming one tested green and failed at the first create.
 That is the production failure this endpoint exists to catch, produced by the endpoint meant to
-catch it. Presence is therefore followed by `selfReach`, a `customer_client` read scoped to the
-configured customer and narrowed to its own row by id — `customer_client` queried under a
-customer includes that customer, which is what makes the read work with no manager in the
-picture, and asking by id is what stops it reading an entire hierarchy when the configured
-account turns out to BE a manager.
+catch it. Presence is therefore followed by `selfReach`, which reads the configured account's OWN
+customer record — `SELECT customer.id, customer.manager, customer.status FROM customer`, issued
+under that customer, with no `WHERE` and no hierarchy walk, because `customer` under a customer IS
+that one row. It reads `customer` rather than a narrowed `customer_client` deliberately:
+`customer_client` is documented as a link resource belonging to MANAGER customers, so asking for
+it in flat mode — where there is no manager — rests on behaviour the contract does not promise,
+and an empty result there is indistinguishable from an account the credential cannot reach. See
+`docs/knowledge/code/internal-platform-googleads.md` for the full reasoning.
 
 The second leg's failures stay errors rather than becoming verdicts. Neither `AccountReachable`
 (a success nothing established) nor `AccountUnreachable` (a confirmed verdict contradicting the
@@ -2429,15 +2432,23 @@ which hides no provider failure from anyone. Narrowing the marker to a never-sen
 a harmless undercount for the miscount the mechanism was built to stop.
 
 A caller that gives up BEFORE the probe starts is the one context error the predicate claims, and
-only on the three two-leg platforms. `googleads`, `microsoft` and `reddit` each answer a context
-already done at their token path's ENTRY check with a package-local `errTokenContextAlreadyDone`
-wrapped around `ctx.Err()`, and each package's `ProbeNotSent` reads its own. Unmarked, the bare
-`ctx.Err()` fell through the `false` default and `probeReachedThePlatform` found no local sentinel
-to name, so this deployment's own cancellation was booked as an upstream **error** sample against
-the provider for a call that never left the process. Only the entry check is marked: the waiter
-select inside a coalesced refresh returns `ctx.Err()` too, but a detached refresh may already be
-on the wire there, so the same claim would be false and the `false` default is the right answer.
-The marker wraps rather than replaces, so `errors.Is(err, context.Canceled)` still answers.
+five packages claim it. `googleads`, `microsoft` and `reddit` answer a context already done at
+their token path's ENTRY check with a package-local `errTokenContextAlreadyDone` wrapped around
+`ctx.Err()`. `meta` and `twitter` have no token leg to guard — Meta carries a long-lived access
+token as a header, X signs each request with OAuth 1.0a — so each marks the entry of its single
+shared request path (`Client.do`, `Client.doRequestAbs`) with an `errRequestContextAlreadyDone`
+of the same shape. Either way the package's own `ProbeNotSent` reads its own marker. Unmarked,
+the bare `ctx.Err()` fell through the `false` default — on the two-leg platforms
+`probeReachedThePlatform` found no local sentinel to name, and on Meta and X the context error
+came back out of `http.Client.Do` wrapped as a `transportError`, a shape the predicate does not
+recognise — so this deployment's own cancellation was booked as an upstream **error** sample
+against the provider for a call that never left the process. Only the ENTRY check is marked, on
+all five: the waiter select inside a coalesced refresh returns `ctx.Err()` too, and so does a
+mid-flight cancellation on a later retry attempt, but bytes may already be on the wire at either
+point, so the same claim would be false and the `false` default is the right answer. The marker
+wraps rather than replaces, so `errors.Is(err, context.Canceled)` still answers. On Meta and X it
+also sharpens `createOutcomeAmbiguous`, which had been reading the `transportError` as "the
+mutation MAY have been applied" for a request that demonstrably was not.
 
 A `408` belongs with `429` and `5xx` in `ProbeInconclusive`, not with the refusals, and this was
 true on the token leg before it was true on the account leg. A `408` means the endpoint or an
