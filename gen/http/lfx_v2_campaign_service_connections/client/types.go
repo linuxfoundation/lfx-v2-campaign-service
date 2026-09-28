@@ -4929,8 +4929,10 @@ type AccountMonitorCampaignResponseBody struct {
 	// The campaign's flight end date, RFC 3339 date-only (YYYY-MM-DD). Empty when
 	// the platform did not report one.
 	EndDate *string `form:"end_date,omitempty" json:"end_date,omitempty" xml:"end_date,omitempty"`
-	// True when the flight dates needed to compute pacing_pct were unavailable. A
-	// renderer MUST NOT treat pacing_pct as meaningful when this is true.
+	// True when pacing could not be computed at all: either the flight dates
+	// needed for pacing_pct were unavailable, or the campaign has no usable budget
+	// to pace against. A renderer MUST NOT treat pacing_pct as meaningful when
+	// this is true.
 	PacingUnknown *bool `form:"pacing_unknown,omitempty" json:"pacing_unknown,omitempty" xml:"pacing_unknown,omitempty"`
 	// Google Ads only: true when the campaign's advertising_channel_type is
 	// SEARCH. Always false for LinkedIn/Meta/Reddit rows.
@@ -4978,7 +4980,9 @@ type AccountMonitorTotalsResponseBody struct {
 	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
 	// Account-wide clicks over the window.
 	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
-	// Account-wide conversions over the window.
+	// Account-wide conversions over the window, summed over the campaigns that
+	// reported a conversion measurement. ABSENT when none of them did — not a
+	// measured 0.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
 	// How many campaigns the totals reflect: the length of the campaigns array
 	// these totals sum.
@@ -16061,9 +16065,6 @@ func ValidateAccountMonitorTotalsResponseBody(body *AccountMonitorTotalsResponse
 	}
 	if body.Clicks == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
-	}
-	if body.Conversions == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("conversions", "body"))
 	}
 	if body.CampaignCount == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_count", "body"))

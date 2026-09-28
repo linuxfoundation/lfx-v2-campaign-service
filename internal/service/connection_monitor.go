@@ -75,6 +75,8 @@ func validateMonitorDays(days int) error {
 // see model.AccountMonitorTotals' own doc comment — so the figures a response reports always
 // describe exactly the campaigns array returned alongside them.
 //
+// Conversions is the one field that can come back absent: see the type's own doc comment.
+//
 // A row is never specially excluded from the sum: a metrics-fetch-failed row contributes its
 // zero-value numeric fields, which is a no-op, since there is no correct non-zero contribution
 // to substitute; a Google row whose budget alone was unparseable (round-24/25 review)
@@ -82,13 +84,22 @@ func validateMonitorDays(days int) error {
 // its budget field — not summed here — was untrusted.
 func monitorTotals(rows []model.AccountCampaignMetrics) *model.AccountMonitorTotals {
 	t := &model.AccountMonitorTotals{CampaignCount: len(rows)}
+	var conversions float64
+	var measured bool
 	for _, r := range rows {
 		t.Spend += r.Spend
 		t.Impressions += r.Impressions
 		t.Clicks += r.Clicks
 		if r.Conversions != nil {
-			t.Conversions += *r.Conversions
+			conversions += *r.Conversions
+			measured = true
 		}
+	}
+	// Absent, not zero, when nothing in the sum measured conversions — a total of 0 across
+	// rows that all report "unmeasured" is a claim none of them made. Reddit is the case that
+	// forces it: every Reddit row carries nil since linuxfoundation/lfx-self-serve#3020.
+	if measured {
+		t.Conversions = &conversions
 	}
 	return t
 }

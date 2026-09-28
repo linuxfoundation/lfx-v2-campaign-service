@@ -11813,7 +11813,7 @@ func unmarshalAccountMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsA
 		Spend:         *v.Spend,
 		Impressions:   *v.Impressions,
 		Clicks:        *v.Clicks,
-		Conversions:   *v.Conversions,
+		Conversions:   v.Conversions,
 		CampaignCount: *v.CampaignCount,
 	}
 

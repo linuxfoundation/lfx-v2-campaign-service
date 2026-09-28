@@ -41,8 +41,10 @@ const (
 // DEVIATION FROM THE BFF: linkedin-ads.service.ts's action-item loop's FIRST branch is "this
 // campaign has zero ad creatives and is ACTIVE" (a separate per-campaign creative-analytics
 // fetch this port's dispatcher does not make — see internal/dispatch/linkedin.go's
-// ListAccountCampaignMetrics doc comment) — that HIGH "no creatives" rule is not ported. Every
-// other rule below IS ported, including the priority-sort bug.
+// ListAccountCampaignMetrics doc comment) — that HIGH "no creatives" rule is not ported.
+//
+// The BFF's MED-vs-MEDIUM sort-key mismatch is NOT ported: items are ordered by the shared
+// priorityRank (linuxfoundation/lfx-self-serve#3018), as on the other three platforms.
 func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now time.Time) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 	out := make([]model.AccountMonitorRow, 0, len(rows))
 	items := make([]model.AccountMonitorActionItem, 0)

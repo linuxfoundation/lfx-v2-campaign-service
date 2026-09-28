@@ -12865,7 +12865,7 @@ components:
                     format: double
                 pacing_unknown:
                     type: boolean
-                    description: True when the flight dates needed to compute pacing_pct were unavailable. A renderer MUST NOT treat pacing_pct as meaningful when this is true.
+                    description: 'True when pacing could not be computed at all: either the flight dates needed for pacing_pct were unavailable, or the campaign has no usable budget to pace against. A renderer MUST NOT treat pacing_pct as meaningful when this is true.'
                     example: false
                 platform_campaign_id:
                     type: string
@@ -12940,7 +12940,7 @@ components:
                     format: int64
                 conversions:
                     type: number
-                    description: Account-wide conversions over the window.
+                    description: Account-wide conversions over the window, summed over the campaigns that reported a conversion measurement. ABSENT when none of them did — not a measured 0.
                     example: 212.5
                     format: double
                 impressions:
@@ -12963,7 +12963,6 @@ components:
                 - spend
                 - impressions
                 - clicks
-                - conversions
                 - campaign_count
         AdoptCampaignRequestBody:
             type: object

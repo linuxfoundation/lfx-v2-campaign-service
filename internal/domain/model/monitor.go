@@ -7,16 +7,17 @@ package model
 // (campaign-metrics.service.ts / linkedin-ads.service.ts / meta-ads.service.ts /
 // reddit-ads.service.ts) into this service's domain model. It is a faithful PORT, not a
 // redesign: the BFF computed rule-engine action items per platform, each with its own
-// pacing thresholds (some shared, some hard-coded and divergent — see
-// internal/service/rules/monitor_*.go), and this type is the account-scoped shape that
+// pacing thresholds (one shared ladder in internal/service/rules/monitor_shared.go), and
+// this type is the account-scoped shape that
 // carries that computation's inputs and outputs across the dispatcher/orchestrator/service
 // boundary the same way CampaignMetrics does for the single-campaign read path.
 
-// MonitorPriority is the three-value priority band the BFF's per-platform rule engines
-// assign to a generated action item. Kept as a string type (not reusing any Go-side enum)
-// because the BFF's own values are NOT uniform across platforms — see
-// internal/service/rules/monitor_linkedin.go for the ported priority-sort bug this
-// preserves.
+// MonitorPriority is the three-value priority band the per-platform rule engines assign to a
+// generated action item. Kept as a string type (not reusing any Go-side enum) because these
+// are the BFF's own wire values. All four platforms order them through one shared
+// priorityRank (internal/service/rules/monitor_shared.go); LinkedIn's MED-vs-MEDIUM sort-key
+// mismatch, which sorted MED items behind LOW ones, was fixed rather than ported
+// (linuxfoundation/lfx-self-serve#3018).
 type MonitorPriority string
 
 const (
@@ -25,10 +26,10 @@ const (
 	MonitorPriorityLow  MonitorPriority = "LOW"
 )
 
-// MonitorPacingLabel is the pacing classification the BFF derives from a campaign's
-// spend-vs-budget ratio. Every platform's rule engine (googleAds/meta/reddit/linkedIn)
-// computes this independently, with its own literals — see internal/service/rules — so this
-// type is shared vocabulary only, not shared thresholds.
+// MonitorPacingLabel is the pacing classification derived from a campaign's spend-vs-budget
+// ratio. All four platforms compute it through one shared pacingLabelFor
+// (internal/service/rules/monitor_shared.go) over the same 50/90/100 ladder, so this type is
+// shared vocabulary AND shared thresholds (linuxfoundation/lfx-self-serve#3019).
 type MonitorPacingLabel string
 
 const (
@@ -80,9 +81,10 @@ type AccountCampaignMetrics struct {
 	// RFC 3339 date-only (YYYY-MM-DD), empty when the platform did not report one.
 	StartDate string
 	EndDate   string
-	// PacingUnknown is true when the flight dates needed to compute a pacing percentage were
-	// unavailable (e.g. Google Ads rows this port does not schedule-bound, or a platform row
-	// with no runSchedule/start_time). A rule engine MUST NOT compute a pacing percentage
+	// PacingUnknown is true when pacing could not be computed at all: either the flight dates
+	// were unavailable (e.g. Google Ads rows this port does not schedule-bound, or a platform
+	// row with no runSchedule/start_time), or the campaign has no usable budget to pace
+	// against. A rule engine MUST NOT compute a pacing percentage
 	// against a fabricated flight window when this is true — it must report pacing as
 	// unknown, mirroring the same "absent, not defaulted" contract as
 	// CampaignSettingsReadback's `unknown` verdict.
@@ -118,13 +120,13 @@ type AccountCampaignMetrics struct {
 }
 
 // AccountMonitorActionItem is one rule-engine finding for a single campaign (or, on
-// platforms whose BFF rule engine emits account-wide items, the whole account). Ported
-// verbatim per platform in internal/service/rules/monitor_*.go, including each platform's
-// own bugs — see that package's doc comments for the specific, deliberately-preserved
-// divergences (Google's local pacing literals, LinkedIn's MED/MEDIUM sort-key mismatch,
-// Reddit's hardcoded-zero conversions / mismatched underspend threshold+label / independent
-// account-totals call; Meta's Graph insights read paginates both the campaign and insights
-// edges to exhaustion, not a single page).
+// platforms whose rule engine emits account-wide items, the whole account). The engines live
+// in internal/service/rules/monitor_*.go and share their pacing ladder, priority ordering and
+// budget-less handling through monitor_shared.go; the quirks each one carried over from its
+// BFF source were fixed rather than preserved — see that package's doc comments and
+// docs/knowledge/architecture/account-monitor-endpoints.md for the list. What remains
+// genuinely per-platform is the rule set itself and the thresholds that carry a stated reason
+// (Meta's higher CTR baseline, the per-platform clicks-without-conversions floors).
 type AccountMonitorActionItem struct {
 	// CampaignID is the platform campaign id the item is about. Empty for an account-wide
 	// item (none of the four ported engines currently emit one, but the field exists so a
@@ -150,10 +152,16 @@ type AccountMonitorActionItem struct {
 // spend it sat beside. Summing the rows makes the aggregate and the list agree by
 // construction. See linuxfoundation/lfx-self-serve#3022.
 type AccountMonitorTotals struct {
-	Spend         float64
-	Impressions   int64
-	Clicks        int64
-	Conversions   float64
+	Spend       float64
+	Impressions int64
+	Clicks      int64
+	// Conversions is a pointer for the same reason AccountCampaignMetrics.Conversions is, and
+	// it has to be: nil means no row in the sum reported a conversion measurement, which is
+	// not the same claim as a measured 0. Reddit makes that distinction load-bearing — since
+	// linuxfoundation/lfx-self-serve#3020 its rows carry nil rather than a hardcoded 0, so a
+	// float64 here would rebuild at the aggregate exactly the false measurement that fix
+	// removed from every row.
+	Conversions   *float64
 	CampaignCount int
 }
 

@@ -322,6 +322,36 @@ func TestMonitorRedditAccount_TotalsSumTheReturnedRows(t *testing.T) {
 	}
 }
 
+// TestMonitorAccount_TotalsConversionsAbsentWhenNoRowMeasuredThem pins the aggregate half of
+// linuxfoundation/lfx-self-serve#3020. That fix stopped Reddit's rows from claiming a measured
+// zero, so every Reddit row now carries a nil Conversions; if the totals summed those into a
+// float64 the response would go on reporting "conversions": 0 for the account while reporting
+// conversions as unmeasured on every campaign underneath it — the same false claim, one level
+// up. Absent when nothing measured, a real sum when anything did.
+func TestMonitorAccount_TotalsConversionsAbsentWhenNoRowMeasuredThem(t *testing.T) {
+	none := monitorTotals([]model.AccountCampaignMetrics{
+		{PlatformCampaignID: "1", Spend: 50, Impressions: 100, Clicks: 5},
+		{PlatformCampaignID: "2", Spend: 25, Impressions: 40, Clicks: 2},
+	})
+	if none.Conversions != nil {
+		t.Errorf("Conversions = %v, want nil when no row reported a conversion measurement", *none.Conversions)
+	}
+
+	zero := 0.0
+	four := 4.0
+	some := monitorTotals([]model.AccountCampaignMetrics{
+		{PlatformCampaignID: "1", Conversions: &four},
+		{PlatformCampaignID: "2"},
+		{PlatformCampaignID: "3", Conversions: &zero},
+	})
+	if some.Conversions == nil {
+		t.Fatalf("Conversions = nil, want a sum once any row reported a measurement")
+	}
+	if *some.Conversions != 4 {
+		t.Errorf("Conversions = %v, want 4 — the measured rows summed, the unmeasured one skipped", *some.Conversions)
+	}
+}
+
 // TestToConnAccountMonitorCampaign_CampaignURL pins the round-21-review fix (PR #215 comment
 // #4): a Google row's CampaignURL must come through as a non-nil pointer on the response, and
 // every other platform's empty CampaignURL must stay nil rather than becoming an empty-string

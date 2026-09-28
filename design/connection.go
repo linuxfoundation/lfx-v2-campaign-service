@@ -1134,7 +1134,7 @@ var AccountMonitorCampaign = Type("account-monitor-campaign", func() {
 	Attribute("total_budget", Float64, "Lifetime/total budget in the account's currency, 0 when the campaign is funded by budget_day instead.", func() { Example(5000) })
 	Attribute("start_date", String, "The campaign's flight start date, RFC 3339 date-only (YYYY-MM-DD). Empty when the platform did not report one.", func() { Example("2026-08-01") })
 	Attribute("end_date", String, "The campaign's flight end date, RFC 3339 date-only (YYYY-MM-DD). Empty when the platform did not report one.", func() { Example("2026-11-30") })
-	Attribute("pacing_unknown", Boolean, "True when the flight dates needed to compute pacing_pct were unavailable. A renderer MUST NOT treat pacing_pct as meaningful when this is true.", func() { Example(false) })
+	Attribute("pacing_unknown", Boolean, "True when pacing could not be computed at all: either the flight dates needed for pacing_pct were unavailable, or the campaign has no usable budget to pace against. A renderer MUST NOT treat pacing_pct as meaningful when this is true.", func() { Example(false) })
 	Attribute("is_search_channel", Boolean, "Google Ads only: true when the campaign's advertising_channel_type is SEARCH. Always false for LinkedIn/Meta/Reddit rows.", func() { Example(true) })
 	Attribute("fetch_failed", Boolean, "True when some part of this row's upstream data could not be trusted: either its per-campaign metrics fetch failed outright (numeric fields left at their zero value), or, for Google Ads, its budget field was present but unparseable alongside otherwise-good metrics. A renderer MUST check this before treating any of this row's fields, zero or not, as a fully trusted reading.", func() { Example(false) })
 	Attribute("pacing_pct", Float64, "spend / expected-spend * 100. Meaningless when pacing_unknown is true.", func() { Example(87) })
@@ -1163,9 +1163,12 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 	Attribute("spend", Float64, "Account-wide spend over the window.", func() { Example(1842.55) })
 	Attribute("impressions", Int64, "Account-wide impressions over the window.", func() { Example(184200) })
 	Attribute("clicks", Int64, "Account-wide clicks over the window.", func() { Example(11420) })
-	Attribute("conversions", Float64, "Account-wide conversions over the window.", func() { Example(212.5) })
+	// Not required, for the same reason the per-campaign conversions attribute is not: absent
+	// is the honest answer when no row in the sum measured conversions, and a 0 there would be
+	// the aggregate restating a measurement none of the rows made.
+	Attribute("conversions", Float64, "Account-wide conversions over the window, summed over the campaigns that reported a conversion measurement. ABSENT when none of them did — not a measured 0.", func() { Example(212.5) })
 	Attribute("campaign_count", Int, "How many campaigns the totals reflect: the length of the campaigns array these totals sum.", func() { Example(14) })
-	Required("spend", "impressions", "clicks", "conversions", "campaign_count")
+	Required("spend", "impressions", "clicks", "campaign_count")
 })
 
 // AccountMonitor is the account-scoped monitor read result, shared across all four
