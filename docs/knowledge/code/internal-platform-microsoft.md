@@ -903,6 +903,40 @@ order decides whether the operator is told their connection is broken or that th
 complete. Neither predicate true is a third outcome: the platform refused a request this service
 BUILT, which is a service defect rather than a verdict.
 
+`probe.go` exports a FOURTH predicate, `ProbeConfiguredCustomerRejected(err) bool`, and it is this
+package's one departure from the shared vocabulary — the same shape of departure
+`reddit.ProbeAccountUnreachable` and `twitter.ProbeAccountUnreachable` are, and for the same
+reason: a confirmed failure neither standard predicate can state correctly. It is named for the
+customer, not the account, because Microsoft is the only platform here with a second operator-
+settable identity ABOVE the account. `customer_id` scopes the enumeration itself, so a refusal of
+it is not the account being missing — `probeMembership` already answers that — but the question
+being unaskable as the connection is configured.
+
+Microsoft answers a well-formed `AccountsInfo/Query` with an ordinary `400` when the `CustomerId`
+it carries does not exist or these credentials cannot reach it. Both are reachable states:
+`customer_id` is settable through the connection config API, and access to a customer can be
+revoked long after the value was stored. That `400` matched NEITHER predicate — `ProbeCredentialRejected`
+claims `401`/`403`, `ProbeInconclusive` claims `429`/`408`/`5xx` — so `probeClass` fell to its
+default arm and answered `domain.ErrServiceDefect`, a typed `500` that pages the service team for
+a field the operator can see and correct. Claiming it as a rejection instead would have been wrong
+the other way: it renders "microsoft ads rejected the stored credential" and sends the operator to
+re-authorise a credential Microsoft honoured well enough to answer with.
+
+`markConfiguredCustomerRejection` attaches `errConfiguredCustomerRejected`, and gates it on two
+conditions that are both load-bearing. The status must be `400` — `401`/`403` stay with the
+credential, `429`/`408`/`5xx` stay inconclusive, anything else stays the defect. And the id must
+be the CONFIGURED one, which is why `discoveredCustomer` carries a `configured` flag: the request
+body this client composes is constant apart from that value, so when the id came from the
+connection row it is the only variable Microsoft can be objecting to, while an id this client read
+out of `User/Query` itself means a `400` is the shape of a request only this service builds. Marking
+both provenances would have told an operator to repair a field that is not broken and silenced the
+one class of `400` that genuinely is ours. No error-code allowlist is layered on top: `apiError`
+does carry parsed `ErrorCodes`, but the Customer Management codes for a missing or unreachable
+customer are pinned by nothing in this repo or by any test against the live API, and a guessed
+literal that never matched would have restored the paging `500` while looking handled — so the
+check follows `classifyTokenRefusal`'s own discipline, status first and the body only where an
+allowlist has earned it.
+
 `probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
 vocabulary: it answers only whether the request whose failure ENDED the probe ever left this
 process, and it changes nothing an operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error

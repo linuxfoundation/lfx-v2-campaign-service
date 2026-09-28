@@ -24,6 +24,7 @@ func TestProbePredicates(t *testing.T) {
 		err             error
 		wantRejected    bool
 		wantInconclusiv bool
+		wantCustomer    bool
 	}{
 		{
 			name:         "token endpoint refused the refresh (revoked token)",
@@ -82,10 +83,25 @@ func TestProbePredicates(t *testing.T) {
 			wantInconclusiv: true,
 		},
 		{
+			// A 400 this client provoked itself — the customer id came from User/Query, not
+			// from the connection row — stays in the defect arm on purpose. Nothing the
+			// operator controls produced it.
 			name:            "400 is neither",
 			err:             &apiError{StatusCode: 400},
 			wantRejected:    false,
 			wantInconclusiv: false,
+			wantCustomer:    false,
+		},
+		{
+			// The same 400, raised about the CONFIGURED customer id. It must not read as a
+			// credential rejection (Microsoft honoured the credential to answer at all) and must
+			// not reach the defect arm, which pages us for a field the operator can correct.
+			name: "400 about the configured customer",
+			err: fmt.Errorf("%w: %w", errConfiguredCustomerRejected,
+				&apiError{StatusCode: 400, Method: "POST", Path: "/CustomerManagement/v13"}),
+			wantRejected:    false,
+			wantInconclusiv: false,
+			wantCustomer:    true,
 		},
 		{
 			name:            "mid-flight transport failure",
@@ -110,6 +126,9 @@ func TestProbePredicates(t *testing.T) {
 			}
 			if got := ProbeInconclusive(tc.err); got != tc.wantInconclusiv {
 				t.Errorf("ProbeInconclusive = %v, want %v", got, tc.wantInconclusiv)
+			}
+			if got := ProbeConfiguredCustomerRejected(tc.err); got != tc.wantCustomer {
+				t.Errorf("ProbeConfiguredCustomerRejected = %v, want %v", got, tc.wantCustomer)
 			}
 		})
 	}

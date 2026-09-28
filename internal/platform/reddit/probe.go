@@ -115,6 +115,9 @@ func ProbeCredentialRejected(err error) bool {
 // It exists on this client and on X's, and on no other, because only these two probes name the
 // configured account IN the request path. Every other client enumerates and checks membership,
 // so a 404 there could only mean the endpoint moved — our defect, and correctly inconclusive.
+// microsoft.ProbeConfiguredCustomerRejected is a fourth predicate of the same KIND but not of
+// this one: it answers for the customer that scopes Microsoft's enumeration, an identity above
+// the account which no other platform has, and never for a 404 on an account read.
 // Here the 404 IS the answer to the question asked, and it is a different answer from the one
 // ProbeCredentialRejected gives: the token worked, the account id is the broken half. That
 // distinction is the whole point of splitting it out — the two produce the same OK: false, but

@@ -464,6 +464,13 @@ func microsoftAccountLabel(a microsoft.AdAccount) string {
 // incomplete answer is an ERROR, never a short list") — so an account absent from a list that
 // was returned at all is genuinely not reachable by this credential.
 //
+// The configured customer_id is checked twice, against two different authorities. Its SHAPE is
+// checked here before anything is sent (customerIDNotUsable, below); whether Microsoft will
+// enumerate under it at all is checked by Microsoft, and a refusal comes back as a 400 that
+// microsoft.ProbeConfiguredCustomerRejected claims ahead of probeClass. Both answer with
+// customer_id, because both are that field — one says it cannot name a customer, the other that
+// it names one these credentials do not reach.
+//
 // Accounts that are suspended, paused or draft are RETURNED by ListAdAccounts, each carrying
 // the reason it is unusable, and this probe deliberately accepts them. The test asks whether
 // the stored credential authenticates and reaches the configured account; the account's own
@@ -547,6 +554,18 @@ func (d *MicrosoftDispatcher) ProbeConnection(ctx context.Context, projectID str
 	)
 	adAccounts, lerr := client.ListAdAccounts(ctx)
 	if lerr != nil {
+		// Microsoft refusing the CONFIGURED customer id: the credential authenticated and
+		// AccountsInfo/Query answered 400 about the customer this connection scopes everything
+		// to. Answered before probeClass because it is a confirmed failure neither standard
+		// predicate can state correctly — the rejection arm would blame a credential Microsoft
+		// just honoured, and neither predicate claiming it is the service-defect arm, a typed
+		// 500 paging us about a field the operator can see and correct. The remedy is
+		// customer_id, and only this verdict says so. See
+		// microsoft.ProbeConfiguredCustomerRejected for why a 400 about a DISCOVERED customer
+		// deliberately stays in the defect arm.
+		if microsoft.ProbeConfiguredCustomerRejected(lerr) {
+			return subject.customerNotReachable()
+		}
 		return subject.probeClass(lerr, microsoft.ProbeCredentialRejected, microsoft.ProbeInconclusive, microsoft.ProbeNotSent)
 	}
 	reachable := make([]string, 0, len(adAccounts))

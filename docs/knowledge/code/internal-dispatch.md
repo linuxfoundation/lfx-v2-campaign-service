@@ -2254,7 +2254,41 @@ separate from `accountIDNotUsable` because the operator has to know which of the
 the same row to fix. `TestMicrosoftProbe_MalformedCustomerIDIsAVerdictNotInconclusive` pins it
 over `abc`, `0`, `-1`, `1.5` and an int64 overflow.
 
-All three carry `domain.ErrConnectionProbeNotAttempted` alongside `ErrConnectionProbeFailed`,
+`customerNotReachable` is that same field's POST-call sibling, and the pair is the clearest
+illustration of why this file splits verdicts by remedy rather than by status. `customerIDNotUsable`
+is decided here, from this service's own identity rule, and says the stored value cannot name a
+customer at all. `customerNotReachable` is decided by Microsoft, after the credential
+authenticated: the value is a well-formed customer identity, and `AccountsInfo/Query` answers
+`400` because that customer does not exist or these credentials cannot reach it. Both are
+`customer_id`; neither is the credential, and neither is the account.
+
+That `400` used to match NEITHER predicate — `microsoft.ProbeCredentialRejected` claims `401`/`403`
+and `microsoft.ProbeInconclusive` claims `429`/`408`/`5xx` — so `probeClass` fell to its default
+arm and raised `domain.ErrServiceDefect`: a typed `500` that pages the service team for a stale
+value on the operator's own connection row. `microsoft.ProbeConfiguredCustomerRejected` now claims
+it, and `MicrosoftDispatcher.ProbeConnection` asks that predicate BEFORE `probeClass` — the same
+shape as Reddit's and X's `ProbeAccountUnreachable` arms, and for the same reason: a confirmed
+failure neither standard predicate can state without sending the operator to the wrong field.
+
+The predicate is deliberately narrow on both axes, and the second axis is what keeps it honest. It
+claims a `400` only when the customer id came from the CONNECTION ROW. With none configured the id
+is one the client read out of `User/Query` moments earlier and the request body is otherwise
+composed entirely by this service, so a `400` then is our defect and must keep reaching the defect
+arm; `markConfiguredCustomerRejection` carries that provenance, and
+`TestListAdAccounts_ADiscoveredCustomerRefusedStaysADefect` pins it. No error-code allowlist sits
+on top of the status check: `apiError` does carry parsed `ErrorCodes`, but the Customer Management
+codes for a missing or unreachable customer are pinned by nothing in this repo, and a guessed
+literal that never matched would have restored the paging `500` while looking handled.
+`TestMicrosoftProbe_RefusedConfiguredCustomerIsAVerdictNotAServiceDefect` pins the dispatch-level
+answer, including that the sentence names the customer id.
+
+Unlike its three siblings above, it carries NO `ErrConnectionProbeNotAttempted` marker: the
+enumeration was sent and Microsoft answered it, so the call belongs in the upstream series. It also
+names no account, because reaching it means the enumeration never completed — under a corrected
+customer the configured account may well be reachable, and `accountNotReachable`'s sentence would
+send the operator to repoint two fields when one is wrong.
+
+All three of the pre-send verdicts carry `domain.ErrConnectionProbeNotAttempted` alongside `ErrConnectionProbeFailed`,
 built through `preSendProbeVerdict`. The marker changes nothing an operator sees — same status,
 same sentence — and has exactly one reader, `Orchestrator.ProbeConnection`'s metrics arm, which
 must not book an upstream call for a platform that was never contacted. `probeMembership` renders

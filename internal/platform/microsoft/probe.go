@@ -43,15 +43,58 @@ var ErrTokenRequestRejected = errors.New("microsoft-ads: the token endpoint refu
 // learned about the credential. ProbeInconclusive is the only reader.
 var errTokenEndpointUnavailable = errors.New("microsoft-ads: the token endpoint is unavailable")
 
+// errConfiguredCustomerRejected marks Microsoft refusing an AccountsInfo/Query that carried the
+// CONFIGURED customer id: the customer does not exist, or these credentials cannot reach it.
+//
+// It is unexported because no caller needs to name it — ProbeConfiguredCustomerRejected is the
+// only reader, exactly as errTokenEndpointUnavailable is ProbeInconclusive's. It is attached in
+// one place, markConfiguredCustomerRejection, which carries the reasoning for both the status
+// gate and the provenance gate.
+var errConfiguredCustomerRejected = errors.New("microsoft-ads: the configured customer id was refused")
+
+// ProbeConfiguredCustomerRejected reports whether err is Microsoft accepting this connection's
+// credential and then refusing the CUSTOMER it was asked to enumerate under.
+//
+// It is this package's departure from the three-predicate vocabulary, and it is the same shape
+// of departure reddit.ProbeAccountUnreachable and twitter.ProbeAccountUnreachable are: a
+// confirmed failure that neither standard predicate can state correctly. It is named for the
+// customer rather than the account because that is the field it indicts. Those two answer for a
+// 404 on the configured ACCOUNT, which this probe cannot produce — it enumerates and checks
+// membership, so an account it cannot reach is simply absent from a list that was returned, and
+// probeMembership already answers that. Microsoft's extra identity is the one ABOVE the account:
+// customer_id scopes the enumeration itself, so a refusal of it is not the account being missing
+// but the question being unaskable as configured.
+//
+// The two remedies it keeps apart are the two fields on the same connection row.
+// ProbeCredentialRejected would send the operator to re-authorise a credential Microsoft had
+// just honoured; probeMembership's accountNotReachable would send them to repoint an account id
+// that may be perfectly correct. Only this one names customer_id.
+//
+// apiError is unexported, so this classification cannot be made by the dispatcher; like every
+// other member of the vocabulary it has to be answered by the package that owns the type.
+// internal/dispatch/probe.go holds the shared rationale and is the only caller.
+func ProbeConfiguredCustomerRejected(err error) bool {
+	return errors.Is(err, errConfiguredCustomerRejected)
+}
+
 // ProbeCredentialRejected reports whether err is Microsoft evaluating this connection's stored
 // credential and REFUSING it: a token refresh Microsoft itself turned down, or an Ads API call
 // answered 401/403.
 //
+// A 400 is deliberately NOT here, and neither is it inconclusive. One kind of 400 says
+// something this predicate cannot — the credential was accepted and the configured CUSTOMER was
+// refused — and it has its own predicate, ProbeConfiguredCustomerRejected, which the dispatcher
+// asks BEFORE probeClass. Claiming it here would render "microsoft ads rejected the stored
+// credential" and send an operator to re-authorise a credential Microsoft had just honoured,
+// which is the same misreading that predicate's siblings on Reddit and X exist to prevent.
+//
 // It is one half of the two-predicate probe vocabulary every platform client in this repo
 // exposes; internal/dispatch/probe.go holds the shared rationale for the split and is the only
 // caller. "Neither predicate" is the third outcome and is deliberately not a predicate of its
-// own — it means Microsoft refused the request THIS SERVICE built (any other 4xx), which is
-// our defect rather than a verdict on the operator's connection.
+// own — it means Microsoft refused the request THIS SERVICE built, which is our defect rather
+// than a verdict on the operator's connection. Every 4xx that is not 401/403, not a 408 or 429,
+// and not a 400 the configured customer id provoked still lands there, including a 400 raised
+// about a customer this client discovered from User/Query itself.
 func ProbeCredentialRejected(err error) bool {
 	if errors.Is(err, ErrCredentialRejected) {
 		return true

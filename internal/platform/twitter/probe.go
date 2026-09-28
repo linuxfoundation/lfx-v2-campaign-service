@@ -89,7 +89,9 @@ func ProbeCredentialRejected(err error) bool {
 //
 // It exists on this client and on Reddit's, and on no other, because only these two probes name
 // the configured account IN the request path — VerifyAccount's URL is the account resource
-// itself. Every other client enumerates and checks membership, so a 404 there could only mean
+// itself. microsoft.ProbeConfiguredCustomerRejected is a fourth predicate of the same KIND but
+// not of this one: it answers for the customer that scopes Microsoft's enumeration, an identity
+// above the account which no other platform has. Every other client enumerates and checks membership, so a 404 there could only mean
 // the endpoint moved — our defect, and correctly inconclusive. Here the 404 IS the answer to
 // the question asked, and distinguishing it from a rejection is what keeps the verdict from
 // telling an operator to re-authorise credentials X just honoured.

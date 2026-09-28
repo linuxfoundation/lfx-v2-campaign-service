@@ -255,6 +255,28 @@ func (s probeSubject) customerIDNotUsable() error {
 		s.platform, s.platform)
 }
 
+// customerNotReachable is customerIDNotUsable's post-call sibling: the configured customer id
+// is a well-formed Microsoft identity, and Microsoft refused it anyway.
+//
+// The two are kept apart for the reason every pair in this file is. customerIDNotUsable is
+// decided before anything is sent, from this service's own identity rule, and says the value
+// cannot name a customer at all. This one is decided by Microsoft, after the credential
+// authenticated, and says the value names a customer these credentials do not reach — which an
+// operator repairs by correcting or re-pointing customer_id, or by being granted access to it,
+// not by rewriting a value that is already the right shape.
+//
+// It is a CONFIRMED verdict and carries no not-attempted marker: the enumeration was sent and
+// answered, so the call belongs in the upstream series like any other post-call verdict.
+//
+// It names no account, unlike accountNotReachable. Reaching here means the enumeration never
+// ran to completion, so nothing is known about whether the configured account is reachable —
+// under a corrected customer it may well be, and claiming otherwise would send the operator to
+// repoint two fields when one is wrong.
+func (s probeSubject) customerNotReachable() error {
+	return confirmedProbeVerdict("the %s credential authenticates but does not reach the customer this connection's customer id names",
+		s.platform)
+}
+
 // accountNotReachable is the verdict for a completed enumeration that did not contain the
 // configured account.
 //

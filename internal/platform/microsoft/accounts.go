@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 )
@@ -190,9 +191,16 @@ type customerRole struct {
 }
 
 // discoveredCustomer is a customer id with its associated role id.
+//
+// configured records WHERE the id came from, and it exists for the error path rather than the
+// success path: the two provenances are the same customer id to query and a different thing to
+// say when the query is refused. A configured id is the operator's own value, arriving from the
+// connection row; a discovered one this client read out of User/Query moments earlier. See
+// markConfiguredCustomerRejection.
 type discoveredCustomer struct {
-	id     string
-	roleID int64
+	id         string
+	roleID     int64
+	configured bool
 }
 
 // roleIsStrong reports whether a role is likely to grant write permission (is "strong").
@@ -316,7 +324,7 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]discoveredCustomer
 		// write-capable. An earlier revision used -1 for exactly that, which asserted write
 		// permission this client has no evidence of and advertised viewer-only connections
 		// as writable — the precise failure the role validation exists to prevent.
-		return []discoveredCustomer{{id: id, roleID: 0}}, nil
+		return []discoveredCustomer{{id: id, roleID: 0, configured: true}}, nil
 	}
 
 	// idempotent: a read, so a 429 retry cannot create anything. UserId is omitted
@@ -437,7 +445,7 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 			// One customer failing fails the whole call. A partial union is the failure
 			// mode this function exists to remove: it is indistinguishable from a
 			// complete one at the boundary, and the caller acts on the absence.
-			return nil, berr
+			return nil, markConfiguredCustomerRejection(berr, customer.configured)
 		}
 		for _, a := range batch {
 			if idx, dup := seen[a.ID]; dup {
@@ -453,6 +461,48 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 		}
 	}
 	return accounts, nil
+}
+
+// markConfiguredCustomerRejection attaches errConfiguredCustomerRejected to a 400 that
+// AccountsInfo/Query answered about the CONFIGURED customer, and to nothing else.
+//
+// Microsoft answers a well-formed AccountsInfo/Query with an ordinary 400 when the CustomerId it
+// carries does not exist, or exists and the authenticated user cannot reach it. Both are states
+// an operator can put a connection into — customer_id is settable through the connection config
+// API, and access to a customer can be revoked long after the value was stored — and neither is
+// anything this service did. Left unmarked such a 400 matches NEITHER probe predicate, so
+// probeClass falls to its default arm and raises domain.ErrServiceDefect: a typed 500 that pages
+// us about a field the operator can see and correct. ProbeConfiguredCustomerRejected reads this
+// marker so the dispatcher can answer with the customer instead.
+//
+// Two conditions gate it, and both are load-bearing.
+//
+// The id must be the CONFIGURED one. The request body this client composes is constant apart
+// from that value — OnlyParentAccounts plus CustomerId — so when the id came from the connection
+// row it is the only variable Microsoft can be objecting to. When it came from User/Query
+// instead, this client chose it from an answer Microsoft had just given, and a 400 then says the
+// request shape is wrong or the contract moved: our defect, which must keep paging us. Marking
+// both would tell an operator to repair a field that is not broken and silence the one class of
+// 400 that genuinely is ours.
+//
+// The status must be 400, on its own, without reading the body. A 401 or 403 is the credential
+// and stays with ProbeCredentialRejected; a 429, 408 or 5xx is inconclusive; anything else is
+// still the defect arm. No error-code allowlist is applied on top: apiError does carry parsed
+// ErrorCodes, but the Customer Management codes for a missing or unreachable customer are not
+// pinned by anything in this repo or by a test against the live API, and a guessed literal that
+// never matches would restore the paging 500 while looking like it had been handled. The status
+// gate plus the provenance gate is what is actually known to be true, and it is checked the way
+// classifyTokenRefusal checks its own: status first, and the body only where an allowlist has
+// earned it.
+func markConfiguredCustomerRejection(err error, configured bool) error {
+	if !configured {
+		return err
+	}
+	var ae *apiError
+	if errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest {
+		return fmt.Errorf("%w: %w", errConfiguredCustomerRejected, err)
+	}
+	return err
 }
 
 // accountsInfoForCustomer enumerates the accounts reachable under one customer.

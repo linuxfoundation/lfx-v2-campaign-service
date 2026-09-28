@@ -120,6 +120,67 @@ func TestMicrosoftProbe_MalformedCustomerIDIsAVerdictNotInconclusive(t *testing.
 	}
 }
 
+// TestMicrosoftProbe_RefusedConfiguredCustomerIsAVerdictNotAServiceDefect pins the fourth state
+// of the same field, and it is the one that PAGED us.
+//
+// The three states above are all decided here: the account is not under the configured customer,
+// the customer id is not an identity at all, no customer is configured. The fourth is decided by
+// Microsoft — the id is a well-formed customer identity and Microsoft still refuses to enumerate
+// under it, because it does not exist or these credentials cannot reach it. That arrives as an
+// ordinary 400 on AccountsInfo/Query, which matched NEITHER probe predicate: ProbeCredentialRejected
+// claims 401/403 and ProbeInconclusive claims 429/408/5xx, so probeClass fell to its default arm
+// and raised domain.ErrServiceDefect. A typed 500 that pages the service team, for a stale value
+// on the operator's own connection row — the exact class of failure this endpoint exists to
+// convert into an answer.
+//
+// The assertions are ordered by what each wrong answer would cost. Not a defect first (that is
+// the page). Then a confirmed verdict rather than inconclusive, which would name an outage to
+// wait out instead of a field to correct. The sentence itself is checked last, and it is checked
+// because the remedy lives in the words: "customer id" is what tells the operator which of the
+// row's two identities to look at.
+func TestMicrosoftProbe_RefusedConfiguredCustomerIsAVerdictNotAServiceDefect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/token") {
+			_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+			return
+		}
+		// The credential authenticated: Microsoft answered. It is the CUSTOMER it will not
+		// enumerate under.
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"Errors":[{"Code":1100,"ErrorCode":"CustomerNotFound"}]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithBaseURL(srv.URL), microsoft.WithCustomerBaseURL(srv.URL), microsoft.WithTokenURL(srv.URL+"/token"))
+
+	err := d.ProbeConnection(context.Background(), "cncf", model.ProviderMicrosoftAds)
+	if err == nil {
+		t.Fatal("ProbeConnection reported a healthy connection while Microsoft refuses to " +
+			"enumerate under the configured customer id; no campaign can be created under it")
+	}
+	if errors.Is(err, domain.ErrServiceDefect) {
+		t.Fatalf("ProbeConnection = %v, want a verdict rather than a service defect: a 400 about "+
+			"the operator's own customer_id is not a request this service got wrong, and raising "+
+			"ErrServiceDefect pages us with a typed 500 for a field the operator can correct", err)
+	}
+	if errors.Is(err, domain.ErrConnectionProbeInconclusive) {
+		t.Fatalf("ProbeConnection = %v, want a confirmed verdict: Microsoft answered, so this is "+
+			"not an outage to wait out", err)
+	}
+	if !errors.Is(err, domain.ErrConnectionProbeFailed) {
+		t.Fatalf("ProbeConnection = %v, want ErrConnectionProbeFailed", err)
+	}
+	// The confirmed arm is the one echoed to the operator verbatim, so the remedy has to be IN
+	// the sentence. Naming the credential instead would send them to re-authorise a credential
+	// Microsoft just honoured.
+	if !strings.Contains(err.Error(), "customer id") {
+		t.Errorf("ProbeConnection = %q, want the verdict to name the customer id: that is the "+
+			"field the operator repairs, and the account id may be perfectly correct", err)
+	}
+}
+
 // TestMicrosoftProbe_StillWalksEveryCustomerWithNoneConfigured pins the other half. With no
 // customer_id stored the credential is the whole question, and one AccountsInfo/Query cannot
 // answer it — only walking every CustomerRole from User/Query covers the set. Narrowing here
