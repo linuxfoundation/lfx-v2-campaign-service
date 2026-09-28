@@ -937,6 +937,19 @@ literal that never matched would have restored the paging `500` while looking ha
 check follows `classifyTokenRefusal`'s own discipline, status first and the body only where an
 allowlist has earned it.
 
+What that costs is stated rather than hidden. A `400` Microsoft raised for some OTHER reason — a
+moved contract, an operation-level validation this build stopped meeting — reaches the operator
+as "your `customer_id` is unreachable", pointing them at a field that may be fine while a real
+service defect goes unpaged. `ConfiguredCustomerRejectionCodes(err) []string` is the answer to
+that: it hands the dispatcher the parsed codes the PREDICATE refused to read, and
+`MicrosoftDispatcher.ProbeConnection` logs them at warn every time it renders the verdict. The
+codes decide nothing — the verdict is still the status and the provenance — but the first real
+occurrence in any environment now leaves behind exactly the evidence an allowlist would need,
+which is the only way one can ever be written honestly. It returns a copy, and `ErrorCodes` is
+bounded at parse time and holds no upstream body text, so this carries none of the material
+`apiError` drops the raw body to avoid. `customer_id` itself is deliberately NOT logged: it is
+the operator's own identifier, and the verdict already names the field.
+
 `probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
 vocabulary: it answers only whether the request whose failure ENDED the probe ever left this
 process, and it changes nothing an operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error

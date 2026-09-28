@@ -5,6 +5,7 @@ package microsoft
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -92,5 +93,41 @@ func TestListAdAccounts_ADiscoveredCustomerRefusedStaysADefect(t *testing.T) {
 		t.Errorf("a discovered-customer 400 must match neither standard predicate so it reaches "+
 			"the service-defect arm; rejected=%v inconclusive=%v",
 			ProbeCredentialRejected(err), ProbeInconclusive(err))
+	}
+}
+
+// TestConfiguredCustomerRejectionCodes_SurfacesWhateverMicrosoftSent pins the evidence half of
+// this verdict (LFXV2-2665).
+//
+// The predicate reads no code, on purpose — see ConfiguredCustomerRejectionCodes for why. The
+// price is that a 400 raised for some OTHER reason is answered as "your customer_id is
+// unreachable", so the codes are carried out to the dispatcher and logged, and the first real
+// occurrence in any environment leaves behind the evidence an allowlist would need.
+//
+// The code in this fixture is deliberately an INVENTED literal. Nothing may come to depend on
+// its value: the assertion is pass-through, that whatever Microsoft sent arrives intact, and a
+// plausible-looking real code here would be the same unearned claim the predicate refuses to
+// make.
+func TestConfiguredCustomerRejectionCodes_SurfacesWhateverMicrosoftSent(t *testing.T) {
+	c := newCustomerClient(t, AccountConfig{CustomerID: "9988776"}, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"Errors":[{"Code":"NotAPinnedCodeJustAFixture","Message":"refused"}]}`)
+	})
+
+	_, err := c.ListAdAccounts(context.Background())
+	if err == nil {
+		t.Fatal("ListAdAccounts returned no error for a refused configured customer")
+	}
+	if !ProbeConfiguredCustomerRejected(err) {
+		t.Fatalf("ProbeConfiguredCustomerRejected(%v) = false; the code must not change the verdict", err)
+	}
+	got := ConfiguredCustomerRejectionCodes(err)
+	if len(got) != 1 || got[0] != "NotAPinnedCodeJustAFixture" {
+		t.Errorf("ConfiguredCustomerRejectionCodes = %v, want [NotAPinnedCodeJustAFixture]", got)
+	}
+	// An error this predicate does not claim has no codes to offer, whatever it carries: the
+	// accessor answers for THIS verdict and must not become a general body reader.
+	if other := ConfiguredCustomerRejectionCodes(errors.New("unrelated")); other != nil {
+		t.Errorf("ConfiguredCustomerRejectionCodes(unrelated) = %v, want nil", other)
 	}
 }

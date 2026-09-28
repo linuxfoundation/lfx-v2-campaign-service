@@ -564,6 +564,18 @@ func (d *MicrosoftDispatcher) ProbeConnection(ctx context.Context, projectID str
 		// microsoft.ProbeConfiguredCustomerRejected for why a 400 about a DISCOVERED customer
 		// deliberately stays in the defect arm.
 		if microsoft.ProbeConfiguredCustomerRejected(lerr) {
+			// The verdict is decided by the status and the id's provenance, never by a code —
+			// see microsoft.ConfiguredCustomerRejectionCodes for why no allowlist is applied.
+			// The codes are logged rather than read, so the one way this verdict can be wrong
+			// (a 400 Microsoft raised about something other than the customer) leaves evidence
+			// instead of silently reading as an operator's bad field. They are bounded,
+			// machine-readable, and carry no upstream body text; customer_id itself is NOT
+			// logged, because it is the operator's own identifier and the verdict already names
+			// the field.
+			slog.WarnContext(ctx, "microsoft refused the connection's configured customer_id; reporting the customer as not reachable",
+				"platform", platform,
+				"error_codes", microsoft.ConfiguredCustomerRejectionCodes(lerr),
+			)
 			return subject.customerNotReachable()
 		}
 		return subject.probeClass(lerr, microsoft.ProbeCredentialRejected, microsoft.ProbeInconclusive, microsoft.ProbeNotSent)

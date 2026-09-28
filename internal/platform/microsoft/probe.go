@@ -77,6 +77,39 @@ func ProbeConfiguredCustomerRejected(err error) bool {
 	return errors.Is(err, errConfiguredCustomerRejected)
 }
 
+// ConfiguredCustomerRejectionCodes returns the machine-readable Microsoft error codes carried by
+// a rejection ProbeConfiguredCustomerRejected just claimed, or nil.
+//
+// It exists because that predicate gates on the STATUS and the id's provenance and reads no code
+// at all — deliberately, since the Customer Management codes for a missing or unreachable
+// customer are pinned by nothing in this repo and by no test against the live API, and a guessed
+// literal that never matched would restore the paging 500 while looking handled. The cost of not
+// reading them is that a 400 arriving for some OTHER reason — a moved contract, an
+// operation-level validation this build has not met — is answered as "your customer_id is
+// unreachable", and nothing anywhere records that it might not have been.
+//
+// This is what closes that: the dispatcher logs these codes whenever it renders the verdict, so
+// the first real occurrence in any environment leaves behind exactly the evidence an allowlist
+// would need. Until someone has that evidence, the honest classification is the one the status
+// and the provenance actually support.
+//
+// It returns a COPY. ErrorCodes is bounded at parse time (maxRetainedErrorCodes,
+// maxErrorCodeLen) and holds no upstream body text — apiError drops the raw body after
+// extraction precisely so this material is safe to carry — but handing out the slice itself
+// would let a caller alias the error's own state.
+func ConfiguredCustomerRejectionCodes(err error) []string {
+	if !errors.Is(err, errConfiguredCustomerRejected) {
+		return nil
+	}
+	var ae *apiError
+	if !errors.As(err, &ae) || len(ae.ErrorCodes) == 0 {
+		return nil
+	}
+	codes := make([]string, len(ae.ErrorCodes))
+	copy(codes, ae.ErrorCodes)
+	return codes
+}
+
 // ProbeCredentialRejected reports whether err is Microsoft evaluating this connection's stored
 // credential and REFUSING it: a token refresh Microsoft itself turned down, or an Ads API call
 // answered 401/403.
