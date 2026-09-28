@@ -4,6 +4,7 @@
 package rules
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -20,10 +21,10 @@ func TestRedditPacingPct_ScheduleBranch(t *testing.T) {
 		EndDate:     "2026-06-25", // 20-day flight
 		Spend:       45,
 	}
-	pct := redditPacingPct(m, 10, now)
+	pct, computable := redditPacingPct(m, 10, now)
 	// totalFlightDays=20, elapsedDays=10, expected = 100/20*10 = 50, spend/expected*100 = 90.
-	if pct != 90 {
-		t.Errorf("pct = %v, want 90", pct)
+	if pct != 90 || !computable {
+		t.Errorf("pct, computable = %v, %v; want 90, true", pct, computable)
 	}
 }
 
@@ -35,32 +36,33 @@ func TestRedditPacingPct_ScheduleBranch(t *testing.T) {
 func TestRedditPacingPct_NoDailyBudgetBranch(t *testing.T) {
 	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
 	m := model.AccountCampaignMetrics{BudgetDay: 10, Spend: 45} // no TotalBudget/StartDate
-	pct := redditPacingPct(m, 5, now)
-	if pct != 0 {
-		t.Errorf("pct = %v, want 0 — redditPacingPct has no BudgetDay*days branch, "+
-			"it is dead code omitted from this port, not merely unreached here", pct)
+	pct, computable := redditPacingPct(m, 5, now)
+	if pct != 0 || computable {
+		t.Errorf("pct, computable = %v, %v; want 0, false — redditPacingPct has no "+
+			"BudgetDay*days branch, it is dead code omitted from this port, not merely "+
+			"unreached here, and a daily budget alone gives nothing to pace against", pct, computable)
 	}
 }
 
-// TestRedditUnderspendGap_LabelVsActionItemMismatch is the migration spec's documented bug
-// (b): the pacingLabel's underspending boundary is <50, but the underspend ACTION ITEM only
-// fires below 40 — a genuinely different number. A campaign paced at 45% must be labeled
-// "underspending" yet get NO underspend action item, because 45 is not < 40.
+// TestRedditUnderspend_AlertMatchesTheLabel is the regression test for
+// linuxfoundation/lfx-self-serve#3021. The pacing label's underspending boundary is < 50, but
+// the underspend ACTION ITEM used to fire at a separate hardcoded < 40. A campaign pacing at
+// 45% was therefore labelled "underspending" on its row and alerted on nowhere — the whole
+// 40-49% band showed the problem and withheld the call to action.
 //
-// follow-up: do not unify these two thresholds to close the 40-49% gap here — that fix is
-// tracked separately, and normalizing this test would defeat the differential verification
-// this migration depends on. See redditUnderspendActionFloor's doc comment in monitor_reddit.go.
-func TestRedditUnderspendGap_LabelVsActionItemMismatch(t *testing.T) {
+// The item is now keyed off the label, as it is on the other three platforms, so one boundary
+// decides both.
+func TestRedditUnderspend_AlertMatchesTheLabel(t *testing.T) {
 	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
 	// Pick a flight where TotalBudget/totalFlightDays == 1, so expected == elapsedDays and a
-	// 45% pacing reading is just Spend == 45 with a 100-day (or longer) flight ending at `now`.
+	// 45% pacing reading is just Spend == 45 with a 100-day flight ending at `now`.
 	rows := []model.AccountCampaignMetrics{
 		{
 			PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
 			TotalBudget: 100, StartDate: "2026-03-07", EndDate: "2026-06-15", // exactly 100 days, now == end
 			Spend: 45,
 			// Nonzero impressions/clicks (below every other rule's own floor) so this row
-			// exercises ONLY the underspend-gap rule under test, not the separate
+			// exercises ONLY the underspend rule under test, not the separate
 			// zero-impressions/zero-clicks no-delivery HIGH rule.
 			Impressions: 500,
 			Clicks:      10,
@@ -76,10 +78,39 @@ func TestRedditUnderspendGap_LabelVsActionItemMismatch(t *testing.T) {
 	if out[0].PacingLabel != model.MonitorPacingUnderspending {
 		t.Errorf("label = %q, want underspending — the label's own boundary is <50", out[0].PacingLabel)
 	}
+	mustContainIssue(t, items, "Underspending at 45%", model.MonitorPriorityHigh)
+}
+
+// TestEvaluateRedditMonitor_BudgetlessCampaignWithAFlightIsPacingUnknown covers the half of the
+// no-budget case Reddit's original guard left open. That guard keyed only off an empty
+// StartDate, so a campaign with a perfectly good flight and no TotalBudget still fell through
+// to redditPacingPct's 0 and was labelled "underspending" — the same defect the other three
+// platforms carried, reached by a different route. Both halves are now one condition.
+func TestEvaluateRedditMonitor_BudgetlessCampaignWithAFlightIsPacingUnknown(t *testing.T) {
+	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	rows := []model.AccountCampaignMetrics{
+		{
+			PlatformCampaignID: "1", Name: "No Budget", Status: "ACTIVE",
+			StartDate: "2026-06-05", EndDate: "2026-06-25", // a real flight
+			Spend: 25, Impressions: 900, Clicks: 5,
+		},
+	}
+	out, items := EvaluateRedditMonitor(rows, 30, now)
+	if len(out) != 1 {
+		t.Fatalf("got %d rows, want 1", len(out))
+	}
+	if !out[0].Metrics.PacingUnknown {
+		t.Errorf("row = %+v, want PacingUnknown=true — a flight is not a budget", out[0])
+	}
+	if out[0].PacingLabel == model.MonitorPacingUnderspending {
+		t.Errorf("label = %q; a campaign with no budget cannot be underspending one", out[0].PacingLabel)
+	}
+	if out[0].PacingPct != 0 {
+		t.Errorf("PacingPct = %v, want 0 (never computed)", out[0].PacingPct)
+	}
 	for _, it := range items {
-		if it.Priority == model.MonitorPriorityHigh {
-			t.Errorf("an underspend action item fired at 45%% pacing, want none: %+v — "+
-				"the action item's floor is <40, a different number from the label's <50", it)
+		if strings.Contains(it.Issue, "Underspending") {
+			t.Errorf("emitted an underspend item for a budget-less campaign: %q", it.Issue)
 		}
 	}
 }
@@ -98,7 +129,7 @@ func TestRedditConversionsHardcodedZero_ClicksNoConversionsAlwaysFires(t *testin
 		PlatformCampaignID: "c1", Name: "c",
 		Clicks: 101, Conversions: floatPtr(0),
 	}
-	items := redditActionItems(m, 0)
+	items := redditActionItems(m, 0, model.MonitorPacingNormal)
 	mustContainIssue(t, items, "0 conversions", model.MonitorPriorityMed)
 }
 
@@ -109,7 +140,7 @@ func TestRedditActionItems(t *testing.T) {
 	t.Run("active zero impressions and zero clicks is HIGH", func(t *testing.T) {
 		row := base
 		row.Status = "ACTIVE"
-		items := redditActionItems(row, 0)
+		items := redditActionItems(row, 0, model.MonitorPacingNormal)
 		mustContainIssue(t, items, "zero impressions and zero clicks", model.MonitorPriorityHigh)
 	})
 	t.Run("active low CTR above min impressions is MED", func(t *testing.T) {
@@ -117,13 +148,13 @@ func TestRedditActionItems(t *testing.T) {
 		row.Status = "ACTIVE"
 		row.Impressions = 1001
 		row.Ctr = 0.1
-		items := redditActionItems(row, 50)
+		items := redditActionItems(row, 50, model.MonitorPacingNormal)
 		mustContainIssue(t, items, "Low CTR", model.MonitorPriorityMed)
 	})
 	t.Run("inactive campaign does not fire the no-delivery rule (status-gated)", func(t *testing.T) {
 		row := base
 		row.Status = "PAUSED"
-		items := redditActionItems(row, 0)
+		items := redditActionItems(row, 0, model.MonitorPacingNormal)
 		for _, it := range items {
 			t.Errorf("expected no items for a PAUSED zero-delivery row, got: %+v", it)
 		}

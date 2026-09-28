@@ -73,14 +73,16 @@ comments come out with each fix.
 | LinkedIn's `MED`-vs-`MEDIUM` sort-map key mismatch sorted MED action items *behind* LOW ones | `linuxfoundation/lfx-self-serve#3018` | **Fixed** — one shared `priorityRank` |
 | Google/Reddit's local pacing literals rather than a shared constant | `linuxfoundation/lfx-self-serve#3019` | **Fixed** — one shared `pacingLabelFor` |
 | Reddit's hardcoded `conversions: 0` in its rule input | `linuxfoundation/lfx-self-serve#3020` | Open |
-| Reddit's underspend threshold/label mismatch (fires at `<40`, labeled `<50`) | `linuxfoundation/lfx-self-serve#3021` | Open |
+| Reddit's underspend threshold/label mismatch (fires at `<40`, labeled `<50`) | `linuxfoundation/lfx-self-serve#3021` | **Fixed** — the alert is keyed off the label |
 | Reddit's account totals from an independent upstream call rather than a row sum | `linuxfoundation/lfx-self-serve#3022` | Open |
 
 Two further defects were found in this code rather than carried across it, so
 neither has a BFF-side ticket: a campaign with no budget at all reported as
-`underspending` on Google, Meta and LinkedIn (**fixed** — see the log entry
-of 2026-09-28), and the Google `zz`-prefix name filter, which drops any
-campaign whose name merely begins with those two letters (open).
+`underspending`, which turned out to affect all four platforms — Google, Meta
+and LinkedIn directly, and Reddit for a campaign that had a flight but no
+total budget (**fixed**; see the two log entries of 2026-09-28) — and the
+Google `zz`-prefix name filter, which drops any campaign whose name merely
+begins with those two letters (open).
 
 Meta has two deliberate departures rather than the usual verbatim port. Its
 pagination is the first — the legacy BFF silently truncates past 100
