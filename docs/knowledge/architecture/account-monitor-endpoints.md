@@ -72,7 +72,7 @@ comments come out with each fix.
 | --- | --- | --- |
 | LinkedIn's `MED`-vs-`MEDIUM` sort-map key mismatch sorted MED action items *behind* LOW ones | `linuxfoundation/lfx-self-serve#3018` | **Fixed** — one shared `priorityRank` |
 | Google/Reddit's local pacing literals rather than a shared constant | `linuxfoundation/lfx-self-serve#3019` | **Fixed** — one shared `pacingLabelFor` |
-| Reddit's hardcoded `conversions: 0` in its rule input | `linuxfoundation/lfx-self-serve#3020` | Open |
+| Reddit's hardcoded `conversions: 0` in its rule input | `linuxfoundation/lfx-self-serve#3020` | **Fixed** — absent, not a measured 0 |
 | Reddit's underspend threshold/label mismatch (fires at `<40`, labeled `<50`) | `linuxfoundation/lfx-self-serve#3021` | **Fixed** — the alert is keyed off the label |
 | Reddit's account totals from an independent upstream call rather than a row sum | `linuxfoundation/lfx-self-serve#3022` | Open |
 

@@ -1268,6 +1268,64 @@ func TestReddit_ListAccountCampaignMetrics_RejectsMismatchedAccount(t *testing.T
 	}
 }
 
+// TestReddit_ListAccountCampaignMetrics_ConversionsAbsentNotZero is the regression test for
+// linuxfoundation/lfx-self-serve#3020, and covers the mapping every other test in this group
+// stops short of: all four siblings are refusal tests, so nothing pinned what a SUCCESSFUL
+// account-monitor read actually produces — which is why a fabricated conversions count lived
+// here undetected.
+//
+// This read never asks Reddit for conversions (see fetchMonitorReport's "fields" list), so
+// Conversions must be nil: absent, not a measured 0. The port originally set a non-nil 0 on
+// every row, copying the BFF's campaignMetrics[].conversions = 0, and monitor_reddit.go's
+// "clicks but 0 conversions" rule then fired for every campaign past its click floor — an
+// alert that could never be satisfied, because a real nonzero count could never arrive.
+//
+// The fixture's report carries a plausible-looking "conversions" key for the same reason
+// TestReddit_ReadMetrics_ConversionsAbsentNotZero's does: opportunistically reading a guessed
+// field name is the other way this could go wrong.
+func TestReddit_ListAccountCampaignMetrics_ConversionsAbsentNotZero(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/reports"):
+			_, _ = w.Write([]byte(`{"data":{"metrics":[{"impressions":1000,"clicks":150,"spend":25000000,"conversions":9}]}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":{"campaigns":[{"id":"t2_c1","name":"c","configured_status":"ACTIVE",` +
+				`"goal_value":100000000,"start_time":"2026-06-05T00:00:00Z","end_time":"2026-06-25T00:00:00Z"}]}}`))
+		}
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+	)
+	rows, err := d.ListAccountCampaignMetrics(context.Background(), "proj", model.ProviderRedditAds, "t2_acct", 30)
+	if err != nil {
+		t.Fatalf("ListAccountCampaignMetrics: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if rows[0].Conversions != nil {
+		t.Errorf("Conversions = %v, want nil — this read never requests conversions, so "+
+			"reporting a number is a measurement claim nothing behind it supports",
+			*rows[0].Conversions)
+	}
+	// The rest of the mapping, pinned alongside it so a successful read has some coverage at
+	// all: goal_value/1e6 is the total budget, spend is micros, CTR is derived.
+	if rows[0].TotalBudget != 100 || rows[0].Spend != 25 || rows[0].Clicks != 150 {
+		t.Errorf("row = %+v; want TotalBudget 100, Spend 25, Clicks 150", rows[0])
+	}
+	if rows[0].StartDate != "2026-06-05" || rows[0].EndDate != "2026-06-25" {
+		t.Errorf("flight = %q..%q, want 2026-06-05..2026-06-25", rows[0].StartDate, rows[0].EndDate)
+	}
+}
+
 // TestReddit_ReadAccountTotals_RejectsMalformedAccountID and
 // TestReddit_ReadAccountTotals_RejectsInvalidDays pin round-18 review's fix: ReadAccountTotals
 // previously called resolveMonitorClient (and so resolved a credential) without validating

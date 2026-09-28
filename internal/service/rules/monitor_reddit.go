@@ -126,11 +126,13 @@ func redditActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 			fmt.Sprintf("Low CTR at %.2f%% — %d clicks from %d impressions", m.Ctr, m.Clicks, m.Impressions),
 			"Refresh ad creative, test different headlines, or narrow targeting to more relevant subreddits")
 	}
-	// c.conversions is hardcoded to 0 for every Reddit row (see the dispatcher and
-	// model.AccountCampaignMetrics.Conversions' doc comment) — so this rule, ported verbatim,
-	// fires for every Reddit campaign whose Clicks exceed the threshold: it can never be
-	// satisfied otherwise, because conversions can never be observed as nonzero. KNOWN BUG,
-	// ported verbatim — see follow-up ticket.
+	// This rule is dormant on Reddit today, and correctly so. The dispatcher leaves Conversions
+	// nil because this read never asks Reddit for conversions, so the nil guard below is what
+	// stops the rule claiming "0 conversions" about something nobody measured. It used to
+	// receive a hardcoded non-nil 0 on every row and therefore fired for every campaign past
+	// the click floor (linuxfoundation/lfx-self-serve#3020). The rule stays rather than being
+	// deleted: it is correct as written, and lights up on its own the day a real conversions
+	// read lands.
 	if m.Clicks > redditClicksNoConversions && m.Conversions != nil && *m.Conversions == 0 {
 		add(model.MonitorPriorityMed,
 			fmt.Sprintf("%d clicks but 0 conversions — traffic is not converting", m.Clicks),

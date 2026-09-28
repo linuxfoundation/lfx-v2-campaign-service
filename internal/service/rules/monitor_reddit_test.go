@@ -115,22 +115,32 @@ func TestEvaluateRedditMonitor_BudgetlessCampaignWithAFlightIsPacingUnknown(t *t
 	}
 }
 
-// TestRedditConversionsHardcodedZero_ClicksNoConversionsAlwaysFires pins the KNOWN BUG:
-// Conversions is hardcoded to a non-nil 0 for every Reddit row upstream, so the "clicks
-// without conversions" rule fires unconditionally once Clicks crosses the 100-click floor —
-// it can never be satisfied any other way, because a real nonzero conversion count can never
-// reach this code path.
+// TestRedditClicksNoConversions_DormantWhileUnmeasured is the rules half of
+// linuxfoundation/lfx-self-serve#3020. The dispatcher used to hand every Reddit row a non-nil
+// 0 conversions, so this rule fired for every campaign past the 100-click floor and could
+// never be satisfied any other way — a real nonzero count could not reach it.
 //
-// follow-up: once Reddit's dispatcher populates real Conversions data, revisit whether this
-// rule should require Conversions == nil (unmeasured) rather than compare against a literal 0
-// that source never varies today.
-func TestRedditConversionsHardcodedZero_ClicksNoConversionsAlwaysFires(t *testing.T) {
-	m := model.AccountCampaignMetrics{
-		PlatformCampaignID: "c1", Name: "c",
-		Clicks: 101, Conversions: floatPtr(0),
-	}
-	items := redditActionItems(m, 0, model.MonitorPacingNormal)
-	mustContainIssue(t, items, "0 conversions", model.MonitorPriorityMed)
+// Reddit's Conversions is now nil, so the rule is dormant rather than wrong. It is kept, not
+// deleted: the logic is correct as written and lights up on its own the day a real conversions
+// read lands, which the second subtest pins by supplying the measurement the dispatcher does
+// not yet have.
+func TestRedditClicksNoConversions_DormantWhileUnmeasured(t *testing.T) {
+	base := model.AccountCampaignMetrics{PlatformCampaignID: "c1", Name: "c", Clicks: 101}
+
+	t.Run("unmeasured conversions fire nothing", func(t *testing.T) {
+		items := redditActionItems(base, 0, model.MonitorPacingNormal)
+		for _, it := range items {
+			if strings.Contains(it.Issue, "0 conversions") {
+				t.Errorf("fired %q for a row nobody measured conversions on", it.Issue)
+			}
+		}
+	})
+	t.Run("a measured zero still fires", func(t *testing.T) {
+		m := base
+		m.Conversions = floatPtr(0)
+		items := redditActionItems(m, 0, model.MonitorPacingNormal)
+		mustContainIssue(t, items, "0 conversions", model.MonitorPriorityMed)
+	})
 }
 
 // TestRedditActionItems exercises the remaining independent rules.

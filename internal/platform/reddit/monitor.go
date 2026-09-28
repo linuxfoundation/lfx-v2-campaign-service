@@ -25,10 +25,11 @@ const monitorReportConcurrency = 5
 // endpoint, ported from lfx-self-serve's reddit-ads.service.ts (getRedditAnalytics).
 //
 // Conversions is deliberately absent (unlike the sibling platforms' AccountCampaignRow
-// types): the BFF hardcodes campaignMetrics[].conversions to the literal 0 on every row
-// (reddit-ads.service.ts:300), not a measurement, so the dispatcher maps every row's
-// model.AccountCampaignMetrics.Conversions to a non-nil &0 directly rather than this type
-// carrying a field that could only ever hold one value.
+// types): this read does not request conversions from Reddit, so there is nothing for the
+// field to carry. The dispatcher leaves model.AccountCampaignMetrics.Conversions nil to say
+// exactly that. The BFF hardcoded campaignMetrics[].conversions to a literal 0 on every row
+// (reddit-ads.service.ts:300), which is not a measurement — see
+// linuxfoundation/lfx-self-serve#3020.
 type AccountCampaignRow struct {
 	CampaignID  string
 	Name        string

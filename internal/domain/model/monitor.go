@@ -65,9 +65,10 @@ type AccountCampaignMetrics struct {
 	Ctr float64
 	// Conversions is a pointer for the same reason model.CampaignMetrics.Conversions is: nil
 	// means this platform/row could not measure conversions, a non-nil 0 is a measurement.
-	// Reddit's port sets this to a non-nil 0 on EVERY row — see monitor_reddit.go — which is
-	// a ported bug, not a capability gap; the pointer still exists here so a future honest
-	// Reddit conversions read does not require a struct change.
+	// Reddit leaves it nil on every row: its monitor read never asks for conversions, so it
+	// has nothing to report. The port originally set a non-nil 0 there, copying the BFF
+	// (linuxfoundation/lfx-self-serve#3020) — a measurement claim nothing behind it could
+	// support.
 	Conversions *float64
 	// BudgetDay is the daily budget in the account's currency, 0 when the campaign has none
 	// (e.g. a LinkedIn/Meta campaign funded by TotalBudget instead).
