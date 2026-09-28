@@ -16,8 +16,9 @@ what the endpoint returns for a campaign with no activity, whether `ends_at` inc
 hour, or whether the account's attribution window shifts the figures. The constant now states
 that unknown instead, and points at the dispatcher gate so the two stay in step.
 
-No behaviour change. `docs/api-catalog.md` and the `internal-dispatch` /
-`internal-platform-reddit` concept files were already current; `pkg/constants` was the only place
-left describing the superseded state.
+No behaviour change. `docs/api-catalog.md` and the `internal-platform-reddit` concept file were
+already current; `pkg/constants` was not the only remaining place describing the superseded state,
+as this entry first claimed — see the 2026-09-29 entry that corrects the two concept files it
+missed.
 
 Refs: LFXV2-3282

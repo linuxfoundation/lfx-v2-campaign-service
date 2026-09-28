@@ -172,7 +172,8 @@ conversions at all**, the same way `zero_delivery` is gated on the channel billi
 `Conversions` is a POINTER on both `model.CampaignMetrics` and `rules.Input` precisely so absent
 stays distinguishable from a measured zero. Only Google Ads, LinkedIn and Microsoft populate it;
 Meta and X expose conversions solely as per-action-type structures with no scalar to read,
-Reddit's reporting contract is undocumented, and the email channel has no conversion concept.
+Reddit's reporting read does not request a conversion field at all, and the email channel has no
+conversion concept.
 Flattening a nil to 0 anywhere along the path would flag **every** campaign on those four
 platforms, forever — reporting the absence of measurement as a campaign defect, which is the
 failure mode the whole pointer exists to prevent.
