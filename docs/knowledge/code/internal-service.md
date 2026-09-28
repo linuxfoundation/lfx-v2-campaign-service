@@ -1214,6 +1214,15 @@ missing dispatcher, or a registered dispatcher that does not implement the inter
 `ErrServiceDefect` + `ErrConnectionProbeUnwired` — never nil, which would answer `OK: true` having
 verified nothing.
 
+**Required means required of this call path, not of all seven providers.** LinkedIn's dispatcher
+does not implement `ConnectionProber` and lacks nothing: `TestLinkedinAds` never reaches
+`Orchestrator.ProbeConnection`, verifying through `OrgReferenceVerifier`/`VerifyAccountOrg`
+instead, which asks the probe's question and adds the org cross-check to it. So the interface has
+exactly six implementations, and `internal/dispatch/probe_owned_resolver_test.go` pins that roster
+including LinkedIn's absence. Reading the interface doc alone and "repairing" LinkedIn with a
+`ProbeConnection` method would give the one endpoint that already has the stronger check a second,
+weaker verification path to drift against — which is why both the doc and the test say so.
+
 ## HubSpot email search (LFXV2-3197)
 
 `ListHubspotEmails` serves `GET /projects/{project_id}/connection-hubspot/emails`, returning the

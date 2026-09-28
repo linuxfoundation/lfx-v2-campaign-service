@@ -207,6 +207,12 @@ entirely. Two deliberate asymmetries are worth knowing before "tightening" eithe
 - Whitespace-padded and out-of-`int64`-range values diverge from `microsoft.ValidateCustomerID`,
   which trims and parses: the design layer is the stricter outer check for padding, and no regex
   can express the `int64` ceiling, which is why `ParseInt` must stay.
+- **HubSpot's `account_id` carries neither**, and it is the exception that states the rule. Every
+  bound above exists because that id is interpolated into a request path, query or header, so its
+  shape is a transport concern first. HubSpot's is stored on the row and read by nothing — the
+  campaign path takes its list id from `hubspotConfig`, and the connection probe authenticates the
+  token and compares `portal_id`. With no request for a malformed value to reach, a bound would
+  assert a shape this service has no way to know. It earns one when a caller puts it in a request.
 
 `internal/apivalidation` tests the GENERATED validators from outside `gen/` and includes a drift
 guard per platform that runs the same ids through the design validator and the platform

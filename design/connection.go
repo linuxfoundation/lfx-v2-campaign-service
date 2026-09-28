@@ -1055,6 +1055,15 @@ var HubSpotCredentials = Type("hubspot-credentials", func() {
 
 var HubSpotConnectionConfig = Type("hubspot-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
+	// account_id carries NO Pattern or MaxLength, and that is deliberate rather than the one
+	// field this sweep missed. The bounds on every sibling provider's id exist because that id
+	// is interpolated into a request path, a query or a header, so its shape is a transport
+	// concern before it is a validation preference. HubSpot's is not: it is stored on the
+	// connection row and never read by the HubSpot client or its dispatcher — the campaign path
+	// takes its own list id from hubspotConfig, and the connection probe authenticates the token
+	// and compares portal_id, never touching this field. There is no request for a malformed
+	// value to reach, so a bound here would assert a shape this service has no way to know.
+	// Give it one only alongside a caller that puts it in a request.
 	Attribute("account_id", String, "HubSpot list/audience ID")
 	Attribute("portal_id", String, "HubSpot portal/account ID")
 	Attribute("sender_email", String, "Default sender address")

@@ -418,10 +418,20 @@ type CampaignAdopter interface {
 // answered OK the moment a credential blob existed in the row, never decrypting it, never
 // authenticating, and never reaching the configured account (LFXV2-2665).
 //
-// Unlike OrgReferenceVerifier below, its absence is NOT a designed outcome for any platform.
-// Every platform this service can dispatch to can be asked "does this credential still work",
-// so a dispatcher that does not implement this is mis-wired, and Orchestrator.ProbeConnection
-// says so unconditionally rather than consulting a per-platform table.
+// Unlike OrgReferenceVerifier below, its absence is NOT a designed outcome for any dispatcher
+// that reaches Orchestrator.ProbeConnection. Every platform this service can dispatch to can be
+// asked "does this credential still work", so a dispatcher that arrives here without
+// implementing this is mis-wired, and ProbeConnection says so unconditionally rather than
+// consulting a per-platform table.
+//
+// That is a statement about THIS call path, not about the seven providers. LinkedIn's
+// dispatcher does not implement ConnectionProber and is not missing anything: TestLinkedinAds
+// (internal/service/connection.go) never routes through here, verifying instead via
+// OrgReferenceVerifier/VerifyAccountOrg, which subsumes the probe's question and adds the org
+// cross-check on top. So ConnectionProber has exactly six implementations, and
+// internal/dispatch/probe_owned_resolver_test.go pins that roster — including LinkedIn's
+// absence. Do not "repair" LinkedIn by adding a ProbeConnection method: a second verification
+// path on the one endpoint that already has a stronger one is how the two drift apart.
 type ConnectionProber interface {
 	// ProbeConnection resolves the project's OWN connection — never the shared LF system row,
 	// whose acceptance would report a connection the project does not have as healthy — and

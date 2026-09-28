@@ -641,9 +641,15 @@ var (
 	// Nothing that IS evidence about the connection may carry it — a credential the platform
 	// evaluated and refused carries ErrConnectionProbeFailed, and a request this service built
 	// wrongly carries ErrServiceDefect — because this sentinel makes no claim about the stored
-	// connection at all. It answers OK: false (an unverified credential is not an authenticated
-	// one) with a message naming only the unreachability, exactly as the org-verification one
-	// does; an error that IS a verdict, carried here, would be reported as a platform outage.
+	// connection at all. It answers OK: false because OK is a CONJUNCTION — the credential
+	// authenticated AND the configured account passed that provider's check — and this sentinel
+	// means the conjunction was not established. It does NOT mean the credential failed to
+	// authenticate, and the multi-leg probes are exactly where the difference bites: Google Ads,
+	// Microsoft and Reddit can refresh a token successfully and only then go inconclusive on the
+	// account read, so the first half is proven and the second is unknown. The message therefore
+	// names only the unreachability, exactly as the org-verification one does, and never a
+	// credential refusal — that claim belongs to ErrConnectionProbeFailed, which an operator acts
+	// on differently. An error that IS a verdict, carried here, would be reported as an outage.
 	//
 	// Like that sentinel, it is attached by the DISPATCHER, the one layer that knows both this
 	// service's contract and the platform client's error types, and the conversion is also the
