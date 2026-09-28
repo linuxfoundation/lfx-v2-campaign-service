@@ -56,11 +56,12 @@ func TestEvaluateGoogleMonitor_KeepsCampaignsThatMerelyStartWithZZ(t *testing.T)
 	}
 }
 
-// TestGooglePacingBoundaries pins the three LOCAL literals (50/90/100) at their exact
-// boundaries. These are campaign-metrics.service.ts's own literals, NOT this package's shared
-// Thresholds — see monitor_google.go's const doc comment — so this test exists specifically to
-// catch a future edit that (accidentally or "helpfully") repoints these at the shared
-// constants.
+// TestGooglePacingBoundaries pins the shared account-monitor ladder (50/90/100) at its exact
+// boundaries, exercised through Google's evaluator. Google is one of the four callers of
+// monitor_shared.go's pacingLabelFor, and the boundaries are inclusive/exclusive in ways a
+// refactor can silently flip; this test is where that would be caught. The ladder is NOT
+// pacing.go's Thresholds, which run 50/100/130 for the single-campaign brief path — repointing
+// these at that one would move operator-facing alerting bands.
 func TestGooglePacingBoundaries(t *testing.T) {
 	// budgetDay=1, days=1 => expectedSpend=1, so spend == pacingPct/100 directly.
 	tests := []struct {

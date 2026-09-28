@@ -77,10 +77,15 @@ comments come out with each fix.
 | Reddit's account totals from an independent upstream call rather than a row sum | `linuxfoundation/lfx-self-serve#3022` | **Fixed** — every platform sums its rows |
 
 Three further defects were found in this code rather than carried across it, so
-none has a BFF-side ticket: a campaign with no budget at all reported as
-`underspending`, which turned out to affect all four platforms — Google, Meta
-and LinkedIn directly, and Reddit for a campaign that had a flight but no
-total budget (**fixed**; see the two log entries of 2026-09-28) — and the
+none has a BFF-side ticket: a campaign with no budget at all presented as
+though its pacing were known, which turned out to affect all four platforms in
+two different ways. Google and Meta reported it as `underspending` outright, and
+so did Reddit for a campaign that had a flight but no total budget. LinkedIn's
+`hasBudget` guard genuinely held the row off the ladder but did not *say* so:
+it went out as `normal` with `PacingUnknown` left false, which a consumer reads
+as "on plan" — a quieter version of the same claim (**fixed**; all four now
+route a budget-less campaign through `unknownPacingRow`; see the two log entries
+of 2026-09-28) — and the
 Google `zz`-prefix name filter, which dropped any campaign whose name merely
 began with those two letters rather than only those using the operator's
 `zz` scratch-naming convention (**fixed**; the prefix must now be followed
