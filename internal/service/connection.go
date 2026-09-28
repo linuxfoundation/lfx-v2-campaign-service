@@ -1121,11 +1121,13 @@ func (s *ConnectionService) TestLinkedinAds(ctx context.Context, p *conn.TestLin
 			// it moves with it — leaving the two disagreeing would make `ok` mean one thing on
 			// linkedin and another everywhere else, which is worse than either answer.
 			//
-			// The message must NOT say the credential was neither accepted nor rejected, and
-			// this arm is where that would be most plainly false: reaching here means the
-			// credential baseline above already PASSED — linkedin accepted it — and only the
-			// org-reference cross-check failed to complete. It is the same correction the
-			// shared inconclusive arm carries, with the evidence sitting one log line above.
+			// The message must NOT say the credential FAILED to authenticate: this arm reaches
+			// no such verdict. It must not say the opposite either. The baseline gating entry
+			// here is testConn's, which reads the row and checks it carries a credential and
+			// never touches a dispatcher, so it is no evidence about linkedin; and this arm
+			// also covers a walk that failed before send, where linkedin got nothing to
+			// evaluate. Neither half of the conjunction is established, so the message asserts
+			// neither. It is the same correction the shared inconclusive arm carries.
 			msg := "connection found, but linkedin could not be reached to finish verifying the account/organization reference " +
 				"(timeout, rate limit or a platform error); the check did not complete, so no conclusion was reached " +
 				"about this connection and nothing is known to be wrong with it — try again shortly"

@@ -578,8 +578,11 @@ var (
 	// OK: false, because `ok` is declared as a CONJUNCTION — the credential authenticated AND
 	// the configured account passed that provider's own check — and an incomplete walk
 	// establishes neither half of it. The justification cannot be "the credential did not
-	// authenticate", because on this path it demonstrably DID: the baseline named one line
-	// above is what gates entry to this arm — but its message names the
+	// authenticate", because this path obtained no such verdict. Nor may it be the opposite
+	// claim: the baseline named one line above is LOCAL — the row exists and carries a
+	// credential — and this sentinel also covers a walk that failed BEFORE send, where
+	// LinkedIn received nothing to evaluate. Neither half is established, so the message
+	// asserts neither; it names the
 	// unreachability and says nothing about the stored pairing, which is the distinction that
 	// keeps "try again" and "repoint this connection" apart. Precisely because it makes no
 	// claim about the pairing, nothing that IS evidence may carry it — see

@@ -770,7 +770,7 @@ func TestVerifyAccountOrgReference(t *testing.T) {
 			t.Errorf("VerifyAccountOrgReference: %v, want ErrCredentialsExpired", err)
 		}
 		if errors.Is(err, ErrOrgVerificationInconclusive) {
-			t.Errorf("VerifyAccountOrgReference: %v, a credential failure must NOT be wrapped as inconclusive — TestLinkedinAds checks the inconclusive sentinel first, and folding a credential failure into it would report a broken connection as healthy", err)
+			t.Errorf("VerifyAccountOrgReference: %v, a credential failure must NOT be wrapped as inconclusive — TestLinkedinAds checks the inconclusive sentinel first, and folding a credential failure into it would send the operator to wait out an outage instead of repairing the credential", err)
 		}
 	})
 

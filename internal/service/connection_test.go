@@ -478,8 +478,10 @@ func TestTestLinkedinAds_UpstreamVerification(t *testing.T) {
 		// both or `ok` means one thing on linkedin and another everywhere else: the walk did not
 		// establish the CONJUNCTION the field reports — the credential authenticated AND the
 		// configured account passed linkedin's own check — so OK: false. Not "the credential did
-		// not authenticate": reaching this arm REQUIRES the credential baseline to have passed,
-		// so on this path linkedin demonstrably accepted it and only the cross-check stalled.
+		// not authenticate", which is a verdict this arm never obtained — and not the opposite
+		// either: the baseline gating entry is testConn's local row read, and this arm also
+		// covers a walk that failed before send. Neither half is established, so neither is
+		// claimed.
 		if res.OK {
 			t.Errorf("OK = true for a walk that reached no verdict; a caller reading ok alone gets a " +
 				"green check for a pairing nothing verified")

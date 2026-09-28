@@ -996,9 +996,13 @@ A failure of the `ListAdAccounts` enumeration walk ITSELF reaches this package a
 `errors.Is` FIRST, before folding anything into the echoing `OK: false` arm. It answers `OK: false`
 too — `ok` is declared as a CONJUNCTION, the credential authenticated AND the configured account
 passed that provider's own check, and an incomplete walk establishes neither half of it; this arm
-is where the older credential-only justification was plainly false, because reaching it REQUIRES
-the credential baseline to have already passed, so LinkedIn had demonstrably accepted the
-credential and only the org-reference cross-check failed to finish — but its message names the
+is where the older credential-only justification was plainly false, because saying `ok` is false
+"because the credential did not authenticate" asserts a verdict this path never obtained. The
+correction is NOT the opposite assertion: the baseline gating entry here is local — `testConn`
+reads the row and checks it carries a credential, and never touches a dispatcher — so it proves
+nothing about what LinkedIn did, and the inconclusive class includes pre-send connection failures,
+where LinkedIn received nothing to evaluate at all. Neither half is established, so the message
+claims neither — it names the
 unreachability and says nothing about the stored pairing, so no operator is told a pairing is wrong on the strength of a walk that
 never compared it. The corollary is the standing hazard here: anything wrongly folded into that
 sentinel is reported as somebody else's outage to wait out, and the remedy the operator does own is
@@ -1153,7 +1157,8 @@ refresh that SUCCEEDED before the account read timed out means the provider acce
 credential outright. `OK: false` still holds — the conjunction was not established — but the
 message may claim only that the check is INCOMPLETE, never that the credential was left
 untouched. The `TestLinkedinAds` arm is where the old wording was most plainly false: reaching it
-requires the credential baseline to have already passed, so LinkedIn had demonstrably accepted
+requires only the LOCAL baseline to have passed — the row exists and carries a credential — which
+is not LinkedIn having accepted
 the credential and only the org cross-check failed to finish. Both messages now assert the
 narrower fact, and `connection_test.go` and `connection_probe_test.go` each carry an INVERSE
 guard asserting the overclaim has not come back. Reporting it as `true` with an advisory also depended on the caller reading

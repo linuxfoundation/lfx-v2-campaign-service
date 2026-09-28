@@ -484,8 +484,9 @@ type OrgReferenceVerifier interface {
 	// be numeric) is a REAL error too, decidable without contacting the platform at all:
 	// campaign creation on that connection is already guaranteed to fail. So is a request the
 	// platform RECEIVED and refused against THIS token's authorization — a 403. It will not
-	// start succeeding on its own, so calling it an incomplete walk would answer "healthy"
-	// for a permanently broken cross-check forever.
+	// start succeeding on its own, so calling it an incomplete walk would route a permanently
+	// broken cross-check to the retry advisory forever — OK: false either way, but an operator
+	// told to wait out an outage instead of one told what to repair.
 	//
 	// The remaining 4xx refusals (a rate limit aside) are neither: the enumeration request
 	// names no account and no organization, so a 400 or a 404 says this service built the
