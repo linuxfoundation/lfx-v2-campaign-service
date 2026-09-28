@@ -1430,9 +1430,11 @@ func (s *ConnectionService) DeleteRedditAds(ctx context.Context, p *conn.DeleteR
 }
 
 func (s *ConnectionService) TestRedditAds(ctx context.Context, p *conn.TestRedditAdsPayload) (*conn.ConnectionTestResult, error) {
-	// Reddit's probe is the strongest of the six: it GETs the configured ad account directly
-	// rather than enumerating and checking membership, so a 404 answers "this token does not
-	// reach this account" about the exact account the connection names.
+	// Reddit's probe takes the stronger of the two forms this repo uses: it GETs the configured
+	// ad account directly rather than enumerating and checking membership, so a 404 answers
+	// "this token does not reach this account" about the exact account the connection names.
+	// X's probe is direct in the same way (TestTwitterAds below); the enumerating platforms are
+	// the other four. Nothing here is unique to Reddit except the request it makes.
 	return s.testConnUpstream(ctx, p.ProjectID, redditAdsConnectionDiscovery)
 }
 

@@ -55,11 +55,13 @@ var errTokenEndpointUnavailable = errors.New("reddit: the token endpoint is unav
 // there a failure is a non-fatal warning step, because a campaign create should not be refused
 // over a verification call, whereas here the call IS the test and its failure is the answer.
 //
-// Reddit is the one platform in this repo where the probe addresses the configured account
-// directly rather than enumerating and checking membership. That makes it the strongest form
-// of the check available — it proves reachability of the account this connection will actually
-// dispatch to, not merely that some account is reachable — and it is why Reddit's connection
-// test needs no account enumeration to exist first.
+// Reddit is one of the TWO probes in this repo that address the configured account directly
+// rather than enumerating and checking membership; X is the other, through its own
+// VerifyAccount against the account root. Both are the stronger form of the check — they prove
+// reachability of the account this connection will actually dispatch to, not merely that some
+// account is reachable — and it is why neither connection test needed an account enumeration
+// endpoint to exist first. They differ only in the request: this one GETs
+// /ad_accounts/{id}, X targets its account root with an empty path.
 func (c *Client) VerifyAccount(ctx context.Context) error {
 	// Validated before the path is built, for the reason accountIDRe exists: the id is
 	// concatenated into the request path, so a value carrying a slash would inject extra

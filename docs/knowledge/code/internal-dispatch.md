@@ -2052,8 +2052,8 @@ reached no platform at all, which is the exact defect this work removes.
 | --- | --- | --- |
 | `GoogleAdsDispatcher` | `ProbeAccountReach` | reached / reached-but-not-capable / unreachable (see below) |
 | `MetaDispatcher` | `ListAdAccounts` | `meta.ValidateAccountID` pre-send, then configured id ∈ list (`trimMetaAccountPrefix` still normalizes `act_` on both sides, for the upstream side) |
-| `RedditDispatcher` | `VerifyAccount` → `GET /ad_accounts/{id}` | direct — the strongest form |
-| `TwitterDispatcher` | `VerifyAccount` → `GET` account root | direct |
+| `RedditDispatcher` | `VerifyAccount` → `GET /ad_accounts/{id}` | direct — the stronger form |
+| `TwitterDispatcher` | `VerifyAccount` → `GET` account root | direct — the stronger form |
 | `MicrosoftDispatcher` | `ListAdAccounts` | configured id ∈ list |
 | `HubSpotDispatcher` | `AuthenticatedPortalID` (token-info) | **none** — the token IS the account |
 

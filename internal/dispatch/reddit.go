@@ -623,12 +623,13 @@ func (d *RedditDispatcher) resolveMonitorClient(ctx context.Context, projectID s
 // d.creds.resolveOwned, never d.creds.resolve — see GoogleAdsDispatcher.ProbeConnection for
 // the shared rationale.
 //
-// Reddit is the one platform here whose probe addresses the configured account DIRECTLY
-// (GET /ad_accounts/{id}) instead of enumerating and checking membership, because that read
-// already exists as CreateCampaign's Step 1. That makes it the strongest form of the check
-// available — it proves reachability of the account this connection will actually dispatch to,
-// rather than that the account appears in a list — and it is why this arm needed no account
-// enumeration endpoint to be built first. The verdict for a 404 is decided by
+// Reddit's probe addresses the configured account DIRECTLY (GET /ad_accounts/{id}) instead of
+// enumerating and checking membership, because that read already exists as CreateCampaign's
+// Step 1. That is the stronger form of the check — it proves reachability of the account this
+// connection will actually dispatch to, rather than that the account appears in a list — and it
+// is why this arm needed no account enumeration endpoint to be built first. X makes the same
+// choice for the same reason (TwitterDispatcher.ProbeConnection), against its account root, so
+// this is one of two direct probes rather than the only one. The verdict for a 404 is decided by
 // reddit.ProbeAccountUnreachable, asked below BEFORE probeClass: it explains why a 404 is
 // Reddit answering the question asked here and a defect anywhere else, and it answers with the
 // account id rather than the credential. reddit.ProbeCredentialRejected documents the other
