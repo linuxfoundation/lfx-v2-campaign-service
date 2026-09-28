@@ -25,7 +25,8 @@ type Service interface {
 	UpdateGoogleAds(context.Context, *UpdateGoogleAdsPayload) (res *GoogleAdsConnection, err error)
 	// Soft-delete the project's Google Ads connection.
 	DeleteGoogleAds(context.Context, *DeleteGoogleAdsPayload) (err error)
-	// Verify the stored Google Ads credential against the provider.
+	// Verify the stored Google Ads credential and the configured account against
+	// the provider.
 	TestGoogleAds(context.Context, *TestGoogleAdsPayload) (res *ConnectionTestResult, err error)
 	// Replace the stored (encrypted) Google Ads credential. Separate from update
 	// so credential replacement is independently permissioned and audited. Not a
@@ -42,7 +43,8 @@ type Service interface {
 	UpdateLinkedinAds(context.Context, *UpdateLinkedinAdsPayload) (res *LinkedinAdsConnection, err error)
 	// Soft-delete the project's LinkedIn Ads connection.
 	DeleteLinkedinAds(context.Context, *DeleteLinkedinAdsPayload) (err error)
-	// Verify the stored LinkedIn Ads credential against the provider.
+	// Verify the stored LinkedIn Ads credential and the configured account against
+	// the provider.
 	TestLinkedinAds(context.Context, *TestLinkedinAdsPayload) (res *ConnectionTestResult, err error)
 	// Replace the stored (encrypted) LinkedIn Ads credential. Separate from update
 	// so credential replacement is independently permissioned and audited. Not a
@@ -58,7 +60,8 @@ type Service interface {
 	UpdateMetaAds(context.Context, *UpdateMetaAdsPayload) (res *MetaAdsConnection, err error)
 	// Soft-delete the project's Meta Ads connection.
 	DeleteMetaAds(context.Context, *DeleteMetaAdsPayload) (err error)
-	// Verify the stored Meta Ads credential against the provider.
+	// Verify the stored Meta Ads credential and the configured account against the
+	// provider.
 	TestMetaAds(context.Context, *TestMetaAdsPayload) (res *ConnectionTestResult, err error)
 	// Replace the stored (encrypted) Meta Ads credential. Separate from update so
 	// credential replacement is independently permissioned and audited. Not a
@@ -74,7 +77,8 @@ type Service interface {
 	UpdateRedditAds(context.Context, *UpdateRedditAdsPayload) (res *RedditAdsConnection, err error)
 	// Soft-delete the project's Reddit Ads connection.
 	DeleteRedditAds(context.Context, *DeleteRedditAdsPayload) (err error)
-	// Verify the stored Reddit Ads credential against the provider.
+	// Verify the stored Reddit Ads credential and the configured account against
+	// the provider.
 	TestRedditAds(context.Context, *TestRedditAdsPayload) (res *ConnectionTestResult, err error)
 	// Replace the stored (encrypted) Reddit Ads credential. Separate from update
 	// so credential replacement is independently permissioned and audited. Not a
@@ -91,7 +95,8 @@ type Service interface {
 	UpdateTwitterAds(context.Context, *UpdateTwitterAdsPayload) (res *TwitterAdsConnection, err error)
 	// Soft-delete the project's X/Twitter Ads connection.
 	DeleteTwitterAds(context.Context, *DeleteTwitterAdsPayload) (err error)
-	// Verify the stored X/Twitter Ads credential against the provider.
+	// Verify the stored X/Twitter Ads credential and the configured account
+	// against the provider.
 	TestTwitterAds(context.Context, *TestTwitterAdsPayload) (res *ConnectionTestResult, err error)
 	// Replace the stored (encrypted) X/Twitter Ads credential. Separate from
 	// update so credential replacement is independently permissioned and audited.
@@ -108,7 +113,8 @@ type Service interface {
 	UpdateMicrosoftAds(context.Context, *UpdateMicrosoftAdsPayload) (res *MicrosoftAdsConnection, err error)
 	// Soft-delete the project's Microsoft Ads connection.
 	DeleteMicrosoftAds(context.Context, *DeleteMicrosoftAdsPayload) (err error)
-	// Verify the stored Microsoft Ads credential against the provider.
+	// Verify the stored Microsoft Ads credential and the configured account
+	// against the provider.
 	TestMicrosoftAds(context.Context, *TestMicrosoftAdsPayload) (res *ConnectionTestResult, err error)
 	// Replace the stored (encrypted) Microsoft Ads credential. Separate from
 	// update so credential replacement is independently permissioned and audited.
@@ -124,7 +130,8 @@ type Service interface {
 	UpdateHubspot(context.Context, *UpdateHubspotPayload) (res *HubspotConnection, err error)
 	// Soft-delete the project's HubSpot connection.
 	DeleteHubspot(context.Context, *DeleteHubspotPayload) (err error)
-	// Verify the stored HubSpot credential against the provider.
+	// Verify the stored HubSpot credential and the configured account against the
+	// provider.
 	TestHubspot(context.Context, *TestHubspotPayload) (res *ConnectionTestResult, err error)
 	// Replace the stored (encrypted) HubSpot credential. Separate from update so
 	// credential replacement is independently permissioned and audited. Not a

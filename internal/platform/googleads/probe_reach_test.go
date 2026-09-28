@@ -91,6 +91,16 @@ func clientRow(id string, manager bool, status string) map[string]any {
 	}}
 }
 
+// customerRow is what flat mode's second leg reads: the account's own `customer` record,
+// which nests under a DIFFERENT key from customerClient. The two helpers are kept apart on
+// purpose — a test that fed a customer_client row to the flat-mode read would decode a zero
+// value and quietly assert the wrong resource's contract.
+func customerRow(id string, manager bool, status string) map[string]any {
+	return map[string]any{"customer": map[string]any{
+		"id": id, "manager": manager, "status": status,
+	}}
+}
+
 func reachClient(t *testing.T, srv *httptest.Server, loginCustomerID string) *Client {
 	t.Helper()
 	return NewClient(
@@ -109,8 +119,14 @@ func reachClient(t *testing.T, srv *httptest.Server, loginCustomerID string) *Cl
 // status, so membership alone answered AccountReachable for an account a campaign can never run
 // in. A manager account configured as account_id therefore tested green and failed at the first
 // create — the production failure this endpoint exists to catch, recreated by the endpoint
-// meant to catch it. Presence is now followed by the account's own customer_client row, which
-// is the same pair manager mode reads from the hierarchy walk.
+// meant to catch it. Presence is now followed by the account's own `customer` record, which
+// carries the same pair manager mode reads from the hierarchy walk.
+//
+// The resource matters as much as the pair. customer_client is documented as existing for
+// MANAGER customers, so reading it under the ordinary direct account flat mode serves rests
+// on an unpromised behaviour; an empty result there turns a working connection amber. These
+// cases therefore answer with `customer` rows and assert the query names that resource, so a
+// silent drift back to customer_client fails here rather than in production.
 func TestProbeAccountReach_FlatMode(t *testing.T) {
 	const configured = "1234567890"
 
@@ -119,9 +135,9 @@ func TestProbeAccountReach_FlatMode(t *testing.T) {
 		rows []map[string]any
 		want AccountReach
 	}{
-		{"an enabled non-manager is reachable", []map[string]any{clientRow(configured, false, "ENABLED")}, AccountReachable},
-		{"a manager account is not somewhere a campaign can run", []map[string]any{clientRow(configured, true, "ENABLED")}, AccountIsManager},
-		{"a suspended account is reached but not enabled", []map[string]any{clientRow(configured, false, "SUSPENDED")}, AccountNotEnabled},
+		{"an enabled non-manager is reachable", []map[string]any{customerRow(configured, false, "ENABLED")}, AccountReachable},
+		{"a manager account is not somewhere a campaign can run", []map[string]any{customerRow(configured, true, "ENABLED")}, AccountIsManager},
+		{"a suspended account is reached but not enabled", []map[string]any{customerRow(configured, false, "SUSPENDED")}, AccountNotEnabled},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,10 +158,11 @@ func TestProbeAccountReach_FlatMode(t *testing.T) {
 			if !strings.Contains(obs.path, "/customers/"+configured+"/googleAds:search") {
 				t.Errorf("search ran at %q, want it scoped to the configured customer", obs.path)
 			}
-			// Asking for the one row by id, not reading the table: under a manager account that
-			// table is the whole hierarchy, and being a manager is the case this call detects.
-			if !strings.Contains(obs.query, "customer_client.id = "+configured) {
-				t.Errorf("query = %q, want it narrowed to the configured id", obs.query)
+			// The account's own record, not the manager-only link resource. `FROM customer`
+			// is already scoped to the customer the search runs under, so it needs no WHERE —
+			// and it is defined for a direct account, which customer_client is not.
+			if !strings.Contains(obs.query, "FROM customer") || strings.Contains(obs.query, "customer_client") {
+				t.Errorf("query = %q, want the account's own customer record and not customer_client", obs.query)
 			}
 		})
 	}

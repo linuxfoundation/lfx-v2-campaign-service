@@ -2502,43 +2502,43 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    get-google-ads: Get the project's Google Ads connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-google-ads: Replace the Google Ads connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-google-ads: Soft-delete the project's Google Ads connection.`)
-	fmt.Fprintln(os.Stderr, `    test-google-ads: Verify the stored Google Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-google-ads: Verify the stored Google Ads credential and the configured account against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-google-ads: Replace the stored (encrypted) Google Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    create-linkedin-ads: Create the project's LinkedIn Ads connection (singleton; 409 if one already exists).`)
 	fmt.Fprintln(os.Stderr, `    get-linkedin-ads: Get the project's LinkedIn Ads connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-linkedin-ads: Replace the LinkedIn Ads connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-linkedin-ads: Soft-delete the project's LinkedIn Ads connection.`)
-	fmt.Fprintln(os.Stderr, `    test-linkedin-ads: Verify the stored LinkedIn Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-linkedin-ads: Verify the stored LinkedIn Ads credential and the configured account against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-linkedin-ads: Replace the stored (encrypted) LinkedIn Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    create-meta-ads: Create the project's Meta Ads connection (singleton; 409 if one already exists).`)
 	fmt.Fprintln(os.Stderr, `    get-meta-ads: Get the project's Meta Ads connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-meta-ads: Replace the Meta Ads connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-meta-ads: Soft-delete the project's Meta Ads connection.`)
-	fmt.Fprintln(os.Stderr, `    test-meta-ads: Verify the stored Meta Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-meta-ads: Verify the stored Meta Ads credential and the configured account against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-meta-ads: Replace the stored (encrypted) Meta Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    create-reddit-ads: Create the project's Reddit Ads connection (singleton; 409 if one already exists).`)
 	fmt.Fprintln(os.Stderr, `    get-reddit-ads: Get the project's Reddit Ads connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-reddit-ads: Replace the Reddit Ads connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-reddit-ads: Soft-delete the project's Reddit Ads connection.`)
-	fmt.Fprintln(os.Stderr, `    test-reddit-ads: Verify the stored Reddit Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-reddit-ads: Verify the stored Reddit Ads credential and the configured account against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-reddit-ads: Replace the stored (encrypted) Reddit Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    create-twitter-ads: Create the project's X/Twitter Ads connection (singleton; 409 if one already exists).`)
 	fmt.Fprintln(os.Stderr, `    get-twitter-ads: Get the project's X/Twitter Ads connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-twitter-ads: Replace the X/Twitter Ads connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-twitter-ads: Soft-delete the project's X/Twitter Ads connection.`)
-	fmt.Fprintln(os.Stderr, `    test-twitter-ads: Verify the stored X/Twitter Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-twitter-ads: Verify the stored X/Twitter Ads credential and the configured account against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-twitter-ads: Replace the stored (encrypted) X/Twitter Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    create-microsoft-ads: Create the project's Microsoft Ads connection (singleton; 409 if one already exists).`)
 	fmt.Fprintln(os.Stderr, `    get-microsoft-ads: Get the project's Microsoft Ads connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-microsoft-ads: Replace the Microsoft Ads connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-microsoft-ads: Soft-delete the project's Microsoft Ads connection.`)
-	fmt.Fprintln(os.Stderr, `    test-microsoft-ads: Verify the stored Microsoft Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-microsoft-ads: Verify the stored Microsoft Ads credential and the configured account against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-microsoft-ads: Replace the stored (encrypted) Microsoft Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    create-hubspot: Create the project's HubSpot connection (singleton; 409 if one already exists).`)
 	fmt.Fprintln(os.Stderr, `    get-hubspot: Get the project's HubSpot connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-hubspot: Replace the HubSpot connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-hubspot: Soft-delete the project's HubSpot connection.`)
-	fmt.Fprintln(os.Stderr, `    test-hubspot: Verify the stored HubSpot credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-hubspot: Verify the stored HubSpot credential and the configured account against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-hubspot: Replace the stored (encrypted) HubSpot credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    list-google-ads-accounts: Enumerate the Google Ads ad accounts accessible via the stored connection credential.`)
 	fmt.Fprintln(os.Stderr, `    get-google-ads-keywords: Read Google Ads keyword performance for this project's own campaigns, live from the platform. Scoped to the campaigns this service holds for the project, NOT to the connected ad account: the Google Ads customer is shared across foundations, so an account-wide read would return other projects' keywords. A pure read-through — nothing is persisted, and this service stores no keyword of its own. Rows are the TOP keywords by impressions over the window, capped; `+"`"+`truncated`+"`"+` reports whether the project's campaigns hold more. The returned criterion_id/ad_group_id pairs are the handles the keyword-actions endpoint takes.`)
@@ -2654,7 +2654,7 @@ func lfxV2CampaignServiceConnectionsTestGoogleAdsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored Google Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored Google Ads credential and the configured account against the provider.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
@@ -2782,7 +2782,7 @@ func lfxV2CampaignServiceConnectionsTestLinkedinAdsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored LinkedIn Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored LinkedIn Ads credential and the configured account against the provider.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
@@ -2910,7 +2910,7 @@ func lfxV2CampaignServiceConnectionsTestMetaAdsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored Meta Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored Meta Ads credential and the configured account against the provider.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
@@ -3038,7 +3038,7 @@ func lfxV2CampaignServiceConnectionsTestRedditAdsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored Reddit Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored Reddit Ads credential and the configured account against the provider.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
@@ -3166,7 +3166,7 @@ func lfxV2CampaignServiceConnectionsTestTwitterAdsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored X/Twitter Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored X/Twitter Ads credential and the configured account against the provider.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
@@ -3294,7 +3294,7 @@ func lfxV2CampaignServiceConnectionsTestMicrosoftAdsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored Microsoft Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored Microsoft Ads credential and the configured account against the provider.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
@@ -3422,7 +3422,7 @@ func lfxV2CampaignServiceConnectionsTestHubspotUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored HubSpot credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored HubSpot credential and the configured account against the provider.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)

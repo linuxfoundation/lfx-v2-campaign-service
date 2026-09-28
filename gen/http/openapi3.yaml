@@ -6722,7 +6722,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: test-google-ads lfx-v2-campaign-service-connections
-            description: Verify the stored Google Ads credential against the provider.
+            description: Verify the stored Google Ads credential and the configured account against the provider.
             operationId: lfx-v2-campaign-service-connections#test-google-ads
             parameters:
                 - name: project_id
@@ -7690,7 +7690,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: test-hubspot lfx-v2-campaign-service-connections
-            description: Verify the stored HubSpot credential against the provider.
+            description: Verify the stored HubSpot credential and the configured account against the provider.
             operationId: lfx-v2-campaign-service-connections#test-hubspot
             parameters:
                 - name: project_id
@@ -8641,7 +8641,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: test-linkedin-ads lfx-v2-campaign-service-connections
-            description: Verify the stored LinkedIn Ads credential against the provider.
+            description: Verify the stored LinkedIn Ads credential and the configured account against the provider.
             operationId: lfx-v2-campaign-service-connections#test-linkedin-ads
             parameters:
                 - name: project_id
@@ -9557,7 +9557,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: test-meta-ads lfx-v2-campaign-service-connections
-            description: Verify the stored Meta Ads credential against the provider.
+            description: Verify the stored Meta Ads credential and the configured account against the provider.
             operationId: lfx-v2-campaign-service-connections#test-meta-ads
             parameters:
                 - name: project_id
@@ -10291,7 +10291,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: test-microsoft-ads lfx-v2-campaign-service-connections
-            description: Verify the stored Microsoft Ads credential against the provider.
+            description: Verify the stored Microsoft Ads credential and the configured account against the provider.
             operationId: lfx-v2-campaign-service-connections#test-microsoft-ads
             parameters:
                 - name: project_id
@@ -11100,7 +11100,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: test-reddit-ads lfx-v2-campaign-service-connections
-            description: Verify the stored Reddit Ads credential against the provider.
+            description: Verify the stored Reddit Ads credential and the configured account against the provider.
             operationId: lfx-v2-campaign-service-connections#test-reddit-ads
             parameters:
                 - name: project_id
@@ -11834,7 +11834,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: test-twitter-ads lfx-v2-campaign-service-connections
-            description: Verify the stored X/Twitter Ads credential against the provider.
+            description: Verify the stored X/Twitter Ads credential and the configured account against the provider.
             operationId: lfx-v2-campaign-service-connections#test-twitter-ads
             parameters:
                 - name: project_id

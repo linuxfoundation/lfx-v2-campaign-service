@@ -1106,8 +1106,10 @@ A connection in the intermediate state stays `status=active` and stores `account
 That is not a loose end: `validateGoogleAdsCredentials` REFUSES a non-active connection, so any
 "pending"-style status would make step two unreachable and dead-end the bootstrap it exists to
 serve. `active` says the connection is ENABLED for credential-based operations, NOT that the
-credentials were verified — nothing verifies them, so an active row can hold material the
-platform will reject. Readiness to run a campaign is `account_id` being non-empty, and the paths
+credentials were verified — nothing on the WRITE path verifies them, so an active row can hold
+material the platform will reject. Verification exists, but only on demand: the `test-<platform>`
+endpoints call `ProbeConnection`, which checks the credential and the configured account against
+the provider. Nothing runs them for you, so `active` still carries no claim about either. Readiness to run a campaign is `account_id` being non-empty, and the paths
 that need it say so with `ErrAccountNotSelected`.
 
 The two preconditions below were relaxed for the endpoint's own semantics rather than for the

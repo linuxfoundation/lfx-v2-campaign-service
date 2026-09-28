@@ -1458,7 +1458,9 @@ const (
 //     and cannot hold a campaign, so a connection naming one tested green and failed at the
 //     first create — the production failure this endpoint exists to catch. Presence is
 //     therefore followed by a self-scoped customer_client read for the two properties that
-//     enumeration cannot carry, which is the same pair manager mode reads from the walk.
+//     therefore followed by a self-scoped read of the account's own `customer` record for the
+//     two properties that enumeration cannot carry, which is the same pair manager mode reads
+//     from the walk.
 //
 // Read-only. The returned value never carries platform-supplied text; it is an enum the
 // caller renders in its own vocabulary.
@@ -1504,9 +1506,11 @@ func (c *Client) ProbeAccountReach(ctx context.Context, customerID string) (Acco
 	return AccountUnreachable, nil
 }
 
-// customerStatusEnabled is the one customer_client.status value in which an account can run
-// a campaign. Compared against, never rendered: it is upstream vocabulary, and no message
-// this package produces may carry platform-supplied text.
+// customerStatusEnabled is the one status value in which an account can run a campaign. It
+// spells the same token in both resources this package reads it from — customer_client.status
+// on the hierarchy walk and customer.status on the flat-mode self read — so one const serves
+// both. Compared against, never rendered: it is upstream vocabulary, and no message this
+// package produces may carry platform-supplied text.
 const customerStatusEnabled = "ENABLED"
 
 // The two customer_client queries, differing only in the status predicate.
@@ -1517,13 +1521,24 @@ const customerStatusEnabled = "ENABLED"
 // created in; the connection probe asks whether this credential reaches the configured
 // account AT ALL, and must not read a filtered-out account as an absent one.
 // selfReach reads the manager flag and status of ONE customer from that customer's own
-// customer_client table, and is flat mode's second leg.
+// `customer` record, and is flat mode's second leg.
 //
-// customer_client queried under a customer includes that customer's own row, so this works with
-// no manager in the picture — which is the whole point, since flat mode is the mode with no
-// manager. It asks for the single row by id rather than reading the table, because under a
-// manager account that table is the entire hierarchy and being a manager is exactly the case
-// this call exists to detect.
+// It reads `customer`, not `customer_client`, and the difference is load-bearing rather than
+// stylistic. customer_client is documented as a link resource that exists for MANAGER
+// customers — the rows beneath a manager, the manager's own row among them — so asking for it
+// under an ordinary direct account, which is precisely the account flat mode exists to serve,
+// rests on behaviour the contract does not promise. If that query returns no rows, an account
+// the credential demonstrably reaches answers inconclusive and a working connection tests
+// amber. `customer` carries no such condition: it is the queried customer's own record,
+// defined for managers and non-managers alike, and it carries the same two properties under
+// the same names. Reading the resource whose existence is guaranteed costs nothing and
+// removes the bet.
+//
+// The query is not narrowed by id. `FROM customer` scoped to a customer returns that
+// customer's single row, so there is no table to filter — which is also why being a manager
+// is still detected here: the row carries customer.manager whether or not any hierarchy
+// hangs beneath it. The returned id is matched against the requested one anyway, because a
+// row about some other customer answers a question nobody asked.
 //
 // A failure here is returned rather than folded into a verdict. The caller classifies it through
 // the probe predicates, and an error this package does not recognise is INCONCLUSIVE by default
@@ -1537,24 +1552,32 @@ func (c *Client) selfReach(ctx context.Context, customerID string) (AccountReach
 	if !customerIDRE.MatchString(customerID) {
 		return AccountUnreachable, fmt.Errorf("invalid Google Ads customer id %q: must be digits only (no dashes)", customerID)
 	}
-	clients, err := c.queryCustomerClients(ctx, customerID, selfClientQuery(customerID))
+	rows, err := c.gaqlSearchForCustomer(ctx, customerID, selfCustomerQuery)
 	if err != nil {
-		return AccountUnreachable, err
+		return AccountUnreachable, fmt.Errorf("read customer %s: %w", customerID, err)
 	}
-	for _, client := range clients {
-		if client.ID != customerID {
+	for _, raw := range rows {
+		var row selfCustomerRow
+		if uerr := json.Unmarshal(raw, &row); uerr != nil {
+			return AccountUnreachable, &transportError{
+				Method: http.MethodPost,
+				Path:   "customers/" + customerID + "/googleAds:search",
+				Err:    fmt.Errorf("decode customer row: %w", uerr),
+			}
+		}
+		if row.Customer.ID != customerID {
 			continue
 		}
 		switch {
-		case client.Manager:
+		case row.Customer.Manager:
 			return AccountIsManager, nil
-		case client.Status != customerStatusEnabled:
+		case row.Customer.Status != customerStatusEnabled:
 			return AccountNotEnabled, nil
 		default:
 			return AccountReachable, nil
 		}
 	}
-	// The enumeration named this customer and its own table does not. Nothing here is a
+	// The enumeration named this customer and its own record does not. Nothing here is a
 	// verdict: see the doc comment — this reaches the caller as an inconclusive probe.
 	return AccountUnreachable, errSelfRowMissing
 }
@@ -1562,14 +1585,27 @@ func (c *Client) selfReach(ctx context.Context, customerID string) (AccountReach
 // errSelfRowMissing is deliberately a plain error of this package: it matches neither probe
 // predicate by name, and ProbeInconclusive's default for an error it does not recognise is
 // true, which is the classification this case wants.
-var errSelfRowMissing = errors.New("google-ads: the account did not appear in its own customer_client table")
+var errSelfRowMissing = errors.New("google-ads: the account did not return its own customer record")
 
-// selfClientQuery asks for one customer's own row. The id is interpolated rather than bound
-// because GAQL has no parameter binding; every caller validates it against customerIDRE first,
-// which admits digits alone.
-func selfClientQuery(customerID string) string {
-	return allClientsQuery + ` WHERE customer_client.id = ` + customerID
+// selfCustomerRow is one `FROM customer` row: the queried customer's own record.
+//
+// It is a separate type from customerClientRow rather than a widened one, because the two
+// resources nest under different JSON keys and carry different guarantees. Decoding a
+// customer row through the customer_client struct would silently produce a zero value — id
+// empty, manager false, status "" — which reads as a reached, non-manager, not-enabled
+// account: a confirmed verdict manufactured out of a field name that did not match.
+type selfCustomerRow struct {
+	Customer struct {
+		ID      string `json:"id"`
+		Manager bool   `json:"manager"`
+		Status  string `json:"status"`
+	} `json:"customer"`
 }
+
+// selfCustomerQuery asks a customer for its own record. No WHERE clause and no interpolated
+// id: `FROM customer` is already scoped to the customer the search runs under, which is also
+// why this query needs none of selfReach's id validation to be safe.
+const selfCustomerQuery = `SELECT customer.id, customer.manager, customer.status FROM customer`
 
 const (
 	campaignCapableClientsQuery = `SELECT customer_client.id, customer_client.descriptive_name, ` +

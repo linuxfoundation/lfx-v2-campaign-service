@@ -975,12 +975,26 @@ names alone — so accounts come back labelled in manager mode and unlabelled wi
 `campaignCapableClientsQuery`; `ProbeAccountReach` sends `allClientsQuery`, the same projection
 with no `WHERE`, and does its own `manager`/`status` reading on the rows. The two queries are
 separate constants over one shared decoder (`queryCustomerClients`) rather than one query with a
-flag, so neither caller can silently acquire the other's row set. Flat mode uses a third form of
-the same query — `selfClientQuery`, `allClientsQuery` with `WHERE customer_client.id = <id>` —
-because there it is not a hierarchy walk at all but a read of one account's own row, which is how
-the manager flag and status are obtained where no manager exists to walk. The id is interpolated
-because GAQL has no parameter binding, and every caller validates it against `customerIDRE`
-first, which admits digits alone. Why the probe cannot reuse the filtered walk is in
+flag, so neither caller can silently acquire the other's row set. Flat mode reads a DIFFERENT
+resource entirely — `selfCustomerQuery`, `SELECT customer.id, customer.manager, customer.status
+FROM customer`, scoped to the configured account — because there it is not a hierarchy walk at
+all but a read of one account's own record, which is how the manager flag and status are
+obtained where no manager exists to walk.
+
+It reads `customer` rather than a narrowed `customer_client`, and that is the correction rather
+than a naming choice. `customer_client` is documented as a link resource that exists for MANAGER
+customers; asking for it under the ordinary direct account flat mode exists to serve rests on
+behaviour the contract does not promise, and an empty result there is indistinguishable from an
+account the credential cannot reach — so a perfectly good direct connection answers inconclusive
+and tests amber. `customer` carries no such condition: it is the queried customer's own record,
+defined for managers and non-managers alike, and it carries the same two properties under the
+same names. Being a manager is still detected, because `customer.manager` is on the record
+whether or not a hierarchy hangs beneath it. The query needs no `WHERE` and no interpolated id —
+`FROM customer` is already scoped to the customer the search runs under — and it decodes through
+its own `selfCustomerRow` rather than `customerClientRow`, because the two resources nest under
+different JSON keys and a mismatched decode would yield a zero value that reads as a reached,
+non-manager, not-enabled account: a confirmed verdict manufactured from a field name that did
+not match. Why the probe cannot reuse the filtered walk is in
 `internal-dispatch.md` — *Why Google Ads is the one probe that does not check
 membership* — and the short form is that absence from a filtered list is not absence.
 Expansion rows are deduplicated by resource name, since `customer_client` reports a client once

@@ -477,7 +477,13 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 	})
 
 	Method("test-"+key, func() {
-		Description("Verify the stored " + title + " credential against the provider.")
+		// The description says "and the configured account" because that is what the
+		// endpoint now does: a green result means the credential authenticated AND the
+		// account this connection names passed that provider's own check. How deep that
+		// second check goes is provider-specific — see TestResult.ok — but "credential"
+		// alone understates every one of them, and an operator reading the API reference
+		// would take a green result as saying less than it says.
+		Description("Verify the stored " + title + " credential and the configured account against the provider.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
