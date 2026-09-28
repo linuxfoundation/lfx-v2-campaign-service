@@ -448,17 +448,22 @@ PAUSES all three, so toggling only the campaign would not serve.
 
 ## Account-monitor read
 
-`monitor.go`'s `ListAccountCampaigns` plus its account-level totals call back the
+`monitor.go`'s `ListAccountCampaigns` backs the
 account-scoped `GET .../connection-reddit-ads/account-monitor` endpoint, ported from
 the LFX One BFF's `reddit-ads.service.ts`. A Reddit connection is bound to exactly
 one ad account, so the dispatcher additionally scopes the requested `account_id` to
 that resolved connection's own account. See
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md) for the
 credential-scoping (`resolveOwned`, no system-account fallback) and the ported rule
-engine (`internal/service/rules/monitor_reddit.go`), which carries over the BFF's
-hardcoded `conversions: 0` and its underspend threshold/label mismatch (fires at
-`<40`, labeled `<50`) verbatim, plus the totals-from-a-separate-call quirk (Reddit's
-`AccountMonitorTotals` come from its own upstream rollup, not a sum of returned rows).
+engine (`internal/service/rules/monitor_reddit.go`). The three quirks it carried over
+from the BFF were fixed rather than preserved: the hardcoded `conversions: 0` is now
+absent — not a measured zero — on the row and in the account totals alike
+(`linuxfoundation/lfx-self-serve#3020`); the underspend rule that fired at `<40` while
+labelling itself `<50` is keyed off one shared ladder (`#3021`, `#3019`); and the
+separate account-level totals call is gone (`#3022`) — `AccountMonitorTotals` sum the
+returned rows on every platform, so the aggregate and the campaigns array beside it
+can never describe different populations. `FetchAccountTotals`, the `AccountTotals`
+type and the `AccountTotalsReader` plumbing were removed with it.
 
 See [internal/platform/reddit](../../../internal/platform/reddit).
 

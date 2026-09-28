@@ -1331,9 +1331,13 @@ platform's response carries), not one project's own campaigns. See
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md) for the
 credential-scoping (`resolveOwned`, no system-account fallback), the GAQL query-scope
 fix (missing `advertising_channel_type`/`status`/`impressions>0` filters found during
-differential verification), and the ported rule engine
-(`internal/service/rules/monitor_google.go`, including its preserved local
-50/90/100 pacing literals rather than the shared `Thresholds`).
+differential verification), and the rule engine
+(`internal/service/rules/monitor_google.go`). Its local 50/90/100 pacing literals
+were replaced by the shared `pacingLabelFor` in `monitor_shared.go`
+(`linuxfoundation/lfx-self-serve#3019`), and its `zz`-prefix scratch-campaign filter
+no longer drops a campaign whose name merely begins with those two letters. The
+low-CTR pair is now the named `googleLowCtrPct`/`googleMinImpressions` rather than
+inline literals — same values, same behaviour.
 
 See [internal/platform/googleads](../../../internal/platform/googleads).
 
