@@ -628,9 +628,12 @@ func (d *RedditDispatcher) resolveMonitorClient(ctx context.Context, projectID s
 // already exists as CreateCampaign's Step 1. That makes it the strongest form of the check
 // available — it proves reachability of the account this connection will actually dispatch to,
 // rather than that the account appears in a list — and it is why this arm needed no account
-// enumeration endpoint to be built first. The verdict for a 404 is decided inside
-// reddit.ProbeCredentialRejected, which explains why a 404 is Reddit answering the question
-// asked here and a defect anywhere else.
+// enumeration endpoint to be built first. The verdict for a 404 is decided by
+// reddit.ProbeAccountUnreachable, asked below BEFORE probeClass: it explains why a 404 is
+// Reddit answering the question asked here and a defect anywhere else, and it answers with the
+// account id rather than the credential. reddit.ProbeCredentialRejected documents the other
+// half of the same split — why a 404 is deliberately not a rejection — but decides nothing
+// here.
 //
 // An account-less connection is converted to the probe path's own confirmed verdict rather
 // than passed through as ErrAccountNotSelected. The two sentinels disagree about what the
