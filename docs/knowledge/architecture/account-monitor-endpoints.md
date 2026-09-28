@@ -42,27 +42,45 @@ reaches), not project-scoped ones.
   same way discovery does; Reddit additionally scopes the requested
   `account_id` to its own resolved connection's single account, since a
   Reddit connection is bound to exactly one ad account.
-- The four rule engines (`internal/service/rules/monitor_*.go`) are ported as
-  four separate files, deliberately **not** unified onto the shared
-  `internal/service/rules` package (`pacing.go`/`actions.go`) — unifying
-  would change output and break the empty-diff proof against the legacy BFF
-  path. Follow-up ticket #7 tracks that unification.
+- The four rule engines (`internal/service/rules/monitor_*.go`) were ported as
+  four separate files so the empty-diff proof against the legacy BFF path
+  stayed meaningful. That diff is no longer the plan of record, so what the
+  four genuinely share now lives in `monitor_shared.go` — one pacing ladder
+  (`pacingLabelFor`), one priority rank (`priorityRank`/`sortByPriority`),
+  one unknown-pacing row. Each `EvaluateXMonitor` keeps its own guard for
+  whether a campaign has a pacing figure worth placing at all, because the
+  platforms report budget differently. They are still **not** routed onto
+  `pacing.go`/`actions.go`, which run a different ladder (50/100/130) for
+  the single-campaign brief path; merging the two read paths would move
+  operator-facing alerting bands and remains its own decision.
 - `internal/service/connection_monitor.go`'s `monitorAccount` is the shared
   handler body: validate → resolve backend → `ReadAccountCampaignMetrics` →
   per-platform `evaluate` closure → `ReadAccountTotals` (Reddit's only —
   its totals come from a separate account-level call, not a row sum) →
   `monitorTotalsFallback` for everyone else.
 
-## Known-verbatim-ported quirks
+## Ported BFF quirks, and where each one now stands
 
-Five threshold/labeling bugs from the BFF are carried over on purpose, so the
-OLD-vs-NEW differential diff stays a meaningful faithfulness check rather
-than a mix of "moved" and "fixed": LinkedIn's `MED`-vs-`MEDIUM` sort-map key
-mismatch, Google/Reddit's local pacing literals (not the shared
-`Thresholds`), Reddit's hardcoded `conversions: 0` in its rule input, Reddit's
-underspend threshold/label mismatch (fires at `<40`, labeled `<50`), and
-Reddit's totals coming from an independent upstream call rather than a row
-sum. Each has (or will have) its own follow-up issue.
+Five threshold/labeling bugs from the BFF were carried over on purpose, so the
+OLD-vs-NEW differential diff stayed a meaningful faithfulness check rather
+than a mix of "moved" and "fixed". **That diff is no longer the plan of
+record**, which removes the reason to preserve them, so each is being fixed
+against its own filed issue rather than frozen — and the "do not fix this"
+comments come out with each fix.
+
+| Ported quirk | Issue | Status |
+| --- | --- | --- |
+| LinkedIn's `MED`-vs-`MEDIUM` sort-map key mismatch sorted MED action items *behind* LOW ones | `linuxfoundation/lfx-self-serve#3018` | **Fixed** — one shared `priorityRank` |
+| Google/Reddit's local pacing literals rather than a shared constant | `linuxfoundation/lfx-self-serve#3019` | **Fixed** — one shared `pacingLabelFor` |
+| Reddit's hardcoded `conversions: 0` in its rule input | `linuxfoundation/lfx-self-serve#3020` | Open |
+| Reddit's underspend threshold/label mismatch (fires at `<40`, labeled `<50`) | `linuxfoundation/lfx-self-serve#3021` | Open |
+| Reddit's account totals from an independent upstream call rather than a row sum | `linuxfoundation/lfx-self-serve#3022` | Open |
+
+Two further defects were found in this code rather than carried across it, so
+neither has a BFF-side ticket: a campaign with no budget at all reported as
+`underspending` on Google, Meta and LinkedIn (**fixed** — see the log entry
+of 2026-09-28), and the Google `zz`-prefix name filter, which drops any
+campaign whose name merely begins with those two letters (open).
 
 Meta has two deliberate departures rather than the usual verbatim port. Its
 pagination is the first — the legacy BFF silently truncates past 100

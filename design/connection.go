@@ -1145,7 +1145,7 @@ var AccountMonitorCampaign = Type("account-monitor-campaign", func() {
 		"is_search_channel", "fetch_failed", "pacing_pct", "pacing_label")
 })
 
-// AccountMonitorActionItem is one rule-engine finding, ported verbatim per platform in
+// AccountMonitorActionItem is one rule-engine finding, produced per platform in
 // internal/service/rules/monitor_*.go — see model.AccountMonitorActionItem.
 var AccountMonitorActionItem = Type("account-monitor-action-item", func() {
 	Attribute("campaign_id", String, "The platform campaign id this item is about. Empty for an account-wide item.", func() { Example("24183781329") })

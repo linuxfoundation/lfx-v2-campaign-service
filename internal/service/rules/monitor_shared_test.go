@@ -139,3 +139,51 @@ func TestBudgetlessGoogleCampaignStillRaisesThePlaceholderBudget(t *testing.T) {
 		t.Errorf("no HIGH placeholder-budget item for a budget-less enabled campaign; items = %+v", items)
 	}
 }
+
+// TestPriorityRank_MedSortsAheadOfLow is the regression test for
+// linuxfoundation/lfx-self-serve#3018. LinkedIn's rank function spelled its middle case "MEDIUM"
+// while model.MonitorPriorityMed is "MED", so no MED item ever matched: every one fell through
+// to the unranked bucket and sorted BEHIND the LOW items — the reverse of the intended order,
+// on the list an operator reads top-down to decide what to fix first.
+//
+// The four platforms now share one rank function, so this asserts it once. The ordering matters
+// more than the numbers, so it is asserted through the sort rather than against the ranks.
+func TestPriorityRank_MedSortsAheadOfLow(t *testing.T) {
+	items := []model.AccountMonitorActionItem{
+		{CampaignID: "med-1", Priority: model.MonitorPriorityMed},
+		{CampaignID: "high", Priority: model.MonitorPriorityHigh},
+		{CampaignID: "low", Priority: model.MonitorPriorityLow},
+		{CampaignID: "med-2", Priority: model.MonitorPriorityMed},
+		{CampaignID: "odd", Priority: model.MonitorPriority("SOMETHING-ELSE")},
+	}
+	sortByPriority(items)
+
+	want := []string{"high", "med-1", "med-2", "low", "odd"}
+	got := itemIDs(items)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sorted order = %v, want %v — HIGH, then MED in original relative order, "+
+				"then LOW, then anything unrecognised", got, want)
+		}
+	}
+}
+
+// TestPriorityRank_Values pins the individual ranks, since the ordering test above could in
+// principle pass while two ranks collided.
+func TestPriorityRank_Values(t *testing.T) {
+	tests := []struct {
+		priority model.MonitorPriority
+		want     int
+	}{
+		{model.MonitorPriorityHigh, 0},
+		{model.MonitorPriorityMed, 1},
+		{model.MonitorPriorityLow, 2},
+		{model.MonitorPriority("UNKNOWN"), 3},
+		{model.MonitorPriority("MEDIUM"), 3}, // the misspelling that caused #3018 is not special
+	}
+	for _, tc := range tests {
+		if got := priorityRank(tc.priority); got != tc.want {
+			t.Errorf("priorityRank(%q) = %d, want %d", tc.priority, got, tc.want)
+		}
+	}
+}

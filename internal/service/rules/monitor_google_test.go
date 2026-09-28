@@ -239,24 +239,6 @@ func TestEvaluateGoogleMonitor_SkipsFetchFailedRows(t *testing.T) {
 	}
 }
 
-// TestGooglePriorityRank_IsNotBuggy pins that Google's rank function (unlike LinkedIn's, see
-// monitor_linkedin_test.go) correctly maps every priority, including MED, to its documented
-// slot: HIGH:0, MED:1, LOW:2, unknown:3.
-func TestGooglePriorityRank_IsNotBuggy(t *testing.T) {
-	items := []model.AccountMonitorActionItem{
-		{CampaignID: "a", Priority: model.MonitorPriorityLow},
-		{CampaignID: "b", Priority: model.MonitorPriorityMed},
-		{CampaignID: "c", Priority: model.MonitorPriorityHigh},
-	}
-	sortByPriority(items, googlePriorityRank)
-	want := []string{"c", "b", "a"}
-	for i, id := range want {
-		if items[i].CampaignID != id {
-			t.Fatalf("sorted order = %v, want HIGH, MED, LOW", itemIDs(items))
-		}
-	}
-}
-
 func itemIDs(items []model.AccountMonitorActionItem) []string {
 	ids := make([]string, len(items))
 	for i, it := range items {

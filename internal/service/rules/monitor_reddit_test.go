@@ -130,24 +130,6 @@ func TestRedditActionItems(t *testing.T) {
 	})
 }
 
-// TestRedditPriorityRank_IsNotBuggy pins that Reddit's rank function, unlike LinkedIn's,
-// correctly maps every priority, including MED, to its documented slot.
-func TestRedditPriorityRank_IsNotBuggy(t *testing.T) {
-	items := []model.AccountMonitorActionItem{
-		{CampaignID: "a", Priority: model.MonitorPriorityLow},
-		{CampaignID: "b", Priority: model.MonitorPriorityMed},
-		{CampaignID: "c", Priority: model.MonitorPriorityHigh},
-	}
-	sortByPriority(items, redditPriorityRank)
-	want := []string{"c", "b", "a"}
-	got := itemIDs(items)
-	for i, id := range want {
-		if got[i] != id {
-			t.Fatalf("sorted order = %v, want HIGH, MED, LOW", got)
-		}
-	}
-}
-
 // TestEvaluateRedditMonitor_SkipsFetchFailedRows mirrors
 // TestEvaluateGoogleMonitor_SkipsFetchFailedRows: a FetchFailed row's zero-value metrics must
 // not be run through pacing/action-item evaluation, but the row itself must still be returned.

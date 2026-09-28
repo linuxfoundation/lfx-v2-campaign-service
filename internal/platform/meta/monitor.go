@@ -50,13 +50,13 @@ type AccountCampaignRow struct {
 // (level=campaign, fully paginated — see fetchAccountCampaignInsights) merged with a
 // campaign-list read for status/budget/schedule fields insights does not carry. Unlike the
 // BFF, which logs a warning and silently drops rows past its first page, both reads here
-// walk every page (LFXV2-2519 Part 3): pagination is a pre-cutover fix, not one of the five
-// ported-verbatim bugs.
+// walk every page (LFXV2-2519 Part 3): pagination is a pre-cutover fix, not one of the
+// threshold/labeling quirks ported over from the BFF.
 //
 // days selects an explicit `time_range` for the insights read rather than the BFF's hardcoded
 // date_preset=last_30d — getMetaAnalytics ignored its own caller-supplied window entirely,
 // which is a data-correctness bug (a days=7 request silently answered with 30 days of spend),
-// not one of the five threshold/labeling quirks ported verbatim. See fetchAccountCampaignInsights.
+// not one of those ported threshold/labeling quirks. See fetchAccountCampaignInsights.
 //
 // accountID must already be in Meta's "act_<digits>" form (the same form AccountConfig.
 // AccountID and normalizeMetaAccountID produce). On the account-monitor path this is a

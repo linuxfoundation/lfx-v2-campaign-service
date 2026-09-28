@@ -11,60 +11,6 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// TestLinkedinPriorityRank_MedMediumBug proves the KNOWN BUG documented on
-// linkedinPriorityRank: the BFF's sort map is {HIGH:0, MEDIUM:1, LOW:2}, but every MED item
-// this file emits carries the literal string "MED" (model.MonitorPriorityMed), which never
-// matches the "MEDIUM" case — so it falls through to the `default: 3` bucket, the same bucket
-// an entirely unrecognized priority string would land in.
-//
-// Net, verifiable effect (per the doc comment): HIGH items sort first, then LOW items, then
-// every MED item, in original relative order (the sort is stable). This test feeds items in
-// the order [MED, HIGH, LOW, MED] and asserts the sorted order is [HIGH, LOW, MED, MED] — both
-// MEDs pushed to the tail, in their original relative order.
-//
-// follow-up: do not "fix" this expectation to HIGH, MED, MED, LOW — that is the CORRECT
-// behavior this port deliberately does not have yet. Fixing linkedinPriorityRank's "MEDIUM"
-// case to model.MonitorPriorityMed is tracked as a follow-up ticket, and doing so here would
-// silently defeat the differential verification this migration depends on.
-func TestLinkedinPriorityRank_MedMediumBug(t *testing.T) {
-	items := []model.AccountMonitorActionItem{
-		{CampaignID: "med-1", Priority: model.MonitorPriorityMed},
-		{CampaignID: "high", Priority: model.MonitorPriorityHigh},
-		{CampaignID: "low", Priority: model.MonitorPriorityLow},
-		{CampaignID: "med-2", Priority: model.MonitorPriorityMed},
-	}
-	sortByPriority(items, linkedinPriorityRank)
-
-	want := []string{"high", "low", "med-1", "med-2"}
-	got := itemIDs(items)
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("sorted order = %v, want %v — MED items must be pushed to the tail behind LOW, "+
-				"in original relative order, per the ported MED/MEDIUM sort-key bug", got, want)
-		}
-	}
-}
-
-// TestLinkedinPriorityRank_RanksInIsolation pins the four individual rank values the bug
-// produces, since the ordering test above could in principle pass by accident if two ranks
-// happened to collide differently.
-func TestLinkedinPriorityRank_RanksInIsolation(t *testing.T) {
-	tests := []struct {
-		priority model.MonitorPriority
-		want     int
-	}{
-		{model.MonitorPriorityHigh, 0},
-		{model.MonitorPriorityMed, 3}, // KNOWN BUG: falls through to the default/unranked bucket.
-		{model.MonitorPriorityLow, 2},
-		{model.MonitorPriority("UNKNOWN"), 3},
-	}
-	for _, tc := range tests {
-		if got := linkedinPriorityRank(tc.priority); got != tc.want {
-			t.Errorf("linkedinPriorityRank(%q) = %d, want %d", tc.priority, got, tc.want)
-		}
-	}
-}
-
 // TestLinkedinPacingPct_IsUnrounded pins the property called out at length in
 // model.AccountMonitorRow.PacingPct's doc comment: LinkedIn, uniquely among the four
 // platforms, does NOT round its pacing percentage. A spend/expected ratio chosen to produce a

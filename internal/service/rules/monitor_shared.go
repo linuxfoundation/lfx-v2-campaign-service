@@ -4,6 +4,8 @@
 package rules
 
 import (
+	"sort"
+
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
@@ -117,4 +119,39 @@ func unknownPacingRow(m model.AccountCampaignMetrics) model.AccountMonitorRow {
 // row's own fields. A fetch failure is a reason pacing is unknown, not a separate state.
 func fetchFailedRow(m model.AccountCampaignMetrics) model.AccountMonitorRow {
 	return unknownPacingRow(m)
+}
+
+// priorityRank orders action items for display: HIGH first, then MED, then LOW, then anything
+// unrecognised. It matches the BFF's generateActionItems sort key (`{ HIGH: 0, MED: 1, LOW: 2 }`
+// with a `?? 3` fallback).
+//
+// This used to be four per-platform copies, of which LinkedIn's was wrong: it spelled the middle
+// case "MEDIUM" while model.MonitorPriorityMed is "MED", so no MED item ever matched and every
+// one fell through to the unranked bucket — sorting MED items BEHIND LOW ones, which is the
+// reverse of the intended order and the exact opposite of what an operator triaging a list
+// needs. linuxfoundation/lfx-self-serve#3018.
+//
+// Keeping one function is most of the fix. Four copies of a four-line switch is how one of them
+// got to be wrong for as long as it was: nothing about linkedinPriorityRank looked broken on its
+// own, and telling it apart from its three correct siblings meant reading all four side by side.
+func priorityRank(p model.MonitorPriority) int {
+	switch p {
+	case model.MonitorPriorityHigh:
+		return 0
+	case model.MonitorPriorityMed:
+		return 1
+	case model.MonitorPriorityLow:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// sortByPriority is the stable sort all four monitors apply to their action items.
+// sort.SliceStable matches Array.prototype.sort's stability the BFF relies on, in O(n log n)
+// rather than the O(n²) insertion sort this used to run (round-31+ review).
+func sortByPriority(items []model.AccountMonitorActionItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		return priorityRank(items[i].Priority) < priorityRank(items[j].Priority)
+	})
 }

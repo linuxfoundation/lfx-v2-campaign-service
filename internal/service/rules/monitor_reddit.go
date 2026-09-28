@@ -74,7 +74,7 @@ func EvaluateRedditMonitor(rows []model.AccountCampaignMetrics, days int, now ti
 		items = append(items, redditActionItems(m, pacingPct)...)
 	}
 
-	sortByPriority(items, redditPriorityRank)
+	sortByPriority(items)
 	return out, items
 }
 
@@ -135,17 +135,4 @@ func redditActionItems(m model.AccountCampaignMetrics, pacingPct float64) []mode
 			"Verify Reddit pixel is firing correctly, check landing page relevance, and review conversion event setup")
 	}
 	return items
-}
-
-func redditPriorityRank(p model.MonitorPriority) int {
-	switch p {
-	case model.MonitorPriorityHigh:
-		return 0
-	case model.MonitorPriorityMed:
-		return 1
-	case model.MonitorPriorityLow:
-		return 2
-	default:
-		return 3
-	}
 }

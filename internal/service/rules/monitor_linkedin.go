@@ -65,7 +65,7 @@ func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now 
 		items = append(items, linkedinActionItems(m, pacingPct, label)...)
 	}
 
-	sortByPriority(items, linkedinPriorityRank)
+	sortByPriority(items)
 	return out, items
 }
 
@@ -165,26 +165,4 @@ func linkedinActionItems(m model.AccountCampaignMetrics, pacingPct float64, labe
 			"Confirm intentional pause or activate")
 	}
 	return items
-}
-
-// linkedinPriorityRank is the KNOWN BUG, ported verbatim — see follow-up ticket: the BFF's
-// sort map is `{ HIGH: 0, MEDIUM: 1, LOW: 2 }`, but every MED-priority item pushed above (and
-// upstream) carries the literal priority string "MED", not "MEDIUM" — so the map lookup always
-// misses for MED and falls through to `?? 3`, the same "unranked" bucket a completely unknown
-// priority string would land in. HIGH still sorts first and LOW still sorts before that
-// fallback bucket, so the net, verifiable effect is: HIGH items first, then LOW items, then
-// EVERY MED item, in original order (Go's sort.SliceStable / this file's sortByPriority is
-// stable, matching Array.prototype.sort). Do not "fix" this to MED:1 — that changes the ported
-// output and defeats the differential verification this migration depends on.
-func linkedinPriorityRank(p model.MonitorPriority) int {
-	switch p {
-	case model.MonitorPriorityHigh:
-		return 0
-	case "MEDIUM": // never matches model.MonitorPriorityMed ("MED") — that is the bug.
-		return 1
-	case model.MonitorPriorityLow:
-		return 2
-	default:
-		return 3
-	}
 }

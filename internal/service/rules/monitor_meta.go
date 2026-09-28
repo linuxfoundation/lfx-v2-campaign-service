@@ -60,7 +60,7 @@ func EvaluateMetaMonitor(rows []model.AccountCampaignMetrics, days int, now time
 		items = append(items, metaActionItems(m, pacingPct, label, days)...)
 	}
 
-	sortByPriority(items, metaPriorityRank)
+	sortByPriority(items)
 	return out, items
 }
 
@@ -140,19 +140,6 @@ func metaActionItems(m model.AccountCampaignMetrics, pacingPct float64, label mo
 			"Increase daily budget or narrow targeting to focus spend on highest-value audiences")
 	}
 	return items
-}
-
-func metaPriorityRank(p model.MonitorPriority) int {
-	switch p {
-	case model.MonitorPriorityHigh:
-		return 0
-	case model.MonitorPriorityMed:
-		return 1
-	case model.MonitorPriorityLow:
-		return 2
-	default:
-		return 3
-	}
 }
 
 // parseMonitorDate parses a YYYY-MM-DD date, returning the zero time.Time for an empty or

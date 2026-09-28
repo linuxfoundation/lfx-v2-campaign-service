@@ -6,7 +6,6 @@ package rules
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -102,7 +101,7 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 		items = append(items, googleActionItems(m, pacingPct, label, days)...)
 	}
 
-	sortByPriority(items, googlePriorityRank)
+	sortByPriority(items)
 	return out, items
 }
 
@@ -188,29 +187,4 @@ func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 			"Upload creative assets, review ad groups, publish the campaign (then pause if not ready to go live)")
 	}
 	return items
-}
-
-// googlePriorityRank matches campaign-metrics.service.ts's generateActionItems sort key
-// exactly: HIGH:0, MED:1, LOW:2, anything else last.
-func googlePriorityRank(p model.MonitorPriority) int {
-	switch p {
-	case model.MonitorPriorityHigh:
-		return 0
-	case model.MonitorPriorityMed:
-		return 1
-	case model.MonitorPriorityLow:
-		return 2
-	default:
-		return 3
-	}
-}
-
-// sortByPriority is a small stable sort shared by all four monitor_*.go files (each with its
-// own rank function, since — see monitor_linkedin.go — the rank functions are NOT
-// interchangeable). sort.SliceStable matches Array.prototype.sort's stability the BFF relies
-// on, in O(n log n) rather than the O(n²) insertion sort this used to run (round-31+ review).
-func sortByPriority(items []model.AccountMonitorActionItem, rank func(model.MonitorPriority) int) {
-	sort.SliceStable(items, func(i, j int) bool {
-		return rank(items[i].Priority) < rank(items[j].Priority)
-	})
 }
