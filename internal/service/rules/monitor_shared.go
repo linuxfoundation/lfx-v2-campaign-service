@@ -83,12 +83,12 @@ func unknownPacingRow(m model.AccountCampaignMetrics) model.AccountMonitorRow {
 // row's own fields. A fetch failure is a reason pacing is unknown, not a separate state.
 //
 // The Google branch is reachable: internal/platform/googleads.ListAccountCampaigns sets
-// FetchFailed on a row whose GAQL metrics fields (impressions/clicks/costMicros) fail to parse
-// (round-19 review), or whose campaign_budget.amount_micros is present but unparseable alongside
-// otherwise-good metrics (round-24/25 review) — see AccountCampaignRow.FetchFailed's doc comment
-// in internal/platform/googleads/monitor.go and TestListAccountCampaigns_MalformedMetrics_
+// FetchFailed on a row whose GAQL metrics fields (impressions/clicks/costMicros) fail to parse,
+// and on one whose campaign_budget.amount_micros is present but unparseable alongside
+// otherwise-good metrics — see AccountCampaignRow.FetchFailed's doc comment in
+// internal/platform/googleads/monitor.go, and TestListAccountCampaigns_MalformedMetrics_
 // MarksFetchFailed / TestListAccountCampaigns_MalformedBudget_MarksFetchFailed in
-// internal/platform/googleads/monitor_test.go.
+// internal/platform/googleads/monitor_test.go, which pin both causes.
 //
 // A metrics-fetch-failed row's numeric fields are left at their platform-reported zero value
 // (see AccountCampaignMetrics.FetchFailed's doc comment) — running the pacing/action-item calc
@@ -142,7 +142,7 @@ func priorityRank(p model.MonitorPriority) int {
 
 // sortByPriority is the stable sort all four monitors apply to their action items.
 // sort.SliceStable matches Array.prototype.sort's stability the BFF relies on, in O(n log n)
-// rather than the O(n²) insertion sort this used to run (round-31+ review).
+// rather than the O(n²) insertion sort this used to run.
 func sortByPriority(items []model.AccountMonitorActionItem) {
 	sort.SliceStable(items, func(i, j int) bool {
 		return priorityRank(items[i].Priority) < priorityRank(items[j].Priority)
