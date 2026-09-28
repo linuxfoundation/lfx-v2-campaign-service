@@ -43,6 +43,58 @@ import (
 // in monitor_google.go) misrepresented that: this package's monitor_*.go files are otherwise
 // strictly per-platform, mirroring the pacing.go/actions.go/window.go split between shared and
 // per-platform logic.
+// The account-monitor pacing ladder, shared by all four EvaluateXMonitor loops.
+//
+// These four used to be four private copies — googlePacing*, linkedinPacing*, metaPacing* and
+// redditPacing* — carrying identical numbers under names that disagreed about what the numbers
+// MEANT: Google called its 100 "overspending" and its 90 "constrainedFrom", while the other
+// three called 100 "constrained" and 90 "normal". Same ladder, four vocabularies, so the copies
+// read as four different rules and any future edit to one looked local.
+//
+// On the BFF side the split is real and is what linuxfoundation/lfx-self-serve#3019 records:
+// meta-ads.service.ts and linkedin-ads.service.ts read the shared CAMPAIGN_PACING_THRESHOLDS,
+// while campaign-metrics.service.ts (Google) and reddit-ads.service.ts hardcode the same numbers
+// locally, so an edit to the shared constant moves two platforms and silently leaves two behind.
+// The port copied that shape faithfully, private const block and all. One ladder here is the fix:
+// the four now cannot diverge, in either direction, by accident.
+//
+// Named for the boundary each one IS, not for the band it happens to gate:
+const (
+	// monitorPacingUnderspendingBelow is the floor: under half the prorated plan, a campaign is
+	// not delivering the budget it was given.
+	monitorPacingUnderspendingBelow = 50
+	// monitorPacingHealthyTo is the top of the healthy band, INCLUSIVE. A campaign exactly on
+	// plan (100) is not yet constrained; only one running ahead of it is.
+	monitorPacingHealthyTo = 90
+	// monitorPacingOverspendingAbove is where outrunning the plan stops being "constrained" and
+	// becomes overspend. Above plan, not a multiple of it.
+	monitorPacingOverspendingAbove = 100
+)
+
+// pacingLabelFor places a prorated spend percentage on the ladder above.
+//
+// It answers for the NUMBER only. Whether a campaign has a pacing figure worth placing at all is
+// each platform's own question — the guards differ because the platforms report budget
+// differently, not because the bands do — so a caller with no trustworthy budget must not reach
+// here at all. See each EvaluateXMonitor for the guard it applies first.
+//
+// This is deliberately NOT ComputePacing/Thresholds from pacing.go. That path is the
+// single-campaign brief view and runs a different ladder (50/100/130, Constrained as inclusive
+// top); routing the account-monitor path through it would move every platform's alerting bands
+// as a side effect of a refactor. Unifying the two is its own decision, tracked separately.
+func pacingLabelFor(pct float64) model.MonitorPacingLabel {
+	switch {
+	case pct < monitorPacingUnderspendingBelow:
+		return model.MonitorPacingUnderspending
+	case pct > monitorPacingOverspendingAbove:
+		return model.MonitorPacingOverspending
+	case pct > monitorPacingHealthyTo:
+		return model.MonitorPacingConstrained
+	default:
+		return model.MonitorPacingNormal
+	}
+}
+
 func fetchFailedRow(m model.AccountCampaignMetrics) model.AccountMonitorRow {
 	m.PacingUnknown = true
 	return model.AccountMonitorRow{Metrics: m, PacingLabel: model.MonitorPacingNormal}

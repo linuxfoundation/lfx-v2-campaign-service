@@ -17,18 +17,14 @@ import (
 // Ported from lfx-self-serve's linkedin-ads.service.ts (the pacing calc + label logic inside
 // getLinkedInAnalytics, and its action-item loop).
 //
-// LinkedIn's pacing thresholds ARE the shared CAMPAIGN_PACING_THRESHOLDS (50/90/100/130), per
-// that file's own comment explaining it was deliberately moved off local literals so the label
-// agrees with a shared pacing-bar component. As with Meta (see monitor_meta.go), the label
-// logic's own overspend band starts at >constrained (100), never comparing against the 130
-// `overspending` member — ported as-is.
+// The pacing label comes from pacingLabelFor (monitor_shared.go). On the BFF side LinkedIn
+// reads the shared CAMPAIGN_PACING_THRESHOLDS — moved off local literals there so the label
+// agrees with a shared pacing-bar component — and, like Meta, never compares against that
+// constant's fourth member (`overspending: 130`); see monitor_meta.go.
 //
 // LinkedIn's pacingPct is also NOT rounded, unlike every other platform here — see
 // model.AccountMonitorRow.PacingPct's doc comment.
 const (
-	linkedinPacingUnderspending = 50
-	linkedinPacingNormal        = 90
-	linkedinPacingConstrained   = 100
 	linkedinLowCtrPct           = 0.3
 	linkedinClicksNoConversions = 50
 )
@@ -55,14 +51,7 @@ func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now 
 		hasBudget := m.TotalBudget > 0 || m.BudgetDay > 0
 		label := model.MonitorPacingNormal
 		if hasBudget {
-			switch {
-			case pacingPct < linkedinPacingUnderspending:
-				label = model.MonitorPacingUnderspending
-			case pacingPct > linkedinPacingConstrained:
-				label = model.MonitorPacingOverspending
-			case pacingPct > linkedinPacingNormal:
-				label = model.MonitorPacingConstrained
-			}
+			label = pacingLabelFor(pacingPct)
 		}
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)
@@ -145,12 +134,12 @@ func linkedinActionItems(m model.AccountCampaignMetrics, pacingPct float64, labe
 	// than only on the BFF's else-branch.
 	if label == model.MonitorPacingUnderspending {
 		add(model.MonitorPriorityHigh,
-			fmt.Sprintf("Underspending — pacing below %d%%", linkedinPacingUnderspending),
+			fmt.Sprintf("Underspending — pacing below %d%%", monitorPacingUnderspendingBelow),
 			"Check targeting breadth, bid strategy, or budget floor")
 	}
 	if label == model.MonitorPacingConstrained || label == model.MonitorPacingOverspending {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Budget constrained — pacing above %d%%", linkedinPacingNormal),
+			fmt.Sprintf("Budget constrained — pacing above %d%%", monitorPacingHealthyTo),
 			"Consider increasing budget if event is in peak registration period")
 	}
 	if m.Ctr > 0 && m.Ctr < linkedinLowCtrPct {

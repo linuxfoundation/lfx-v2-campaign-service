@@ -16,12 +16,21 @@ resource: "internal/service"
 **This package (`pacing.go`/`actions.go`) is not the only rule engine in this
 directory.** The four `monitor_*.go` files (`monitor_google.go`,
 `monitor_linkedin.go`, `monitor_meta.go`, `monitor_reddit.go`) back the
-account-scoped `/account-monitor` endpoints and are deliberately **separate,
-unshared, per-platform ports** of the LFX One BFF's own four historically
-divergent rule engines — including the divergent thresholds and known bugs this
-package exists to replace — kept unmerged so an OLD-vs-NEW differential diff
-against the BFF stays a meaningful faithfulness check. Unifying them onto this
-package is follow-up ticket #7, tracked in
+account-scoped `/account-monitor` endpoints, ported from the LFX One BFF's own
+four historically divergent rule engines.
+
+They were originally kept unmerged, bug for bug, so an OLD-vs-NEW differential
+diff against the still-live BFF stayed a meaningful faithfulness check. That
+diff is no longer the plan of record, so the duplication no longer buys
+anything: the four now share **one** pacing ladder, `pacingLabelFor` in
+`monitor_shared.go`, and the deliberately-ported defects are being fixed under
+their own tickets instead of frozen.
+
+What remains separate is the **ladder itself**. The monitor path's bands are
+50/90/100; this package's are 50/100/130 with `Constrained` as an inclusive top.
+They are two different ladders for two different read paths, and routing one
+through the other would move operator-facing alerting bands as a side effect of
+a refactor — so merging the two is its own decision, tracked in
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md), which
 is the concept file for that surface.
 

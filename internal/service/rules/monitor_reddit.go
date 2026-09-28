@@ -17,17 +17,14 @@ import (
 // Ported from lfx-self-serve's reddit-ads.service.ts (the pacing calc inside getRedditAnalytics,
 // and buildRedditActionItems).
 //
-// Reddit's pacing literals (50/90/100 below) are LOCAL to reddit-ads.service.ts, not read from
-// the shared CAMPAIGN_PACING_THRESHOLDS constant Meta/LinkedIn use — they happen to hold the
-// same numeric values as that constant's underspending/normal/constrained members today, which
-// is a coincidence worth noting, not a shared source of truth: a future edit to one will not
-// move the other, on either side of this port.
+// The pacing LABEL comes from pacingLabelFor (monitor_shared.go). On the BFF side Reddit's
+// 50/90/100 are local literals rather than the shared CAMPAIGN_PACING_THRESHOLDS Meta and
+// LinkedIn read — linuxfoundation/lfx-self-serve#3019 — so a change to that constant moves
+// those two and leaves Reddit behind. Here there is one ladder and no such gap.
 const (
-	redditPacingUnderspending = 50
-	redditPacingNormal        = 90
-	redditPacingConstrained   = 100
 	// redditUnderspendActionFloor is the migration spec's bug (b): the underspend ACTION ITEM
-	// fires at pacingPct < 40, a DIFFERENT number from the pacingLabel's own <50 boundary above.
+	// fires at pacingPct < 40, a DIFFERENT number from the label's own <50 boundary
+	// (monitorPacingUnderspendingBelow, monitor_shared.go).
 	// KNOWN BUG, ported verbatim — see follow-up ticket: a campaign pacing at, say, 45% carries
 	// PacingLabel == "underspending" (per the 50 boundary) but never gets the HIGH "Underspending
 	// at ..." action item (which needs <40) — the label and the alert disagree for the 40-49%
@@ -71,15 +68,7 @@ func EvaluateRedditMonitor(rows []model.AccountCampaignMetrics, days int, now ti
 		}
 
 		pacingPct := redditPacingPct(m, days, now)
-		label := model.MonitorPacingNormal
-		switch {
-		case pacingPct < redditPacingUnderspending:
-			label = model.MonitorPacingUnderspending
-		case pacingPct > redditPacingConstrained:
-			label = model.MonitorPacingOverspending
-		case pacingPct > redditPacingNormal:
-			label = model.MonitorPacingConstrained
-		}
+		label := pacingLabelFor(pacingPct)
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)
 		items = append(items, redditActionItems(m, pacingPct)...)

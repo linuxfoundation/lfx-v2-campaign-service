@@ -12,36 +12,29 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// This file, and its three siblings monitor_linkedin.go / monitor_meta.go / monitor_reddit.go,
-// are a deliberately UNPORTED-INTO-`rules` family. This package's Thresholds/ComputePacing/
-// Evaluate (pacing.go, actions.go) already unify what the BFF drifted apart on the SINGLE-
-// campaign metrics path. The account-monitor endpoints this file backs are a DIFFERENT read
-// path — see internal/domain/model/monitor.go — being ported for the express purpose of
-// differentially verifying it against the still-live BFF, bug for bug. Routing it through the
-// already-unified Thresholds/Evaluate would silently move every threshold this file exists to
-// preserve, breaking that diff. Unifying these four is deferred to follow-up ticket #7,
-// tracked as part of linuxfoundation/lfx-self-serve#2519; it is a decision to make in the
-// open, once, not a side effect of adding this endpoint.
+// This file and its three siblings monitor_linkedin.go / monitor_meta.go / monitor_reddit.go
+// back the ACCOUNT-MONITOR read path — see internal/domain/model/monitor.go — which is distinct
+// from the single-campaign metrics path that pacing.go's Thresholds/ComputePacing and actions.go's
+// Evaluate serve.
+//
+// The four were originally ported from the BFF bug-for-bug, each with its own private copy of the
+// rules, so that the port could be differentially diffed against the still-live BFF before
+// cutover. That diff is no longer the plan of record, which removes the reason to preserve the
+// duplication — so what the four genuinely share now lives in monitor_shared.go, and the five
+// deliberately-ported defects are being fixed under their own tickets rather than frozen.
+//
+// What stays separate, and deliberately: these four still do NOT route through
+// Thresholds/Evaluate. That path runs a different ladder (50/100/130, with `Constrained` as an
+// inclusive top) against a different input shape, so routing the monitor through it would move
+// every operator-facing alerting band as a side effect. Merging the two read paths is its own
+// decision, on its own ticket, under linuxfoundation/lfx-self-serve#2519 — not a side effect of
+// deduplicating the four.
 //
 // Ported from lfx-self-serve's campaign-metrics.service.ts (resolveDateRange,
 // parseCampaignMetrics, generateActionItems).
 //
 // fetchFailedRow, used below, is a cross-platform helper shared with the other three
 // monitor_*.go files — see monitor_shared.go.
-
-// googlePacingUnderspending/ConstrainedFrom/Overspending are campaign-metrics.service.ts's own
-// local literals (50/90/100) — NOT this package's shared Thresholds{50,100,130}, and not the
-// same 50/90/100 Reddit happens to also hardcode (a coincidence of value, not a shared
-// constant on either side). Ported verbatim.
-//
-// Named for the branch each one gates, not for the number: googlePacingOverspending (100) is
-// the ">" cutoff for the overspending label, googlePacingConstrainedFrom (90) the ">" cutoff
-// for constrained — the reverse of what the pre-round-22-review names implied.
-const (
-	googlePacingUnderspending   = 50
-	googlePacingOverspending    = 100
-	googlePacingConstrainedFrom = 90
-)
 
 // EvaluateGoogleMonitor computes each row's pacing percentage/label and the account's action
 // items, mirroring campaign-metrics.service.ts's parseCampaignMetrics + generateActionItems.
@@ -87,15 +80,7 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 		if expectedSpend > 0 {
 			pacingPct = math.Round(m.Spend / expectedSpend * 100)
 		}
-		label := model.MonitorPacingNormal
-		switch {
-		case pacingPct < googlePacingUnderspending:
-			label = model.MonitorPacingUnderspending
-		case pacingPct > googlePacingOverspending:
-			label = model.MonitorPacingOverspending
-		case pacingPct > googlePacingConstrainedFrom:
-			label = model.MonitorPacingConstrained
-		}
+		label := pacingLabelFor(pacingPct)
 
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)

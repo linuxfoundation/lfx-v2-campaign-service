@@ -14,17 +14,14 @@ import (
 // See monitor_google.go's package-level comment for why this file is a deliberately
 // SEPARATE, unshared rule engine rather than routed through Thresholds/Evaluate.
 //
-// Ported from lfx-self-serve's meta-ads.service.ts (buildCampaignMetrics, buildMetaActionItems),
-// using the SHARED CAMPAIGN_PACING_THRESHOLDS the BFF's packages/shared/src/constants exports
-// (underspending 50 / normal 90 / constrained 100 / overspending 130) — but, ported verbatim,
-// Meta's own label logic never actually compares against the `overspending` (130) member: its
-// overspend band starts at >constrained (100), exactly as linkedin-ads.service.ts's does. That
-// makes the 130 threshold dead for both platforms' own labeling, which is themselves a BFF-side
-// oddity this port reproduces rather than "fixes".
+// Ported from lfx-self-serve's meta-ads.service.ts (buildCampaignMetrics, buildMetaActionItems).
+// The pacing label comes from pacingLabelFor (monitor_shared.go).
+//
+// On the BFF side Meta reads the shared CAMPAIGN_PACING_THRESHOLDS, whose fourth member is
+// `overspending: 130` — and never compares against it: the overspend band starts above
+// `constrained` (100), so 130 is dead for labeling on Meta and LinkedIn both. The shared ladder
+// here has no such member, which is why it is three boundaries and not four.
 const (
-	metaPacingUnderspending = 50
-	metaPacingNormal        = 90
-	metaPacingConstrained   = 100
 	metaLowCtrPct           = 0.5
 	metaMinImpressions      = 500
 	metaClicksNoConversions = 20
@@ -48,14 +45,7 @@ func EvaluateMetaMonitor(rows []model.AccountCampaignMetrics, days int, now time
 		pacingPct, unknown := metaPacingPct(m, days, now)
 		label := model.MonitorPacingNormal
 		if !unknown {
-			switch {
-			case pacingPct < metaPacingUnderspending:
-				label = model.MonitorPacingUnderspending
-			case pacingPct > metaPacingConstrained:
-				label = model.MonitorPacingOverspending
-			case pacingPct > metaPacingNormal:
-				label = model.MonitorPacingConstrained
-			}
+			label = pacingLabelFor(pacingPct)
 		}
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)
