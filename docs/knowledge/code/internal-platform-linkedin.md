@@ -622,7 +622,9 @@ differently). A credential or authorization failure surfacing during that same w
 invalid credentials, an application-authorization rejection, or ANY `4xx` other than `429` — is
 NOT folded into this inconclusive bucket: LinkedIn received the request and refused it on the
 merits, so it will not start succeeding on its own. Calling that an incomplete walk would answer
-"healthy" for a permanently broken cross-check forever. `429` is the one exempt status — a rate
+"try again later" for a permanently broken cross-check forever — `OK: false` either way, since an
+inconclusive outcome is not a healthy one, but an advisory inviting a retry rather than a verdict
+naming what to repair. `429` is the one exempt status — a rate
 limit genuinely says nothing about the pairing — and `5xx` likewise stays inconclusive.
 
 Those refusals do not all mean the same thing, and the split is **by who can act on them**, which

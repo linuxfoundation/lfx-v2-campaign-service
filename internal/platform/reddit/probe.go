@@ -141,8 +141,11 @@ func ProbeInconclusive(err error) bool {
 	// ErrTokenRequestRejected is the one error this package recognises that is NEITHER
 	// predicate, and it has to say so EXPLICITLY, because the fall-through at the bottom of
 	// this function answers true for anything it does not recognise. Left to that default, a
-	// token request only this service composes would report the connection as OK with an
-	// advisory — unproven reported as healthy, the exact shape LFXV2-2665 exists to remove.
+	// token request only this service composes would be answered INCONCLUSIVE: the operator
+	// gets an advisory naming a platform that could not be reached, on a connection no amount
+	// of waiting repairs, and nobody is told this service composed a request the token endpoint
+	// refused. The ok field does not move — an inconclusive probe answers false too — so the
+	// whole cost lands on the status axis and on who gets sent to fix what.
 	// Answering false lets probeClass fall to its default arm and raise domain.ErrServiceDefect,
 	// which pages us. dispatch/linkedin.go routes linkedin.ErrTokenRequestRejected the same way.
 	if errors.Is(err, ErrTokenRequestRejected) {

@@ -73,7 +73,8 @@ func TestClassifyTokenRefusal(t *testing.T) {
 // operator as a confirmed failed test. ErrTokenRequestRejected must match NEITHER predicate, which
 // is what routes it to domain.ErrServiceDefect. The inconclusive half is the one that has to be
 // asserted explicitly: ProbeInconclusive answers true for any error it does not recognise, so
-// without its dedicated arm this sentinel would report the connection as OK with an advisory.
+// without its dedicated arm this sentinel would be answered inconclusive, sending the operator
+// to wait out an outage that is this service's own malformed request.
 func TestTokenRefusalSentinelsRouteToOppositeOutcomes(t *testing.T) {
 	credential := fmt.Errorf("%w: microsoft-ads token refresh -> %d", ErrCredentialRejected, http.StatusBadRequest)
 	if !ProbeCredentialRejected(credential) {
@@ -88,7 +89,7 @@ func TestTokenRefusalSentinelsRouteToOppositeOutcomes(t *testing.T) {
 	}
 	if ProbeInconclusive(request) {
 		t.Error("a request this service built wrong matched ProbeInconclusive, so probeClass " +
-			"would report OK with an advisory instead of raising the service defect it is")
+			"would be answered inconclusive instead of raising the service defect it is")
 	}
 }
 
