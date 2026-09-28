@@ -42,11 +42,19 @@ func EvaluateMetaMonitor(rows []model.AccountCampaignMetrics, days int, now time
 			continue
 		}
 
-		pacingPct, unknown := metaPacingPct(m, days, now)
-		label := model.MonitorPacingNormal
-		if !unknown {
-			label = pacingLabelFor(pacingPct)
+		// See monitor_google.go's budget-less branch for why this reports unknown rather than a
+		// computed 0. Meta had the guard below written already, but metaPacingPct returned false
+		// from every one of its four returns, so it was never taken: a budget-less Meta campaign
+		// got pacingPct 0 and the "underspending" label, exactly as Google's did.
+		pacingPct, computable := metaPacingPct(m, days, now)
+		if !computable {
+			row := unknownPacingRow(m)
+			out = append(out, row)
+			items = append(items, metaActionItems(row.Metrics, 0, row.PacingLabel, days)...)
+			continue
 		}
+
+		label := pacingLabelFor(pacingPct)
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)
 		items = append(items, metaActionItems(m, pacingPct, label, days)...)
@@ -56,11 +64,13 @@ func EvaluateMetaMonitor(rows []model.AccountCampaignMetrics, days int, now time
 	return out, items
 }
 
-// metaPacingPct ports buildCampaignMetrics' pacing branch: schedule-based when a total budget
-// and a start time are both known, else a flat dailyBudget*days expectation, else 0 (unknown
-// treated as pacingPct 0 / label "normal", exactly as the BFF's `pacingPct = 0` default did —
-// this is NOT the same as model.AccountCampaignMetrics.PacingUnknown, which this port reserves
-// for rows the dispatcher could not schedule-bound at all).
+// metaPacingPct computes the pacing percentage: schedule-based when a total budget and a start
+// time are both known, else against a flat dailyBudget*days expectation.
+//
+// The second return says whether the figure is COMPUTABLE. It used to be an `unknown` flag that
+// no return path ever set, so the caller's guard on it was dead and a campaign with neither
+// budget reached the ladder carrying 0 — reported as underspending. Now the no-budget path says
+// so, and the caller reports PacingUnknown.
 func metaPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (float64, bool) {
 	start := parseMonitorDate(m.StartDate)
 	end := parseMonitorDate(m.EndDate)
@@ -73,14 +83,14 @@ func metaPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (flo
 		elapsedDays := maxFloat(1, math.Ceil(now.Sub(start).Hours()/24))
 		expected := m.TotalBudget / totalFlightDays * math.Min(elapsedDays, totalFlightDays)
 		if expected > 0 {
-			return math.Round(m.Spend / expected * 100), false
+			return math.Round(m.Spend / expected * 100), true
 		}
 		return 0, false
 	}
 	if m.BudgetDay > 0 {
 		expected := m.BudgetDay * float64(days)
 		if expected > 0 {
-			return math.Round(m.Spend / expected * 100), false
+			return math.Round(m.Spend / expected * 100), true
 		}
 	}
 	return 0, false

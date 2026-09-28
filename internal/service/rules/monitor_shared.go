@@ -63,11 +63,12 @@ const (
 	// monitorPacingUnderspendingBelow is the floor: under half the prorated plan, a campaign is
 	// not delivering the budget it was given.
 	monitorPacingUnderspendingBelow = 50
-	// monitorPacingHealthyTo is the top of the healthy band, INCLUSIVE. A campaign exactly on
-	// plan (100) is not yet constrained; only one running ahead of it is.
+	// monitorPacingHealthyTo is the top of the healthy band, INCLUSIVE: at exactly 90 a campaign
+	// is still normal, above it it is constrained. Note this sits BELOW plan — a campaign at 95%
+	// of its prorated budget is already reported as constrained.
 	monitorPacingHealthyTo = 90
-	// monitorPacingOverspendingAbove is where outrunning the plan stops being "constrained" and
-	// becomes overspend. Above plan, not a multiple of it.
+	// monitorPacingOverspendingAbove is the top of the constrained band, INCLUSIVE: exactly on
+	// plan (100) is constrained, not overspending. Only running ahead of plan is overspend.
 	monitorPacingOverspendingAbove = 100
 )
 
@@ -95,7 +96,25 @@ func pacingLabelFor(pct float64) model.MonitorPacingLabel {
 	}
 }
 
-func fetchFailedRow(m model.AccountCampaignMetrics) model.AccountMonitorRow {
+// unknownPacingRow is the row for a campaign whose pacing percentage cannot be computed at all —
+// no usable budget, or no flight to prorate one against.
+//
+// It sets PacingUnknown, which model.AccountCampaignMetrics documents as the "absent, not
+// defaulted" contract: a consumer must render this as unknown rather than as a number. The label
+// is MonitorPacingNormal because the label enum has no unknown member on this path and normal is
+// the only band that asserts nothing actionable; PacingUnknown is what carries the meaning, and a
+// consumer that reads the label without it will report "on plan" for a campaign nobody can pace.
+//
+// PacingPct is deliberately left at its zero value rather than carrying a computed 0. The
+// distinction is the whole point: 0 means "spent nothing against a real budget", which is a
+// finding; unknown means "there is no budget to have spent against", which is not.
+func unknownPacingRow(m model.AccountCampaignMetrics) model.AccountMonitorRow {
 	m.PacingUnknown = true
 	return model.AccountMonitorRow{Metrics: m, PacingLabel: model.MonitorPacingNormal}
+}
+
+// fetchFailedRow is unknownPacingRow for one specific cause: the dispatcher could not trust the
+// row's own fields. A fetch failure is a reason pacing is unknown, not a separate state.
+func fetchFailedRow(m model.AccountCampaignMetrics) model.AccountMonitorRow {
+	return unknownPacingRow(m)
 }

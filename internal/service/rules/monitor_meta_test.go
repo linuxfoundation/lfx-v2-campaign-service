@@ -20,10 +20,10 @@ func TestMetaPacingPct_ScheduleBranch(t *testing.T) {
 		EndDate:     "2026-06-25", // 20-day flight
 		Spend:       50,
 	}
-	pct, unknown := metaPacingPct(m, 10, now)
+	pct, computable := metaPacingPct(m, 10, now)
 	// totalFlightDays=20, elapsedDays=10, expected = 100/20*10 = 50, spend/expected*100 = 100.
-	if unknown {
-		t.Fatalf("unknown = true, want false")
+	if !computable {
+		t.Fatalf("computable = false, want true")
 	}
 	if pct != 100 {
 		t.Errorf("pct = %v, want 100", pct)
@@ -35,34 +35,31 @@ func TestMetaPacingPct_ScheduleBranch(t *testing.T) {
 func TestMetaPacingPct_FlatDailyBudgetBranch(t *testing.T) {
 	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
 	m := model.AccountCampaignMetrics{BudgetDay: 10, Spend: 45}
-	pct, unknown := metaPacingPct(m, 5, now)
+	pct, computable := metaPacingPct(m, 5, now)
 	// expected = 10*5 = 50, spend/expected*100 = 90.
-	if unknown {
-		t.Fatalf("unknown = true, want false")
+	if !computable {
+		t.Fatalf("computable = false, want true")
 	}
 	if pct != 90 {
 		t.Errorf("pct = %v, want 90", pct)
 	}
 }
 
-// TestMetaPacingPct_UnknownIsAlwaysFalse observes that metaPacingPct's `unknown` return value
-// is hardcoded false on every code path in the current source — including the final
-// no-budget-information fallback, which returns (0, false) rather than (0, true). This is
-// NOT one of the plan's documented preserved bugs and is not asserted here as a "bug" the way
-// LinkedIn's MED/MEDIUM mismatch is; it is flagged in the accompanying report as something
-// worth confirming against the BFF source, since a genuinely unmeasurable row is
-// indistinguishable from a real 0% pacing reading under the current code.
-func TestMetaPacingPct_UnknownIsAlwaysFalse(t *testing.T) {
+// TestMetaPacingPct_NoBudgetIsNotComputable pins the fix for the defect an earlier revision of
+// this test merely observed: metaPacingPct's second return was hardcoded false on every path,
+// including the no-budget fallback, so the caller's guard on it was dead and a genuinely
+// unmeasurable row was indistinguishable from a real 0% reading.
+//
+// The flag now means "computable", and a campaign with no budget information says false.
+func TestMetaPacingPct_NoBudgetIsNotComputable(t *testing.T) {
 	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
 	m := model.AccountCampaignMetrics{} // no budget info at all
-	pct, unknown := metaPacingPct(m, 10, now)
+	pct, computable := metaPacingPct(m, 10, now)
 	if pct != 0 {
 		t.Errorf("pct = %v, want 0 for a campaign with no budget information", pct)
 	}
-	if unknown {
-		t.Errorf("unknown = true; metaPacingPct's current source never returns true on any path — " +
-			"if this now fails, the vestigial-looking always-false return has changed and the " +
-			"report's open item about it should be revisited")
+	if computable {
+		t.Errorf("computable = true for a campaign with no budget; there is nothing to pace against")
 	}
 }
 

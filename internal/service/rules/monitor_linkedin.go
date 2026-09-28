@@ -47,12 +47,19 @@ func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now 
 			continue
 		}
 
-		pacingPct := linkedinPacingPct(m, days, now)
-		hasBudget := m.TotalBudget > 0 || m.BudgetDay > 0
-		label := model.MonitorPacingNormal
-		if hasBudget {
-			label = pacingLabelFor(pacingPct)
+		// LinkedIn's guard was the one that worked — a budget-less campaign was already held off
+		// the ladder rather than labelled underspending. What it did not do is SAY so: the row
+		// went out as MonitorPacingNormal with PacingUnknown unset, which a consumer reads as
+		// "on plan". Same treatment as Google and Meta now, for the same reason.
+		if m.TotalBudget <= 0 && m.BudgetDay <= 0 {
+			row := unknownPacingRow(m)
+			out = append(out, row)
+			items = append(items, linkedinActionItems(row.Metrics, 0, row.PacingLabel)...)
+			continue
 		}
+
+		pacingPct := linkedinPacingPct(m, days, now)
+		label := pacingLabelFor(pacingPct)
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)
 		items = append(items, linkedinActionItems(m, pacingPct, label)...)

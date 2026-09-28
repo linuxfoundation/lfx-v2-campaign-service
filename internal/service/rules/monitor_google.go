@@ -75,11 +75,25 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 			continue
 		}
 
+		// No daily budget means no plan to pace against, so there is no percentage to report.
+		// This port used to fall through to pacingPct = 0 here, which the ladder reads as
+		// "underspending" — so every budget-less campaign was reported as failing to spend a
+		// budget it does not have, with an action item reading "Only spending 0% of $0.00/day
+		// budget — $0.00 spent vs $0.00 expected". Reddit already routes this case through
+		// PacingUnknown; Google and Meta did not (Meta's own guard was dead code, never taken).
+		//
+		// The real signal for this campaign is not lost: the BudgetDay <= 1 rule in
+		// googleActionItems still fires, and says the accurate thing — that the budget is a
+		// placeholder — at HIGH rather than burying it in a pacing complaint at MED.
 		expectedSpend := m.BudgetDay * float64(days)
-		pacingPct := 0.0
-		if expectedSpend > 0 {
-			pacingPct = math.Round(m.Spend / expectedSpend * 100)
+		if expectedSpend <= 0 {
+			row := unknownPacingRow(m)
+			out = append(out, row)
+			items = append(items, googleActionItems(row.Metrics, 0, row.PacingLabel, days)...)
+			continue
 		}
+
+		pacingPct := math.Round(m.Spend / expectedSpend * 100)
 		label := pacingLabelFor(pacingPct)
 
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
