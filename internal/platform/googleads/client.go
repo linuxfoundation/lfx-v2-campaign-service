@@ -699,11 +699,14 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 // Request layer
 // ---------------------------------------------------------------------------
 
-// customerIDRE matches a Google Ads customer id: digits only, no dashes. The
-// connection's account_id is user-supplied and its Goa design only checks
-// presence, so it must be validated here before being concatenated into a URL —
-// a padded/dashed id yields an invalid request, and slash/dot input could alter
-// the resource path.
+// customerIDRE matches a Google Ads customer id: digits only, no dashes. The connection's
+// account_id is user-supplied and must be validated here before being concatenated into a
+// URL — a padded/dashed id yields an invalid request, and slash/dot input could alter the
+// resource path.
+//
+// The Goa design now declares the same rule as a Pattern, and this check STAYS regardless:
+// Goa validates the HTTP transport only, so a row written by bootstrap, by a migration, or
+// before that pattern existed reaches this concatenation having passed nothing.
 var customerIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 // ErrNotACustomerID reports that a caller-supplied account id is not a digits-only Google
@@ -1559,10 +1562,14 @@ func (c *Client) selfReach(ctx context.Context, customerID string) (AccountReach
 	for _, raw := range rows {
 		var row selfCustomerRow
 		if uerr := json.Unmarshal(raw, &row); uerr != nil {
+			// errDecodeRow, not the json error: see its own comment. The decode cause is
+			// derived from the response body and transportError.Err is EXPORTED, so
+			// wrapping it here would carry upstream-derived text into a persisted,
+			// API-reachable failure narrative.
 			return AccountUnreachable, &transportError{
 				Method: http.MethodPost,
 				Path:   "customers/" + customerID + "/googleAds:search",
-				Err:    fmt.Errorf("decode customer row: %w", uerr),
+				Err:    errDecodeCustomerRow,
 			}
 		}
 		if row.Customer.ID != customerID {
@@ -1586,6 +1593,21 @@ func (c *Client) selfReach(ctx context.Context, customerID string) (AccountReach
 // predicate by name, and ProbeInconclusive's default for an error it does not recognise is
 // true, which is the classification this case wants.
 var errSelfRowMissing = errors.New("google-ads: the account did not return its own customer record")
+
+// The two row-decode failures, as FIXED errors rather than wrapped json causes.
+//
+// `docs/reviews/knowledge-base/credentials-and-untrusted-text.md`,
+// platform-error-must-not-carry-untrusted-or-credential-text, forbids both forms this would
+// otherwise take: an error interpolating an HTTP response body, AND an error struct with an
+// EXPORTED field holding such material. transportError.Err is exported and these errors reach
+// the persisted, API-reachable Steps narrative, so a json.UnmarshalTypeError — which renders
+// the offending value — would durably record upstream-derived text. Nothing is lost that this
+// layer can act on: the row failed to decode, the path and method say where, and the probe
+// classifies an unrecognised error as inconclusive either way.
+var (
+	errDecodeCustomerRow       = errors.New("the search response row is not a decodable customer record")
+	errDecodeCustomerClientRow = errors.New("the search response row is not a decodable customer_client record")
+)
 
 // selfCustomerRow is one `FROM customer` row: the queried customer's own record.
 //
@@ -1646,7 +1668,7 @@ func (c *Client) queryCustomerClients(ctx context.Context, managerID, query stri
 			return nil, &transportError{
 				Method: http.MethodPost,
 				Path:   "customers/" + managerID + "/googleAds:search",
-				Err:    fmt.Errorf("decode customer_client row: %w", uerr),
+				Err:    errDecodeCustomerClientRow,
 			}
 		}
 		// A row whose id is missing OR non-numeric is unusable: AccessibleCustomer

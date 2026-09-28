@@ -2538,7 +2538,7 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    get-hubspot: Get the project's HubSpot connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-hubspot: Replace the HubSpot connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-hubspot: Soft-delete the project's HubSpot connection.`)
-	fmt.Fprintln(os.Stderr, `    test-hubspot: Verify the stored HubSpot credential and the configured account against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-hubspot: Verify the stored HubSpot private-app token against the provider. No configured account is checked: the portal is the token's own.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-hubspot: Replace the stored (encrypted) HubSpot credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    list-google-ads-accounts: Enumerate the Google Ads ad accounts accessible via the stored connection credential.`)
 	fmt.Fprintln(os.Stderr, `    get-google-ads-keywords: Read Google Ads keyword performance for this project's own campaigns, live from the platform. Scoped to the campaigns this service holds for the project, NOT to the connected ad account: the Google Ads customer is shared across foundations, so an account-wide read would return other projects' keywords. A pure read-through — nothing is persisted, and this service stores no keyword of its own. Rows are the TOP keywords by impressions over the window, capped; `+"`"+`truncated`+"`"+` reports whether the project's campaigns hold more. The returned criterion_id/ad_group_id pairs are the handles the keyword-actions endpoint takes.`)
@@ -3422,7 +3422,7 @@ func lfxV2CampaignServiceConnectionsTestHubspotUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored HubSpot credential and the configured account against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored HubSpot private-app token against the provider. No configured account is checked: the portal is the token's own.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)

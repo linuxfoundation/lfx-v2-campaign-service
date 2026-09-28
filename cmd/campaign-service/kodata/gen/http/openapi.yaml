@@ -5453,7 +5453,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: test-hubspot lfx-v2-campaign-service-connections
-            description: Verify the stored HubSpot credential and the configured account against the provider.
+            description: 'Verify the stored HubSpot private-app token against the provider. No configured account is checked: the portal is the token''s own.'
             operationId: lfx-v2-campaign-service-connections#test-hubspot
             parameters:
                 - name: project_id
@@ -11621,7 +11621,7 @@ definitions:
                 example: Sed ea aut.
             ok:
                 type: boolean
-                description: 'Whether the connection passed its provider''s verification: the credential authenticated AND the configured account passed that provider''s own check. How deep that account check goes is provider-specific — it is not a guarantee of account lifecycle state. False when the check could not be completed against the provider, because an incomplete check establishes neither half of that conjunction — read message to tell that case apart from a confirmed failure'
+                description: 'Whether the connection passed its provider''s verification: the credential authenticated AND the configured account passed that provider''s own check. How deep that account check goes is provider-specific — it is not a guarantee of account lifecycle state, and for HubSpot there is no configured account to check, so the token''s own portal is the whole of it. False when the check could not be completed against the provider, because an incomplete check establishes neither half of that conjunction — read message to tell that case apart from a confirmed failure'
                 example: false
         example:
             message: Qui maiores.

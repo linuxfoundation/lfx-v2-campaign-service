@@ -130,8 +130,8 @@ type Service interface {
 	UpdateHubspot(context.Context, *UpdateHubspotPayload) (res *HubspotConnection, err error)
 	// Soft-delete the project's HubSpot connection.
 	DeleteHubspot(context.Context, *DeleteHubspotPayload) (err error)
-	// Verify the stored HubSpot credential and the configured account against the
-	// provider.
+	// Verify the stored HubSpot private-app token against the provider. No
+	// configured account is checked: the portal is the token's own.
 	TestHubspot(context.Context, *TestHubspotPayload) (res *ConnectionTestResult, err error)
 	// Replace the stored (encrypted) HubSpot credential. Separate from update so
 	// credential replacement is independently permissioned and audited. Not a
@@ -508,10 +508,11 @@ type ConnectionTestResult struct {
 	// Whether the connection passed its provider's verification: the credential
 	// authenticated AND the configured account passed that provider's own check.
 	// How deep that account check goes is provider-specific — it is not a
-	// guarantee of account lifecycle state. False when the check could not be
-	// completed against the provider, because an incomplete check establishes
-	// neither half of that conjunction — read message to tell that case apart from
-	// a confirmed failure
+	// guarantee of account lifecycle state, and for HubSpot there is no configured
+	// account to check, so the token's own portal is the whole of it. False when
+	// the check could not be completed against the provider, because an incomplete
+	// check establishes neither half of that conjunction — read message to tell
+	// that case apart from a confirmed failure
 	OK bool
 	// Human-readable detail
 	Message *string

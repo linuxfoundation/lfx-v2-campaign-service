@@ -225,11 +225,13 @@ func roleIsStrong(roleID int64) bool {
 // Advertising account identity — a positive int64, the same rule numberID applies to every id
 // ListAdAccounts hands back.
 //
-// It is the residual guard the Goa design cannot express. `^[1-9][0-9]*$` with MaxLength(19)
-// refuses "0" and everything obviously too long, but a 19-digit value above MaxInt64 matches
-// the pattern and still is not an int64 — the identical gap ValidateCustomerID exists to close
-// for the other id on this row. Unlike that sibling an empty id is an ERROR here: account_id is
-// Required, so "no account configured" is not a supported state for it.
+// It is the guard for every caller the Goa design does not see. The design declares
+// `^[1-9][0-9]{0,17}$` with MaxLength(18) — eighteen digits, so that every value the pattern
+// admits is a valid int64 and the design's rule is a SUBSET of this one rather than
+// overlapping it — but it validates the HTTP transport alone, and bootstrap, migrations and
+// rows written before that pattern landed bypass it entirely. Unlike ValidateCustomerID, its
+// sibling for the other id on this row, an empty id is an ERROR here: account_id is Required,
+// so "no account configured" is not a supported state for it.
 func ValidateAccountID(accountID string) error {
 	trimmed := strings.TrimSpace(accountID)
 	n := json.Number(trimmed)

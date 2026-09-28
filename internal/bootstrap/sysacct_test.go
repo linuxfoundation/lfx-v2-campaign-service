@@ -353,8 +353,9 @@ func TestInstallWritesNothingWhenItCannotProceed(t *testing.T) {
 // TestInstallRejectsMisshapenValues: the installer writes PAST the API, so a value the rest of
 // the system refuses must not reach an ACTIVE system row and turn into a dispatch failure nobody
 // connects back to install time. Both sources of the rule are covered: design/connection.go's
-// Pattern() (Meta, X, LinkedIn) AND the runtime validators for the three providers whose design
-// checks presence alone (Google Ads, Microsoft, Reddit) — reading only the design was the gap.
+// Pattern() AND the runtime validators — which is the point, since the installer writes past
+// Goa and so past every Pattern, and reading only the design was the gap. Google Ads, Reddit
+// and Microsoft now carry a design Pattern too; their runtime validators still decide here.
 // An OMITTED account id is not a misshapen one; that is the legal credentials-first state.
 func TestInstallRejectsMisshapenValues(t *testing.T) {
 	metaCreds := []byte(`{"access_token":"tok","app_secret":"sec"}`)

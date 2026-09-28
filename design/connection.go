@@ -270,7 +270,7 @@ var ConnServiceUnavailableError = Type("conn-service-unavailable-error", func() 
 // client that treats an inconclusive result as "do not rely on this connection yet" behaves
 // correctly; one that treats it as "re-authorize" has been told otherwise in the same string.
 var TestResult = Type("connection-test-result", func() {
-	Attribute("ok", Boolean, "Whether the connection passed its provider's verification: the credential authenticated AND the configured account passed that provider's own check. How deep that account check goes is provider-specific — it is not a guarantee of account lifecycle state. False when the check could not be completed against the provider, because an incomplete check establishes neither half of that conjunction — read message to tell that case apart from a confirmed failure")
+	Attribute("ok", Boolean, "Whether the connection passed its provider's verification: the credential authenticated AND the configured account passed that provider's own check. How deep that account check goes is provider-specific — it is not a guarantee of account lifecycle state, and for HubSpot there is no configured account to check, so the token's own portal is the whole of it. False when the check could not be completed against the provider, because an incomplete check establishes neither half of that conjunction — read message to tell that case apart from a confirmed failure")
 	Attribute("message", String, "Human-readable detail")
 	Required("ok")
 })
@@ -342,6 +342,33 @@ func connectionAuthErrorResponses() {
 // title is a human-readable provider name used in descriptions (e.g. "Google
 // Ads"). Goa derives the generated method names from the method keys
 // (create-{key} → CreateGoogleAds, etc.), so no explicit suffix is needed.
+// testMethodDescription is the one method description that cannot be written once for all
+// seven providers, because one of them verifies something different.
+//
+// Six check a credential AND the account this connection names: that conjunction is what a
+// green result asserts, and describing them as credential-only understates every one of them
+// to an operator reading the API reference. HubSpot checks no account, and not by omission —
+// `docs/api-catalog.md` records why: `portal_id` is not an account, nothing routes on it (its
+// only readers build app.hubspot.com deep links for assets that already exist), and the portal
+// a campaign lands in is the token's own. A mismatch there is logged as a warning and is
+// deliberately not part of the verdict.
+//
+// So HubSpot gets its own sentence rather than the shared one. The description is published in
+// gen/** and both embedded OpenAPI copies, where a promise the dispatcher does not keep is not
+// a wording preference: it tells an integrator that a green HubSpot test cleared an identifier
+// nothing ever looked at.
+func testMethodDescription(key, title string) string {
+	if key == hubSpotKey {
+		return "Verify the stored " + title + " private-app token against the provider. " +
+			"No configured account is checked: the portal is the token's own."
+	}
+	return "Verify the stored " + title + " credential and the configured account against the provider."
+}
+
+// hubSpotKey is the provider key testMethodDescription singles out, named rather than spelled
+// inline so the exception is greppable from the call site that creates it.
+const hubSpotKey = "hubspot"
+
 func connectionMethods(key, title string, config, creds, result eval.Expression) {
 	Method("create-"+key, func() {
 		Description("Create the project's " + title + " connection (singleton; 409 if one already exists).")
@@ -477,13 +504,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 	})
 
 	Method("test-"+key, func() {
-		// The description says "and the configured account" because that is what the
-		// endpoint now does: a green result means the credential authenticated AND the
-		// account this connection names passed that provider's own check. How deep that
-		// second check goes is provider-specific — see TestResult.ok — but "credential"
-		// alone understates every one of them, and an operator reading the API reference
-		// would take a green result as saying less than it says.
-		Description("Verify the stored " + title + " credential and the configured account against the provider.")
+		Description(testMethodDescription(key, title))
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -985,11 +1006,11 @@ var MicrosoftAdsCredentials = Type("microsoft-ads-credentials", func() {
 
 var MicrosoftAdsConnectionConfig = Type("microsoft-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
-	// Both ids carry microsoft.accountIDRE's rule, and that regex's own comment names this
-	// gap as the reason it exists: "The connection's account_id is user-supplied and its Goa
-	// design only checks presence, so it must be validated here before being placed in a
-	// header — a padded/dashed id yields an invalid request, and control characters could
-	// inject a header." Both values travel as REQUEST HEADERS (CustomerAccountId and
+	// Both ids carry microsoft.accountIDRE's rule, and that regex's own comment names the
+	// hazard it exists for: "The connection's account_id is user-supplied and must be
+	// validated here before being placed in a header — a padded/dashed id yields an invalid
+	// request, and control characters could inject a header." Both values travel as REQUEST
+	// HEADERS (CustomerAccountId and
 	// CustomerId), so the charset is a header-injection boundary, not a formatting
 	// preference. Declaring the same rule here refuses a malformed id at connection time
 	// rather than storing it on an active connection that can never dispatch.

@@ -851,10 +851,13 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 // ---------------------------------------------------------------------------
 
 // accountIDRE matches a Microsoft Advertising account/customer id: digits only.
-// The connection's account_id is user-supplied and its Goa design only checks
-// presence, so it must be validated here before being placed in a header — a
-// padded/dashed id yields an invalid request, and control characters could inject
-// a header. Mirrors the google-ads customerIDRE.
+// The connection's account_id is user-supplied and must be validated here before
+// being placed in a header — a padded/dashed id yields an invalid request, and
+// control characters could inject a header. Mirrors the google-ads customerIDRE.
+//
+// The Goa design now declares a STRICTER rule for both ids (`^[1-9][0-9]{0,17}$`,
+// MaxLength(18)), and this check stays as the transport-boundary guard: Goa never
+// sees a row written by bootstrap, by a migration, or before that pattern existed.
 var accountIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 // clipID bounds an invalid id before it is embedded in an error. The id is a

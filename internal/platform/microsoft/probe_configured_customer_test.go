@@ -32,7 +32,12 @@ func TestListAdAccounts_AConfiguredCustomerRefusedIsClaimedByItsOwnPredicate(t *
 			t.Error("User/Query was called; a configured customer id skips role discovery")
 		}
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = io.WriteString(w, `{"Errors":[{"Code":1100,"ErrorCode":"CustomerNotFound"}]}`)
+		// A body with no error code in it, deliberately. The predicate gates on the STATUS
+		// and the id's provenance, never on a code — the Customer Management codes for a
+		// missing or unreachable customer are pinned by nothing in this repo and by no test
+		// against the live API. A fixture naming one would assert knowledge we do not have
+		// and would let a future code-based narrowing look tested when it is not.
+		_, _ = io.WriteString(w, `{"Errors":[{"Message":"refused"}]}`)
 	})
 
 	_, err := c.ListAdAccounts(context.Background())
@@ -71,7 +76,7 @@ func TestListAdAccounts_ADiscoveredCustomerRefusedStaysADefect(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = io.WriteString(w, `{"Errors":[{"Code":1100,"ErrorCode":"CustomerNotFound"}]}`)
+		_, _ = io.WriteString(w, `{"Errors":[{"Message":"refused"}]}`)
 	})
 
 	_, err := c.ListAdAccounts(context.Background())

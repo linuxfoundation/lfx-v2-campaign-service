@@ -225,7 +225,17 @@ PUT is a full replace on every provider, and un-selecting an account is expresse
 
 `TestResult.ok` is described as "the credential authenticated AND the configured account passed
 that provider's own check", with an explicit note that **how deep that account check goes is
-provider-specific**. The earlier wording — "the configured account is usable" — promised more
+provider-specific** — including HubSpot, where there is no configured account to check at all
+and the token's own portal is the whole of it.
+
+The per-method description is provider-aware for the same reason, through
+`testMethodDescription(key, title)`. Six providers get "credential and the configured account";
+HubSpot gets "private-app token … no configured account is checked: the portal is the token's
+own". A single shared sentence would publish, in `gen/**` and both embedded OpenAPI copies, a
+promise `HubSpotDispatcher.ProbeConnection` does not keep — telling an integrator that a green
+HubSpot test cleared an identifier nothing ever looked at. That dispatcher logs a `portal_id`
+mismatch as a warning and deliberately keeps it out of the verdict, because `portal_id` is not
+an account: nothing routes on it, and the portal a campaign lands in is the token's own. The earlier wording — "the configured account is usable" — promised more
 than any probe delivers and more than several deliberately intend to: Microsoft and Meta test
 membership in an enumeration and knowingly accept accounts the platform reports as suspended,
 paused or draft, because those are recoverable states an operator fixes in the platform's UI and
