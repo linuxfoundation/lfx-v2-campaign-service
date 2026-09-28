@@ -229,11 +229,10 @@ func TestMonitorAccount_UpstreamFailureNamesAccountMonitor(t *testing.T) {
 	}
 }
 
-// TestMonitorAccount_FallsBackToRowSumTotals pins the AccountTotalsReader-absent path: a
-// dispatcher implementing ONLY AccountMetricsReader (not AccountTotalsReader, which
-// Orchestrator.ReadAccountTotals reports via its `ok=false` return, not an error) must reach
-// monitorTotalsFallback rather than fail, matching every platform but Reddit.
-func TestMonitorAccount_FallsBackToRowSumTotals(t *testing.T) {
+// TestMonitorAccount_TotalsSumTheReturnedRows pins the contract every platform now shares: the
+// totals are the sum of the campaigns array returned alongside them, so the aggregate and the
+// list can never describe different populations.
+func TestMonitorAccount_TotalsSumTheReturnedRows(t *testing.T) {
 	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
 	svc.SetOrchestrator(&Orchestrator{
 		dispatchers: map[model.Provider]PlatformDispatcher{
@@ -251,56 +250,59 @@ func TestMonitorAccount_FallsBackToRowSumTotals(t *testing.T) {
 		t.Fatalf("MonitorGoogleAdsAccount failed: %T: %v", err, err)
 	}
 	if result.Totals == nil {
-		t.Fatalf("expected non-nil totals from the row-sum fallback")
+		t.Fatalf("expected non-nil totals")
 	}
 	if result.Totals.Spend != 50 || result.Totals.Impressions != 100 || result.Totals.Clicks != 5 || result.Totals.CampaignCount != 1 {
 		t.Errorf("totals = %+v, want the row summed verbatim (spend=50, impressions=100, clicks=5, campaignCount=1)", result.Totals)
 	}
-	if result.Totals.DerivedFromRows {
-		t.Errorf("DerivedFromRows = true, want false: for every platform but Reddit this row sum " +
-			"IS the contractual totals figure, not a stand-in for one that failed")
-	}
 }
 
-// mockAccountTotalsReaderDispatcher additionally implements AccountTotalsReader, so a test can
-// drive monitorAccount's ReadAccountTotals call — the Reddit-shaped path — independently of the
-// metrics-read call above.
-type mockAccountTotalsReaderDispatcher struct {
-	mockAccountMetricsReaderDispatcher
-	totalsErr error
-	// totalsNilResult drives the Orchestrator.ReadAccountTotals contract-violation path: a
-	// dispatcher returning (nil, nil), the same broken-adapter shape ReadAccountCampaignMetrics
-	// and every sibling reader guard against.
-	totalsNilResult bool
-}
-
-func (m *mockAccountTotalsReaderDispatcher) ReadAccountTotals(ctx context.Context, projectID string, platform model.Provider, accountID string, days, campaignCount int) (*model.AccountMonitorTotals, error) {
-	if m.totalsErr != nil {
-		return nil, m.totalsErr
-	}
-	if m.totalsNilResult {
-		return nil, nil
-	}
-	return &model.AccountMonitorTotals{Spend: 999, Impressions: 999, Clicks: 999, CampaignCount: 999}, nil
-}
-
-// TestMonitorAccount_TotalsReaderErrorFallsBackToRowSum pins the fix for a real defect: a
-// dispatcher implementing AccountTotalsReader (Reddit's shape) whose separate account-wide
-// totals call FAILS must still return the per-campaign rows and action items already fetched
-// successfully, falling back to summing them — the same fallback the !ok (unsupported) arm
-// uses — rather than aborting the whole endpoint with an error. The per-campaign data is the
-// response's primary content; the account-wide totals are a secondary, derivable figure.
-func TestMonitorAccount_TotalsReaderErrorFallsBackToRowSum(t *testing.T) {
+// TestMonitorAccount_TotalsExcludeRowsTheRuleEngineDropped pins which rows the sum is over: the
+// post-rule-engine ones, not the raw dispatcher read. EvaluateGoogleMonitor drops the operator's
+// scratch campaigns, and a total that counted their spend would describe a population the caller
+// never sees in the same response.
+func TestMonitorAccount_TotalsExcludeRowsTheRuleEngineDropped(t *testing.T) {
 	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
 	svc.SetOrchestrator(&Orchestrator{
 		dispatchers: map[model.Provider]PlatformDispatcher{
-			model.ProviderRedditAds: &mockAccountTotalsReaderDispatcher{
-				mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{
-					rows: []model.AccountCampaignMetrics{
-						{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE", Spend: 50, Impressions: 100, Clicks: 5},
-					},
+			model.ProviderGoogleAds: &mockAccountMetricsReaderDispatcher{
+				rows: []model.AccountCampaignMetrics{
+					{PlatformCampaignID: "1", Name: "Live", Status: "enabled", BudgetDay: 50, Spend: 50, Impressions: 100, Clicks: 5},
+					{PlatformCampaignID: "2", Name: "zz_old_draft", Status: "enabled", BudgetDay: 50, Spend: 900, Impressions: 900, Clicks: 90},
 				},
-				totalsErr: domain.ErrConnectionNotUsable,
+			},
+		},
+	})
+
+	result, err := svc.MonitorGoogleAdsAccount(context.Background(),
+		&conn.MonitorGoogleAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
+	if err != nil {
+		t.Fatalf("MonitorGoogleAdsAccount failed: %T: %v", err, err)
+	}
+	if len(result.Campaigns) != 1 {
+		t.Fatalf("got %d campaigns, want 1 — the scratch campaign should be filtered", len(result.Campaigns))
+	}
+	if result.Totals.Spend != 50 || result.Totals.CampaignCount != 1 {
+		t.Errorf("totals = %+v, want only the returned row (spend=50, campaignCount=1); the dropped "+
+			"scratch campaign's spend must not appear in a total the caller cannot reconcile", result.Totals)
+	}
+}
+
+// TestMonitorRedditAccount_TotalsSumTheReturnedRows is the regression test for
+// linuxfoundation/lfx-self-serve#3022. Reddit's totals used to come from a SEPARATE account-wide
+// report call, ported from reddit-ads.service.ts's fetchAccountMetrics. That call is unfiltered —
+// it covers every campaign on the account, archived ones included — while the rows beside it are
+// filtered to the statuses the monitor displays, so the two described different populations with
+// nothing in the response saying so. Reddit now sums its rows like every other platform.
+func TestMonitorRedditAccount_TotalsSumTheReturnedRows(t *testing.T) {
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(&Orchestrator{
+		dispatchers: map[model.Provider]PlatformDispatcher{
+			model.ProviderRedditAds: &mockAccountMetricsReaderDispatcher{
+				rows: []model.AccountCampaignMetrics{
+					{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE", Spend: 50, Impressions: 100, Clicks: 5},
+					{PlatformCampaignID: "2", Name: "d", Status: "PAUSED", Spend: 25, Impressions: 40, Clicks: 2},
+				},
 			},
 		},
 	})
@@ -308,59 +310,15 @@ func TestMonitorAccount_TotalsReaderErrorFallsBackToRowSum(t *testing.T) {
 	result, err := svc.MonitorRedditAdsAccount(context.Background(),
 		&conn.MonitorRedditAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
 	if err != nil {
-		t.Fatalf("MonitorRedditAdsAccount failed: %T: %v — a failed account-totals call must fall "+
-			"back to the row sum, not abort the endpoint", err, err)
+		t.Fatalf("MonitorRedditAdsAccount failed: %T: %v", err, err)
 	}
 	if result.Totals == nil {
-		t.Fatalf("expected non-nil totals from the row-sum fallback")
+		t.Fatalf("expected non-nil totals")
 	}
-	if result.Totals.Spend != 50 || result.Totals.Impressions != 100 || result.Totals.Clicks != 5 || result.Totals.CampaignCount != 1 {
-		t.Errorf("totals = %+v, want the row summed verbatim (spend=50, impressions=100, clicks=5, "+
-			"campaignCount=1), not the platform's own (999) totals since that call failed", result.Totals)
-	}
-	if !result.Totals.DerivedFromRows {
-		t.Errorf("DerivedFromRows = false, want true: Reddit's own account-wide totals call failed, " +
-			"so this row sum stands in for a platform-native figure that was expected but unavailable")
-	}
-}
-
-// TestMonitorAccount_ContractViolationFallsBackToRowSum pins the fix for general reviewer's
-// finding #3: when ReadAccountTotals' own dispatcher adapter is broken — it returns (nil, nil)
-// instead of a real result or error — that must not be logged the same way as an ordinary
-// upstream failure (ErrConnectionNotUsable, a timeout, a 500). It is still non-fatal to the
-// endpoint (the campaign rows and action items already succeeded), so it still falls back to
-// the row sum, but errAccountTotalsContractViolation must be identifiable via errors.Is so the
-// caller can log it at ERROR rather than folding it into the routine WARN-level path.
-func TestMonitorAccount_ContractViolationFallsBackToRowSum(t *testing.T) {
-	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
-	svc.SetOrchestrator(&Orchestrator{
-		dispatchers: map[model.Provider]PlatformDispatcher{
-			model.ProviderRedditAds: &mockAccountTotalsReaderDispatcher{
-				mockAccountMetricsReaderDispatcher: mockAccountMetricsReaderDispatcher{
-					rows: []model.AccountCampaignMetrics{
-						{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE", Spend: 50, Impressions: 100, Clicks: 5},
-					},
-				},
-				totalsNilResult: true,
-			},
-		},
-	})
-
-	result, err := svc.MonitorRedditAdsAccount(context.Background(),
-		&conn.MonitorRedditAdsAccountPayload{ProjectID: "p", AccountID: "a", Days: 30})
-	if err != nil {
-		t.Fatalf("MonitorRedditAdsAccount failed: %T: %v — a broken AccountTotalsReader adapter must "+
-			"still fall back to the row sum, not abort the endpoint", err, err)
-	}
-	if result.Totals == nil {
-		t.Fatalf("expected non-nil totals from the row-sum fallback")
-	}
-	if result.Totals.Spend != 50 || result.Totals.Impressions != 100 || result.Totals.Clicks != 5 || result.Totals.CampaignCount != 1 {
-		t.Errorf("totals = %+v, want the row summed verbatim (spend=50, impressions=100, clicks=5, campaignCount=1)", result.Totals)
-	}
-	if !result.Totals.DerivedFromRows {
-		t.Errorf("DerivedFromRows = false, want true: Reddit's own totals reader is what returned the " +
-			"contract violation, so this row sum stands in for a platform-native figure that was expected")
+	if result.Totals.Spend != 75 || result.Totals.Impressions != 140 || result.Totals.Clicks != 7 ||
+		result.Totals.CampaignCount != len(result.Campaigns) {
+		t.Errorf("totals = %+v, want the two returned rows summed (spend=75, impressions=140, clicks=7) "+
+			"with campaignCount matching the %d campaigns returned", result.Totals, len(result.Campaigns))
 	}
 }
 

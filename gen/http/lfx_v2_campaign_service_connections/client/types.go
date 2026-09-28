@@ -4980,14 +4980,9 @@ type AccountMonitorTotalsResponseBody struct {
 	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
 	// Account-wide conversions over the window.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
-	// How many campaigns the totals reflect.
+	// How many campaigns the totals reflect: the length of the campaigns array
+	// these totals sum.
 	CampaignCount *int `form:"campaign_count,omitempty" json:"campaign_count,omitempty" xml:"campaign_count,omitempty"`
-	// True when these totals are a sum of the returned campaigns array rather than
-	// the platform's own account-wide figure. Always false except on a Reddit read
-	// whose separate account-totals call actually failed, in which case the
-	// campaign rows are still authoritative but this aggregate is a derived
-	// stand-in.
-	DerivedFromRows *bool `form:"derived_from_rows,omitempty" json:"derived_from_rows,omitempty" xml:"derived_from_rows,omitempty"`
 }
 
 // NewCreateGoogleAdsRequestBody builds the HTTP request body from the payload
@@ -16072,9 +16067,6 @@ func ValidateAccountMonitorTotalsResponseBody(body *AccountMonitorTotalsResponse
 	}
 	if body.CampaignCount == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_count", "body"))
-	}
-	if body.DerivedFromRows == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("derived_from_rows", "body"))
 	}
 	return
 }

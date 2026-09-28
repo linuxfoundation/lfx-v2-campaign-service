@@ -349,9 +349,7 @@ type Service interface {
 	// Read every campaign visible on a Reddit Ads account, live from the platform,
 	// with pacing and action items derived by this service's ported rule engine.
 	// Account-scoped, not project-scoped, the same way monitor-google-ads-account
-	// is. totals on this platform come from a separate account-level upstream call
-	// rather than a sum of the campaigns array — see AccountTotalsReader in
-	// internal/service/orchestrator.go. A pure read: nothing is persisted.
+	// is. A pure read: nothing is persisted.
 	MonitorRedditAdsAccount(context.Context, *MonitorRedditAdsAccountPayload) (res *AccountMonitor, err error)
 }
 
@@ -484,14 +482,9 @@ type AccountMonitorTotals struct {
 	Clicks int64
 	// Account-wide conversions over the window.
 	Conversions float64
-	// How many campaigns the totals reflect.
+	// How many campaigns the totals reflect: the length of the campaigns array
+	// these totals sum.
 	CampaignCount int
-	// True when these totals are a sum of the returned campaigns array rather than
-	// the platform's own account-wide figure. Always false except on a Reddit read
-	// whose separate account-totals call actually failed, in which case the
-	// campaign rows are still authoritative but this aggregate is a derived
-	// stand-in.
-	DerivedFromRows bool
 }
 
 type CampaignRef struct {

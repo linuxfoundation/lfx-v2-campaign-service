@@ -1944,7 +1944,7 @@ after adoption could already have bound a campaign. `googleads.CampaignKindSearc
 `OrgReferenceVerifier` is another OPTIONAL dispatcher interface, declared in
 `internal/service/orchestrator.go` and discovered by the same type assertion as the others
 (`StatusToggler`, `MetricsReader`, `AccountLister`, `CampaignAdopter`, `SettingsReader`,
-`AccountMetricsReader`, `AccountTotalsReader`, `EmailSearcher`, `KeywordInsightsReader`,
+`AccountMetricsReader`, `EmailSearcher`, `KeywordInsightsReader`,
 `KeywordActioner`). **LinkedIn is the
 only implementation today** — it is the only platform with an upstream signal to cross-check
 a connection's configured account/org pairing against.

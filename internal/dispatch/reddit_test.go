@@ -1325,28 +1325,3 @@ func TestReddit_ListAccountCampaignMetrics_ConversionsAbsentNotZero(t *testing.T
 		t.Errorf("flight = %q..%q, want 2026-06-05..2026-06-25", rows[0].StartDate, rows[0].EndDate)
 	}
 }
-
-// TestReddit_ReadAccountTotals_RejectsMalformedAccountID and
-// TestReddit_ReadAccountTotals_RejectsInvalidDays pin round-18 review's fix: ReadAccountTotals
-// previously called resolveMonitorClient (and so resolved a credential) without validating
-// accountID or days first, unlike its sibling ListAccountCampaignMetrics — even though
-// resolveMonitorClient's own doc comment claimed every caller validated first.
-func TestReddit_ReadAccountTotals_RejectsMalformedAccountID(t *testing.T) {
-	d := NewRedditDispatcher(
-		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
-	)
-	_, err := d.ReadAccountTotals(context.Background(), "proj", model.ProviderRedditAds, "t2/../abc", 30, 5)
-	if !errors.Is(err, domain.ErrAccountIDMalformed) {
-		t.Errorf("expected err to wrap domain.ErrAccountIDMalformed, got: %v", err)
-	}
-}
-
-func TestReddit_ReadAccountTotals_RejectsInvalidDays(t *testing.T) {
-	d := NewRedditDispatcher(
-		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
-	)
-	_, err := d.ReadAccountTotals(context.Background(), "proj", model.ProviderRedditAds, "t2_abc123", 0, 5)
-	if !errors.Is(err, domain.ErrMonitorDaysInvalid) {
-		t.Errorf("expected err to wrap domain.ErrMonitorDaysInvalid, got: %v", err)
-	}
-}

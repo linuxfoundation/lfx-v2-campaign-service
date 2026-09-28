@@ -55,9 +55,9 @@ reaches), not project-scoped ones.
   operator-facing alerting bands and remains its own decision.
 - `internal/service/connection_monitor.go`'s `monitorAccount` is the shared
   handler body: validate → resolve backend → `ReadAccountCampaignMetrics` →
-  per-platform `evaluate` closure → `ReadAccountTotals` (Reddit's only —
-  its totals come from a separate account-level call, not a row sum) →
-  `monitorTotalsFallback` for everyone else.
+  per-platform `evaluate` closure → `monitorTotals`, which sums the
+  post-`evaluate` rows on every platform, so the aggregate always describes
+  exactly the campaigns array returned beside it.
 
 ## Ported BFF quirks, and where each one now stands
 
@@ -74,7 +74,7 @@ comments come out with each fix.
 | Google/Reddit's local pacing literals rather than a shared constant | `linuxfoundation/lfx-self-serve#3019` | **Fixed** — one shared `pacingLabelFor` |
 | Reddit's hardcoded `conversions: 0` in its rule input | `linuxfoundation/lfx-self-serve#3020` | **Fixed** — absent, not a measured 0 |
 | Reddit's underspend threshold/label mismatch (fires at `<40`, labeled `<50`) | `linuxfoundation/lfx-self-serve#3021` | **Fixed** — the alert is keyed off the label |
-| Reddit's account totals from an independent upstream call rather than a row sum | `linuxfoundation/lfx-self-serve#3022` | Open |
+| Reddit's account totals from an independent upstream call rather than a row sum | `linuxfoundation/lfx-self-serve#3022` | **Fixed** — every platform sums its rows |
 
 Two further defects were found in this code rather than carried across it, so
 neither has a BFF-side ticket: a campaign with no budget at all reported as
@@ -306,10 +306,12 @@ differential diff, since fixed:
    whole endpoint with an error whenever Reddit's separate account-totals
    call (`AccountTotalsReader.ReadAccountTotals`) failed, discarding the
    per-campaign rows and action items already fetched successfully. A
-   totals-call error now falls back to `monitorTotalsFallback` the same way
-   the capability-absent (`!ok`) arm already did — the per-campaign data is
+   totals-call error fell back to the row sum the same way the
+   capability-absent (`!ok`) arm already did — the per-campaign data is
    the response's primary content, and the account-wide totals are a
-   secondary, derivable figure not worth a 5xx over.
+   secondary, derivable figure not worth a 5xx over. (That whole call, and
+   the `AccountTotalsReader` capability behind it, were later removed by
+   `#3022`; Reddit now sums its rows like everyone else.)
 4. Three more false-absence/false-zero defects, found by Copilot's second PR
    review pass and fixed in round 24: Google Ads'
    `internal/platform/googleads/monitor.go` converted a present-but-unparseable

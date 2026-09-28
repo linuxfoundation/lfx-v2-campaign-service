@@ -7822,7 +7822,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-reddit-ads-account lfx-v2-campaign-service-connections
-            description: 'Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. totals on this platform come from a separate account-level upstream call rather than a sum of the campaigns array — see AccountTotalsReader in internal/service/orchestrator.go. A pure read: nothing is persisted.'
+            description: 'Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#monitor-reddit-ads-account
             parameters:
                 - name: account_id
@@ -9272,7 +9272,6 @@ definitions:
                 campaign_count: 14
                 clicks: 11420
                 conversions: 212.5
-                derived_from_rows: false
                 impressions: 184200
                 spend: 1842.55
         required:
@@ -9450,7 +9449,7 @@ definitions:
         properties:
             campaign_count:
                 type: integer
-                description: How many campaigns the totals reflect.
+                description: 'How many campaigns the totals reflect: the length of the campaigns array these totals sum.'
                 example: 14
                 format: int64
             clicks:
@@ -9463,10 +9462,6 @@ definitions:
                 description: Account-wide conversions over the window.
                 example: 212.5
                 format: double
-            derived_from_rows:
-                type: boolean
-                description: True when these totals are a sum of the returned campaigns array rather than the platform's own account-wide figure. Always false except on a Reddit read whose separate account-totals call actually failed, in which case the campaign rows are still authoritative but this aggregate is a derived stand-in.
-                example: false
             impressions:
                 type: integer
                 description: Account-wide impressions over the window.
@@ -9481,7 +9476,6 @@ definitions:
             campaign_count: 14
             clicks: 11420
             conversions: 212.5
-            derived_from_rows: false
             impressions: 184200
             spend: 1842.55
         required:
@@ -9490,7 +9484,6 @@ definitions:
             - clicks
             - conversions
             - campaign_count
-            - derived_from_rows
     Audience:
         title: Audience
         type: object

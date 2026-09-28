@@ -544,38 +544,6 @@ func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, proje
 	return out, nil
 }
 
-// ReadAccountTotals implements service.AccountTotalsReader for Reddit, porting
-// fetchAccountMetrics — a SEPARATE account-wide report call, independent of the per-campaign
-// rows ListAccountCampaignMetrics returns. See model.AccountMonitorTotals' doc comment for
-// why Reddit alone needs this second capability.
-func (d *RedditDispatcher) ReadAccountTotals(ctx context.Context, projectID string, platform model.Provider, accountID string, days, campaignCount int) (*model.AccountMonitorTotals, error) {
-	// Validated up front, before any credential is resolved — same ordering as
-	// ListAccountCampaignMetrics, and the reason resolveMonitorClient's own comment can say
-	// accountID is guaranteed non-empty by the time it runs: both of resolveMonitorClient's
-	// callers validate before calling it, not just one of them.
-	if err := reddit.ValidateAccountID(accountID); err != nil {
-		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
-	}
-	if err := validateMonitorDays(days); err != nil {
-		return nil, err
-	}
-	client, err := d.resolveMonitorClient(ctx, projectID, platform, accountID)
-	if err != nil {
-		return nil, err
-	}
-	totals, terr := client.FetchAccountTotals(ctx, accountID, days, campaignCount)
-	if terr != nil {
-		return nil, terr
-	}
-	return &model.AccountMonitorTotals{
-		Spend:         totals.SpendUSD,
-		Impressions:   totals.Impressions,
-		Clicks:        totals.Clicks,
-		Conversions:   0,
-		CampaignCount: totals.CampaignCount,
-	}, nil
-}
-
 // resolveMonitorClient resolves the project's OWN Reddit connection and its client — never the
 // LF system fallback (d.creds.resolveOwned, not d.creds.resolve) — then confirms accountID
 // names the SAME account the connection resolves to. A raw ad account id that does not match is

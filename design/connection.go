@@ -1157,16 +1157,15 @@ var AccountMonitorActionItem = Type("account-monitor-action-item", func() {
 })
 
 // AccountMonitorTotals is the account-wide aggregate reported next to the per-campaign rows —
-// see model.AccountMonitorTotals. NOT necessarily a sum of the campaigns array: Reddit's
-// totals come from a separate account-level upstream call.
+// see model.AccountMonitorTotals. Always the sum of the campaigns array in the same response,
+// on every platform, so the aggregate and the list can never describe different populations.
 var AccountMonitorTotals = Type("account-monitor-totals", func() {
 	Attribute("spend", Float64, "Account-wide spend over the window.", func() { Example(1842.55) })
 	Attribute("impressions", Int64, "Account-wide impressions over the window.", func() { Example(184200) })
 	Attribute("clicks", Int64, "Account-wide clicks over the window.", func() { Example(11420) })
 	Attribute("conversions", Float64, "Account-wide conversions over the window.", func() { Example(212.5) })
-	Attribute("campaign_count", Int, "How many campaigns the totals reflect.", func() { Example(14) })
-	Attribute("derived_from_rows", Boolean, "True when these totals are a sum of the returned campaigns array rather than the platform's own account-wide figure. Always false except on a Reddit read whose separate account-totals call actually failed, in which case the campaign rows are still authoritative but this aggregate is a derived stand-in.", func() { Example(false) })
-	Required("spend", "impressions", "clicks", "conversions", "campaign_count", "derived_from_rows")
+	Attribute("campaign_count", Int, "How many campaigns the totals reflect: the length of the campaigns array these totals sum.", func() { Example(14) })
+	Required("spend", "impressions", "clicks", "conversions", "campaign_count")
 })
 
 // AccountMonitor is the account-scoped monitor read result, shared across all four
@@ -1746,7 +1745,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	// per-platform result union, and the house convention is one method per platform sharing
 	// one result type (AccountMonitor). Unlike list-*-accounts, every platform gets one here —
 	// including Reddit, which has no ListAccounts dispatcher implementation but does have an
-	// account-scoped metrics read (see AccountTotalsReader in internal/service/orchestrator.go).
+	// account-scoped metrics read (see AccountMetricsReader in internal/service/orchestrator.go).
 	//
 	// account_id is supplied by the caller rather than resolved from the stored connection:
 	// this ports the BFF's account-scoped monitor endpoints, which read a raw ad account
@@ -1876,9 +1875,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	Method("monitor-reddit-ads-account", func() {
 		Description("Read every campaign visible on a Reddit Ads account, live from the platform, with " +
 			"pacing and action items derived by this service's ported rule engine. Account-scoped, not " +
-			"project-scoped, the same way monitor-google-ads-account is. totals on this platform come " +
-			"from a separate account-level upstream call rather than a sum of the campaigns array — see " +
-			"AccountTotalsReader in internal/service/orchestrator.go. A pure read: nothing is persisted.")
+			"project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()

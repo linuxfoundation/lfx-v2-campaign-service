@@ -141,26 +141,20 @@ type AccountMonitorActionItem struct {
 // AccountMonitorTotals is the account-wide aggregate the monitor response reports next to
 // the per-campaign rows.
 //
-// NOT necessarily a sum of the returned AccountCampaignMetrics rows — Reddit's port
-// deliberately is not (bug (c) in the migration spec): its accountTotals come from a
-// SEPARATE account-level metrics call, made independently of the per-campaign rows, exactly
-// as reddit-ads.service.ts's getRedditAnalytics does. Every other platform's totals ARE a
-// sum of the rows, ported the same way the BFF computed them.
+// Always the sum of exactly those rows, on every platform (service.monitorTotals). Reddit's
+// port originally took its totals from a SEPARATE account-level metrics call, the way
+// reddit-ads.service.ts's getRedditAnalytics does, and that call is unfiltered: it covers
+// every campaign on the account, including ones the monitor's own status filter excludes from
+// the rows. So the totals and the rows described different populations, with nothing in the
+// response saying so — and CampaignCount, taken from the row count, already contradicted the
+// spend it sat beside. Summing the rows makes the aggregate and the list agree by
+// construction. See linuxfoundation/lfx-self-serve#3022.
 type AccountMonitorTotals struct {
 	Spend         float64
 	Impressions   int64
 	Clicks        int64
 	Conversions   float64
 	CampaignCount int
-	// DerivedFromRows is true only when these totals are the row-summed fallback
-	// (monitorTotalsFallback) rather than the platform's own account-wide figure — see that
-	// function's doc comment. Every platform but Reddit always sets it false: their totals
-	// ARE a row sum by design, so "derived" carries no information for them. For Reddit it
-	// distinguishes the platform's own independent account-level number from a stand-in
-	// computed here because that call actually failed — not merely because no
-	// AccountTotalsReader exists for the platform, which is the contractual figure, not a
-	// stand-in.
-	DerivedFromRows bool
 }
 
 // AccountMonitorRow wraps one AccountCampaignMetrics with rule-engine output, in the shape

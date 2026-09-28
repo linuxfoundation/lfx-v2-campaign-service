@@ -4808,14 +4808,9 @@ type AccountMonitorTotalsResponseBody struct {
 	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
 	// Account-wide conversions over the window.
 	Conversions float64 `form:"conversions" json:"conversions" xml:"conversions"`
-	// How many campaigns the totals reflect.
+	// How many campaigns the totals reflect: the length of the campaigns array
+	// these totals sum.
 	CampaignCount int `form:"campaign_count" json:"campaign_count" xml:"campaign_count"`
-	// True when these totals are a sum of the returned campaigns array rather than
-	// the platform's own account-wide figure. Always false except on a Reddit read
-	// whose separate account-totals call actually failed, in which case the
-	// campaign rows are still authoritative but this aggregate is a derived
-	// stand-in.
-	DerivedFromRows bool `form:"derived_from_rows" json:"derived_from_rows" xml:"derived_from_rows"`
 }
 
 // GoogleAdsConnectionConfigRequestBody is used to define fields on request
