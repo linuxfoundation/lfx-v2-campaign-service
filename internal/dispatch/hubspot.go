@@ -345,10 +345,16 @@ func (d *HubSpotDispatcher) ProbeConnection(ctx context.Context, projectID strin
 	// It stays worth SAYING, because a stale value renders deep links into a portal the
 	// operator is not looking at. That is a link-building defect, logged for whoever has to
 	// explain a dead link, and deliberately not part of the operator-facing verdict.
+	//
+	// Only the AUTHENTICATED portal is logged. The configured one is the operator's own
+	// stored input and is the half a reader can already look up — it is on the connection row
+	// this line names by project_id — so logging it copies operator-supplied data into the log
+	// stream for no diagnostic the row does not already answer. The derived value is the half
+	// that exists nowhere else, and without it the line announces a broken deep link while
+	// withholding the portal the links actually resolve into. PR #228 review, security nit.
 	if configured != "" && strings.TrimSpace(portalID) != configured {
 		slog.WarnContext(ctx, "the hubspot connection's configured portal_id does not match the portal its token authenticates into; the connection is usable and campaigns land in the token's portal, but app links built for created assets will point at the configured portal",
 			"project_id", projectID,
-			"configured_portal_id", configured,
 			"authenticated_portal_id", strings.TrimSpace(portalID),
 		)
 	}

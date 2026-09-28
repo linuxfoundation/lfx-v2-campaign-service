@@ -2069,6 +2069,14 @@ into a portal the operator is not looking at, but it is a link-building defect r
 verdict on the connection — failing it would report a working connection as broken, and
 `accountNotReachable`'s "does not reach" would be false on top of that.
 
+That warning carries the **authenticated** portal and not the configured one. The derived value
+is the point of the line — it is where the dead links actually resolve, and it exists nowhere
+else — while the configured value is the operator's own stored input, already sitting on the
+connection row the same line names by `project_id`. Logging it would copy operator-supplied data
+into the log stream for a diagnostic the row answers on its own.
+`TestHubSpotProbe_MismatchLogsOnlyTheDerivedPortal` pins the asymmetry, because a later reader
+sees half a pair and completes it.
+
 HubSpot's `probeSubject` is therefore built with **no `accountID` at all**. `where()` renders
 that field as "for account X" on a confirmed verdict, so seeding it with `portal_id` put the one
 value this section documents as routing nothing into the single message an operator reads as

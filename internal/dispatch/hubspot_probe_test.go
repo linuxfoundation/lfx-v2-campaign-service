@@ -4,8 +4,10 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -123,5 +125,44 @@ func TestHubSpotProbe_RejectionNamesNoAccount(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "for account") {
 		t.Errorf("message %q claims an account subject; HubSpot's probe has none", err)
+	}
+}
+
+// TestHubSpotProbe_MismatchLogsOnlyTheDerivedPortal pins the SHAPE of the deep-link warning, not
+// just that it fires.
+//
+// The line exists so whoever chases a dead app.hubspot.com link can see which portal those links
+// actually resolve into — that value is derived from the token and appears nowhere else, so it
+// has to be in the log. The CONFIGURED portal does not: it is the operator's own stored input,
+// sitting on the connection row this same line names by project_id, so logging it copies
+// operator-supplied data into the log stream for a diagnostic the row already answers. Dropping
+// it was a security nit on PR #228; this test is what stops a later edit from "completing" the
+// pair.
+func TestHubSpotProbe_MismatchLogsOnlyTheDerivedPortal(t *testing.T) {
+	srv := tokenInfoServer(t, `{"hubId":8112310}`)
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	d := NewHubSpotDispatcher(
+		fakeConnReader{conn: hubspotConnInPortal("99999999")},
+		identityEncryptor{},
+		fakeAudienceReader{},
+		hubspot.WithBaseURL(srv.URL),
+	)
+	if err := d.ProbeConnection(context.Background(), "tlf", model.ProviderHubSpot); err != nil {
+		t.Fatalf("ProbeConnection = %v, want nil: a stale portal_id is not a verdict", err)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "authenticated_portal_id=8112310") {
+		t.Errorf("the mismatch warning does not carry the portal the token authenticates into; "+
+			"without it the line reports a broken deep link and withholds where the links go:\n%s", logged)
+	}
+	if strings.Contains(logged, "configured_portal_id") || strings.Contains(logged, "99999999") {
+		t.Errorf("the mismatch warning logged the operator-supplied portal_id; it is on the "+
+			"connection row this line already names by project_id:\n%s", logged)
 	}
 }
