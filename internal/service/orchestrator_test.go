@@ -2490,6 +2490,116 @@ func TestOrchestrator_ReadAccountsBoundsThePlatformCall(t *testing.T) {
 	}
 }
 
+// plainDispatcher implements ONLY PlatformDispatcher — none of the optional capabilities —
+// standing in for the 5 platforms with no OrgReferenceVerifier.
+type plainDispatcher struct{}
+
+func (plainDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, nil
+}
+
+// orgReferenceVerifierStub implements OrgReferenceVerifier (and the bare PlatformDispatcher
+// it composes with) so VerifyAccountOrg's type assertion can be exercised without a real
+// LinkedIn client.
+type orgReferenceVerifierStub struct {
+	err error
+	// gotProjectID/gotPlatform record what the orchestrator actually passed through.
+	gotProjectID string
+	gotPlatform  model.Provider
+}
+
+func (s *orgReferenceVerifierStub) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, nil
+}
+
+func (s *orgReferenceVerifierStub) VerifyAccountOrg(_ context.Context, projectID string, platform model.Provider) error {
+	s.gotProjectID = projectID
+	s.gotPlatform = platform
+	return s.err
+}
+
+// TestOrchestrator_VerifyAccountOrg_NoOpForUnsupportedPlatform pins that this is the ONE
+// optional capability whose absence is silent, not ErrAccountsUnsupported-style — every
+// other platform lacks any upstream signal to check, and that must read as "nothing to
+// report", not as a failure the caller has to special-case.
+func TestOrchestrator_VerifyAccountOrg_NoOpForUnsupportedPlatform(t *testing.T) {
+	orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: plainDispatcher{},
+	})
+	if err := orch.VerifyAccountOrg(context.Background(), "proj-1", model.ProviderGoogleAds); err != nil {
+		t.Errorf("VerifyAccountOrg: %v, want nil for a dispatcher with no OrgReferenceVerifier", err)
+	}
+}
+
+// TestOrchestrator_VerifyAccountOrg_NoOpForUnregisteredPlatform mirrors the above for a
+// platform with no dispatcher registered at all.
+//
+// The fixture is deliberately a platform NOT in orgVerificationRequired. Google has no
+// upstream org reference to check, so nothing is skipped by staying silent here. LinkedIn
+// would be the wrong fixture for this claim, and the two tests below say why.
+func TestOrchestrator_VerifyAccountOrg_NoOpForUnregisteredPlatform(t *testing.T) {
+	orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{})
+	if err := orch.VerifyAccountOrg(context.Background(), "proj-1", model.ProviderGoogleAds); err != nil {
+		t.Errorf("VerifyAccountOrg: %v, want nil when no dispatcher is registered for a platform with no org signal", err)
+	}
+}
+
+// TestOrchestrator_VerifyAccountOrg_MissingRequiredDispatcherIsAServiceDefect pins the
+// boundary the silent no-op above must NOT cross. LinkedIn is the platform this service has a
+// cross-check FOR, so a build that cannot run it is mis-wired — and nil would make
+// TestLinkedinAds answer OK: true with the check never run, the exact failure this
+// verification exists to prevent. ErrServiceDefect routes it to that handler's typed 500
+// instead. (Whether a given account populates `reference` is the check's own outcome, not a
+// reason to skip running it — an account that omits it is the documented inconclusive nil.)
+func TestOrchestrator_VerifyAccountOrg_MissingRequiredDispatcherIsAServiceDefect(t *testing.T) {
+	t.Run("no dispatcher registered at all", func(t *testing.T) {
+		orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{})
+		err := orch.VerifyAccountOrg(context.Background(), "proj-1", model.ProviderLinkedInAds)
+		if !errors.Is(err, domain.ErrServiceDefect) {
+			t.Errorf("VerifyAccountOrg: %v, want a domain.ErrServiceDefect for an unregistered linkedin dispatcher", err)
+		}
+	})
+
+	t.Run("dispatcher registered but not an OrgReferenceVerifier", func(t *testing.T) {
+		orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+			model.ProviderLinkedInAds: plainDispatcher{},
+		})
+		err := orch.VerifyAccountOrg(context.Background(), "proj-1", model.ProviderLinkedInAds)
+		if !errors.Is(err, domain.ErrServiceDefect) {
+			t.Errorf("VerifyAccountOrg: %v, want a domain.ErrServiceDefect for a linkedin dispatcher missing OrgReferenceVerifier", err)
+		}
+	})
+}
+
+// TestOrchestrator_VerifyAccountOrg_DelegatesToTheVerifier pins that a dispatcher which DOES
+// implement OrgReferenceVerifier is actually consulted, and its answer (both success and
+// failure) is propagated verbatim.
+func TestOrchestrator_VerifyAccountOrg_DelegatesToTheVerifier(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		stub := &orgReferenceVerifierStub{}
+		orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+			model.ProviderLinkedInAds: stub,
+		})
+		if err := orch.VerifyAccountOrg(context.Background(), "proj-1", model.ProviderLinkedInAds); err != nil {
+			t.Errorf("VerifyAccountOrg: %v, want nil", err)
+		}
+		if stub.gotProjectID != "proj-1" || stub.gotPlatform != model.ProviderLinkedInAds {
+			t.Errorf("verifier saw (%q, %q), want (\"proj-1\", %q)", stub.gotProjectID, stub.gotPlatform, model.ProviderLinkedInAds)
+		}
+	})
+
+	t.Run("failure propagates verbatim", func(t *testing.T) {
+		wantErr := errors.New("account 1 advertises on behalf of a different organization")
+		stub := &orgReferenceVerifierStub{err: wantErr}
+		orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+			model.ProviderLinkedInAds: stub,
+		})
+		if err := orch.VerifyAccountOrg(context.Background(), "proj-1", model.ProviderLinkedInAds); !errors.Is(err, wantErr) {
+			t.Errorf("VerifyAccountOrg: %v, want %v", err, wantErr)
+		}
+	})
+}
+
 // accountNotSelectedErr is the shape Meta's requireMetaAccountID (and Google Ads' connection
 // validator) produce for a connection parked in the credentials-only bootstrap state: a
 // pre-create fault carrying the ErrConnectionNotUsable / ErrAccountNotSelected pair.

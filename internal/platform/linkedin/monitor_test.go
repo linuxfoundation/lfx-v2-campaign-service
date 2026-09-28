@@ -262,3 +262,33 @@ func TestListAccountCampaigns_NullAnalyticsElements_IsRejected(t *testing.T) {
 		})
 	}
 }
+
+// TestListAccountCampaigns_UnattributableAnalyticsElement_IsRejected pins the round-31 review
+// fix at monitor.go:315-321: an analytics element with no pivotValues, or a pivotValues entry
+// that does not resolve to a campaign id, cannot be attributed to any campaign — there is no id
+// to key FetchFailed on, unlike a malformed costInUsd. Dropping the row instead of rejecting the
+// whole read would let ListAccountCampaigns read that campaign's real activity as a legitimate
+// zero, restoring the exact false-zero-delivery bug Copilot flagged on this range (PR #215
+// post-merge review comment).
+func TestListAccountCampaigns_UnattributableAnalyticsElement_IsRejected(t *testing.T) {
+	for name, analyticsBody := range map[string]string{
+		"empty pivotValues":            `{"elements":[{"pivotValues":[],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
+		"pivotValues resolves to none": `{"elements":[{"pivotValues":[""],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, _ := adAccountsServer(t,
+				`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"}],"metadata":{}}`,
+				analyticsBody,
+			)
+			c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
+
+			_, err := c.ListAccountCampaigns(context.Background(), "512345678", 7)
+			if err == nil {
+				t.Fatalf("an analytics element with %s was accepted, silently attributing its metrics to no campaign", name)
+			}
+			if !strings.Contains(err.Error(), "pivotValues") {
+				t.Errorf("error = %v, want it to report the pivotValues problem", err)
+			}
+		})
+	}
+}

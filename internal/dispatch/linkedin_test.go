@@ -19,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 const goodLinkedInCreds = `{"AccessToken":"tok"}`
@@ -58,6 +59,216 @@ func TestLinkedIn_PreCreateErrorsReleaseClaim(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---- VerifyAccountOrg (connection-test upstream cross-check) --------------
+
+// TestLinkedIn_VerifyAccountOrg mirrors the pre-create resolution failures in
+// TestLinkedIn_PreCreateErrorsReleaseClaim: VerifyAccountOrg resolves credentials through
+// resolveLinkedInOwnedDiscoveryCredentials (d.creds.resolveOwned, the connection-test read's
+// own project only, never the LF system fallback), then additionally requires both the
+// connection's account id and its org id to be present, because verifying a PAIRING needs
+// both.
+//
+// The two resolvers diverge in TWO ways, and both are tenant boundaries. With forcing OFF,
+// resolve falls back to the reserved system scope whenever the project has no connection of its
+// own (creds.go), while resolveOwned never falls back. With LFX_FORCE_SYSTEM_ADS_ACCOUNT ON,
+// resolve answers from the LF system row even for a project that HAS one. The last two subtests
+// turn forcing on because that is the stronger of the two — a fixture holding only the system
+// row would discriminate the unforced fallback without t.Setenv, but only the forced path
+// substitutes the LF row for a connection that exists. They pin both halves of it: a project with no
+// connection of its own must not be answered from the LF system row (resolve would have
+// verified an account the project cannot reach and reported the connection healthy), and a
+// project that does have one must be checked against ITS row, not the LF row that forcing
+// would substitute for dispatch. Without them, swapping resolveOwned for resolve here passes
+// every other case in this file unchanged.
+func TestLinkedIn_VerifyAccountOrg(t *testing.T) {
+	t.Run("resolution failures surface as errors", func(t *testing.T) {
+		cases := []struct {
+			name string
+			repo connReader
+			enc  domain.Encryptor
+		}{
+			{"missing connection", fakeConnReader{err: domain.ErrNotFound}, identityEncryptor{}},
+			{"no stored credentials", fakeConnReader{conn: &model.Connection{Provider: model.ProviderLinkedInAds, Status: model.StatusActive}}, identityEncryptor{}},
+			{"decrypt fails", fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, errEncryptor{}},
+			{"empty access token", fakeConnReader{conn: activeLinkedInConn(`{"AccessToken":""}`)}, identityEncryptor{}},
+			{"inactive connection", fakeConnReader{conn: &model.Connection{Provider: model.ProviderLinkedInAds, AccountID: "1", EncryptedCredentials: []byte(goodLinkedInCreds), ProviderConfig: map[string]string{"org_id": "o"}, Status: model.StatusInactive}}, identityEncryptor{}},
+			{"missing org id", fakeConnReader{conn: &model.Connection{Provider: model.ProviderLinkedInAds, AccountID: "1", EncryptedCredentials: []byte(goodLinkedInCreds), Status: model.StatusActive}}, identityEncryptor{}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				d := NewLinkedInDispatcher(tc.repo, tc.enc)
+				if err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds); err == nil {
+					t.Error("VerifyAccountOrg: want an error, got nil")
+				}
+			})
+		}
+	})
+
+	t.Run("agreement with the platform's reference passes", func(t *testing.T) {
+		rec := &requestRecorder{}
+		srv := linkedInAccountsServer(t, rec, `{"id":123456789,"reference":"urn:li:organization:987654321"}`)
+		d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+		if err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds); err != nil {
+			t.Errorf("VerifyAccountOrg: %v, want nil on agreement", err)
+		}
+	})
+
+	t.Run("confirmed disagreement with the platform's reference fails", func(t *testing.T) {
+		rec := &requestRecorder{}
+		srv := linkedInAccountsServer(t, rec, `{"id":123456789,"reference":"urn:li:organization:111111111"}`)
+		d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+		err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds)
+		if err == nil {
+			t.Fatal("VerifyAccountOrg: want an error when the connection's org_id disagrees with the platform's reference")
+		}
+		if !strings.Contains(err.Error(), "111111111") || !strings.Contains(err.Error(), "987654321") {
+			t.Errorf("error = %v, want it to name both org ids", err)
+		}
+		// The mirror image of the inconclusive conversion below: internal/service echoes
+		// this error's text into the operator-visible message, and it does so ONLY for an
+		// error carrying this sentinel. Without the tag the verdict falls to the default arm
+		// and the operator is told "could not be completed" about a cross-check that
+		// completed and disagreed.
+		if !errors.Is(err, domain.ErrOrgVerificationFailed) {
+			t.Errorf("VerifyAccountOrg: %v, want domain.ErrOrgVerificationFailed — the service echoes only allowlisted verdicts", err)
+		}
+		// The tag is additive and MUST add no text of its own: the service renders this
+		// message after its own prefix, and a sentinel sentence in between would be a third
+		// restatement of "verification failed" before the operator reaches the facts.
+		if strings.Contains(err.Error(), domain.ErrOrgVerificationFailed.Error()) {
+			t.Errorf("VerifyAccountOrg: %v, want the sentinel attached without rendering its own sentence", err)
+		}
+	})
+
+	// A stored pairing missing either id is decided before any request is made, and it is a
+	// verdict in the same sense: stored configuration alone answers it. It must carry the
+	// same tag, or the one message that names the field to repair is replaced by fixed text.
+	t.Run("a half-configured pairing is a confirmed verdict naming the missing fields", func(t *testing.T) {
+		c := activeLinkedInConn(goodLinkedInCreds)
+		c.ProviderConfig = map[string]string{"org_id": ""}
+		d := NewLinkedInDispatcher(fakeConnReader{conn: c}, identityEncryptor{})
+		err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds)
+		if err == nil {
+			t.Fatal("VerifyAccountOrg: want an error when the stored org id is absent")
+		}
+		if !errors.Is(err, domain.ErrOrgVerificationFailed) {
+			t.Errorf("VerifyAccountOrg: %v, want domain.ErrOrgVerificationFailed", err)
+		}
+		if !strings.Contains(err.Error(), "account id or org id") {
+			t.Errorf("VerifyAccountOrg: %v, want the message to name the fields to repair", err)
+		}
+	})
+
+	// The third outcome, and the one that is a verdict about neither the pairing nor the
+	// token: LinkedIn refused the discovery request itself. The walk sends neither id, so a
+	// 400 says this service built a malformed request — reporting that as a failed
+	// verification would send an operator to audit fields that were never consulted.
+	t.Run("a rejected discovery request is a service defect, not a failed verification", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+		}))
+		t.Cleanup(srv.Close)
+		d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+		err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds)
+		if err == nil {
+			t.Fatal("VerifyAccountOrg: want an error when linkedin refuses the discovery request")
+		}
+		if !errors.Is(err, domain.ErrServiceDefect) {
+			t.Errorf("VerifyAccountOrg: %v, want domain.ErrServiceDefect — the stored connection is not at fault and cannot be repaired into a well-formed request", err)
+		}
+		if errors.Is(err, domain.ErrOrgVerificationFailed) {
+			t.Errorf("VerifyAccountOrg: %v, want NOT domain.ErrOrgVerificationFailed — no account and no organization were compared", err)
+		}
+		// And it must not fold into the healthy-reporting bucket either: a 400 does not
+		// clear on its own, so calling the walk incomplete answers OK: true forever.
+		if errors.Is(err, domain.ErrOrgVerificationInconclusive) {
+			t.Errorf("VerifyAccountOrg: %v, want NOT domain.ErrOrgVerificationInconclusive — a refusal is permanent and that sentinel reports OK: true", err)
+		}
+	})
+
+	// The conversion to the domain sentinel is also the redaction boundary: internal/service
+	// logs an error carrying domain.ErrOrgVerificationInconclusive verbatim, which is only
+	// safe because the platform error's chain stops HERE. A *url.Error inside it renders the
+	// full discovery request URL, pagination cursor included.
+	t.Run("an inconclusive walk becomes the domain sentinel and carries no request url", func(t *testing.T) {
+		// A closed server: the dial fails, which is the real inconclusive case and the one
+		// whose error carries the URL.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		closedURL := srv.URL
+		srv.Close()
+		d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(closedURL))
+		err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds)
+		if err == nil {
+			t.Fatal("VerifyAccountOrg: want an error when ad-account discovery cannot be reached")
+		}
+		if !errors.Is(err, domain.ErrOrgVerificationInconclusive) {
+			t.Errorf("VerifyAccountOrg: %v, want domain.ErrOrgVerificationInconclusive — the service classifies on the domain sentinel, not on the platform package's", err)
+		}
+		// The platform sentinel must NOT ride along: a caller matching on it would be
+		// reaching across the layer this conversion exists to close.
+		if errors.Is(err, linkedin.ErrOrgVerificationInconclusive) {
+			t.Errorf("VerifyAccountOrg: %v, want the platform sentinel's chain dropped, not wrapped", err)
+		}
+		if strings.Contains(err.Error(), "adAccounts") || strings.Contains(err.Error(), closedURL) {
+			t.Errorf("VerifyAccountOrg: %v, leaked the discovery request url — internal/service logs this error verbatim", err)
+		}
+	})
+
+	// Forcing exists for DISPATCH: it makes paid-ads creates run on the LF-owned account
+	// regardless of the project's own connection. A connection TEST is the opposite question
+	// — "is THIS project's stored connection usable?" — so resolving it through the forced
+	// path would answer about a row the project does not own, and hand back a green result
+	// for a connection that does not exist.
+	t.Run("forced system mode does not answer the check from the LF system row", func(t *testing.T) {
+		t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+		rec := &requestRecorder{}
+		srv := linkedInAccountsServer(t, rec, `{"id":123456789,"reference":"urn:li:organization:987654321"}`)
+		repo := &scopedConnReader{rows: map[string]*model.Connection{
+			// Only the LF row exists. Under resolve this verifies cleanly and the project
+			// is told its (absent) connection is fine; under resolveOwned there is nothing
+			// to verify and the absence is reported.
+			model.SystemProjectID: activeLinkedInConn(goodLinkedInCreds),
+		}}
+		d := NewLinkedInDispatcher(repo, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+		if err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds); err == nil {
+			t.Error("VerifyAccountOrg: want an error for a project with no connection of its own, got nil")
+		}
+		if len(repo.gets) != 1 || repo.gets[0] != "cncf" {
+			t.Errorf("scopes asked = %v, want the project scope ONLY", repo.gets)
+		}
+		// The refusal must happen before any credential reaches LinkedIn: a request here
+		// means the LF token was used to answer a question about another project.
+		if paths, _, _ := rec.all(); len(paths) != 0 {
+			t.Errorf("requests to linkedin = %v, want none", paths)
+		}
+	})
+
+	t.Run("forced system mode still verifies the project's own row, not the LF row", func(t *testing.T) {
+		t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+		rec := &requestRecorder{}
+		srv := linkedInAccountsServer(t, rec, `{"id":123456789,"reference":"urn:li:organization:987654321"}`)
+		repo := &scopedConnReader{rows: map[string]*model.Connection{
+			"cncf": activeLinkedInConn(goodLinkedInCreds), // org 987654321 — agrees
+			// Same account id, DIFFERENT org id: if forcing redirected this read, the
+			// walk would find the same account and report a confirmed mismatch.
+			model.SystemProjectID: {
+				Provider:             model.ProviderLinkedInAds,
+				AccountID:            "123456789",
+				EncryptedCredentials: []byte(goodLinkedInCreds),
+				ProviderConfig:       map[string]string{"org_id": "111111111"},
+				Status:               model.StatusActive,
+			},
+		}}
+		d := NewLinkedInDispatcher(repo, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+		if err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds); err != nil {
+			t.Errorf("VerifyAccountOrg: %v, want nil — the project's own org id agrees", err)
+		}
+		if len(repo.gets) != 1 || repo.gets[0] != "cncf" {
+			t.Errorf("scopes asked = %v, want the project scope ONLY", repo.gets)
+		}
+	})
 }
 
 func TestLinkedIn_BadConfigIsPreCreate(t *testing.T) {

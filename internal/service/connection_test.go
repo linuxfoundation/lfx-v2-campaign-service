@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -324,6 +325,276 @@ func TestLinkedInAds_RoundTripsOrgID(t *testing.T) {
 	if res.OrgID == nil || *res.OrgID != "208777" {
 		t.Errorf("org_id = %v, want 208777", res.OrgID)
 	}
+}
+
+// TestTestLinkedinAds_NoOrchestratorIs503 pins that, once the shared testConn baseline
+// passes, verifying the account/org pairing is treated the SAME way account discovery is —
+// requiring an orchestrator — rather than silently skipping the check when none is wired.
+func TestTestLinkedinAds_NoOrchestratorIs503(t *testing.T) {
+	s := newTestService(t, newFakeRepo())
+	if _, err := s.CreateLinkedinAds(context.Background(), &conn.CreateLinkedinAdsPayload{
+		ProjectID:   "tlf",
+		Config:      &conn.LinkedinAdsConnectionConfig{AccountID: "538170226", OrgID: "208777"},
+		Credentials: &conn.LinkedinAdsCredentials{AccessToken: "tok"},
+	}); err != nil {
+		t.Fatalf("CreateLinkedinAds: %v", err)
+	}
+	_, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+	if _, ok := err.(*conn.ConnServiceUnavailableError); !ok {
+		t.Fatalf("expected *conn.ConnServiceUnavailableError with no orchestrator wired, got %T (%v)", err, err)
+	}
+}
+
+// TestTestLinkedinAds_NoCredentialsSkipsUpstreamVerification pins that a connection which
+// fails the shared testConn baseline (no credentials) is reported as-is — OK: false — without
+// ever reaching the orchestrator's upstream check. There is nothing to verify an org pairing
+// against without credentials, and the orchestrator being unset here (it would 503, per the
+// test above) proves the short-circuit actually happened rather than merely succeeding too.
+func TestTestLinkedinAds_NoCredentialsSkipsUpstreamVerification(t *testing.T) {
+	repo := newFakeRepo()
+	repo.store[repoKey("tlf", model.ProviderLinkedInAds)] = &model.Connection{
+		ProjectID: "tlf", Provider: model.ProviderLinkedInAds,
+		AccountID: "538170226", ProviderConfig: map[string]string{"org_id": "208777"},
+		Status: model.StatusActive, Version: 1,
+		// EncryptedCredentials deliberately empty — HasCredentials() must be false.
+	}
+	s := newTestService(t, repo)
+	res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+	if err != nil {
+		t.Fatalf("TestLinkedinAds: %v", err)
+	}
+	if res.OK {
+		t.Error("OK = true for a connection with no stored credentials")
+	}
+	// The message must name the real reason. testConn is shared across providers and its
+	// generic text says upstream verification is "not yet implemented" — false here, since
+	// TestLinkedinAds implements it — so an operator handed that text goes looking for a
+	// missing feature instead of authorizing the connection.
+	if res.Message == nil {
+		t.Fatal("Message = nil; the operator is told nothing about why the test failed")
+	}
+	if strings.Contains(*res.Message, "not yet implemented") {
+		t.Errorf("Message = %q, still claims upstream verification is unimplemented", *res.Message)
+	}
+	if !strings.Contains(*res.Message, "no credentials are stored") {
+		t.Errorf("Message = %q, does not name the absent credential as the reason", *res.Message)
+	}
+}
+
+// TestTestLinkedinAds_UpstreamVerification exercises the new behavior beyond the testConn
+// baseline: once a credentialed connection passes testConn, TestLinkedinAds must additionally
+// consult Orchestrator.VerifyAccountOrg and fold a confirmed mismatch into OK: false rather
+// than returning it as a transport-level error.
+func TestTestLinkedinAds_UpstreamVerification(t *testing.T) {
+	newConn := func(t *testing.T) *ConnectionService {
+		s := newTestService(t, newFakeRepo())
+		if _, err := s.CreateLinkedinAds(context.Background(), &conn.CreateLinkedinAdsPayload{
+			ProjectID:   "tlf",
+			Config:      &conn.LinkedinAdsConnectionConfig{AccountID: "538170226", OrgID: "208777"},
+			Credentials: &conn.LinkedinAdsCredentials{AccessToken: "tok"},
+		}); err != nil {
+			t.Fatalf("CreateLinkedinAds: %v", err)
+		}
+		return s
+	}
+
+	t.Run("agreement reports OK", func(t *testing.T) {
+		s := newConn(t)
+		verifier := &orgReferenceVerifierStub{}
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: verifier},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if err != nil {
+			t.Fatalf("TestLinkedinAds: %v", err)
+		}
+		if !res.OK {
+			t.Errorf("OK = false, want true; message = %v", res.Message)
+		}
+		if verifier.gotPlatform != model.ProviderLinkedInAds {
+			t.Errorf("verifier saw platform %q, want %q", verifier.gotPlatform, model.ProviderLinkedInAds)
+		}
+	})
+
+	t.Run("confirmed mismatch reports OK: false, not a transport error", func(t *testing.T) {
+		s := newConn(t)
+		// Carries domain.ErrOrgVerificationFailed because the dispatcher attaches it to every
+		// confirmed verdict; the echo arm is an allowlist keyed on it, so an untagged error
+		// would (correctly) get the fixed text instead — see the subtest below.
+		mismatch := fmt.Errorf("%w: %w", domain.ErrOrgVerificationFailed,
+			errors.New("linkedin ad account 538170226 advertises on behalf of organization 999, not the configured organization 208777"))
+		verifier := &orgReferenceVerifierStub{err: mismatch}
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: verifier},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if err != nil {
+			t.Fatalf("TestLinkedinAds: %v, want a normal (nil, result) failed test, not a transport error", err)
+		}
+		if res.OK {
+			t.Fatal("OK = true despite a confirmed org mismatch")
+		}
+		if res.Message == nil || !strings.Contains(*res.Message, "999") || !strings.Contains(*res.Message, "208777") {
+			t.Errorf("message = %v, want it to name both org ids", res.Message)
+		}
+	})
+
+	// The reason the echo is an allowlist rather than a default. Three classes that reach
+	// this switch were found carrying a datastore query, a request URL and decrypted bytes,
+	// each after a change elsewhere routed a new error here; every one of them inherited the
+	// echo by simply not matching an arm above it. An unrecognised error is now silent by
+	// construction, so the next such class leaks nothing while it waits for its own arm.
+	t.Run("an unclassified verification error is not echoed to the caller", func(t *testing.T) {
+		s := newConn(t)
+		const canary = "DO-NOT-LEAK-pq: SELECT * FROM connections WHERE token='secret'"
+		verifier := &orgReferenceVerifierStub{err: fmt.Errorf("reading connection: %w", errors.New(canary))}
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: verifier},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if err != nil {
+			t.Fatalf("TestLinkedinAds: %v, want a normal (nil, result) failed test", err)
+		}
+		if res.OK {
+			t.Fatal("OK = true for an error that proves no cross-check succeeded")
+		}
+		if res.Message == nil || strings.Contains(*res.Message, "DO-NOT-LEAK") {
+			t.Errorf("message = %v, want fixed text with no part of the unclassified error", res.Message)
+		}
+	})
+
+	t.Run("inconclusive enumeration failure reports OK: true, not a failed test", func(t *testing.T) {
+		s := newConn(t)
+		inconclusive := fmt.Errorf("%w: %v", domain.ErrOrgVerificationInconclusive, "transport failure contacting linkedin ad-account discovery")
+		verifier := &orgReferenceVerifierStub{err: inconclusive}
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: verifier},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if err != nil {
+			t.Fatalf("TestLinkedinAds: %v", err)
+		}
+		if !res.OK {
+			t.Errorf("OK = false, want true: an enumeration failure proves nothing about the org pairing")
+		}
+		if res.Message == nil || !strings.Contains(*res.Message, "inconclusive") {
+			t.Errorf("message = %v, want it to say the check was inconclusive", res.Message)
+		}
+	})
+
+	// Defence in depth. The dispatcher is what strips the platform error's chain before this
+	// sentinel is ever attached (TestLinkedInVerifyAccountOrg_InconclusiveCarriesNoRequestURL
+	// in internal/dispatch pins that), so a real inconclusive error reaching this layer has
+	// nothing to leak. This injects one that does anyway, and pins the separate guarantee that
+	// the RESPONSE is a fixed advisory built from no part of the error either way.
+	t.Run("inconclusive enumeration failure never echoes the transport error's URL into the response", func(t *testing.T) {
+		s := newConn(t)
+		const leakyURL = "https://api.linkedin.com/rest/adAccounts?q=search&pageToken=SECRET-CURSOR-9f2a"
+		inconclusive := fmt.Errorf("%w: %v", domain.ErrOrgVerificationInconclusive, fmt.Errorf("linkedin GET /adAccounts: Get %q: EOF", leakyURL))
+		verifier := &orgReferenceVerifierStub{err: inconclusive}
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: verifier},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if err != nil {
+			t.Fatalf("TestLinkedinAds: %v", err)
+		}
+		if res.Message == nil || strings.Contains(*res.Message, leakyURL) || strings.Contains(*res.Message, "SECRET-CURSOR") {
+			t.Errorf("message = %v, leaked the transport error's request URL/query into the HTTP response", res.Message)
+		}
+	})
+
+	// A datastore outage is not a verdict. Before this arm existed it fell to the default and
+	// was reported as OK: false — telling the caller their connection is broken because this
+	// service could not read it, with the raw repo error concatenated in to explain why.
+	t.Run("a connection load failure is a retryable 503, not a failed test", func(t *testing.T) {
+		s := newConn(t)
+		const marker = "pq: SELECT connections WHERE project_id = 'tlf' -- DO-NOT-LEAK"
+		loadErr := fmt.Errorf("load linkedin-ads connection: %w: %w", domain.ErrConnectionLoadFailed, errors.New(marker))
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: &orgReferenceVerifierStub{err: loadErr}},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if res != nil {
+			t.Errorf("result = %+v, want nil: nothing was learned about the connection", res)
+		}
+		var unavail *conn.ConnServiceUnavailableError
+		if !errors.As(err, &unavail) {
+			t.Fatalf("error = %v (%T), want a 503 — unlike every other arm here, waiting genuinely helps", err, err)
+		}
+		if strings.Contains(err.Error(), marker) || strings.Contains(err.Error(), "DO-NOT-LEAK") {
+			t.Errorf("error = %v, leaked the repo error text; a repo error can quote the query or the row", err)
+		}
+	})
+
+	// OK: false is right — the connection really is unusable — but the default arm's message
+	// was not: one condition behind this sentinel is found by decoding the DECRYPTED credential
+	// blob, and an unmarshal error quotes its input.
+	t.Run("an unusable stored connection fails the test without echoing the credential-derived error", func(t *testing.T) {
+		s := newConn(t)
+		const marker = "invalid character 'x' looking for beginning of value in DECRYPTED-BLOB-BYTES"
+		unusable := fmt.Errorf("linkedin credentials: %w: %w: %w",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, errors.New(marker))
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: &orgReferenceVerifierStub{err: unusable}},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if err != nil {
+			t.Fatalf("TestLinkedinAds: %v, want an ordinary failed test", err)
+		}
+		if res.OK {
+			t.Error("OK = true for a connection that cannot be used as configured")
+		}
+		if res.Message == nil || strings.Contains(*res.Message, marker) || strings.Contains(*res.Message, "DECRYPTED-BLOB-BYTES") {
+			t.Errorf("message = %v, put credential-derived bytes into the HTTP response", res.Message)
+		}
+		if res.Message == nil || !strings.Contains(*res.Message, "cannot be used as configured") {
+			t.Errorf("message = %v, want it to name the remedy surface", res.Message)
+		}
+	})
+
+	t.Run("credential decryption failure returns a redacted 500, never the marker text", func(t *testing.T) {
+		s := newConn(t)
+		const marker = "AES-GCM-CIPHERTEXT-DO-NOT-LEAK-77b3"
+		decryptErr := fmt.Errorf("decrypt linkedin credentials: %w: %w", domain.ErrCredentialDecryptionFailed, errors.New(marker))
+		verifier := &orgReferenceVerifierStub{err: decryptErr}
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: verifier},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if res != nil {
+			t.Errorf("result = %+v, want nil on a service-side decryption failure", res)
+		}
+		ise, ok := err.(*conn.InternalServerError)
+		if !ok {
+			t.Fatalf("err = %#v (%T), want *conn.InternalServerError", err, err)
+		}
+		if strings.Contains(ise.Message, marker) {
+			t.Errorf("InternalServerError.Message = %q leaked the decrypt error's marker text %q", ise.Message, marker)
+		}
+	})
+
+	t.Run("a service defect returns a typed 500, not an ordinary failed test", func(t *testing.T) {
+		s := newConn(t)
+		// The middle link stands in for a platform client's own typed setup error, which is what
+		// the dispatcher wraps in ErrServiceDefect in production. It is deliberately NOT the real
+		// linkedin.ErrTokenRequestRejected: this package classifies on domain sentinels alone, so
+		// importing the platform package even from a test would make the layering claim in
+		// internal-service.md false for package service's own import graph. The arm under test
+		// matches ErrServiceDefect and nothing else, so a stand-in exercises the same path.
+		defect := fmt.Errorf("%w: %w: %w", domain.ErrServiceDefect, errors.New("linkedin token request rejected"), errors.New("malformed refresh request"))
+		verifier := &orgReferenceVerifierStub{err: defect}
+		s.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderLinkedInAds: verifier},
+		})
+		res, err := s.TestLinkedinAds(context.Background(), &conn.TestLinkedinAdsPayload{ProjectID: "tlf"})
+		if res != nil {
+			t.Errorf("result = %+v, want nil on a service defect", res)
+		}
+		if _, ok := err.(*conn.InternalServerError); !ok {
+			t.Fatalf("err = %#v, want *conn.InternalServerError — a defect in this service, not the stored connection, must not be reported as a failed test", err)
+		}
+	})
 }
 
 func TestJWTAuth_ExtractsActorFromToken(t *testing.T) {

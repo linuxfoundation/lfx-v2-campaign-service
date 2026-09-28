@@ -412,6 +412,45 @@ type CampaignAdopter interface {
 	LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error)
 }
 
+// OrgReferenceVerifier is an OPTIONAL dispatcher capability: cross-check a project's stored
+// connection against the platform's OWN record of the org/account pairing it is scoped to,
+// for use by a connection-test endpoint. Discovered by type assertion like the other optional
+// capabilities above, but unlike them its ABSENCE is not an error condition — see
+// Orchestrator.VerifyAccountOrg. Only LinkedIn implements this today: it is the one platform
+// this service integrates with whose ad-account resource carries a platform-reported
+// "reference" naming the true sponsoring organization, independent of whatever org id a
+// connection happens to have stored. The other platforms have no equivalent signal to check.
+type OrgReferenceVerifier interface {
+	// VerifyAccountOrg reports whether the project's connection's configured account/org
+	// pairing agrees with the platform's own record of it. A resolution failure — no usable
+	// connection, an inactive connection, undecodable or incomplete credentials, a missing
+	// account or org id — is a REAL error: there is nothing to verify, and the connection-test
+	// caller must see that as a failed test, not a silent pass. So is a CONFIRMED disagreement,
+	// and so is the configured account being absent from a platform enumeration the
+	// implementation has verified was complete (see linkedin.VerifyAccountOrgReference's doc
+	// comment) — both are confirmable facts about a broken pairing, not merely an inconclusive
+	// comparison. A failure of the enumeration walk itself is different: it proves nothing
+	// about the pairing, so implementations wrap it in domain.ErrOrgVerificationInconclusive,
+	// and callers must not treat it the same as a confirmed failure (see TestLinkedinAds).
+	// A stored account id or org id the platform could never have issued (linkedin's must both
+	// be numeric) is a REAL error too, decidable without contacting the platform at all:
+	// campaign creation on that connection is already guaranteed to fail. So is a request the
+	// platform RECEIVED and refused against THIS token's authorization — a 403. It will not
+	// start succeeding on its own, so calling it an incomplete walk would answer "healthy"
+	// for a permanently broken cross-check forever.
+	//
+	// The remaining 4xx refusals (a rate limit aside) are neither: the enumeration request
+	// names no account and no organization, so a 400 or a 404 says this service built the
+	// request wrongly or is calling a path that moved. Implementations report those as
+	// domain.ErrServiceDefect — still never as an incomplete walk, since they do not clear on
+	// their own either, but as a defect the caller pages US for rather than a connection the
+	// operator is told to repair.
+	// Returns nil in exactly two situations, which it cannot distinguish: a confirmed match,
+	// and the platform having no comparable reference on the account to compare against.
+	// Callers that need to tell those apart cannot, by design.
+	VerifyAccountOrg(ctx context.Context, projectID string, platform model.Provider) error
+}
+
 // Status-toggle classification sentinels. These distinguish a client/state error (the
 // toggle never reached the ad platform) from a real platform-call failure, so the service
 // can return an accurate status + message instead of blaming the platform for everything.
@@ -587,6 +626,7 @@ const (
 	opReadKeywords               = "read_keywords"
 	opReadAudience               = "read_audience"
 	opKeywordActions             = "keyword_actions"
+	opVerifyAccountOrg           = "verify_account_org"
 )
 
 // recordUpstream times one upstream platform call. It is called ONLY after the
@@ -2064,6 +2104,63 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 		return nil, fmt.Errorf("%s account campaign metrics reader returned a nil result with no error", platform)
 	}
 	return rows, nil
+}
+
+// orgVerificationRequired names the platforms whose dispatcher MUST implement
+// OrgReferenceVerifier. Membership is a claim about the PLATFORM, not about this service's
+// wiring: LinkedIn's ad-account resource EXPOSES a `reference` field naming the sponsoring
+// organization, so this service has a cross-check to run for it and a build that cannot run one
+// is mis-wired. The other 5 platforms expose no equivalent field at all, so their absence from
+// VerifyAccountOrg is the designed outcome rather than a defect — see the method's doc comment.
+//
+// Membership says the check must RUN, not that it must reach a verdict. `reference` is optional
+// per account (it can be absent, or name a person rather than an organization), and an account
+// that omits it yields the one inconclusive nil the outcome model documents. Being unable to run
+// the check is a different failure from running it and having nothing to compare, and only the
+// first is a defect.
+var orgVerificationRequired = map[model.Provider]bool{
+	model.ProviderLinkedInAds: true,
+}
+
+// VerifyAccountOrg cross-checks a project's stored connection against the platform's own
+// record of the org/account pairing it is scoped to, when the platform's dispatcher supports
+// it. Unlike ReadAccounts and the other optional-capability methods above, an unsupported
+// platform is NOT an error here — this is meant to be called from every platform's
+// connection-test path, and only LinkedIn's `reference` field gives this service a way to
+// catch a manually mistyped org id against the platform's own data. The other 5 platforms
+// have no such signal to check, so silently doing nothing for them is the correct, expected
+// outcome, not a degraded one.
+//
+// That permissiveness is scoped to the platforms it is actually correct for. For a platform in
+// orgVerificationRequired, a missing dispatcher — or a registered one that does not implement
+// OrgReferenceVerifier — is a wiring defect in THIS service, and returning nil for it would let
+// TestLinkedinAds answer OK: true with the cross-check never run: the same "broken connection
+// reported healthy" outcome the check exists to prevent, and one no operator could diagnose
+// from the response. ErrServiceDefect makes the caller return its typed 500 instead, wrapped
+// alongside ErrOrgVerificationUnwired as the reason sentinel — per that sentinel's contract, the
+// status and the reason token are separate decisions, and the response carries no detail, so the
+// token is the only thing that tells an operator reading the log that nothing they own is broken.
+func (o *Orchestrator) VerifyAccountOrg(ctx context.Context, projectID string, platform model.Provider) error {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		if orgVerificationRequired[platform] {
+			return fmt.Errorf("%w: %w: no %s dispatcher is registered, so the org/account cross-check this platform requires could not run", domain.ErrServiceDefect, domain.ErrOrgVerificationUnwired, platform)
+		}
+		return nil
+	}
+	verifier, ok := d.(OrgReferenceVerifier)
+	if !ok {
+		if orgVerificationRequired[platform] {
+			return fmt.Errorf("%w: %w: the registered %s dispatcher does not implement OrgReferenceVerifier, so the org/account cross-check this platform requires could not run", domain.ErrServiceDefect, domain.ErrOrgVerificationUnwired, platform)
+		}
+		return nil
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	err := verifier.VerifyAccountOrg(callCtx, projectID, platform)
+	o.recordUpstream(ctx, platform, opVerifyAccountOrg, start, err)
+	return err
 }
 
 // errAccountTotalsContractViolation wraps ReadAccountTotals' nil-result contract-violation

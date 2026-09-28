@@ -168,6 +168,14 @@ func TestLinkedIn_ExpiredCredentialsAreTaggedOnEveryPath(t *testing.T) {
 			_, err := d.ReadMetrics(context.Background(), "p1", model.ProviderLinkedInAds, campaign, model.MetricsWindowLast7Days)
 			return err
 		}},
+		// VerifyAccountOrg applies the same re-tagging, and it is the one path that ALSO
+		// classifies the error afterwards — into the inconclusive bucket or the confirmed
+		// one. Both of those answer a connection TEST, so a credential fault that slipped
+		// past this tagging would not merely lose a reason token here: it would be reported
+		// as an org cross-check outcome.
+		{"VerifyAccountOrg", func(d *LinkedInDispatcher) error {
+			return d.VerifyAccountOrg(context.Background(), "p1", model.ProviderLinkedInAds)
+		}},
 	}
 
 	for _, tc := range cases {
@@ -193,6 +201,13 @@ func TestLinkedIn_ExpiredCredentialsAreTaggedOnEveryPath(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "reconnected") {
 				t.Errorf("err = %q; want an actionable message telling the operator to reconnect", err)
+			}
+			// A credential fault is not a verdict about the account/org pairing — the
+			// cross-check never ran. VerifyAccountOrg tags only confirmed verdicts, and
+			// internal/service echoes an error's own text solely on that tag, so a
+			// credential fault carrying it would be rendered as a failed cross-check.
+			if errors.Is(err, domain.ErrOrgVerificationFailed) {
+				t.Errorf("err = %v; a credential fault must NOT carry ErrOrgVerificationFailed — nothing about the pairing was checked", err)
 			}
 		})
 	}
@@ -269,6 +284,14 @@ func TestLinkedIn_InvalidClientIsTaggedOnEveryPath(t *testing.T) {
 			_, err := d.ReadMetrics(context.Background(), "p1", model.ProviderLinkedInAds, campaign, model.MetricsWindowLast7Days)
 			return err
 		}},
+		// VerifyAccountOrg applies the same re-tagging, and it is the one path that ALSO
+		// classifies the error afterwards — into the inconclusive bucket or the confirmed
+		// one. Both of those answer a connection TEST, so a credential fault that slipped
+		// past this tagging would not merely lose a reason token here: it would be reported
+		// as an org cross-check outcome.
+		{"VerifyAccountOrg", func(d *LinkedInDispatcher) error {
+			return d.VerifyAccountOrg(context.Background(), "p1", model.ProviderLinkedInAds)
+		}},
 	}
 
 	for _, tc := range cases {
@@ -300,6 +323,12 @@ func TestLinkedIn_InvalidClientIsTaggedOnEveryPath(t *testing.T) {
 			// The originating cause survives for anything classifying at the client layer.
 			if !errors.Is(err, linkedin.ErrApplicationCredentialsInvalid) {
 				t.Errorf("err = %v; the originating cause must be preserved", err)
+			}
+			// Same guard as the expiry twin: an application-credential fault is not a
+			// verdict about the pairing, and the confirmed tag is what makes the service
+			// echo an error's own text.
+			if errors.Is(err, domain.ErrOrgVerificationFailed) {
+				t.Errorf("err = %v; must NOT carry ErrOrgVerificationFailed — the cross-check never ran", err)
 			}
 			// This repo redacts token-endpoint bodies: only the classification travels.
 			for _, leak := range []string{"sk-LEAKME", "client authentication failed for app"} {

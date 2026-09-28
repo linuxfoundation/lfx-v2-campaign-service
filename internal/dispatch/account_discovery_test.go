@@ -36,9 +36,10 @@ import (
 // Consult that when the question is "which providers support discovery?"; these assertions
 // only guarantee that the three exercised below still compile against the interface.
 var (
-	_ service.AccountLister = (*LinkedInDispatcher)(nil)
-	_ service.AccountLister = (*MicrosoftDispatcher)(nil)
-	_ service.AccountLister = (*TwitterDispatcher)(nil)
+	_ service.AccountLister        = (*LinkedInDispatcher)(nil)
+	_ service.AccountLister        = (*MicrosoftDispatcher)(nil)
+	_ service.AccountLister        = (*TwitterDispatcher)(nil)
+	_ service.OrgReferenceVerifier = (*LinkedInDispatcher)(nil)
 )
 
 // requestRecorder captures what the dispatcher actually put on the wire. Asserting on the
