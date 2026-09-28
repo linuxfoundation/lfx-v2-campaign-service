@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
@@ -47,12 +49,10 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 	items := make([]model.AccountMonitorActionItem, 0)
 
 	for _, m := range rows {
-		// zz-prefixed campaign names are filtered out entirely — ported from
-		// getMonitorData's `.filter((c) => !c.name.toLowerCase().startsWith('zz'))`. This is a
-		// KNOWN BUG/convention, ported verbatim — see follow-up ticket: it silently drops any
-		// campaign an operator happened to name starting with "zz" (e.g. a "ZZ-archive-test"
-		// campaign), not just the intended test/scratch ones.
-		if strings.HasPrefix(strings.ToLower(m.Name), "zz") {
+		// Campaigns named with the operator's "zz" scratch prefix are hidden from this view.
+		// See isScratchCampaignName for what counts and why the BFF's own test is not used
+		// directly.
+		if isScratchCampaignName(m.Name) {
 			continue
 		}
 
@@ -187,4 +187,30 @@ func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 			"Upload creative assets, review ad groups, publish the campaign (then pause if not ready to go live)")
 	}
 	return items
+}
+
+// isScratchCampaignName reports whether a campaign name uses the operator convention of
+// prefixing throwaway campaigns with "zz" so they sort last and can be ignored.
+//
+// Ported from getMonitorData's `.filter((c) => !c.name.toLowerCase().startsWith('zz'))`, but
+// NOT that test verbatim. Two bare letters is not a convention, it is a coincidence waiting to
+// happen: `startsWith('zz')` silently drops any campaign whose name merely begins with them,
+// and a dropped campaign is invisible here — no row, no action items, no indication anything
+// was filtered. An operator looking for a campaign that is quietly missing from the monitor
+// has nothing to go on.
+//
+// The prefix must therefore be followed by a separator (or be the whole name) to count. That
+// keeps every name the convention actually produces — "zz-test", "ZZ_old_scratch", "zz 2026
+// draft" — and stops the filter reaching a name that simply starts with the same two letters.
+func isScratchCampaignName(name string) bool {
+	n := strings.ToLower(name)
+	if !strings.HasPrefix(n, "zz") {
+		return false
+	}
+	rest := n[len("zz"):]
+	if rest == "" {
+		return true
+	}
+	next, _ := utf8.DecodeRuneInString(rest)
+	return !unicode.IsLetter(next) && !unicode.IsDigit(next)
 }
