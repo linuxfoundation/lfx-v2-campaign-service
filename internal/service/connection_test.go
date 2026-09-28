@@ -463,7 +463,7 @@ func TestTestLinkedinAds_UpstreamVerification(t *testing.T) {
 		}
 	})
 
-	t.Run("inconclusive enumeration failure reports OK: true, not a failed test", func(t *testing.T) {
+	t.Run("inconclusive enumeration failure reports OK: false, and says linkedin was unreachable", func(t *testing.T) {
 		s := newConn(t)
 		inconclusive := fmt.Errorf("%w: %v", domain.ErrOrgVerificationInconclusive, "transport failure contacting linkedin ad-account discovery")
 		verifier := &orgReferenceVerifierStub{err: inconclusive}
@@ -474,11 +474,40 @@ func TestTestLinkedinAds_UpstreamVerification(t *testing.T) {
 		if err != nil {
 			t.Fatalf("TestLinkedinAds: %v", err)
 		}
-		if !res.OK {
-			t.Errorf("OK = false, want true: an enumeration failure proves nothing about the org pairing")
+		// Same contract as testConnUpstream's inconclusive arm, and it has to be the same on
+		// both or `ok` means one thing on linkedin and another everywhere else: the walk did not
+		// establish the CONJUNCTION the field reports — the credential authenticated AND the
+		// configured account passed linkedin's own check — so OK: false. Not "the credential did
+		// not authenticate", which is a verdict this arm never obtained — and not the opposite
+		// either: the baseline gating entry is testConn's local row read, and this arm also
+		// covers a walk that failed before send. Neither half is established, so neither is
+		// claimed.
+		if res.OK {
+			t.Errorf("OK = true for a walk that reached no verdict; a caller reading ok alone gets a " +
+				"green check for a pairing nothing verified")
 		}
-		if res.Message == nil || !strings.Contains(*res.Message, "inconclusive") {
-			t.Errorf("message = %v, want it to say the check was inconclusive", res.Message)
+		if res.Message == nil || !strings.Contains(*res.Message, "could not be reached") {
+			t.Errorf("message = %v, does not tell the caller linkedin was unreachable", res.Message)
+		}
+		if res.Message != nil && !strings.Contains(*res.Message, "nothing is known to be wrong") {
+			t.Errorf("message = %v, does not steer the operator to retry; the repair for an "+
+				"unreachable platform is to try again, not to re-authorize", res.Message)
+		}
+		// ...and it must not overclaim in EITHER direction. This arm reached no verdict on
+		// the credential at all: the baseline gating entry is testConn's local row read, and
+		// the inconclusive class covers a walk that failed before send, where linkedin
+		// received nothing to evaluate. So the message may assert neither half of the
+		// conjunction. The guard runs both ways on purpose — round 9 removed the "did not
+		// authenticate" claim and the correction replaced it with its negation, which is the
+		// same mistake pointed the other way.
+		for _, claim := range []string{
+			"did not authenticate", "was rejected", "is invalid", "failed to authenticate",
+			"authenticated", "was accepted", "accepted the credential",
+		} {
+			if res.Message != nil && strings.Contains(*res.Message, claim) {
+				t.Errorf("message = %v, says %q about a credential this walk reached no verdict "+
+					"on; an incomplete walk establishes neither half of the conjunction", res.Message, claim)
+			}
 		}
 	})
 

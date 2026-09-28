@@ -924,24 +924,44 @@ func TestUpdateCampaignStatus_CancelDuringBackoffIsUnconfirmed(t *testing.T) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	defer tokenSrv.Close()
-	var hits int
+	// atomic, and cancellation is driven off the handler rather than off the clock. The
+	// handler runs on net/http's goroutine while the assertions below run on the test's, so a
+	// plain int is a data race the detector fails the whole package on. The 50ms sleep this
+	// replaced was also a lost bet on scheduling: when the token exchange plus the first API
+	// request did not finish inside it, cancel landed BEFORE any request was sent and the test
+	// failed its own "fixture did not send a request" guard -- roughly one run in ten here.
+	// Waiting for the first hit makes "cancelled AFTER a request was sent", which is the whole
+	// premise, true by construction instead of by timing. The short sleep after it lets the
+	// 429 response finish being read before the context dies, leaving the cancel inside the
+	// 2s Retry-After backoff with three orders of magnitude to spare.
+	var hits atomic.Int64
+	sent := make(chan struct{}, 1)
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits++
+		hits.Add(1)
 		w.Header().Set("Retry-After", "2") // long enough to cancel mid-backoff
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = io.WriteString(w, `{"error":{"message":"rate limited"}}`)
+		select {
+		case sent <- struct{}{}:
+		default:
+		}
 	}))
 	defer apiSrv.Close()
 
 	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+	defer cancel()
+	go func() {
+		<-sent
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
 
 	err := c.UpdateCampaignStatus(ctx, "222", StatusPaused)
 	if err == nil {
 		t.Fatal("expected an error when the context is cancelled during the retry backoff")
 	}
-	if hits == 0 {
+	if hits.Load() == 0 {
 		t.Fatal("fixture did not send a request, so there is no ambiguity to classify")
 	}
 	if !IsOutcomeUnconfirmed(err) {

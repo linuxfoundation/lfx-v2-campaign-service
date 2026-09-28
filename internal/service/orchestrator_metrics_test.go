@@ -7,10 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -342,6 +345,10 @@ func (d upstreamCapableDispatcher) VerifyAccountOrg(context.Context, string, mod
 	return d.err
 }
 
+func (d upstreamCapableDispatcher) ProbeConnection(context.Context, string, model.Provider) error {
+	return d.err
+}
+
 // TestUpstreamCallsAreInstrumented drives each instrumented capability path and
 // asserts the upstream call was actually recorded with the right bounded operation
 // token and outcome.
@@ -480,6 +487,17 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 				return o.VerifyAccountOrg(ctx, "p1", platform)
 			},
 		},
+		{
+			// The connection probe is the only upstream call made purely to answer "is this
+			// credential still good". Its failure rate IS the signal an operator wants — a
+			// platform revoking tokens shows up here before it shows up as failed campaign
+			// creations.
+			name: "probe connection",
+			op:   opProbeConnection,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				return o.ProbeConnection(ctx, "p1", platform)
+			},
+		},
 	}
 
 	// Completeness gate: every operation token recordUpstream is called with in the
@@ -604,6 +622,241 @@ func TestPrePlatformGuardsAreNotInstrumented(t *testing.T) {
 				t.Fatalf("a pre-platform guard recorded %d upstream calls, want 0: %+v", len(got), got)
 			}
 		})
+	}
+}
+
+// TestProbeVerdictsDecidedBeforeAnyRequestAreNotInstrumented pins the probe's own version of
+// the guard above, for the guards that cannot be hoisted out of the timed region.
+//
+// ToggleCampaignStatus's refusals are the orchestrator's own and are decided before the timer
+// starts. The probe's three pre-send verdicts — the connection names no ad account, its account
+// id is not usable, its customer id is not usable — are decided by the DISPATCHER, which is
+// already inside the measured call. They are confirmed failures the operator must see, and they
+// are also local refusals that never touched the platform, so they reach
+// Orchestrator.ProbeConnection carrying domain.ErrConnectionProbeNotAttempted and must leave no
+// upstream sample behind: a platform whose connections are misconfigured would otherwise show
+// an upstream error rate and a latency distribution collapsing toward zero for calls it never
+// received.
+//
+// The fourth carrier of that marker is not a verdict at all: an INCONCLUSIVE outcome whose
+// platform error proves the request never left the process — an unresolvable host, a refused
+// connection. It is the same local refusal wearing the other status, and it is the one an
+// operator is most likely to meet in bulk, because a DNS or egress fault hits every connection
+// on the platform at once. Recording those would read as a provider outage caused entirely by
+// this deployment's own network.
+//
+// The same is true of every failure the dispatcher's own resolver returns — an unreadable row,
+// an undecryptable credential, an inactive connection, a malformed blob — which is why
+// probeReachedThePlatform is a deny-list over the local sentinels rather than an allow-list
+// over the probe vocabulary: an outcome it does not recognise is still recorded, so a real
+// platform failure can never vanish from the series by going unnamed. The table below runs both
+// halves against the one gate.
+func TestProbeVerdictsDecidedBeforeAnyRequestAreNotInstrumented(t *testing.T) {
+	const platform = model.ProviderMicrosoftAds
+
+	// The shape internal/dispatch's preSendProbeVerdict produces: the confirmed-failure status
+	// the operator is answered with, plus the marker saying nothing was sent. That package's own
+	// tests pin that its three pre-send verdicts actually carry it.
+	preSend := fmt.Errorf("%w: %w: the %s connection names no ad account to verify",
+		domain.ErrConnectionProbeFailed, domain.ErrConnectionProbeNotAttempted, platform)
+
+	for _, tc := range []struct {
+		name       string
+		probeErr   error
+		wantCalls  int
+		wantReason string
+	}{
+		{
+			name:       "verdict reached before any request",
+			probeErr:   preSend,
+			wantCalls:  0,
+			wantReason: "no request was built, so there is no upstream call to record",
+		},
+		{
+			name:       "verdict reached by asking the platform",
+			probeErr:   fmt.Errorf("%w: %s rejected the stored credential", domain.ErrConnectionProbeFailed, platform),
+			wantCalls:  1,
+			wantReason: "the platform had to evaluate the credential to refuse it, and that call is the signal an operator watches",
+		},
+		{
+			name:       "probe could not be completed",
+			probeErr:   fmt.Errorf("%w: the %s check could not be completed", domain.ErrConnectionProbeInconclusive, platform),
+			wantCalls:  1,
+			wantReason: "an attempt was made and failed in flight; dropping it would hide a platform outage",
+		},
+		{
+			// The shape internal/dispatch's probeClass produces when the platform's own
+			// ProbeNotSent predicate recognises the error as never having left the process.
+			name: "probe could not be completed because nothing was sent",
+			probeErr: fmt.Errorf("%w: %w: the %s check could not be completed",
+				domain.ErrConnectionProbeInconclusive, domain.ErrConnectionProbeNotAttempted, platform),
+			wantCalls:  0,
+			wantReason: "an unresolvable host or a refused connection is this deployment's fault, not the provider's, and every connection on the platform fails it at once",
+		},
+		{
+			name:       "healthy connection",
+			probeErr:   nil,
+			wantCalls:  1,
+			wantReason: "a successful probe is a successful upstream call",
+		},
+		{
+			name: "platform refused the request this service built",
+			probeErr: fmt.Errorf("%w: %w: %s refused the probe request",
+				domain.ErrServiceDefect, domain.ErrConnectionProbeRequestRejected, platform),
+			wantCalls:  1,
+			wantReason: "a service defect rather than a verdict, but the platform received the request and answered it",
+		},
+		// The resolver's own failures. Every dispatcher loads the row, decrypts it, checks it is
+		// active and decodes the blob INSIDE ProbeConnection, so these are local refusals sitting
+		// inside the measured call exactly as the three pre-send verdicts are. They carry no probe
+		// sentinel at all, which is what the deny-list keys on: recording them would let a
+		// datastore or key-management incident read as a platform outage on the provider's own
+		// upstream series, and the platform would be the only thing that was not at fault.
+		{
+			name:       "connection row could not be read",
+			probeErr:   fmt.Errorf("%w: reading the %s connection failed", domain.ErrConnectionLoadFailed, platform),
+			wantCalls:  0,
+			wantReason: "the row never opened, so nothing was sent to the platform",
+		},
+		{
+			name:       "credentials could not be decrypted",
+			probeErr:   fmt.Errorf("%w: the %s credential did not decrypt", domain.ErrCredentialDecryptionFailed, platform),
+			wantCalls:  0,
+			wantReason: "decryption is local; the platform never saw a request",
+		},
+		{
+			name: "connection is inactive",
+			probeErr: fmt.Errorf("%w: %w: the %s connection is not active",
+				domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, platform),
+			wantCalls:  0,
+			wantReason: "refused on the row's own status, before a request was built",
+		},
+		{
+			name: "credential blob is malformed",
+			probeErr: fmt.Errorf("%w: %w: the %s credentials are not valid JSON",
+				domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, platform),
+			wantCalls:  0,
+			wantReason: "the blob was never turned into a request",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMetrics{}
+			orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+				platform: upstreamCapableDispatcher{err: tc.probeErr},
+			})
+			orch.SetMetrics(rec)
+
+			err := orch.ProbeConnection(context.Background(), "p1", platform)
+			if tc.probeErr != nil && err == nil {
+				t.Fatal("ProbeConnection swallowed the dispatcher's verdict")
+			}
+			if tc.probeErr == nil && err != nil {
+				t.Fatalf("ProbeConnection = %v, want nil", err)
+			}
+
+			got := rec.upstreamCalls()
+			if len(got) != tc.wantCalls {
+				t.Fatalf("recorded %d upstream calls, want %d: %s (%+v)", len(got), tc.wantCalls, tc.wantReason, got)
+			}
+			if len(got) == 1 && got[0].operation != opProbeConnection {
+				t.Errorf("operation = %q, want %q", got[0].operation, opProbeConnection)
+			}
+		})
+	}
+}
+
+// TestProbeLocalRefusalsCoverTheResolverVocabulary is the drift guard that makes
+// probeReachedThePlatform's "record unless it is a known local refusal" default safe.
+//
+// The gate names the local outcomes instead of allow-listing the probe vocabulary, so anything it
+// does not recognise is recorded as an upstream call. That is the right default — a real platform
+// failure must never vanish from the series — but it only stays correct while the local set is
+// complete. internal/dispatch/creds.go is where every dispatcher resolves a connection, and every
+// failure it can return before a request exists carries one of its domain sentinels. This scans
+// that file for those sentinels and requires each one to be classified: either listed in
+// probeLocalRefusalSentinels, or named below as deliberately not a local refusal.
+//
+// Derived from source on both sides for the reason recordUpstreamOperations is: a hand-kept roster
+// and a hand-kept gate move together only by luck. A sentinel added to the resolver later fails
+// here loudly rather than quietly re-entering campaign_upstream_call_duration_seconds as a
+// platform error the platform never caused.
+func TestProbeLocalRefusalsCoverTheResolverVocabulary(t *testing.T) {
+	// Sentinels the resolver names that are NOT local refusals of a probe, each with the reason
+	// it is exempt. Anything not here and not in the gate is a failure.
+	notALocalRefusal := map[string]string{
+		// Provenance, not a failure: it reports that credentials came from the LF system row.
+		// Probes never resolve through that fallback (they use resolveOwned), and it is not
+		// returned as an error outcome in the first place.
+		"ErrSystemConnectionOrigin": "a provenance marker, not a failure",
+	}
+
+	src, err := os.ReadFile(filepath.Join("..", "dispatch", "creds.go"))
+	if err != nil {
+		t.Fatalf("read the resolver source this gate tracks: %v", err)
+	}
+	gate, err := os.ReadFile("orchestrator.go")
+	if err != nil {
+		t.Fatalf("read orchestrator.go: %v", err)
+	}
+
+	sentinelRE := regexp.MustCompile(`domain\.(Err[A-Za-z0-9_]+)`)
+	found := map[string]bool{}
+	for _, m := range sentinelRE.FindAllStringSubmatch(string(src), -1) {
+		found[m[1]] = true
+	}
+	// A scan that finds nothing would make this gate vacuous, which is the failure mode it exists
+	// to prevent elsewhere.
+	if len(found) == 0 {
+		t.Fatal("found no domain sentinels in internal/dispatch/creds.go; this gate scanned the " +
+			"wrong file or the resolver moved, and it is now asserting nothing")
+	}
+
+	// The gate's own list, read as source so this compares two things that are both derived.
+	block := string(gate)
+	start := strings.Index(block, "var probeLocalRefusalSentinels = []error{")
+	if start < 0 {
+		t.Fatal("probeLocalRefusalSentinels is no longer declared in orchestrator.go; the metrics " +
+			"gate this test guards has moved or been rewritten")
+	}
+	end := strings.Index(block[start:], "}")
+	if end < 0 {
+		t.Fatal("probeLocalRefusalSentinels' declaration is unterminated")
+	}
+	listed := map[string]bool{}
+	for _, m := range sentinelRE.FindAllStringSubmatch(block[start:start+end], -1) {
+		listed[m[1]] = true
+	}
+
+	for name := range found {
+		if listed[name] || notALocalRefusal[name] != "" {
+			continue
+		}
+		t.Errorf("internal/dispatch/creds.go can return domain.%s, but probeReachedThePlatform "+
+			"does not classify it: a probe that fails this way records an upstream call for a "+
+			"platform it never contacted. Add it to probeLocalRefusalSentinels, or to this test's "+
+			"notALocalRefusal map with the reason it is not one.", name)
+	}
+}
+
+// TestPreSendProbeVerdictStillReachesTheCaller is the regression half: dropping the metric must
+// not drop the verdict. The connection-test arm renders this error's own text to the operator,
+// so a marker that also suppressed the error would turn a confirmed "no" into a silent "yes".
+func TestPreSendProbeVerdictStillReachesTheCaller(t *testing.T) {
+	const platform = model.ProviderMicrosoftAds
+	preSend := fmt.Errorf("%w: %w: the %s connection names no ad account to verify",
+		domain.ErrConnectionProbeFailed, domain.ErrConnectionProbeNotAttempted, platform)
+
+	orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		platform: upstreamCapableDispatcher{err: preSend},
+	})
+	orch.SetMetrics(&recordingMetrics{})
+
+	err := orch.ProbeConnection(context.Background(), "p1", platform)
+	if !errors.Is(err, domain.ErrConnectionProbeFailed) {
+		t.Fatalf("ProbeConnection = %v, want the dispatcher's confirmed verdict unchanged", err)
+	}
+	if err.Error() != preSend.Error() {
+		t.Errorf("ProbeConnection error text = %q, want %q", err.Error(), preSend.Error())
 	}
 }
 

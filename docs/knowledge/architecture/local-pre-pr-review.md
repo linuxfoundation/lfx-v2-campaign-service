@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Local pre-PR review"
-description: "How the repo-owned code and learnings reviewers, the empirical knowledge base, and the Claude fallback run a local review of the newest commit before a PR exists."
+description: "How the repo-owned code and learnings reviewers, the empirical knowledge base, and the Claude fallback run a local review of the newest commit before a PR exists, and why review cycles recur."
 resource: ".claude/skills/local-review-fallback/SKILL.md"
 ---
 
@@ -98,6 +98,37 @@ complete trio on the same harness.
 That rerun is bounded: the Claude fallback reruns the trio **once**, and if the
 rerun also fails it reports the role-labelled failure and stops. A host failure
 never becomes a reviewer `INCOMPLETE` — the two stay separate states.
+
+## Why cycles recur, and how to shorten them
+
+A fix cycle reruns with the **original** base, not the new `HEAD`'s parent, so every
+rerun re-reads the whole change rather than just the fix. Three reviewers sample a
+large range independently, and a clean round needs all three silent at once. Several
+rounds is therefore the normal shape of this cycle, not a malfunction.
+
+Two things make it longer than it needs to be, and both are the author's to fix.
+
+**Sibling claims in comments.** A uniqueness or counting claim — "the one platform",
+"the only probe", "the strongest of the six" — is a claim about every sibling in the
+repo. It goes stale when any sibling changes, in a file the change never touched, so
+no sweep keyed on "what did this commit touch" will find it. LFXV2-2665 hit this
+squarely: `reddit.Client.VerifyAccount` said Reddit was the only probe to read its
+configured account directly, which was true when written and was made false by adding
+X's probe three files away.
+
+The convention that follows from it: state a cross-cutting fact **once**, in
+`docs/api-catalog.md`, which is the roster of record. A comment says what is true of
+the code it sits on; where it must place that against siblings, it names **the reason
+the relationship holds** rather than re-enumerating the roster, so the claim is
+falsifiable where it stands instead of only against a count kept elsewhere. Before
+rerunning, sweep the branch's added comments for the class directly — it is
+mechanical, and it front-runs the findings this repo generates most.
+
+**No memory between rounds.** Each round starts blind, so a finding that was
+considered and deliberately declined comes back. Carry the decisions forward in
+`--extra` on every rerun — what was fixed, and what was declined, with the reason and
+the issue tracking it. Doing so ended a four-round recurrence of the same Microsoft
+HTTP 400 finding on LFXV2-2665.
 
 ## Boundaries
 

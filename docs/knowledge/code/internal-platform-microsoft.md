@@ -50,6 +50,20 @@ and the refresh runs on a `WithoutCancel`-detached context so one caller's
 cancellation can't tear down a shared refresh). The OAuth response body is never
 echoed into errors (it can carry the `client_secret`/`refresh_token` back).
 
+**`WithCallerScopedTokenRefresh()` opts one client out of that detach.** Detaching is right for a
+client that OUTLIVES a request and is shared by many: one caller's cancellation must not tear down
+a refresh the other waiters are parked on, and the token it produces is reused long after that
+caller is gone. Neither reason holds for the client `internal/dispatch` builds for a single
+connection probe and drops — nothing else will ever read its cache, so the detached refresh buys
+nobody anything while it OUTRUNS its caller, running on `msAdsRequestTimeout`, which is longer than the bound
+`ProbeConnection` puts on the whole probe. Cancel the probe and the goroutine, its socket and its
+file descriptor stay alive to finish work whose result is already unreachable, per probe, on every
+connection. With the option set, the leader's refresh stays derived from the calling context
+instead. It is safe ONLY on a client no other caller shares; on a shared one it reintroduces
+exactly the tear-down the single-flight exists to prevent. `token_refresh_scope_test.go` asserts
+both directions — that the option cancels the in-flight token request and that the default does
+not — because flipping the default would be as much a regression as the leak.
+
 A resource-server **401 invalidates the cached access token**, on the STATUS LINE and before
 the response body is read. Expiry alone is not enough: a revoked or rotated token keeps its
 advertised `expires_in`, so the fast path would go on serving it long after the platform
@@ -621,7 +635,58 @@ answer to "whose accounts are these", to be enumerated under and offered as a pi
 Trusting a configured id more than a discovered one is backwards. A discovered id arrived
 seconds ago from the API; a configured one has been sitting in a connection record since
 whenever it was written. `discoveryCustomerIDs` therefore runs `numberID` over it and fails
-the call rather than querying under an id that cannot name a customer. `Id` is decoded as a `json.Number`, not through `any`: Microsoft types
+the call rather than querying under an id that cannot name a customer.
+
+That refusal is now **sentineled and exported**. `ValidateCustomerID` applies exactly the
+`numberID` rule (positive `int64`; an EMPTY id is not an error, because "no customer configured"
+is a supported state), and a failure carries `ErrInvalidCustomerID`. Both exist because two
+callers need the same answer and must not each write their own: this package, which cannot
+enumerate under a malformed id, and `internal/dispatch`, which has to decide before sending
+anything whether the connection is testable at all. Before the sentinel, the refusal was an
+unsentineled error that neither probe predicate recognised, so `ProbeInconclusive`'s
+unrecognised-error default answered `true` and the connection test reported an unreachable
+platform for a connection whose stored `customer_id` makes dispatch impossible — an outage to
+wait out in place of the one field on the row that can be corrected.
+
+**`account_id` carries the same rule, and used not to.** Its Goa pattern was `^[0-9]+$` with
+`MaxLength(64)` — the transport rule — so the API could persist `0`, or a 64-digit number, on an
+ACTIVE connection, and the header guard then confirmed only that it was made of digits. Holding a
+stored id to a weaker rule than the discovered ones `ListAdAccounts` already runs `numberID` over
+is backwards in exactly the way the paragraph above describes. The design now declares
+`^[1-9][0-9]{0,17}$` with `MaxLength(18)`, the same as `customer_id`. Eighteen rather than
+nineteen: a `Pattern` cannot express the int64 RANGE, and at nineteen digits it admitted values
+above `MaxInt64` that `numberID` refuses — the API storing an id on an ACTIVE connection that
+every probe and dispatch then rejects. Eighteen is the widest length every value of which is a
+valid int64, so the design's rule is now a SUBSET of the runtime's. What it gives up is 19-digit
+ids at or below `MaxInt64`, a range no Microsoft account id (seven to nine digits) occupies.
+
+`ValidateAccountID` and `ValidateCustomerID` stay regardless, because the pattern binds the HTTP
+transport alone and a row written by bootstrap, by a migration, or before the pattern existed
+never met it. `TestValidateMicrosoftAdsConnectionConfig_IDPatterns` now asserts the overflow is
+refused at BOTH layers, and asserts the new deliberate mismatch — a 19-digit value BELOW
+`MaxInt64`, which both runtime validators accept and the pattern does not — so nobody widens the
+pattern back on the grounds that it rejects something the platform layer allows.
+
+**Both rules run on both ids at the request boundary.** `validateAccountIDs` applies the raw
+anchored `accountIDRE` AND the identity validator to `AccountID` and to a set `CustomerID`, and
+`doCustomerRequest` carries the customer-id pair inline (it drops only the ACCOUNT half, because
+discovery must run for a connection that has no account id yet). Neither rule subsumes the other:
+the identity validators `TrimSpace` before parsing while the headers are set from the RAW stored
+value, so `"\n123"` is an id only the anchored regexp catches; and the regexp bounds charset
+alone, so `0`, `007` and an above-`MaxInt64` value are ids only the validators catch.
+
+Adding the exported function was not by itself enough for the probe, and the reason is worth
+recording: `MicrosoftDispatcher.ProbeConnection` builds its discovery client with `CustomerID`
+only, so `Client.validateAccountIDs` — the dispatch-path caller of `ValidateAccountID` — never
+runs on that path. The probe therefore has to call it directly, and does, immediately after
+`subject.accountID` is set and before the `customer_id` check or any upstream call. Without it a
+stored `0` bought an enumeration it could not benefit from, and a transient 5xx on that
+enumeration classified inconclusive and blamed an unreachable platform for a connection every
+campaign request deterministically rejects.
+`TestMicrosoftProbe_UnusableStoredAccountIDIsRefusedBeforeTheCall` asserts the not-attempted
+marker AND that nothing was sent, against an upstream that would otherwise answer 503.
+
+`Id` is decoded as a `json.Number`, not through `any`: Microsoft types
 it as a `long`, and float64 silently loses precision above 2^53, producing a WRONG
 account id that still looks like one (a test pins 2^53+1 round-tripping exactly).
 
@@ -827,3 +892,149 @@ Reads are gated behind `MICROSOFT_METRICS_ENABLED` (chart default `"false"`), mi
 `REDDIT_METRICS_ENABLED`: the v13 Reporting contract was implemented from published
 documentation and has not been exercised against a live Microsoft Advertising account, and a
 guessed read returning 200 looks authoritative to every consumer.
+
+## Connection-probe predicates (LFXV2-2665)
+
+`probe.go` exports `ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` over this
+package's own error types. `internal/dispatch` consults them **in that order** for every platform
+— `ProbeInconclusive` defaults to `true` for an unrecognised error (an error nobody classified
+proves nothing about the credential), so a revoked credential usually satisfies both and only the
+order decides whether the operator is told their connection is broken or that the check did not
+complete. Neither predicate true is a third outcome: the platform refused a request this service
+BUILT, which is a service defect rather than a verdict.
+
+`probe.go` exports a FOURTH predicate, `ProbeConfiguredCustomerRejected(err) bool`, and it is this
+package's one departure from the shared vocabulary — the same shape of departure
+`reddit.ProbeAccountUnreachable` and `twitter.ProbeAccountUnreachable` are, and for the same
+reason: a confirmed failure neither standard predicate can state correctly. It is named for the
+customer, not the account, because Microsoft is the only platform here with a second operator-
+settable identity ABOVE the account. `customer_id` scopes the enumeration itself, so a refusal of
+it is not the account being missing — `probeMembership` already answers that — but the question
+being unaskable as the connection is configured.
+
+Microsoft answers a well-formed `AccountsInfo/Query` with an ordinary `400` when the `CustomerId`
+it carries does not exist or these credentials cannot reach it. Both are reachable states:
+`customer_id` is settable through the connection config API, and access to a customer can be
+revoked long after the value was stored. That `400` matched NEITHER predicate — `ProbeCredentialRejected`
+claims `401`/`403`, `ProbeInconclusive` claims `429`/`408`/`5xx` — so `probeClass` fell to its
+default arm and answered `domain.ErrServiceDefect`, a typed `500` that pages the service team for
+a field the operator can see and correct. Claiming it as a rejection instead would have been wrong
+the other way: it renders "microsoft ads rejected the stored credential" and sends the operator to
+re-authorise a credential Microsoft honoured well enough to answer with.
+
+`markConfiguredCustomerRejection` attaches `errConfiguredCustomerRejected`, and gates it on two
+conditions that are both load-bearing. The status must be `400` — `401`/`403` stay with the
+credential, `429`/`408`/`5xx` stay inconclusive, anything else stays the defect. And the id must
+be the CONFIGURED one, which is why `discoveredCustomer` carries a `configured` flag: the request
+body this client composes is constant apart from that value, so when the id came from the
+connection row it is the only variable Microsoft can be objecting to, while an id this client read
+out of `User/Query` itself means a `400` is the shape of a request only this service builds. Marking
+both provenances would have told an operator to repair a field that is not broken and silenced the
+one class of `400` that genuinely is ours. No error-code allowlist is layered on top: `apiError`
+does carry parsed `ErrorCodes`, but the Customer Management codes for a missing or unreachable
+customer are pinned by nothing in this repo or by any test against the live API, and a guessed
+literal that never matched would have restored the paging `500` while looking handled — so the
+check follows `classifyTokenRefusal`'s own discipline, status first and the body only where an
+allowlist has earned it.
+
+What that costs is stated rather than hidden. A `400` Microsoft raised for some OTHER reason — a
+moved contract, an operation-level validation this build stopped meeting — reaches the operator
+as "your `customer_id` is unreachable", pointing them at a field that may be fine while a real
+service defect goes unpaged. `ConfiguredCustomerRejectionCodes(err) []string` is the answer to
+that: it hands the dispatcher the parsed codes the PREDICATE refused to read, and
+`MicrosoftDispatcher.ProbeConnection` logs them at warn every time it renders the verdict. The
+codes decide nothing — the verdict is still the status and the provenance — but the first real
+occurrence in any environment now leaves behind exactly the evidence an allowlist would need,
+which is the only way one can ever be written honestly. It returns a copy, and `ErrorCodes` is
+bounded at parse time and holds no upstream body text, so this carries none of the material
+`apiError` drops the raw body to avoid. `customer_id` itself is deliberately NOT logged: it is
+the operator's own identifier, and the verdict already names the field.
+
+`probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
+vocabulary: it answers only whether the request whose failure ENDED the probe ever left this
+process, and it changes nothing an operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error
+chain is DROPPED there, so no later layer could tell a provider that answered badly from one that
+was never contacted; the answer reaches `Orchestrator.ProbeConnection`'s metrics arm alone, which
+keeps a local DNS or dial failure off `campaign_upstream_call_duration_seconds` rather than
+charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInconclusive`'s on
+purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
+series instead of vanishing from it.
+
+A caller that gives up BEFORE the probe starts is the one context error this predicate claims.
+The token path's entry check answers a context already done by returning
+`errTokenContextAlreadyDone` wrapped around `ctx.Err()`, and `ProbeNotSent` reads that marker.
+Unmarked, the bare `ctx.Err()` fell through the `false` default and `probeReachedThePlatform`
+found no local sentinel to name, so this deployment's own cancellation was booked as a
+`campaign_upstream_call_duration_seconds{outcome="error"}` sample against Microsoft for a call
+that never left the process. `errRequestNotSent` could NOT have carried this: its own doc scopes
+it to the REST path alone, and widening it to the token leg would have made a written contract
+false to save a declaration. The marker sits at the entry check and nowhere else — the waiter
+select inside the refresh returns `ctx.Err()` too, but a detached refresh may already be on the
+wire there, so the same claim would be false. It WRAPS rather than replaces, so
+`errors.Is(err, context.Canceled)` keeps answering for every existing caller.
+
+The subject is the FAILING request, not "no bytes at all". This client probes on two legs — a
+token refresh, then an account read — so a refresh that SUCCEEDED before the account read failed
+to dial still answers true here, and the sample is still suppressed. That is deliberate and it is
+the cheap direction: `recordUpstream` is handed the probe's non-nil error, so the suppressed
+sample is an ERROR sample, and recording it would book this deployment's own DNS or egress fault
+against Microsoft's error rate — the exact inflation the predicate exists to prevent. What is
+given up instead is one SUCCESSFUL token call, which hides no Microsoft failure from anyone. See
+`domain.ErrConnectionProbeNotAttempted`, which carries the same reasoning and an explicit warning
+against narrowing the marker to a never-sent FIRST leg.
+
+**This is the one platform whose `ProbeNotSent` reads a REST-path marker as well as the two every
+sibling reads, because this client reaches the network on two legs that fail through different
+machinery.** `errRequestNotSent` carries the REST
+leg, whose pre-send arm flattens the cause through `safeCause` into a plain string — deliberately,
+so a custom RoundTripper's text can never reach a persisted campaign step — which also erases the
+`*net.OpError` a classifier would match on. That erasure is why the marker had to exist here and in
+no sibling package.
+
+The TOKEN leg is the opposite, and reading the paragraph above onto it was the defect. A fresh
+probe refreshes before it reads, so the token endpoint is the FIRST host this client dials and the
+first that can be unreachable; a dial failure there returns `tokenTransportError`, which renders
+only `safeCause` but whose `Unwrap` DOES preserve the cause — so `isPreSendDialError` sees through
+it perfectly well, while `errRequestNotSent` is never attached, because the REST arm is what
+attaches it and the probe never got that far. Reading only the marker therefore answered `false`
+for a token host that does not resolve, and `Orchestrator.ProbeConnection` booked an upstream-call
+sample against Microsoft for a probe that never left the deployment — inflating Microsoft's error
+rate on `campaign_upstream_call_duration_seconds` with this network's own fault, which is the one
+thing the predicate exists to stop. It now answers
+`errors.Is(err, errRequestNotSent) || isPreSendDialError(err)`.
+
+`ProbeInconclusive` needed no equivalent change — its `tokenTransportError` arm already answers
+true — but its doc comment had generalised the REST leg's "the dial classifier cannot see through
+this" to the whole client, which is what made the gap look intended. The claim is now scoped to the
+leg it is true of. `isPreSendDialError` matches only DNS failures and dial-op
+`ECONNREFUSED`/`EHOSTUNREACH`/`ENETUNREACH`, so a TLS handshake failure — a real conversation with a
+real host — stays off it and remains Microsoft's sample.
+
+`fetchToken` splits non-2xx by status as Google's and Reddit's do — `errTokenEndpointUnavailable`
+for `5xx` and for `429`, and `classifyTokenRefusal` for everything else — and its token error
+carries status only, since the request body holds the client secret and refresh token. The `429`
+belongs on the retryable side for the reason a rate limit always does here: it is Microsoft
+declining to answer, not answering, and classifying it as a refusal told an operator to
+re-authorise a credential Microsoft never evaluated.
+
+The status split alone was not enough, and the second split is the same one Google's package
+carries, for the same reasons and with the same conservative fallback — see
+*The two token-refusal sentinels, and why the name changed* in `internal-platform-googleads.md`.
+In short: `ErrCredentialRejected` is Microsoft evaluating the stored credential and refusing it,
+and is the only class reported as a confirmed failed test; `ErrTokenRequestRejected` is the token
+endpoint refusing the SHAPE of the request this service built (a `3xx` that was not followed, a
+`404`/`405` from a moved endpoint, or RFC 6749's `invalid_request`, `unsupported_grant_type` and
+`invalid_scope`), matches neither predicate, and raises `domain.ErrServiceDefect`. The sentinel
+kept its name but reversed its meaning to match `domain.ErrTokenRequestRejected` and
+`linkedin.ErrTokenRequestRejected`; the credential verdict took the name that describes it.
+`ProbeInconclusive` therefore needs its explicit `ErrTokenRequestRejected → false` arm, since its
+default for an unrecognised error is `true` and would report a service defect as an unreachable
+platform.
+
+`ProbeInconclusive` here deliberately OMITS the `isPreSendDialError` arm its Google, Reddit and X
+siblings carry. This client's pre-send arm renders the cause through `safeCause` into a plain
+string rather than wrapping it with `%w`, so the dial classifier cannot see through such an error
+and an arm calling it would assert a match that can never happen. The classification is unchanged
+either way — the default is inconclusive too — only the claim would be false.
+`TestProbeInconclusive_PreSendDialErrorIsNotClaimed` keeps that note executable, and fails if the
+pre-send shape ever changes.
