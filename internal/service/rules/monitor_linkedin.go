@@ -24,8 +24,14 @@ import (
 //
 // LinkedIn's pacingPct is also NOT rounded, unlike every other platform here — see
 // model.AccountMonitorRow.PacingPct's doc comment.
+// The low-CTR rule's two numbers are shared with Google and Reddit rather than being a third
+// LinkedIn-specific pair: all three platforms call 0.3% low, and 1000 impressions is the volume
+// at which a CTR figure means anything. Meta is the one that genuinely differs (0.5 / 500) —
+// its CTR baseline is higher and its delivery reaches that volume sooner. The
+// clicks-without-conversions floors differ per platform because the click volumes do.
 const (
 	linkedinLowCtrPct           = 0.3
+	linkedinMinImpressions      = 1000
 	linkedinClicksNoConversions = 50
 )
 
@@ -149,7 +155,13 @@ func linkedinActionItems(m model.AccountCampaignMetrics, pacingPct float64, labe
 			fmt.Sprintf("Budget constrained — pacing above %d%%", monitorPacingHealthyTo),
 			"Consider increasing budget if event is in peak registration period")
 	}
-	if m.Ctr > 0 && m.Ctr < linkedinLowCtrPct {
+	// Gated on an impressions floor, like Meta/Google/Reddit, rather than on the BFF's
+	// `ctr > 0` — which excluded a 0% CTR, the WORST case, from the rule meant to catch it.
+	// LinkedIn has no "impressions but no clicks" rule to catch it instead (Google does), so a
+	// campaign with a half-million impressions and zero clicks emitted nothing at all while one
+	// at 0.29% got a MED item. The floor has to land in the same change: without it, removing
+	// `ctr > 0` would fire "Low CTR: 0.00%" on every campaign that has not been served yet.
+	if m.Ctr < linkedinLowCtrPct && m.Impressions > linkedinMinImpressions {
 		add(model.MonitorPriorityMed,
 			fmt.Sprintf("Low CTR: %.2f%%", m.Ctr),
 			"Refresh ad copy or images; review audience targeting")

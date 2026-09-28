@@ -110,7 +110,14 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 // dispatcher is expected to hand these rules the platform's own status string lower-cased the
 // same way, so the comparisons below match campaign-metrics.service.ts's literal comparisons
 // against 'limited'/'enabled'/'paused'/'draft'.
+// googleLowCtrPct/googleMinImpressions were bare literals inline in the rule, the only two of
+// the sixteen per-platform thresholds in this package that were not named. Same values as
+// LinkedIn and Reddit — see monitor_linkedin.go's const block for why three of the four
+// platforms share them.
 const (
+	googleLowCtrPct      = 0.3
+	googleMinImpressions = 1000
+
 	googleStatusLimited = "limited"
 	googleStatusEnabled = "enabled"
 	googleStatusPaused  = "paused"
@@ -157,7 +164,7 @@ func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 			fmt.Sprintf("Search CTR is %.2f%% (benchmark: 2%%+) - %d clicks from %d impressions", m.Ctr, m.Clicks, m.Impressions),
 			"Improve headline relevance to search intent, add negative keywords to filter irrelevant queries")
 	}
-	if !m.IsSearchChannel && m.Ctr < 0.3 && m.Impressions > 1000 {
+	if !m.IsSearchChannel && m.Ctr < googleLowCtrPct && m.Impressions > googleMinImpressions {
 		add(model.MonitorPriorityMed,
 			fmt.Sprintf("Display CTR is %.2f%% (benchmark: 0.3%%+) - %d clicks from %d impressions", m.Ctr, m.Clicks, m.Impressions),
 			"Refresh creative assets, check for audience overlap across campaigns, or narrow placement targeting")

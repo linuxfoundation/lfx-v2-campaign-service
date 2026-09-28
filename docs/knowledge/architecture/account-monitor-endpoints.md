@@ -76,15 +76,20 @@ comments come out with each fix.
 | Reddit's underspend threshold/label mismatch (fires at `<40`, labeled `<50`) | `linuxfoundation/lfx-self-serve#3021` | **Fixed** — the alert is keyed off the label |
 | Reddit's account totals from an independent upstream call rather than a row sum | `linuxfoundation/lfx-self-serve#3022` | **Fixed** — every platform sums its rows |
 
-Two further defects were found in this code rather than carried across it, so
-neither has a BFF-side ticket: a campaign with no budget at all reported as
+Three further defects were found in this code rather than carried across it, so
+none has a BFF-side ticket: a campaign with no budget at all reported as
 `underspending`, which turned out to affect all four platforms — Google, Meta
 and LinkedIn directly, and Reddit for a campaign that had a flight but no
 total budget (**fixed**; see the two log entries of 2026-09-28) — and the
 Google `zz`-prefix name filter, which dropped any campaign whose name merely
 began with those two letters rather than only those using the operator's
 `zz` scratch-naming convention (**fixed**; the prefix must now be followed
-by a separator, or be the whole name, to count).
+by a separator, or be the whole name, to count). The third is LinkedIn's
+low-CTR rule, which was gated on `ctr > 0 && ctr < 0.3` — excluding a 0% CTR,
+the worst case of the very thing it detects, with no "impressions but no
+clicks" rule to catch it instead (**fixed**; gated on an impressions floor
+like the other three platforms, so a 0% CTR now fires and an unserved
+campaign does not).
 
 Meta has two deliberate departures rather than the usual verbatim port. Its
 pagination is the first — the legacy BFF silently truncates past 100

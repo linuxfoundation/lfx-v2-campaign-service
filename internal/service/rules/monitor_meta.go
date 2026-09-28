@@ -21,6 +21,11 @@ import (
 // `overspending: 130` — and never compares against it: the overspend band starts above
 // `constrained` (100), so 130 is dead for labeling on Meta and LinkedIn both. The shared ladder
 // here has no such member, which is why it is three boundaries and not four.
+// Meta is the one platform whose low-CTR pair differs from the other three's 0.3 / 1000: its CTR
+// baseline is higher, so 0.5% is the comparable "low", and its delivery reaches a judgeable
+// volume sooner, so the floor is 500 rather than 1000. See monitor_linkedin.go's const block.
+// Its clicks-without-conversions floor is the lowest of the four for the same reason the others
+// differ — the click volumes do.
 const (
 	metaLowCtrPct           = 0.5
 	metaMinImpressions      = 500

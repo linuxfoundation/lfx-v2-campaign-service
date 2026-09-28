@@ -27,6 +27,10 @@ import (
 // label's own < 50 boundary — so a campaign pacing at 45% was labelled "underspending" and
 // never alerted on: the row and the alert disagreed for the whole 40-49% band, and only the
 // row was visible. linuxfoundation/lfx-self-serve#3021. One boundary now decides both.
+// 0.3 / 1000 is the low-CTR pair Google and LinkedIn also use; only Meta differs, and for a
+// stated reason — see monitor_linkedin.go's const block. The clicks-without-conversions floor
+// is genuinely Reddit's own: 100 clicks, against LinkedIn's 50 and Meta's 20, because the click
+// volumes these campaigns run at differ by that much.
 const (
 	redditLowCtrPct           = 0.3
 	redditMinImpressions      = 1000

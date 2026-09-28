@@ -54,6 +54,7 @@ func TestLinkedinActionItems_UnderspendingAndConstrained(t *testing.T) {
 	t.Run("low CTR is MED", func(t *testing.T) {
 		row := base
 		row.Ctr = 0.1
+		row.Impressions = 5000
 		items := linkedinActionItems(row, 0, model.MonitorPacingNormal)
 		mustContainIssue(t, items, "Low CTR", model.MonitorPriorityMed)
 	})
@@ -108,5 +109,40 @@ func TestEvaluateLinkedInMonitor_SkipsFetchFailedRows(t *testing.T) {
 	}
 	if len(items) != 0 {
 		t.Errorf("FetchFailed row produced action items, want none: %+v", items)
+	}
+}
+
+// TestLinkedinLowCtr_ZeroCtrIsTheWorstCaseNotAnExemption is the regression test for the guard
+// this port carried from linkedin-ads.service.ts: `ctr > 0 && ctr < 0.3`. A 0% CTR is the worst
+// possible case of the condition the rule exists to detect, and it was the one case excluded.
+//
+// LinkedIn is also the only one of the four platforms with no "impressions but no clicks" rule
+// (googleActionItems has one), so nothing else caught it either: a campaign with half a million
+// impressions and not one click produced no action item at all, while one at 0.29% produced a
+// MED. Both halves are asserted here, since the rule is only correct with both.
+func TestLinkedinLowCtr_ZeroCtrIsTheWorstCaseNotAnExemption(t *testing.T) {
+	served := model.AccountCampaignMetrics{
+		PlatformCampaignID: "c1", Name: "c", Impressions: 500000, Clicks: 0, Ctr: 0,
+	}
+	items := linkedinActionItems(served, 0, model.MonitorPacingNormal)
+	mustContainIssue(t, items, "Low CTR", model.MonitorPriorityMed)
+}
+
+// TestLinkedinLowCtr_NeedsVolumeBeforeItMeansAnything pins the other half. Removing the `ctr > 0`
+// exclusion without an impressions floor would fire "Low CTR: 0.00%" on every campaign that has
+// not been served yet — turning the fix above into a false alert on every new campaign. Meta,
+// Reddit and Google all gate this rule on volume; LinkedIn did not, and now does.
+func TestLinkedinLowCtr_NeedsVolumeBeforeItMeansAnything(t *testing.T) {
+	for _, impressions := range []int64{0, 1, linkedinMinImpressions} {
+		row := model.AccountCampaignMetrics{
+			PlatformCampaignID: "c1", Name: "c", Impressions: impressions, Ctr: 0,
+		}
+		for _, it := range linkedinActionItems(row, 0, model.MonitorPacingNormal) {
+			if strings.Contains(it.Issue, "Low CTR") {
+				t.Errorf("impressions = %d: emitted %q; the floor is exclusive (> %d), and a "+
+					"campaign with no delivery has no CTR to judge",
+					impressions, it.Issue, linkedinMinImpressions)
+			}
+		}
 	}
 }
