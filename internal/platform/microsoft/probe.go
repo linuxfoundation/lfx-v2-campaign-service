@@ -154,8 +154,16 @@ func ProbeInconclusive(err error) bool {
 // domain.ErrConnectionProbeNotAttempted, which explains why that is the cheap direction — the
 // suppressed sample is an ERROR sample, so recording it would charge this deployment's own DNS
 // fault to the provider.
+//
+// It also reads errTokenContextAlreadyDone. That marker is attached at exactly one place — the
+// entry check of token acquisition, where the caller's context was ALREADY done before this
+// client built, dialled or sent anything — so it proves the same thing a dial refusal proves,
+// by a different route. A BARE context error stays unclaimed: cancellation that lands after
+// transmission is indistinguishable from cancellation before it, and only the entry check knows
+// which side of the wire it is on.
 func ProbeNotSent(err error) bool {
-	return errors.Is(err, errRequestNotSent) || isPreSendDialError(err)
+	return errors.Is(err, errRequestNotSent) || isPreSendDialError(err) ||
+		errors.Is(err, errTokenContextAlreadyDone)
 }
 
 // RFC 6749 §5.2 defines exactly six token-endpoint `error` codes, and they split by REMEDY —

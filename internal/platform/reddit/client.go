@@ -703,6 +703,23 @@ func (c *Client) invalidateAccessToken(presented string) {
 	c.tokenExpireAt = time.Time{}
 }
 
+// errTokenContextAlreadyDone marks a context that was ALREADY done when a token acquisition began — the
+// caller's deadline had passed or its context was cancelled before this client reached for a
+// token, so nothing was built, dialled or sent. It exists for the probe's metrics arm alone:
+// ProbeNotSent has to be able to say "no request left this process", and a bare ctx.Err() is
+// indistinguishable from a cancellation that landed mid-flight, after bytes were already on
+// the wire. Left unmarked, a caller cancelled before the first byte was charged to the
+// provider as an upstream error sample — this deployment's own cancellation rendered as a
+// platform fault on the one series that is supposed to mean the platform.
+//
+// It is attached at THAT check and nowhere else. The waiter select further down returns
+// ctx.Err() too, but by then a detached refresh may be in flight and may already have reached
+// the platform, so the same claim would be false. An unmarked context error therefore keeps
+// ProbeNotSent's default of false and still records a sample, which is the cheap direction.
+// It wraps the context error rather than replacing it, so errors.Is(err, context.Canceled)
+// and context.DeadlineExceeded keep answering for every existing caller.
+var errTokenContextAlreadyDone = errors.New("reddit: the caller context was already done before any token request")
+
 // refreshToken returns a cached access token when it is still valid past the
 // expiry buffer, otherwise it requests a new one. Mirrors refreshRedditToken.
 //
@@ -720,7 +737,7 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 	// Bail out early if the caller's context is already done, so a cancelled
 	// caller never triggers or joins a refresh.
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", errTokenContextAlreadyDone, err)
 	}
 
 	c.mu.Lock()

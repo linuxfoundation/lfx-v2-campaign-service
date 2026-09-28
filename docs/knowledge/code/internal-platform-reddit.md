@@ -482,6 +482,17 @@ charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInc
 purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
 series instead of vanishing from it.
 
+A caller that gives up BEFORE the probe starts is the one context error this predicate claims.
+The token path's entry check answers a context already done by returning
+`errTokenContextAlreadyDone` wrapped around `ctx.Err()`, and `ProbeNotSent` reads that marker. Unmarked, the bare
+`ctx.Err()` fell through the `false` default and `probeReachedThePlatform` found no local
+sentinel to name, so this deployment's own cancellation was booked as a
+`campaign_upstream_call_duration_seconds{outcome="error"}` sample against Reddit for a call
+that never left the process. The marker sits at THAT check and nowhere else: the waiter select
+inside the refresh returns `ctx.Err()` too, but a detached refresh may already be on the wire
+there, so the same claim would be false. It WRAPS rather than replaces, so
+`errors.Is(err, context.Canceled)` keeps answering for every existing caller.
+
 One deliberate departure: this package exports a THIRD predicate, `ProbeAccountUnreachable`, for
 a `404` on the configured ad account. Reddit's probe reads that account directly
 (`GET /ad_accounts/{id}`), so a `404` is Reddit answering the exact question asked rather than

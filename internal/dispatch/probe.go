@@ -23,7 +23,15 @@ import (
 //
 //	ProbeCredentialRejected(err) bool  // the platform evaluated the credential and refused it
 //	ProbeInconclusive(err) bool        // nothing was learned about the connection either way
-//	ProbeNotSent(err) bool             // nothing left this process, so no platform was reached
+//	ProbeNotSent(err) bool             // the request whose failure decided it was never sent
+//
+// ProbeNotSent's summary is deliberately about ONE request, not about the whole probe. A
+// probe that refreshes a token and then reads an account has two legs, and the first may have
+// reached the platform and succeeded before the second failed to dial. The predicate still
+// answers true, because it claims only that the request whose failure DECIDED this probe was
+// never sent — which is exactly what the metrics arm needs, since the sample it suppresses is
+// the error sample for that decisive failure. Narrowing it to "no bytes at all" would silently
+// restore the defect it exists to prevent on every multi-leg platform.
 //
 // The first two decide the outcome. The third decides nothing an operator sees — it is
 // provenance for the metrics arm, and it has to be asked here because the platform error chain

@@ -1343,6 +1343,17 @@ charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInc
 purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
 series instead of vanishing from it.
 
+A caller that gives up BEFORE the probe starts is the one context error this predicate claims.
+The token path's entry check answers a context already done by returning
+`errTokenContextAlreadyDone` wrapped around `ctx.Err()`, and `ProbeNotSent` reads that marker. Unmarked, the bare
+`ctx.Err()` fell through the `false` default and `probeReachedThePlatform` found no local
+sentinel to name, so this deployment's own cancellation was booked as a
+`campaign_upstream_call_duration_seconds{outcome="error"}` sample against Google for a call
+that never left the process. The marker sits at THAT check and nowhere else: the waiter select
+inside the refresh returns `ctx.Err()` too, but a detached refresh may already be on the wire
+there, so the same claim would be false. It WRAPS rather than replaces, so
+`errors.Is(err, context.Canceled)` keeps answering for every existing caller.
+
 This package's token path was split to make the predicates answerable at all. `fetchToken`
 previously returned one untyped error for every non-2xx from the token endpoint, so a refresh
 Google had permanently revoked fell to `ProbeInconclusive`'s default and the connection test

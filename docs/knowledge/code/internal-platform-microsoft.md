@@ -913,6 +913,19 @@ charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInc
 purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
 series instead of vanishing from it.
 
+A caller that gives up BEFORE the probe starts is the one context error this predicate claims.
+The token path's entry check answers a context already done by returning
+`errTokenContextAlreadyDone` wrapped around `ctx.Err()`, and `ProbeNotSent` reads that marker.
+Unmarked, the bare `ctx.Err()` fell through the `false` default and `probeReachedThePlatform`
+found no local sentinel to name, so this deployment's own cancellation was booked as a
+`campaign_upstream_call_duration_seconds{outcome="error"}` sample against Microsoft for a call
+that never left the process. `errRequestNotSent` could NOT have carried this: its own doc scopes
+it to the REST path alone, and widening it to the token leg would have made a written contract
+false to save a declaration. The marker sits at the entry check and nowhere else — the waiter
+select inside the refresh returns `ctx.Err()` too, but a detached refresh may already be on the
+wire there, so the same claim would be false. It WRAPS rather than replaces, so
+`errors.Is(err, context.Canceled)` keeps answering for every existing caller.
+
 The subject is the FAILING request, not "no bytes at all". This client probes on two legs — a
 token refresh, then an account read — so a refresh that SUCCEEDED before the account read failed
 to dial still answers true here, and the sample is still suppressed. That is deliberate and it is
@@ -923,8 +936,9 @@ given up instead is one SUCCESSFUL token call, which hides no Microsoft failure 
 `domain.ErrConnectionProbeNotAttempted`, which carries the same reasoning and an explicit warning
 against narrowing the marker to a never-sent FIRST leg.
 
-**This is the one platform whose `ProbeNotSent` reads TWO markers, because this client reaches the
-network on two legs that fail through different machinery.** `errRequestNotSent` carries the REST
+**This is the one platform whose `ProbeNotSent` reads a REST-path marker as well as the two every
+sibling reads, because this client reaches the network on two legs that fail through different
+machinery.** `errRequestNotSent` carries the REST
 leg, whose pre-send arm flattens the cause through `safeCause` into a plain string — deliberately,
 so a custom RoundTripper's text can never reach a persisted campaign step — which also erases the
 `*net.OpError` a classifier would match on. That erasure is why the marker had to exist here and in

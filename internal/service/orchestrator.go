@@ -447,7 +447,11 @@ type ConnectionProber interface {
 	//     and is the one probe error a caller may echo.
 	//   - domain.ErrConnectionProbeInconclusive: the check could not be completed — a timeout,
 	//     a dial failure, a rate limit, a platform 5xx. It proves nothing about the connection,
-	//     so it must not be rendered as a failed test.
+	//     so it must not be rendered as a CONFIRMED connection failure or credential rejection.
+	//     It still answers OK: false, with an inconclusive advisory: ok reports a CONJUNCTION
+	//     (the credential authenticated AND the configured account passed the platform's own
+	//     check), and a check that did not complete establishes neither half as a whole. See
+	//     design/connection.go's TestResult description, which is the contract this must match.
 	//   - domain.ErrServiceDefect (with domain.ErrConnectionProbeRequestRejected, or
 	//     domain.ErrCredentialDecryptionFailed and the other resolution defects): nothing the
 	//     operator owns is at fault.
@@ -2231,8 +2235,10 @@ func probeReachedThePlatform(err error) bool {
 //
 // ErrConnectionProbeNotAttempted is the dispatcher's own marker for an outcome reached with
 // nothing sent — the verdicts decided before a request is built, and an inconclusive outcome
-// whose platform error proves the request never left the process (see that sentinel's doc, and
-// the ProbeNotSent predicate each platform package exposes). The rest are the credential resolver's
+// whose platform error proves the request whose failure DECIDED it was never sent (see that
+// sentinel's doc, and the ProbeNotSent predicate each platform package exposes; on a multi-leg
+// probe an earlier token request may already have reached the platform and succeeded, and the
+// suppressed sample is the error sample for the decisive leg). The rest are the credential resolver's
 // vocabulary, plus the unwired-dispatcher defect the orchestrator raises before the timer even
 // starts. ErrConnectionNotUsable is the family head for the inactive, incomplete, undecodable and
 // no-account-selected cases, which are always wrapped alongside it.

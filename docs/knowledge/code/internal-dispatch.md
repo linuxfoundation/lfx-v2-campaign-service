@@ -2392,6 +2392,17 @@ inflation the marker exists to prevent. What is given up instead is one SUCCESSF
 which hides no provider failure from anyone. Narrowing the marker to a never-sent FIRST leg trades
 a harmless undercount for the miscount the mechanism was built to stop.
 
+A caller that gives up BEFORE the probe starts is the one context error the predicate claims, and
+only on the three two-leg platforms. `googleads`, `microsoft` and `reddit` each answer a context
+already done at their token path's ENTRY check with a package-local `errTokenContextAlreadyDone`
+wrapped around `ctx.Err()`, and each package's `ProbeNotSent` reads its own. Unmarked, the bare
+`ctx.Err()` fell through the `false` default and `probeReachedThePlatform` found no local sentinel
+to name, so this deployment's own cancellation was booked as an upstream **error** sample against
+the provider for a call that never left the process. Only the entry check is marked: the waiter
+select inside a coalesced refresh returns `ctx.Err()` too, but a detached refresh may already be
+on the wire there, so the same claim would be false and the `false` default is the right answer.
+The marker wraps rather than replaces, so `errors.Is(err, context.Canceled)` still answers.
+
 A `408` belongs with `429` and `5xx` in `ProbeInconclusive`, not with the refusals, and this was
 true on the token leg before it was true on the account leg. A `408` means the endpoint or an
 intermediary gave up waiting for the request: nothing evaluated the credential, and the same call

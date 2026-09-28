@@ -582,14 +582,18 @@ func TestRequestBoundaryRejectsBeforeAnyHTTPCall(t *testing.T) {
 	const overflow = "9999999999999999999"
 
 	t.Run("doRequest", func(t *testing.T) {
-		var hits int
+		// Written by the httptest handler goroutines and read here, so the handoff is atomic
+		// rather than a bare int — docs/reviews/knowledge-base/test-hygiene.md,
+		// httptest-handler-state-needs-synchronized-handoff. The assertion is that it stays
+		// zero, and an unsynchronized zero proves nothing.
+		var hits atomic.Int32
 		tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			hits++
+			hits.Add(1)
 			tokenHandler(w, r)
 		}))
 		t.Cleanup(tok.Close)
 		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			hits++
+			hits.Add(1)
 			w.WriteHeader(http.StatusOK)
 		}))
 		t.Cleanup(api.Close)
@@ -599,20 +603,24 @@ func TestRequestBoundaryRejectsBeforeAnyHTTPCall(t *testing.T) {
 		if _, err := c.doRequest(context.Background(), http.MethodPost, "Campaigns", nil, false); err == nil {
 			t.Fatal("doRequest accepted a customer id above MaxInt64")
 		}
-		if hits != 0 {
-			t.Errorf("%d HTTP calls were made; the id must be refused before anything is sent", hits)
+		if n := hits.Load(); n != 0 {
+			t.Errorf("%d HTTP calls were made; the id must be refused before anything is sent", n)
 		}
 	})
 
 	t.Run("doCustomerRequest", func(t *testing.T) {
-		var hits int
+		// Written by the httptest handler goroutines and read here, so the handoff is atomic
+		// rather than a bare int — docs/reviews/knowledge-base/test-hygiene.md,
+		// httptest-handler-state-needs-synchronized-handoff. The assertion is that it stays
+		// zero, and an unsynchronized zero proves nothing.
+		var hits atomic.Int32
 		tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			hits++
+			hits.Add(1)
 			tokenHandler(w, r)
 		}))
 		t.Cleanup(tok.Close)
 		cust := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			hits++
+			hits.Add(1)
 			w.WriteHeader(http.StatusOK)
 		}))
 		t.Cleanup(cust.Close)
@@ -622,8 +630,8 @@ func TestRequestBoundaryRejectsBeforeAnyHTTPCall(t *testing.T) {
 		if _, err := c.doCustomerRequest(context.Background(), http.MethodGet, "User/Query", nil, true); err == nil {
 			t.Fatal("doCustomerRequest accepted a leading-zero customer id")
 		}
-		if hits != 0 {
-			t.Errorf("%d HTTP calls were made; the id must be refused before anything is sent", hits)
+		if n := hits.Load(); n != 0 {
+			t.Errorf("%d HTTP calls were made; the id must be refused before anything is sent", n)
 		}
 	})
 }

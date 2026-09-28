@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -23,9 +24,29 @@ type reachServer struct {
 	searchRows []map[string]any
 	searchCode int
 
+	// The handler runs on the httptest server's own goroutines, so what it records is handed
+	// to the asserting goroutine under this mutex rather than read straight off the fields —
+	// see docs/reviews/knowledge-base/test-hygiene.md, httptest-handler-state-needs-
+	// synchronized-handoff. Without it -race can flag a passing test, and the assertion is
+	// reading whatever the compiler felt like caching.
+	mu          sync.Mutex
 	searchPath  string
 	searchQuery string
 	searches    int
+}
+
+// reachObserved is a snapshot of what the handler recorded, taken under the mutex so the
+// assertions read a consistent set of values rather than three separately-racing fields.
+type reachObserved struct {
+	path     string
+	query    string
+	searches int
+}
+
+func (rs *reachServer) observed() reachObserved {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return reachObserved{path: rs.searchPath, query: rs.searchQuery, searches: rs.searches}
 }
 
 func (rs *reachServer) start(t *testing.T) *httptest.Server {
@@ -39,11 +60,13 @@ func (rs *reachServer) start(t *testing.T) *httptest.Server {
 		case strings.HasSuffix(r.URL.Path, "/customers:listAccessibleCustomers"):
 			_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: rs.accessible})
 		case strings.HasSuffix(r.URL.Path, "/googleAds:search"):
-			rs.searches++
-			rs.searchPath = r.URL.Path
 			var body searchRequest
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			rs.mu.Lock()
+			rs.searches++
+			rs.searchPath = r.URL.Path
 			rs.searchQuery = body.Query
+			rs.mu.Unlock()
 			if rs.searchCode != 0 {
 				w.WriteHeader(rs.searchCode)
 				_, _ = w.Write([]byte(`{"error":{"code":500,"message":"boom"}}`))
@@ -111,17 +134,18 @@ func TestProbeAccountReach_FlatMode(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("reach = %v, want %v", got, tc.want)
 			}
-			if rs.searches != 1 {
-				t.Errorf("%d searches; flat mode must read the account's own row exactly once", rs.searches)
+			obs := rs.observed()
+			if obs.searches != 1 {
+				t.Errorf("%d searches; flat mode must read the account's own row exactly once", obs.searches)
 			}
 			// Under the CONFIGURED customer, not under some manager — flat mode has none.
-			if !strings.Contains(rs.searchPath, "/customers/"+configured+"/googleAds:search") {
-				t.Errorf("search ran at %q, want it scoped to the configured customer", rs.searchPath)
+			if !strings.Contains(obs.path, "/customers/"+configured+"/googleAds:search") {
+				t.Errorf("search ran at %q, want it scoped to the configured customer", obs.path)
 			}
 			// Asking for the one row by id, not reading the table: under a manager account that
 			// table is the whole hierarchy, and being a manager is the case this call detects.
-			if !strings.Contains(rs.searchQuery, "customer_client.id = "+configured) {
-				t.Errorf("query = %q, want it narrowed to the configured id", rs.searchQuery)
+			if !strings.Contains(obs.query, "customer_client.id = "+configured) {
+				t.Errorf("query = %q, want it narrowed to the configured id", obs.query)
 			}
 		})
 	}
@@ -136,7 +160,7 @@ func TestProbeAccountReach_FlatMode(t *testing.T) {
 		if got != AccountUnreachable {
 			t.Errorf("reach = %v, want AccountUnreachable", got)
 		}
-		if rs.searches != 0 {
+		if obs := rs.observed(); obs.searches != 0 {
 			t.Error("the properties read ran for an account the credential does not reach")
 		}
 	})
@@ -204,8 +228,8 @@ func TestProbeAccountReach_ManagerMode(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("reach = %v, want %v", got, tc.want)
 			}
-			if !strings.Contains(rs.searchPath, "/customers/"+manager+"/googleAds:search") {
-				t.Errorf("search ran at %q, want it scoped to the manager", rs.searchPath)
+			if obs := rs.observed(); !strings.Contains(obs.path, "/customers/"+manager+"/googleAds:search") {
+				t.Errorf("search ran at %q, want it scoped to the manager", obs.path)
 			}
 		})
 	}
