@@ -2554,7 +2554,7 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    monitor-google-ads-account: Read every campaign visible on a Google Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped: {project_id} resolves which stored connection credential to use, and the read enumerates everything that credential reaches on account_id, not only campaigns this service created. Unlike GET .../connection-google-ads/accounts, this endpoint resolves the project's OWN connection only and does not fall back to the shared LF system credential: a project with no Google Ads connection of its own gets a 404, not the LF account's data. A pure read: nothing is persisted.`)
 	fmt.Fprintln(os.Stderr, `    monitor-linkedin-ads-account: Read every campaign visible on a LinkedIn Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
 	fmt.Fprintln(os.Stderr, `    monitor-meta-ads-account: Read every campaign visible on a Meta Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
-	fmt.Fprintln(os.Stderr, `    monitor-reddit-ads-account: Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. totals on this platform come from a separate account-level upstream call rather than a sum of the campaigns array — see AccountTotalsReader in internal/service/orchestrator.go. A pure read: nothing is persisted.`)
+	fmt.Fprintln(os.Stderr, `    monitor-reddit-ads-account: Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-connections COMMAND --help\n", os.Args[0])
@@ -3770,7 +3770,7 @@ func lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. totals on this platform come from a separate account-level upstream call rather than a sum of the campaigns array — see AccountTotalsReader in internal/service/orchestrator.go. A pure read: nothing is persisted.`)
+	fmt.Fprintln(os.Stderr, `Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)

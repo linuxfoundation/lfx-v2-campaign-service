@@ -10,37 +10,58 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// TestEvaluateGoogleMonitor_FiltersZZPrefixedCampaigns pins the KNOWN BUG ported verbatim
-// from getMonitorData's `.filter((c) => !c.name.toLowerCase().startsWith('zz'))`: ANY
-// campaign whose name starts with "zz" (case-insensitive) is silently dropped from both the
-// row list and the action-item pass, not just an intentional test/scratch campaign. A real
-// operator-named campaign that happens to start with "ZZ" (e.g. an archival naming
-// convention) is invisible to this endpoint exactly the same way.
-//
-// follow-up: unify this with the shared rules package and reconsider the zz-prefix filter
-// (see monitor_google.go's package doc comment, follow-up ticket #7 / lfx-self-serve#2519).
-func TestEvaluateGoogleMonitor_FiltersZZPrefixedCampaigns(t *testing.T) {
+// TestEvaluateGoogleMonitor_FiltersScratchCampaigns pins the operator convention this filter
+// exists to serve: a campaign named with a "zz" scratch prefix is hidden from the monitor
+// view. Every case here uses the convention and must still be dropped, case-insensitively —
+// narrowing the test must not stop it doing its job.
+func TestEvaluateGoogleMonitor_FiltersScratchCampaigns(t *testing.T) {
 	rows := []model.AccountCampaignMetrics{
 		{PlatformCampaignID: "1", Name: "KubeCon NA 2026", Status: "enabled", BudgetDay: 50, Spend: 50},
 		{PlatformCampaignID: "2", Name: "zz-test-scratch", Status: "enabled", BudgetDay: 50, Spend: 50},
 		{PlatformCampaignID: "3", Name: "ZZ-archive-test", Status: "enabled", BudgetDay: 50, Spend: 50},
 		{PlatformCampaignID: "4", Name: "Zz-Mixed-Case", Status: "enabled", BudgetDay: 50, Spend: 50},
+		{PlatformCampaignID: "5", Name: "zz_old_draft", Status: "enabled", BudgetDay: 50, Spend: 50},
+		{PlatformCampaignID: "6", Name: "zz 2026 planning", Status: "enabled", BudgetDay: 50, Spend: 50},
+		{PlatformCampaignID: "7", Name: "zz", Status: "enabled", BudgetDay: 50, Spend: 50},
 	}
 	out, _ := EvaluateGoogleMonitor(rows, 1)
 	if len(out) != 1 {
-		t.Fatalf("got %d rows, want 1 — every zz-prefixed campaign (any case) must be dropped, "+
-			"including a legitimately-named archival campaign: %+v", len(out), out)
+		t.Fatalf("got %d rows, want 1 — every zz-prefixed scratch campaign must be dropped, "+
+			"in any case: %+v", len(out), out)
 	}
 	if out[0].Metrics.PlatformCampaignID != "1" {
-		t.Errorf("surviving row = %q, want the one non-zz campaign", out[0].Metrics.PlatformCampaignID)
+		t.Errorf("surviving row = %q, want the one non-scratch campaign", out[0].Metrics.PlatformCampaignID)
 	}
 }
 
-// TestGooglePacingBoundaries pins the three LOCAL literals (50/90/100) at their exact
-// boundaries. These are campaign-metrics.service.ts's own literals, NOT this package's shared
-// Thresholds — see monitor_google.go's const doc comment — so this test exists specifically to
-// catch a future edit that (accidentally or "helpfully") repoints these at the shared
-// constants.
+// TestEvaluateGoogleMonitor_KeepsCampaignsThatMerelyStartWithZZ is the regression test for the
+// narrowing. The BFF's `startsWith('zz')` matched two bare letters, so a campaign whose name
+// simply began with them was dropped from the row list AND the action-item pass — with no row,
+// no item, and nothing anywhere in the response saying a campaign had been filtered. An
+// operator whose campaign is quietly absent from the monitor has nothing to go on.
+//
+// The prefix now has to be followed by a separator, or be the whole name, to count as the
+// convention.
+func TestEvaluateGoogleMonitor_KeepsCampaignsThatMerelyStartWithZZ(t *testing.T) {
+	rows := []model.AccountCampaignMetrics{
+		{PlatformCampaignID: "1", Name: "Zzyzx Road Retargeting", Status: "enabled", BudgetDay: 50, Spend: 50},
+		{PlatformCampaignID: "2", Name: "ZZTop Sponsorship", Status: "enabled", BudgetDay: 50, Spend: 50},
+		{PlatformCampaignID: "3", Name: "zz2026", Status: "enabled", BudgetDay: 50, Spend: 50},
+	}
+	out, _ := EvaluateGoogleMonitor(rows, 1)
+	if len(out) != len(rows) {
+		t.Fatalf("got %d rows, want %d — a name that merely starts with the letters zz is not "+
+			"the scratch convention, and dropping it makes a real campaign invisible: %+v",
+			len(out), len(rows), out)
+	}
+}
+
+// TestGooglePacingBoundaries pins the shared account-monitor ladder (50/90/100) at its exact
+// boundaries, exercised through Google's evaluator. Google is one of the four callers of
+// monitor_shared.go's pacingLabelFor, and the boundaries are inclusive/exclusive in ways a
+// refactor can silently flip; this test is where that would be caught. The ladder is NOT
+// pacing.go's Thresholds, which run 50/100/130 for the single-campaign brief path — repointing
+// these at that one would move operator-facing alerting bands.
 func TestGooglePacingBoundaries(t *testing.T) {
 	// budgetDay=1, days=1 => expectedSpend=1, so spend == pacingPct/100 directly.
 	tests := []struct {
@@ -235,24 +256,6 @@ func TestEvaluateGoogleMonitor_SkipsFetchFailedRows(t *testing.T) {
 	for _, it := range items {
 		if it.CampaignID == "1" {
 			t.Errorf("FetchFailed row produced an action item, want none: %+v", it)
-		}
-	}
-}
-
-// TestGooglePriorityRank_IsNotBuggy pins that Google's rank function (unlike LinkedIn's, see
-// monitor_linkedin_test.go) correctly maps every priority, including MED, to its documented
-// slot: HIGH:0, MED:1, LOW:2, unknown:3.
-func TestGooglePriorityRank_IsNotBuggy(t *testing.T) {
-	items := []model.AccountMonitorActionItem{
-		{CampaignID: "a", Priority: model.MonitorPriorityLow},
-		{CampaignID: "b", Priority: model.MonitorPriorityMed},
-		{CampaignID: "c", Priority: model.MonitorPriorityHigh},
-	}
-	sortByPriority(items, googlePriorityRank)
-	want := []string{"c", "b", "a"}
-	for i, id := range want {
-		if items[i].CampaignID != id {
-			t.Fatalf("sorted order = %v, want HIGH, MED, LOW", itemIDs(items))
 		}
 	}
 }

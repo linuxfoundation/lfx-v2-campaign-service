@@ -515,13 +515,18 @@ func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, proje
 	}
 	out := make([]model.AccountCampaignMetrics, 0, len(rows))
 	for _, r := range rows {
-		// Conversions is a non-nil &0 on every row, NOT nil — matching the BFF's own
-		// campaignMetrics[].conversions = 0 (reddit-ads.service.ts:300) and the KNOWN BUG
-		// this preserves in monitor_reddit.go's redditActionItems (the "0 conversions"
-		// alert can never be satisfied any other way, because conversions can never be
-		// observed as nonzero here). A nil would instead mean "cannot measure at all",
-		// which is Meta's gap, not Reddit's — see model.AccountCampaignMetrics.Conversions.
-		conv := 0.0
+		// Conversions is left nil: this read never asks Reddit for conversions, so it has
+		// nothing to report. The BFF set campaignMetrics[].conversions to a literal 0
+		// (reddit-ads.service.ts:300) and the port copied it, which is a measurement claim
+		// nothing here can support — and monitor_reddit.go's "clicks but 0 conversions"
+		// rule then fired for every campaign past its click floor, since a real nonzero
+		// count could never arrive to suppress it. linuxfoundation/lfx-self-serve#3020.
+		//
+		// nil is what AccountMonitorCampaign's design-layer comment already prescribes for
+		// this case — "ABSENT when this platform/row could not measure conversions, not a
+		// measured 0" — and matches the sibling reader in internal/platform/reddit/
+		// metrics.go, which leaves the brief path's Conversions nil for the same reason and
+		// says so.
 		out = append(out, model.AccountCampaignMetrics{
 			PlatformCampaignID: r.CampaignID,
 			Name:               r.Name,
@@ -530,7 +535,6 @@ func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, proje
 			Impressions:        r.Impressions,
 			Clicks:             r.Clicks,
 			Ctr:                r.Ctr,
-			Conversions:        &conv,
 			TotalBudget:        r.TotalBudget,
 			StartDate:          r.StartDate,
 			EndDate:            r.EndDate,
@@ -538,38 +542,6 @@ func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, proje
 		})
 	}
 	return out, nil
-}
-
-// ReadAccountTotals implements service.AccountTotalsReader for Reddit, porting
-// fetchAccountMetrics — a SEPARATE account-wide report call, independent of the per-campaign
-// rows ListAccountCampaignMetrics returns. See model.AccountMonitorTotals' doc comment for
-// why Reddit alone needs this second capability.
-func (d *RedditDispatcher) ReadAccountTotals(ctx context.Context, projectID string, platform model.Provider, accountID string, days, campaignCount int) (*model.AccountMonitorTotals, error) {
-	// Validated up front, before any credential is resolved — same ordering as
-	// ListAccountCampaignMetrics, and the reason resolveMonitorClient's own comment can say
-	// accountID is guaranteed non-empty by the time it runs: both of resolveMonitorClient's
-	// callers validate before calling it, not just one of them.
-	if err := reddit.ValidateAccountID(accountID); err != nil {
-		return nil, fmt.Errorf("%w: %w", domain.ErrAccountIDMalformed, err)
-	}
-	if err := validateMonitorDays(days); err != nil {
-		return nil, err
-	}
-	client, err := d.resolveMonitorClient(ctx, projectID, platform, accountID)
-	if err != nil {
-		return nil, err
-	}
-	totals, terr := client.FetchAccountTotals(ctx, accountID, days, campaignCount)
-	if terr != nil {
-		return nil, terr
-	}
-	return &model.AccountMonitorTotals{
-		Spend:         totals.SpendUSD,
-		Impressions:   totals.Impressions,
-		Clicks:        totals.Clicks,
-		Conversions:   0,
-		CampaignCount: totals.CampaignCount,
-	}, nil
 }
 
 // resolveMonitorClient resolves the project's OWN Reddit connection and its client — never the

@@ -712,9 +712,12 @@ campaign is already the effective gate.
 BFF's `linkedin-ads.service.ts`. It is a read over the WHOLE ad account the resolved
 credential reaches, not one project's own campaigns — see
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md) for the
-credential-scoping (`resolveOwned`, no system-account fallback), the ported rule
-engine (`internal/service/rules/monitor_linkedin.go`, including the deliberately
-preserved `MED`/`MEDIUM` sort-map bug), and the days-1-ending-today window
+credential-scoping (`resolveOwned`, no system-account fallback), the rule engine
+(`internal/service/rules/monitor_linkedin.go` — the BFF's `MED`/`MEDIUM` sort-map
+mismatch is NOT ported, items order through the shared `priorityRank`,
+`linuxfoundation/lfx-self-serve#3018`; and its low-CTR rule no longer excludes a 0%
+CTR, the worst case of the very condition it detects, now that an impressions floor
+separates that from an unserved campaign), and the days-1-ending-today window
 convention this dispatcher shares with Google/Reddit/Meta's monitor reads.
 
 `LinkedInDispatcher.VerifyAccountOrg(ctx, projectID, platform)` implements another optional

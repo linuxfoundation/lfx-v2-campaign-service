@@ -25,10 +25,11 @@ const monitorReportConcurrency = 5
 // endpoint, ported from lfx-self-serve's reddit-ads.service.ts (getRedditAnalytics).
 //
 // Conversions is deliberately absent (unlike the sibling platforms' AccountCampaignRow
-// types): the BFF hardcodes campaignMetrics[].conversions to the literal 0 on every row
-// (reddit-ads.service.ts:300), not a measurement, so the dispatcher maps every row's
-// model.AccountCampaignMetrics.Conversions to a non-nil &0 directly rather than this type
-// carrying a field that could only ever hold one value.
+// types): this read does not request conversions from Reddit, so there is nothing for the
+// field to carry. The dispatcher leaves model.AccountCampaignMetrics.Conversions nil to say
+// exactly that. The BFF hardcoded campaignMetrics[].conversions to a literal 0 on every row
+// (reddit-ads.service.ts:300), which is not a measurement — see
+// linuxfoundation/lfx-self-serve#3020.
 type AccountCampaignRow struct {
 	CampaignID  string
 	Name        string
@@ -52,18 +53,6 @@ type AccountCampaignRow struct {
 	// port sets it instead of fabricating the zero. This is a disclosed, deliberate
 	// divergence, not a preserved bug.
 	FetchFailed bool
-}
-
-// AccountTotals is the account-wide aggregate read via a SEPARATE report call
-// (fetchAccountMetrics in the BFF), independent of the per-campaign rows above — see
-// model.AccountMonitorTotals' doc comment for why Reddit's totals are not a sum of rows.
-// Conversions is always 0 (reddit-ads.service.ts:312 hardcodes it), so, like
-// AccountCampaignRow, this type carries no field for it.
-type AccountTotals struct {
-	Impressions   int64
-	Clicks        int64
-	SpendUSD      float64
-	CampaignCount int
 }
 
 // campaignElement is one entry of the campaign-list response, per the fields
@@ -195,9 +184,9 @@ func ValidateAccountID(accountID string) error {
 // verbatim including the pacing inputs (goal_value/1e6 as TotalBudget, start_time/end_time as
 // the flight window) the rules.EvaluateRedditMonitor rule engine consumes.
 //
-// The account-wide totals (fetchAccountMetrics) are NOT returned here — see AccountTotals /
-// FetchAccountTotals, called separately, exactly as getRedditAnalytics makes that a SEPARATE
-// call from the per-campaign fan-out.
+// The BFF's separate account-wide totals call (fetchAccountMetrics) has no counterpart here:
+// this service sums the rows it returns, on every platform — see
+// service.monitorTotals and model.AccountMonitorTotals' doc comment.
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
 	if err := ValidateAccountID(accountID); err != nil {
 		return nil, fmt.Errorf("list account campaigns: %w", err)
@@ -298,35 +287,4 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		return nil, fmt.Errorf("list account campaigns: %w", werr)
 	}
 	return rows, nil
-}
-
-// FetchAccountTotals ports fetchAccountMetrics: a single account-wide report over the
-// trailing `days` days, independent of the per-campaign rows ListAccountCampaigns returns.
-// campaignCount is supplied by the caller (the count of rows ListAccountCampaigns returned),
-// matching getRedditAnalytics' own accountTotals.campaignCount = campaignMetrics.length
-// (reddit-ads.service.ts:313), which counts the FILTERED active campaigns, not every
-// campaign fetchCampaigns returned.
-//
-// Unlike ListAccountCampaigns' per-campaign fetch, a failure here is NOT translated into a
-// FetchFailed row — there is no row to mark. Mirrors getRedditAnalytics' own handling
-// (reddit-ads.service.ts:256-262): the caller logs a warning and treats the totals as zero.
-// The error is still returned so the caller (dispatch/reddit.go) decides whether to log
-// there, rather than this package silently swallowing it.
-func (c *Client) FetchAccountTotals(ctx context.Context, accountID string, days, campaignCount int) (AccountTotals, error) {
-	if err := ValidateAccountID(accountID); err != nil {
-		return AccountTotals{}, fmt.Errorf("fetch account totals: %w", err)
-	}
-	end := c.now().UTC()
-	start := end.AddDate(0, 0, -(days - 1))
-	impressions, clicks, spendUSD, err := c.fetchMonitorReport(ctx,
-		"/ad_accounts/"+accountID+"/reports", start.Format("2006-01-02"), end.Format("2006-01-02"))
-	if err != nil {
-		return AccountTotals{CampaignCount: campaignCount}, fmt.Errorf("fetch account totals: %w", redactReportPath(err, accountID))
-	}
-	return AccountTotals{
-		Impressions:   impressions,
-		Clicks:        clicks,
-		SpendUSD:      spendUSD,
-		CampaignCount: campaignCount,
-	}, nil
 }

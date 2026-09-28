@@ -562,7 +562,7 @@ the clients happened to request:
 | Microsoft | Yes | `ConversionsQualified` report column | `double` |
 | Meta | **No scalar** | conversions live in the Insights `actions` array as `{action_type, value}` | — |
 | X (Twitter) | **No scalar** | split across `conversion_purchases`, `conversion_sign_ups`, … each a JSON object, under metric groups this client does not request | — |
-| Reddit | **Unknown** | the v3 reporting contract has no public documentation at all | — |
+| Reddit | **Not requested** | the v3 report request names only `IMPRESSIONS`, `CLICKS` and `SPEND` | — |
 | HubSpot (email) | **No such concept** | the statistics counter vocabulary contains no conversion counter | — |
 
 Three corrections that a plausible-looking implementation would have got wrong:
@@ -1944,7 +1944,7 @@ after adoption could already have bound a campaign. `googleads.CampaignKindSearc
 `OrgReferenceVerifier` is another OPTIONAL dispatcher interface, declared in
 `internal/service/orchestrator.go` and discovered by the same type assertion as the others
 (`StatusToggler`, `MetricsReader`, `AccountLister`, `CampaignAdopter`, `SettingsReader`,
-`AccountMetricsReader`, `AccountTotalsReader`, `EmailSearcher`, `KeywordInsightsReader`,
+`AccountMetricsReader`, `EmailSearcher`, `KeywordInsightsReader`,
 `KeywordActioner`). **LinkedIn is the
 only implementation today** — it is the only platform with an upstream signal to cross-check
 a connection's configured account/org pairing against.

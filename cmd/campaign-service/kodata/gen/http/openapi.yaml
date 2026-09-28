@@ -7822,7 +7822,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-reddit-ads-account lfx-v2-campaign-service-connections
-            description: 'Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. totals on this platform come from a separate account-level upstream call rather than a sum of the campaigns array — see AccountTotalsReader in internal/service/orchestrator.go. A pure read: nothing is persisted.'
+            description: 'Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service''s ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#monitor-reddit-ads-account
             parameters:
                 - name: account_id
@@ -9272,7 +9272,6 @@ definitions:
                 campaign_count: 14
                 clicks: 11420
                 conversions: 212.5
-                derived_from_rows: false
                 impressions: 184200
                 spend: 1842.55
         required:
@@ -9384,7 +9383,7 @@ definitions:
                 format: double
             pacing_unknown:
                 type: boolean
-                description: True when the flight dates needed to compute pacing_pct were unavailable. A renderer MUST NOT treat pacing_pct as meaningful when this is true.
+                description: 'True when pacing could not be computed at all: either the flight dates needed for pacing_pct were unavailable, or the campaign has no usable budget to pace against. A renderer MUST NOT treat pacing_pct as meaningful when this is true.'
                 example: false
             platform_campaign_id:
                 type: string
@@ -9450,7 +9449,7 @@ definitions:
         properties:
             campaign_count:
                 type: integer
-                description: How many campaigns the totals reflect.
+                description: 'How many campaigns the totals reflect: the length of the campaigns array these totals sum.'
                 example: 14
                 format: int64
             clicks:
@@ -9460,13 +9459,9 @@ definitions:
                 format: int64
             conversions:
                 type: number
-                description: Account-wide conversions over the window.
+                description: Account-wide conversions over the window, summed over the campaigns that reported a conversion measurement. ABSENT when none of them did — not a measured 0.
                 example: 212.5
                 format: double
-            derived_from_rows:
-                type: boolean
-                description: True when these totals are a sum of the returned campaigns array rather than the platform's own account-wide figure. Always false except on a Reddit read whose separate account-totals call actually failed, in which case the campaign rows are still authoritative but this aggregate is a derived stand-in.
-                example: false
             impressions:
                 type: integer
                 description: Account-wide impressions over the window.
@@ -9481,16 +9476,13 @@ definitions:
             campaign_count: 14
             clicks: 11420
             conversions: 212.5
-            derived_from_rows: false
             impressions: 184200
             spend: 1842.55
         required:
             - spend
             - impressions
             - clicks
-            - conversions
             - campaign_count
-            - derived_from_rows
     Audience:
         title: Audience
         type: object

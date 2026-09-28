@@ -349,9 +349,7 @@ type Service interface {
 	// Read every campaign visible on a Reddit Ads account, live from the platform,
 	// with pacing and action items derived by this service's ported rule engine.
 	// Account-scoped, not project-scoped, the same way monitor-google-ads-account
-	// is. totals on this platform come from a separate account-level upstream call
-	// rather than a sum of the campaigns array — see AccountTotalsReader in
-	// internal/service/orchestrator.go. A pure read: nothing is persisted.
+	// is. A pure read: nothing is persisted.
 	MonitorRedditAdsAccount(context.Context, *MonitorRedditAdsAccountPayload) (res *AccountMonitor, err error)
 }
 
@@ -451,8 +449,10 @@ type AccountMonitorCampaign struct {
 	// The campaign's flight end date, RFC 3339 date-only (YYYY-MM-DD). Empty when
 	// the platform did not report one.
 	EndDate string
-	// True when the flight dates needed to compute pacing_pct were unavailable. A
-	// renderer MUST NOT treat pacing_pct as meaningful when this is true.
+	// True when pacing could not be computed at all: either the flight dates
+	// needed for pacing_pct were unavailable, or the campaign has no usable budget
+	// to pace against. A renderer MUST NOT treat pacing_pct as meaningful when
+	// this is true.
 	PacingUnknown bool
 	// Google Ads only: true when the campaign's advertising_channel_type is
 	// SEARCH. Always false for LinkedIn/Meta/Reddit rows.
@@ -482,16 +482,13 @@ type AccountMonitorTotals struct {
 	Impressions int64
 	// Account-wide clicks over the window.
 	Clicks int64
-	// Account-wide conversions over the window.
-	Conversions float64
-	// How many campaigns the totals reflect.
+	// Account-wide conversions over the window, summed over the campaigns that
+	// reported a conversion measurement. ABSENT when none of them did — not a
+	// measured 0.
+	Conversions *float64
+	// How many campaigns the totals reflect: the length of the campaigns array
+	// these totals sum.
 	CampaignCount int
-	// True when these totals are a sum of the returned campaigns array rather than
-	// the platform's own account-wide figure. Always false except on a Reddit read
-	// whose separate account-totals call actually failed, in which case the
-	// campaign rows are still authoritative but this aggregate is a derived
-	// stand-in.
-	DerivedFromRows bool
 }
 
 type CampaignRef struct {

@@ -306,30 +306,6 @@ type AccountMetricsReader interface {
 		accountID string, days int) ([]model.AccountCampaignMetrics, error)
 }
 
-// AccountTotalsReader is a SECOND OPTIONAL dispatcher capability, orthogonal to
-// AccountMetricsReader: read the account-wide monitor totals from a SEPARATE upstream call,
-// independent of any per-campaign row.
-//
-// This exists ONLY because of Reddit. model.AccountMonitorTotals' own doc comment records
-// that Reddit's accountTotals come from a distinct account-level report
-// (reddit-ads.service.ts's fetchAccountMetrics), made independently of the per-campaign
-// fan-out fetchCampaignMetrics performs — NOT a sum of the rows AccountMetricsReader
-// returns. Every other ported platform's totals ARE a sum of its rows, computed by the
-// service layer (connection_monitor.go) without ever calling this interface; a dispatcher
-// that has no reason to diverge from that sum (Meta/GoogleAds/LinkedIn today) simply does
-// not implement it, and the service layer's summing path covers it. Folding this into
-// AccountMetricsReader's own signature would force every platform to answer a question only
-// one of them actually has a different answer to.
-type AccountTotalsReader interface {
-	// ReadAccountTotals returns the account-wide totals for accountID over the trailing
-	// `days` days. campaignCount is supplied by the CALLER (the count of rows
-	// AccountMetricsReader already returned for the same request), matching
-	// getRedditAnalytics' own accountTotals.campaignCount, which counts the filtered
-	// per-campaign result rather than anything this call could independently know.
-	ReadAccountTotals(ctx context.Context, projectID string, platform model.Provider,
-		accountID string, days, campaignCount int) (*model.AccountMonitorTotals, error)
-}
-
 // EmailSearcher is an OPTIONAL dispatcher capability: search the marketing emails reachable
 // through a project's stored connection. Discovered by type assertion like StatusToggler,
 // MetricsReader and AccountLister; a dispatcher that doesn't implement it yields a clean
@@ -673,7 +649,6 @@ const (
 	opReadSettings               = "read_settings"
 	opListAccounts               = "list_accounts"
 	opListAccountCampaignMetrics = "list_account_campaign_metrics"
-	opReadAccountTotals          = "read_account_totals"
 	opSearchEmails               = "search_emails"
 	opSearchCampaign             = "search_campaign"
 	opCreateCampaign             = "create_campaign"
@@ -2316,50 +2291,6 @@ func (o *Orchestrator) VerifyAccountOrg(ctx context.Context, projectID string, p
 	err := verifier.VerifyAccountOrg(callCtx, projectID, platform)
 	o.recordUpstream(ctx, platform, opVerifyAccountOrg, start, err)
 	return err
-}
-
-// errAccountTotalsContractViolation wraps ReadAccountTotals' nil-result contract-violation
-// error, unlike the repo's other seven "(nil, nil) is a contract violation" sites (see the
-// grep for "returned a nil result with no error"): those all fold into a generic upstream-
-// failure path with no severity distinction, but this one's sole caller
-// (connection_monitor.go's monitorAccount) treats any non-nil error from this function as a
-// routine, WARN-level reason to serve the row-summed fallback — the same log line an ordinary
-// timeout or 500 gets. A broken AccountTotalsReader adapter is not that: it deserves an
-// ERROR-level log distinct from "Reddit's API had a bad day," so this sentinel exists solely
-// to let the caller tell the two apart. It is deliberately unexported and local to this one
-// return path rather than a case added to unusableConnectionReason's fixed vocabulary
-// (connection.go), which classifies credential/connection failures, not adapter defects.
-var errAccountTotalsContractViolation = errors.New("account totals reader returned a nil result with no error")
-
-// ReadAccountTotals reads accountID's separately-fetched monitor totals when platform's
-// dispatcher implements AccountTotalsReader, reporting ok=false (with a nil error) when it
-// does not — that is NOT a failure, it means the caller should fall back to summing the rows
-// AccountMetricsReader already returned, exactly as connection_monitor.go does for every
-// platform but Reddit. Modeled on ReadAccountCampaignMetrics, except a missing capability is
-// expected and routine here rather than being reported through ErrAccountMetricsUnsupported:
-// AccountTotalsReader is not a per-platform monitor gate the caller must react to, it is an
-// override only Reddit needs.
-func (o *Orchestrator) ReadAccountTotals(ctx context.Context, projectID string, platform model.Provider, accountID string, days, campaignCount int) (*model.AccountMonitorTotals, bool, error) {
-	d, ok := o.dispatchers[platform]
-	if !ok {
-		return nil, false, nil
-	}
-	reader, ok := d.(AccountTotalsReader)
-	if !ok {
-		return nil, false, nil
-	}
-	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
-	defer cancel()
-	start := time.Now()
-	totals, rerr := reader.ReadAccountTotals(callCtx, projectID, platform, accountID, days, campaignCount)
-	o.recordUpstream(ctx, platform, opReadAccountTotals, start, rerr)
-	if rerr != nil {
-		return nil, true, rerr
-	}
-	if totals == nil {
-		return nil, true, fmt.Errorf("%s: %w", platform, errAccountTotalsContractViolation)
-	}
-	return totals, true, nil
 }
 
 // SearchCampaigns looks up marketing campaigns by name on platform.

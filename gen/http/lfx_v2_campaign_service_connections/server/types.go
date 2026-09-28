@@ -4757,8 +4757,10 @@ type AccountMonitorCampaignResponseBody struct {
 	// The campaign's flight end date, RFC 3339 date-only (YYYY-MM-DD). Empty when
 	// the platform did not report one.
 	EndDate string `form:"end_date" json:"end_date" xml:"end_date"`
-	// True when the flight dates needed to compute pacing_pct were unavailable. A
-	// renderer MUST NOT treat pacing_pct as meaningful when this is true.
+	// True when pacing could not be computed at all: either the flight dates
+	// needed for pacing_pct were unavailable, or the campaign has no usable budget
+	// to pace against. A renderer MUST NOT treat pacing_pct as meaningful when
+	// this is true.
 	PacingUnknown bool `form:"pacing_unknown" json:"pacing_unknown" xml:"pacing_unknown"`
 	// Google Ads only: true when the campaign's advertising_channel_type is
 	// SEARCH. Always false for LinkedIn/Meta/Reddit rows.
@@ -4806,16 +4808,13 @@ type AccountMonitorTotalsResponseBody struct {
 	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
 	// Account-wide clicks over the window.
 	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
-	// Account-wide conversions over the window.
-	Conversions float64 `form:"conversions" json:"conversions" xml:"conversions"`
-	// How many campaigns the totals reflect.
+	// Account-wide conversions over the window, summed over the campaigns that
+	// reported a conversion measurement. ABSENT when none of them did — not a
+	// measured 0.
+	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
+	// How many campaigns the totals reflect: the length of the campaigns array
+	// these totals sum.
 	CampaignCount int `form:"campaign_count" json:"campaign_count" xml:"campaign_count"`
-	// True when these totals are a sum of the returned campaigns array rather than
-	// the platform's own account-wide figure. Always false except on a Reddit read
-	// whose separate account-totals call actually failed, in which case the
-	// campaign rows are still authoritative but this aggregate is a derived
-	// stand-in.
-	DerivedFromRows bool `form:"derived_from_rows" json:"derived_from_rows" xml:"derived_from_rows"`
 }
 
 // GoogleAdsConnectionConfigRequestBody is used to define fields on request
