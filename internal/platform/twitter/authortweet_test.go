@@ -2402,12 +2402,71 @@ func TestRejectCredentialQueryParamsInText_SchemelessUserinfo(t *testing.T) {
 	// those would make the screen worse than the hole it closes.
 	for _, text := range []string{
 		"contact bob@events.example for details",
-		"questions? email hello@lf.org",
+		"questions? email user-1@example.com",
 		"Ratio 3:4@events tomorrow",
 		"Doors 9:30 — see events.lf.org/agenda",
 	} {
 		if err := rejectCredentialQueryParamsInText(text); err != nil {
 			t.Errorf("ordinary tweet copy %q was refused: %v", text, err)
+		}
+	}
+}
+
+// Round-14 review fixes
+
+// TestRejectCredentialQueryParamsInText_ClockAgainstHost pins the false positive the
+// round-13 userinfo scanner shipped with: a time of day written hard against a host is
+// the RFC 3986 userinfo production byte for byte, and an events platform writes that
+// sentence every day. The round-13 negative rows all happened to put punctuation between
+// the clock and the host, so none of them caught it.
+func TestRejectCredentialQueryParamsInText_ClockAgainstHost(t *testing.T) {
+	for _, text := range []string{
+		"session 9:30@main.stage tomorrow",
+		"keynote 14:00@events.example",
+		"finals 3:4@events.example/bracket",
+		"doors 09:00@events.example/r?utm_source=x",
+	} {
+		if err := rejectCredentialQueryParamsInText(text); err != nil {
+			t.Errorf("ordinary tweet copy %q was refused: %v", text, err)
+		}
+	}
+
+	// Digits on BOTH sides is what makes it a clock. One non-digit side and it is a
+	// credential pair again — this is the coverage the narrower "numeric username"
+	// spelling would have given up.
+	for _, text := range []string{
+		"9:PLAINTEXT@events.example is the link",
+		"ops9:PLAINTEXT@events.example/portal",
+	} {
+		err := rejectCredentialQueryParamsInText(text)
+		if err == nil {
+			t.Errorf("scheme-less userinfo text %q was not screened", text)
+			continue
+		}
+		if strings.Contains(err.Error(), "PLAINTEXT") {
+			t.Errorf("refusal for %q echoed the credential value: %v", text, err)
+		}
+	}
+}
+
+// TestWeightedRunLen_TextPresentationSelector pins U+FE0E ending an emoji cluster rather
+// than joining one. It requests TEXT presentation, so a sequence carrying it is not an
+// emoji sequence; twitter-text@3.1.0 weighs U+1F5A5 U+FE0E as 4, and absorbing the
+// selector charged 2.
+func TestWeightedRunLen_TextPresentationSelector(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want int
+	}{
+		{"text presentation is two weighed runes", "\U0001F5A5︎", 4},
+		{"emoji presentation is one cluster", "\U0001F5A5️", 2},
+		{"bare base is one cluster", "\U0001F5A5", 2},
+		{"a skin tone still clusters", "✊\U0001F3FD", 2},
+		{"a flag pair still clusters", "\U0001F1EF\U0001F1F5", 2},
+	} {
+		if got := weightedRunLen(tc.in); got != tc.want {
+			t.Errorf("%s: weightedRunLen(%q) = %d, want %d", tc.name, tc.in, got, tc.want)
 		}
 	}
 }

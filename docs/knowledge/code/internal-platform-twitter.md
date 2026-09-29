@@ -527,6 +527,24 @@ change what goes out in the tweet. The COLON is the entire discriminator and can
 dropped — without it the pattern matches `bob@events.example`, an ordinary email address,
 and a screen that refuses those is worse than the hole it closes.
 
+The colon is not QUITE the whole discriminator, and the round that shipped believing it
+was put a false REFUSAL into the pre-create path. `keynote 14:00@events.example` and
+`session 9:30@main.stage` are the RFC 3986 userinfo production byte for byte, and an
+events platform writes that sentence every day. `userinfoRunIsClockShaped` skips a run
+whose colon has ASCII digits on BOTH sides — a clock, a score, a ratio. Both sides,
+because the narrower "numeric username" spelling gives up `9:hunter2@events.example` for
+nothing, and because a digits-only password behind a digits-only username is a shape
+nothing here produces and the scheme-ful screen still catches the moment the operator
+writes the `https://`. The negative rows that missed this all happened to put punctuation
+between the clock and the host; hard against the host is the shape real copy has.
+
+U+FE0E is the one variation selector `emojiClusterLen` must NOT absorb. It requests TEXT
+presentation — it is the codepoint that says "do not render the one before me as an
+emoji" — so no RGI emoji sequence contains it and twitter-text's generated data has none.
+Ending the cluster before it is therefore what twitter-text does, not a guess about it:
+`U+1F5A5 U+FE0E` weighs 4 there, and absorbing the selector charged 2. The fix needs none
+of the generated sequence table that the broader clustering question still turns on.
+
 The error never renders the caller's key. It points at the offending parameter by
 the fixed VOCABULARY WORD that classified it — `credentialQueryKeyMatch` returns
 the matched literal alongside the verdict — and that word is always an entry from

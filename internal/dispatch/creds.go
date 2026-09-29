@@ -239,7 +239,7 @@ func sanitizeSnapshotText(raw string) string {
 	// say about, which is the `user:password@host` with no query at all.
 	out := snapshotURLRunRe.ReplaceAllStringFunc(raw, sanitizeSnapshotURL)
 	out = schemelessSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeSchemelessSnapshotRun)
-	return schemelessUserinfoSnapshotRunRe.ReplaceAllString(out, "")
+	return schemelessUserinfoSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeUserinfoSnapshotRun)
 }
 
 // schemelessSnapshotRunRe matches a scheme-less link carrying a query or fragment, the
@@ -283,11 +283,53 @@ var schemelessSnapshotRunRe = regexp.MustCompile(
 // The colon is the discriminator, exactly as on schemelessUserinfoRunRe in
 // internal/platform/twitter/client.go: without it this matches every email address an
 // operator writes in their copy. Keep the two in step.
+//
+// It is not the only discriminator needed, and the second one is kept in step too: a time
+// of day written hard against a host — `keynote 14:00@events.example` — is the userinfo
+// production byte for byte. See sanitizeUserinfoSnapshotRun.
 var schemelessUserinfoSnapshotRunRe = regexp.MustCompile(
 	`(?i)[a-z0-9._~%+-]+:[^\s<>"\x60\]}|\\^@]*@` +
 		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>"\x60\]}|\\^]*)?`,
 )
+
+// sanitizeUserinfoSnapshotRun blanks a matched userinfo run unless both sides of the colon
+// are digits, which makes it a clock, a score or a ratio rather than a credential pair.
+//
+// The rule is deliberately identical to userinfoRunIsClockShaped in
+// internal/platform/twitter/client.go — the two patterns are documented as kept in step,
+// and a discriminator that lived on only one of them would put the screen and the redactor
+// back out of agreement, which is the exact defect the third pass was added to fix.
+//
+// The COST direction differs, and it is worth being clear that this side is the milder
+// one: over-redacting here loses a line of the operator's own copy from a diagnostic
+// snapshot, where over-refusing on the twitter side blocks a brief before anything is
+// created. Milder is not free — the snapshot exists to be read by a human — and the
+// digits-both-sides test gives up no credential shape to buy it.
+func sanitizeUserinfoSnapshotRun(run string) string {
+	at := strings.IndexByte(run, '@')
+	if at < 0 {
+		return ""
+	}
+	userinfo := run[:at]
+	colon := strings.IndexByte(userinfo, ':')
+	if colon >= 0 && isAllASCIIDigits(userinfo[:colon]) && isAllASCIIDigits(userinfo[colon+1:]) {
+		return run
+	}
+	return ""
+}
+
+func isAllASCIIDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
 
 // sanitizeSchemelessSnapshotRun reduces a scheme-less run to its authority, and fails
 // CLOSED to the empty string on anything that will not parse or carries userinfo —

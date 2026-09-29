@@ -2215,6 +2215,11 @@ var schemelessScreenRunRe = regexp.MustCompile(
 // than the hole it closes. `user:password@host` is the RFC 3986 userinfo production with
 // a password in it; nothing else in prose looks like that. A userinfo with no colon
 // carries no password and is not matched.
+//
+// The colon is not QUITE the whole discriminator, and the gap is one this service's own
+// copy walks into constantly: a clock. `keynote 14:00@events.example` and
+// `session 9:30@main.stage` are the userinfo production byte for byte, and an events
+// platform writes that sentence every day. See userinfoRunIsClockShaped.
 var schemelessUserinfoRunRe = regexp.MustCompile(
 	`(?i)[a-z0-9._~%+-]+:[^\s<>@。、！？，：；]*@` +
 		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
@@ -2246,16 +2251,69 @@ func schemefulRunMask(s string) string {
 // caller's own bytes.
 func findSchemelessScreenRuns(text string) []string {
 	masked := schemefulRunMask(text)
+	scans := []struct {
+		re   *regexp.Regexp
+		skip func(string) bool
+	}{
+		{re: schemelessScreenRunRe},
+		{re: schemelessUserinfoRunRe, skip: userinfoRunIsClockShaped},
+	}
 	var runs []string
-	for _, re := range []*regexp.Regexp{schemelessScreenRunRe, schemelessUserinfoRunRe} {
-		for _, m := range re.FindAllStringIndex(masked, -1) {
+	for _, scan := range scans {
+		for _, m := range scan.re.FindAllStringIndex(masked, -1) {
 			if !urlRunStartIsBounded(masked, m[0]) {
 				continue
 			}
-			runs = append(runs, text[m[0]:m[1]])
+			run := text[m[0]:m[1]]
+			if scan.skip != nil && scan.skip(run) {
+				continue
+			}
+			runs = append(runs, run)
 		}
 	}
 	return runs
+}
+
+// userinfoRunIsClockShaped reports whether a scheme-less userinfo run is a time of day, a
+// score or a ratio written hard against a host rather than a credential pair.
+//
+// `keynote 14:00@events.example` parses as userinfo `14:00` on host `events.example`, and
+// there is no syntax that separates it from `bob:pw@events.example`. What separates them
+// is that BOTH sides of the colon are digits. A clock, a score (`3:4`) and a ratio are all
+// digits either side; a password that is also all digits sitting behind a username that is
+// also all digits is a shape nothing in this service produces, and one the scheme-ful
+// screen still catches the moment the operator writes the `https://`.
+//
+// The narrower test — reject when only the username is numeric — was the first spelling
+// and it gives up `9:hunter2@events.example` for nothing. Requiring both sides keeps that
+// refusal.
+//
+// This is a REFUSAL path, so the cost direction is what decides it: a false positive here
+// blocks a working brief before anything is created, and "keynote 14:00@…" is copy an
+// events platform writes every day.
+func userinfoRunIsClockShaped(run string) bool {
+	at := strings.IndexByte(run, '@')
+	if at < 0 {
+		return false
+	}
+	userinfo := run[:at]
+	colon := strings.IndexByte(userinfo, ':')
+	if colon < 0 {
+		return false
+	}
+	return isAllASCIIDigits(userinfo[:colon]) && isAllASCIIDigits(userinfo[colon+1:])
+}
+
+func isAllASCIIDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // twitterUTMParams is the allowlist of utm_* params THIS client generates (the source
@@ -2621,8 +2679,8 @@ const (
 	zeroWidthJoiner = 0x200D
 	// variationSelector16 requests emoji presentation for a BMP codepoint.
 	variationSelector16 = 0xFE0F
-	// variationSelector15 requests TEXT presentation; it is consumed as part of the
-	// sequence when it follows an emoji-plane codepoint so it is not weighed alone.
+	// variationSelector15 requests TEXT presentation. It ENDS an emoji cluster rather
+	// than joining one — see emojiClusterLen.
 	variationSelector15 = 0xFE0E
 	// combiningEnclosingKeycap completes a keycap sequence ("1️⃣").
 	combiningEnclosingKeycap = 0x20E3
@@ -2717,7 +2775,15 @@ func emojiClusterLen(rs []rune) int {
 	for i < len(rs) {
 		r := rs[i]
 		switch {
-		case r == variationSelector16, r == variationSelector15,
+		// U+FE0E is absent on purpose, and it is the one selector that must NOT be
+		// absorbed. It requests TEXT presentation — it is the codepoint that says "do
+		// not render the one before me as an emoji" — so a sequence containing it is
+		// not an emoji sequence at all. No RGI emoji sequence contains U+FE0E, and
+		// twitter-text's generated data has none, so ending the cluster before it is
+		// what twitter-text does rather than a guess about it: `U+1F5A5 U+FE0E` weighs
+		// 4 there, and absorbing the selector charged 2. Terminating here needs none of
+		// the generated table the round-13 decline was about.
+		case r == variationSelector16,
 			r == combiningEnclosingKeycap,
 			r >= skinToneLo && r <= skinToneHi,
 			r >= tagLo && r <= tagHi:
@@ -2725,6 +2791,8 @@ func emojiClusterLen(rs []rune) int {
 		case r == zeroWidthJoiner && i+1 < len(rs):
 			// The joiner AND the codepoint it joins belong to this one emoji.
 			i += 2
+		case r == variationSelector15:
+			return i
 		default:
 			return i
 		}

@@ -202,6 +202,18 @@ its host before the pass responsible for queries ever saw it. The colon requirem
 same one the twitter screen carries, and for the same reason: without it, every email
 address in operator copy is erased from the snapshot.
 
+So is the second discriminator. `sanitizeUserinfoSnapshotRun` leaves a run alone when both
+sides of the colon are ASCII digits, because that makes it a clock (`keynote
+14:00@events.example`), a score or a ratio rather than a credential pair — identical to
+`userinfoRunIsClockShaped` in `internal/platform/twitter/client.go`, and deliberately so:
+a discriminator living on only one of the two patterns puts the screen and the redactor
+back out of agreement, which is the exact defect this third pass was added to fix. The
+COST direction differs and this side is the milder one — over-redacting loses a line of
+the operator's own copy from a diagnostic snapshot, where over-refusing on the twitter
+side blocks a brief before anything is created. Milder is not free, since the snapshot
+exists to be read by a human, and the digits-both-sides test gives up no credential shape
+to buy it.
+
 `campaignFromTwitter` sanitizes a COPY of the config, so the
 text actually sent to X is untouched.
 

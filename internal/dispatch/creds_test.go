@@ -1075,6 +1075,25 @@ func TestSanitizeSnapshotText_SchemelessUserinfo(t *testing.T) {
 			"doors 9:30, ask bob@events.example",
 			"doors 9:30, ask bob@events.example",
 		},
+		// Round-14: the rows above all put punctuation between the clock and the host,
+		// which is what hid the false positive. Hard against the host is the shape an
+		// events platform actually writes, and it is the userinfo production byte for
+		// byte. Kept in step with userinfoRunIsClockShaped on the twitter side.
+		{
+			"a clock hard against a host is left alone",
+			"keynote 14:00@events.example",
+			"keynote 14:00@events.example",
+		},
+		{
+			"a clock with a path is left alone",
+			"session 9:30@main.stage/agenda",
+			"session 9:30@main.stage/agenda",
+		},
+		{
+			"one non-digit side is a credential again",
+			"see 9:SECRET@events.example now",
+			"see  now",
+		},
 	} {
 		if got := sanitizeSnapshotText(tc.in); got != tc.want {
 			t.Errorf("%s: sanitizeSnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
