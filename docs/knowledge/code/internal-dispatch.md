@@ -114,7 +114,12 @@ the exact leak this prevents. `]` is one of those terminators — it closes a ma
 far as `https://[2001:db8::1`, and the path AND query survived in the snapshot as prose.
 The pattern now tries a bracketed host first and only then falls back to the general run,
 so the terminator still ends a bracketed ordinary URL while an IPv6 authority is matched
-whole. `campaignFromTwitter` sanitizes a COPY of the config, so the
+whole. That branch admits any non-space run up to the closing `]` rather than a hex/colon
+IP grammar, which looks safer and is not: the tighter class rejected the zone-scoped form
+`https://[fe80::1%25eth0]/…`, which then fell through to the general alternative and
+truncated at the bracket again — reopening the leak for the one host shape the branch
+exists to close. Validity is left to `net/url`, because over-matching a bracketed run that
+is not a host costs a sanitized fragment of prose while under-matching costs a token. `campaignFromTwitter` sanitizes a COPY of the config, so the
 text actually sent to X is untouched.
 
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a

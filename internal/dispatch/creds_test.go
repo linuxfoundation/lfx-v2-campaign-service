@@ -91,6 +91,14 @@ func TestSanitizeSnapshotText(t *testing.T) {
 			"https://[2001:db8::1]:8443/reg",
 		},
 		{
+			// A zone-scoped literal is the shape a hex/colon-only bracket class
+			// rejects, sending it back through the general alternative and
+			// truncating at the bracket — the leak the branch exists to close.
+			"ipv6 zone-scoped literal host",
+			"https://[fe80::1%25eth0]/reg?ticket=SECRET",
+			"https://[fe80::1%25eth0]/reg",
+		},
+		{
 			// The ']' terminator still has to work where it means what it meant
 			// before: a bracket closing around an ordinary URL.
 			"bracketed ordinary url",

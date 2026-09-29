@@ -123,8 +123,16 @@ func sanitizeSnapshotURL(raw string) string {
 // snapshot as bare text — under-matching costing exactly the token this guards. A
 // bracketed host is therefore consumed whole first, and only the REST of the run is
 // subject to the stop set.
+//
+// That branch admits any non-space run up to the closing `]`, NOT a hex/colon IP
+// grammar. A tighter class looks safer and is not: it rejected the zone-scoped form
+// `https://[fe80::1%25eth0]/…`, which then fell through to the general alternative and
+// truncated at the bracket again — reopening the leak for the one host shape the branch
+// was added for. Matching the authority whole and leaving its validity to net/url is the
+// direction that fails safe here: over-matching a bracketed run that is not a host costs
+// a sanitized fragment of prose, while under-matching costs a token.
 var snapshotURLRunRe = regexp.MustCompile(
-	`(?i)\bhttps?://(?:\[[0-9a-f:.]+\][^\s<>"'\x60\]}|\\^]*|[^\s<>"'\x60\]}|\\^]+)`,
+	`(?i)\bhttps?://(?:\[[^\]\s]+\][^\s<>"'\x60\]}|\\^]*|[^\s<>"'\x60\]}|\\^]+)`,
 )
 
 // sanitizeSnapshotText strips the query and fragment from every URL embedded in free text
