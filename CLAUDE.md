@@ -52,11 +52,18 @@ For the live schema, the migrations under
 `internal/infrastructure/postgres/migrations/` are the sole authority;
 `docs/architecture.md`, `docs/channel-connections-schema.md` and
 `docs/build-summary.md` describe design intent and do not override the
-migrations where they disagree. What the formatting and license-header checks
-cover is defined by `GO_FILES` in the `Makefile` and `exclude_pattern` in
+migrations where they disagree. Not a review finding (2026-09-29):
+pre-existing drift between those docs and the code, or the unused
+`GO_VERSION` pin in the `Makefile`, is known and deliberate; see
+`docs/reviews/knowledge-base/known-false-positives.md` § 9. What the
+formatting and license-header checks cover is defined by `GO_FILES` in the
+`Makefile` and `exclude_pattern` in
 `.github/workflows/license-header-check.yml`; `FILTER_REGEX_EXCLUDE` in
 `.mega-linter.yml` scopes MegaLinter's file-based linters only — project-mode
-scanners such as gitleaks and secretlint ignore it and scan every path.
+scanners such as gitleaks and secretlint ignore it and scan every path. Not a
+review finding (2026-09-29): a license-header, `gofmt -s` or MegaLinter
+file-linter finding in a path those settings exclude; see
+`docs/reviews/knowledge-base/known-false-positives.md` § 10.
 
 ## Pre-PR review
 
