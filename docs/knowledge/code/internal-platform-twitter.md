@@ -458,18 +458,29 @@ decoded. A query Go refuses to decode — an unescaped `;` separator, a bad esca
 — therefore arrived as an empty map, and the screen cleared a URL whose
 parameters it had never read.
 
-The error names the offending KEY and never its value — but only when that key is
-really a name. The reasoning holds because the secret is the VALUE, which the
-parser holds separately and which is never rendered; it fails entirely for a URL
-ending in a bare `?eyJhbGciOi…`, which has no `=` at all, so the whole token lands
-in the key position. Bounding that is not redacting it: a credential prefix is
-still credential material. So the two cases are split.
-`queryKeysWrittenWithAValue` re-reads the raw query — `url.ParseQuery` cannot
-answer this, giving the empty string for the value of both `?token=` and `?token`
-— and only a key the caller actually wrote as `name=value` is rendered, through
-`safeQueryKeyForError`, which strips control characters and truncates by rune
-before the name reaches an error that is persisted and logged. A bare component
-is named as a CATEGORY and never echoed. Safety is tracked PER OCCURRENCE, not per
+The error never renders the caller's key. It points at the offending parameter by
+the fixed VOCABULARY WORD that classified it — `credentialQueryKeyMatch` returns
+the matched literal alongside the verdict — and that word is always an entry from
+this file's own lists, never a slice of caller text.
+
+Two earlier rounds got this wrong in the same direction, and the reasoning that
+failed is worth keeping: the secret is the VALUE, so naming the KEY is safe. It is
+not. A parameter NAME is free text too, and `?oauth_token_<secret>=x` classifies on
+`oauth` and then reproduced the secret in an error that reaches the dispatcher, the
+campaign's persisted `Steps` and the service log. Truncating to 40 runes bounded
+that without redacting it, and a credential prefix is still credential material.
+The knowledge base states the test this fails — reproduce a component only when it
+is BOTH structurally incapable of holding a secret AND load-bearing — and a
+caller-written name fails the first half. A word we wrote passes it by construction,
+and stays load-bearing, because the operator finds the parameter by searching their
+own URL for that word, which is exactly how they would have used the key. It is the
+same default-deny shape as `safeCause` in `internal/platform/hubspot/client.go`.
+
+`queryKeysWrittenWithAValue` still splits name from category, because the two are
+different refusals: it re-reads the raw query — `url.ParseQuery` cannot answer this,
+giving the empty string for the value of both `?token=` and `?token` — and a bare
+component, whose whole text landed in the key position, names no word at all and
+redacts the URL instead. Safety is tracked PER OCCURRENCE, not per
 key: one `=` anywhere used to be enough, so
 `?oauth_token_SECRET&oauth_token_SECRET=x` decoded to a single key whose valued
 occurrence marked it renderable, and the error then reproduced a string whose BARE

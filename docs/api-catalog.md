@@ -913,7 +913,8 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   that is a credential under any reading (`access_token`,
                                   `api_key`, `sessionId`, `jwt`, `password`, `signature`,
                                   `secret_token`, `auth_key`, `oauth_token_secret`,
-                                  `JSESSIONID`, `PHPSESSID`, `auth_cookie`, `connect.sid`, … in any
+                                  `JSESSIONID`, `PHPSESSID`, `auth_cookie`, `connect.sid`,
+                                  `_csrf`, `SAMLResponse`, … in any
                                   case/separator spelling, compounds included — a credential word
                                   standing as a whole `-`/`_`/`.`-delimited component counts, so
                                   `auth_cookie` is refused while `author` is not). The same screen
@@ -927,11 +928,13 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   (`https://user:pass@host/…`) is refused whether or not it has a
                                   query, which closes the gap that the registration URL's own
                                   userinfo check never covered links pasted into caller copy. The
-                                  error names the offending KEY — bounded and stripped of control
-                                  characters — only when the caller wrote it as `name=value`,
-                                  where the name cannot be the secret; a BARE query component with
-                                  no `=` may itself be the credential and is named only as a
-                                  category, never echoed. Values are never rendered. Routing and
+                                  error never renders the caller's key: it points at the parameter
+                                  by the fixed VOCABULARY WORD that classified it, because a
+                                  parameter NAME is free text too and
+                                  `?oauth_token_<secret>=x` would otherwise reproduce the secret in
+                                  a persisted, logged error. A BARE query component with no `=` may
+                                  itself be the credential, names no word at all, and redacts the
+                                  URL instead. Values are never rendered. Routing and
                                   attribution parameters are unaffected, `code` and `pin` included
                                   — a discount code is not a credential.
                                   The authored tweet is ALWAYS promoted-only

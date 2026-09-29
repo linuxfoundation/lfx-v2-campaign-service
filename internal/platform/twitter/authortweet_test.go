@@ -703,9 +703,11 @@ func TestCreateCampaign_RejectsCredentialQueryParamBeforeAnythingIsCreated(t *te
 			if err == nil {
 				t.Fatalf("a registration URL carrying %q was accepted for publication", param)
 			}
-			if !strings.Contains(err.Error(), param) {
-				t.Errorf("error should name the offending parameter %q, got: %v", param, err)
-			}
+			// The refusal points at the parameter by the VOCABULARY WORD that
+			// classified it, not by the caller's spelling — a name is free text and
+			// can carry a secret itself. The operator still finds the parameter by
+			// searching their own URL for that word.
+			assertNamesClassifyingTerm(t, err, param)
 			if strings.Contains(err.Error(), "s3cr3t") {
 				t.Errorf("error echoes the credential VALUE back: %v", err)
 			}
@@ -1024,9 +1026,11 @@ func TestCreateCampaign_RejectsCredentialQueryParamInCallerTweetCopy(t *testing.
 			if err == nil {
 				t.Fatalf("tweet copy carrying %q was accepted for publication", param)
 			}
-			if !strings.Contains(err.Error(), param) {
-				t.Errorf("error should name the offending parameter %q, got: %v", param, err)
-			}
+			// The refusal points at the parameter by the VOCABULARY WORD that
+			// classified it, not by the caller's spelling — a name is free text and
+			// can carry a secret itself. The operator still finds the parameter by
+			// searching their own URL for that word.
+			assertNamesClassifyingTerm(t, err, param)
 			if strings.Contains(err.Error(), "s3cr3t") {
 				t.Errorf("error echoes the credential VALUE back: %v", err)
 			}
@@ -1342,21 +1346,32 @@ func TestRejectCredentialQueryParams_NamesRealKeysAndRedactsBareOnes(t *testing.
 	if named == nil {
 		t.Fatal("a credential-shaped query parameter was cleared for publication")
 	}
-	if !strings.Contains(named.Error(), "oauth_token") {
-		t.Errorf("a real parameter name must be named to make the refusal actionable, got: %v", named)
+	if !strings.Contains(named.Error(), `"token"`) {
+		t.Errorf("a valued key must be pointed at by its classifying word to stay actionable, got: %v", named)
 	}
 	if strings.Contains(named.Error(), "s3cr3t") {
 		t.Errorf("the refusal rendered the parameter VALUE, which is the secret: %v", named)
 	}
 
-	// A real name is still untrusted text: bounded, and stripped of anything that could
-	// forge structure in the log line it lands in.
-	if got := safeQueryKeyForError("a\x00b\nc"); strings.ContainsAny(got, "\x00\n") {
-		t.Errorf("control characters survived into an error that reaches the log: %q", got)
-	}
-	long := strings.Repeat("k", 300)
-	if got := safeQueryKeyForError(long); len([]rune(got)) > 41 {
-		t.Errorf("an over-long parameter name was not bounded: %d runes", len([]rune(got)))
+	// The refusal no longer renders the caller's key at all — not even bounded and
+	// control-stripped — because a parameter NAME is free text and can carry the secret
+	// itself. What it names is the fixed vocabulary word that classified it, so control
+	// characters and over-long names have nothing to ride in on.
+	for _, key := range []string{"oauth_token_s3cr3t-LEAKED", "a\x00b\nc_token", strings.Repeat("k", 300) + "_secret"} {
+		err := rejectCredentialQueryParams("https://events.lf.org/r?" + url.QueryEscape(key) + "=x")
+		if err == nil {
+			t.Fatalf("key %q was not refused", key)
+		}
+		msg := err.Error()
+		if strings.Contains(msg, "LEAKED") {
+			t.Errorf("the refusal reproduced credential material from the parameter NAME: %v", err)
+		}
+		if strings.ContainsAny(msg, "\x00\n") {
+			t.Errorf("control characters from the key reached an error that lands in the log: %q", msg)
+		}
+		if len(msg) > 400 {
+			t.Errorf("an over-long parameter name was echoed into the error: %d bytes", len(msg))
+		}
 	}
 }
 
@@ -1823,8 +1838,8 @@ func TestCredentialFragmentError_NamesAValuedKeyAndRedactsABareOne(t *testing.T)
 	if named == nil {
 		t.Fatal("a credential-shaped fragment parameter was cleared for publication")
 	}
-	if !strings.Contains(named.Error(), "access_token") {
-		t.Errorf("a real fragment parameter name must be named to make the refusal actionable, got: %v", named)
+	if !strings.Contains(named.Error(), `"accesstoken"`) {
+		t.Errorf("a valued fragment key must be pointed at by its classifying word, got: %v", named)
 	}
 	if strings.Contains(named.Error(), "s3cr3t") {
 		t.Errorf("the refusal rendered the fragment parameter VALUE, which is the secret: %v", named)
@@ -1991,8 +2006,8 @@ func TestCreateCampaign_RefusesACredentialFragmentOnTheRegistrationURL(t *testin
 	if strings.Contains(err.Error(), "s3cr3t-fragment-value") {
 		t.Errorf("the refusal reproduced the credential VALUE: %q", err)
 	}
-	if !strings.Contains(err.Error(), "access_token") {
-		t.Errorf("the refusal should name the offending key: %q", err)
+	if !strings.Contains(err.Error(), "accesstoken") {
+		t.Errorf("the refusal should point at the offending key by its classifying word: %q", err)
 	}
 }
 
@@ -2073,5 +2088,101 @@ func TestAppendUTMToRawQuery_DoesNotReassembleANonCollidingQuery(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "a=1&&b=2&") {
 		t.Errorf("empty component dropped on the collision path: %q", got)
+	}
+}
+
+
+// assertNamesClassifyingTerm checks that a refusal points the operator at the offending
+// parameter by the fixed vocabulary word that classified it, and never by reproducing
+// the caller's own spelling of the key — which is free text and can hold a secret.
+func assertNamesClassifyingTerm(t *testing.T, err error, key string) {
+	t.Helper()
+
+	term, bad := credentialQueryKeyMatch(key)
+	if !bad {
+		t.Fatalf("test key %q does not classify as a credential at all", key)
+	}
+	if !strings.Contains(err.Error(), term) {
+		t.Errorf("refusal for %q does not name its classifying word %q, so the operator cannot find the parameter: %v", key, term, err)
+	}
+	// Every term must be a literal from the client's own lists. A term that is not one
+	// is a slice of the caller's key, which is the leak this shape exists to prevent.
+	if !isFixedCredentialVocabulary(term) {
+		t.Errorf("refusal for %q named %q, which is not a fixed vocabulary word", key, term)
+	}
+}
+
+// isFixedCredentialVocabulary reports whether term is one of the literals the client
+// itself declares, independently of how the classifier reached it.
+func isFixedCredentialVocabulary(term string) bool {
+	if _, ok := credentialQueryKeys[term]; ok {
+		return true
+	}
+	if _, ok := credentialQueryComponents[term]; ok {
+		return true
+	}
+	for _, frag := range credentialQuerySubstrings {
+		if term == frag {
+			return true
+		}
+	}
+	return term == "key"
+}
+
+// ---------------------------------------------------------------------------
+// Round-10 review fixes
+// ---------------------------------------------------------------------------
+
+// TestIsCredentialQueryKey_CatchesCSRFAndSAML closes the last standard credential
+// names every tier missed. `csrf_token` was already caught by `token`, but the bare
+// `_csrf` that Rails, Spring Security and Express emit normalizes to `csrf` — no
+// exact entry, no fragment, not a component — and `SAMLResponse` carries a signed
+// assertion in a parameter matching nothing at all. Their values were copied verbatim
+// into the published tweet.
+func TestIsCredentialQueryKey_CatchesCSRFAndSAML(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"_csrf", "csrf", "CSRFToken", "xsrf", "X-XSRF-TOKEN", "SAMLResponse", "SAMLRequest", "saml_assertion"} {
+		if !isCredentialQueryKey(key) {
+			t.Errorf("credential parameter %q still clears the publication screen", key)
+		}
+	}
+
+	// The additions are fragments, so they must not catch routing parameters an
+	// events page really uses.
+	for _, key := range []string{"session_track", "day_pass", "keyword", "author", "aside", "design", "speaker", "venue", "sponsor_tier"} {
+		if isCredentialQueryKey(key) {
+			t.Errorf("ordinary events parameter %q was refused", key)
+		}
+	}
+}
+
+// TestCredentialQueryKeyMatch_NeverReturnsCallerText is the structural half of the
+// round-10 fix: the term a refusal renders must be a literal this package declares,
+// whatever the caller wrote. A parameter NAME is free text — `?oauth_token_<secret>=x`
+// classifies on `oauth` and, under the old contract, reproduced the whole key in an
+// error bound for the dispatcher, persisted Steps and the service log.
+//
+// The cases here are keys the classifier already catches. It does NOT catch every
+// secret-bearing name — `access_key_AKIA…` normalizes to something that no longer ENDS
+// in `key`, so the suffix tier misses it, and `key` is deliberately not a component
+// match because `key_metrics`-shaped routing parameters exist. That gap is a denylist
+// limit, weighed where the tiers are declared; this test covers what the refusal RENDERS
+// once a key does classify, which is a different property and holds regardless.
+func TestCredentialQueryKeyMatch_NeverReturnsCallerText(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{
+		"oauth_token_s3cr3t", "x_csrf_LEAK", "jwt.eyJhbGciOi", "auth_DEADBEEF",
+		"SAMLResponse_PHNhbWxw", "connect.sid_LEAK", "session_token_LEAK", "my_api_key",
+	} {
+		term, bad := credentialQueryKeyMatch(key)
+		if !bad {
+			t.Errorf("credential-shaped key %q was cleared", key)
+			continue
+		}
+		if !isFixedCredentialVocabulary(term) {
+			t.Errorf("key %q produced term %q, which is caller text rather than a declared literal", key, term)
+		}
 	}
 }

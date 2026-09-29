@@ -1811,10 +1811,19 @@ var credentialQueryKeys = map[string]struct{}{
 // `cookie` is here on the same footing: a query parameter carrying a cookie by any
 // name — `auth_cookie`, `session_cookie`, `cookie` — is carrying the session itself,
 // and no ordinary English word contains it.
+//
+// `csrf`, `xsrf` and `saml` close the last standard names the other tiers all miss.
+// `csrf_token` and `x_csrf_token` were already caught by `token`, but the bare
+// `_csrf` that Rails, Spring Security and Express all emit normalizes to `csrf` —
+// no exact entry, no listed fragment, not a component — and `SAMLResponse` carries a
+// signed assertion in a single parameter that matches nothing above. All three are
+// safe as fragments: no ordinary English word and no routing parameter an events page
+// uses contains any of them.
 var credentialQuerySubstrings = []string{
 	"token", "secret", "password", "passwd", "credential",
 	"signature", "hmac", "jwt", "bearer", "oauth",
 	"authorization", "assertion", "sessionid", "sessid", "cookie",
+	"csrf", "xsrf", "saml",
 }
 
 // credentialQueryComponents are credential names that are unambiguous as a WHOLE
@@ -1871,29 +1880,55 @@ var credentialQueryKeyNormalizer = strings.NewReplacer("-", "", "_", "", ".", ""
 // `connect.sid` are credentials, `author` and `aside` are not, and only the separators
 // tell them apart.
 func isCredentialQueryKey(key string) bool {
+	_, bad := credentialQueryKeyMatch(key)
+	return bad
+}
+
+// credentialQueryKeyMatch reports the same verdict as isCredentialQueryKey and, with it,
+// the TERM that produced the verdict — always a literal from one of the fixed lists
+// above, never a slice of the caller's key.
+//
+// That distinction is the whole reason this function exists. Naming the offending
+// parameter is what makes the refusal actionable, but the key is caller-controlled free
+// text, and a NAME can hold a secret as easily as a value can: `?oauth_token_<secret>=x`
+// classifies on `oauth` and then reproduces the secret in the error, which reaches the
+// dispatcher, the campaign's persisted Steps and the service log. Truncating to 40 runes
+// bounds that; it does not redact it, and a credential prefix is still credential
+// material.
+//
+// So the error names OUR word, not THEIR key — the same default-deny shape as
+// `safeCause` in `internal/platform/hubspot/client.go`, and the same rule the knowledge
+// base states: reproduce a component only when it is both structurally incapable of
+// holding a secret and load-bearing for the diagnosis. A fixed vocabulary entry is
+// structurally incapable, because we wrote it. It stays load-bearing because the
+// operator finds the parameter by searching their own URL for that word, which is
+// exactly how they would have used the key itself.
+func credentialQueryKeyMatch(key string) (string, bool) {
 	norm := strings.ToLower(credentialQueryKeyNormalizer.Replace(key))
 	if norm == "" {
-		return false
+		return "", false
 	}
 	if _, bad := credentialQueryKeys[norm]; bad {
-		return true
+		// The exact tier is the one case where the term IS the whole (normalized) key,
+		// so naming it gives up nothing.
+		return norm, true
 	}
 	for _, frag := range credentialQuerySubstrings {
 		if strings.Contains(norm, frag) {
-			return true
+			return frag, true
 		}
 	}
 	for _, part := range strings.FieldsFunc(strings.ToLower(key), credentialQueryKeyComponentSplitter) {
 		if _, bad := credentialQueryComponents[part]; bad {
-			return true
+			return part, true
 		}
 	}
 	if strings.HasSuffix(norm, "key") {
 		if _, benign := benignKeySuffixWords[norm]; !benign {
-			return true
+			return "key", true
 		}
 	}
-	return false
+	return "", false
 }
 
 // rejectCredentialQueryParams refuses ONE URL that carries a credential-like query
@@ -1945,16 +1980,18 @@ func rejectCredentialQueryParams(raw string) error {
 	}
 	named := queryKeysWrittenWithAValue(u.RawQuery)
 	for key := range q {
-		if !isCredentialQueryKey(key) {
+		term, bad := credentialQueryKeyMatch(key)
+		if !bad {
 			continue
 		}
-		// A key that was written as `name=value` IS a parameter name: structurally
-		// incapable of being the secret, because the secret is the value the parser put
-		// on the other side of the `=`. A key with no `=` behind it is not a name at
-		// all — the whole component landed in the key position — so it is named only as
-		// a category. See safeQueryKeyForError.
+		// A key written as `name=value` is a parameter name, so the refusal can point at
+		// it — but by the WORD that classified it, never by the caller's spelling. A name
+		// is free text and can carry a secret itself (`?oauth_token_<secret>=x`); the
+		// matched term is a literal from this file's own lists and cannot. A key with no
+		// `=` behind it is not a name at all — the whole component landed in the key
+		// position — so that shape names no term and redacts the URL instead.
 		if named[key] {
-			return fmt.Errorf("the tweet's URL query parameter %q looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the registration URL and from your tweet copy, or supply an explicit tweetId instead of tweetText", safeQueryKeyForError(key))
+			return fmt.Errorf("the tweet's URL carries a query parameter whose name contains %q, which looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the registration URL and from your tweet copy, or supply an explicit tweetId instead of tweetText", term)
 		}
 		return fmt.Errorf("URL %q in the tweet text ends in a bare query component that looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
 	}
@@ -2009,11 +2046,12 @@ func credentialFragmentError(raw string, u *url.URL) error {
 	// so it is named as a category and never echoed.
 	named := queryKeysWrittenWithAValue(frag)
 	for key := range f {
-		if !isCredentialQueryKey(key) {
+		term, bad := credentialQueryKeyMatch(key)
+		if !bad {
 			continue
 		}
 		if named[key] {
-			return fmt.Errorf("the tweet's URL fragment parameter %q looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", safeQueryKeyForError(key))
+			return fmt.Errorf("the tweet's URL carries a fragment parameter whose name contains %q, which looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", term)
 		}
 		return fmt.Errorf("URL %q in the tweet text carries a bare fragment component that looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
 	}
@@ -2057,38 +2095,6 @@ func queryKeysWrittenWithAValue(rawQuery string) map[string]bool {
 		delete(named, key)
 	}
 	return named
-}
-
-// safeQueryKeyForError bounds a caller-controlled query key before it is named in an
-// error that reaches the dispatcher, the campaign's persisted Steps and the service log.
-//
-// Naming the key is deliberate and stays: it is what makes the refusal actionable, the
-// operator cannot find the offending parameter without it, and a parameter NAME is not
-// the secret — the value is, and the value is never rendered.
-//
-// That reasoning holds ONLY for a key the caller wrote as `name=value`. A URL ending in
-// a bare `?eyJhbGciOi...` has no `=` at all, so the whole token becomes the "key", and
-// truncating it still reproduces a credential prefix. Bounding is not redaction, so the
-// bare case does not reach this function at all — rejectCredentialQueryParams names it
-// as a category instead, and only keys carrying a real value are rendered here. What is
-// left for this function is the untrusted-text hygiene every named key still needs:
-// control characters are stripped, so the key cannot forge log structure, and the result
-// is truncated well below the length of any real parameter name.
-func safeQueryKeyForError(key string) string {
-	const maxKeyInError = 40
-	clean := strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, key)
-	// Truncate by RUNE, not by byte: a byte cut lands mid-sequence on a non-ASCII key
-	// and renders a replacement character, which reads as corruption rather than as a
-	// deliberate elision.
-	if runes := []rune(clean); len(runes) > maxKeyInError {
-		return string(runes[:maxKeyInError]) + "…"
-	}
-	return clean
 }
 
 // rejectCredentialQueryParamsInText screens EVERY URL in a composed tweet, and is the
