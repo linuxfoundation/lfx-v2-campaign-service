@@ -656,7 +656,7 @@ func BuildGetBriefMetricsPayload(lfxV2CampaignServiceBriefsGetBriefMetricsProjec
 
 // BuildGenerateEmailCopyPayload builds the payload for the
 // lfx-v2-campaign-service-briefs generate-email-copy endpoint from CLI flags.
-func BuildGenerateEmailCopyPayload(lfxV2CampaignServiceBriefsGenerateEmailCopyProjectID string, lfxV2CampaignServiceBriefsGenerateEmailCopyBriefID string, lfxV2CampaignServiceBriefsGenerateEmailCopyStage string, lfxV2CampaignServiceBriefsGenerateEmailCopyVariant string, lfxV2CampaignServiceBriefsGenerateEmailCopyBearerToken string) (*lfxv2campaignservicebriefs.GenerateEmailCopyPayload, error) {
+func BuildGenerateEmailCopyPayload(lfxV2CampaignServiceBriefsGenerateEmailCopyProjectID string, lfxV2CampaignServiceBriefsGenerateEmailCopyBriefID string, lfxV2CampaignServiceBriefsGenerateEmailCopyStage string, lfxV2CampaignServiceBriefsGenerateEmailCopyVariant string, lfxV2CampaignServiceBriefsGenerateEmailCopySegment string, lfxV2CampaignServiceBriefsGenerateEmailCopyBearerToken string) (*lfxv2campaignservicebriefs.GenerateEmailCopyPayload, error) {
 	var err error
 	var projectID string
 	{
@@ -682,6 +682,12 @@ func BuildGenerateEmailCopyPayload(lfxV2CampaignServiceBriefsGenerateEmailCopyPr
 			variant = &lfxV2CampaignServiceBriefsGenerateEmailCopyVariant
 		}
 	}
+	var segment *string
+	{
+		if lfxV2CampaignServiceBriefsGenerateEmailCopySegment != "" {
+			segment = &lfxV2CampaignServiceBriefsGenerateEmailCopySegment
+		}
+	}
 	var bearerToken *string
 	{
 		if lfxV2CampaignServiceBriefsGenerateEmailCopyBearerToken != "" {
@@ -693,6 +699,7 @@ func BuildGenerateEmailCopyPayload(lfxV2CampaignServiceBriefsGenerateEmailCopyPr
 	v.BriefID = briefID
 	v.Stage = stage
 	v.Variant = variant
+	v.Segment = segment
 	v.BearerToken = bearerToken
 
 	return v, nil
@@ -984,7 +991,7 @@ func BuildStartEmailWizardPlanPayload(lfxV2CampaignServiceBriefsStartEmailWizard
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsStartEmailWizardPlanBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"email_type\": \"Perferendis asperiores.\",\n      \"extra_context\": \"Ut reprehenderit ipsa.\",\n      \"is_transactional\": true,\n      \"url\": \"Quas odio.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"email_type\": \"Delectus sequi amet harum tempore.\",\n      \"extra_context\": \"Voluptatibus dolorem.\",\n      \"is_transactional\": false,\n      \"url\": \"Occaecati perferendis asperiores.\"\n   }'")
 		}
 	}
 	var projectID string
@@ -1026,7 +1033,7 @@ func BuildPlanEmailWizardPayload(lfxV2CampaignServiceBriefsPlanEmailWizardBody s
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsPlanEmailWizardBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"email_type\": \"Porro et fuga facere est qui vero.\",\n      \"extra_context\": \"Veniam doloremque dolores voluptatum aut mollitia aperiam.\",\n      \"is_transactional\": false,\n      \"session_id\": \"361474a2-47f8-4b99-b620-23a3b29fb6a0\",\n      \"url\": \"Tenetur deleniti molestias est earum.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"email_type\": \"Neque ipsam neque ut modi ut cumque.\",\n      \"extra_context\": \"Porro et fuga facere est qui vero.\",\n      \"is_transactional\": true,\n      \"session_id\": \"75a984b4-c041-4fb7-ab4f-ec42e780b087\",\n      \"url\": \"Veniam doloremque dolores voluptatum aut mollitia aperiam.\"\n   }'")
 		}
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", body.SessionID, goa.FormatUUID))
 		if err != nil {
@@ -1074,7 +1081,7 @@ func BuildGenerateWizardContentPayload(lfxV2CampaignServiceBriefsGenerateWizardC
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsGenerateWizardContentBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"change_request\": \"Sit dignissimos est.\",\n      \"session_id\": \"f61a3522-2a4d-4381-913f-197ab6acc446\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"change_request\": \"Esse possimus odio.\",\n      \"session_id\": \"a3ff5aef-52c3-4b88-95e6-3f90513a04bc\"\n   }'")
 		}
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", body.SessionID, goa.FormatUUID))
 		if err != nil {
@@ -1119,7 +1126,7 @@ func BuildUpdateWizardSectionsPayload(lfxV2CampaignServiceBriefsUpdateWizardSect
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsUpdateWizardSectionsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"sections\": [\n         \"Et ab aliquam voluptatem voluptatibus architecto sequi.\",\n         \"At dolore aut nemo rerum corrupti non.\"\n      ],\n      \"session_id\": \"2a80b60c-67c3-45bc-9994-b398e95d91e9\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"sections\": [\n         \"Nulla voluptas unde sint omnis.\",\n         \"Facilis quidem qui repellat at ducimus.\",\n         \"Consequatur fugiat iure sint.\"\n      ],\n      \"session_id\": \"15405253-3507-4162-bfcf-92700c5a2c90\"\n   }'")
 		}
 		if body.Sections == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("sections", "body"))
@@ -1173,7 +1180,7 @@ func BuildCloneWizardEmailPayload(lfxV2CampaignServiceBriefsCloneWizardEmailBody
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsCloneWizardEmailBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"approved\": false,\n      \"preview_text\": \"Molestiae nesciunt sit illo repellendus.\",\n      \"send_list_id\": \"Doloribus dolores dolor nostrum ipsa reprehenderit consectetur.\",\n      \"session_id\": \"4180461e-fadd-459d-87cd-aec7224fe121\",\n      \"subject\": \"Eos earum assumenda architecto perferendis.\",\n      \"variant\": \"stage\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"approved\": false,\n      \"preview_text\": \"Aspernatur qui assumenda tenetur omnis.\",\n      \"send_list_id\": \"Ratione quasi.\",\n      \"session_id\": \"d04699ba-863c-40bd-b1b6-94d421f011a2\",\n      \"subject\": \"Molestiae dolorem placeat commodi.\",\n      \"variant\": \"reference\"\n   }'")
 		}
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", body.SessionID, goa.FormatUUID))
 		if body.Variant != nil {
@@ -1226,7 +1233,7 @@ func BuildSetWizardSendListPayload(lfxV2CampaignServiceBriefsSetWizardSendListBo
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsSetWizardSendListBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"email_id\": \"Deleniti tenetur sit omnis dolorem et.\",\n      \"send_list_id\": \"Reiciendis laudantium error.\",\n      \"send_list_ids\": [\n         \"Iste itaque et eum ea voluptatem.\",\n         \"Enim consequatur voluptatum excepturi ea molestias molestias.\",\n         \"Dolore sit consequatur explicabo.\",\n         \"Ut facere ipsa iure tempora ullam.\"\n      ],\n      \"session_id\": \"384b5574-7489-47ef-93bd-29da41fb90c2\",\n      \"suppression_list_ids\": [\n         \"Tenetur eaque eaque.\",\n         \"Aliquid pariatur sint temporibus.\",\n         \"Magnam id minima et.\"\n      ]\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"email_id\": \"Odio iste itaque et eum.\",\n      \"send_list_id\": \"Voluptatem et enim consequatur voluptatum excepturi ea.\",\n      \"send_list_ids\": [\n         \"Quasi dolore sit consequatur explicabo.\",\n         \"Ut facere ipsa iure tempora ullam.\",\n         \"Voluptas tenetur eaque eaque.\",\n         \"Aliquid pariatur sint temporibus.\"\n      ],\n      \"session_id\": \"b94ed37a-a637-4c7a-b02f-195f902d0a48\",\n      \"suppression_list_ids\": [\n         \"Id minima et modi.\",\n         \"Incidunt quas necessitatibus.\",\n         \"Et corrupti.\",\n         \"Quaerat dignissimos a.\"\n      ]\n   }'")
 		}
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", body.SessionID, goa.FormatUUID))
 		if err != nil {
@@ -1283,7 +1290,7 @@ func BuildChatWizardTurnPayload(lfxV2CampaignServiceBriefsChatWizardTurnBody str
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsChatWizardTurnBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"message\": \"Quasi et quisquam qui asperiores.\",\n      \"session_id\": \"7ecd1cfb-56b6-43fa-a44f-a439d5ec1305\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"message\": \"Recusandae culpa illo numquam.\",\n      \"session_id\": \"679d7864-c342-4f1b-be16-8991a93ba56d\"\n   }'")
 		}
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.session_id", body.SessionID, goa.FormatUUID))
 		if err != nil {

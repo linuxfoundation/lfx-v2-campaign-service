@@ -1015,6 +1015,27 @@ type platformResult struct {
 	Skipped    bool   `json:"skipped,omitempty"`
 	CampaignID string `json:"campaign_id,omitempty"`
 	Error      string `json:"error,omitempty"`
+	// HubspotURL is set only for the HubSpot email channel, read back out of the
+	// campaign's own persisted Result blob (see hubspotURLFromResult) — nothing
+	// upstream of the campaign row carries it.
+	HubspotURL string `json:"hubspot_url,omitempty"`
+}
+
+// hubspotURLFromResult reads the deep link a HubSpot dispatch stashed in the
+// campaign's Result blob (see campaignFromHubSpot in internal/dispatch/hubspot.go).
+// Any other platform's Result blob simply has no "hubspotUrl" key, so this
+// decodes to "" for them rather than needing a platform check here.
+func hubspotURLFromResult(result json.RawMessage) string {
+	if len(result) == 0 {
+		return ""
+	}
+	var probe struct {
+		HubspotURL string `json:"hubspotUrl"`
+	}
+	if err := json.Unmarshal(result, &probe); err != nil {
+		return ""
+	}
+	return probe.HubspotURL
 }
 
 // Start creates a queued job for the brief and launches dispatch asynchronously,
@@ -1401,6 +1422,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// terminal, so it falls through to the claim/reconcile path below.
 		res.OK = true
 		res.CampaignID = existing.PlatformCampaignID
+		res.HubspotURL = hubspotURLFromResult(existing.Result)
 		return res
 	case lerr == nil:
 		// A row exists but is not a completed campaign — either it has no upstream id
@@ -1445,6 +1467,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// than being reported as a completed campaign.
 			res.OK = true
 			res.CampaignID = existing.PlatformCampaignID
+			res.HubspotURL = hubspotURLFromResult(existing.Result)
 			return res
 		}
 		// A retained partial ORPHAN is distinguishable from a claim held by a still-
@@ -1766,6 +1789,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 
 	res.OK = true
 	res.CampaignID = campaign.PlatformCampaignID
+	res.HubspotURL = hubspotURLFromResult(campaign.Result)
 	return res
 }
 

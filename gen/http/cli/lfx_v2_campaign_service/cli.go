@@ -40,7 +40,7 @@ func UsageExamples() string {
 	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Non eos.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Dignissimos consequatur reiciendis delectus enim quas.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Eius est porro eos ipsa quia.\",\n            \"Quo repudiandae.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"8d39b230-35cf-4634-a8c6-7a679cc46c0a\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-audience-builder get-audience-builder-capabilities --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-briefs create-brief --body '{\n      \"brief\": {\n         \"copy\": \"Ut quas officiis mollitia ducimus sunt repellendus.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Debitis atque laboriosam unde facilis.\",\n         \"event_slug\": \"n\",\n         \"keywords\": \"Voluptatem optio.\",\n         \"platforms\": [\n            \"Odit illo ut ut.\",\n            \"Nam modi nostrum assumenda alias sed.\"\n         ],\n         \"program_type\": \"events\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Aliquam est autem vel eos minima.\",\n         \"url\": \"Et numquam voluptatem maiores ipsam dicta cum.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
-		os.Args[0] + " " + "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Molestiae necessitatibus perferendis.\",\n         \"client_secret\": \"Laborum quis minus sit ea.\",\n         \"developer_token\": \"Dicta iusto magnam at tempore voluptas.\",\n         \"refresh_token\": \"Delectus et quam hic et aut.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
+		os.Args[0] + " " + "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Perferendis ut laborum quis.\",\n         \"client_secret\": \"Sit ea sunt dicta.\",\n         \"developer_token\": \"Magnam at tempore voluptas incidunt.\",\n         \"refresh_token\": \"Ut molestiae.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-svc readyz" + "\n" +
 		""
 }
@@ -227,6 +227,7 @@ func ParseEndpoint(
 		lfxV2CampaignServiceBriefsGenerateEmailCopyBriefIDFlag     = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("brief-id", "REQUIRED", "Brief UUID")
 		lfxV2CampaignServiceBriefsGenerateEmailCopyStageFlag       = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("stage", "", "")
 		lfxV2CampaignServiceBriefsGenerateEmailCopyVariantFlag     = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("variant", "", "")
+		lfxV2CampaignServiceBriefsGenerateEmailCopySegmentFlag     = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("segment", "", "")
 		lfxV2CampaignServiceBriefsGenerateEmailCopyBearerTokenFlag = lfxV2CampaignServiceBriefsGenerateEmailCopyFlags.String("bearer-token", "", "")
 
 		lfxV2CampaignServiceBriefsUpdateCampaignFlags           = flag.NewFlagSet("update-campaign", flag.ExitOnError)
@@ -1181,7 +1182,7 @@ func ParseEndpoint(
 				data, err = lfxv2campaignservicebriefsc.BuildGetBriefMetricsPayload(*lfxV2CampaignServiceBriefsGetBriefMetricsProjectIDFlag, *lfxV2CampaignServiceBriefsGetBriefMetricsBriefIDFlag, *lfxV2CampaignServiceBriefsGetBriefMetricsWindowFlag, *lfxV2CampaignServiceBriefsGetBriefMetricsBearerTokenFlag)
 			case "generate-email-copy":
 				endpoint = c.GenerateEmailCopy()
-				data, err = lfxv2campaignservicebriefsc.BuildGenerateEmailCopyPayload(*lfxV2CampaignServiceBriefsGenerateEmailCopyProjectIDFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyBriefIDFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyStageFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyVariantFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyBearerTokenFlag)
+				data, err = lfxv2campaignservicebriefsc.BuildGenerateEmailCopyPayload(*lfxV2CampaignServiceBriefsGenerateEmailCopyProjectIDFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyBriefIDFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyStageFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyVariantFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopySegmentFlag, *lfxV2CampaignServiceBriefsGenerateEmailCopyBearerTokenFlag)
 			case "update-campaign":
 				endpoint = c.UpdateCampaign()
 				data, err = lfxv2campaignservicebriefsc.BuildUpdateCampaignPayload(*lfxV2CampaignServiceBriefsUpdateCampaignBodyFlag, *lfxV2CampaignServiceBriefsUpdateCampaignProjectIDFlag, *lfxV2CampaignServiceBriefsUpdateCampaignBriefIDFlag, *lfxV2CampaignServiceBriefsUpdateCampaignCampaignIDFlag, *lfxV2CampaignServiceBriefsUpdateCampaignBearerTokenFlag, *lfxV2CampaignServiceBriefsUpdateCampaignIfMatchFlag)
@@ -2151,6 +2152,7 @@ func lfxV2CampaignServiceBriefsGenerateEmailCopyUsage() {
 	fmt.Fprint(os.Stderr, " -brief-id STRING")
 	fmt.Fprint(os.Stderr, " -stage STRING")
 	fmt.Fprint(os.Stderr, " -variant STRING")
+	fmt.Fprint(os.Stderr, " -segment STRING")
 	fmt.Fprint(os.Stderr, " -bearer-token STRING")
 	fmt.Fprintln(os.Stderr)
 
@@ -2163,11 +2165,12 @@ func lfxV2CampaignServiceBriefsGenerateEmailCopyUsage() {
 	fmt.Fprintln(os.Stderr, `    -brief-id STRING: Brief UUID`)
 	fmt.Fprintln(os.Stderr, `    -stage STRING: `)
 	fmt.Fprintln(os.Stderr, `    -variant STRING: `)
+	fmt.Fprintln(os.Stderr, `    -segment STRING: `)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs generate-email-copy --project-id \"cncf\" --brief-id \"704b5cb9-3974-4003-9a06-47ae4b14d991\" --stage \"Post-Event\" --variant \"urgency-fomo\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs generate-email-copy --project-id \"cncf\" --brief-id \"704b5cb9-3974-4003-9a06-47ae4b14d991\" --stage \"Post-Event\" --variant \"urgency-fomo\" --segment \"developer\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceBriefsUpdateCampaignUsage() {
@@ -2321,7 +2324,7 @@ func lfxV2CampaignServiceBriefsStartEmailWizardPlanUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs start-email-wizard-plan --body '{\n      \"email_type\": \"Perferendis asperiores.\",\n      \"extra_context\": \"Ut reprehenderit ipsa.\",\n      \"is_transactional\": true,\n      \"url\": \"Quas odio.\"\n   }' --project-id \"cncf\" --brief-id \"10c93332-7801-4b65-9100-2ee56afab3c4\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs start-email-wizard-plan --body '{\n      \"email_type\": \"Delectus sequi amet harum tempore.\",\n      \"extra_context\": \"Voluptatibus dolorem.\",\n      \"is_transactional\": false,\n      \"url\": \"Occaecati perferendis asperiores.\"\n   }' --project-id \"cncf\" --brief-id \"ce6f1f49-a775-4e5c-acc1-a771a99cab66\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceBriefsPlanEmailWizardUsage() {
@@ -2345,7 +2348,7 @@ func lfxV2CampaignServiceBriefsPlanEmailWizardUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs plan-email-wizard --body '{\n      \"email_type\": \"Porro et fuga facere est qui vero.\",\n      \"extra_context\": \"Veniam doloremque dolores voluptatum aut mollitia aperiam.\",\n      \"is_transactional\": false,\n      \"session_id\": \"361474a2-47f8-4b99-b620-23a3b29fb6a0\",\n      \"url\": \"Tenetur deleniti molestias est earum.\"\n   }' --project-id \"cncf\" --brief-id \"adbddc8e-6586-4f8f-899b-cd9f3199ff31\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs plan-email-wizard --body '{\n      \"email_type\": \"Neque ipsam neque ut modi ut cumque.\",\n      \"extra_context\": \"Porro et fuga facere est qui vero.\",\n      \"is_transactional\": true,\n      \"session_id\": \"75a984b4-c041-4fb7-ab4f-ec42e780b087\",\n      \"url\": \"Veniam doloremque dolores voluptatum aut mollitia aperiam.\"\n   }' --project-id \"cncf\" --brief-id \"73c35be2-3e29-40b1-8b7c-24b0121f3735\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceBriefsGenerateWizardContentUsage() {
@@ -2369,7 +2372,7 @@ func lfxV2CampaignServiceBriefsGenerateWizardContentUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs generate-wizard-content --body '{\n      \"change_request\": \"Sit dignissimos est.\",\n      \"session_id\": \"f61a3522-2a4d-4381-913f-197ab6acc446\"\n   }' --project-id \"cncf\" --brief-id \"57e84fe2-3be2-4607-8cac-b9cea02ca210\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs generate-wizard-content --body '{\n      \"change_request\": \"Esse possimus odio.\",\n      \"session_id\": \"a3ff5aef-52c3-4b88-95e6-3f90513a04bc\"\n   }' --project-id \"cncf\" --brief-id \"ce51e02e-411d-4fa9-b3b2-950c2e6f14f5\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceBriefsUpdateWizardSectionsUsage() {
@@ -2393,7 +2396,7 @@ func lfxV2CampaignServiceBriefsUpdateWizardSectionsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs update-wizard-sections --body '{\n      \"sections\": [\n         \"Et ab aliquam voluptatem voluptatibus architecto sequi.\",\n         \"At dolore aut nemo rerum corrupti non.\"\n      ],\n      \"session_id\": \"2a80b60c-67c3-45bc-9994-b398e95d91e9\"\n   }' --project-id \"cncf\" --brief-id \"05abceaa-fe49-4996-bfa4-d911da35806d\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs update-wizard-sections --body '{\n      \"sections\": [\n         \"Nulla voluptas unde sint omnis.\",\n         \"Facilis quidem qui repellat at ducimus.\",\n         \"Consequatur fugiat iure sint.\"\n      ],\n      \"session_id\": \"15405253-3507-4162-bfcf-92700c5a2c90\"\n   }' --project-id \"cncf\" --brief-id \"cdef7270-e5c0-4747-a2e9-000bdbea6c1b\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceBriefsCloneWizardEmailUsage() {
@@ -2417,7 +2420,7 @@ func lfxV2CampaignServiceBriefsCloneWizardEmailUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs clone-wizard-email --body '{\n      \"approved\": false,\n      \"preview_text\": \"Molestiae nesciunt sit illo repellendus.\",\n      \"send_list_id\": \"Doloribus dolores dolor nostrum ipsa reprehenderit consectetur.\",\n      \"session_id\": \"4180461e-fadd-459d-87cd-aec7224fe121\",\n      \"subject\": \"Eos earum assumenda architecto perferendis.\",\n      \"variant\": \"stage\"\n   }' --project-id \"cncf\" --brief-id \"49c805c1-3ca6-446e-aca6-46321e0f28f6\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs clone-wizard-email --body '{\n      \"approved\": false,\n      \"preview_text\": \"Aspernatur qui assumenda tenetur omnis.\",\n      \"send_list_id\": \"Ratione quasi.\",\n      \"session_id\": \"d04699ba-863c-40bd-b1b6-94d421f011a2\",\n      \"subject\": \"Molestiae dolorem placeat commodi.\",\n      \"variant\": \"reference\"\n   }' --project-id \"cncf\" --brief-id \"5ebe4389-3852-4adc-a2e6-46f2fc0fc8b2\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceBriefsSetWizardSendListUsage() {
@@ -2441,7 +2444,7 @@ func lfxV2CampaignServiceBriefsSetWizardSendListUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs set-wizard-send-list --body '{\n      \"email_id\": \"Deleniti tenetur sit omnis dolorem et.\",\n      \"send_list_id\": \"Reiciendis laudantium error.\",\n      \"send_list_ids\": [\n         \"Iste itaque et eum ea voluptatem.\",\n         \"Enim consequatur voluptatum excepturi ea molestias molestias.\",\n         \"Dolore sit consequatur explicabo.\",\n         \"Ut facere ipsa iure tempora ullam.\"\n      ],\n      \"session_id\": \"384b5574-7489-47ef-93bd-29da41fb90c2\",\n      \"suppression_list_ids\": [\n         \"Tenetur eaque eaque.\",\n         \"Aliquid pariatur sint temporibus.\",\n         \"Magnam id minima et.\"\n      ]\n   }' --project-id \"cncf\" --brief-id \"6b9935fa-001f-4ce5-b030-d53e95ffec56\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs set-wizard-send-list --body '{\n      \"email_id\": \"Odio iste itaque et eum.\",\n      \"send_list_id\": \"Voluptatem et enim consequatur voluptatum excepturi ea.\",\n      \"send_list_ids\": [\n         \"Quasi dolore sit consequatur explicabo.\",\n         \"Ut facere ipsa iure tempora ullam.\",\n         \"Voluptas tenetur eaque eaque.\",\n         \"Aliquid pariatur sint temporibus.\"\n      ],\n      \"session_id\": \"b94ed37a-a637-4c7a-b02f-195f902d0a48\",\n      \"suppression_list_ids\": [\n         \"Id minima et modi.\",\n         \"Incidunt quas necessitatibus.\",\n         \"Et corrupti.\",\n         \"Quaerat dignissimos a.\"\n      ]\n   }' --project-id \"cncf\" --brief-id \"d5c953a9-ba92-4c0c-aafb-c00f46b7ed96\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceBriefsChatWizardTurnUsage() {
@@ -2465,7 +2468,7 @@ func lfxV2CampaignServiceBriefsChatWizardTurnUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs chat-wizard-turn --body '{\n      \"message\": \"Quasi et quisquam qui asperiores.\",\n      \"session_id\": \"7ecd1cfb-56b6-43fa-a44f-a439d5ec1305\"\n   }' --project-id \"cncf\" --brief-id \"325df294-a47c-48d7-ab72-67df8cb922aa\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs chat-wizard-turn --body '{\n      \"message\": \"Recusandae culpa illo numquam.\",\n      \"session_id\": \"679d7864-c342-4f1b-be16-8991a93ba56d\"\n   }' --project-id \"cncf\" --brief-id \"abd1cba0-540f-45bb-9169-f9a0e4b94466\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceBriefsGetWizardSessionUsage() {
@@ -2489,7 +2492,7 @@ func lfxV2CampaignServiceBriefsGetWizardSessionUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs get-wizard-session --project-id \"cncf\" --brief-id \"c45b2e23-d0be-4160-b0fa-7afcf364a551\" --session-id \"52787cd7-878b-40b1-bc8e-a42b234f59f3\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-briefs get-wizard-session --project-id \"cncf\" --brief-id \"74e39916-afa5-45eb-9bfb-05bd423c5be2\" --session-id \"e44409d8-c02f-4743-b68e-932a159fc4ba\" --bearer-token \"eyJhbGci...\"")
 }
 
 // lfxV2CampaignServiceConnectionsUsage displays the usage of the
@@ -2578,7 +2581,7 @@ func lfxV2CampaignServiceConnectionsCreateGoogleAdsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Molestiae necessitatibus perferendis.\",\n         \"client_secret\": \"Laborum quis minus sit ea.\",\n         \"developer_token\": \"Dicta iusto magnam at tempore voluptas.\",\n         \"refresh_token\": \"Delectus et quam hic et aut.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Perferendis ut laborum quis.\",\n         \"client_secret\": \"Sit ea sunt dicta.\",\n         \"developer_token\": \"Magnam at tempore voluptas incidunt.\",\n         \"refresh_token\": \"Ut molestiae.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsGetGoogleAdsUsage() {
@@ -2684,7 +2687,7 @@ func lfxV2CampaignServiceConnectionsSetCredentialGoogleAdsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-google-ads --body '{\n      \"credentials\": {\n         \"client_id\": \"Molestiae necessitatibus perferendis.\",\n         \"client_secret\": \"Laborum quis minus sit ea.\",\n         \"developer_token\": \"Dicta iusto magnam at tempore voluptas.\",\n         \"refresh_token\": \"Delectus et quam hic et aut.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-google-ads --body '{\n      \"credentials\": {\n         \"client_id\": \"Perferendis ut laborum quis.\",\n         \"client_secret\": \"Sit ea sunt dicta.\",\n         \"developer_token\": \"Magnam at tempore voluptas incidunt.\",\n         \"refresh_token\": \"Ut molestiae.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsCreateLinkedinAdsUsage() {

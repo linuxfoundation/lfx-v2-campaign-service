@@ -4528,6 +4528,15 @@ paths:
                     description: 'Requests a differently-styled draft of the same stage''s copy. Currently one value is recognised: ''urgency-fomo'', which asks for an urgency/FOMO-forward structure (deadline framing, social proof, a secondary CTA) instead of the stage''s normal copy. Any other value, or absence, produces the normal stage-based copy.'
                     example: urgency-fomo
                   example: urgency-fomo
+                - name: segment
+                  in: query
+                  description: 'Tailors which content blocks appear for a specific audience segment. Currently recognised: ''developer'' (keeps agenda/session-track detail, drops sponsorship framing), ''business-decision-maker'' (keeps ROI/sponsorship framing, drops session-level detail), ''alumni'' (past attendee -- leads with what''s new since last time), ''prospect'' (never attended -- leads with what the event is and why it matters). Any other value, or absence, produces the normal stage-based copy with no segment tailoring.'
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: 'Tailors which content blocks appear for a specific audience segment. Currently recognised: ''developer'' (keeps agenda/session-track detail, drops sponsorship framing), ''business-decision-maker'' (keeps ROI/sponsorship framing, drops session-level detail), ''alumni'' (past attendee -- leads with what''s new since last time), ''prospect'' (never attended -- leads with what the event is and why it matters). Any other value, or absence, produces the normal stage-based copy with no segment tailoring.'
+                    example: developer
+                  example: developer
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -4871,8 +4880,8 @@ paths:
                         schema:
                             $ref: '#/components/schemas/ChatWizardTurnRequestBody'
                         example:
-                            message: Quasi et quisquam qui asperiores.
-                            session_id: 7ecd1cfb-56b6-43fa-a44f-a439d5ec1305
+                            message: Recusandae culpa illo numquam.
+                            session_id: 679d7864-c342-4f1b-be16-8991a93ba56d
             responses:
                 "200":
                     description: OK response.
@@ -4881,10 +4890,10 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/WizardChat'
                             example:
-                                draft_url: Et ut corrupti.
-                                message: At eum voluptatem rerum.
-                                phase: content
-                                session_id: 84ba0d2a-9d60-476a-ae42-c7100a0975d3
+                                draft_url: Est ipsa quia.
+                                message: Excepturi et.
+                                phase: cloned
+                                session_id: dd8fcc45-188c-456c-989a-7b18ff75160a
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -4994,11 +5003,11 @@ paths:
                             $ref: '#/components/schemas/CloneWizardEmailRequestBody'
                         example:
                             approved: false
-                            preview_text: Molestiae nesciunt sit illo repellendus.
-                            send_list_id: Doloribus dolores dolor nostrum ipsa reprehenderit consectetur.
-                            session_id: 4180461e-fadd-459d-87cd-aec7224fe121
-                            subject: Eos earum assumenda architecto perferendis.
-                            variant: stage
+                            preview_text: Aspernatur qui assumenda tenetur omnis.
+                            send_list_id: Ratione quasi.
+                            session_id: d04699ba-863c-40bd-b1b6-94d421f011a2
+                            subject: Molestiae dolorem placeat commodi.
+                            variant: reference
             responses:
                 "200":
                     description: OK response.
@@ -5007,21 +5016,21 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/WizardClone'
                             example:
-                                draft_url: Ut placeat error ab sint laudantium rerum.
-                                email_id: Natus quod qui eum itaque.
-                                message: Sit sed neque voluptas.
-                                phase: complete
-                                session_id: 9c305883-f54a-42d8-820a-83f446542063
+                                draft_url: Voluptatem nam beatae doloremque dicta accusantium.
+                                email_id: Vitae laborum id ab et quo.
+                                message: Rerum labore quis eos et placeat.
+                                phase: planning
+                                session_id: daecab11-9048-4558-b241-c16895c27426
                                 validation_issues:
-                                    - Vero quia accusantium dignissimos enim nostrum facere.
-                                    - Omnis sint dignissimos et est perferendis.
-                                    - Dolor quis id natus amet recusandae.
+                                    - Id natus amet recusandae.
                                     - Sint et.
-                                validation_passed: false
-                                variant_a_draft_url: Id ab et quo temporibus voluptatem nam.
-                                variant_a_email_id: Quis eos et placeat facilis soluta vitae.
-                                variant_b_draft_url: Odio ducimus sunt ipsam sint occaecati.
-                                variant_b_email_id: Doloremque dicta accusantium.
+                                    - Ut debitis.
+                                    - Sit qui facilis dolorem adipisci.
+                                validation_passed: true
+                                variant_a_draft_url: Repellendus voluptatem vero quia accusantium dignissimos.
+                                variant_a_email_id: Odio ducimus sunt ipsam sint occaecati.
+                                variant_b_draft_url: Dignissimos et est perferendis.
+                                variant_b_email_id: Nostrum facere dolore omnis.
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -5130,8 +5139,8 @@ paths:
                         schema:
                             $ref: '#/components/schemas/GenerateWizardContentRequestBody'
                         example:
-                            change_request: Sit dignissimos est.
-                            session_id: f61a3522-2a4d-4381-913f-197ab6acc446
+                            change_request: Esse possimus odio.
+                            session_id: a3ff5aef-52c3-4b88-95e6-3f90513a04bc
             responses:
                 "200":
                     description: OK response.
@@ -5140,42 +5149,42 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/WizardContent'
                             example:
-                                banner_url: Occaecati molestiae occaecati atque nihil.
-                                body_html: Dolores pariatur corrupti suscipit molestias sit.
-                                html: Sit voluptatibus.
-                                preview_text: Mollitia quisquam quasi.
+                                banner_url: Optio possimus porro exercitationem et quaerat expedita.
+                                body_html: Tempora quos impedit rerum sapiente aut itaque.
+                                html: Ratione unde occaecati fugiat.
+                                preview_text: Pariatur corrupti suscipit molestias sit.
                                 sections:
-                                    - Unde occaecati fugiat error tempora.
-                                    - Impedit rerum sapiente aut.
-                                    - Quia autem voluptatem odio dolorum qui nisi.
-                                    - Eos facilis necessitatibus.
-                                session_id: 64018e18-4f34-42fc-9bee-84df25045ce7
+                                    - Voluptatem odio dolorum qui.
+                                    - Doloremque eos facilis necessitatibus debitis nihil.
+                                    - Molestiae occaecati atque nihil ducimus.
+                                    - Sit error ducimus consequatur cumque possimus.
+                                session_id: c70ffcbc-20d4-4235-a5ba-b8c268770a30
                                 sponsors:
-                                    - logo_url: Deserunt quae.
-                                      name: Dolor ullam in tempora harum.
-                                      tier: Et qui est qui commodi hic.
-                                      url: Aut mollitia.
-                                    - logo_url: Deserunt quae.
-                                      name: Dolor ullam in tempora harum.
-                                      tier: Et qui est qui commodi hic.
-                                      url: Aut mollitia.
-                                    - logo_url: Deserunt quae.
-                                      name: Dolor ullam in tempora harum.
-                                      tier: Et qui est qui commodi hic.
-                                      url: Aut mollitia.
-                                subject: Distinctio voluptatum aperiam sit amet.
-                                variant_a_banner_url: Sint iste architecto molestias et.
-                                variant_a_body_html: Exercitationem et quaerat expedita eum non.
-                                variant_a_html: Hic optio possimus.
-                                variant_a_mode: failed
-                                variant_a_preview_text: Ducimus consequatur cumque possimus.
+                                    - logo_url: Et qui est qui commodi hic.
+                                      name: Aut mollitia.
+                                      tier: Ex quis molestias nam quia facilis.
+                                      url: Pariatur ratione blanditiis.
+                                    - logo_url: Et qui est qui commodi hic.
+                                      name: Aut mollitia.
+                                      tier: Ex quis molestias nam quia facilis.
+                                      url: Pariatur ratione blanditiis.
+                                    - logo_url: Et qui est qui commodi hic.
+                                      name: Aut mollitia.
+                                      tier: Ex quis molestias nam quia facilis.
+                                      url: Pariatur ratione blanditiis.
+                                subject: Voluptatibus sunt.
+                                variant_a_banner_url: Eum enim architecto.
+                                variant_a_body_html: Architecto fugiat dolores odit beatae beatae molestiae.
+                                variant_a_html: Praesentium et.
+                                variant_a_mode: ai-generated
+                                variant_a_preview_text: Maiores assumenda sed laborum dignissimos omnis.
                                 variant_a_sections:
-                                    - A ut maiores.
-                                    - Sed laborum dignissimos omnis.
-                                    - Praesentium et.
-                                    - Architecto fugiat dolores odit beatae beatae molestiae.
-                                variant_a_subject: Sunt sit.
-                                variant_a_template_key: Libero eum et.
+                                    - Iste architecto molestias et nihil.
+                                    - Eum et magnam adipisci ipsa itaque.
+                                    - Ut ut ut.
+                                    - Voluptates voluptatem quae maxime ut dolor itaque.
+                                variant_a_subject: Non sed ut a.
+                                variant_a_template_key: Dolores et sunt laborum sed.
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -5284,11 +5293,11 @@ paths:
                         schema:
                             $ref: '#/components/schemas/PlanEmailWizardRequestBody'
                         example:
-                            email_type: Porro et fuga facere est qui vero.
-                            extra_context: Veniam doloremque dolores voluptatum aut mollitia aperiam.
-                            is_transactional: false
-                            session_id: 361474a2-47f8-4b99-b620-23a3b29fb6a0
-                            url: Tenetur deleniti molestias est earum.
+                            email_type: Neque ipsam neque ut modi ut cumque.
+                            extra_context: Porro et fuga facere est qui vero.
+                            is_transactional: true
+                            session_id: 75a984b4-c041-4fb7-ab4f-ec42e780b087
+                            url: Veniam doloremque dolores voluptatum aut mollitia aperiam.
             responses:
                 "200":
                     description: OK response.
@@ -5297,15 +5306,15 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/WizardPlanResult'
                             example:
-                                message: Esse quia sunt dignissimos pariatur.
+                                message: Porro distinctio cupiditate accusamus quia sequi.
                                 mode: reference
                                 phase: cloned
-                                session_id: 28680210-15fc-4dc6-a3ca-681e230bd845
+                                session_id: 4ed62d1b-9445-459d-bc08-1454fcf83b3e
                                 source_email:
-                                    id: Qui nobis.
-                                    name: Sunt dolorum possimus eum.
-                                stage: Sed soluta porro distinctio cupiditate accusamus.
-                                utm: Sequi consequatur aut.
+                                    id: Eum aut delectus voluptatem.
+                                    name: Et dolorum est ipsa itaque.
+                                stage: Dolorem quas voluptatem optio perspiciatis reprehenderit sint.
+                                utm: Quam dolor omnis ipsam.
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -5414,10 +5423,10 @@ paths:
                         schema:
                             $ref: '#/components/schemas/StartEmailWizardPlanRequestBody'
                         example:
-                            email_type: Perferendis asperiores.
-                            extra_context: Ut reprehenderit ipsa.
-                            is_transactional: true
-                            url: Quas odio.
+                            email_type: Delectus sequi amet harum tempore.
+                            extra_context: Voluptatibus dolorem.
+                            is_transactional: false
+                            url: Occaecati perferendis asperiores.
             responses:
                 "200":
                     description: OK response.
@@ -5426,8 +5435,8 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/WizardPlanStart'
                             example:
-                                session_id: f1bafb11-72fd-4723-b463-e1ade78c9944
-                                token: Impedit consequuntur est fugit et dolor hic.
+                                session_id: 025a18b2-0e2a-4f77-aedb-46d0219499d0
+                                token: Accusantium et eos.
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -5547,11 +5556,11 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/WizardSession'
                             example:
-                                draft_url: Aut impedit molestiae necessitatibus minima beatae.
-                                email_id: Debitis voluptatem explicabo.
-                                phase: cloned
-                                plan: Et nesciunt eaque voluptatem aperiam accusantium nobis.
-                                session_id: bb4648b2-853e-48fe-89e4-7e674c623fa6
+                                draft_url: Ut recusandae delectus et quam hic.
+                                email_id: Impedit molestiae necessitatibus minima.
+                                phase: complete
+                                plan: Accusantium nobis consequatur debitis voluptatem explicabo facere.
+                                session_id: bbf365f7-f936-4a97-9a98-6105e4f4cf3a
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -5660,18 +5669,19 @@ paths:
                         schema:
                             $ref: '#/components/schemas/SetWizardSendListRequestBody'
                         example:
-                            email_id: Deleniti tenetur sit omnis dolorem et.
-                            send_list_id: Reiciendis laudantium error.
+                            email_id: Odio iste itaque et eum.
+                            send_list_id: Voluptatem et enim consequatur voluptatum excepturi ea.
                             send_list_ids:
-                                - Iste itaque et eum ea voluptatem.
-                                - Enim consequatur voluptatum excepturi ea molestias molestias.
-                                - Dolore sit consequatur explicabo.
+                                - Quasi dolore sit consequatur explicabo.
                                 - Ut facere ipsa iure tempora ullam.
-                            session_id: 384b5574-7489-47ef-93bd-29da41fb90c2
-                            suppression_list_ids:
-                                - Tenetur eaque eaque.
+                                - Voluptas tenetur eaque eaque.
                                 - Aliquid pariatur sint temporibus.
-                                - Magnam id minima et.
+                            session_id: b94ed37a-a637-4c7a-b02f-195f902d0a48
+                            suppression_list_ids:
+                                - Id minima et modi.
+                                - Incidunt quas necessitatibus.
+                                - Et corrupti.
+                                - Quaerat dignissimos a.
             responses:
                 "200":
                     description: OK response.
@@ -5680,11 +5690,11 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/WizardSendList'
                             example:
-                                email_id: Et minus ipsa aut porro.
-                                list_type: Exercitationem minus dolores alias laboriosam delectus sed.
-                                send_list_id: Itaque aut molestias quo eligendi quia.
+                                email_id: Exercitationem minus dolores alias laboriosam delectus sed.
+                                list_type: Dolores maxime.
+                                send_list_id: Minus exercitationem non.
                                 success: true
-                                to: Minus exercitationem non.
+                                to: Consequatur in et id molestiae.
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -5794,9 +5804,10 @@ paths:
                             $ref: '#/components/schemas/UpdateWizardSectionsRequestBody'
                         example:
                             sections:
-                                - Et ab aliquam voluptatem voluptatibus architecto sequi.
-                                - At dolore aut nemo rerum corrupti non.
-                            session_id: 2a80b60c-67c3-45bc-9994-b398e95d91e9
+                                - Nulla voluptas unde sint omnis.
+                                - Facilis quidem qui repellat at ducimus.
+                                - Consequatur fugiat iure sint.
+                            session_id: 15405253-3507-4162-bfcf-92700c5a2c90
             responses:
                 "200":
                     description: OK response.
@@ -5805,9 +5816,9 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/WizardSections'
                             example:
-                                body_html: Saepe facilis recusandae enim perspiciatis.
-                                generated_html: Aperiam magni maxime fugiat repudiandae laudantium tenetur.
-                                session_id: 1f452681-8d6a-4d7f-89d7-642607347e30
+                                body_html: Sunt libero quas maxime assumenda et numquam.
+                                generated_html: Est sit inventore vero.
+                                session_id: f8d53fad-d061-4464-9530-662a14938493
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -6100,10 +6111,10 @@ paths:
                                 label: TLF Main
                                 login_customer_id: "9746983954"
                             credentials:
-                                client_id: Molestiae necessitatibus perferendis.
-                                client_secret: Laborum quis minus sit ea.
-                                developer_token: Dicta iusto magnam at tempore voluptas.
-                                refresh_token: Delectus et quam hic et aut.
+                                client_id: Perferendis ut laborum quis.
+                                client_secret: Sit ea sunt dicta.
+                                developer_token: Magnam at tempore voluptas incidunt.
+                                refresh_token: Ut molestiae.
             responses:
                 "201":
                     description: Created response.
@@ -6120,14 +6131,14 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/GoogleAdsConnection2'
                             example:
-                                account_id: Sed laborum harum quas quod quas.
+                                account_id: Sint eum beatae sed.
                                 has_credentials: true
-                                id: Provident quo nostrum ut culpa nam minima.
-                                label: Quibusdam praesentium ut quidem sint eum.
-                                login_customer_id: Quidem voluptate illum aliquam.
-                                project_id: Neque aut occaecati quibusdam.
-                                status: error
-                                version: 8956689242771203809
+                                id: Quo nostrum.
+                                label: Quibusdam reprehenderit quibusdam praesentium ut.
+                                login_customer_id: Quas non inventore sequi error quidem.
+                                project_id: Culpa nam minima quae neque aut.
+                                status: inactive
+                                version: 1945705092770358056
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -6661,10 +6672,10 @@ paths:
                             $ref: '#/components/schemas/SetCredentialGoogleAdsRequestBody'
                         example:
                             credentials:
-                                client_id: Molestiae necessitatibus perferendis.
-                                client_secret: Laborum quis minus sit ea.
-                                developer_token: Dicta iusto magnam at tempore voluptas.
-                                refresh_token: Delectus et quam hic et aut.
+                                client_id: Perferendis ut laborum quis.
+                                client_secret: Sit ea sunt dicta.
+                                developer_token: Magnam at tempore voluptas incidunt.
+                                refresh_token: Ut molestiae.
             responses:
                 "204":
                     description: No Content response.
@@ -12474,18 +12485,30 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/JobPollResponse'
                             example:
-                                error: At voluptate beatae voluptatum.
-                                job_id: Placeat nam itaque quasi dolorem laborum.
+                                error: Mollitia quia provident nam delectus.
+                                job_id: Aut non at voluptate beatae.
                                 result:
                                     - campaign_id: Mollitia voluptas accusamus qui autem.
                                       error: Omnis quaerat nobis iure suscipit ut.
+                                      hubspot_url: Placeat nam itaque quasi dolorem laborum.
                                       ok: true
                                       platform: Culpa voluptatem culpa omnis laudantium.
                                     - campaign_id: Mollitia voluptas accusamus qui autem.
                                       error: Omnis quaerat nobis iure suscipit ut.
+                                      hubspot_url: Placeat nam itaque quasi dolorem laborum.
                                       ok: true
                                       platform: Culpa voluptatem culpa omnis laudantium.
-                                status: partial
+                                    - campaign_id: Mollitia voluptas accusamus qui autem.
+                                      error: Omnis quaerat nobis iure suscipit ut.
+                                      hubspot_url: Placeat nam itaque quasi dolorem laborum.
+                                      ok: true
+                                      platform: Culpa voluptatem culpa omnis laudantium.
+                                    - campaign_id: Mollitia voluptas accusamus qui autem.
+                                      error: Omnis quaerat nobis iure suscipit ut.
+                                      hubspot_url: Placeat nam itaque quasi dolorem laborum.
+                                      ok: true
+                                      platform: Culpa voluptatem culpa omnis laudantium.
+                                status: failed
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -15454,7 +15477,7 @@ components:
                 window:
                     type: string
                     description: The window REQUESTED for this read. Per-platform defaults still apply when it is omitted, so an individual row may have been read over a narrower window than this — X Ads caps queryable ranges at 7 days. Each row's own metrics.window is what that row actually covers.
-                    example: yesterday
+                    example: last_month
                     enum:
                         - today
                         - yesterday
@@ -15465,6 +15488,18 @@ components:
                         - last_month
             example:
                 action_items:
+                    - action: Check targeting and creative approval status
+                      campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                      issue: No impressions or spend recorded
+                      platform: reddit-ads
+                      priority: HIGH
+                      rule: zero_delivery
+                    - action: Check targeting and creative approval status
+                      campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                      issue: No impressions or spend recorded
+                      platform: reddit-ads
+                      priority: HIGH
+                      rule: zero_delivery
                     - action: Check targeting and creative approval status
                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                       issue: No impressions or spend recorded
@@ -15524,29 +15559,7 @@ components:
                       platform: linkedin-ads
                       reason: this window is not supported for the campaign's platform
                       status: unsupported
-                    - campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
-                      metrics:
-                        campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
-                        clicks: 212
-                        cost_micros: 0
-                        ctr: 0.1152
-                        email:
-                            bounces: 95
-                            clicks: 212
-                            delivered: 9268
-                            opens: 1840
-                            sent: 9400
-                            unsubscribes: 17
-                        impressions: 1840
-                        platform_campaign_id: "104670127234"
-                        window: last_30_days
-                      pacing:
-                        label: normal
-                        pct: 94.2
-                      platform: linkedin-ads
-                      reason: this window is not supported for the campaign's platform
-                      status: unsupported
-                window: this_month
+                window: today
             required:
                 - brief_id
                 - window
@@ -15575,7 +15588,7 @@ components:
                 status:
                     type: string
                     description: Whether this row carries a measurement. ONLY `ok` does.
-                    example: connection_problem
+                    example: ok
                     enum:
                         - ok
                         - unsupported
@@ -15604,7 +15617,7 @@ components:
                     pct: 94.2
                 platform: linkedin-ads
                 reason: this window is not supported for the campaign's platform
-                status: failed
+                status: not_ready
             required:
                 - campaign_id
                 - platform
@@ -15615,50 +15628,50 @@ components:
                 brief_id:
                     type: string
                     description: Parent brief
-                    example: Itaque magnam omnis laborum qui.
+                    example: Animi dolorum vel.
                 campaign_name:
                     type: string
                     description: Campaign name
-                    example: Vel vitae omnis.
+                    example: Modi totam consequatur quis eius velit dicta.
                 etag:
                     type: string
                     description: ETag header value (mirrors version)
-                    example: Eius velit dicta temporibus delectus est perspiciatis.
+                    example: Aperiam illo impedit quia quae quibusdam dolores.
                 id:
                     type: string
                     description: Campaign UUID
-                    example: Veritatis numquam numquam excepturi.
+                    example: Rerum vel nostrum itaque magnam omnis laborum.
                 platform:
                     type: string
                     description: Channel
-                    example: Quam voluptatem quasi nemo animi dolorum.
+                    example: Ut eos velit vel vitae.
                 platform_campaign_id:
                     type: string
                     description: ID returned by the ad platform
-                    example: Quia ut eos.
+                    example: Veniam earum quisquam doloribus.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Et suscipit rerum vel.
+                    example: Eligendi quam voluptatem quasi.
                 status:
                     type: string
                     description: Campaign status
-                    example: Earum quisquam doloribus dolor modi totam.
+                    example: Delectus est perspiciatis.
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 7630008561020249609
+                    example: 8028432523557835082
                     format: int64
             example:
-                brief_id: Commodi corrupti.
-                campaign_name: Aut et aspernatur.
-                etag: Hic id.
-                id: Minus aperiam illo.
-                platform: Impedit accusantium.
-                platform_campaign_id: Aperiam id a dicta.
-                project_id: Quia quae quibusdam dolores.
-                status: Rerum nemo ullam.
-                version: 8551268863016901961
+                brief_id: Aperiam id a dicta.
+                campaign_name: Architecto hic id dolorem facere.
+                etag: Sed nihil ut odio sint quaerat.
+                id: Commodi corrupti.
+                platform: Aut et aspernatur.
+                platform_campaign_id: Rerum nemo ullam.
+                project_id: Impedit accusantium.
+                status: Nulla aspernatur maxime rerum.
+                version: 7005375276267599662
             required:
                 - id
                 - project_id
@@ -16043,7 +16056,7 @@ components:
                 window:
                     type: string
                     description: 'The reporting window that was REQUESTED. On the ad platforms it is also the period the counters cover. On the email channel it is not: it selects which emails are in scope by their send date, and the counters are then that email''s totals to date — see the email object.'
-                    example: last_month
+                    example: last_14_days
                     enum:
                         - today
                         - yesterday
@@ -16081,7 +16094,7 @@ components:
                 label:
                     type: string
                     description: The band pct falls into. `unknown` means no pacing could be derived, which is NOT the same as being on plan.
-                    example: constrained
+                    example: underspending
                     enum:
                         - underspending
                         - normal
@@ -16094,7 +16107,7 @@ components:
                     example: 94.2
                     format: double
             example:
-                label: underspending
+                label: normal
                 pct: 94.2
             required:
                 - label
@@ -16123,7 +16136,7 @@ components:
                 comparison:
                     type: string
                     description: The verdict. `match` and `diverged` both require BOTH sides to have been read; `unknown` means the comparison could not be made and is deliberately NOT folded into `match`.
-                    example: diverged
+                    example: unknown
                     enum:
                         - match
                         - diverged
@@ -16141,7 +16154,7 @@ components:
                     description: What the platform currently holds, read live. Absent when the platform did not return the field — never a zero standing in for one.
                     example: "750.00"
             example:
-                comparison: unknown
+                comparison: diverged
                 field: budget_amount
                 recorded: "500.00"
                 upstream: "750.00"
@@ -16166,15 +16179,15 @@ components:
                         $ref: '#/components/schemas/CampaignSettingsField'
                     description: Every setting compared, in a stable order, INCLUDING the ones that could not be compared — a field missing from this list would be indistinguishable from one this service does not know about.
                     example:
-                        - comparison: match
+                        - comparison: diverged
                           field: budget_amount
                           recorded: "500.00"
                           upstream: "750.00"
-                        - comparison: match
+                        - comparison: diverged
                           field: budget_amount
                           recorded: "500.00"
                           upstream: "750.00"
-                        - comparison: match
+                        - comparison: diverged
                           field: budget_amount
                           recorded: "500.00"
                           upstream: "750.00"
@@ -16189,7 +16202,7 @@ components:
                 read_at:
                     type: string
                     description: When the platform was read (RFC3339, UTC). A readback is a point-in-time observation and says nothing about the campaign after this instant.
-                    example: "2000-04-21T13:01:28Z"
+                    example: "2008-05-23T18:52:05Z"
                     format: date-time
                 unknown_count:
                     type: integer
@@ -16252,18 +16265,18 @@ components:
                 campaign_name:
                     type: string
                     description: Campaign name
-                    example: Voluptatem consequatur.
+                    example: Earum voluptatem nemo sint necessitatibus.
                 config:
                     description: Campaign configuration snapshot
-                    example: Earum voluptatem nemo sint necessitatibus.
+                    example: Nesciunt deleniti nisi.
                 status:
                     type: string
                     description: Campaign status
-                    example: Ut suscipit perferendis quaerat consequatur est.
+                    example: Ut id magnam consectetur.
             example:
-                campaign_name: Ut id magnam consectetur.
-                config: Laborum provident praesentium soluta velit quaerat.
-                status: Nesciunt deleniti nisi.
+                campaign_name: Laborum provident praesentium soluta velit quaerat.
+                config: Ab perferendis.
+                status: Numquam labore nostrum aut tempora sequi.
             required:
                 - campaign_name
                 - status
@@ -16491,10 +16504,10 @@ components:
                     label: TLF Main
                     login_customer_id: "9746983954"
                 credentials:
-                    client_id: Molestiae necessitatibus perferendis.
-                    client_secret: Laborum quis minus sit ea.
-                    developer_token: Dicta iusto magnam at tempore voluptas.
-                    refresh_token: Delectus et quam hic et aut.
+                    client_id: Perferendis ut laborum quis.
+                    client_secret: Sit ea sunt dicta.
+                    developer_token: Magnam at tempore voluptas incidunt.
+                    refresh_token: Ut molestiae.
             required:
                 - config
                 - credentials
@@ -16636,16 +16649,16 @@ components:
                 brief_id:
                     type: string
                     description: Parent brief
-                    example: Illo sunt quam et itaque sint consequuntur.
+                    example: Sint consequuntur commodi voluptatem qui officiis doloribus.
                 byte_size:
                     type: integer
                     description: Size of the stored image in bytes
-                    example: 891747908157411021
+                    example: 7228860235989593978
                     format: int64
                 checksum:
                     type: string
                     description: Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a brief
-                    example: Officiis doloribus debitis deleniti dolores impedit rerum.
+                    example: Impedit rerum.
                 created:
                     type: string
                     description: '"true" when this request stored the asset; "false" when an identical upload already existed. Set only on the upload response, where it selects 201 vs 200.'
@@ -16656,25 +16669,25 @@ components:
                 id:
                     type: string
                     description: Creative asset UUID
-                    example: f72b5338-611a-4c7f-a858-05d1656481d4
+                    example: 68af388e-164c-4404-995a-91effade6ad1
                     format: uuid
                 mime_type:
                     type: string
                     description: Stored image MIME type, as verified from the bytes (not merely the declared header)
-                    example: image/png
+                    example: image/jpeg
                     enum:
                         - image/png
                         - image/jpeg
                 project_id:
                     type: string
                     description: Owning project
-                    example: Libero iste consectetur pariatur illum provident totam.
+                    example: Sunt quam et.
             example:
                 brief_id: Voluptatum itaque dolorem fugit cum tenetur.
                 byte_size: 2437535684968819715
                 checksum: Nam corporis.
                 created: "true"
-                id: 3d261013-ce4f-42f6-ab5e-a0a9ebe13e8d
+                id: 2ca708b4-ce4f-42f6-ab5e-a0a9ebe13e8d
                 mime_type: image/png
                 project_id: Excepturi amet repellendus qui modi ullam.
             required:
@@ -16725,6 +16738,14 @@ components:
             example:
                 preheader: Register now and shape the future of cloud native computing
                 sections:
+                    - html: <p>We're excited to invite you...</p>
+                      text: Register Now
+                      type: rich_text
+                      url: https://example.com/register
+                    - html: <p>We're excited to invite you...</p>
+                      text: Register Now
+                      type: rich_text
+                      url: https://example.com/register
                     - html: <p>We're excited to invite you...</p>
                       text: Register Now
                       type: rich_text
@@ -16825,11 +16846,11 @@ components:
                 description:
                     type: string
                     description: Event description
-                    example: Ratione sit corrupti magnam velit aut minus.
+                    example: Magni architecto occaecati officiis molestiae vitae.
                 end_date:
                     type: string
                     description: Event end date, same caveat as start_date
-                    example: Natus ratione.
+                    example: Beatae velit.
                 event_name:
                     type: string
                     description: Event name
@@ -16837,7 +16858,7 @@ components:
                 extracted_from:
                     type: string
                     description: Which strategy produced this record — the whole record came from exactly one of them
-                    example: fallback
+                    example: jsonld
                     enum:
                         - jsonld
                         - opengraph
@@ -16845,28 +16866,28 @@ components:
                 image:
                     type: string
                     description: Event image URL
-                    example: Iste saepe qui facilis.
+                    example: Consequuntur voluptatem nam ut.
                 location:
                     type: string
                     description: Event location as written on the page — free text, not a resolved place
-                    example: Suscipit sequi commodi placeat ea quis molestiae.
+                    example: Natus ratione.
                 start_date:
                     type: string
                     description: Event start date exactly as the page states it; NOT normalised to RFC 3339, because the source rarely is
-                    example: Magni architecto occaecati officiis molestiae vitae.
+                    example: Iste saepe qui facilis.
                 url:
                     type: string
                     description: 'The event''s own landing page, as the page declares it (JSON-LD url / og:url), falling back to the URL that was fetched when it declares none. NOT necessarily the fetched URL: a caller commonly pastes a link carrying tracking parameters, and the page''s declared canonical is the better destination for an ad'
-                    example: Beatae velit.
+                    example: Accusantium nobis dolorem et.
             example:
-                description: Voluptatem nam ut distinctio accusantium nobis.
-                end_date: Similique pariatur eos eveniet.
+                description: Maiores voluptatum ut et adipisci aut.
+                end_date: Ut architecto consequuntur.
                 event_name: KubeCon + CloudNativeCon Europe 2026
-                extracted_from: jsonld
-                image: Consequatur laborum sapiente voluptates vel ut cupiditate.
-                location: Et animi vel maiores voluptatum ut.
-                start_date: Adipisci aut.
-                url: Ut architecto consequuntur.
+                extracted_from: fallback
+                image: Est voluptatem consequatur quia ut suscipit.
+                location: Similique pariatur eos eveniet.
+                start_date: Consequatur laborum sapiente voluptates vel ut cupiditate.
+                url: Quaerat consequatur.
             required:
                 - extracted_from
         FetchEventURLRequestBody:
@@ -17245,17 +17266,10 @@ components:
                           dimension: age
                           impressions: 12840
                           value: AGE_RANGE_25_34
-                        - clicks: 742
-                          conversions: 31.25
-                          cost_micros: 3120000
-                          ctr: 0.0578
-                          dimension: age
-                          impressions: 12840
-                          value: AGE_RANGE_25_34
                 window:
                     type: string
                     description: The reporting window these counters cover
-                    example: last_month
+                    example: last_14_days
                     enum:
                         - today
                         - yesterday
@@ -17288,7 +17302,14 @@ components:
                       dimension: age
                       impressions: 12840
                       value: AGE_RANGE_25_34
-                window: yesterday
+                    - clicks: 742
+                      conversions: 31.25
+                      cost_micros: 3120000
+                      ctr: 0.0578
+                      dimension: age
+                      impressions: 12840
+                      value: AGE_RANGE_25_34
+                window: last_month
             required:
                 - window
                 - buckets
@@ -17319,7 +17340,7 @@ components:
                 dimension:
                     type: string
                     description: Which breakdown this bucket belongs to
-                    example: gender
+                    example: device
                     enum:
                         - age
                         - gender
@@ -17338,7 +17359,7 @@ components:
                 conversions: 31.25
                 cost_micros: 3120000
                 ctr: 0.0578
-                dimension: device
+                dimension: gender
                 impressions: 12840
                 value: AGE_RANGE_25_34
             required:
@@ -17683,7 +17704,7 @@ components:
                 match_type:
                     type: string
                     description: How broadly the keyword matches queries. UNKNOWN means Google reported a value this service does not recognise, never that the keyword lacks a match type.
-                    example: UNKNOWN
+                    example: PHRASE
                     enum:
                         - EXACT
                         - PHRASE
@@ -17699,7 +17720,7 @@ components:
                 status:
                     type: string
                     description: The criterion's current serving status upstream. UNKNOWN means Google reported a status this service does not recognise. REMOVED is not returned by the keywords read — its query allow-lists ENABLED and PAUSED — but the member is retained so the type stays usable if a future caller reads tombstones.
-                    example: REMOVED
+                    example: UNKNOWN
                     enum:
                         - ENABLED
                         - PAUSED
@@ -17720,7 +17741,7 @@ components:
                 criterion_id: "305729261"
                 ctr: 0.0645
                 impressions: 4820
-                match_type: EXACT
+                match_type: BROAD
                 quality_score: 7
                 status: ENABLED
                 text: kubernetes training
@@ -17780,34 +17801,6 @@ components:
                           quality_score: 7
                           status: UNKNOWN
                           text: kubernetes training
-                        - ad_group_id: "176216228"
-                          ad_group_name: Registration - Exact
-                          campaign_id: "21234567890"
-                          campaign_name: KubeCon NA 2026 - Search
-                          clicks: 311
-                          conversions: 12.5
-                          cost_micros: 1284000
-                          criterion_id: "305729261"
-                          ctr: 0.0645
-                          impressions: 4820
-                          match_type: UNKNOWN
-                          quality_score: 7
-                          status: UNKNOWN
-                          text: kubernetes training
-                        - ad_group_id: "176216228"
-                          ad_group_name: Registration - Exact
-                          campaign_id: "21234567890"
-                          campaign_name: KubeCon NA 2026 - Search
-                          clicks: 311
-                          conversions: 12.5
-                          cost_micros: 1284000
-                          criterion_id: "305729261"
-                          ctr: 0.0645
-                          impressions: 4820
-                          match_type: UNKNOWN
-                          quality_score: 7
-                          status: UNKNOWN
-                          text: kubernetes training
                 truncated:
                     type: boolean
                     description: True when this project's campaigns have more keywords than were returned. The rows are the TOP ones by impressions, not the project's full keyword set — do not total them and present the result as the project's whole spend.
@@ -17815,7 +17808,7 @@ components:
                 window:
                     type: string
                     description: The reporting window these counters cover
-                    example: last_7_days
+                    example: yesterday
                     enum:
                         - today
                         - yesterday
@@ -17855,22 +17848,8 @@ components:
                       quality_score: 7
                       status: UNKNOWN
                       text: kubernetes training
-                    - ad_group_id: "176216228"
-                      ad_group_name: Registration - Exact
-                      campaign_id: "21234567890"
-                      campaign_name: KubeCon NA 2026 - Search
-                      clicks: 311
-                      conversions: 12.5
-                      cost_micros: 1284000
-                      criterion_id: "305729261"
-                      ctr: 0.0645
-                      impressions: 4820
-                      match_type: UNKNOWN
-                      quality_score: 7
-                      status: UNKNOWN
-                      text: kubernetes training
                 truncated: true
-                window: yesterday
+                window: last_month
             required:
                 - window
                 - rows
@@ -18302,11 +18281,11 @@ components:
                 error:
                     type: string
                     description: Terminal error, if any
-                    example: Rerum asperiores sapiente assumenda assumenda impedit quaerat.
+                    example: Neque pariatur libero nam cum repellendus.
                 job_id:
                     type: string
                     description: Job UUID
-                    example: Dolorem beatae molestias illum aut officia nisi.
+                    example: Asperiores sapiente assumenda.
                 result:
                     type: array
                     items:
@@ -18315,16 +18294,18 @@ components:
                     example:
                         - campaign_id: Nisi quasi quis ab.
                           error: Quia magnam temporibus minus et.
+                          hubspot_url: Consequatur non cumque laudantium quod modi voluptas.
                           ok: true
                           platform: Reiciendis ullam laborum eum.
                         - campaign_id: Nisi quasi quis ab.
                           error: Quia magnam temporibus minus et.
+                          hubspot_url: Consequatur non cumque laudantium quod modi voluptas.
                           ok: true
                           platform: Reiciendis ullam laborum eum.
                 status:
                     type: string
                     description: Job status
-                    example: running
+                    example: failed
                     enum:
                         - queued
                         - running
@@ -18332,22 +18313,30 @@ components:
                         - partial
                         - failed
             example:
-                error: Aut et accusantium deleniti.
-                job_id: Pariatur libero nam cum repellendus ullam.
+                error: Optio veritatis numquam numquam excepturi aut et.
+                job_id: Quidem quibusdam in aut.
                 result:
                     - campaign_id: Nisi quasi quis ab.
                       error: Quia magnam temporibus minus et.
+                      hubspot_url: Consequatur non cumque laudantium quod modi voluptas.
                       ok: true
                       platform: Reiciendis ullam laborum eum.
                     - campaign_id: Nisi quasi quis ab.
                       error: Quia magnam temporibus minus et.
+                      hubspot_url: Consequatur non cumque laudantium quod modi voluptas.
                       ok: true
                       platform: Reiciendis ullam laborum eum.
                     - campaign_id: Nisi quasi quis ab.
                       error: Quia magnam temporibus minus et.
+                      hubspot_url: Consequatur non cumque laudantium quod modi voluptas.
                       ok: true
                       platform: Reiciendis ullam laborum eum.
-                status: succeeded
+                    - campaign_id: Nisi quasi quis ab.
+                      error: Quia magnam temporibus minus et.
+                      hubspot_url: Consequatur non cumque laudantium quod modi voluptas.
+                      ok: true
+                      platform: Reiciendis ullam laborum eum.
+                status: queued
             required:
                 - job_id
                 - status
@@ -18357,7 +18346,7 @@ components:
                 action:
                     type: string
                     description: What to do to this keyword. REMOVE is IRREVERSIBLE — a removed criterion cannot be re-enabled, only re-created with a new id.
-                    example: REMOVE
+                    example: PAUSE
                     enum:
                         - PAUSE
                         - REMOVE
@@ -18387,7 +18376,7 @@ components:
                 action:
                     type: string
                     description: The action that was applied
-                    example: REMOVE
+                    example: PAUSE
                     enum:
                         - PAUSE
                         - REMOVE
@@ -18404,7 +18393,7 @@ components:
                     description: The criterion resource name Google returned for the applied mutation
                     example: customers/1234567890/adGroupCriteria/176216228~305729261
             example:
-                action: REMOVE
+                action: PAUSE
                 ad_group_id: "176216228"
                 criterion_id: "305729261"
                 resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
@@ -18431,6 +18420,10 @@ components:
                         $ref: '#/components/schemas/KeywordActionResult'
                     description: One entry per requested action, in request order. All applied, or the request failed and none were.
                     example:
+                        - action: PAUSE
+                          ad_group_id: "176216228"
+                          criterion_id: "305729261"
+                          resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
                         - action: PAUSE
                           ad_group_id: "176216228"
                           criterion_id: "305729261"
@@ -19633,6 +19626,10 @@ components:
                     type: string
                     description: Failure reason (present when not ok)
                     example: Ut est necessitatibus hic voluptatum.
+                hubspot_url:
+                    type: string
+                    description: Deep link to this campaign's email in the HubSpot editor. Present only for the email (HubSpot) channel, and only once the portal that created it is known.
+                    example: Sequi cupiditate nisi inventore id ratione.
                 ok:
                     type: boolean
                     description: Whether the campaign was created (or reused) successfully
@@ -19642,10 +19639,11 @@ components:
                     description: Platform this result is for
                     example: Pariatur dolores atque aperiam eos eum rerum.
             example:
-                campaign_id: Quod dolorum.
-                error: Dolorum ullam animi provident magni.
+                campaign_id: Dolorum ullam animi provident magni.
+                error: Dolorem beatae molestias illum aut officia nisi.
+                hubspot_url: Voluptate numquam.
                 ok: false
-                platform: Sequi cupiditate nisi inventore id ratione.
+                platform: Atque quod.
             required:
                 - platform
                 - ok
@@ -20105,10 +20103,10 @@ components:
                     $ref: '#/components/schemas/GoogleAdsCredentials'
             example:
                 credentials:
-                    client_id: Molestiae necessitatibus perferendis.
-                    client_secret: Laborum quis minus sit ea.
-                    developer_token: Dicta iusto magnam at tempore voluptas.
-                    refresh_token: Delectus et quam hic et aut.
+                    client_id: Perferendis ut laborum quis.
+                    client_secret: Sit ea sunt dicta.
+                    developer_token: Magnam at tempore voluptas incidunt.
+                    refresh_token: Ut molestiae.
             required:
                 - credentials
         SetCredentialHubspotRequestBody:
@@ -22908,8 +22906,8 @@ components:
                 phase: planning
                 session_id: 56cda10f-79f7-4edc-9336-7e69e01e4321
                 source_email:
-                    id: Officia et sint numquam accusamus.
-                    name: Eos et architecto voluptas.
+                    id: Accusamus aperiam eos et architecto voluptas rerum.
+                    name: Natus provident est.
                 stage: Et exercitationem minus.
                 utm: Repudiandae consequatur.
             required:

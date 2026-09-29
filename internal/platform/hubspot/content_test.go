@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -339,5 +341,107 @@ func TestRebuildEmailContent_AnEmptyBodyDropsTheBodySection(t *testing.T) {
 
 	if _, ok := sent["staging_body"]; ok {
 		t.Error("an empty body wrote a staging_body widget; it should be omitted, not blanked")
+	}
+}
+
+// TestRebuildEmailContent_HeroImageAlt pins the hero image's alt text: a caller-supplied value is
+// used verbatim, and an empty one falls back to a generic description rather than the old
+// hardcoded "Email Banner" (which described the widget, not the event, and shipped identically on
+// every campaign).
+func TestRebuildEmailContent_HeroImageAlt(t *testing.T) {
+	extractAlt := func(t *testing.T, alt string) string {
+		var sent map[string]any
+		c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPatch {
+				raw, _ := io.ReadAll(r.Body)
+				var body map[string]any
+				_ = json.Unmarshal(raw, &body)
+				if content, ok := body["content"].(map[string]any); ok {
+					sent, _ = content["widgets"].(map[string]any)
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"999","content":{"widgets":{"staging_footer_hs":{}},"flexAreas":{"main":{"sections":[{"columns":[{"widgets":["staging_footer_hs"]}]}]}}}}`)
+		})
+		_, _ = c.RebuildEmailContent(context.Background(), "999", RebuildEmailContentInput{
+			HeroImageURL: "https://cdn.example/hero.png",
+			HeroImageAlt: alt,
+		})
+		banner, ok := sent["staging_banner"].(map[string]any)
+		if !ok {
+			t.Fatal("expected a staging_banner widget when HeroImageURL is set")
+		}
+		body, ok := banner["body"].(map[string]any)
+		if !ok {
+			t.Fatal("expected the staging_banner widget to have a body")
+		}
+		img, ok := body["img"].(map[string]any)
+		if !ok {
+			t.Fatal("expected the staging_banner body to have an img")
+		}
+		got, _ := img["alt"].(string)
+		return got
+	}
+
+	if got := extractAlt(t, "2026 Maintainer Summit keynote lineup"); got != "2026 Maintainer Summit keynote lineup" {
+		t.Errorf("expected the caller-supplied alt text verbatim, got %q", got)
+	}
+	if got := extractAlt(t, "  "); got != "Event banner" {
+		t.Errorf("expected a generic fallback for blank alt text, got %q", got)
+	}
+	if got := extractAlt(t, ""); got != "Event banner" {
+		t.Errorf("expected a generic fallback for empty alt text, got %q", got)
+	}
+}
+
+// wcagRelativeLuminance and wcagContrastRatio implement the WCAG 2.1 formulas
+// (https://www.w3.org/TR/WCAG21/#dfn-relative-luminance and #dfn-contrast-ratio)
+// so the color pairs this package hardcodes into the real HubSpot email can be
+// checked against the same math a design reviewer would use, rather than eyeballed.
+func wcagRelativeLuminance(hex string) float64 {
+	hex = strings.TrimPrefix(hex, "#")
+	toChannel := func(v int64) float64 {
+		c := float64(v) / 255
+		if c <= 0.03928 {
+			return c / 12.92
+		}
+		return math.Pow((c+0.055)/1.055, 2.4)
+	}
+	r, _ := strconv.ParseInt(hex[0:2], 16, 32)
+	g, _ := strconv.ParseInt(hex[2:4], 16, 32)
+	b, _ := strconv.ParseInt(hex[4:6], 16, 32)
+	return 0.2126*toChannel(r) + 0.7152*toChannel(g) + 0.0722*toChannel(b)
+}
+
+func wcagContrastRatio(hexA, hexB string) float64 {
+	lA, lB := wcagRelativeLuminance(hexA), wcagRelativeLuminance(hexB)
+	if lA < lB {
+		lA, lB = lB, lA
+	}
+	return (lA + 0.05) / (lB + 0.05)
+}
+
+// TestHardcodedEmailColors_MeetWCAG_AA guards the fixed color pairs
+// addButtonSection and addFooterSections bake into every real HubSpot email
+// against silently regressing below WCAG AA's 4.5:1 text-contrast threshold —
+// these are brand colors picked by hand, not computed, so nothing else catches
+// a future edit that swaps in a lower-contrast hex.
+func TestHardcodedEmailColors_MeetWCAG_AA(t *testing.T) {
+	const wcagAANormalText = 4.5
+
+	cases := []struct {
+		name       string
+		foreground string
+		background string
+	}{
+		{"CTA button text on its background", "#ffffff", "#2563eb"},
+		{"footer link text on the white email background", "#2563eb", "#ffffff"},
+	}
+	for _, tc := range cases {
+		ratio := wcagContrastRatio(tc.foreground, tc.background)
+		if ratio < wcagAANormalText {
+			t.Errorf("%s: contrast ratio %.2f:1 is below the WCAG AA normal-text threshold of %.1f:1 (foreground %s, background %s)",
+				tc.name, ratio, wcagAANormalText, tc.foreground, tc.background)
+		}
 	}
 }

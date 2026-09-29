@@ -1440,6 +1440,100 @@ func TestAbsentStageIgnoresTheRegistrationURL(t *testing.T) {
 	}
 }
 
+// Each recognised segment appends its own block, and only that block.
+func TestComposeEmailCopyPrompt_SegmentAppendsItsBlock(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		segment string
+		want    string
+	}{
+		{emailSegmentDeveloper, "SEGMENT: developer"},
+		{emailSegmentBusinessDecisionMaker, "SEGMENT: business-decision-maker"},
+		{emailSegmentAlumni, "SEGMENT: alumni"},
+		{emailSegmentProspect, "SEGMENT: prospect"},
+	}
+	for _, tc := range cases {
+		sys, _ := composeEmailCopyPrompt(emailCopyPromptVars{
+			eventName: "MCP Dev Summit Toronto 2026",
+			location:  "Toronto, Canada",
+			dates:     "March 3-4, 2026",
+			stage:     emailstage.RegistrationPush,
+			segment:   tc.segment,
+		})
+		if !strings.Contains(sys, tc.want) {
+			t.Errorf("segment %q: system prompt missing %q:\n%s", tc.segment, tc.want, sys)
+		}
+		for _, other := range cases {
+			if other.segment == tc.segment {
+				continue
+			}
+			if strings.Contains(sys, other.want) {
+				t.Errorf("segment %q: system prompt also contains unrelated segment marker %q", tc.segment, other.want)
+			}
+		}
+	}
+}
+
+// Absent or unrecognised segment is a no-op: same leniency as an unrecognised stage or variant.
+func TestComposeEmailCopyPrompt_UnrecognisedSegmentIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	base := emailCopyPromptVars{
+		eventName: "MCP Dev Summit Toronto 2026",
+		location:  "Toronto, Canada",
+		dates:     "March 3-4, 2026",
+		stage:     emailstage.RegistrationPush,
+	}
+	plainSys, _ := composeEmailCopyPrompt(base)
+
+	base.segment = "vip-attendee"
+	misspelledSys, _ := composeEmailCopyPrompt(base)
+	if misspelledSys != plainSys {
+		t.Errorf("an unrecognised segment changed the system prompt; it should be silently ignored like an unrecognised stage or variant")
+	}
+}
+
+// The segment field must NOT reach the frozen legacy prompt, same LFXV2-1940 restriction as
+// registrationURL and variant.
+func TestAbsentStageIgnoresTheSegment(t *testing.T) {
+	t.Parallel()
+
+	sys, _ := composeEmailCopyPrompt(emailCopyPromptVars{
+		eventName: "MCP Dev Summit Toronto 2026",
+		location:  "Toronto, Canada",
+		dates:     "March 3-4, 2026",
+		stage:     "",
+		segment:   emailSegmentDeveloper,
+	})
+
+	if sys != goldenLegacySystemPrompt {
+		t.Errorf("a brief with a segment changed the legacy system prompt; LFXV2-1940 requires byte-identity")
+	}
+}
+
+// variant and segment compose additively: both blocks appear together, neither replacing the
+// other, since one restyles the whole draft and the other narrows which blocks are relevant.
+func TestComposeEmailCopyPrompt_VariantAndSegmentComposeAdditively(t *testing.T) {
+	t.Parallel()
+
+	sys, _ := composeEmailCopyPrompt(emailCopyPromptVars{
+		eventName: "MCP Dev Summit Toronto 2026",
+		location:  "Toronto, Canada",
+		dates:     "March 3-4, 2026",
+		stage:     emailstage.RegistrationPush,
+		variant:   urgencyFomoVariant,
+		segment:   emailSegmentAlumni,
+	})
+
+	if !strings.Contains(sys, "VARIANT: urgency-fomo") {
+		t.Errorf("variant block missing when segment is also set:\n%s", sys)
+	}
+	if !strings.Contains(sys, "SEGMENT: alumni") {
+		t.Errorf("segment block missing when variant is also set:\n%s", sys)
+	}
+}
+
 // End to end: the destination stored on the BRIEF is what the model is sent.
 //
 // The composer tests above take the URL as an argument, so they cannot catch the wiring -- a
@@ -1513,26 +1607,33 @@ func worstStageFloorNamed() (int, string) {
 	// worst case this bound must clear, and it reaches every stage (never withheld, unlike the
 	// registration URL). See maxReferenceBlockRunes.
 	maxRef := strings.Repeat("x", maxReferenceBlockRunes)
-	// Composed WITH the urgency-fomo variant too: that block is a fixed content addition, same
-	// floor-contributor shape as a stage template (see urgencyFomoVariant), so the worst case this
-	// bound must clear is whichever of variant-on/variant-off is larger for each stage -- not just
-	// the plain stage composition.
+	// Composed WITH the urgency-fomo variant, and WITH each recognised segment, too: both are
+	// fixed content additions, same floor-contributor shape as a stage template (see
+	// urgencyFomoVariant and the emailSegment* constants), so the worst case this bound must
+	// clear is whichever variant x segment x stage combination is largest -- not just the plain
+	// stage composition.
+	segments := []string{"", emailSegmentDeveloper, emailSegmentBusinessDecisionMaker, emailSegmentAlumni, emailSegmentProspect}
 	for _, variant := range []string{"", urgencyFomoVariant} {
-		for _, name := range emailstage.Names() {
-			sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name, variant: variant, registrationURL: "x", referenceBlock: maxRef})
-			floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user)
-			// Subtract the sentinel ONLY from a stage that actually formatted it. A withholding stage
-			// (emailstage.LinksToRegistration=false) never receives the URL, so "x" contributes
-			// nothing to its composition and subtracting one removes a rune that was never added --
-			// understating that stage's floor, and with it every figure derived from this helper.
-			// Measured: Post-Event composes identically with "x" and with "", delta 0.
-			if emailstage.Resolve(name).LinksToRegistration {
-				floor--
-			}
-			if floor > worst {
-				worst, worstName = floor, name
-				if variant != "" {
-					worstName += " +" + variant
+		for _, segment := range segments {
+			for _, name := range emailstage.Names() {
+				sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name, variant: variant, segment: segment, registrationURL: "x", referenceBlock: maxRef})
+				floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user)
+				// Subtract the sentinel ONLY from a stage that actually formatted it. A withholding stage
+				// (emailstage.LinksToRegistration=false) never receives the URL, so "x" contributes
+				// nothing to its composition and subtracting one removes a rune that was never added --
+				// understating that stage's floor, and with it every figure derived from this helper.
+				// Measured: Post-Event composes identically with "x" and with "", delta 0.
+				if emailstage.Resolve(name).LinksToRegistration {
+					floor--
+				}
+				if floor > worst {
+					worst, worstName = floor, name
+					if variant != "" {
+						worstName += " +" + variant
+					}
+					if segment != "" {
+						worstName += " +" + segment
+					}
 				}
 			}
 		}

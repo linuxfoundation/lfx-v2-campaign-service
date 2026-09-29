@@ -3120,6 +3120,11 @@ paths:
                   description: 'Requests a differently-styled draft of the same stage''s copy. Currently one value is recognised: ''urgency-fomo'', which asks for an urgency/FOMO-forward structure (deadline framing, social proof, a secondary CTA) instead of the stage''s normal copy. Any other value, or absence, produces the normal stage-based copy.'
                   required: false
                   type: string
+                - name: segment
+                  in: query
+                  description: 'Tailors which content blocks appear for a specific audience segment. Currently recognised: ''developer'' (keeps agenda/session-track detail, drops sponsorship framing), ''business-decision-maker'' (keeps ROI/sponsorship framing, drops session-level detail), ''alumni'' (past attendee -- leads with what''s new since last time), ''prospect'' (never attended -- leads with what the event is and why it matters). Any other value, or absence, produces the normal stage-based copy with no segment tailoring.'
+                  required: false
+                  type: string
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -11716,7 +11721,7 @@ definitions:
             id:
                 type: string
                 description: Creative asset UUID
-                example: d4f66fe6-1548-4ba6-b3a1-e432321ac09d
+                example: 62949fe6-1548-4ba6-b3a1-e432321ac09d
                 format: uuid
             mime_type:
                 type: string
@@ -12590,7 +12595,7 @@ definitions:
             error:
                 type: string
                 description: Terminal error, if any
-                example: Nesciunt quia ullam ex accusamus aut vitae.
+                example: Consectetur natus.
             job_id:
                 type: string
                 description: Job UUID
@@ -12603,10 +12608,22 @@ definitions:
                 example:
                     - campaign_id: Mollitia voluptas accusamus qui autem.
                       error: Omnis quaerat nobis iure suscipit ut.
+                      hubspot_url: Placeat nam itaque quasi dolorem laborum.
                       ok: true
                       platform: Culpa voluptatem culpa omnis laudantium.
                     - campaign_id: Mollitia voluptas accusamus qui autem.
                       error: Omnis quaerat nobis iure suscipit ut.
+                      hubspot_url: Placeat nam itaque quasi dolorem laborum.
+                      ok: true
+                      platform: Culpa voluptatem culpa omnis laudantium.
+                    - campaign_id: Mollitia voluptas accusamus qui autem.
+                      error: Omnis quaerat nobis iure suscipit ut.
+                      hubspot_url: Placeat nam itaque quasi dolorem laborum.
+                      ok: true
+                      platform: Culpa voluptatem culpa omnis laudantium.
+                    - campaign_id: Mollitia voluptas accusamus qui autem.
+                      error: Omnis quaerat nobis iure suscipit ut.
+                      hubspot_url: Placeat nam itaque quasi dolorem laborum.
                       ok: true
                       platform: Culpa voluptatem culpa omnis laudantium.
             status:
@@ -12620,22 +12637,25 @@ definitions:
                     - partial
                     - failed
         example:
-            error: Ratione consequatur necessitatibus ea esse corrupti.
-            job_id: Ipsum repudiandae eos maxime.
+            error: Amet delectus architecto.
+            job_id: Consequatur necessitatibus.
             result:
                 - campaign_id: Mollitia voluptas accusamus qui autem.
                   error: Omnis quaerat nobis iure suscipit ut.
+                  hubspot_url: Placeat nam itaque quasi dolorem laborum.
                   ok: true
                   platform: Culpa voluptatem culpa omnis laudantium.
                 - campaign_id: Mollitia voluptas accusamus qui autem.
                   error: Omnis quaerat nobis iure suscipit ut.
+                  hubspot_url: Placeat nam itaque quasi dolorem laborum.
                   ok: true
                   platform: Culpa voluptatem culpa omnis laudantium.
                 - campaign_id: Mollitia voluptas accusamus qui autem.
                   error: Omnis quaerat nobis iure suscipit ut.
+                  hubspot_url: Placeat nam itaque quasi dolorem laborum.
                   ok: true
                   platform: Culpa voluptatem culpa omnis laudantium.
-            status: running
+            status: failed
         required:
             - job_id
             - status
@@ -13711,24 +13731,24 @@ definitions:
             email_type:
                 type: string
                 description: Caller's own label for the kind of email being built
-                example: A at officiis ea.
+                example: Quaerat hic qui qui ut qui.
             extra_context:
                 type: string
                 description: Free-text guidance appended to the planning prompt
-                example: Molestias at laudantium facere.
+                example: A at officiis ea.
             is_transactional:
                 type: boolean
                 description: Whether the email is transactional rather than marketing
-                example: true
+                example: false
             url:
                 type: string
                 description: Event page to plan from; defaults to the event details already scraped onto the brief
-                example: Nostrum corrupti qui consequatur occaecati.
+                example: Molestias at laudantium facere.
         example:
-            email_type: Beatae praesentium.
-            extra_context: Qui iure ratione sed quidem fugiat.
+            email_type: Et a et repudiandae ab.
+            extra_context: Unde illo.
             is_transactional: false
-            url: Hic qui qui.
+            url: Sed quidem fugiat iure beatae.
     LfxV2CampaignServiceBriefsToggleCampaignStatusRequestBody:
         title: LfxV2CampaignServiceBriefsToggleCampaignStatusRequestBody
         type: object
@@ -13842,10 +13862,10 @@ definitions:
                 label: TLF Main
                 login_customer_id: "9746983954"
             credentials:
-                client_id: Molestiae necessitatibus perferendis.
-                client_secret: Laborum quis minus sit ea.
-                developer_token: Dicta iusto magnam at tempore voluptas.
-                refresh_token: Delectus et quam hic et aut.
+                client_id: Perferendis ut laborum quis.
+                client_secret: Sit ea sunt dicta.
+                developer_token: Magnam at tempore voluptas incidunt.
+                refresh_token: Ut molestiae.
         required:
             - config
             - credentials
@@ -14168,10 +14188,10 @@ definitions:
                 $ref: '#/definitions/GoogleAdsCredentials'
         example:
             credentials:
-                client_id: Molestiae necessitatibus perferendis.
-                client_secret: Laborum quis minus sit ea.
-                developer_token: Dicta iusto magnam at tempore voluptas.
-                refresh_token: Delectus et quam hic et aut.
+                client_id: Perferendis ut laborum quis.
+                client_secret: Sit ea sunt dicta.
+                developer_token: Magnam at tempore voluptas incidunt.
+                refresh_token: Ut molestiae.
         required:
             - credentials
     LfxV2CampaignServiceConnectionsSetCredentialHubspotRequestBody:
@@ -14797,6 +14817,10 @@ definitions:
                 type: string
                 description: Failure reason (present when not ok)
                 example: Molestiae quibusdam earum dolores reprehenderit et.
+            hubspot_url:
+                type: string
+                description: Deep link to this campaign's email in the HubSpot editor. Present only for the email (HubSpot) channel, and only once the portal that created it is known.
+                example: Sequi ipsum.
             ok:
                 type: boolean
                 description: Whether the campaign was created (or reused) successfully
@@ -14806,10 +14830,11 @@ definitions:
                 description: Platform this result is for
                 example: Cupiditate velit at vitae.
         example:
-            campaign_id: Blanditiis officiis voluptas nostrum sunt ullam rem.
-            error: Unde ab.
+            campaign_id: Rem et unde ab.
+            error: Maiores nesciunt quia ullam ex accusamus aut.
+            hubspot_url: Quisquam ipsum repudiandae eos.
             ok: true
-            platform: Sequi ipsum.
+            platform: Repellat blanditiis officiis voluptas nostrum.
         required:
             - platform
             - ok
@@ -15248,22 +15273,22 @@ definitions:
                     $ref: '#/definitions/WizardSponsor'
                 description: Sponsor logos scraped from the event page
                 example:
-                    - logo_url: Deserunt quae.
-                      name: Dolor ullam in tempora harum.
-                      tier: Et qui est qui commodi hic.
-                      url: Aut mollitia.
-                    - logo_url: Deserunt quae.
-                      name: Dolor ullam in tempora harum.
-                      tier: Et qui est qui commodi hic.
-                      url: Aut mollitia.
-                    - logo_url: Deserunt quae.
-                      name: Dolor ullam in tempora harum.
-                      tier: Et qui est qui commodi hic.
-                      url: Aut mollitia.
-                    - logo_url: Deserunt quae.
-                      name: Dolor ullam in tempora harum.
-                      tier: Et qui est qui commodi hic.
-                      url: Aut mollitia.
+                    - logo_url: Et qui est qui commodi hic.
+                      name: Aut mollitia.
+                      tier: Ex quis molestias nam quia facilis.
+                      url: Pariatur ratione blanditiis.
+                    - logo_url: Et qui est qui commodi hic.
+                      name: Aut mollitia.
+                      tier: Ex quis molestias nam quia facilis.
+                      url: Pariatur ratione blanditiis.
+                    - logo_url: Et qui est qui commodi hic.
+                      name: Aut mollitia.
+                      tier: Ex quis molestias nam quia facilis.
+                      url: Pariatur ratione blanditiis.
+                    - logo_url: Et qui est qui commodi hic.
+                      name: Aut mollitia.
+                      tier: Ex quis molestias nam quia facilis.
+                      url: Pariatur ratione blanditiis.
             subject:
                 type: string
                 description: Reference variant subject line
@@ -15320,14 +15345,14 @@ definitions:
                 - Quas laborum.
             session_id: d55737ff-7160-457e-8764-e77c3569cba2
             sponsors:
-                - logo_url: Deserunt quae.
-                  name: Dolor ullam in tempora harum.
-                  tier: Et qui est qui commodi hic.
-                  url: Aut mollitia.
-                - logo_url: Deserunt quae.
-                  name: Dolor ullam in tempora harum.
-                  tier: Et qui est qui commodi hic.
-                  url: Aut mollitia.
+                - logo_url: Et qui est qui commodi hic.
+                  name: Aut mollitia.
+                  tier: Ex quis molestias nam quia facilis.
+                  url: Pariatur ratione blanditiis.
+                - logo_url: Et qui est qui commodi hic.
+                  name: Aut mollitia.
+                  tier: Ex quis molestias nam quia facilis.
+                  url: Pariatur ratione blanditiis.
             subject: Cupiditate iusto fugit cupiditate tempore quidem.
             variant_a_banner_url: Dicta ut soluta ut voluptatum perspiciatis quisquam.
             variant_a_body_html: Officia provident.
@@ -15361,7 +15386,7 @@ definitions:
             message:
                 type: string
                 description: Human-readable summary of the plan, rendered directly in the wizard's chat transcript
-                example: Cupiditate perferendis quod officia ab a pariatur.
+                example: A vero sed quod quidem eaque.
             mode:
                 type: string
                 description: How content will be produced for this session
@@ -15378,13 +15403,13 @@ definitions:
             session_id:
                 type: string
                 description: Wizard session UUID
-                example: 61e8bc4f-7cc7-4ff7-8e4c-8a6fc5f9325d
+                example: b75baf20-b6de-4823-bbad-15c662ddaa8c
                 format: uuid
             source_email:
                 $ref: '#/definitions/WizardSourceEmail'
             stage:
                 description: Resolved event-lifecycle stage template (name, purpose, tone, CTA strategy)
-                example: Ut eveniet accusamus molestias esse voluptatem voluptatem.
+                example: Eveniet accusamus molestias esse voluptatem voluptatem.
             utm:
                 description: UTM parameters that will be applied to the draft's links
                 example: Ut accusamus et earum commodi quas.
@@ -15392,10 +15417,10 @@ definitions:
             message: Ut qui vero est.
             mode: reference
             phase: content
-            session_id: 70e38b65-c5a5-4a39-a2a0-65621e55007d
+            session_id: 904878ab-aaa5-4a39-a2a0-65621e55007d
             source_email:
-                id: Qui nobis.
-                name: Sunt dolorum possimus eum.
+                id: Eum aut delectus voluptatem.
+                name: Et dolorum est ipsa itaque.
             stage: In voluptatem aut.
             utm: At at itaque iure deleniti nihil voluptatem.
         required:
@@ -15410,15 +15435,15 @@ definitions:
             session_id:
                 type: string
                 description: Wizard session UUID to pass to every subsequent turn
-                example: 55970153-697a-46f7-9a8f-d0045eb8cd94
+                example: 55970153-de2f-47a2-b7bb-2f725d7df0c0
                 format: uuid
             token:
                 type: string
                 description: Opaque progress token for the SSE stream at /projects/{project_id}/briefs/{brief_id}/wizard/progress/{token}
-                example: Numquam praesentium consectetur non.
+                example: Qui modi sint sit.
         example:
-            session_id: c8cc8ac8-d16e-4a1d-a675-62f8c5c9a4da
-            token: Atque corrupti animi.
+            session_id: 70edf22c-429c-43fa-b8bc-3f598ef67c78
+            token: Nostrum corrupti qui consequatur occaecati.
         required:
             - session_id
             - token
@@ -15525,14 +15550,14 @@ definitions:
             id:
                 type: string
                 description: HubSpot marketing email id
-                example: Sed quod.
+                example: Suscipit distinctio.
             name:
                 type: string
                 description: HubSpot marketing email name
-                example: Eaque eum reiciendis suscipit.
+                example: Sunt reprehenderit et.
         example:
-            id: Sunt sunt reprehenderit et totam mollitia atque.
-            name: Quo accusamus aut aut aliquam corrupti.
+            id: Mollitia atque corrupti quo accusamus aut aut.
+            name: Corrupti ea.
         required:
             - id
             - name
