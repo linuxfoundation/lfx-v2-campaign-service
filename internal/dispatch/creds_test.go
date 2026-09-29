@@ -35,6 +35,60 @@ func TestSanitizeSnapshotURL(t *testing.T) {
 	}
 }
 
+// TestSanitizeSnapshotText: config_snapshot is persisted UNENCRYPTED, and X's
+// tweetText is operator-authored prose that routinely carries a registration link
+// pasted out of a logged-in browser — query string and all. Every http/https run in
+// the text goes through sanitizeSnapshotURL, so the two paths cannot disagree about
+// what "stripped" means; the surrounding prose is left exactly as written, because
+// this redacts links and does not go looking for secrets in sentences.
+func TestSanitizeSnapshotText(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"empty", "", ""},
+		{"no url", "Join us at KubeCon!", "Join us at KubeCon!"},
+		{
+			"token in an embedded url",
+			"Register https://events.lf.org/reg?access_token=SECRET now",
+			"Register https://events.lf.org/reg now",
+		},
+		{
+			"every url in the text is stripped",
+			"See https://a.example/x?sid=SECRET and https://b.example/y?key=SECRET2",
+			"See https://a.example/x and https://b.example/y",
+		},
+		{
+			"fragment goes too",
+			"https://events.lf.org/reg#token-SECRET",
+			"https://events.lf.org/reg",
+		},
+		{
+			// A run sanitizeSnapshotURL fails closed on leaves nothing behind,
+			// which is the same answer the single-URL path gives.
+			"embedded userinfo fails closed",
+			"link: https://user:pass@example.com/x?token=SECRET", // secretlint-disable-line -- fixture asserting userinfo fails closed
+			"link: ",
+		},
+		{
+			// Sentence-final punctuation is legal in a URL, so the run is allowed
+			// to swallow it. Trimming it off would be prettier and would leave the
+			// query behind as bare text on any URL the trim guessed wrong about.
+			"a clean url survives",
+			"Details at https://events.lf.org/kubecon/register",
+			"Details at https://events.lf.org/kubecon/register",
+		},
+		{"uppercase scheme", "HTTPS://events.lf.org/r?token=SECRET", "https://events.lf.org/r"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeSnapshotText(tc.in); got != tc.want {
+				t.Errorf("sanitizeSnapshotText(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if strings.Contains(sanitizeSnapshotText(tc.in), "SECRET") {
+				t.Errorf("sanitizeSnapshotText(%q) left a secret in the snapshot", tc.in)
+			}
+		})
+	}
+}
+
 // TestEnvelopeHSToken covers the shared top-level hsToken extraction: a valid string
 // is returned trimmed, absence yields "", and a wrong-typed value is an error (not a
 // silent fallback).

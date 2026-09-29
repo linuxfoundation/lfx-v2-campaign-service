@@ -73,6 +73,27 @@ final `ctx.Err()` check and the `nextWrite` update.
 `TestPaceCancelAtWaitExpiryReservesNothing` documents and tolerates that residual
 window, measured near 0.5% against roughly 98% unfixed.
 
+Because `pace` RESERVES a slot rather than holding one open, nothing unpaced may
+sit between the reservation and the write it spaces out. The tweet-authoring arm
+of `CreateCampaign` used to reserve and then run the `promotable_users` GET, so a
+concurrent writer sharing the client could reserve and issue inside that window
+and the two writes landed together — rebuilding the burst the pacer exists to
+prevent. Reads are unpaced and cost nothing to move, so `resolvePromotableUser`
+runs first and `pace` is called immediately before `createNullcastTweet`.
+`TestCreateCampaign_PacesImmediatelyBeforeAuthoring` pins the ORDER of the three
+observed events (GET -> admit -> POST) rather than an elapsed duration, which
+would pass for the wrong reason on a slow machine.
+
+`onPaceWait` is `onAdmit`'s sibling and complement: `onAdmit` fires once a wait is
+over, so it cannot be used to act DURING the window a caller is parked in, and
+that window is where a cancellation between two writes has to land. Firing a
+test-only hook just before `sleepCtx` (under `writeMu`) turns that window into an
+ordinary synchronous callback, which is how
+`TestCreateCampaign_AbortBetweenAuthoringAndPromotionRetainsTweetID` now lands its
+cancel. It previously bet a 50ms sleep against a 500ms write delay; the bet was a
+good one and still a bet, and every way of losing it landed on one of that test's
+two silent-pass modes. Both hooks are nil in production.
+
 The bound is per client instance, which is narrower than per ACCOUNT. Two clients
 for one X ad account still pace independently, and three ordinary things produce
 them: separate replicas; two PROJECTS whose connections point at the same ad
@@ -83,7 +104,27 @@ for one project — and leaves the residue to the 429 backoff. A limiter keyed b
 account, with a lifetime independent of the client cache, plus cross-replica
 coordination, is tracked in LFXV2-2665; operators must not rely on this client for
 account-wide rate limiting. When the account limit is hit anyway, 429s are
-retried with backoff bounded by `Retry-After` / `X-Rate-Limit-Reset`. If the caller's
+retried with backoff bounded by `Retry-After` / `X-Rate-Limit-Reset` — but only
+for calls the caller declared IDEMPOTENT.
+
+Retry eligibility is an explicit `idempotent bool` parameter threaded through
+`request` -> `createRequest` -> `doRequest` -> `doRequestAbs`, never inferred from
+the HTTP method, and a non-idempotent call takes the retry-exhausted exit on its
+FIRST 429 (`attempt >= retryMax || !idempotent`). The method cannot carry this: X
+answers a 429 at OR AFTER committing the write it throttled, so "POST" says
+nothing about whether re-issuing is safe. What decides it is whether the endpoint
+converges on a repeat, and three of this client's four creates do — campaigns and
+line items are found-or-created by name, a repeated `promoted_tweets` POST comes
+back `DUPLICATE_PROMOTABLE_ENTITY`. Tweet authoring is the one that does not: a
+tweet has no name to find it by and no idempotency key, so a retried 429 publishes
+a SECOND tweet under the LF handle, and the request layer would have done it twice
+more before `createNullcastTweet` returned. It therefore passes `false`, alone in
+this package. The throttle still surfaces as an `*apiError`, which
+`createOutcomeAmbiguous` classifies as ambiguous, so the caller renders UNCONFIRMED
+and asks the operator to verify in X Ads Manager — a human check before a second
+publish is the only safe form a retry of that call can take. (This is the same
+convention the googleads client uses for its own POST `:search` / POST `:mutate`
+split.) If the caller's
 context expires DURING that backoff sleep, the client returns the 429 as a typed
 `apiError` (with the cancellation cause attached via `Unwrap`) rather than a bare
 `ctx.Err()`: the throttle already happened, and a mutating 429 is ambiguous, so erasing
@@ -152,11 +193,36 @@ user, and this client never sends `nullcast=false`.
 
 `resolvePromotableUser` decides which handle authors the tweet via
 `GET accounts/:account_id/promotable_users`. It fails closed rather than
-guessing: a pinned `AsUserID` not present in that list is refused (named in the
-error), zero candidates is refused, exactly one candidate is used automatically,
-and several candidates with none pinned is refused with all candidates named so
-the caller can pin one. This mirrors the account/funding-instrument validation's
-"never silently pick" posture elsewhere in this client.
+guessing: a pinned `AsUserID` not present in that list is refused, zero
+candidates is refused, exactly one candidate is used automatically, and several
+candidates with none pinned is refused so the caller can pin one. This mirrors
+the account/funding-instrument validation's "never silently pick" posture
+elsewhere in this client.
+
+Its refusals carry the COUNT of candidates and never the user ids themselves.
+These strings do not stop at a log line: they become the campaign result's
+`PromotedTweetWarning` and a `Steps` entry, both persisted and rendered, so
+naming the candidates published the account's promotable X handles to every
+reader of that campaign. The count is the part that makes the message actionable
+("there is more than one, pin one"); the ids only ever needed to be readable in X
+Ads Manager, where whoever is about to set `asUserId` is already looking.
+
+It PAGINATES the list, bounded by `maxListPages` with cursor dedup, as
+`findByName` and `ListAdAccounts` do. Reading only page one made two silent
+errors: a pinned user on a later page was reported as not promotable at all, and
+the single-candidate shortcut fired on an account whose later pages held more —
+auto-picking an author the caller never chose, which is precisely the "never
+silently pick" guarantee above. A pinned id short-circuits the walk the moment it
+is seen; auto-resolution must reach the end before it may conclude.
+
+It differs from `ListAdAccounts` on ONE point, deliberately: `cursorUnknowable`
+ENDS the walk here rather than failing it. `ListAdAccounts` refuses to conclude
+from a possibly-truncated set because its whole job is enumeration. This function
+paginated not at all until now, so every response shape that reaches a decision
+today did so from page one alone; turning an absent or empty `next_cursor` into a
+hard error would break live accounts to fix a case that cannot be worse than the
+status quo. What it reads is a superset of what it read before, and its failure
+modes stay the ones the caller already degrades on.
 
 `composeTweetText` builds the actual text sent to X: it appends the destination
 URL (the real, non-display counterpart of the manual workflow's
@@ -172,6 +238,40 @@ skipped then) or carry others of its own; weighting only the appended URL would
 reject exactly the copy X would accept. This validation runs in the up-front
 pre-create block, before any mutating call, like every other CreateCampaign
 input check.
+
+Everything that is NOT a URL is counted by twitter-text WEIGHT, not by runes.
+X's cap of 280 is a weighted budget: the weight-1 ranges are `[0,4351]`,
+`[8192,8205]`, `[8208,8223]` and `[8242,8247]` — Latin, Greek, Cyrillic, Hebrew,
+Arabic and common punctuation — and every other rune costs 2. A rune count
+therefore under-counted a CJK tweet by half, and 280 CJK characters were accepted
+here and rejected by X.
+
+The two directions of error are not symmetric, and that asymmetry decides the
+emoji handling. An UNDER-count sends copy X refuses: one wasted round trip and an
+operator-facing error. An OVER-count invents a rejection of copy X would have
+accepted, which no retry fixes and no error explains. So `weightedRunLen`
+collapses an emoji presentation sequence into ONE 2-weight cluster
+(`emojiClusterLen`) rather than charging 2 per codepoint: a skin-tone modifier, a
+ZWJ family, a keycap and a country flag each cost 2 in total, where a naive
+per-rune pass would have charged a family sequence 14. A BMP codepoint starts a
+cluster only when U+FE0F requests emoji presentation, so a bare `©` stays weight
+1 and `©️` is one 2-weight cluster.
+
+`rejectCredentialQueryParams` screens the registration URL's own query before any
+of this, and ONLY on this path. Everywhere else that URL is a click destination
+whose query a server reads; here `composeTweetText` puts it in the tweet body,
+where it is world-readable forever — and a registration link pasted out of a
+logged-in browser carries whatever that session put in it. The check is a
+DENYLIST, not an allowlist, and that is the deliberate call: LF event pages carry
+real routing and attribution parameters nobody can enumerate in advance, so an
+allowlist would refuse working briefs to protect against nothing, while a
+denylist refuses only keys that are credentials under any reading
+(`access_token`, `api_key`, `sessionId`, `jwt`, `password`, `signature`, … with
+`-`, `_` and `.` normalised out and case folded). `code` and `pin` are weighed and
+excluded on purpose — a discount code is the common meaning on a registration
+link. The error names the offending KEY and never its value, and it runs in the
+up-front block so the refusal costs a corrected brief rather than an orphaned
+campaign.
 
 `buildTwitterUTMURL` diverges from `displayTwitterUtmURL` in one way that
 matters: it preserves the registration URL's own pre-existing query parameters

@@ -901,12 +901,24 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   already embedded — that URL keeps its own existing query string
                                   verbatim beside the UTM parameters, since it is the ad's real
                                   click destination; its #fragment is dropped), then promotes it.
+                                  Because that query is PUBLISHED verbatim in the tweet, this is
+                                  the one path that first screens the registration URL's own
+                                  parameters and refuses, pre-create, a key that is a credential
+                                  under any reading (`access_token`, `api_key`, `sessionId`, `jwt`,
+                                  `password`, `signature`, … in any case/separator spelling). The
+                                  error names the offending KEY, never its value. Routing and
+                                  attribution parameters are unaffected, `code` and `pin` included
+                                  — a discount code is not a credential.
                                   The authored tweet is ALWAYS promoted-only
                                   (`nullcast=true`, sent explicitly, never relied on
                                   as X's default) — it never appears on the public timeline or to
                                   followers. Rejected pre-create if the composed text (counting any
                                   embedded URL at X's fixed t.co weight of 23 characters each, not
-                                  raw length) exceeds the 280-character cap. An authoring failure is
+                                  raw length) exceeds the 280-character cap. That cap is X's WEIGHTED
+                                  one, not a rune count: runes outside twitter-text's weight-1
+                                  ranges (CJK and beyond) cost 2 each, while an emoji presentation
+                                  sequence — skin tone, ZWJ family, keycap, country flag — costs 2
+                                  in total. An authoring failure is
                                   non-fatal — the campaign + line item still return, degraded — with
                                   three distinct outcomes: a definite rejection (safe to retry/author
                                   manually), an UNCONFIRMED outcome (may have published — verify in
@@ -915,8 +927,13 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
 asUserId?: string                — Pins which of the ad account's promotable users authors the
                                   tweet (only meaningful with tweetText). Omitted → auto-resolved
                                   via the account's promotable-users list: exactly one candidate is
-                                  used, zero or several are refused (never guessed) — the error
-                                  names the candidates found.
+                                  used, zero or several are refused (never guessed). The refusal
+                                  carries the COUNT of candidates, never their user ids: the message
+                                  reaches an operator through the campaign's persisted warning and
+                                  steps, and the ids are visible in X Ads Manager, where whoever
+                                  sets `asUserId` is already looking. The candidate list is read
+                                  across every page, so a pinned user is not reported absent for
+                                  sitting on page two.
 ```
 
 Connection prerequisites (from the X connection, not this config): the OAuth1 4-tuple (consumer

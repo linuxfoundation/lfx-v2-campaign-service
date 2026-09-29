@@ -343,8 +343,16 @@ func (t *tweetToDeadPortTransport) RoundTrip(r *http.Request) (*http.Response, e
 
 // TestResolvePromotableUser covers the three handle-resolution shapes: a pinned
 // id absent from the account's promotable users is refused; exactly one
-// candidate is auto-used; several candidates with none pinned are refused and
-// named rather than guessed at.
+// candidate is auto-used; several candidates with none pinned are refused
+// rather than guessed at.
+//
+// The multiple-candidate case additionally pins what the refusal may SAY. These
+// errors surface to an operator through the campaign's warning and steps, which
+// are persisted and rendered — so the message carries the count, which is what
+// makes it actionable, and must not carry the ids, which publishes the account's
+// promotable X handles to every reader of the campaign. The assertion is written
+// as an absence on purpose: naming the candidates is the easy, helpful-looking
+// regression, and only a test that fails on the ids appearing will catch it.
 func TestResolvePromotableUser(t *testing.T) {
 	t.Run("pinned not in list is refused", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -382,8 +390,66 @@ func TestResolvePromotableUser(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected an error: several candidates and none pinned must refuse, not guess")
 		}
-		if !strings.Contains(err.Error(), "u1") || !strings.Contains(err.Error(), "u2") {
-			t.Errorf("error should name the candidates, got: %v", err)
+		if strings.Contains(err.Error(), "u1") || strings.Contains(err.Error(), "u2") {
+			t.Errorf("error leaks the promotable user ids into an operator-facing message: %v", err)
+		}
+		if !strings.Contains(err.Error(), "2 promotable users") {
+			t.Errorf("error should give the count so the operator knows to pin one, got: %v", err)
+		}
+	})
+
+	t.Run("pinned user on a later page is found", func(t *testing.T) {
+		// One candidate per page. Before pagination this returned "not among this
+		// account's promotable users" for u2 — a refusal derived from a list the
+		// client had only read the first page of.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("cursor") == "c1" {
+				_, _ = w.Write([]byte(`{"data":[{"user_id":"u2"}],"next_cursor":null}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":[{"user_id":"u1"}],"next_cursor":"c1"}`))
+		}))
+		defer srv.Close()
+		c := newAuthorTweetTestClient(srv.URL)
+		id, err := c.resolvePromotableUser(context.Background(), "u2")
+		if err != nil {
+			t.Fatalf("pinned user on page 2 was not found: %v", err)
+		}
+		if id != "u2" {
+			t.Errorf("resolvePromotableUser = %q, want %q", id, "u2")
+		}
+	})
+
+	t.Run("auto-resolve counts every page before concluding", func(t *testing.T) {
+		// The dangerous shape: page one holds exactly one candidate, so the
+		// single-candidate shortcut would auto-pick u1 and publish under a handle
+		// the caller never chose. Two candidates across two pages must refuse.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("cursor") == "c1" {
+				_, _ = w.Write([]byte(`{"data":[{"user_id":"u2"}],"next_cursor":null}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":[{"user_id":"u1"}],"next_cursor":"c1"}`))
+		}))
+		defer srv.Close()
+		c := newAuthorTweetTestClient(srv.URL)
+		id, err := c.resolvePromotableUser(context.Background(), "")
+		if err == nil {
+			t.Fatalf("resolvePromotableUser auto-picked %q from a paginated list of 2", id)
+		}
+		if !strings.Contains(err.Error(), "2 promotable users") {
+			t.Errorf("error should report both pages' candidates, got: %v", err)
+		}
+	})
+
+	t.Run("a repeated cursor is refused rather than looped", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"user_id":"u1"}],"next_cursor":"same"}`))
+		}))
+		defer srv.Close()
+		c := newAuthorTweetTestClient(srv.URL)
+		if _, err := c.resolvePromotableUser(context.Background(), ""); err == nil {
+			t.Fatal("expected a refusal on a cursor that never advances")
 		}
 	})
 
@@ -522,26 +588,30 @@ func TestBuildTwitterUTMURL_KeepsQueryDropsFragment(t *testing.T) {
 //   - Cancelling from the test goroutine after the call has started races the
 //     handler with no ordering at all.
 //
-// So the handler spawns a goroutine that sleeps briefly and then cancels, and the
-// client is built with a write delay an order of magnitude larger. The authoring
-// POST completes against a local httptest server in well under a millisecond, the
-// following pace(ctx) then blocks for the whole write delay, and the cancel lands
-// squarely inside it. The margin is in the safe direction: a slow machine delays
-// the cancel further INTO the pace window, it does not move it back into the POST.
+// This test used to hit the window by timing: the handler spawned a goroutine that
+// slept 50ms while the client's write delay was 500ms, betting that the authoring
+// POST would finish and the following pace(ctx) would still be parked when the
+// cancel landed. The bet is a good one and it is still a bet — a stalled scheduler
+// or a loaded CI box can put the cancel anywhere, and every way of losing lands on
+// one of the two silent-pass modes above, because nothing in the assertions can
+// tell a window that was missed from a window that was hit.
+//
+// It now cancels from onPaceWait, which pace calls with writeMu held at the instant
+// it is about to sleep out a reservation. `rec.Calls() == 1` identifies that wait as
+// the one AFTER the authoring POST committed and before the promotion POST — the
+// window itself, named rather than estimated. No sleeps, no write delay to
+// out-wait, and the cancel cannot land anywhere else.
 func TestCreateCampaign_AbortBetweenAuthoringAndPromotionRetainsTweetID(t *testing.T) {
-	const (
-		writeDelay  = 500 * time.Millisecond
-		cancelAfter = 50 * time.Millisecond
-	)
+	// Only needs to be non-zero. The old 500ms was the margin the timing bet was won
+	// with; with the cancel delivered by the hook there is nothing left to out-wait,
+	// and the client's clock is stubbed, so every pace before the gate still waits —
+	// it just no longer costs the suite half a second per write to do it.
+	const writeDelay = time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	srv, rec := newAuthorTweetTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		go func() {
-			time.Sleep(cancelAfter)
-			cancel()
-		}()
 		_, _ = w.Write([]byte(`{"data":{"id":123456789,"id_str":"123456789"}}`))
 	}, `{"data":[{"user_id":"u1","promotable_user_type":"FULL"}]}`)
 	defer srv.Close()
@@ -554,6 +624,13 @@ func TestCreateCampaign_AbortBetweenAuthoringAndPromotionRetainsTweetID(t *testi
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
+	c.onPaceWait = func(_ context.Context, _ time.Duration) {
+		// Exactly one tweet POST has been served: the tweet exists, the promotion
+		// has not been issued, and this goroutine is holding the gate between them.
+		if rec.Calls() == 1 {
+			cancel()
+		}
+	}
 
 	result, err := c.CreateCampaign(ctx, baseAuthorInput("Join us at KubeCon"))
 
@@ -580,5 +657,277 @@ func TestCreateCampaign_AbortBetweenAuthoringAndPromotionRetainsTweetID(t *testi
 	// only trace of it is a prose Steps entry.
 	if !strings.Contains(err.Error(), "authored tweet 123456789 PUBLISHED, not yet promoted") {
 		t.Errorf("abort error does not name the published tweet: %v", err)
+	}
+}
+
+// TestCreateCampaign_RejectsCredentialQueryParamBeforeAnythingIsCreated covers the
+// one workflow that PUBLISHES the registration URL's pre-existing query: authoring a
+// tweet from TweetText builds the destination from RegistrationURL and puts it in
+// the tweet body, where it is world-readable forever. A registration link pasted out
+// of a logged-in browser can carry a session token in that query.
+//
+// Two things are asserted, and the second is the point. The create must be refused —
+// and it must be refused with NOTHING created, which is why the check sits in the
+// up-front validation block rather than next to the authoring call. A refusal after
+// the campaign and line item exist leaves an operator to clean up; a refusal here
+// costs them a corrected brief.
+func TestCreateCampaign_RejectsCredentialQueryParamBeforeAnythingIsCreated(t *testing.T) {
+	for _, param := range []string{"access_token", "API-KEY", "sessionId", "jwt", "pwd"} {
+		t.Run(param, func(t *testing.T) {
+			var writes atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					writes.Add(1)
+				}
+				w.WriteHeader(http.StatusNotFound)
+			}))
+			defer srv.Close()
+
+			in := baseAuthorInput("Register now")
+			in.RegistrationURL = "https://events.lf.org/kubecon?" + param + "=s3cr3t"
+
+			c := newAuthorTweetTestClient(srv.URL)
+			_, err := c.CreateCampaign(context.Background(), in)
+			if err == nil {
+				t.Fatalf("a registration URL carrying %q was accepted for publication", param)
+			}
+			if !strings.Contains(err.Error(), param) {
+				t.Errorf("error should name the offending parameter %q, got: %v", param, err)
+			}
+			if strings.Contains(err.Error(), "s3cr3t") {
+				t.Errorf("error echoes the credential VALUE back: %v", err)
+			}
+			if n := writes.Load(); n != 0 {
+				t.Errorf("%d write(s) were issued before the refusal; the check must run before anything is created", n)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_AllowsOrdinaryRegistrationQueryParams is the other half of the
+// guard, and the reason it is a denylist rather than an allowlist. LF event pages
+// carry real routing and attribution parameters that cannot be enumerated in
+// advance; rejecting an unrecognised one would break working briefs to protect
+// against nothing. `code` is here deliberately — a discount code is the common
+// meaning on a registration link, and it is not a credential.
+func TestCreateCampaign_AllowsOrdinaryRegistrationQueryParams(t *testing.T) {
+	srv, rec := newAuthorTweetTestServer(t, nil, `{"data":[{"user_id":"u1"}]}`)
+	defer srv.Close()
+
+	in := baseAuthorInput("Register now")
+	in.RegistrationURL = "https://events.lf.org/kubecon?ref=partner&lang=de&code=SAVE20&pin=4"
+
+	c := newAuthorTweetTestClient(srv.URL)
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("an ordinary registration URL was refused: %v", err)
+	}
+	if rec.Calls() != 1 {
+		t.Fatalf("tweet endpoint called %d times, want 1", rec.Calls())
+	}
+}
+
+// TestCreateCampaign_429OnAuthoringIssuesExactlyOneRequest pins the retry decision
+// that makes tweet authoring different from every other create in this package.
+//
+// A 429 is normally retried, and for the other three creates that is right: they are
+// found-or-created by name or answer a repeat with DUPLICATE_PROMOTABLE_ENTITY. A
+// tweet has neither. X can report a 429 at OR AFTER accepting the write, so a
+// retried authoring POST can publish a second tweet under the LF handle — and the
+// request layer would have done it twice more before this function returned.
+//
+// The endpoint therefore must be hit exactly once, and the resulting failure must
+// stay the non-fatal degrade (an operator is told to check X Ads Manager), not a
+// hard error that loses the campaign.
+func TestCreateCampaign_429OnAuthoringIssuesExactlyOneRequest(t *testing.T) {
+	srv, rec := newAuthorTweetTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"RATE_LIMIT","message":"too many requests"}]}`))
+	}, `{"data":[{"user_id":"u1"}]}`)
+	defer srv.Close()
+
+	c := newAuthorTweetTestClient(srv.URL)
+	res, err := c.CreateCampaign(context.Background(), baseAuthorInput("Join us at KubeCon"))
+	if err != nil {
+		t.Fatalf("a throttled authoring POST must degrade, not fail the campaign: %v", err)
+	}
+	if rec.Calls() != 1 {
+		t.Fatalf("tweet endpoint called %d times, want exactly 1 — a retried 429 can publish a duplicate tweet", rec.Calls())
+	}
+	if res == nil || res.CampaignID == "" {
+		t.Fatal("campaign id lost on the degrade path")
+	}
+	if res.PromotedTweetWarning == "" {
+		t.Error("operator was not warned that the tweet may or may not have been published")
+	}
+}
+
+// TestCreateCampaign_PacesImmediatelyBeforeAuthoring pins the ORDER of the
+// promotable-user lookup and the pacer.
+//
+// pace RESERVES the next write slot; it does not hold one open. With the
+// reservation taken first, the promotable_users GET sat inside the reservation, and
+// a concurrent writer sharing this client could reserve and issue in that window —
+// so the two writes landed together and rebuilt the burst the pacer exists to
+// prevent. The read is unpaced and costs nothing to move, so it runs first and the
+// reservation is taken immediately before the POST it spaces out.
+//
+// The assertion is on the sequence of observed events rather than on elapsed time:
+// a duration assertion passes for the wrong reason whenever the machine is slow.
+func TestCreateCampaign_PacesImmediatelyBeforeAuthoring(t *testing.T) {
+	var mu sync.Mutex
+	var events []string
+	note := func(s string) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, s)
+	}
+
+	srv, _ := newAuthorTweetTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		note("POST tweet")
+		_, _ = w.Write([]byte(`{"data":{"id":1,"id_str":"1"}}`))
+	}, `{"data":[{"user_id":"u1"}]}`)
+	defer srv.Close()
+
+	// A non-zero write delay is required: pace returns before it reserves anything
+	// when the delay is zero, so onAdmit never fires and the test would observe an
+	// ordering that does not exist.
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(time.Millisecond),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+	c.onAdmit = func(_ context.Context, _ time.Time) { note("admit") }
+
+	// Wrap the transport so the promotable_users GET is observed at the same level
+	// as the admissions, which is the only way to place one relative to the other.
+	base := c.httpClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	c.httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "promotable_users") {
+			note("GET promotable_users")
+		}
+		return base.RoundTrip(r)
+	})
+
+	if _, err := c.CreateCampaign(context.Background(), baseAuthorInput("Join us at KubeCon")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	get, admit, post := -1, -1, -1
+	for i, e := range events {
+		switch {
+		case e == "GET promotable_users" && get < 0:
+			get = i
+		case e == "POST tweet" && post < 0:
+			post = i
+		}
+	}
+	// The admission that matters is the LAST one before the tweet POST.
+	for i := 0; i < post; i++ {
+		if events[i] == "admit" {
+			admit = i
+		}
+	}
+	if get < 0 || admit < 0 || post < 0 {
+		t.Fatalf("missing events, got %v", events)
+	}
+	if get >= admit || admit >= post {
+		t.Errorf("want GET promotable_users -> admit -> POST tweet, got %v", events)
+	}
+}
+
+// roundTripFunc adapts a function to http.RoundTripper.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestWeightedTweetLen_WeightsNonLatinAtTwo pins the half of twitter-text the
+// counter used to ignore entirely: X does not count characters, it counts WEIGHT.
+// Latin, digits and common punctuation weigh 1; everything outside the four
+// weight-1 ranges — CJK, Cyrillic, Arabic, emoji — weighs 2. A rune count therefore
+// under-counts a CJK tweet by half, and 280 CJK characters were accepted here and
+// rejected by X.
+//
+// Direction matters in both cases, which is why the emoji rows are here. An
+// UNDER-count sends copy X refuses: a wasted round trip and an operator-facing
+// error. An OVER-count invents a rejection of copy X would have accepted, which no
+// retry fixes and no error explains. So an emoji presentation sequence weighs 2 in
+// TOTAL, not 2 per codepoint, and a country flag weighs 2 rather than 4.
+func TestWeightedTweetLen_WeightsNonLatinAtTwo(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		text string
+		want int
+	}{
+		{"ascii weighs one each", "abc", 3},
+		{"latin-1 accents stay weight 1", "café", 4},
+		{"cjk weighs two each", "日本語", 6},
+		// Cyrillic, Greek, Hebrew and Arabic all sit inside twitter-text's first
+		// weight-1 range ([0,4351]) — only CJK and beyond weigh 2. Asserting the
+		// obvious-looking 2 here would encode a stricter counter than X's and
+		// reject Russian copy X accepts.
+		{"cyrillic stays weight 1", "Привет", 6},
+		{"general punctuation in the weight-1 range", "–—", 2},
+		{"mixed script sums per rune", "Hi 日本", 3 + 4},
+		// A lone BMP symbol is NOT an emoji cluster unless emoji presentation is
+		// requested with U+FE0F. Bare © is U+00A9, inside the weight-1 range; the
+		// same character WITH the selector is an emoji presentation sequence and
+		// weighs 2 as one cluster, not 1+2.
+		{"bare copyright sign", "©", 1},
+		{"copyright with emoji presentation", "©️", 2},
+		{"single emoji weighs two", "🎉", 2},
+		{"emoji with skin tone weighs two", "👍🏽", 2},
+		{"zwj family sequence weighs two", "👨‍👩‍👧‍👦", 2},
+		{"keycap sequence weighs two", "1️⃣", 2},
+		{"country flag weighs two", "🇺🇸", 2},
+		{"two country flags weigh two each", "🇺🇸🇯🇵", 4},
+		{"emoji adjacent to text", "Hi 🎉", 3 + 2},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := weightedTweetLen(tc.text); got != tc.want {
+				t.Fatalf("weightedTweetLen(%q) = %d, want %d", tc.text, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_RejectsOverWeightCJKText is the end-to-end half: 200 CJK
+// characters are 200 runes and 400 weighted, so the pre-create gate must refuse them
+// with nothing created. docs/api-catalog.md promises exactly this rejection.
+func TestCreateCampaign_RejectsOverWeightCJKText(t *testing.T) {
+	var writes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			writes.Add(1)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	text := strings.Repeat("日", 200)
+	if utf8.RuneCountInString(text) > maxTweetWeightedChars {
+		t.Fatalf("test text is already over the cap by rune count (%d); it would be rejected without weighting", utf8.RuneCountInString(text))
+	}
+
+	c := newAuthorTweetTestClient(srv.URL)
+	_, err := c.CreateCampaign(context.Background(), baseAuthorInput(text))
+	if err == nil {
+		t.Fatal("200 CJK characters weigh 400 and X refuses them; the gate accepted the text")
+	}
+	if n := writes.Load(); n != 0 {
+		t.Errorf("%d write(s) issued before the refusal; the length gate must run before anything is created", n)
 	}
 }

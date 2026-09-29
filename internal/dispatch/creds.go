@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -104,6 +105,39 @@ func sanitizeSnapshotURL(raw string) string {
 		return "" // fail closed: don't store a value that may embed userinfo credentials
 	}
 	return trimmed
+}
+
+// snapshotURLRunRe matches an http/https URL run inside free text: everything from the
+// scheme up to the first character that cannot continue a URL. Whitespace ends a run, and
+// so do the characters that in prose almost always belong to the sentence rather than the
+// link — a trailing quote, bracket or angle. Sentence-final punctuation ('.', ',', ')',
+// '!', '?') IS admitted here, because it is legal inside a URL and a run trimmed too
+// eagerly leaves the query fragment behind as bare text, which is the exact leak this
+// exists to prevent. Over-matching costs a sanitized URL a trailing period; under-matching
+// costs a token.
+var snapshotURLRunRe = regexp.MustCompile(`(?i)\bhttps?://[^\s<>"'\x60\]}|\\^]+`)
+
+// sanitizeSnapshotText strips the query and fragment from every URL embedded in free text
+// before that text is stored in config_snapshot (which is persisted UNENCRYPTED).
+//
+// sanitizeSnapshotURL already does this for a field that IS a URL. A free-text field is the
+// same exposure with an extra step: X's tweetText is operator-authored prose that routinely
+// carries a registration link, and a link pasted out of a browser carries whatever query the
+// operator's session put there — including, in the shapes the create path now refuses
+// outright, a token. Refusing those at create does not help a campaign snapshot written
+// before that check existed, nor a credential-shaped parameter the denylist does not name,
+// and the snapshot is the copy that persists.
+//
+// Each run is rewritten through sanitizeSnapshotURL, so the two paths cannot drift on what
+// "stripped" means. A run sanitizeSnapshotURL fails closed on (embedded userinfo) is
+// replaced by nothing, which is the same fail-closed answer the single-URL path gives. Text
+// outside a URL run is left exactly as written — this redacts links, it does not attempt to
+// find secrets in prose.
+func sanitizeSnapshotText(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	return snapshotURLRunRe.ReplaceAllStringFunc(raw, sanitizeSnapshotURL)
 }
 
 // parseCampaignDate parses a YYYY-MM-DD config date to a *time.Time (UTC), returning

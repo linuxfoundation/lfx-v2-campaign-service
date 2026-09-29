@@ -471,7 +471,7 @@ func TestRetryOn429(t *testing.T) {
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
 
-	resp, err := c.createRequest(context.Background(), "campaigns", map[string]string{"name": "x"})
+	resp, err := c.createRequest(context.Background(), "campaigns", map[string]string{"name": "x"}, true /* idempotent: found-or-created by name */)
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -524,7 +524,7 @@ func TestRetryOn429ReusesTheConnection(t *testing.T) {
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
 
-	if _, err := c.createRequest(context.Background(), "campaigns", map[string]string{"name": "x"}); err != nil {
+	if _, err := c.createRequest(context.Background(), "campaigns", map[string]string{"name": "x"}, true /* idempotent: found-or-created by name */); err != nil {
 		t.Fatalf("request: %v", err)
 	}
 
@@ -4399,7 +4399,7 @@ func TestWriteRetryRePacesButReadRetryDoesNot(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			_, _ = c.doRequestAbs(ctx, tc.method, srv.URL+"/x", "x", nil)
+			_, _ = c.doRequestAbs(ctx, tc.method, srv.URL+"/x", "x", nil, true /* idempotent */)
 
 			if got := calls.Load(); got != tc.wantCalls {
 				t.Errorf("%s reached the server %d times; want %d", tc.method, got, tc.wantCalls)

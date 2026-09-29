@@ -91,6 +91,33 @@ revoked or deleted.
    human or monitor to reconcile. The orchestrator fills project/brief/job/platform
    (and, for a retained ambiguous orphan, a `pending` status).
 
+## `config_snapshot` is persisted UNENCRYPTED, so URLs are stripped before they reach it
+
+`applyCampaignConfig` marshals the validated per-platform config struct whole into
+`Campaign.ConfigSnapshot`, and that column is stored in the clear and outlives the
+campaign. A URL's query and fragment are the part of a config most likely to carry a
+secret, so every adapter that snapshots one rewrites it first rather than trusting its
+contents: `sanitizeSnapshotURL` keeps scheme+host+path and nothing else, failing closed
+(to empty) on a value carrying userinfo. `reddit.go` applies it to `PostURL`/`ImageURL`,
+`meta.go` to each variant's `ImageURL`.
+
+X's `tweetText` is the same exposure through a free-text field. It is operator-authored
+prose that routinely carries a registration link, and a link pasted out of a logged-in
+browser brings whatever query that session put in it. `sanitizeSnapshotText` rewrites
+every `http`/`https` run in the text through `sanitizeSnapshotURL`, so the two paths
+cannot drift on what "stripped" means, and leaves the surrounding prose exactly as
+written — it redacts links, it does not go looking for secrets in sentences. Runs are
+matched greedily up to whitespace or a quote/bracket: sentence-final punctuation is legal
+inside a URL, and a run trimmed too eagerly leaves the query behind as bare text, which is
+the exact leak this prevents. `campaignFromTwitter` sanitizes a COPY of the config, so the
+text actually sent to X is untouched.
+
+This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a
+credential-SHAPED parameter because the text is about to be PUBLISHED, and it is a
+denylist that cannot name every credential parameter a registration page might use, and it
+does not apply at all to rows written before it existed. The snapshot does not have to
+guess, so it keeps nothing.
+
 ## The claim contract (release vs retain)
 
 The claim is PERMANENT until released — deliberately NOT auto-reclaimed on a timer. `pending`

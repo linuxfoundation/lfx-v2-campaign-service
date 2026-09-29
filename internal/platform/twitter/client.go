@@ -184,6 +184,18 @@ type Client struct {
 	// dead. Both order and liveness have to be observed at the reservation itself.
 	// Never set in production.
 	onAdmit func(context.Context, time.Time)
+
+	// onPaceWait, when set, is called by pace immediately BEFORE it sleeps out a
+	// reservation, with the waiting caller's context and the remaining wait, while
+	// writeMu is still held. onAdmit's sibling and its complement: onAdmit fires once
+	// the wait is over, so it cannot be used to act DURING the window a caller is
+	// parked in.
+	//
+	// That window is the only place some behaviour is observable — a cancellation
+	// between two writes has to land inside it, and a test that arranges that with a
+	// sleep is asserting on a race it can lose silently. Firing here makes the same
+	// window an ordinary synchronous callback. Never set in production.
+	onPaceWait func(context.Context, time.Duration)
 }
 
 // Option customizes a Client at construction time.
@@ -894,7 +906,9 @@ func (c *Client) statsURL() string {
 // signing and 429 exponential-backoff retry. Any parameters must be encoded
 // into path as a query string. Mirrors twitterRequest in the TS for reads.
 func (c *Client) request(ctx context.Context, method, path string) (*apiResponse, error) {
-	return c.doRequest(ctx, method, path, nil)
+	// Reads are idempotent by construction: this helper is GET/list only, so a 429
+	// costs nothing to re-issue.
+	return c.doRequest(ctx, method, path, nil, true /* idempotent */)
 }
 
 // createRequest performs an X Ads API create (POST) call. Per the X Ads v12
@@ -903,8 +917,13 @@ func (c *Client) request(ctx context.Context, method, path string) (*apiResponse
 // appended to the request URL and also folded into the OAuth signature base
 // string (OAuth 1.0a signs query params), and the request is sent with no
 // body. Callers own the 1-req/sec write delay.
-func (c *Client) createRequest(ctx context.Context, path string, params map[string]string) (*apiResponse, error) {
-	return c.doRequest(ctx, http.MethodPost, path, params)
+//
+// idempotent is passed through to doRequest's 429 handling and is a PER-ENDPOINT
+// property, not a property of POST: see doRequestAbs. Every caller states it
+// explicitly rather than inheriting a default, because the endpoint that must say
+// false (tweet authoring) is the one whose accidental repeat is irreversible.
+func (c *Client) createRequest(ctx context.Context, path string, params map[string]string, idempotent bool) (*apiResponse, error) {
+	return c.doRequest(ctx, http.MethodPost, path, params, idempotent)
 }
 
 // doRequest is the shared HTTP path with OAuth1 signing and 429
@@ -914,7 +933,7 @@ func (c *Client) createRequest(ctx context.Context, path string, params map[stri
 // (accountURL) — callers whose endpoint is NOT nested under
 // /accounts/{accountID} (e.g. the stats endpoint, which is
 // /stats/accounts/{accountID}) must use doRequestAbs directly instead.
-func (c *Client) doRequest(ctx context.Context, method, path string, queryParams map[string]string) (*apiResponse, error) {
+func (c *Client) doRequest(ctx context.Context, method, path string, queryParams map[string]string, idempotent bool) (*apiResponse, error) {
 	// An empty path targets the account root itself (accountURL) — used by
 	// verifyAccount's GET — so don't append a bare "/" that would change the URL.
 	reqURL := c.accountURL()
@@ -922,7 +941,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 		reqURL += "/" + p
 	}
 
-	return c.doRequestAbs(ctx, method, reqURL, path, queryParams)
+	return c.doRequestAbs(ctx, method, reqURL, path, queryParams, idempotent)
 }
 
 // drainAndClose discards a bounded amount of an unread response body before closing
@@ -942,7 +961,20 @@ func drainAndClose(resp *http.Response) {
 // prefixing). logPath is used only for error labeling (apiError/transportError
 // Path field), so callers whose reqURL isn't accountURL()-rooted can still
 // pass a meaningful label. queryParams, when non-nil, are appended to reqURL.
-func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath string, queryParams map[string]string) (*apiResponse, error) {
+//
+// idempotent gates the 429 retry, and is an EXPLICIT PARAMETER rather than something
+// inferred from the HTTP method — the same discipline the googleads client states for
+// its own doRequest, where POST `:search` is read-only and POST `:mutate` must not be
+// retried. Here the split does not follow the method either: the campaign, line-item
+// and promoted-tweet creates are all POSTs that are found-or-created (by name, or by
+// X's DUPLICATE_PROMOTABLE_ENTITY), so re-issuing one converges on the same entity and
+// they pass true. Tweet authoring has no lookup and no idempotency key — X publishes a
+// SECOND tweet — so it passes false: its first 429 is returned rather than retried.
+// A 429 stays an *apiError either way, so createOutcomeAmbiguous still classifies the
+// mutating case as UNCONFIRMED and the caller still tells the operator to verify in X
+// Ads Manager before retrying. What false removes is this layer silently doing the
+// unverified retry on the operator's behalf.
+func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath string, queryParams map[string]string, idempotent bool) (*apiResponse, error) {
 	// Entry-time only — see errRequestContextAlreadyDone. Without it a caller that had
 	// already cancelled got the context error back out of http.Client.Do wrapped as a
 	// transportError, which ProbeNotSent does not recognise: the probe then charged X's
@@ -998,8 +1030,10 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 			// If this was the last attempt, don't sleep+retry: the loop would
 			// exit and the 429 would otherwise fall through to the generic
 			// non-2xx return below. Surface the intended exhausted-rate-limit
-			// error instead.
-			if attempt >= retryMax {
+			// error instead. A NON-idempotent call takes the same exit on its
+			// FIRST 429: X may already have committed the write it throttled,
+			// and re-issuing it would publish a duplicate.
+			if attempt >= retryMax || !idempotent {
 				drainAndClose(resp)
 				return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
 			}
@@ -1267,6 +1301,9 @@ func (c *Client) pace(ctx context.Context) error {
 	// client goes immediately rather than paying a delay for a slot nobody used.
 	if !c.nextWrite.IsZero() {
 		if wait := c.nextWrite.Sub(now); wait > 0 {
+			if c.onPaceWait != nil {
+				c.onPaceWait(ctx, wait)
+			}
 			if err := sleepCtx(ctx, wait); err != nil {
 				// Cancelled while waiting: no write is issued, so do NOT advance the
 				// reservation. Advancing here would make a cancelled caller push the
@@ -1605,6 +1642,75 @@ func validateRegistrationURL(raw string) error {
 	}
 }
 
+// credentialQueryKeys names registration-URL query KEYS whose value is authentication
+// material rather than routing. Keys are compared case-insensitively with `-`, `_` and
+// `.` removed, so `access-token`, `Access_Token` and `accesstoken` are one entry.
+//
+// This is a DENYLIST, deliberately, and the reviewer's stricter suggestion — allow only
+// modeled routing params — was considered and rejected: the registration URL belongs to
+// whoever wrote the brief, and the routing params real LF event pages use (`ref`,
+// `lang`, `discount`, tracking ids of a dozen vendors) cannot be enumerated in advance.
+// An allowlist would reject working briefs, and the operator's only recourse would be
+// to drop a parameter the page needs. A denylist inverts that: it fails the create for
+// the shapes that are credentials under any reading, and passes everything else.
+//
+// The asymmetry is the point. A false positive is a pre-mutation rejection naming the
+// key, which an operator fixes in seconds. A false negative publishes a live credential
+// to X Ads Manager and to every viewer of the ad, permanently. So where a name is
+// arguable, it is listed. Names that are NOT listed, having been weighed: `code` and
+// `pin`, because `?code=SAVE20` is an ordinary discount parameter on an LF events page
+// and rejecting it would break real briefs — an OAuth authorization code, the credential
+// reading of `code`, is single-use and scoped to a redirect that has already happened.
+var credentialQueryKeys = map[string]struct{}{
+	"token": {}, "accesstoken": {}, "idtoken": {}, "refreshtoken": {}, "authtoken": {},
+	"apitoken": {}, "sessiontoken": {}, "bearertoken": {},
+	"secret": {}, "clientsecret": {}, "consumersecret": {}, "apisecret": {},
+	"key": {}, "apikey": {}, "privatekey": {}, "sharedkey": {}, "secretkey": {},
+	"password": {}, "passwd": {}, "pwd": {}, "pass": {},
+	"auth": {}, "authorization": {}, "bearer": {}, "credential": {}, "credentials": {},
+	"session": {}, "sessionid": {}, "sid": {},
+	"sig": {}, "signature": {}, "hmac": {}, "jwt": {},
+}
+
+// credentialQueryKeyNormalizer folds the separators a query key can be spelled with, so
+// one denylist entry covers every spelling of the same name.
+var credentialQueryKeyNormalizer = strings.NewReplacer("-", "", "_", "", ".", "")
+
+// rejectCredentialQueryParams refuses a registration URL that carries a credential-like
+// query parameter, and is called ONLY on the tweetText path, before any mutating call.
+//
+// The gate exists because that path is the one that PUBLISHES the URL. buildTwitterUTMURL
+// keeps the brief's pre-existing query verbatim — it has to, since dropping a routing
+// param would send real ad traffic to the wrong page — and the result goes into the text
+// of a tweet, visible in X Ads Manager and to anyone the ad reaches. validateRegistrationURL
+// rejects userinfo, which is the other place a URL hides a secret, but says nothing about
+// the query; a `?token=...` therefore travelled all the way to publication. Documenting
+// "do not put secrets in the registration URL" does not stop a brief that already has one.
+//
+// Deliberately NOT applied to the other two workflows. When TweetID is set, or when
+// neither TweetID nor TweetText is, the only URL this client emits is displayTwitterUtmURL's,
+// which strips the pre-existing query outright — nothing is published and nothing is
+// persisted, so rejecting those briefs would fail a create for an exposure that cannot
+// occur. The error names the KEY and never the value: a key name is not itself a secret,
+// and it is what the operator needs in order to fix the brief.
+func rejectCredentialQueryParams(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		// Unreachable in the create flow — validateRegistrationURL has already parsed
+		// this value — but fail CLOSED rather than treating an unparseable URL as
+		// having no query, which would hand this helper's guarantee to a caller that
+		// reordered the two checks.
+		return fmt.Errorf("registration URL %q could not be re-parsed to check for credential parameters", redactURLForError(raw))
+	}
+	for key := range u.Query() {
+		norm := strings.ToLower(credentialQueryKeyNormalizer.Replace(key))
+		if _, bad := credentialQueryKeys[norm]; bad {
+			return fmt.Errorf("registration URL query parameter %q looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the registration URL, or supply an explicit tweetId instead of tweetText", key)
+		}
+	}
+	return nil
+}
+
 // twitterUTMParams is the allowlist of utm_* params THIS client generates (the source
 // of truth for both the real destination URL and the sanitized display copy).
 func twitterUTMParams(in CampaignInput) map[string]string {
@@ -1685,18 +1791,165 @@ var tweetURLRe = regexp.MustCompile(`https?://\S+`)
 // create. Counting every occurrence rather than the first matters for the same
 // reason — X weights each one.
 //
-// Still a best-effort approximation: X's weighted-length rules cover more than
-// URLs (CJK runes count double, which this does not model). That residue can only
-// make this count LOW relative to X, so it never invents a rejection — an
-// over-long tweet X refuses comes back as a 4xx and degrades non-fatally, which is
-// the safe direction for a guard whose job is catching the obvious case.
+// Every OTHER rune is weighted by X's published weighted-ranges rule rather than
+// counted as one: a codepoint inside tweetWeightOneRanges costs 1 and everything
+// else costs 2, and an emoji presentation sequence costs 2 in total however many
+// codepoints it spans. An earlier revision counted every non-URL rune as 1, which
+// UNDERCOUNTED CJK and made the pre-create guard a promise the create could not
+// keep: docs/api-catalog.md says text over the 280-character cap is rejected before
+// anything is created, but 200 Japanese characters (400 to X) passed the guard, the
+// campaign and line item were created, and only then did X refuse the tweet — the
+// exact avoidable degrade the up-front validation block exists to prevent.
+//
+// The emoji collapse is not a refinement, it is what keeps the fix from breaking
+// the other direction. Weighing an emoji per-codepoint would charge a ZWJ family
+// sequence 10 or 12 where X charges 2, and a guard that OVERCOUNTS invents a
+// rejection: copy X would have accepted is refused before the create, with no way
+// for the operator to tell why. Undercounting only degrades a create that X then
+// refuses; overcounting blocks a valid one outright, so the collapse is the arm
+// that must be right.
 func weightedTweetLen(s string) int {
-	n := utf8.RuneCountInString(s)
+	// URLs first: X rewrites each to a t.co link of fixed weight regardless of the
+	// codepoints inside it, so they must not also be weighed rune by rune.
+	n := 0
+	rest := s
 	for _, u := range tweetURLRe.FindAllString(s, -1) {
-		n -= utf8.RuneCountInString(u)
-		n += tcoURLWeight
+		idx := strings.Index(rest, u)
+		if idx < 0 {
+			// Unreachable: u came from rest's own prefix-ordered matches.
+			continue
+		}
+		n += weightedRunLen(rest[:idx]) + tcoURLWeight
+		rest = rest[idx+len(u):]
+	}
+	return n + weightedRunLen(rest)
+}
+
+// runeRange is an inclusive codepoint interval.
+type runeRange struct{ lo, hi rune }
+
+// tweetWeightOneRanges are the codepoint ranges X weighs at 1; every codepoint
+// outside them weighs 2. These are X's published weighted ranges (the
+// `weightedRanges` of twitter-text's v3 configuration, whose weights of 100 against
+// a scale of 100 and a defaultWeight of 200 are 1 and 2 here). Latin, digits and
+// punctuation fall in the first range; CJK, Hangul, Cyrillic beyond the first range,
+// and the emoji planes do not, which is the whole point.
+var tweetWeightOneRanges = []runeRange{
+	{0x0000, 0x10FF},
+	{0x2000, 0x200D},
+	{0x2010, 0x201F},
+	{0x2032, 0x2037},
+}
+
+// emojiPlaneLo/emojiPlaneHi bound the supplementary planes X's emoji set lives in.
+// A codepoint at or above emojiPlaneLo starts an emoji presentation sequence on its
+// own; a BMP codepoint starts one only when followed by U+FE0F, the variation
+// selector that REQUESTS emoji presentation. That split is what keeps a bare "©" or
+// "▶" weighed by the range table (X weighs those as text, and "©" as 1) while
+// "©️" and "▶️" collapse to 2 like any other emoji.
+const (
+	emojiPlaneLo = 0x1F000
+	emojiPlaneHi = 0x1FFFD
+	// zeroWidthJoiner binds the parts of a composed emoji (family, profession).
+	zeroWidthJoiner = 0x200D
+	// variationSelector16 requests emoji presentation for a BMP codepoint.
+	variationSelector16 = 0xFE0F
+	// variationSelector15 requests TEXT presentation; it is consumed as part of the
+	// sequence when it follows an emoji-plane codepoint so it is not weighed alone.
+	variationSelector15 = 0xFE0E
+	// combiningEnclosingKeycap completes a keycap sequence ("1️⃣").
+	combiningEnclosingKeycap = 0x20E3
+	skinToneLo               = 0x1F3FB
+	skinToneHi               = 0x1F3FF
+	// regionalIndicatorLo/Hi are the letters a country flag is spelled with: a flag is
+	// exactly TWO of them and X weighs the pair as one emoji. They are handled as their
+	// own case because a regional indicator is not a modifier of the one before it —
+	// left to the joiner rules a flag would be read as two separate emoji and weighed 4.
+	regionalIndicatorLo = 0x1F1E6
+	regionalIndicatorHi = 0x1F1FF
+	// tagLo/tagHi are the tag characters that spell out subdivision flags.
+	tagLo = 0xE0020
+	tagHi = 0xE007F
+)
+
+// weightedRunLen weighs a stretch of text that contains no URL.
+func weightedRunLen(s string) int {
+	n := 0
+	rs := []rune(s)
+	for i := 0; i < len(rs); {
+		if size := emojiClusterLen(rs[i:]); size > 0 {
+			// The whole sequence costs what a single default-weight codepoint costs.
+			n += 2
+			i += size
+			continue
+		}
+		n += runeWeight(rs[i])
+		i++
 	}
 	return n
+}
+
+// runeWeight is X's per-codepoint weight: 1 inside the published weighted ranges,
+// 2 outside them.
+func runeWeight(r rune) int {
+	for _, rr := range tweetWeightOneRanges {
+		if r >= rr.lo && r <= rr.hi {
+			return 1
+		}
+	}
+	return 2
+}
+
+// isRegionalIndicator reports whether r is one of the 26 letters country flags are
+// spelled with.
+func isRegionalIndicator(r rune) bool {
+	return r >= regionalIndicatorLo && r <= regionalIndicatorHi
+}
+
+// emojiClusterLen returns how many runes of rs form ONE emoji presentation sequence
+// starting at rs[0], or 0 when no such sequence starts there. It is deliberately
+// permissive about what it will absorb once a sequence has started — joiners, skin
+// tones, variation selectors, keycaps and tag characters — because every one of
+// those is a modifier X folds into the single emoji it modifies, and absorbing one
+// too many can only move this count DOWN toward the safe direction, never up into
+// inventing a rejection.
+func emojiClusterLen(rs []rune) int {
+	if len(rs) == 0 {
+		return 0
+	}
+	first := rs[0]
+	inPlane := first >= emojiPlaneLo && first <= emojiPlaneHi
+	// A BMP codepoint is only an emoji when it ASKS to be one.
+	requested := len(rs) > 1 && rs[1] == variationSelector16
+	if !inPlane && !requested {
+		return 0
+	}
+	// A flag is a PAIR of regional indicators and nothing else; consume exactly two so
+	// the pair weighs 2 rather than 2 each, and so a run of four (two flags) is read as
+	// two emoji rather than one long one.
+	if isRegionalIndicator(first) {
+		if len(rs) > 1 && isRegionalIndicator(rs[1]) {
+			return 2
+		}
+		return 1
+	}
+	i := 1
+	for i < len(rs) {
+		r := rs[i]
+		switch {
+		case r == variationSelector16, r == variationSelector15,
+			r == combiningEnclosingKeycap,
+			r >= skinToneLo && r <= skinToneHi,
+			r >= tagLo && r <= tagHi:
+			i++
+		case r == zeroWidthJoiner && i+1 < len(rs):
+			// The joiner AND the codepoint it joins belong to this one emoji.
+			i += 2
+		default:
+			return i
+		}
+	}
+	return i
 }
 
 // composeTweetText builds the FINAL text of an authored tweet from caller
@@ -1988,6 +2241,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// (before any mutating call) so Step 4 need not re-validate.
 	var composedTweetText string
 	if in.TweetID == "" && strings.TrimSpace(in.TweetText) != "" {
+		// This is the one workflow that publishes the registration URL's pre-existing
+		// query. Refuse a credential-bearing parameter here, before the campaign and
+		// line item exist, so the failure costs nothing to recover from.
+		if err := rejectCredentialQueryParams(in.RegistrationURL); err != nil {
+			return nil, err
+		}
 		destURL, err := buildTwitterUTMURL(in)
 		if err != nil {
 			return nil, err
@@ -2095,7 +2354,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				Steps:        steps,
 			}
 		}
-		resp, err := c.createRequest(ctx, "campaigns", campaignParams)
+		resp, err := c.createRequest(ctx, "campaigns", campaignParams, true /* idempotent: found-or-created by name */)
 		if err != nil {
 			// An AMBIGUOUS failure (mutating 3xx/5xx or a transport error) may follow a
 			// committed campaign create — X may have made the PAUSED campaign under the
@@ -2208,7 +2467,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if err := c.pace(ctx); err != nil {
 			return partialResult(), fmt.Errorf("x line item creation aborted (%s): %w", campaignStatus(), err)
 		}
-		resp, err := c.createRequest(ctx, "line_items", lineItemParams)
+		resp, err := c.createRequest(ctx, "line_items", lineItemParams, true /* idempotent: found-or-created by name */)
 		if err != nil {
 			// An AMBIGUOUS failure (mutating 3xx/5xx or a transport error) may follow a
 			// committed line-item create — word it UNCONFIRMED so a caller reconciling
@@ -2267,9 +2526,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// survives every abort on this path, so the operator retrying has the handle to
 	// the existing tweet instead of only a prose Steps line.
 	if tweetID == "" && composedTweetText != "" {
-		if err := c.pace(ctx); err != nil {
-			return partialResult(), fmt.Errorf("x tweet authoring aborted (%s / %s): %w", campaignStatus(), lineItemStatus(), err)
-		}
 		// Resolution stays HERE, after the campaign and line item exist, rather than
 		// moving into the up-front validation block. A resolve failure is a non-fatal
 		// degrade — a PAUSED campaign and line item plus instructions to post the
@@ -2278,11 +2534,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// into a hard "nothing created" failure while the other kept degrading, for no
 		// gain: the campaign and line item are found-or-created BY NAME, so the retry
 		// this degrade invites reuses them rather than accumulating duplicates.
+		//
+		// It runs BEFORE pace, and that order is load-bearing. pace RESERVES the next
+		// write slot; it does not hold one open. With the reservation taken first, the
+		// promotable_users GET sat between the reservation and the write it was meant
+		// to space out, and a concurrent writer sharing this client (the dispatch layer
+		// shares one per connection, deliberately — see internal-platform-twitter) could
+		// reserve and issue inside that window, so the two writes landed together and
+		// rebuilt the burst the pacer exists to prevent. Reads are not paced and cost
+		// nothing to move, so the fix is simply to finish the read first and reserve
+		// immediately before the write.
 		asUserID, resolveErr := c.resolvePromotableUser(ctx, in.AsUserID)
 		if resolveErr != nil {
 			promotedTweetWarning = fmt.Sprintf("could not author a tweet: %s — post one manually, then add it as a promoted tweet in X Ads Manager", resolveErr.Error())
 			steps = append(steps, fmt.Sprintf("Tweet authoring skipped: %s", resolveErr.Error()))
 		} else {
+			if err := c.pace(ctx); err != nil {
+				return partialResult(), fmt.Errorf("x tweet authoring aborted (%s / %s): %w", campaignStatus(), lineItemStatus(), err)
+			}
 			resp, authorErr := c.createNullcastTweet(ctx, composedTweetText, asUserID)
 			switch {
 			case authorErr != nil && createOutcomeAmbiguous(authorErr):
@@ -2337,7 +2606,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		resp, err := c.createRequest(ctx, "promoted_tweets", map[string]string{
 			"line_item_id": lineItemID,
 			"tweet_ids":    tweetID,
-		})
+		}, true /* idempotent: a repeat is refused as DUPLICATE_PROMOTABLE_ENTITY, handled below */)
 		switch {
 		case err != nil && isDuplicatePromotedTweetErr(err):
 			// X reports the tweet is already promoted (DUPLICATE_PROMOTABLE_ENTITY).
@@ -2546,35 +2815,83 @@ func extractPromotedTweetID(resp *apiResponse) string {
 // closed rather than guessing: if pinned is non-empty, it must appear among
 // the account's promotable users, or the call is refused; if empty and
 // exactly one user is returned, that one is used; if empty and several are
-// returned, the call is refused and the candidates are named so a caller can
-// pin one. Never returns a user id this call didn't itself verify against
-// the account's promotable-user list.
+// returned, the call is refused so a caller can pin one. Never returns a user
+// id this call didn't itself verify against the account's promotable-user
+// list.
+//
+// Its errors carry COUNTS, never the user ids themselves. These strings travel
+// all the way out to an operator-facing warning on the campaign response and
+// into `steps`, which is persisted and rendered in the UI — so naming the
+// candidates published the account's promotable X user ids to every reader of
+// that campaign, including ones with no standing to see which handles the
+// account can post as. The count is what makes the message actionable ("there
+// is more than one, pin one"); the ids only ever needed to be visible in X Ads
+// Manager, where the operator setting asUserId is already looking.
+//
+// It PAGINATES, where it used to read page one and treat it as the whole list.
+// A pinned user sitting on page two was reported as not promotable at all, and
+// the single-candidate shortcut fired on an account whose second page held
+// more — picking an author the caller never chose. The walk is bounded by
+// maxListPages and dedupes cursors, exactly as findByName and ListAdAccounts
+// do.
+//
+// It differs from ListAdAccounts deliberately on ONE point: cursorUnknowable
+// ends the walk rather than failing it. ListAdAccounts is picking from a set
+// whose truncation is invisible and so refuses to conclude; here the code
+// paginated not at all until now, so every response shape that works today
+// reached a decision from page one. Turning an absent or empty next_cursor
+// into a hard error would break live accounts to fix a case that cannot be
+// worse than the status quo. What is read stays a superset of what was read
+// before, and the failure modes stay the ones the caller already handles.
 func (c *Client) resolvePromotableUser(ctx context.Context, pinned string) (string, error) {
-	resp, err := c.request(ctx, http.MethodGet, "promotable_users")
-	if err != nil {
-		return "", fmt.Errorf("looking up promotable users: %w", err)
-	}
-	var users []struct {
-		UserID string `json:"user_id"`
-	}
-	if resp != nil && len(resp.Data) > 0 {
-		if err := json.Unmarshal(resp.Data, &users); err != nil {
-			return "", fmt.Errorf("decoding promotable users: %w", err)
+	var ids []string
+	cursor := ""
+	seen := map[string]struct{}{}
+	for page := 0; page < maxListPages; page++ {
+		path := "promotable_users"
+		if cursor != "" {
+			path += "?cursor=" + url.QueryEscape(cursor)
 		}
-	}
-	ids := make([]string, 0, len(users))
-	for _, u := range users {
-		if u.UserID != "" {
-			ids = append(ids, u.UserID)
+		resp, err := c.request(ctx, http.MethodGet, path)
+		if err != nil {
+			return "", fmt.Errorf("looking up promotable users: %w", err)
 		}
-	}
-	if pinned != "" {
-		for _, id := range ids {
-			if id == pinned {
-				return pinned, nil
+		if resp == nil {
+			break
+		}
+		var users []struct {
+			UserID string `json:"user_id"`
+		}
+		if len(resp.Data) > 0 {
+			if err := json.Unmarshal(resp.Data, &users); err != nil {
+				return "", fmt.Errorf("decoding promotable users: %w", err)
 			}
 		}
-		return "", fmt.Errorf("configured as_user_id %q is not among this account's promotable users (%v)", pinned, ids)
+		for _, u := range users {
+			if u.UserID != "" {
+				ids = append(ids, u.UserID)
+			}
+		}
+		// A pinned id can be confirmed the moment it is seen; there is no reason to
+		// walk the remaining pages to answer a membership question.
+		if pinned != "" {
+			for _, id := range ids {
+				if id == pinned {
+					return pinned, nil
+				}
+			}
+		}
+		if cursorVerdict(resp) != cursorMore {
+			break
+		}
+		if _, dup := seen[resp.NextCursor]; dup {
+			return "", fmt.Errorf("x promotable-user listing repeated cursor %q; refusing to loop", resp.NextCursor)
+		}
+		seen[resp.NextCursor] = struct{}{}
+		cursor = resp.NextCursor
+	}
+	if pinned != "" {
+		return "", fmt.Errorf("the configured asUserId is not among this account's %d promotable users; check the account's promotable users in X Ads Manager", len(ids))
 	}
 	switch len(ids) {
 	case 0:
@@ -2582,7 +2899,7 @@ func (c *Client) resolvePromotableUser(ctx context.Context, pinned string) (stri
 	case 1:
 		return ids[0], nil
 	default:
-		return "", fmt.Errorf("account %s has %d promotable users (%v); set asUserId to pick one", c.account.AccountID, len(ids), ids)
+		return "", fmt.Errorf("account %s has %d promotable users; set asUserId to pick one", c.account.AccountID, len(ids))
 	}
 }
 
@@ -2601,7 +2918,17 @@ func (c *Client) createNullcastTweet(ctx context.Context, text, asUserID string)
 	if asUserID != "" {
 		params["as_user_id"] = asUserID
 	}
-	return c.createRequest(ctx, "tweet", params)
+	// idempotent=FALSE, alone among this package's creates. The other three converge on
+	// re-issue — campaigns and line items are found-or-created by name, a repeated
+	// promoted_tweets POST comes back DUPLICATE_PROMOTABLE_ENTITY — but a tweet has no
+	// name to find it by and no idempotency key, so X publishes a second one. A 429 can
+	// be reported AT or AFTER the write is accepted, so the request layer's automatic
+	// retry could publish two or three tweets under the LF handle before this function
+	// ever returned. The 429 comes back as an *apiError, which createOutcomeAmbiguous
+	// classifies as ambiguous, so the caller renders it UNCONFIRMED and tells the
+	// operator to verify in X Ads Manager — a human check before a second publish,
+	// which is the only safe form a retry of this call can take.
+	return c.createRequest(ctx, "tweet", params, false /* NOT idempotent: a retry publishes a second tweet */)
 }
 
 // Run states an X campaign/line item can be toggled between. X calls this
@@ -2655,7 +2982,7 @@ func (c *Client) updateEntityStatus(ctx context.Context, path, status string) er
 	if err := c.pace(ctx); err != nil {
 		return err
 	}
-	_, err := c.doRequest(ctx, http.MethodPut, path, map[string]string{"entity_status": status})
+	_, err := c.doRequest(ctx, http.MethodPut, path, map[string]string{"entity_status": status}, true /* idempotent: setting a status converges */)
 	return err
 }
 

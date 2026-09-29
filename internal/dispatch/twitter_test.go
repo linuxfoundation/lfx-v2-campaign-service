@@ -1103,3 +1103,47 @@ func TestTwitter_DispatchStampsCreatingAccount(t *testing.T) {
 		t.Errorf("a created row must record its creating account: twitterCreationAccountID = %q, want %q (blob: %s)", got, "acc1", camp.Result)
 	}
 }
+
+// TestCampaignFromTwitter_SnapshotStripsTweetTextURLQuery is the persistence half of
+// the credential-query guard the X client now applies at create time.
+//
+// The two are not redundant. The client refuses a credential-SHAPED parameter
+// because that text is about to be published in a tweet; this strips EVERY query
+// from every link in the stored copy, because config_snapshot is persisted
+// unencrypted and outlives the campaign. The denylist cannot name every credential
+// parameter a registration page might use, and it does not apply at all to rows
+// written before it existed — the snapshot does not need to guess, so it keeps
+// nothing.
+//
+// The copy sent to X is untouched: the caller's cfg must not be mutated.
+func TestCampaignFromTwitter_SnapshotStripsTweetTextURLQuery(t *testing.T) {
+	const text = "Register at https://events.lf.org/reg?access_token=SECRET today"
+
+	cfg := twitterConfig{
+		BudgetAmount: 500,
+		StartDate:    "2099-03-01",
+		EndDate:      "2099-03-10",
+		TweetText:    text,
+	}
+	c := campaignFromTwitter(context.Background(), &twitter.CampaignResult{CampaignID: "cmp1"}, cfg)
+
+	if c.ConfigSnapshot == nil {
+		t.Fatal("ConfigSnapshot is empty; nothing was persisted to assert on")
+	}
+	if strings.Contains(string(c.ConfigSnapshot), "SECRET") {
+		t.Errorf("config_snapshot carries the token from the tweet text: %s", c.ConfigSnapshot)
+	}
+	if strings.Contains(string(c.ConfigSnapshot), "access_token") {
+		t.Errorf("config_snapshot carries the credential parameter name: %s", c.ConfigSnapshot)
+	}
+	// The redaction must not cost the snapshot the rest of the copy.
+	if !strings.Contains(string(c.ConfigSnapshot), "https://events.lf.org/reg") {
+		t.Errorf("config_snapshot lost the link itself: %s", c.ConfigSnapshot)
+	}
+	if !strings.Contains(string(c.ConfigSnapshot), "Register at") {
+		t.Errorf("config_snapshot lost the surrounding copy: %s", c.ConfigSnapshot)
+	}
+	if cfg.TweetText != text {
+		t.Errorf("the caller's config was mutated; X would have been sent the redacted text: %q", cfg.TweetText)
+	}
+}

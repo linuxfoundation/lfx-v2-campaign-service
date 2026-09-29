@@ -245,7 +245,16 @@ func campaignFromTwitter(ctx context.Context, r *twitter.CampaignResult, cfg twi
 	// Persist the budget/schedule/config the caller supplied. BudgetAmount is a daily
 	// cap in the account currency (X has no lifetime-budget flag on this path).
 	// ConfigSnapshot captures the validated config.
-	applyCampaignConfig(ctx, c, cfg.BudgetAmount, false, cfg.StartDate, cfg.EndDate, cfg)
+	//
+	// TweetText goes through sanitizeSnapshotText first, exactly as reddit.go does for
+	// its PostURL/ImageURL: config_snapshot is persisted UNENCRYPTED, and tweetText is
+	// the one field in this config that is operator-authored prose carrying a link. A
+	// registration URL pasted from a logged-in browser brings its query with it, and
+	// that query is what the snapshot would otherwise keep forever. The copy sent to X
+	// is untouched — only the stored copy is stripped.
+	snapshot := cfg
+	snapshot.TweetText = sanitizeSnapshotText(cfg.TweetText)
+	applyCampaignConfig(ctx, c, cfg.BudgetAmount, false, cfg.StartDate, cfg.EndDate, snapshot)
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT
 		// swallow it: on the created_degraded / UNCONFIRMED paths Result is the main
