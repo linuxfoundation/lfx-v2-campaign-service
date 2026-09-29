@@ -25,5 +25,6 @@ on the polled job result, for the HubSpot email channel only — every other pla
 `Result` blob has no `hubspotUrl` key, so the field decodes to `""` and is omitted.
 
 `docs/knowledge/code/internal-platform-hubspot.md`, `internal-dispatch.md` and
-`internal-service.md` were updated to match. `docs/api-catalog.md` already documented the
-`heroImageAlt` request field and `hubspotUrl` response field from the original change.
+`internal-service.md` were updated to match. `docs/api-catalog.md` gained the
+`heroImageUrl`/`heroLinkUrl`/`heroImageAlt` config fields and the `hubspotUrl` `PlatformResult`
+field in this same follow-up fix — the original commit had not documented either.

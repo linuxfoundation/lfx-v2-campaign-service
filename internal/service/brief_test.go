@@ -1103,6 +1103,43 @@ func TestBriefService_GetJob_ValidResultsAndFailedErrorOnly(t *testing.T) {
 	}
 }
 
+// TestBriefService_GetJob_HubspotURL guards the last hop of the hubspotUrl seam: a stored
+// per-platform result's hubspot_url decodes into PlatformResult.HubspotURL as a non-nil
+// pointer, and an absent/empty one leaves it nil rather than a pointer to "".
+func TestBriefService_GetJob_HubspotURL(t *testing.T) {
+	s := getJobTestService(&model.CampaignJob{
+		ID: "j1", BriefID: "b1", Status: model.JobSucceeded,
+		Result: []byte(`[{"platform":"hubspot","ok":true,"campaign_id":"999","hubspot_url":"https://app.hubspot.com/email/8112310/edit/999/settings"},{"platform":"google-ads","ok":true,"campaign_id":"pc-1"}]`),
+	})
+	resp, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+
+	var hs, ga *briefs.PlatformResult
+	for _, r := range resp.Result {
+		switch r.Platform {
+		case "hubspot":
+			hs = r
+		case "google-ads":
+			ga = r
+		}
+	}
+	if hs == nil {
+		t.Fatal("hubspot result missing")
+	}
+	if hs.HubspotURL == nil || *hs.HubspotURL != "https://app.hubspot.com/email/8112310/edit/999/settings" {
+		t.Errorf("hubspot result HubspotURL = %v, want a pointer to the stored hubspot_url", hs.HubspotURL)
+	}
+
+	if ga == nil {
+		t.Fatal("google-ads result missing")
+	}
+	if ga.HubspotURL != nil {
+		t.Errorf("google-ads result HubspotURL = %q, want nil (no hubspot_url was stored for this platform)", *ga.HubspotURL)
+	}
+}
+
 // TestBriefService_GetJob_SkippedSurfacesNonFailure verifies a skipped platform
 // (ok=false, skipped=true) on a succeeded job is surfaced with an explicit
 // non-failure message rather than an unexplained ok=false that reads as a failure.
