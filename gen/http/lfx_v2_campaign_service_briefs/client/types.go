@@ -3352,6 +3352,10 @@ type PlatformResultResponseBody struct {
 	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
 	// Failure reason (present when not ok)
 	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
+	// Deep link to this campaign's email in the HubSpot editor. Present only for
+	// the email (HubSpot) channel, and only once the portal that created it is
+	// known.
+	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 }
 
 // WizardSourceEmailResponseBody is used to define fields on response body

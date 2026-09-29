@@ -49,6 +49,11 @@ type RebuildEmailContentInput struct {
 	// HeroLinkURL is where the hero image links when clicked (e.g. the event page).
 	// Empty makes the image non-clickable.
 	HeroLinkURL string
+	// HeroImageAlt is the hero image's alt text, read by screen readers and shown when the
+	// image fails to load. OPTIONAL: empty falls back to a generic "Event banner" rather than
+	// the earlier hardcoded "Email Banner", which described the widget instead of the event and
+	// was identical across every campaign regardless of what the image actually showed.
+	HeroImageAlt string
 	// BodyHTML is the generated email body, rendered as a single rich-text section
 	// immediately after the hero.
 	BodyHTML string
@@ -117,7 +122,7 @@ func (c *Client) RebuildEmailContent(ctx context.Context, id string, in RebuildE
 	var sections []map[string]any
 
 	if strings.TrimSpace(in.HeroImageURL) != "" {
-		addHeroSection(widgets, &sections, in.HeroImageURL, in.HeroLinkURL)
+		addHeroSection(widgets, &sections, in.HeroImageURL, in.HeroLinkURL, in.HeroImageAlt)
 	}
 
 	// Conditional, and the clone's body is NOT carried forward — it is dropped from the tree.
@@ -357,8 +362,12 @@ func wrapperCSS(top, right, bottom, left string) map[string]any {
 	}
 }
 
-func addHeroSection(widgets map[string]any, sections *[]map[string]any, imageURL, linkURL string) {
+func addHeroSection(widgets map[string]any, sections *[]map[string]any, imageURL, linkURL, altText string) {
 	const key = "staging_banner"
+	altText = strings.TrimSpace(altText)
+	if altText == "" {
+		altText = "Event banner"
+	}
 	widgets[key] = map[string]any{
 		"type":      "module",
 		"module_id": moduleIDImage,
@@ -366,7 +375,7 @@ func addHeroSection(widgets map[string]any, sections *[]map[string]any, imageURL
 			"module_id": moduleIDImage,
 			"img": map[string]any{
 				"src":   imageURL,
-				"alt":   "Email Banner",
+				"alt":   altText,
 				"width": 600,
 			},
 			"link":                     linkURL,
@@ -426,7 +435,10 @@ func addButtonSection(widgets map[string]any, sections *[]map[string]any, text, 
 		"body": map[string]any{
 			"path":             "@hubspot/button",
 			"module_id":        moduleIDButton,
-			"background_color": "#0094ff",
+			// #2563eb (Tailwind blue-600, matching the frontend preview's CTA) contrasts
+			// white text at ~5.17:1, clearing the WCAG AA 4.5:1 text threshold. The prior
+			// #0094ff only reached ~3.14:1 and failed it.
+			"background_color": "#2563eb",
 			"corner_radius":    8,
 			"destination":      destination,
 			"font":             "Arial, sans-serif",
@@ -648,7 +660,9 @@ func addFooterSections(widgets map[string]any, sections *[]map[string]any, sentB
 				},
 			},
 			"link_font": map[string]any{
-				"color":    "#0094ff",
+				// #2563eb, not the prior #0094ff — see addButtonSection's contrast note;
+				// the same failing ~3.14:1-against-white ratio applied to this footer link.
+				"color":    "#2563eb",
 				"font":     "Arial, sans-serif",
 				"font_set": "DEFAULT",
 				"size":     map[string]any{"units": "px", "value": 12},

@@ -103,7 +103,18 @@ const maxPromptSize = 2400 // runes
 // (8770) to Post-Event with the variant appended (11055) -- 2285 runes higher. 14000 clears
 // (11055 + maxPromptSize) with headroom in the same ~500-rune-per-section range every earlier
 // revision aimed for; see TestConceptDocSizingArithmetic for the exact current figures.
-const maxComposedPromptSize = 14000 // runes
+//
+// Raised again, from 14000 to 14600, when the segment-conditional content-block guidance was
+// added (composeEmailCopyPrompt): each emailSegment* block is fixed prompt text appended only
+// when emailCopyPromptVars.segment exactly matches one of the recognised values, so it is a FLOOR
+// contributor exactly like the stage template and variant block, not caller input.
+// worstStageFloorNamed now composes each stage across BOTH variant-on/off AND every recognised
+// segment (plus none) and takes the max, which moved the worst case from Post-Event with the
+// variant alone to Post-Event with the variant AND the alumni segment block appended -- 11689
+// runes, 634 higher than the variant-only floor. 14600 clears (11689 + maxPromptSize = 14089)
+// with headroom in the same ~500-rune range every earlier revision aimed for; see
+// TestConceptDocSizingArithmetic for the exact current figures.
+const maxComposedPromptSize = 14600 // runes
 
 // maxReferenceBlockRunes bounds the reference-email style block EmailReferenceSource builds from
 // up to three past sent HubSpot emails (see email_reference.go). It reaches the stage-aware user
@@ -165,12 +176,41 @@ type emailCopyPromptVars struct {
 	// above and this field is never consulted there, so a variant request alongside no stage is
 	// silently a no-op rather than a second way to grow the LFXV2-1940-frozen prompt.
 	variant string
+	// segment requests which CONTENT BLOCKS appear for a specific audience, orthogonal to both
+	// stage (WHAT the email is for) and variant (HOW the whole draft is styled). Same two-path
+	// shape as stage and variant, for the same reason:
+	//
+	//   - EMPTY (or blank) means no segment was requested; composeEmailCopyPrompt appends nothing
+	//     and the stage's (and variant's, if any) own prompt is unchanged.
+	//   - Recognised (one of the emailSegment* constants below) appends that segment's
+	//     block-inclusion guidance. Anything else, including unrecognised text, is silently
+	//     ignored -- same leniency as an unrecognised stage or variant, so a caller that misspells
+	//     it still gets ordinary copy rather than an error.
+	//
+	// Composes ADDITIVELY alongside variant: variant restructures the whole draft's framing,
+	// segment narrows which blocks within that draft are relevant to a named audience. Both may
+	// be set together, either alone, or neither.
+	//
+	// Reaches the STAGE-AWARE prompt only, same restriction as variant and for the same reason:
+	// an absent stage already takes the frozen legacy path above and this field is never
+	// consulted there.
+	segment string
 }
 
 // urgencyFomoVariant is the one recognised value of emailCopyPromptVars.variant today. It asks
 // for the SAME stage's copy restructured toward urgency/FOMO framing -- deadline pressure, social
 // proof, a secondary CTA -- rather than a different stage or a different set of facts.
 const urgencyFomoVariant = "urgency-fomo"
+
+// The recognised values of emailCopyPromptVars.segment. Each narrows which content blocks
+// composeEmailCopyPrompt's segment guidance asks the model to keep or drop for a named audience;
+// none of them changes the underlying facts, stage or variant framing.
+const (
+	emailSegmentDeveloper             = "developer"
+	emailSegmentBusinessDecisionMaker = "business-decision-maker"
+	emailSegmentAlumni                = "alumni"
+	emailSegmentProspect              = "prospect"
+)
 
 // decodeEmailCopyEventDetails pulls the fields email generation needs from the brief's opaque
 // EventDetails blob. Unlike audience_build.go (which skips mismatched shapes), this function
@@ -266,7 +306,11 @@ Constraints:
 - No sign-off/signature -- the platform appends its own footer after these sections
 - A greeting with a personalization token (e.g. "Hi {{contact.firstname}},") gets the comma
   right after the token, no space before it
-- Name any supplied speakers/topics specifically; never "and more" or "and others"`
+- Name any supplied speakers/topics specifically; never "and more" or "and others"
+- Make every rich_text section scannable, not a wall of text: short paragraphs (2-3 sentences),
+  a bolded lead-in phrase (<strong>) at the start of a paragraph making a distinct point, and a
+  <ul>/<li> list wherever three or more parallel items are listed (benefits, speakers, topics,
+  agenda highlights) instead of a comma-separated sentence`
 
 	// Stage-specific guidance, appended to the shared role/constraint block above rather than
 	// replacing it: the JSON schema and the length limits hold for every stage, only the intent
@@ -338,6 +382,38 @@ Structure the sections in this order:
 Numbering is for ordering only; do not print "1."/"2." in the output. Every numbered section
 whose supporting fact is missing is OMITTED, per the placeholder rule above -- a shorter email
 that only says what is known is correct, an invented capacity or deadline is not.`
+	}
+
+	// The segment guidance narrows which of the stage's (and, if present, the variant's) sections
+	// are relevant to a named audience -- it does not add new facts or change the stage's purpose,
+	// only which supplied facts are worth foregrounding versus omitting. Composes ADDITIVELY after
+	// the stage block and the variant block, same appended-not-swapped-in reasoning as both: the
+	// JSON schema, the no-invented-facts rule and the length limits still hold.
+	switch vars.segment {
+	case emailSegmentDeveloper:
+		systemPrompt += `
+
+SEGMENT: developer -- this reader evaluates the event on session/track substance, not business
+value. Keep any agenda, session-track or speaker/topic detail the supplied facts support; drop
+sponsorship, ROI or business-case framing entirely rather than including it thin.`
+	case emailSegmentBusinessDecisionMaker:
+		systemPrompt += `
+
+SEGMENT: business-decision-maker -- this reader evaluates the event on business value, not
+session substance. Keep any ROI, sponsorship or business-case framing the supplied facts support;
+drop session-level agenda detail (specific talks, tracks, speaker bios) rather than listing it.`
+	case emailSegmentAlumni:
+		systemPrompt += `
+
+SEGMENT: alumni -- this reader has attended before. Lead with what is NEW or DIFFERENT this time
+versus a past edition, using only facts actually supplied -- never invent a comparison to a prior
+year that was not given. Skip introductory "what this event is" framing; they already know.`
+	case emailSegmentProspect:
+		systemPrompt += `
+
+SEGMENT: prospect -- this reader has never attended. Lead with what the event IS and why it
+matters before any call to action; do not assume familiarity with past editions, recurring
+tracks or the organisation running it.`
 	}
 
 	// User prompt: the specific event details and the stage's own content brief.
@@ -799,6 +875,10 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 		// urgency-fomo block for an EXACT match, so an unrecognised value here silently produces
 		// ordinary stage-based copy rather than an error.
 		variant: strVal(p.Variant),
+		// Same absent-is-a-no-op shape as stage/variant: composeEmailCopyPrompt only appends
+		// segment guidance for an EXACT match, so an unrecognised value here silently produces
+		// ordinary stage-based copy rather than an error.
+		segment: strVal(p.Segment),
 	}
 	// BEST-EFFORT reference-email lookup, never a hard dependency: a project with no HubSpot
 	// connection, no published emails, or an unreachable portal still gets copy generated, just

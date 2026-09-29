@@ -1846,6 +1846,7 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			CampaignID string `json:"campaign_id"`
 			Error      string `json:"error"`
 			Skipped    bool   `json:"skipped"`
+			HubspotURL string `json:"hubspot_url"`
 		}
 		if err := json.Unmarshal(j.Result, &stored); err != nil {
 			// A persisted result that won't decode is corruption, not a valid empty
@@ -1869,6 +1870,10 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			if r.CampaignID != "" {
 				id := r.CampaignID
 				pr.CampaignID = &id
+			}
+			if r.HubspotURL != "" {
+				u := r.HubspotURL
+				pr.HubspotURL = &u
 			}
 			switch {
 			case r.Skipped && !r.OK:

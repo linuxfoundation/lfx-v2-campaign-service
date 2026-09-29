@@ -825,6 +825,14 @@ type GenerateEmailCopyPayload struct {
 	// stage's normal copy. Any other value, or absence, produces the normal
 	// stage-based copy.
 	Variant *string
+	// Tailors which content blocks appear for a specific audience segment.
+	// Currently recognised: 'developer' (keeps agenda/session-track detail, drops
+	// sponsorship framing), 'business-decision-maker' (keeps ROI/sponsorship
+	// framing, drops session-level detail), 'alumni' (past attendee -- leads with
+	// what's new since last time), 'prospect' (never attended -- leads with what
+	// the event is and why it matters). Any other value, or absence, produces the
+	// normal stage-based copy with no segment tailoring.
+	Segment *string
 }
 
 // GenerateWizardContentPayload is the payload type of the
@@ -1030,6 +1038,10 @@ type PlatformResult struct {
 	CampaignID *string
 	// Failure reason (present when not ok)
 	Error *string
+	// Deep link to this campaign's email in the HubSpot editor. Present only for
+	// the email (HubSpot) channel, and only once the portal that created it is
+	// known.
+	HubspotURL *string
 }
 
 // SetWizardSendListPayload is the payload type of the

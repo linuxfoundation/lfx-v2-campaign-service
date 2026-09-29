@@ -3294,6 +3294,10 @@ type PlatformResultResponseBody struct {
 	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
 	// Failure reason (present when not ok)
 	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
+	// Deep link to this campaign's email in the HubSpot editor. Present only for
+	// the email (HubSpot) channel, and only once the portal that created it is
+	// known.
+	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 }
 
 // WizardSourceEmailResponseBody is used to define fields on response body
@@ -6534,12 +6538,13 @@ func NewGetBriefMetricsPayload(projectID string, briefID string, window *string,
 
 // NewGenerateEmailCopyPayload builds a lfx-v2-campaign-service-briefs service
 // generate-email-copy endpoint payload.
-func NewGenerateEmailCopyPayload(projectID string, briefID string, stage *string, variant *string, bearerToken *string) *lfxv2campaignservicebriefs.GenerateEmailCopyPayload {
+func NewGenerateEmailCopyPayload(projectID string, briefID string, stage *string, variant *string, segment *string, bearerToken *string) *lfxv2campaignservicebriefs.GenerateEmailCopyPayload {
 	v := &lfxv2campaignservicebriefs.GenerateEmailCopyPayload{}
 	v.ProjectID = projectID
 	v.BriefID = briefID
 	v.Stage = stage
 	v.Variant = variant
+	v.Segment = segment
 	v.BearerToken = bearerToken
 
 	return v

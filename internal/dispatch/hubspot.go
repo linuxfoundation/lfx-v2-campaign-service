@@ -82,6 +82,10 @@ type hubspotConfig struct {
 	// HeroLinkURL optionally makes the hero image a clickable link (e.g. back to the event
 	// page). OPTIONAL; ignored when HeroImageURL is empty.
 	HeroLinkURL string `json:"heroLinkUrl"`
+	// HeroImageAlt optionally sets the hero image's alt text, read by screen readers. OPTIONAL;
+	// ignored when HeroImageURL is empty. Empty falls back to a generic "Event banner" (see
+	// addHeroSection) rather than the image going undescribed.
+	HeroImageAlt string `json:"heroImageAlt"`
 	// ButtonText optionally renders a native, centered CTA button (e.g. "Register Now")
 	// immediately after the body during the same full rebuild HeroImageURL/Sponsors trigger.
 	// OPTIONAL; ignored unless ButtonURL is also set. Defaults to "Register Now" when
@@ -605,7 +609,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	sponsors := toHubSpotSponsors(cfg.Sponsors)
 	heroImageURL := strings.TrimSpace(cfg.HeroImageURL)
 	hostedHeroURL := uploadHeroImage(ctx, client, heroImageURL)
-	applyEmailContentWithHero(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML, hostedHeroURL, cfg.HeroLinkURL, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewText)
+	applyEmailContentWithHero(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML, hostedHeroURL, cfg.HeroLinkURL, cfg.HeroImageAlt, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewText)
 
 	// STEP 3B (mutating, BEST-EFFORT, OPT-IN): create a native A/B test variant of the clone and
 	// apply the variant's own copy to it. Ordered AFTER the clone's own content (STEP 3) and
@@ -619,7 +623,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// error, and it never blocks on ABTestEnabled being false (the common case costs nothing).
 	var abVariant *hubspot.Email
 	if cfg.ABTestEnabled {
-		abVariant = createABTestVariantWithHero(ctx, client, email.ID, cloneName, cfg.SubjectB, cfg.BodyHTMLB, hostedHeroURL, cfg.HeroLinkURL, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewTextB)
+		abVariant = createABTestVariantWithHero(ctx, client, email.ID, cloneName, cfg.SubjectB, cfg.BodyHTMLB, hostedHeroURL, cfg.HeroLinkURL, cfg.HeroImageAlt, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewTextB)
 	}
 
 	// STEP 4 (mutating, BEST-EFFORT): tag the draft's links with UTM parameters so email
@@ -674,7 +678,7 @@ func uploadHeroImage(ctx context.Context, client *hubspot.Client, imageURL strin
 // uploading the source image twice.
 //
 // BEST-EFFORT, like tagEmailLinks: every failure is logged and swallowed.
-func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emailID, subject, bodyHTML, hostedHeroURL, heroLinkURL, buttonText, buttonURL string, sponsors []hubspot.Sponsor, sentByOrg, previewText string) {
+func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emailID, subject, bodyHTML, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL string, sponsors []hubspot.Sponsor, sentByOrg, previewText string) {
 	if subject = strings.TrimSpace(subject); subject != "" {
 		if _, err := client.PatchEmailSettings(ctx, emailID, hubspot.EmailSettings{Subject: &subject}); err != nil {
 			slog.WarnContext(ctx, "could not set the generated subject on the email draft; it keeps the template's subject",
@@ -709,6 +713,7 @@ func applyEmailContentWithHero(ctx context.Context, client *hubspot.Client, emai
 	if _, err := client.RebuildEmailContent(ctx, emailID, hubspot.RebuildEmailContentInput{
 		HeroImageURL: hostedHeroURL,
 		HeroLinkURL:  heroLinkURL,
+		HeroImageAlt: heroImageAlt,
 		BodyHTML:     bodyHTML,
 		ButtonText:   buttonText,
 		ButtonURL:    buttonURL,
@@ -764,14 +769,14 @@ const abVariantNameSuffix = " - Variant B"
 // (already-applied) content with it would destroy Variant A's copy for a reason invisible to
 // anyone looking at the draft afterwards. Losing the second variant here is a smaller, more
 // honest failure than corrupting the first one.
-func createABTestVariantWithHero(ctx context.Context, client *hubspot.Client, parentID, parentName, subjectB, bodyHTMLB, hostedHeroURL, heroLinkURL, buttonText, buttonURL string, sponsors []hubspot.Sponsor, sentByOrg, previewTextB string) *hubspot.Email {
+func createABTestVariantWithHero(ctx context.Context, client *hubspot.Client, parentID, parentName, subjectB, bodyHTMLB, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL string, sponsors []hubspot.Sponsor, sentByOrg, previewTextB string) *hubspot.Email {
 	variant, err := client.CreateABTestVariant(ctx, parentID, parentName+abVariantNameSuffix)
 	if err != nil {
 		slog.WarnContext(ctx, "could not create a HubSpot A/B test variant; the campaign proceeds as a single email",
 			"email_id", parentID, "error", err)
 		return nil
 	}
-	applyEmailContentWithHero(ctx, client, variant.ID, subjectB, bodyHTMLB, hostedHeroURL, heroLinkURL, buttonText, buttonURL, sponsors, sentByOrg, previewTextB)
+	applyEmailContentWithHero(ctx, client, variant.ID, subjectB, bodyHTMLB, hostedHeroURL, heroLinkURL, heroImageAlt, buttonText, buttonURL, sponsors, sentByOrg, previewTextB)
 	slog.InfoContext(ctx, "created a HubSpot A/B test variant of the campaign email",
 		"email_id", parentID, "variant_id", variant.ID, "variant_state", variant.State)
 	return variant
@@ -979,11 +984,16 @@ func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfi
 	// (createABTestVariant's best-effort contract) — omitempty on a nil pointer drops the key
 	// entirely rather than persisting a `null` that would need its own "was this even attempted"
 	// distinction from a caller that never asked for a variant.
+	// HubspotURL restates e.AppURL under a real JSON key: hubspot.Email tags AppURL
+	// `json:"-"` because it is built client-side rather than returned by HubSpot, so
+	// embedding *hubspot.Email above does not emit it. This is the only place the
+	// orchestrator can read it back from (see dispatchPlatform's hubspotURLFromResult).
 	if raw, err := json.Marshal(struct {
 		*hubspot.Email
 		PortalID      string         `json:"portalId,omitempty"`
+		HubspotURL    string         `json:"hubspotUrl,omitempty"`
 		ABTestVariant *hubspot.Email `json:"abTestVariant,omitempty"`
-	}{Email: e, PortalID: portalID, ABTestVariant: abVariant}); err != nil {
+	}{Email: e, PortalID: portalID, HubspotURL: e.AppURL, ABTestVariant: abVariant}); err != nil {
 		slog.WarnContext(ctx, "failed to marshal hubspot email result blob (Result left empty)",
 			"campaign_id", c.PlatformCampaignID, "error", err)
 	} else {

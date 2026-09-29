@@ -220,6 +220,7 @@ var PlatformResult = Type("platform-result", func() {
 	Attribute("ok", Boolean, "Whether the campaign was created (or reused) successfully")
 	Attribute("campaign_id", String, "Upstream platform campaign id. Present when ok; also set on the specific failure where the upstream campaign was created but recording it failed, so the orphaned id isn't lost.")
 	Attribute("error", String, "Failure reason (present when not ok)")
+	Attribute("hubspot_url", String, "Deep link to this campaign's email in the HubSpot editor. Present only for the email (HubSpot) channel, and only once the portal that created it is known.")
 	Required("platform", "ok")
 })
 
@@ -1408,6 +1409,14 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Attribute("variant", String, "Requests a differently-styled draft of the same stage's copy. Currently one value is recognised: 'urgency-fomo', which asks for an urgency/FOMO-forward structure (deadline framing, social proof, a secondary CTA) instead of the stage's normal copy. Any other value, or absence, produces the normal stage-based copy.", func() {
 				Example("urgency-fomo")
 			})
+			// OPTIONAL, same free-text/lenient-fallback shape as stage and variant: absent or
+			// unrecognised means "no segment requested" rather than an error. Unlike variant
+			// (which restyles the WHOLE draft), segment tailors which content blocks appear --
+			// e.g. omitting a developer-facing agenda-highlights block for a business-persona
+			// segment -- so it composes independently of, and alongside, variant.
+			Attribute("segment", String, "Tailors which content blocks appear for a specific audience segment. Currently recognised: 'developer' (keeps agenda/session-track detail, drops sponsorship framing), 'business-decision-maker' (keeps ROI/sponsorship framing, drops session-level detail), 'alumni' (past attendee -- leads with what's new since last time), 'prospect' (never attended -- leads with what the event is and why it matters). Any other value, or absence, produces the normal stage-based copy with no segment tailoring.", func() {
+				Example("developer")
+			})
 			Required("project_id", "brief_id")
 		})
 		Result(EmailCopy)
@@ -1420,6 +1429,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// against the running service before and after: body-less went 400, then 200.
 			Param("stage")
 			Param("variant")
+			Param("segment")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()
