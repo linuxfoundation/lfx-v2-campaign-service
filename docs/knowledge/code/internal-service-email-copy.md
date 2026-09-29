@@ -164,7 +164,10 @@ and with the maximum 2400 runes of caller input it composes to 14089 against the
 
 Every figure in this section has been wrong at least once from a measurement taken before a
 template grew — six times, most recently when the segment-conditional content-block guidance was
-added and grew the worst composition by 634 runes, leaving 511 runes of headroom. A prose
+added, growing the worst composition by 634 runes: ~346 from a new "scannable rich_text" rule
+added to the shared stage-aware system prompt (applies to every stage-aware request, regardless of
+segment) plus ~288 from the alumni segment block itself (the largest of the four segment blocks),
+leaving 511 runes of headroom. A prose
 instruction to re-measure did not survive contact, so
 `TestComposedBoundClearsEveryStageFloor` now COMPUTES every stage floor from the real constants and
 fails if `worst + maxPromptSize` exceeds `maxComposedPromptSize`. Derive these numbers from that

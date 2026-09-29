@@ -690,6 +690,14 @@ utmCampaign: string             — OPTIONAL. Overrides the utm_campaign applied
                                   set this only to make several briefs' emails roll up to one
                                   campaign in reporting. utm_source is always `email` and
                                   utm_medium always `LF-Events`.
+heroImageUrl: string             — OPTIONAL. Hosted hero image rendered as its own module.
+heroLinkUrl: string               — OPTIONAL. Link target for the hero image; ignored without
+                                  `heroImageUrl`.
+heroImageAlt: string             — OPTIONAL. Alt text for `heroImageUrl`. Trimmed; when blank or
+                                  absent the dispatcher falls back to the generic "Event banner",
+                                  so a caller should send the event's own name here to give
+                                  screen-reader listeners something more specific than that.
+                                  Ignored without `heroImageUrl`.
 ```
 
 The connection supplies the HubSpot private-app token (credentials) and `portal_id` (provider
@@ -935,6 +943,10 @@ platform: string        — Platform this result is for
 ok: boolean             — Whether the campaign was created (or reused) successfully
 campaignId?: string     — Upstream platform campaign id (present when ok)
 error?: string          — Failure reason (present when not ok)
+hubspotUrl?: string     — Deep link to this campaign's email in the HubSpot editor.
+                          Email (HubSpot) channel only, populated once the portal that
+                          created the draft is known — absent for every other platform and
+                          for campaigns created before this field existed.
 ```
 
 Per-platform errors are carried inside each `result` entry rather than in a
@@ -944,7 +956,7 @@ the job record's timestamps and are not echoed in the poll payload.
 ### CampaignCreateResult (future, richer per-platform result)
 
 > Not yet emitted. Today the job result carries the minimal `PlatformResult`
-> shape above (`platform`/`ok`/`campaignId`/`error`). Once the per-provider
+> shape above (`platform`/`ok`/`campaignId`/`error`/`hubspotUrl`). Once the per-provider
 > dispatchers land, each result is expected to grow into the richer shape below
 > (counts, creation log, direct UI URL); this section documents that intended
 > end-state, not the current payload.

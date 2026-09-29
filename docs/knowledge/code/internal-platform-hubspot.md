@@ -459,6 +459,16 @@ section drops it — so the dispatcher does not call this at all when it has no 
 and a preheader-only change is silently not applied. Preview text has no first-class field on the
 Marketing Emails v3 object, so there is no narrower path for it today.
 
+`RebuildEmailContentInput.HeroImageAlt` (LFXV2-2775 follow-up) sets the hero image's alt text.
+`addHeroSection` trims it and falls back to a generic "Event banner" when blank, replacing the
+prior hardcoded "Email Banner" — which described the widget rather than the event and shipped
+identically on every campaign regardless of what the image actually showed.
+
+The CTA button's and footer link's `background_color`/`link_font.color` moved from `#0094ff` to
+`#2563eb` (Tailwind blue-600, matching the frontend preview) in the same change: the old value
+contrasted white text at only ~3.14:1, failing the WCAG AA 4.5:1 text threshold, where `#2563eb`
+clears it at ~5.17:1.
+
 `verifyContentSaved` re-reads the draft afterwards, because HubSpot has in practice accepted a
 content PATCH with a 2xx and silently reverted it. It requires EVERY widget it wrote to be
 referenced from `flexAreas`, not merely one: the keys are fixed, so a single surviving key from
