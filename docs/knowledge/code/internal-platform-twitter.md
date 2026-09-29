@@ -514,8 +514,21 @@ decoded name COLLIDES with a UTM key is dropped, because a destination carrying 
 `utm_source` values makes click attribution depend on which one the landing page
 reads first.
 
-The fragment is dropped in both — it never reaches a server, so it cannot carry
-attribution and only widens what gets published.
+The fragment is dropped in the DISPLAY form and published verbatim in the real
+one. It used to be dropped in both, on the reasoning that it never reaches a server.
+That is true of the server and false of the page: `#register` scrolls to and focuses
+the registration form, and a hash-router SPA reads the fragment as the ROUTE, so
+`https://events.example/#/register` stripped of its fragment lands on the front page
+instead. Paid clicks went somewhere the brief did not ask for, and silently — the
+create succeeded and every step the client prints showed a destination that looked
+correct.
+
+Stripping it also cost the screen its subject. `credentialFragmentError` exists to
+refuse a credential-shaped fragment, but `buildTwitterUTMURL` removed the fragment
+before the composed text reached `rejectCredentialQueryParamsInText`, so that arm
+never once examined the registration URL it was written for — only links the operator
+typed into their own copy. Publishing the fragment puts it back under the screen,
+which is what protects it; the strip only hid it.
 
 `composeTweetText` appends the destination only when the text does not already
 carry it, and "already carries it" is decided by `textCarriesURL`, which extracts

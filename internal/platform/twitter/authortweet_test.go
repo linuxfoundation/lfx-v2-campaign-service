@@ -531,12 +531,17 @@ func TestWeightedTweetLen_CountsEveryURLAtTcoWeight(t *testing.T) {
 	}
 }
 
-// TestBuildTwitterUTMURL_KeepsQueryDropsFragment pins the deliberate divergence
+// TestBuildTwitterUTMURL_KeepsQueryAndFragment pins the deliberate divergence
 // from displayTwitterUtmURL. This URL is the ad's real click destination, so the
 // brief's own routing parameters have to survive alongside the generated utm_*
-// set; the fragment never reaches a server, so it is dropped rather than
-// published.
-func TestBuildTwitterUTMURL_KeepsQueryDropsFragment(t *testing.T) {
+// set — and so does the fragment.
+//
+// The fragment used to be dropped here, on the reasoning that it never reaches a
+// server. It reaches the PAGE: `#agenda` scrolls to and focuses that section, and a
+// hash-router SPA reads the fragment as its route, so stripping it lands paid traffic
+// on the front page instead. It failed silently, too — the create succeeded and every
+// step we print showed a destination that looked right.
+func TestBuildTwitterUTMURL_KeepsQueryAndFragment(t *testing.T) {
 	t.Parallel()
 
 	in := baseAuthorInput("")
@@ -551,8 +556,13 @@ func TestBuildTwitterUTMURL_KeepsQueryDropsFragment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse %q: %v", got, err)
 	}
-	if u.Fragment != "" || u.RawFragment != "" {
-		t.Errorf("fragment survived: %q (raw %q) in %q", u.Fragment, u.RawFragment, got)
+	if u.Fragment != "agenda" {
+		t.Errorf("fragment not preserved: got %q, want %q, in %q", u.Fragment, "agenda", got)
+	}
+	// The fragment must come AFTER the query, or the UTM params land inside it and
+	// never reach the server that reads them.
+	if i, j := strings.Index(got, "?"), strings.Index(got, "#"); i < 0 || j < 0 || i > j {
+		t.Errorf("query and fragment are out of order: %q", got)
 	}
 	q := u.Query()
 	if q.Get("ref") != "partner" {
@@ -1914,5 +1924,71 @@ func TestComposeTweetText_AppendsWhenTheDestinationIsOnlyNestedInAnotherURL(t *t
 		if got != text {
 			t.Errorf("the destination was appended twice for %q, got %q", text, got)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Round-8 review fixes
+// ---------------------------------------------------------------------------
+
+// TestBuildTwitterUTMURL_KeepsAHashRouterRoute is the shape that made dropping the
+// fragment a routing bug rather than a cosmetic one. A hash-router SPA serves ONE
+// document and reads everything after `#` as the path, so a destination stripped of
+// its fragment is not "the same page without an anchor" — it is a different page.
+func TestBuildTwitterUTMURL_KeepsAHashRouterRoute(t *testing.T) {
+	t.Parallel()
+
+	in := baseAuthorInput("")
+	in.RegistrationURL = "https://events.lf.org/#/register/kubecon-na"
+
+	got, err := buildTwitterUTMURL(in)
+	if err != nil {
+		t.Fatalf("buildTwitterUTMURL: %v", err)
+	}
+	if !strings.Contains(got, "#/register/kubecon-na") {
+		t.Errorf("hash route lost: %q", got)
+	}
+	if !strings.Contains(got, "utm_source=twitter") {
+		t.Errorf("utm params not added: %q", got)
+	}
+}
+
+// TestCreateCampaign_RefusesACredentialFragmentOnTheRegistrationURL closes the loop
+// the fragment strip had quietly opened. credentialFragmentError was written to screen
+// exactly this, but buildTwitterUTMURL removed the fragment BEFORE the composed text
+// reached rejectCredentialQueryParamsInText — so the arm only ever saw links the
+// operator typed into their own copy, never the registration URL it was written for.
+//
+// The refusal must also land before any mutating call: a campaign and line item that
+// exist with no promoted tweet are the expensive failure this screen's placement
+// avoids.
+func TestCreateCampaign_RefusesACredentialFragmentOnTheRegistrationURL(t *testing.T) {
+	t.Parallel()
+
+	var mutations int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			mutations++
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	in := baseAuthorInput("Register now for KubeCon")
+	in.RegistrationURL = "https://events.lf.org/kc#access_token=s3cr3t-fragment-value"
+
+	c := newAuthorTweetTestClient(srv.URL)
+	_, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatalf("expected a refusal for a credential-shaped fragment")
+	}
+	if mutations != 0 {
+		t.Errorf("refused only after %d mutating call(s); the screen must run first", mutations)
+	}
+	if strings.Contains(err.Error(), "s3cr3t-fragment-value") {
+		t.Errorf("the refusal reproduced the credential VALUE: %q", err)
+	}
+	if !strings.Contains(err.Error(), "access_token") {
+		t.Errorf("the refusal should name the offending key: %q", err)
 	}
 }

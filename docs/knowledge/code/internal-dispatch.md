@@ -111,7 +111,20 @@ the same rule's two-part test: this column's only reader is a human reconstructi
 campaign was configured with, and "which site did this link point at" is the whole of what
 a redacted URL can still tell them. The path is not load-bearing for that, so it goes;
 over-redacting here costs nothing, because unlike an operator-facing error this value is
-never used to diagnose anything in the moment. The scheme+host is rebuilt through
+never used to diagnose anything in the moment.
+
+An http(s)-scheme value that will NOT reduce to scheme+host — it does not parse, has
+no host, or carries userinfo — fails closed to empty rather than falling through to
+the truncating fallback, which keeps the path. `https:///reset/SECRET` parses cleanly
+with an EMPTY host and offers no `?`, `#` or `@` to truncate at, and
+`https://example.org/reset/SEC%zz` does not parse at all; both used to come back
+whole, which is the exposure the reduction exists to close. Nothing legitimate is
+lost, because every caller of this helper supplies a URL — a value that announced an
+http scheme and will not reduce is malformed input, not data with another meaning.
+The truncating branch still serves a value that never claimed to be a URL, such as a
+reddit thing id.
+
+The scheme+host is rebuilt through
 `url.URL.String()` rather than concatenated, because `URL.Host` holds the DECODED
 authority — a zone-scoped IPv6 literal would come back as `[fe80::1%eth0]`, a bare `%`
 that is not a valid escape, turning a well-formed URL into one that no longer parses.

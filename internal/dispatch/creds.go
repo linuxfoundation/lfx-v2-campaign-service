@@ -84,10 +84,11 @@ func applyCampaignConfig(ctx context.Context, c *model.Campaign, budget float64,
 
 // sanitizeSnapshotURL strips the PATH, query and fragment from a URL before it is stored
 // in config_snapshot (which is persisted UNENCRYPTED). The snapshot keeps only
-// scheme+host. An absolute URL is reduced to that; a value that does not parse as an
-// absolute URL (or carries userinfo/credentials) is truncated at the first '?'/'#' and
-// dropped entirely if it still contains a credential delimiter '@', mirroring the reddit
-// client's redactURL fail-closed behavior. An empty input stays empty.
+// scheme+host. An absolute URL is reduced to that; an http(s)-scheme value that will not
+// reduce — it does not parse, has no host, or carries userinfo — is dropped entirely. A
+// value that never claimed to be a URL is truncated at the first '?'/'#' and dropped if
+// it still contains a credential delimiter '@', mirroring the reddit client's redactURL
+// fail-closed behavior. An empty input stays empty.
 //
 // The path used to be kept, on the reasoning that a path segment is a route and not a
 // secret. `caller-url-must-be-redacted-before-errors-steps-and-snapshots` says otherwise
@@ -118,6 +119,24 @@ func sanitizeSnapshotURL(raw string) string {
 		redacted := url.URL{Scheme: u.Scheme, Host: u.Host}
 		return redacted.String()
 	}
+	// A value that ANNOUNCED itself as http(s) and did not reduce above fails closed
+	// here, rather than falling through to the truncating branch below. Reaching that
+	// branch means the parse failed, or produced no host, or carried userinfo — and in
+	// the first two cases the truncating branch keeps the PATH, which is the exact
+	// exposure the scheme+host reduction exists to close. `https:///reset/SECRET`
+	// parses cleanly with an EMPTY host and no '?', '#' or '@' to truncate at, so it
+	// was returned whole; `https://example.org/reset/SEC%zz` fails to parse on the bad
+	// escape and was likewise returned whole.
+	//
+	// Nothing legitimate is lost: every caller (reddit PostURL/ImageURL, meta
+	// ImageURL, and the runs sanitizeSnapshotText feeds in, which the regex only
+	// matches from an http/https scheme) supplies a URL, so an http-shaped value that
+	// will not reduce is malformed input, not data with another meaning. The branch
+	// below still exists for a value that never claimed to be a URL — a reddit thing
+	// id, say — where truncating and dropping on '@' is the conservative answer.
+	if isHTTPScheme(trimmed) {
+		return ""
+	}
 	if i := strings.IndexAny(trimmed, "?#"); i >= 0 {
 		trimmed = trimmed[:i]
 	}
@@ -125,6 +144,15 @@ func sanitizeSnapshotURL(raw string) string {
 		return "" // fail closed: don't store a value that may embed userinfo credentials
 	}
 	return trimmed
+}
+
+// isHTTPScheme reports whether raw begins with an http or https scheme. Case-insensitive
+// because RFC 3986 §3.1 makes schemes case-insensitive and snapshotURLRunRe matches
+// `HTTPS://` runs accordingly — a case-sensitive test here would let exactly those runs
+// fall through to the truncating fallback the check exists to keep them out of.
+func isHTTPScheme(raw string) bool {
+	lower := strings.ToLower(raw)
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
 }
 
 // snapshotURLRunRe matches an http/https URL run inside free text: everything from the

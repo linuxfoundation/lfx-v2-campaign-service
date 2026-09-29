@@ -2179,9 +2179,22 @@ func twitterUTMParams(in CampaignInput) map[string]string {
 // not carry a secret (a ?token=... style credential). docs/api-catalog.md states
 // the same constraint on the consumer-facing side.
 //
-// The FRAGMENT is dropped: it is never transmitted to a server, so it cannot
-// affect routing or attribution, and carrying it would widen that public exposure
-// for nothing.
+// THE FRAGMENT IS PUBLISHED VERBATIM TOO, for the same reason as the query. It
+// used to be dropped, on the reasoning that a fragment is never transmitted to a
+// server and so cannot affect routing. That is true of the SERVER and false of the
+// page: `#register` scrolls to and focuses the registration form, and a hash-router
+// SPA reads the fragment as the ROUTE, so `https://events.example/#/register` with
+// its fragment removed lands on the site's front page instead. Dropping it sent paid
+// click traffic somewhere the brief did not ask for, and did it silently — the create
+// succeeded and the destination looked right in every step we print.
+//
+// The exposure argument does not survive the comparison either: the fragment is one
+// component of a URL this function already publishes whole. What actually protects it
+// is the screen, not the strip — the composed text goes through
+// rejectCredentialQueryParamsInText, whose credentialFragmentError arm refuses a
+// credential-shaped fragment before any mutating call. Stripping the fragment HERE
+// meant that arm never once saw the registration URL it was written for; it only ever
+// examined links the operator typed into their own copy.
 func buildTwitterUTMURL(in CampaignInput) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(in.RegistrationURL))
 	if err != nil || !u.IsAbs() || u.Hostname() == "" {
@@ -2199,7 +2212,6 @@ func buildTwitterUTMURL(in CampaignInput) (string, error) {
 		return "", fmt.Errorf("the query of registration URL %q could not be parsed, so the destination URL cannot be built without silently dropping its parameters; fix or remove the URL's query string", redactURLForError(in.RegistrationURL))
 	}
 	u.RawQuery = appendUTMToRawQuery(u.RawQuery, twitterUTMParams(in))
-	u.Fragment, u.RawFragment = "", ""
 	return u.String(), nil
 }
 

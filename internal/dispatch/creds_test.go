@@ -34,6 +34,16 @@ func TestSanitizeSnapshotURL(t *testing.T) {
 		// would emit a bare '%' and produce a URL that no longer parses.
 		{"https://[2001:db8::1]:8443/reg?t=SECRET", "https://[2001:db8::1]:8443"},
 		{"https://[fe80::1%25eth0]/reg?t=SECRET", "https://[fe80::1%25eth0]"},
+		// An http(s)-shaped value that will not reduce to scheme+host fails CLOSED.
+		// Both of these used to fall through to the truncating branch and come back
+		// with their paths intact — the exact exposure the reduction exists to close.
+		// `https:///reset/SECRET` parses cleanly with an EMPTY host and has no '?',
+		// '#' or '@' to truncate at; the second fails to parse on the bad escape.
+		{"https:///reset/SECRET", ""},
+		{"https://example.org/reset/SEC%zzRET", ""},
+		{"HTTPS:///reset/SECRET", ""}, // the run regex is case-insensitive, so this test is too
+		// A value that never claimed to be a URL keeps the conservative fallback:
+		// there is no scheme+host to reduce it to, and it is not URL data.
 		{"t3_abc123", "t3_abc123"}, // reddit thing-id, no query — unchanged
 		{"not a url?token=SECRET", "not a url"},
 		{"https://user:pass@example.com/x?token=SECRET", ""}, // secretlint-disable-line -- fixture asserting userinfo fails closed

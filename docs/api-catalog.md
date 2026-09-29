@@ -456,7 +456,8 @@ postUrl?: string                — OPTIONAL existing Reddit post to promote. Ac
                                   against reddit.com/redd.it hosts. When set it TAKES PRECEDENCE and
                                   `imageUrl`/`callToAction` are ignored. The stored config snapshot keeps
                                   only its scheme and host — path, query and fragment are all stripped,
-                                  because any of the three may carry a secret.
+                                  because any of the three may carry a secret; an http(s) value that
+                                  cannot be reduced to a scheme and host is dropped entirely.
 imageUrl?: string               — OPTIONAL public absolute http(s) image URL. When set and `postUrl`
                                   is absent, the client AUTHORS a promoted ("dark") IMAGE post from it
                                   (Reddit ingests and re-hosts the image at create time; there is no
@@ -902,8 +903,10 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   this text (the brief's UTM'd registration URL is appended if not
                                   already embedded — that URL keeps its own existing query string
                                   verbatim beside the UTM parameters, since it is the ad's real
-                                  click destination; its #fragment is dropped), then promotes it.
-                                  Because that query is PUBLISHED verbatim in the tweet, this is
+                                  click destination, and keeps its #fragment for the same reason —
+                                  `#register` and a hash-router route both decide where the click
+                                  actually lands), then promotes it.
+                                  Because that query AND fragment are PUBLISHED verbatim, this is
                                   the one path that first screens EVERY URL in the composed tweet
                                   text — the registration URL's own parameters and any link the
                                   caller put in their own copy — and refuses, pre-create, a key
