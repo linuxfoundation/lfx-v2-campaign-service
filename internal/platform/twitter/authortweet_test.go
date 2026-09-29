@@ -1172,3 +1172,148 @@ func TestResolvePromotableUser_ErrorsOmitTheUpstreamCursor(t *testing.T) {
 		}
 	})
 }
+
+// TestIsCredentialQueryKey_SessionIDCompounds pins the two standard spellings a web
+// session cookie takes when it ends up in a URL. Both normalize to names the exact
+// set never had — `jsessionid` and `aspnetsessionid` — so the exact-only entry for
+// `sessionid` cleared them for publication. `sessionid` is a fragment now; bare
+// `session` still is not, and the benign rows below are why.
+func TestIsCredentialQueryKey_SessionIDCompounds(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"JSESSIONID", "ASP.NET_SessionId", "phpsessionid", "session-id"} {
+		if !isCredentialQueryKey(key) {
+			t.Errorf("%q was not classified as a credential; a live session would be published", key)
+		}
+	}
+	for _, key := range []string{"sessionize", "sessions", "session_title", "breakout_session"} {
+		if isCredentialQueryKey(key) {
+			t.Errorf("%q was refused; an ordinary conference-agenda parameter would break the brief", key)
+		}
+	}
+}
+
+// TestRejectCredentialQueryParams_FailsClosedOnAnUnparseableQuery covers the hole
+// url.URL.Query() opens by DISCARDING ParseQuery's error: a query Go refuses to decode
+// arrives as an empty map, so the screen sees no parameters at all and clears a URL
+// whose credential it never read. Go rejects a bare `;` as a separator, which is the
+// shape asserted here.
+func TestRejectCredentialQueryParams_FailsClosedOnAnUnparseableQuery(t *testing.T) {
+	t.Parallel()
+
+	const raw = "https://sched.lf.org/kc?ref=abc;session_token=s3cr3t"
+	err := rejectCredentialQueryParams(raw)
+	if err == nil {
+		t.Fatal("an unparseable query was cleared for publication; the credential in it was never inspected")
+	}
+	if strings.Contains(err.Error(), "s3cr3t") {
+		t.Errorf("the refusal renders the credential value: %v", err)
+	}
+}
+
+// TestRejectCredentialQueryParams_BoundsTheKeyItNames keeps both halves of the
+// contract at once. The KEY is named because the operator cannot find the offending
+// parameter otherwise — but "key" is whatever sits left of the first `=`, and a URL
+// ending in a bare `?<token>` has no `=`, so the whole token becomes the key. It is
+// truncated and stripped of control characters rather than dropped.
+func TestRejectCredentialQueryParams_BoundsTheKeyItNames(t *testing.T) {
+	t.Parallel()
+
+	token := "oauth_token_" + strings.Repeat("A", 300)
+	err := rejectCredentialQueryParams("https://sched.lf.org/kc?" + token)
+	if err == nil {
+		t.Fatal("a bare credential-shaped query key was cleared for publication")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Error("the refusal reproduces the whole caller-controlled key; it must be truncated")
+	}
+	if !strings.Contains(err.Error(), "oauth_token") {
+		t.Errorf("the refusal must still name enough of the key to be actionable, got: %v", err)
+	}
+	if got := safeQueryKeyForError("a\x00b\nc"); strings.ContainsAny(got, "\x00\n") {
+		t.Errorf("control characters survived into an error that reaches the log: %q", got)
+	}
+}
+
+// TestComposeTweetText_RejectsAnOversizedRawBody guards the gap the weighted cap
+// leaves open by design: a URL weighs a fixed 23 however long it really is, so one
+// enormous link passes the 280 check and is only rejected once it has been encoded
+// into the tweet-create request URI — after the campaign and line item exist.
+func TestComposeTweetText_RejectsAnOversizedRawBody(t *testing.T) {
+	t.Parallel()
+
+	huge := "https://sched.lf.org/kc?ref=" + strings.Repeat("x", maxTweetRawBytes)
+	if _, err := composeTweetText("Agenda: "+huge, "https://sched.lf.org/kc"); err == nil {
+		t.Fatal("an oversized raw body passed validation; it would fail only after the campaign was created")
+	}
+
+	// The bound must not reach any legitimate brief: a full-width 280-weight tweet is
+	// four-byte runes throughout and still an order of magnitude below the cap.
+	// 2 weight per emoji, plus the appended URL's t.co weight of 23 and the separating
+	// space — the whole budget, spent on the widest runes there are.
+	full := strings.Repeat("😀", (maxTweetWeightedChars-tcoURLWeight-1)/2)
+	if _, err := composeTweetText(full, "https://sched.lf.org/kc"); err != nil {
+		t.Errorf("a legitimate maximum-weight tweet was rejected by the raw cap: %v", err)
+	}
+}
+
+// TestExtractTweetID_RejectsAMalformedIDStr closes the asymmetry between an explicit
+// TweetID, which is held to tweetIDRe and the int64 range before any mutating call,
+// and an AUTHORED id, which was taken on trust from a 2xx body. The caller only tests
+// it for emptiness, so a non-numeric value was recorded as a confirmed authored tweet
+// and persisted into Steps before failing at promoted_tweets.
+func TestExtractTweetID_RejectsAMalformedIDStr(t *testing.T) {
+	t.Parallel()
+
+	valid := &apiResponse{Data: []byte(`{"id_str":"1770000000000000001"}`)}
+	if got := extractTweetID(valid); got != "1770000000000000001" {
+		t.Fatalf("a well-formed id was not extracted: %q", got)
+	}
+
+	for _, body := range []string{
+		`{"id_str":"not-a-tweet"}`,
+		`{"id_str":"0"}`,
+		`{"id_str":"0177"}`,
+		`{"id_str":"9999999999999999999"}`, // 19 digits, above max int64
+		`{"id_str":"<html>error</html>"}`,
+	} {
+		if got := extractTweetID(&apiResponse{Data: []byte(body)}); got != "" {
+			t.Errorf("%s yielded %q; a malformed id must take the UNCONFIRMED path, not be reported as success", body, got)
+		}
+	}
+}
+
+// TestResolvePromotableUser_FullPageWithNoUsableCursorIsRefused asserts the one shape
+// that leaves the list genuinely unconfirmed: a FULL page, which X's contract says
+// owes a next_cursor, carrying one it gives no meaning to. Concluding there would
+// report a not-found or auto-pick an author out of a list that may have more.
+//
+// The complementary case is the important one for live accounts and is covered by the
+// existing single-candidate test: a SHORT page is conclusively the last one under X's
+// own documented rule, needs no cursor, and must still resolve.
+func TestResolvePromotableUser_FullPageWithNoUsableCursorIsRefused(t *testing.T) {
+	t.Parallel()
+
+	var b strings.Builder
+	b.WriteString(`{"data":[`)
+	for i := 0; i < listPageSize; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"user_id":"u%d"}`, i)
+	}
+	b.WriteString(`],"next_cursor":""}`)
+	body := b.String()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := newAuthorTweetTestClient(srv.URL)
+	if _, err := c.resolvePromotableUser(context.Background(), "someone-not-here"); err == nil {
+		t.Fatal("reported a pinned user absent from a list that was never confirmed complete")
+	} else if !strings.Contains(err.Error(), "cannot be confirmed complete") {
+		t.Errorf("error should say the list is unconfirmed, got: %v", err)
+	}
+}

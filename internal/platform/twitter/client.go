@@ -90,6 +90,18 @@ const (
 	maxResponseBody = 1 << 20 // 1 MiB
 	// maxTweetWeightedChars is X's per-Tweet character cap.
 	maxTweetWeightedChars = 280
+	// maxTweetRawBytes bounds the RAW size of the composed tweet, which the weighted
+	// cap above does not: a URL weighs a fixed 23 no matter how long it actually is,
+	// so a single multi-kilobyte link passes the 280 check and is then percent-encoded
+	// into the tweet-create request URI, where an oversized URI is rejected by X or an
+	// intermediary — after the campaign and line item have been created.
+	//
+	// It is set far above any real tweet on purpose. The two directions of error are
+	// not symmetric here either: this bound exists to catch an absurd input, so it must
+	// not be tight enough to refuse copy X would have accepted. 280 weighted characters
+	// of 4-byte runes is 1120 bytes even before URLs, so 8 KiB cannot be reached by any
+	// legitimate brief and is still two orders of magnitude below a URI limit.
+	maxTweetRawBytes = 8 << 10 // 8 KiB
 	// tcoURLWeight is the fixed weight X counts ANY http/https URL as, regardless
 	// of its actual length (every URL is wrapped to a t.co link at post time).
 	// Counting a UTM-decorated registration URL at its raw rune length would
@@ -1713,10 +1725,17 @@ var credentialQueryKeys = map[string]struct{}{
 // (`keyword`, `bypass`, `design`, `oauth` itself), and matching them anywhere would
 // reject working briefs. `key` is instead handled by the suffix rule below, which is
 // the one shape that carries a credential reading without those collisions.
+//
+// `sessionid` is the compound form of one of those exact-only names, and it is listed
+// here rather than left to the exact set because the two standard spellings of a web
+// session cookie carried into a URL — `JSESSIONID` and `ASP.NET_SessionId` — normalize
+// to `jsessionid` and `aspnetsessionid`, neither of which is an exact entry. Unlike
+// bare `session`, the full `sessionid` has no ordinary-word collision: it is not a
+// substring of any routing parameter an event page uses.
 var credentialQuerySubstrings = []string{
 	"token", "secret", "password", "passwd", "credential",
 	"signature", "hmac", "jwt", "bearer", "oauth",
-	"authorization", "assertion",
+	"authorization", "assertion", "sessionid",
 }
 
 // benignKeySuffixWords are the ordinary English words that end in "key" and would
@@ -1787,12 +1806,50 @@ func rejectCredentialQueryParams(raw string) error {
 		// reordered the two checks.
 		return fmt.Errorf("URL %q in the tweet text could not be parsed to check for credential parameters", redactURLForError(raw))
 	}
-	for key := range u.Query() {
+	// url.Values.Query() DISCARDS the error ParseQuery returns, and returns whatever
+	// pairs it managed to decode. A query Go refuses to decode — an unescaped `;`
+	// separator, a `%zz` escape — therefore arrives here as an empty or partial map,
+	// every unparsed pair invisible, and the URL is published anyway. Parsing
+	// explicitly and failing CLOSED is the only reading that keeps the guarantee:
+	// a query this gate could not read in full is a query it cannot clear.
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return fmt.Errorf("the query of URL %q in the tweet text could not be parsed, so it cannot be screened for credentials before the tweet is published; fix or remove the URL's query string, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
+	}
+	for key := range q {
 		if isCredentialQueryKey(key) {
-			return fmt.Errorf("the tweet's URL query parameter %q looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the registration URL and from your tweet copy, or supply an explicit tweetId instead of tweetText", key)
+			return fmt.Errorf("the tweet's URL query parameter %q looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the registration URL and from your tweet copy, or supply an explicit tweetId instead of tweetText", safeQueryKeyForError(key))
 		}
 	}
 	return nil
+}
+
+// safeQueryKeyForError bounds a caller-controlled query key before it is named in an
+// error that reaches the dispatcher, the campaign's persisted Steps and the service log.
+//
+// Naming the key is deliberate and stays: it is what makes the refusal actionable, the
+// operator cannot find the offending parameter without it, and a parameter NAME is not
+// the secret — the value is, and the value is never rendered. But "key" is whatever the
+// parser put on the left of the first `=`, and a URL ending in a bare `?eyJhbGciOi...`
+// has no `=` at all, so the entire token becomes the key. Two bounds close that without
+// giving up the name: control characters are stripped, so the key cannot forge log
+// structure, and the result is truncated well below any real parameter name, so a
+// credential that lands in the key position is not reproduced in full.
+func safeQueryKeyForError(key string) string {
+	const maxKeyInError = 40
+	clean := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, key)
+	// Truncate by RUNE, not by byte: a byte cut lands mid-sequence on a non-ASCII key
+	// and renders a replacement character, which reads as corruption rather than as a
+	// deliberate elision.
+	if runes := []rune(clean); len(runes) > maxKeyInError {
+		return string(runes[:maxKeyInError]) + "…"
+	}
+	return clean
 }
 
 // rejectCredentialQueryParamsInText screens EVERY URL in a composed tweet, and is the
@@ -2125,6 +2182,11 @@ func composeTweetText(callerText, destURL string) (string, error) {
 	}
 	if n := weightedTweetLen(full); n > maxTweetWeightedChars {
 		return "", fmt.Errorf("invalid tweet text: weighted length %d (including the destination URL) exceeds X's %d-character limit", n, maxTweetWeightedChars)
+	}
+	// The weighted cap counts any URL as 23 regardless of its real length, so it is
+	// no bound at all on raw size. See maxTweetRawBytes.
+	if n := len(full); n > maxTweetRawBytes {
+		return "", fmt.Errorf("invalid tweet text: %d raw bytes (including the destination URL) exceeds the %d-byte request limit; shorten the URL or the copy", n, maxTweetRawBytes)
 	}
 	return full, nil
 }
@@ -2903,6 +2965,18 @@ func extractID(resp *apiResponse) string {
 // "" even though Data holds a valid tweet. Read id_str instead: X's own
 // string-typed escape hatch for the same value, present on every tweet object
 // specifically because the numeric id can exceed float64's exact-integer range.
+//
+// The extracted value is held to the SAME shape an explicit TweetID must satisfy —
+// tweetIDRe plus the int64 range check — because it is used the same way: it is
+// promoted via promoted_tweets, recorded in AuthoredTweetID, and persisted into the
+// campaign's Steps as the id an operator will look up. The caller only tests it for
+// emptiness, so without this an arbitrary non-numeric string in a 2xx body (a proxy's
+// error document, a field X reshapes) would be reported as a CONFIRMED authored tweet
+// and then fail at promoted_tweets — after the campaign and line item exist, which is
+// exactly what validating the explicit id up front was meant to prevent. An invalid
+// value returns "" and so takes the existing malformed-2xx path, where the create is
+// reported as UNCONFIRMED rather than as a success carrying an id that is not one.
+// Nothing echoes the rejected value: it is upstream response text.
 func extractTweetID(resp *apiResponse) string {
 	if resp == nil || len(resp.Data) == 0 {
 		return ""
@@ -2910,10 +2984,17 @@ func extractTweetID(resp *apiResponse) string {
 	var obj struct {
 		IDStr string `json:"id_str"`
 	}
-	if err := json.Unmarshal(resp.Data, &obj); err == nil {
-		return obj.IDStr
+	if err := json.Unmarshal(resp.Data, &obj); err != nil {
+		return ""
 	}
-	return ""
+	id := strings.TrimSpace(obj.IDStr)
+	if !tweetIDRe.MatchString(id) {
+		return ""
+	}
+	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+		return ""
+	}
+	return id
 }
 
 // isDuplicatePromotedTweetErr reports whether err from a promoted_tweets POST is
@@ -3008,13 +3089,31 @@ func (c *Client) resolvePromotableUser(ctx context.Context, pinned string) (stri
 	// "none at all", and above all the single-candidate auto-pick — is a claim about
 	// the WHOLE list that a truncated one cannot support.
 	enumerated := false
+	// endConfirmed is the STRONGER claim: the list is known to have ENDED, rather than
+	// merely having stopped producing a cursor this client can interpret. Only the
+	// single-candidate auto-pick needs it — see the switch below. It is satisfied two
+	// ways, and they are the same two findByName already relies on: an explicit
+	// cursorExhausted, or a SHORT page, which X documents as conclusively the last one
+	// ("If less than count entities are returned in the current page of the result set,
+	// the next_cursor value will be null"). A FULL page owing a cursor and not giving
+	// one is the ambiguous case, and the only one that blocks the pick.
+	endConfirmed := false
+	// count is requested explicitly so the short-page test above has a denominator.
+	// Under X's default page size the same body is short or full depending on a number
+	// this client never saw, which is not evidence anything may be concluded from.
+	countedPath := "promotable_users?count=" + strconv.Itoa(listPageSize)
 	for page := 0; page < maxListPages; page++ {
-		resp, err := c.requestPage(ctx, "promotable_users", cursor)
+		resp, err := c.requestPage(ctx, countedPath, cursor)
 		if err != nil {
 			return "", fmt.Errorf("looking up promotable users: %w", err)
 		}
 		if resp == nil {
+			// No body at all: there is no page to be short or full and no cursor to
+			// read, so this ends the walk on the same footing an empty page would.
+			// ids is whatever earlier pages held — with none, the tail reports the
+			// account as having no promotable users, which is what an empty list is.
 			enumerated = true
+			endConfirmed = true
 			break
 		}
 		var users []struct {
@@ -3039,8 +3138,9 @@ func (c *Client) resolvePromotableUser(ctx context.Context, pinned string) (stri
 				}
 			}
 		}
-		if cursorVerdict(resp) != cursorMore {
+		if verdict := cursorVerdict(resp); verdict != cursorMore {
 			enumerated = true
+			endConfirmed = verdict == cursorExhausted || len(users) < listPageSize
 			break
 		}
 		if _, dup := seen[resp.NextCursor]; dup {
@@ -3056,6 +3156,15 @@ func (c *Client) resolvePromotableUser(ctx context.Context, pinned string) (stri
 		// a prefix of the list, not the list. findByName refuses on the same footing
 		// rather than reporting a not-found it cannot stand behind.
 		return "", fmt.Errorf("x promotable-user listing exceeded %d pages with more results remaining, so this account's promotable users could not be fully enumerated; check them in X Ads Manager", maxListPages)
+	}
+	// Every conclusion below is a claim about the WHOLE list, and the walk may have
+	// stopped on a page that said nothing about whether more exist. A FULL page owes a
+	// cursor under X's contract, so a full page with an unknowable one leaves the list
+	// unconfirmed — refuse rather than report a not-found or pick an author from it.
+	// A SHORT page is conclusively last on X's own documented rule and needs no cursor,
+	// which is what keeps ordinary small accounts working; see endConfirmed.
+	if !endConfirmed {
+		return "", fmt.Errorf("x returned a full page of promotable users with no next_cursor it gives a meaning to (absent or empty, not the documented null), so this account's promotable users cannot be confirmed complete; set asUserId to pick the author explicitly")
 	}
 	if pinned != "" {
 		return "", fmt.Errorf("the configured asUserId is not among this account's %d promotable users; check the account's promotable users in X Ads Manager", len(ids))

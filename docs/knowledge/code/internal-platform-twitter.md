@@ -215,6 +215,9 @@ auto-picking an author the caller never chose, which is precisely the "never
 silently pick" guarantee above. A pinned id short-circuits the walk the moment it
 is seen; auto-resolution must reach the end before it may conclude.
 
+Two different things can leave the walk unable to conclude, and both are checked
+before any of those conclusions is drawn.
+
 Reaching `maxListPages` with a cursor still outstanding is NOT reaching the end,
 and the walk records which of the two happened. Falling out of the loop otherwise
 looks identical to finishing it, and every conclusion below the loop is a claim
@@ -222,6 +225,22 @@ about the whole list: "not among them", "none at all", and above all the
 single-candidate auto-pick, which on a truncated list picks an author from a set
 the caller was never shown. `findByName` refuses on exactly this footing rather
 than reporting a not-found it cannot stand behind, and this walk now does too.
+
+The second is a page that ended the walk without saying the list ended. The
+`cursorUnknowable` policy here — end the walk rather than fail it — is
+deliberate and unchanged, because the function read page one alone before, so
+failing on a response shape that works today would break live accounts. But
+ending the WALK is not the same as confirming the LIST, and every conclusion
+below the loop is a claim about the list. So the discriminator `findByName`
+already uses applies here too, and for the same reason: PAGE FULLNESS. X
+documents that "if less than count entities are returned in the current page of
+the result set, the next_cursor value will be null", so a SHORT page is
+conclusively the last one on its own evidence and needs no cursor — which is
+what keeps every ordinary small account resolving. A FULL page OWES a cursor,
+so a full page with an unknowable one leaves the list unconfirmed and the walk
+refuses. `count` is requested explicitly for exactly this reason: under X's
+default page size, whether a body is short or full depends on a number this
+client never saw, which is not evidence anything may be concluded from.
 
 Its page cursors stay on the WIRE URL and off the error path, via `requestPage`.
 A cursor is opaque text decoded out of an upstream response body, and
@@ -276,6 +295,16 @@ per-rune pass would have charged a family sequence 14. A BMP codepoint starts a
 cluster only when U+FE0F requests emoji presentation, so a bare `©` stays weight
 1 and `©️` is one 2-weight cluster.
 
+A second, much looser cap bounds the RAW size of the composed text
+(`maxTweetRawBytes`, 8 KiB). The weighted cap is no bound on raw size at all —
+a URL weighs a fixed 23 however long it really is — so one multi-kilobyte link
+passed validation and was then percent-encoded into the tweet-create request
+URI, where it is rejected as an oversized URI AFTER the campaign and line item
+exist. It is set far above any real tweet on purpose: the same asymmetry applies,
+so a bound that exists to catch an absurd input must not be tight enough to
+refuse copy X would accept. 280 weighted characters of four-byte runes is 1120
+bytes, so no legitimate brief comes near 8 KiB.
+
 The same asymmetry decides where a URL run ENDS. `tweetURLRe` is
 `(?i)\bhttps?://\S+`: case-insensitive because RFC 3986 §3.1 makes the scheme
 case-insensitive and `HTTPS://…` is a link X wraps to t.co like any other, where
@@ -326,10 +355,27 @@ SUFFIX rule minus an explicit benign set (`monkey`, `donkey`, `turkey`,
 `session` are exactly the words that CANNOT be fragments — `keyword`, `oauth`
 inside nothing, `design`, `bypass`, `passenger` — so they stay exact-only, and
 `key` gets the suffix rule instead, which is the position where it really is one.
-`code` and `pin` are weighed and excluded on purpose — a discount code is the
-common meaning on a registration link. The error names the offending KEY and
-never its value, and it runs in the up-front block so the refusal costs a
-corrected brief rather than an orphaned campaign.
+`sessionid` is the one compound promoted INTO the fragment tier: the two standard
+spellings of a session cookie carried in a URL, `JSESSIONID` and
+`ASP.NET_SessionId`, normalise to names the exact set never had, and unlike bare
+`session` the full `sessionid` collides with no routing parameter. `code` and
+`pin` are weighed and excluded on purpose — a discount code is the common meaning
+on a registration link.
+
+The query is parsed with `url.ParseQuery` and the gate fails CLOSED on its error,
+NOT with `u.Query()`, which discards that error and returns whatever pairs it
+decoded. A query Go refuses to decode — an unescaped `;` separator, a bad escape
+— therefore arrived as an empty map, and the screen cleared a URL whose
+parameters it had never read.
+
+The error names the offending KEY and never its value: a parameter name is not
+the secret, and it is what the operator needs to fix the brief. But "key" is
+whatever sits left of the first `=`, and a URL ending in a bare `?eyJhbGciOi…`
+has no `=` at all, so the whole token lands in the key position — hence
+`safeQueryKeyForError`, which strips control characters and truncates by rune
+before the key reaches an error that is persisted and logged. The check runs in
+the up-front block so the refusal costs a corrected brief rather than an orphaned
+campaign.
 
 `buildTwitterUTMURL` diverges from `displayTwitterUtmURL` in one way that
 matters: it preserves the registration URL's own pre-existing query parameters
@@ -389,6 +435,17 @@ unmarshal against it and returns `""`, indistinguishable from a genuinely
 missing id. `extractTweetID` instead reads `id_str`, the same value as X's own
 string-typed escape hatch, so a successfully authored tweet is no longer
 misclassified as the malformed-success (2xx-no-id) case above.
+
+What it extracts is then held to the SAME shape an explicit `TweetID` must
+satisfy — `tweetIDRe` plus the int64 range check — because it is used the same
+way: promoted via `promoted_tweets`, recorded in `AuthoredTweetID`, persisted
+into `Steps` as the id an operator looks up. The caller only tests it for
+emptiness, so without that an arbitrary non-numeric string in a 2xx body was
+reported as a CONFIRMED authored tweet and then failed at `promoted_tweets`,
+after the campaign and line item existed — exactly what validating the explicit
+id up front was for. An invalid value returns `""` and takes the
+malformed-success path instead, and the rejected value is never echoed: it is
+upstream response text.
 
 A successfully authored tweet's id flows into the exact same `tweetID` variable
 an explicit `TweetID` would have populated, so it falls through into the

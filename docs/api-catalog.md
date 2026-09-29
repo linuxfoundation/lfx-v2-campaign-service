@@ -907,9 +907,12 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   caller put in their own copy — and refuses, pre-create, a key
                                   that is a credential under any reading (`access_token`,
                                   `api_key`, `sessionId`, `jwt`, `password`, `signature`,
-                                  `secret_token`, `auth_key`, `oauth_token_secret`, … in any
-                                  case/separator spelling, compounds included). The error names
-                                  the offending KEY, never its value. Routing and
+                                  `secret_token`, `auth_key`, `oauth_token_secret`,
+                                  `JSESSIONID`, … in any
+                                  case/separator spelling, compounds included). A query string
+                                  that cannot be parsed is refused rather than read as having no
+                                  parameters. The error names the offending KEY — bounded and
+                                  stripped of control characters — never its value. Routing and
                                   attribution parameters are unaffected, `code` and `pin` included
                                   — a discount code is not a credential.
                                   The authored tweet is ALWAYS promoted-only
@@ -919,7 +922,9 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   embedded URL at X's fixed t.co weight of 23 characters each, not
                                   raw length — schemes match case-insensitively, and trailing
                                   sentence punctuation is counted as prose, not as part of the
-                                  link) exceeds the 280-character cap. That cap is X's WEIGHTED
+                                  link) exceeds the 280-character cap, or if its raw size
+                                  exceeds an 8 KiB request bound that the weighted cap — under
+                                  which any URL costs 23 whatever its length — does not impose. That cap is X's WEIGHTED
                                   one, not a rune count: runes outside twitter-text's weight-1
                                   ranges (CJK and beyond) cost 2 each, while an emoji presentation
                                   sequence — skin tone, ZWJ family, keycap, country flag — costs 2
@@ -940,7 +945,10 @@ asUserId?: string                — Pins which of the ad account's promotable u
                                   across every page, so a pinned user is not reported absent for
                                   sitting on page two; if the page cap is reached with results
                                   still outstanding, the lookup is refused as inconclusive rather
-                                  than concluding from a truncated list.
+                                  than concluding from a truncated list; so is a FULL page that
+                                  returns no next_cursor X gives a meaning to. A short page is
+                                  conclusively last under X's documented rule and resolves
+                                  normally.
 ```
 
 Connection prerequisites (from the X connection, not this config): the OAuth1 4-tuple (consumer
