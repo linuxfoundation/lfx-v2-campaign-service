@@ -6,42 +6,36 @@ package rules
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// This file, and its three siblings monitor_linkedin.go / monitor_meta.go / monitor_reddit.go,
-// are a deliberately UNPORTED-INTO-`rules` family. This package's Thresholds/ComputePacing/
-// Evaluate (pacing.go, actions.go) already unify what the BFF drifted apart on the SINGLE-
-// campaign metrics path. The account-monitor endpoints this file backs are a DIFFERENT read
-// path — see internal/domain/model/monitor.go — being ported for the express purpose of
-// differentially verifying it against the still-live BFF, bug for bug. Routing it through the
-// already-unified Thresholds/Evaluate would silently move every threshold this file exists to
-// preserve, breaking that diff. Unifying these four is deferred to follow-up ticket #7,
-// tracked as part of linuxfoundation/lfx-self-serve#2519; it is a decision to make in the
-// open, once, not a side effect of adding this endpoint.
+// This file and its three siblings monitor_linkedin.go / monitor_meta.go / monitor_reddit.go
+// back the ACCOUNT-MONITOR read path — see internal/domain/model/monitor.go — which is distinct
+// from the single-campaign metrics path that pacing.go's Thresholds/ComputePacing and actions.go's
+// Evaluate serve.
+//
+// The four were originally ported from the BFF bug-for-bug, each with its own private copy of the
+// rules, so that the port could be differentially diffed against the still-live BFF before
+// cutover. That diff is no longer the plan of record, which removes the reason to preserve the
+// duplication — so what the four genuinely share now lives in monitor_shared.go, and the five
+// deliberately-ported defects are being fixed under their own tickets rather than frozen.
+//
+// What stays separate, and deliberately: these four still do NOT route through
+// Thresholds/Evaluate. That path runs a different ladder (50/100/130, with `Constrained` as an
+// inclusive top) against a different input shape, so routing the monitor through it would move
+// every operator-facing alerting band as a side effect. Merging the two read paths is its own
+// decision, on its own ticket, under linuxfoundation/lfx-self-serve#2519 — not a side effect of
+// deduplicating the four.
 //
 // Ported from lfx-self-serve's campaign-metrics.service.ts (resolveDateRange,
 // parseCampaignMetrics, generateActionItems).
 //
 // fetchFailedRow, used below, is a cross-platform helper shared with the other three
 // monitor_*.go files — see monitor_shared.go.
-
-// googlePacingUnderspending/ConstrainedFrom/Overspending are campaign-metrics.service.ts's own
-// local literals (50/90/100) — NOT this package's shared Thresholds{50,100,130}, and not the
-// same 50/90/100 Reddit happens to also hardcode (a coincidence of value, not a shared
-// constant on either side). Ported verbatim.
-//
-// Named for the branch each one gates, not for the number: googlePacingOverspending (100) is
-// the ">" cutoff for the overspending label, googlePacingConstrainedFrom (90) the ">" cutoff
-// for constrained — the reverse of what the pre-round-22-review names implied.
-const (
-	googlePacingUnderspending   = 50
-	googlePacingOverspending    = 100
-	googlePacingConstrainedFrom = 90
-)
 
 // EvaluateGoogleMonitor computes each row's pacing percentage/label and the account's action
 // items, mirroring campaign-metrics.service.ts's parseCampaignMetrics + generateActionItems.
@@ -55,19 +49,17 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 	items := make([]model.AccountMonitorActionItem, 0)
 
 	for _, m := range rows {
-		// zz-prefixed campaign names are filtered out entirely — ported from
-		// getMonitorData's `.filter((c) => !c.name.toLowerCase().startsWith('zz'))`. This is a
-		// KNOWN BUG/convention, ported verbatim — see follow-up ticket: it silently drops any
-		// campaign an operator happened to name starting with "zz" (e.g. a "ZZ-archive-test"
-		// campaign), not just the intended test/scratch ones.
-		if strings.HasPrefix(strings.ToLower(m.Name), "zz") {
+		// Campaigns named with the operator's "zz" scratch prefix are hidden from this view.
+		// See isScratchCampaignName for what counts and why the BFF's own test is not used
+		// directly.
+		if isScratchCampaignName(m.Name) {
 			continue
 		}
 
 		// internal/platform/googleads.ListAccountCampaigns sets FetchFailed when a campaign's
-		// GAQL metrics fields fail to parse (round-19 review) OR when its budget is present
-		// but unparseable alongside otherwise-good metrics (round-24/25 review) — see
-		// fetchFailedRow's doc comment in monitor_shared.go. Either way this row (metrics
+		// GAQL metrics fields fail to parse, or when its budget is present but unparseable
+		// alongside otherwise-good metrics — see fetchFailedRow's doc comment in
+		// monitor_shared.go. Either way this row (metrics
 		// possibly real, possibly zero-value) is excluded here rather than risk fabricating a
 		// pacing/action-item finding against an untrusted field. This is a deliberately blanket
 		// exclusion, unlike monitor_reddit.go's empty-StartDate branch (which still runs the
@@ -76,26 +68,32 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 		// spend, not the budget, and could in principle still fire. Left blanket for now — no
 		// evidence yet that a real budget-parse failure has ever coincided with an actionable
 		// delivery issue on the same row — rather than partially evaluating a row this port has
-		// never had to before (round-26 review).
+		// never had to before.
 		if m.FetchFailed {
 			out = append(out, fetchFailedRow(m))
 			continue
 		}
 
+		// No daily budget means no plan to pace against, so there is no percentage to report.
+		// This port used to fall through to pacingPct = 0 here, which the ladder reads as
+		// "underspending" — so every budget-less campaign was reported as failing to spend a
+		// budget it does not have, with an action item reading "Only spending 0% of $0.00/day
+		// budget — $0.00 spent vs $0.00 expected". Reddit already routes this case through
+		// PacingUnknown; Google and Meta did not (Meta's own guard was dead code, never taken).
+		//
+		// The real signal for this campaign is not lost: the BudgetDay <= 1 rule in
+		// googleActionItems still fires, and says the accurate thing — that the budget is a
+		// placeholder — at HIGH rather than burying it in a pacing complaint at MED.
 		expectedSpend := m.BudgetDay * float64(days)
-		pacingPct := 0.0
-		if expectedSpend > 0 {
-			pacingPct = math.Round(m.Spend / expectedSpend * 100)
+		if expectedSpend <= 0 {
+			row := unknownPacingRow(m)
+			out = append(out, row)
+			items = append(items, googleActionItems(row.Metrics, 0, row.PacingLabel, days)...)
+			continue
 		}
-		label := model.MonitorPacingNormal
-		switch {
-		case pacingPct < googlePacingUnderspending:
-			label = model.MonitorPacingUnderspending
-		case pacingPct > googlePacingOverspending:
-			label = model.MonitorPacingOverspending
-		case pacingPct > googlePacingConstrainedFrom:
-			label = model.MonitorPacingConstrained
-		}
+
+		pacingPct := math.Round(m.Spend / expectedSpend * 100)
+		label := pacingLabelFor(pacingPct)
 
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)
@@ -103,7 +101,7 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 		items = append(items, googleActionItems(m, pacingPct, label, days)...)
 	}
 
-	sortByPriority(items, googlePriorityRank)
+	sortByPriority(items)
 	return out, items
 }
 
@@ -112,7 +110,14 @@ func EvaluateGoogleMonitor(rows []model.AccountCampaignMetrics, days int) ([]mod
 // dispatcher is expected to hand these rules the platform's own status string lower-cased the
 // same way, so the comparisons below match campaign-metrics.service.ts's literal comparisons
 // against 'limited'/'enabled'/'paused'/'draft'.
+// googleLowCtrPct/googleMinImpressions were bare literals inline in the rule, the only two of
+// the sixteen per-platform thresholds in this package that were not named. Same values as
+// LinkedIn and Reddit — see monitor_linkedin.go's const block for why three of the four
+// platforms share them.
 const (
+	googleLowCtrPct      = 0.3
+	googleMinImpressions = 1000
+
 	googleStatusLimited = "limited"
 	googleStatusEnabled = "enabled"
 	googleStatusPaused  = "paused"
@@ -159,7 +164,7 @@ func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 			fmt.Sprintf("Search CTR is %.2f%% (benchmark: 2%%+) - %d clicks from %d impressions", m.Ctr, m.Clicks, m.Impressions),
 			"Improve headline relevance to search intent, add negative keywords to filter irrelevant queries")
 	}
-	if !m.IsSearchChannel && m.Ctr < 0.3 && m.Impressions > 1000 {
+	if !m.IsSearchChannel && m.Ctr < googleLowCtrPct && m.Impressions > googleMinImpressions {
 		add(model.MonitorPriorityMed,
 			fmt.Sprintf("Display CTR is %.2f%% (benchmark: 0.3%%+) - %d clicks from %d impressions", m.Ctr, m.Clicks, m.Impressions),
 			"Refresh creative assets, check for audience overlap across campaigns, or narrow placement targeting")
@@ -191,27 +196,28 @@ func googleActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 	return items
 }
 
-// googlePriorityRank matches campaign-metrics.service.ts's generateActionItems sort key
-// exactly: HIGH:0, MED:1, LOW:2, anything else last.
-func googlePriorityRank(p model.MonitorPriority) int {
-	switch p {
-	case model.MonitorPriorityHigh:
-		return 0
-	case model.MonitorPriorityMed:
-		return 1
-	case model.MonitorPriorityLow:
-		return 2
-	default:
-		return 3
+// isScratchCampaignName reports whether a campaign name uses the operator convention of
+// prefixing throwaway campaigns with "zz" so they sort last and can be ignored.
+//
+// Ported from getMonitorData's `.filter((c) => !c.name.toLowerCase().startsWith('zz'))`, but
+// NOT that test verbatim. Two bare letters is not a convention, it is a coincidence waiting to
+// happen: `startsWith('zz')` silently drops any campaign whose name merely begins with them,
+// and a dropped campaign is invisible here — no row, no action items, no indication anything
+// was filtered. An operator looking for a campaign that is quietly missing from the monitor
+// has nothing to go on.
+//
+// The prefix must therefore be followed by a separator (or be the whole name) to count. That
+// keeps every name the convention actually produces — "zz-test", "ZZ_old_scratch", "zz 2026
+// draft" — and stops the filter reaching a name that simply starts with the same two letters.
+func isScratchCampaignName(name string) bool {
+	n := strings.ToLower(name)
+	if !strings.HasPrefix(n, "zz") {
+		return false
 	}
-}
-
-// sortByPriority is a small stable sort shared by all four monitor_*.go files (each with its
-// own rank function, since — see monitor_linkedin.go — the rank functions are NOT
-// interchangeable). sort.SliceStable matches Array.prototype.sort's stability the BFF relies
-// on, in O(n log n) rather than the O(n²) insertion sort this used to run (round-31+ review).
-func sortByPriority(items []model.AccountMonitorActionItem, rank func(model.MonitorPriority) int) {
-	sort.SliceStable(items, func(i, j int) bool {
-		return rank(items[i].Priority) < rank(items[j].Priority)
-	})
+	rest := n[len("zz"):]
+	if rest == "" {
+		return true
+	}
+	next, _ := utf8.DecodeRuneInString(rest)
+	return !unicode.IsLetter(next) && !unicode.IsDigit(next)
 }

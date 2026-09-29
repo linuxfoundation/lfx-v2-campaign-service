@@ -37,7 +37,7 @@ func UsageCommands() []string {
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Non eos.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Dignissimos consequatur reiciendis delectus enim quas.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Eius est porro eos ipsa quia.\",\n            \"Quo repudiandae.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"8d39b230-35cf-4634-a8c6-7a679cc46c0a\" --bearer-token \"eyJhbGci...\"" + "\n" +
+	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Quia nihil quo repudiandae laboriosam non.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Quo aliquam in rem.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Autem neque nihil laborum omnis et voluptatem.\",\n            \"Veniam dignissimos consequatur reiciendis.\",\n            \"Enim quas.\",\n            \"Porro eius est porro eos.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"61d911f3-a3c7-47ab-8e80-97d54900f587\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-audience-builder get-audience-builder-capabilities --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-briefs create-brief --body '{\n      \"brief\": {\n         \"copy\": \"Ut quas officiis mollitia ducimus sunt repellendus.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Debitis atque laboriosam unde facilis.\",\n         \"event_slug\": \"n\",\n         \"keywords\": \"Voluptatem optio.\",\n         \"platforms\": [\n            \"Odit illo ut ut.\",\n            \"Nam modi nostrum assumenda alias sed.\"\n         ],\n         \"program_type\": \"events\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Aliquam est autem vel eos minima.\",\n         \"url\": \"Et numquam voluptatem maiores ipsam dicta cum.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Molestiae necessitatibus perferendis.\",\n         \"client_secret\": \"Laborum quis minus sit ea.\",\n         \"developer_token\": \"Dicta iusto magnam at tempore voluptas.\",\n         \"refresh_token\": \"Delectus et quam hic et aut.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
@@ -1450,7 +1450,7 @@ func lfxV2CampaignServiceAudiencesCreateAudienceUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Non eos.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Dignissimos consequatur reiciendis delectus enim quas.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Eius est porro eos ipsa quia.\",\n            \"Quo repudiandae.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"8d39b230-35cf-4634-a8c6-7a679cc46c0a\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Quia nihil quo repudiandae laboriosam non.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Quo aliquam in rem.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Autem neque nihil laborum omnis et voluptatem.\",\n            \"Veniam dignissimos consequatur reiciendis.\",\n            \"Enim quas.\",\n            \"Porro eius est porro eos.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"61d911f3-a3c7-47ab-8e80-97d54900f587\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudiencesGetAudienceUsage() {
@@ -1474,7 +1474,7 @@ func lfxV2CampaignServiceAudiencesGetAudienceUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences get-audience --project-id \"cncf\" --brief-id \"66dd781c-4873-4394-afcd-17c169a7eb5a\" --audience-id \"5c356bb4-3058-4707-9802-8519530fd8fb\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences get-audience --project-id \"cncf\" --brief-id \"878e3ccf-664a-450b-8c2e-94f1d8536749\" --audience-id \"cab61bed-1a64-442e-b942-541311ce350b\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudiencesListAudiencesUsage() {
@@ -1496,7 +1496,7 @@ func lfxV2CampaignServiceAudiencesListAudiencesUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences list-audiences --project-id \"cncf\" --brief-id \"c18133b9-c321-41f9-a652-6d0231167b02\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences list-audiences --project-id \"cncf\" --brief-id \"ad188d44-b0c5-4855-a267-b7fb86ec0a7e\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudiencesUpdateAudienceUsage() {
@@ -1524,7 +1524,7 @@ func lfxV2CampaignServiceAudiencesUpdateAudienceUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences update-audience --body '{\n      \"audience\": {\n         \"clear_suppression_lists\": false,\n         \"inclusion_summary\": \"Voluptatem ipsa.\",\n         \"platform_master_list_id\": \"Ut ullam aliquam dolore iure consequatur.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Iste nemo.\",\n            \"Sunt deleniti.\",\n            \"Natus quia labore non ut dolores et.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"d0b930ed-8cbf-4dbc-8d7b-d1368b0722ea\" --audience-id \"10ca178b-a3fc-41d5-906d-96f79980a432\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences update-audience --body '{\n      \"audience\": {\n         \"clear_suppression_lists\": false,\n         \"inclusion_summary\": \"Voluptatem ipsa.\",\n         \"platform_master_list_id\": \"Iste nemo.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Deleniti officia natus.\",\n            \"Labore non ut dolores et.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"c3e507b3-34bf-4dbc-8d7b-d1368b0722ea\" --audience-id \"10ca178b-a3fc-41d5-906d-96f79980a432\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
 }
 
 func lfxV2CampaignServiceAudiencesBuildAudienceUsage() {
@@ -2502,43 +2502,43 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    get-google-ads: Get the project's Google Ads connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-google-ads: Replace the Google Ads connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-google-ads: Soft-delete the project's Google Ads connection.`)
-	fmt.Fprintln(os.Stderr, `    test-google-ads: Verify the stored Google Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-google-ads: Verify the stored Google Ads credential and the configured account against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-google-ads: Replace the stored (encrypted) Google Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    create-linkedin-ads: Create the project's LinkedIn Ads connection (singleton; 409 if one already exists).`)
 	fmt.Fprintln(os.Stderr, `    get-linkedin-ads: Get the project's LinkedIn Ads connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-linkedin-ads: Replace the LinkedIn Ads connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-linkedin-ads: Soft-delete the project's LinkedIn Ads connection.`)
-	fmt.Fprintln(os.Stderr, `    test-linkedin-ads: Verify the stored LinkedIn Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-linkedin-ads: Verify the stored LinkedIn Ads credential and the configured account against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-linkedin-ads: Replace the stored (encrypted) LinkedIn Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    create-meta-ads: Create the project's Meta Ads connection (singleton; 409 if one already exists).`)
 	fmt.Fprintln(os.Stderr, `    get-meta-ads: Get the project's Meta Ads connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-meta-ads: Replace the Meta Ads connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-meta-ads: Soft-delete the project's Meta Ads connection.`)
-	fmt.Fprintln(os.Stderr, `    test-meta-ads: Verify the stored Meta Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-meta-ads: Verify the stored Meta Ads credential and the configured account against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-meta-ads: Replace the stored (encrypted) Meta Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    create-reddit-ads: Create the project's Reddit Ads connection (singleton; 409 if one already exists).`)
 	fmt.Fprintln(os.Stderr, `    get-reddit-ads: Get the project's Reddit Ads connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-reddit-ads: Replace the Reddit Ads connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-reddit-ads: Soft-delete the project's Reddit Ads connection.`)
-	fmt.Fprintln(os.Stderr, `    test-reddit-ads: Verify the stored Reddit Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-reddit-ads: Verify the stored Reddit Ads credential and the configured account against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-reddit-ads: Replace the stored (encrypted) Reddit Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    create-twitter-ads: Create the project's X/Twitter Ads connection (singleton; 409 if one already exists).`)
 	fmt.Fprintln(os.Stderr, `    get-twitter-ads: Get the project's X/Twitter Ads connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-twitter-ads: Replace the X/Twitter Ads connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-twitter-ads: Soft-delete the project's X/Twitter Ads connection.`)
-	fmt.Fprintln(os.Stderr, `    test-twitter-ads: Verify the stored X/Twitter Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-twitter-ads: Verify the stored X/Twitter Ads credential and the configured account against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-twitter-ads: Replace the stored (encrypted) X/Twitter Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    create-microsoft-ads: Create the project's Microsoft Ads connection (singleton; 409 if one already exists).`)
 	fmt.Fprintln(os.Stderr, `    get-microsoft-ads: Get the project's Microsoft Ads connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-microsoft-ads: Replace the Microsoft Ads connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-microsoft-ads: Soft-delete the project's Microsoft Ads connection.`)
-	fmt.Fprintln(os.Stderr, `    test-microsoft-ads: Verify the stored Microsoft Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-microsoft-ads: Verify the stored Microsoft Ads credential and the configured account against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-microsoft-ads: Replace the stored (encrypted) Microsoft Ads credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    create-hubspot: Create the project's HubSpot connection (singleton; 409 if one already exists).`)
 	fmt.Fprintln(os.Stderr, `    get-hubspot: Get the project's HubSpot connection (credentials redacted; returns ETag).`)
 	fmt.Fprintln(os.Stderr, `    update-hubspot: Replace the HubSpot connection config (requires If-Match; does not set credentials).`)
 	fmt.Fprintln(os.Stderr, `    delete-hubspot: Soft-delete the project's HubSpot connection.`)
-	fmt.Fprintln(os.Stderr, `    test-hubspot: Verify the stored HubSpot credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `    test-hubspot: Verify the stored HubSpot private-app token against the provider. No configured account is checked: the portal is the token's own.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-hubspot: Replace the stored (encrypted) HubSpot credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    list-google-ads-accounts: Enumerate the Google Ads ad accounts accessible via the stored connection credential.`)
 	fmt.Fprintln(os.Stderr, `    get-google-ads-keywords: Read Google Ads keyword performance for this project's own campaigns, live from the platform. Scoped to the campaigns this service holds for the project, NOT to the connected ad account: the Google Ads customer is shared across foundations, so an account-wide read would return other projects' keywords. A pure read-through — nothing is persisted, and this service stores no keyword of its own. Rows are the TOP keywords by impressions over the window, capped; `+"`"+`truncated`+"`"+` reports whether the project's campaigns hold more. The returned criterion_id/ad_group_id pairs are the handles the keyword-actions endpoint takes.`)
@@ -2554,7 +2554,7 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    monitor-google-ads-account: Read every campaign visible on a Google Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped: {project_id} resolves which stored connection credential to use, and the read enumerates everything that credential reaches on account_id, not only campaigns this service created. Unlike GET .../connection-google-ads/accounts, this endpoint resolves the project's OWN connection only and does not fall back to the shared LF system credential: a project with no Google Ads connection of its own gets a 404, not the LF account's data. A pure read: nothing is persisted.`)
 	fmt.Fprintln(os.Stderr, `    monitor-linkedin-ads-account: Read every campaign visible on a LinkedIn Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
 	fmt.Fprintln(os.Stderr, `    monitor-meta-ads-account: Read every campaign visible on a Meta Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
-	fmt.Fprintln(os.Stderr, `    monitor-reddit-ads-account: Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. totals on this platform come from a separate account-level upstream call rather than a sum of the campaigns array — see AccountTotalsReader in internal/service/orchestrator.go. A pure read: nothing is persisted.`)
+	fmt.Fprintln(os.Stderr, `    monitor-reddit-ads-account: Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-connections COMMAND --help\n", os.Args[0])
@@ -2654,7 +2654,7 @@ func lfxV2CampaignServiceConnectionsTestGoogleAdsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored Google Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored Google Ads credential and the configured account against the provider.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
@@ -2782,7 +2782,7 @@ func lfxV2CampaignServiceConnectionsTestLinkedinAdsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored LinkedIn Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored LinkedIn Ads credential and the configured account against the provider.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
@@ -2910,7 +2910,7 @@ func lfxV2CampaignServiceConnectionsTestMetaAdsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored Meta Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored Meta Ads credential and the configured account against the provider.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
@@ -3038,7 +3038,7 @@ func lfxV2CampaignServiceConnectionsTestRedditAdsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored Reddit Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored Reddit Ads credential and the configured account against the provider.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
@@ -3166,7 +3166,7 @@ func lfxV2CampaignServiceConnectionsTestTwitterAdsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored X/Twitter Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored X/Twitter Ads credential and the configured account against the provider.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
@@ -3218,7 +3218,7 @@ func lfxV2CampaignServiceConnectionsCreateMicrosoftAdsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-microsoft-ads --body '{\n      \"config\": {\n         \"account_id\": \"Sint minima culpa repellendus non voluptatem.\",\n         \"customer_id\": \"Asperiores in magni.\",\n         \"label\": \"Et quia.\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Vero deleniti facilis.\",\n         \"client_secret\": \"Cum eligendi animi explicabo quidem.\",\n         \"developer_token\": \"Enim fugiat dolor consequuntur libero quisquam.\",\n         \"refresh_token\": \"Molestiae sint repellendus pariatur temporibus vero qui.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-microsoft-ads --body '{\n      \"config\": {\n         \"account_id\": \"1234567\",\n         \"customer_id\": \"9999999\",\n         \"label\": \"Et quia.\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Sint minima culpa repellendus non voluptatem.\",\n         \"client_secret\": \"Asperiores in magni.\",\n         \"developer_token\": \"Cum eligendi animi explicabo quidem.\",\n         \"refresh_token\": \"Vero deleniti facilis.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsGetMicrosoftAdsUsage() {
@@ -3262,7 +3262,7 @@ func lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections update-microsoft-ads --body '{\n      \"config\": {\n         \"account_id\": \"Sint minima culpa repellendus non voluptatem.\",\n         \"customer_id\": \"Asperiores in magni.\",\n         \"label\": \"Et quia.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections update-microsoft-ads --body '{\n      \"config\": {\n         \"account_id\": \"1234567\",\n         \"customer_id\": \"9999999\",\n         \"label\": \"Et quia.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
 }
 
 func lfxV2CampaignServiceConnectionsDeleteMicrosoftAdsUsage() {
@@ -3294,7 +3294,7 @@ func lfxV2CampaignServiceConnectionsTestMicrosoftAdsUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored Microsoft Ads credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored Microsoft Ads credential and the configured account against the provider.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
@@ -3324,7 +3324,7 @@ func lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-microsoft-ads --body '{\n      \"credentials\": {\n         \"client_id\": \"Vero deleniti facilis.\",\n         \"client_secret\": \"Cum eligendi animi explicabo quidem.\",\n         \"developer_token\": \"Enim fugiat dolor consequuntur libero quisquam.\",\n         \"refresh_token\": \"Molestiae sint repellendus pariatur temporibus vero qui.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-microsoft-ads --body '{\n      \"credentials\": {\n         \"client_id\": \"Sint minima culpa repellendus non voluptatem.\",\n         \"client_secret\": \"Asperiores in magni.\",\n         \"developer_token\": \"Cum eligendi animi explicabo quidem.\",\n         \"refresh_token\": \"Vero deleniti facilis.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsCreateHubspotUsage() {
@@ -3346,7 +3346,7 @@ func lfxV2CampaignServiceConnectionsCreateHubspotUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-hubspot --body '{\n      \"config\": {\n         \"account_id\": \"Aut doloremque eum autem.\",\n         \"brand_kit\": \"Quae qui nihil quas corrupti.\",\n         \"label\": \"Nihil natus beatae tenetur vero.\",\n         \"portal_id\": \"Nobis praesentium aliquid.\",\n         \"sender_email\": \"Repudiandae quis voluptatem magni.\",\n         \"sender_name\": \"Unde impedit quidem.\"\n      },\n      \"credentials\": {\n         \"private_app_token\": \"Repellat assumenda occaecati ut exercitationem eius.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections create-hubspot --body '{\n      \"config\": {\n         \"account_id\": \"Doloribus omnis culpa sed ducimus ut.\",\n         \"brand_kit\": \"Nobis praesentium aliquid.\",\n         \"label\": \"Iste perspiciatis mollitia vel.\",\n         \"portal_id\": \"Et deserunt nihil.\",\n         \"sender_email\": \"Beatae tenetur vero.\",\n         \"sender_name\": \"Aut doloremque eum autem.\"\n      },\n      \"credentials\": {\n         \"private_app_token\": \"Repudiandae quis voluptatem magni.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsGetHubspotUsage() {
@@ -3390,7 +3390,7 @@ func lfxV2CampaignServiceConnectionsUpdateHubspotUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections update-hubspot --body '{\n      \"config\": {\n         \"account_id\": \"Aut doloremque eum autem.\",\n         \"brand_kit\": \"Quae qui nihil quas corrupti.\",\n         \"label\": \"Nihil natus beatae tenetur vero.\",\n         \"portal_id\": \"Nobis praesentium aliquid.\",\n         \"sender_email\": \"Repudiandae quis voluptatem magni.\",\n         \"sender_name\": \"Unde impedit quidem.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections update-hubspot --body '{\n      \"config\": {\n         \"account_id\": \"Doloribus omnis culpa sed ducimus ut.\",\n         \"brand_kit\": \"Nobis praesentium aliquid.\",\n         \"label\": \"Iste perspiciatis mollitia vel.\",\n         \"portal_id\": \"Et deserunt nihil.\",\n         \"sender_email\": \"Beatae tenetur vero.\",\n         \"sender_name\": \"Aut doloremque eum autem.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
 }
 
 func lfxV2CampaignServiceConnectionsDeleteHubspotUsage() {
@@ -3422,7 +3422,7 @@ func lfxV2CampaignServiceConnectionsTestHubspotUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Verify the stored HubSpot credential against the provider.`)
+	fmt.Fprintln(os.Stderr, `Verify the stored HubSpot private-app token against the provider. No configured account is checked: the portal is the token's own.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
@@ -3452,7 +3452,7 @@ func lfxV2CampaignServiceConnectionsSetCredentialHubspotUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-hubspot --body '{\n      \"credentials\": {\n         \"private_app_token\": \"Repellat assumenda occaecati ut exercitationem eius.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections set-credential-hubspot --body '{\n      \"credentials\": {\n         \"private_app_token\": \"Repudiandae quis voluptatem magni.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsListGoogleAdsAccountsUsage() {
@@ -3494,7 +3494,7 @@ func lfxV2CampaignServiceConnectionsGetGoogleAdsKeywordsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-google-ads-keywords --project-id \"cncf\" --window \"last_30_days\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-google-ads-keywords --project-id \"cncf\" --window \"last_month\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceUsage() {
@@ -3770,7 +3770,7 @@ func lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. totals on this platform come from a separate account-level upstream call rather than a sum of the campaigns array — see AccountTotalsReader in internal/service/orchestrator.go. A pure read: nothing is persisted.`)
+	fmt.Fprintln(os.Stderr, `Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)

@@ -36,6 +36,20 @@ refresh runs on a `WithoutCancel`-detached context so one caller's cancellation
 can't tear down a shared refresh). The OAuth response body is never echoed into
 errors (it can carry the `client_secret`/`refresh_token` back).
 
+**`WithCallerScopedTokenRefresh()` opts one client out of that detach.** Detaching is right for a
+client that OUTLIVES a request and is shared by many: one caller's cancellation must not tear down
+a refresh the other waiters are parked on, and the token it produces is reused long after that
+caller is gone. Neither reason holds for the client `internal/dispatch` builds for a single
+connection probe and drops — nothing else will ever read its cache, so the detached refresh buys
+nobody anything while it OUTRUNS its caller, running on `googleAdsRequestTimeout`, which is longer than the bound
+`ProbeConnection` puts on the whole probe. Cancel the probe and the goroutine, its socket and its
+file descriptor stay alive to finish work whose result is already unreachable, per probe, on every
+connection. With the option set, the leader's refresh stays derived from the calling context
+instead. It is safe ONLY on a client no other caller shares; on a shared one it reintroduces
+exactly the tear-down the single-flight exists to prevent. `token_refresh_scope_test.go` asserts
+both directions — that the option cancels the in-flight token request and that the default does
+not — because flipping the default would be as much a regression as the leak.
+
 A resource-server **401 invalidates the cached access token**, on the STATUS LINE and before
 the response body is read. Expiry alone is not enough: a revoked or rotated token keeps its
 advertised `expires_in`, so the fast path would go on serving it long after the platform
@@ -956,6 +970,33 @@ in the expansion too.
 
 The expansion is also the only source of `descriptive_name` — the flat endpoint returns resource
 names alone — so accounts come back labelled in manager mode and unlabelled without one.
+
+**That filter is the picker's, and only the picker's.** `listManagerClients` sends
+`campaignCapableClientsQuery`; `ProbeAccountReach` sends `allClientsQuery`, the same projection
+with no `WHERE`, and does its own `manager`/`status` reading on the rows. The two queries are
+separate constants over one shared decoder (`queryCustomerClients`) rather than one query with a
+flag, so neither caller can silently acquire the other's row set. Flat mode reads a DIFFERENT
+resource entirely — `selfCustomerQuery`, `SELECT customer.id, customer.manager, customer.status
+FROM customer`, scoped to the configured account — because there it is not a hierarchy walk at
+all but a read of one account's own record, which is how the manager flag and status are
+obtained where no manager exists to walk.
+
+It reads `customer` rather than a narrowed `customer_client`, and that is the correction rather
+than a naming choice. `customer_client` is documented as a link resource that exists for MANAGER
+customers; asking for it under the ordinary direct account flat mode exists to serve rests on
+behaviour the contract does not promise, and an empty result there is indistinguishable from an
+account the credential cannot reach — so a perfectly good direct connection answers inconclusive
+and tests amber. `customer` carries no such condition: it is the queried customer's own record,
+defined for managers and non-managers alike, and it carries the same two properties under the
+same names. Being a manager is still detected, because `customer.manager` is on the record
+whether or not a hierarchy hangs beneath it. The query needs no `WHERE` and no interpolated id —
+`FROM customer` is already scoped to the customer the search runs under — and it decodes through
+its own `selfCustomerRow` rather than `customerClientRow`, because the two resources nest under
+different JSON keys and a mismatched decode would yield a zero value that reads as a reached,
+non-manager, not-enabled account: a confirmed verdict manufactured from a field name that did
+not match. Why the probe cannot reuse the filtered walk is in
+`internal-dispatch.md` — *Why Google Ads is the one probe that does not check
+membership* — and the short form is that absence from a filtered list is not absence.
 Expansion rows are deduplicated by resource name, since `customer_client` reports a client once
 per path through the hierarchy and a client of a sub-manager that is itself a client of the root
 appears twice. A row with no id is a hard error rather than a silent drop, since dropping it
@@ -965,7 +1006,7 @@ Flat-list resource names are validated as `customers/{digits}` in direct mode, w
 persists the value as the connection's account id and interpolates it into later request
 paths. That validation used to run in manager mode too, on rows nothing would consume — which
 only meant the discarded response had one more way to fail the request. Manager-mode ids are
-validated inside `listManagerClients` instead.
+validated inside `queryCustomerClients`, the decoder both manager-mode callers share, instead.
 
 **Only one data source means only one failure mode.** Fetching the flat list and then throwing
 it away spent request quota and whatever deadline the caller passed down, but the behavioural
@@ -1290,8 +1331,122 @@ platform's response carries), not one project's own campaigns. See
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md) for the
 credential-scoping (`resolveOwned`, no system-account fallback), the GAQL query-scope
 fix (missing `advertising_channel_type`/`status`/`impressions>0` filters found during
-differential verification), and the ported rule engine
-(`internal/service/rules/monitor_google.go`, including its preserved local
-50/90/100 pacing literals rather than the shared `Thresholds`).
+differential verification), and the rule engine
+(`internal/service/rules/monitor_google.go`). Its local 50/90/100 pacing literals
+were replaced by the shared `pacingLabelFor` in `monitor_shared.go`
+(`linuxfoundation/lfx-self-serve#3019`), and its `zz`-prefix scratch-campaign filter
+no longer drops a campaign whose name merely begins with those two letters. The
+low-CTR pair is now the named `googleLowCtrPct`/`googleMinImpressions` rather than
+inline literals — same values, same behaviour.
 
 See [internal/platform/googleads](../../../internal/platform/googleads).
+
+## Connection-probe predicates (LFXV2-2665)
+
+`probe.go` exports `ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` over this
+package's own error types. `internal/dispatch` consults them **in that order** for every platform
+— `ProbeInconclusive` defaults to `true` for an unrecognised error (an error nobody classified
+proves nothing about the credential), so a revoked credential usually satisfies both and only the
+order decides whether the operator is told their connection is broken or that the check did not
+complete. Neither predicate true is a third outcome: the platform refused a request this service
+BUILT, which is a service defect rather than a verdict.
+
+`probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
+vocabulary: it answers only whether the failure ever left this process, and it changes nothing an
+operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error
+chain is DROPPED there, so no later layer could tell a provider that answered badly from one that
+was never contacted; the answer reaches `Orchestrator.ProbeConnection`'s metrics arm alone, which
+keeps a local DNS or dial failure off `campaign_upstream_call_duration_seconds` rather than
+charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInconclusive`'s on
+purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
+series instead of vanishing from it.
+
+A caller that gives up BEFORE the probe starts is the one context error this predicate claims.
+The token path's entry check answers a context already done by returning
+`errTokenContextAlreadyDone` wrapped around `ctx.Err()`, and `ProbeNotSent` reads that marker. Unmarked, the bare
+`ctx.Err()` fell through the `false` default and `probeReachedThePlatform` found no local
+sentinel to name, so this deployment's own cancellation was booked as a
+`campaign_upstream_call_duration_seconds{outcome="error"}` sample against Google for a call
+that never left the process. The marker sits at THAT check and nowhere else: the waiter select
+inside the refresh returns `ctx.Err()` too, but a detached refresh may already be on the wire
+there, so the same claim would be false. It WRAPS rather than replaces, so
+`errors.Is(err, context.Canceled)` keeps answering for every existing caller.
+
+This package's token path was split to make the predicates answerable at all. `fetchToken`
+previously returned one untyped error for every non-2xx from the token endpoint, so a refresh
+Google had permanently revoked fell to `ProbeInconclusive`'s default and the connection test
+reported it healthy. Non-2xx now splits by status: `errTokenEndpointUnavailable` for `5xx`
+**and for `429`** (retryable, inconclusive) and, for everything else, whichever sentinel
+`classifyTokenRefusal` picks. The `429` sits on the retryable side for the reason a rate limit
+always does in this repo — it is Google declining to answer, not answering — and putting it with
+the refusals made a throttled refresh claim the stored credential had been permanently rejected,
+which a rejection's own contract says is a fact that retrying cannot change. The
+token error deliberately carries STATUS ONLY — its request body holds the client secret and the
+refresh token — which is also why the dispatcher authors confirmed-verdict text rather than
+echoing anything from here.
+
+### The two token-refusal sentinels, and why the name changed
+
+The status split above is necessary and was not sufficient. Every non-`429` sub-`500` status
+carried ONE sentinel, so three things that are not verdicts on the credential were reported as
+one: a `3xx` (this client does not follow redirects, so a redirect surfaces as a status), a `404`
+or `405` (the endpoint moved), and RFC 6749 §5.2's three REQUEST-shaped error codes
+(`invalid_request`, `unsupported_grant_type`, `invalid_scope`). Each of those is a failure of
+what **this service** sent, and each told the operator to go replace a credential Google never
+looked at — while the defect that actually broke the refresh went unreported.
+
+`classifyTokenRefusal` makes the second split, and the vocabulary now matches the rest of the
+repo:
+
+- **`ErrCredentialRejected`** — Google evaluated the stored credential and refused it. Permanent,
+  the operator's to fix, and the one class reported as a confirmed failed test.
+  `ProbeCredentialRejected` matches it.
+- **`ErrTokenRequestRejected`** — the token endpoint refused the SHAPE of the request. It matches
+  **neither** predicate, which routes it to `domain.ErrServiceDefect`, a typed `500` that pages
+  us, because nobody re-authorising anything can repair a request only this service composes.
+
+The name is the load-bearing part of that change. `domain.ErrTokenRequestRejected` and
+`linkedin.ErrTokenRequestRejected` already meant *service defect, file a bug*; this package used
+the identical name for the opposite meaning, so reading one told you nothing about the other.
+`ErrTokenRequestRejected` now means here what it already meant there, and the credential verdict
+got the name that describes it.
+
+`ProbeInconclusive` has a dedicated `ErrTokenRequestRejected → false` arm, and it is not
+redundant. That function answers `true` for anything it does not recognise, so without the arm
+the new sentinel would inherit the default and be answered as a platform that could not be
+reached — a defect in a request this service built, rendered to the operator as somebody else's
+outage to wait out instead of the `500` that names its owner.
+
+The fallback is deliberately **conservative**, and that asymmetry is the whole safety argument.
+The **status gates the body**, never the reverse: only `400`, `401` and `403` are statuses a
+token endpoint genuinely uses to refuse, so only for those is the body read at all. Everything
+else is the request, whatever arrived with it — an OAuth-shaped body CAN accompany a `404` or a
+`302`, from a proxy, a gateway error page, or whatever now answers at the moved address, and
+reading the body first let `{"error":"invalid_grant"}` on a `404` report a credential the
+platform never evaluated as refused. An unrecognised body
+on a `400`, `401` or `403` stays a credential verdict — promoting it would turn the ordinary
+revoked-token case, the failure this whole endpoint exists to catch, into a `500` that pages us
+instead of an answer the operator can act on. Only the allowlisted `error` code is ever read out
+of the body, and it is compared against rather than rendered: that request carried the client
+secret and the refresh token, and an OAuth or proxy diagnostic body may reflect them.
+
+A body this client cannot use — a read failure, or one past `maxResponseBytes` — must not erase
+the STATUS either. Returning a bare read or size error ahead of the classification dropped the
+failure out of BOTH predicates, so `ProbeInconclusive`'s default answered `true` and a plain
+`401` with an oversized body reported the connection as an unreachable platform, hiding the
+refusal this endpoint exists to surface. The status is kept and
+classified with a **nil** body, which carries no allowlisted code and so takes the conservative
+fallback. The read error is still returned for a `2xx`, where the body IS the answer and there is
+no status to fall back on.
+
+`408 Request Timeout` never reaches that classifier. It joins `5xx` and `429` on the
+`errTokenEndpointUnavailable` arm — the inconclusive one — because a `408` is the endpoint or an
+intermediary giving up waiting for the request, so nothing evaluated the credential and the same
+refresh can succeed on a retry. Classified as a refusal it was neither predicate's, which made it
+`domain.ErrServiceDefect`: a typed `500` paging us for a timeout, when the probe contract says a
+timeout is inconclusive. `TestTokenRefresh408IsInconclusive` pins it beside the `429` sibling in
+all three packages, and `linkedin/token.go` carries the same arm.
+
+Reddit and Microsoft carry the same pair and the same classifier, duplicated rather than shared
+because each platform package owns its own error vocabulary and the sentinel sets are not
+interchangeable.

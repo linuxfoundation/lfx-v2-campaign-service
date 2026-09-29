@@ -63,12 +63,21 @@ const (
 	// value other than "true" leaves them off, and the metrics endpoint answers 400
 	// "not supported for this campaign's platform" for Reddit campaigns.
 	//
-	// The flag exists because Reddit's reporting endpoint has no public documentation
-	// (LFXV2-2995): the request shape, response shape, and spend currency unit the client
-	// uses are a best-effort GUESS. A guessed read that returns 200 looks authoritative to
-	// every consumer, and the caveats live only in code comments the response never carries.
-	// Default-off keeps that from reaching anyone until the contract is verified against a
-	// live Reddit ad account, at which point the default flips and this constant goes away.
+	// The flag originally existed because Reddit's reporting endpoint had no public
+	// documentation (LFXV2-2995) and the request shape, response shape and spend currency
+	// unit were a best-effort GUESS. That reason is retired: LFXV2-3282 replaced the guess
+	// with Reddit's official public OpenAPI spec, and the client was corrected against it —
+	// see internal/platform/reddit/metrics.go, whose CONTRACT SOURCE note names the spec.
+	//
+	// The gate nevertheless STAYS ON, because the remaining unknown is a DIFFERENT one: no
+	// request has ever been made against a live Reddit ad account. Matching a published
+	// schema does not establish what the endpoint returns for a campaign with no activity,
+	// whether ends_at includes its final hour, or whether the account's attribution window
+	// shifts the figures. An unexercised read that returns 200 looks authoritative to every
+	// consumer, and the caveats live only in code comments the response never carries.
+	// Default-off keeps that from reaching anyone until one live read confirms the shape, at
+	// which point the default flips and this constant goes away. RedditDispatcher.ReadMetrics
+	// carries the same statement at the gate itself; keep the two in step.
 	EnvRedditMetricsEnabled = "REDDIT_METRICS_ENABLED"
 
 	// EnvMicrosoftMetricsEnabled opts a deployment IN to Microsoft Advertising metrics

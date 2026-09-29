@@ -17,10 +17,14 @@
 // This unification covers only the single-campaign metrics path (Thresholds/ComputePacing/
 // Evaluate below). This package's four monitor_*.go siblings (monitor_google.go,
 // monitor_linkedin.go, monitor_meta.go, monitor_reddit.go) back the account-scoped
-// /account-monitor endpoints and are a DIFFERENT, deliberately un-unified read path — see each
-// file's own header and this package's entry in docs/knowledge/code/internal-service-rules.md
-// for why routing them through this package's shared thresholds would defeat their purpose (a
-// differential diff against the still-live BFF, bug for bug).
+// /account-monitor endpoints, which are a DIFFERENT read path with its own ladder — one shared
+// ladder, in monitor_shared.go, not four copies, but a different one from this file's.
+//
+// The two differ on purpose and not by accident: this path's bands are 50/100/130 with
+// Constrained as an inclusive top, the monitor's are 50/90/100. Routing one through the other
+// would move operator-facing alerting bands as a side effect of a refactor, so merging them is
+// its own decision on its own ticket — see monitor_google.go's header and this package's entry
+// in docs/knowledge/code/internal-service-rules.md.
 package rules
 
 import (

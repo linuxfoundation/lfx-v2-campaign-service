@@ -3046,3 +3046,50 @@ func TestOrchestrator_ReadCampaignSettings_BoundsTheCall(t *testing.T) {
 			settingsCallTimeout, constants.DefaultWriteTimeout)
 	}
 }
+
+// TestOrchestrator_ProbeConnection_UnwiredIsAServiceDefect pins the deliberate asymmetry
+// between this capability and OrgReferenceVerifier above.
+//
+// A missing OrgReferenceVerifier is silent, because only LinkedIn has an upstream org
+// reference to cross-check and the other five have nothing to skip. ConnectionProber is the
+// opposite: every platform can be asked whether its stored credential still works, so a
+// dispatcher that cannot be asked is mis-wired, not exempt.
+//
+// Returning nil here would be the worst possible answer — the connection test would report
+// OK: true having verified nothing, which is precisely the defect LFXV2-2665 removes, restored
+// by a wiring mistake no test would otherwise catch.
+func TestOrchestrator_ProbeConnection_UnwiredIsAServiceDefect(t *testing.T) {
+	cases := []struct {
+		name        string
+		dispatchers map[model.Provider]PlatformDispatcher
+	}{
+		{
+			name:        "no dispatcher registered for the platform",
+			dispatchers: map[model.Provider]PlatformDispatcher{},
+		},
+		{
+			// Registered, dispatches campaigns, but never implements ProbeConnection — the
+			// shape a new platform has on the day it is added.
+			name: "registered dispatcher does not implement ConnectionProber",
+			dispatchers: map[model.Provider]PlatformDispatcher{
+				model.ProviderGoogleAds: plainDispatcher{},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), tc.dispatchers)
+			err := orch.ProbeConnection(context.Background(), "proj-1", model.ProviderGoogleAds)
+			if err == nil {
+				t.Fatal("ProbeConnection = nil; the connection test would report a verified connection having reached no platform at all")
+			}
+			if !errors.Is(err, domain.ErrServiceDefect) {
+				t.Errorf("err = %v, want ErrServiceDefect so the service returns a typed 500 rather than telling the operator their connection is broken", err)
+			}
+			if !errors.Is(err, domain.ErrConnectionProbeUnwired) {
+				t.Errorf("err = %v, want ErrConnectionProbeUnwired; ErrServiceDefect selects the status and the response carries no detail, so the reason token is all an operator reading the log gets", err)
+			}
+		})
+	}
+}

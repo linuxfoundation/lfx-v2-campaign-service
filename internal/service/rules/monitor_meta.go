@@ -14,17 +14,19 @@ import (
 // See monitor_google.go's package-level comment for why this file is a deliberately
 // SEPARATE, unshared rule engine rather than routed through Thresholds/Evaluate.
 //
-// Ported from lfx-self-serve's meta-ads.service.ts (buildCampaignMetrics, buildMetaActionItems),
-// using the SHARED CAMPAIGN_PACING_THRESHOLDS the BFF's packages/shared/src/constants exports
-// (underspending 50 / normal 90 / constrained 100 / overspending 130) — but, ported verbatim,
-// Meta's own label logic never actually compares against the `overspending` (130) member: its
-// overspend band starts at >constrained (100), exactly as linkedin-ads.service.ts's does. That
-// makes the 130 threshold dead for both platforms' own labeling, which is themselves a BFF-side
-// oddity this port reproduces rather than "fixes".
+// Ported from lfx-self-serve's meta-ads.service.ts (buildCampaignMetrics, buildMetaActionItems).
+// The pacing label comes from pacingLabelFor (monitor_shared.go).
+//
+// On the BFF side Meta reads the shared CAMPAIGN_PACING_THRESHOLDS, whose fourth member is
+// `overspending: 130` — and never compares against it: the overspend band starts above
+// `constrained` (100), so 130 is dead for labeling on Meta and LinkedIn both. The shared ladder
+// here has no such member, which is why it is three boundaries and not four.
+// Meta is the one platform whose low-CTR pair differs from the other three's 0.3 / 1000: its CTR
+// baseline is higher, so 0.5% is the comparable "low", and its delivery reaches a judgeable
+// volume sooner, so the floor is 500 rather than 1000. See monitor_linkedin.go's const block.
+// Its clicks-without-conversions floor is the lowest of the four for the same reason the others
+// differ — the click volumes do.
 const (
-	metaPacingUnderspending = 50
-	metaPacingNormal        = 90
-	metaPacingConstrained   = 100
 	metaLowCtrPct           = 0.5
 	metaMinImpressions      = 500
 	metaClicksNoConversions = 20
@@ -45,32 +47,35 @@ func EvaluateMetaMonitor(rows []model.AccountCampaignMetrics, days int, now time
 			continue
 		}
 
-		pacingPct, unknown := metaPacingPct(m, days, now)
-		label := model.MonitorPacingNormal
-		if !unknown {
-			switch {
-			case pacingPct < metaPacingUnderspending:
-				label = model.MonitorPacingUnderspending
-			case pacingPct > metaPacingConstrained:
-				label = model.MonitorPacingOverspending
-			case pacingPct > metaPacingNormal:
-				label = model.MonitorPacingConstrained
-			}
+		// See monitor_google.go's budget-less branch for why this reports unknown rather than a
+		// computed 0. Meta had the guard below written already, but metaPacingPct returned false
+		// from every one of its four returns, so it was never taken: a budget-less Meta campaign
+		// got pacingPct 0 and the "underspending" label, exactly as Google's did.
+		pacingPct, computable := metaPacingPct(m, days, now)
+		if !computable {
+			row := unknownPacingRow(m)
+			out = append(out, row)
+			items = append(items, metaActionItems(row.Metrics, 0, row.PacingLabel, days)...)
+			continue
 		}
+
+		label := pacingLabelFor(pacingPct)
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)
 		items = append(items, metaActionItems(m, pacingPct, label, days)...)
 	}
 
-	sortByPriority(items, metaPriorityRank)
+	sortByPriority(items)
 	return out, items
 }
 
-// metaPacingPct ports buildCampaignMetrics' pacing branch: schedule-based when a total budget
-// and a start time are both known, else a flat dailyBudget*days expectation, else 0 (unknown
-// treated as pacingPct 0 / label "normal", exactly as the BFF's `pacingPct = 0` default did —
-// this is NOT the same as model.AccountCampaignMetrics.PacingUnknown, which this port reserves
-// for rows the dispatcher could not schedule-bound at all).
+// metaPacingPct computes the pacing percentage: schedule-based when a total budget and a start
+// time are both known, else against a flat dailyBudget*days expectation.
+//
+// The second return says whether the figure is COMPUTABLE. It used to be an `unknown` flag that
+// no return path ever set, so the caller's guard on it was dead and a campaign with neither
+// budget reached the ladder carrying 0 — reported as underspending. Now the no-budget path says
+// so, and the caller reports PacingUnknown.
 func metaPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (float64, bool) {
 	start := parseMonitorDate(m.StartDate)
 	end := parseMonitorDate(m.EndDate)
@@ -83,14 +88,14 @@ func metaPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (flo
 		elapsedDays := maxFloat(1, math.Ceil(now.Sub(start).Hours()/24))
 		expected := m.TotalBudget / totalFlightDays * math.Min(elapsedDays, totalFlightDays)
 		if expected > 0 {
-			return math.Round(m.Spend / expected * 100), false
+			return math.Round(m.Spend / expected * 100), true
 		}
 		return 0, false
 	}
 	if m.BudgetDay > 0 {
 		expected := m.BudgetDay * float64(days)
 		if expected > 0 {
-			return math.Round(m.Spend / expected * 100), false
+			return math.Round(m.Spend / expected * 100), true
 		}
 	}
 	return 0, false
@@ -140,19 +145,6 @@ func metaActionItems(m model.AccountCampaignMetrics, pacingPct float64, label mo
 			"Increase daily budget or narrow targeting to focus spend on highest-value audiences")
 	}
 	return items
-}
-
-func metaPriorityRank(p model.MonitorPriority) int {
-	switch p {
-	case model.MonitorPriorityHigh:
-		return 0
-	case model.MonitorPriorityMed:
-		return 1
-	case model.MonitorPriorityLow:
-		return 2
-	default:
-		return 3
-	}
 }
 
 // parseMonitorDate parses a YYYY-MM-DD date, returning the zero time.Time for an empty or

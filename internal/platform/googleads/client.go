@@ -165,6 +165,12 @@ type Client struct {
 	// failed refresh fails all current waiters at once rather than each re-leading
 	// a serial refresh.
 	inflight *tokenRefresh
+
+	// callerScopedRefresh keeps the leader's refresh derived from the CALLING
+	// context instead of detaching it. Off by default, because detaching is what
+	// makes the single-flight above safe for a client many callers share. See
+	// WithCallerScopedTokenRefresh for when it is the right trade.
+	callerScopedRefresh bool
 }
 
 // tokenRefresh holds the shared result of one in-flight token refresh. done is
@@ -233,6 +239,29 @@ func WithClock(now func() time.Time) Option {
 		if now != nil {
 			c.now = now
 		}
+	}
+}
+
+// WithCallerScopedTokenRefresh ties the token refresh's lifetime to the caller
+// that triggers it, instead of detaching it with context.WithoutCancel.
+//
+// Detaching is the right default for a client that OUTLIVES a request and is
+// shared by many: one caller's cancellation must not tear down a refresh the
+// other waiters are parked on, and the token it produces is reused long after
+// that caller is gone. Neither reason holds for a client built for ONE call and
+// dropped — a connection probe's. Nothing else will ever read its cache, so a
+// detached refresh buys nobody anything, and it outruns its caller: the refresh
+// runs on its own googleAdsRequestTimeout deadline, which is longer than the
+// bound the probe orchestrator puts on the whole probe. Cancel the probe and
+// the goroutine, its socket and its file descriptor stay alive to finish work
+// whose result is already unreachable — per probe, on every connection, on a
+// platform whose token endpoint is the thing that is slow.
+//
+// Set this ONLY on a client no other caller shares. On a shared one it
+// reintroduces exactly the tear-down the single-flight exists to prevent.
+func WithCallerScopedTokenRefresh() Option {
+	return func(c *Client) {
+		c.callerScopedRefresh = true
 	}
 }
 
@@ -448,6 +477,23 @@ func (c *Client) invalidateAccessToken(presented string) {
 	c.tokenExpiry = time.Time{}
 }
 
+// errTokenContextAlreadyDone marks a context that was ALREADY done when a token acquisition began — the
+// caller's deadline had passed or its context was cancelled before this client reached for a
+// token, so nothing was built, dialled or sent. It exists for the probe's metrics arm alone:
+// ProbeNotSent has to be able to say "no request left this process", and a bare ctx.Err() is
+// indistinguishable from a cancellation that landed mid-flight, after bytes were already on
+// the wire. Left unmarked, a caller cancelled before the first byte was charged to the
+// provider as an upstream error sample — this deployment's own cancellation rendered as a
+// platform fault on the one series that is supposed to mean the platform.
+//
+// It is attached at THAT check and nowhere else. The waiter select further down returns
+// ctx.Err() too, but by then a detached refresh may be in flight and may already have reached
+// the platform, so the same claim would be false. An unmarked context error therefore keeps
+// ProbeNotSent's default of false and still records a sample, which is the cheap direction.
+// It wraps the context error rather than replacing it, so errors.Is(err, context.Canceled)
+// and context.DeadlineExceeded keep answering for every existing caller.
+var errTokenContextAlreadyDone = errors.New("google-ads: the caller context was already done before any token request")
+
 // accessTokenValue returns a valid access token, refreshing via the OAuth2 token
 // endpoint when the cached one is absent or within tokenExpiryBuffer of expiry.
 //
@@ -461,7 +507,7 @@ func (c *Client) invalidateAccessToken(presented string) {
 func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 	// A caller whose context is already done never triggers or joins a refresh.
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", errTokenContextAlreadyDone, err)
 	}
 
 	c.tokenMu.Lock()
@@ -482,6 +528,12 @@ func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 		inflight = &tokenRefresh{done: make(chan struct{})}
 		c.inflight = inflight
 		refreshValuesCtx := context.WithoutCancel(ctx)
+		if c.callerScopedRefresh {
+			// A one-shot client: nothing outlives this caller to benefit from the
+			// detach, so the refresh stays bounded by the caller's own deadline
+			// rather than leaking past it. See WithCallerScopedTokenRefresh.
+			refreshValuesCtx = ctx
+		}
 		go func() {
 			fetchCtx, cancel := context.WithTimeout(refreshValuesCtx, googleAdsRequestTimeout)
 			token, err := c.fetchToken(fetchCtx)
@@ -554,12 +606,23 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// A body this client cannot use must not erase the STATUS. Returning a bare read or size
+	// error here — ahead of the classification below — drops the failure out of BOTH probe
+	// predicates, so ProbeInconclusive's unrecognised-error default answers true and a plain
+	// 401 with a truncated or oversized body is reported as Google Ads having been
+	// unreachable — telling the operator to retry, when Google answered plainly and refused
+	// their credential. That is the misdirection LFXV2-2665 exists to remove, arriving
+	// through the one door left open.
+	// The status is kept and classified; an unusable body is passed as nil, which carries no
+	// allowlisted code and so takes classifyTokenRefusal's conservative fallback. The error is
+	// still reported when the response was a 2xx, where the body IS the answer and there is no
+	// status to fall back on.
 	buf := new(bytes.Buffer)
+	var bodyErr error
 	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
-		return "", fmt.Errorf("read token response: %w", err)
-	}
-	if int64(buf.Len()) > maxResponseBytes {
-		return "", fmt.Errorf("token response exceeds %d bytes", maxResponseBytes)
+		bodyErr = fmt.Errorf("read token response: %w", err)
+	} else if int64(buf.Len()) > maxResponseBytes {
+		bodyErr = fmt.Errorf("token response exceeds %d bytes", maxResponseBytes)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Do NOT echo the token-endpoint body: this request carried the client
@@ -567,7 +630,47 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// untrusted and may reflect that credential material. This error can be
 		// persisted into a campaign's Steps, so a leaked secret would be durable —
 		// report status only.
-		return "", fmt.Errorf("google-ads token refresh -> %d", resp.StatusCode)
+		//
+		// The status is CLASSIFIED as well as reported, because the two halves mean
+		// opposite things to a connection test. A 4xx is Google evaluating this
+		// refresh token and refusing it — revoked, expired, or issued to different
+		// application credentials — and no amount of waiting reverses that. A 5xx is
+		// Google's token endpoint being unavailable, which says nothing about the
+		// credential at all. See probe.go, where those become a confirmed verdict and
+		// an inconclusive probe respectively; without the split, the dead-refresh-token
+		// failure this service has already hit in production was indistinguishable from
+		// a transient outage and would be reported as a healthy connection.
+		//
+		// 429 is a 4xx that does NOT belong on the refusal side, for the reason a rate
+		// limit never does in this repo: it is Google declining to answer, not Google
+		// answering. Left in the rejected arm it makes a throttled refresh say "the
+		// platform rejected your stored credential" about a credential the platform
+		// never evaluated, and ErrCredentialRejected's godoc promise — that the
+		// refusal is permanent and retrying re-sends it — would be false.
+		// 408 joins it for the same reason and is the other 4xx that is not an answer: the
+		// endpoint (or an intermediary) gave up waiting for the request. Nothing evaluated the
+		// credential, and retrying the same refresh can succeed — both of which a rejection
+		// promises the opposite of.
+		if resp.StatusCode >= 500 ||
+			resp.StatusCode == http.StatusTooManyRequests ||
+			resp.StatusCode == http.StatusRequestTimeout {
+			return "", fmt.Errorf("%w: google-ads token refresh -> %d", errTokenEndpointUnavailable, resp.StatusCode)
+		}
+		// Everything else splits again, by WHOSE fault it is. Not every non-429 4xx is Google
+		// evaluating the credential: a 3xx (redirects are not followed), a 404 or 405 (the
+		// endpoint moved), and the three RFC 6749 codes that describe the REQUEST are all
+		// failures of what this service sent. Reported as credential rejections they told the
+		// operator to replace a credential Google never looked at. classifyTokenRefusal reads
+		// only the allowlisted error CODE and still renders nothing from the body.
+		var body []byte
+		if bodyErr == nil {
+			body = buf.Bytes()
+		}
+		return "", fmt.Errorf("%w: google-ads token refresh -> %d",
+			classifyTokenRefusal(resp.StatusCode, body), resp.StatusCode)
+	}
+	if bodyErr != nil {
+		return "", bodyErr
 	}
 
 	var tok tokenResponse
@@ -596,11 +699,14 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 // Request layer
 // ---------------------------------------------------------------------------
 
-// customerIDRE matches a Google Ads customer id: digits only, no dashes. The
-// connection's account_id is user-supplied and its Goa design only checks
-// presence, so it must be validated here before being concatenated into a URL —
-// a padded/dashed id yields an invalid request, and slash/dot input could alter
-// the resource path.
+// customerIDRE matches a Google Ads customer id: digits only, no dashes. The connection's
+// account_id is user-supplied and must be validated here before being concatenated into a
+// URL — a padded/dashed id yields an invalid request, and slash/dot input could alter the
+// resource path.
+//
+// The Goa design now declares the same rule as a Pattern, and this check STAYS regardless:
+// Goa validates the HTTP transport only, so a row written by bootstrap, by a migration, or
+// before that pattern existed reaches this concatenation having passed nothing.
 var customerIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 // ErrNotACustomerID reports that a caller-supplied account id is not a digits-only Google
@@ -1316,30 +1422,252 @@ type customerClientRow struct {
 	} `json:"customerClient"`
 }
 
-// listManagerClients enumerates the ad accounts beneath a manager (MCC) account.
+// AccountReach is what a connection probe learned about ONE configured customer id.
 //
-// Manager accounts are excluded from the result: they cannot hold campaigns, so offering
-// one as a choice would let a caller select an account that fails at the first create.
-// Only ENABLED clients are requested — a cancelled or closed account is not somewhere a
-// campaign can run either.
-func (c *Client) listManagerClients(ctx context.Context, managerID string) ([]AccessibleCustomer, error) {
-	const query = `SELECT customer_client.id, customer_client.descriptive_name, ` +
+// It exists because "is the id in the list" has three different wrong answers here. The
+// account picker's enumeration is filtered to accounts a campaign can be created in, so an
+// account the credential genuinely reaches is missing from it whenever that account is not
+// ENABLED, or is itself a manager. Read as membership, each of those becomes "the credential
+// does not reach this account" — a confirmed, operator-facing verdict that names the wrong
+// broken part and sends the operator to repoint an account id that is perfectly correct.
+type AccountReach int
+
+const (
+	// AccountUnreachable is the ZERO value deliberately: a reach returned alongside a non-nil
+	// error, or from a caller that forgot to assign one, must never read as reachable.
+	AccountUnreachable AccountReach = iota
+	// AccountReachable: the credential reaches the account and the account can hold campaigns.
+	AccountReachable
+	// AccountIsManager: reached, but it is a manager (MCC) account, which cannot hold campaigns.
+	AccountIsManager
+	// AccountNotEnabled: reached, but not in ENABLED status (suspended, cancelled, closed).
+	AccountNotEnabled
+)
+
+// ProbeAccountReach answers, for one configured customer id, whether this credential reaches
+// it and whether a campaign could run there.
+//
+// This is the connection probe's own question, and it is asked here rather than assembled by
+// the caller from ListAccessibleCustomers because only this package knows that the answer
+// differs by mode:
+//
+//   - Manager mode (a login-customer-id is configured, which is how this service is deployed):
+//     every other request carries that header, so an account is addressable only if it sits
+//     under that manager. The walk runs UNFILTERED, so a reached-but-not-campaign-capable
+//     account is reported as what it is instead of vanishing into an absence.
+//   - Flat mode: customers:listAccessibleCustomers is unfiltered, so an absence there really
+//     does mean the credential does not address the account. But it carries neither status nor
+//     a manager flag, and membership ALONE is a false success: a manager account appears in it
+//     and cannot hold a campaign, so a connection naming one tested green and failed at the
+//     first create — the production failure this endpoint exists to catch. Presence is
+//     therefore followed by a self-scoped read of the account's own `customer` record for the
+//     two properties that enumeration cannot carry, which is the same pair manager mode reads
+//     from the walk.
+//
+// Read-only. The returned value never carries platform-supplied text; it is an enum the
+// caller renders in its own vocabulary.
+func (c *Client) ProbeAccountReach(ctx context.Context, customerID string) (AccountReach, error) {
+	if err := ValidateCustomerID(customerID); err != nil {
+		return AccountUnreachable, err
+	}
+
+	if c.account.LoginCustomerID == "" {
+		customers, err := c.ListAccessibleCustomers(ctx)
+		if err != nil {
+			return AccountUnreachable, err
+		}
+		for _, cust := range customers {
+			if strings.TrimPrefix(cust.ResourceName, "customers/") == customerID {
+				return c.selfReach(ctx, customerID)
+			}
+		}
+		return AccountUnreachable, nil
+	}
+
+	clients, err := c.queryCustomerClients(ctx, c.account.LoginCustomerID, allClientsQuery)
+	if err != nil {
+		return AccountUnreachable, err
+	}
+	for _, client := range clients {
+		if client.ID != customerID {
+			continue
+		}
+		// First match wins, and duplicates are safe to resolve this way for the same reason
+		// expandManagerHierarchy keeps the first: a customer reachable by two hierarchy paths
+		// is the SAME customer, so manager and status are properties of it rather than of the
+		// path taken to reach it.
+		switch {
+		case client.Manager:
+			return AccountIsManager, nil
+		case client.Status != customerStatusEnabled:
+			return AccountNotEnabled, nil
+		default:
+			return AccountReachable, nil
+		}
+	}
+	return AccountUnreachable, nil
+}
+
+// customerStatusEnabled is the one status value in which an account can run a campaign. It
+// spells the same token in both resources this package reads it from — customer_client.status
+// on the hierarchy walk and customer.status on the flat-mode self read — so one const serves
+// both. Compared against, never rendered: it is upstream vocabulary, and no message this
+// package produces may carry platform-supplied text.
+const customerStatusEnabled = "ENABLED"
+
+// The two customer_client queries, differing only in the status predicate.
+//
+// They are separate consts rather than one string built at the call site because the
+// difference between them IS the distinction two callers depend on, and a composed query
+// hides which caller gets which. The account picker asks for accounts a campaign can be
+// created in; the connection probe asks whether this credential reaches the configured
+// account AT ALL, and must not read a filtered-out account as an absent one.
+// selfReach reads the manager flag and status of ONE customer from that customer's own
+// `customer` record, and is flat mode's second leg.
+//
+// It reads `customer`, not `customer_client`, and the difference is load-bearing rather than
+// stylistic. customer_client is documented as a link resource that exists for MANAGER
+// customers — the rows beneath a manager, the manager's own row among them — so asking for it
+// under an ordinary direct account, which is precisely the account flat mode exists to serve,
+// rests on behaviour the contract does not promise. If that query returns no rows, an account
+// the credential demonstrably reaches answers inconclusive and a working connection tests
+// amber. `customer` carries no such condition: it is the queried customer's own record,
+// defined for managers and non-managers alike, and it carries the same two properties under
+// the same names. Reading the resource whose existence is guaranteed costs nothing and
+// removes the bet.
+//
+// The query is not narrowed by id. `FROM customer` scoped to a customer returns that
+// customer's single row, so there is no table to filter — which is also why being a manager
+// is still detected here: the row carries customer.manager whether or not any hierarchy
+// hangs beneath it. The returned id is matched against the requested one anyway, because a
+// row about some other customer answers a question nobody asked.
+//
+// A failure here is returned rather than folded into a verdict. The caller classifies it through
+// the probe predicates, and an error this package does not recognise is INCONCLUSIVE by default
+// — which is the right answer for "reached, properties unknown": the credential demonstrably
+// reaches the account, so neither AccountReachable (a success nothing established) nor
+// AccountUnreachable (a confirmed verdict contradicting the enumeration) is honest.
+func (c *Client) selfReach(ctx context.Context, customerID string) (AccountReach, error) {
+	// customerID is validated by ProbeAccountReach above and again inside
+	// gaqlSearchForCustomer; it is interpolated into the GAQL text here, where neither check
+	// would reach it.
+	if !customerIDRE.MatchString(customerID) {
+		return AccountUnreachable, fmt.Errorf("invalid Google Ads customer id %q: must be digits only (no dashes)", customerID)
+	}
+	rows, err := c.gaqlSearchForCustomer(ctx, customerID, selfCustomerQuery)
+	if err != nil {
+		return AccountUnreachable, fmt.Errorf("read customer %s: %w", customerID, err)
+	}
+	for _, raw := range rows {
+		var row selfCustomerRow
+		if uerr := json.Unmarshal(raw, &row); uerr != nil {
+			// errDecodeRow, not the json error: see its own comment. The decode cause is
+			// derived from the response body and transportError.Err is EXPORTED, so
+			// wrapping it here would carry upstream-derived text into a persisted,
+			// API-reachable failure narrative.
+			return AccountUnreachable, &transportError{
+				Method: http.MethodPost,
+				Path:   "customers/" + customerID + "/googleAds:search",
+				Err:    errDecodeCustomerRow,
+			}
+		}
+		if row.Customer.ID != customerID {
+			continue
+		}
+		switch {
+		case row.Customer.Manager:
+			return AccountIsManager, nil
+		case row.Customer.Status != customerStatusEnabled:
+			return AccountNotEnabled, nil
+		default:
+			return AccountReachable, nil
+		}
+	}
+	// The enumeration named this customer and its own record does not. Nothing here is a
+	// verdict: see the doc comment — this reaches the caller as an inconclusive probe.
+	return AccountUnreachable, errSelfRowMissing
+}
+
+// errSelfRowMissing is deliberately a plain error of this package: it matches neither probe
+// predicate by name, and ProbeInconclusive's default for an error it does not recognise is
+// true, which is the classification this case wants.
+var errSelfRowMissing = errors.New("google-ads: the account did not return its own customer record")
+
+// The two row-decode failures, as FIXED errors rather than wrapped json causes.
+//
+// `docs/reviews/knowledge-base/credentials-and-untrusted-text.md`,
+// platform-error-must-not-carry-untrusted-or-credential-text, forbids both forms this would
+// otherwise take: an error interpolating an HTTP response body, AND an error struct with an
+// EXPORTED field holding such material. transportError.Err is exported and these errors reach
+// the persisted, API-reachable Steps narrative, so a json.UnmarshalTypeError — which renders
+// the offending value — would durably record upstream-derived text. Nothing is lost that this
+// layer can act on: the row failed to decode, the path and method say where, and the probe
+// classifies an unrecognised error as inconclusive either way.
+var (
+	errDecodeCustomerRow       = errors.New("the search response row is not a decodable customer record")
+	errDecodeCustomerClientRow = errors.New("the search response row is not a decodable customer_client record")
+)
+
+// selfCustomerRow is one `FROM customer` row: the queried customer's own record.
+//
+// It is a separate type from customerClientRow rather than a widened one, because the two
+// resources nest under different JSON keys and carry different guarantees. Decoding a
+// customer row through the customer_client struct would silently produce a zero value — id
+// empty, manager false, status "" — which reads as a reached, non-manager, not-enabled
+// account: a confirmed verdict manufactured out of a field name that did not match.
+type selfCustomerRow struct {
+	Customer struct {
+		ID      string `json:"id"`
+		Manager bool   `json:"manager"`
+		Status  string `json:"status"`
+	} `json:"customer"`
+}
+
+// selfCustomerQuery asks a customer for its own record. No WHERE clause and no interpolated
+// id: `FROM customer` is already scoped to the customer the search runs under, which is also
+// why this query needs none of selfReach's id validation to be safe.
+const selfCustomerQuery = `SELECT customer.id, customer.manager, customer.status FROM customer`
+
+const (
+	campaignCapableClientsQuery = `SELECT customer_client.id, customer_client.descriptive_name, ` +
 		`customer_client.manager, customer_client.status FROM customer_client ` +
 		`WHERE customer_client.status = 'ENABLED'`
+	allClientsQuery = `SELECT customer_client.id, customer_client.descriptive_name, ` +
+		`customer_client.manager, customer_client.status FROM customer_client`
+)
 
+// managerClient is one decoded customer_client row, before any caller's filtering.
+//
+// It carries the two fields the filtering would otherwise destroy. Absence from a FILTERED
+// list is indistinguishable from absence from the hierarchy, and those two mean opposite
+// things to a connection probe — so the walk now returns what it found and each caller
+// narrows it itself.
+type managerClient struct {
+	ID              string
+	DescriptiveName string
+	Manager         bool
+	Status          string
+}
+
+// queryCustomerClients runs one customer_client query beneath a manager and decodes it.
+//
+// The query is the caller's parameter, deliberately: the two callers ask genuinely different
+// questions of the same table, and sharing the decode without sharing the question is the
+// whole point of the split.
+func (c *Client) queryCustomerClients(ctx context.Context, managerID, query string) ([]managerClient, error) {
 	rows, err := c.gaqlSearchForCustomer(ctx, managerID, query)
 	if err != nil {
 		return nil, fmt.Errorf("expand manager %s: %w", managerID, err)
 	}
 
-	out := make([]AccessibleCustomer, 0, len(rows))
+	out := make([]managerClient, 0, len(rows))
 	for _, raw := range rows {
 		var row customerClientRow
 		if uerr := json.Unmarshal(raw, &row); uerr != nil {
 			return nil, &transportError{
 				Method: http.MethodPost,
 				Path:   "customers/" + managerID + "/googleAds:search",
-				Err:    fmt.Errorf("decode customer_client row: %w", uerr),
+				Err:    errDecodeCustomerClientRow,
 			}
 		}
 		// A row whose id is missing OR non-numeric is unusable: AccessibleCustomer
@@ -1354,12 +1682,39 @@ func (c *Client) listManagerClients(ctx context.Context, managerID string) ([]Ac
 				Err:    fmt.Errorf("customer_client row id %q is not a numeric customer id", row.CustomerClient.ID),
 			}
 		}
-		if row.CustomerClient.Manager {
+		out = append(out, managerClient{
+			ID:              row.CustomerClient.ID,
+			DescriptiveName: row.CustomerClient.DescriptiveName,
+			Manager:         row.CustomerClient.Manager,
+			Status:          row.CustomerClient.Status,
+		})
+	}
+	return out, nil
+}
+
+// listManagerClients enumerates the ad accounts beneath a manager (MCC) account.
+//
+// Manager accounts are excluded from the result: they cannot hold campaigns, so offering
+// one as a choice would let a caller select an account that fails at the first create.
+// Only ENABLED clients are requested — a cancelled or closed account is not somewhere a
+// campaign can run either.
+//
+// Both exclusions are right for THIS caller, which answers "which accounts may I pick", and
+// wrong for anything asking "does this credential reach account X" — see ProbeAccountReach,
+// which runs the same walk unfiltered for exactly that reason.
+func (c *Client) listManagerClients(ctx context.Context, managerID string) ([]AccessibleCustomer, error) {
+	clients, err := c.queryCustomerClients(ctx, managerID, campaignCapableClientsQuery)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AccessibleCustomer, 0, len(clients))
+	for _, client := range clients {
+		if client.Manager {
 			continue
 		}
 		out = append(out, AccessibleCustomer{
-			ResourceName:    "customers/" + row.CustomerClient.ID,
-			DescriptiveName: row.CustomerClient.DescriptiveName,
+			ResourceName:    "customers/" + client.ID,
+			DescriptiveName: client.DescriptiveName,
 		})
 	}
 	return out, nil

@@ -579,3 +579,44 @@ departures, the credential-scoping (`resolveOwned`, no system-account fallback),
 the ported rule engine (`internal/service/rules/monitor_meta.go`).
 
 See [internal/platform/meta](../../../internal/platform/meta).
+
+## Connection-probe predicates (LFXV2-2665)
+
+`probe.go` exports `ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` over this
+package's own error types. `internal/dispatch` consults them **in that order** for every platform
+— `ProbeInconclusive` defaults to `true` for an unrecognised error (an error nobody classified
+proves nothing about the credential), so a revoked credential usually satisfies both and only the
+order decides whether the operator is told their connection is broken or that the check did not
+complete. Neither predicate true is a third outcome: the platform refused a request this service
+BUILT, which is a service defect rather than a verdict.
+
+`probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
+vocabulary: it answers only whether the failure ever left this process, and it changes nothing an
+operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error
+chain is DROPPED there, so no later layer could tell a provider that answered badly from one that
+was never contacted; the answer reaches `Orchestrator.ProbeConnection`'s metrics arm alone, which
+keeps a local DNS or dial failure off `campaign_upstream_call_duration_seconds` rather than
+charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInconclusive`'s on
+purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
+series instead of vanishing from it.
+
+The one error it claims beyond a dial failure is a caller that had ALREADY given up: `Client.do`
+checks `ctx.Err()` at its entry and returns `errRequestContextAlreadyDone` wrapped around it, and
+`ProbeNotSent` matches that marker. Meta has no token leg for the sibling clients'
+`errTokenContextAlreadyDone` to guard — the access token is long-lived and travels as a header —
+and `do` is the single path every Graph call takes, so its entry is where the equivalent check
+belongs. Only that entry is marked. A context error out of `http.Client.Do`, or on a retry
+attempt after the first, can arrive with bytes already sent, and the marker's whole value is that
+it PROVES otherwise.
+
+The classification reads the Graph envelope, not just the status: code `190` under a `400` is a
+credential rejection, while a rate-limit code under the same `400` is inconclusive. **The status
+gates the code, never the reverse** — the same rule the token-refusal classifiers follow. HTTP
+`400` is the only status Meta uses to deliver `190`/`200`/`10` as a verdict on the credential, so
+`ProbeCredentialRejected` refuses to read the code under any other status. Without that gate a
+`429` or a `5xx` that happened to carry code `190` — a shed or failed request that evaluated
+nothing — was a CONFIRMED credential rejection, because this predicate is consulted before the
+inconclusive one; the operator was told to reauthorize a credential Meta never looked at. An
+`APIError` whose envelope could not be read (`EnvelopeUnreadable`) is inconclusive whatever the
+status — nothing was parsed, so nothing was learned. `APIError.Message` falls back to the raw
+response body, which is why the dispatcher never echoes it.

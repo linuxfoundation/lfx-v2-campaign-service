@@ -17,19 +17,21 @@ import (
 // Ported from lfx-self-serve's linkedin-ads.service.ts (the pacing calc + label logic inside
 // getLinkedInAnalytics, and its action-item loop).
 //
-// LinkedIn's pacing thresholds ARE the shared CAMPAIGN_PACING_THRESHOLDS (50/90/100/130), per
-// that file's own comment explaining it was deliberately moved off local literals so the label
-// agrees with a shared pacing-bar component. As with Meta (see monitor_meta.go), the label
-// logic's own overspend band starts at >constrained (100), never comparing against the 130
-// `overspending` member — ported as-is.
+// The pacing label comes from pacingLabelFor (monitor_shared.go). On the BFF side LinkedIn
+// reads the shared CAMPAIGN_PACING_THRESHOLDS — moved off local literals there so the label
+// agrees with a shared pacing-bar component — and, like Meta, never compares against that
+// constant's fourth member (`overspending: 130`); see monitor_meta.go.
 //
 // LinkedIn's pacingPct is also NOT rounded, unlike every other platform here — see
 // model.AccountMonitorRow.PacingPct's doc comment.
+// The low-CTR rule's two numbers are shared with Google and Reddit rather than being a third
+// LinkedIn-specific pair: all three platforms call 0.3% low, and 1000 impressions is the volume
+// at which a CTR figure means anything. Meta is the one that genuinely differs (0.5 / 500) —
+// its CTR baseline is higher and its delivery reaches that volume sooner. The
+// clicks-without-conversions floors differ per platform because the click volumes do.
 const (
-	linkedinPacingUnderspending = 50
-	linkedinPacingNormal        = 90
-	linkedinPacingConstrained   = 100
 	linkedinLowCtrPct           = 0.3
+	linkedinMinImpressions      = 1000
 	linkedinClicksNoConversions = 50
 )
 
@@ -39,8 +41,10 @@ const (
 // DEVIATION FROM THE BFF: linkedin-ads.service.ts's action-item loop's FIRST branch is "this
 // campaign has zero ad creatives and is ACTIVE" (a separate per-campaign creative-analytics
 // fetch this port's dispatcher does not make — see internal/dispatch/linkedin.go's
-// ListAccountCampaignMetrics doc comment) — that HIGH "no creatives" rule is not ported. Every
-// other rule below IS ported, including the priority-sort bug.
+// ListAccountCampaignMetrics doc comment) — that HIGH "no creatives" rule is not ported.
+//
+// The BFF's MED-vs-MEDIUM sort-key mismatch is NOT ported: items are ordered by the shared
+// priorityRank (linuxfoundation/lfx-self-serve#3018), as on the other three platforms.
 func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now time.Time) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 	out := make([]model.AccountMonitorRow, 0, len(rows))
 	items := make([]model.AccountMonitorActionItem, 0)
@@ -51,25 +55,25 @@ func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now 
 			continue
 		}
 
-		pacingPct := linkedinPacingPct(m, days, now)
-		hasBudget := m.TotalBudget > 0 || m.BudgetDay > 0
-		label := model.MonitorPacingNormal
-		if hasBudget {
-			switch {
-			case pacingPct < linkedinPacingUnderspending:
-				label = model.MonitorPacingUnderspending
-			case pacingPct > linkedinPacingConstrained:
-				label = model.MonitorPacingOverspending
-			case pacingPct > linkedinPacingNormal:
-				label = model.MonitorPacingConstrained
-			}
+		// LinkedIn's guard was the one that worked — a budget-less campaign was already held off
+		// the ladder rather than labelled underspending. What it did not do is SAY so: the row
+		// went out as MonitorPacingNormal with PacingUnknown unset, which a consumer reads as
+		// "on plan". Same treatment as Google and Meta now, for the same reason.
+		if m.TotalBudget <= 0 && m.BudgetDay <= 0 {
+			row := unknownPacingRow(m)
+			out = append(out, row)
+			items = append(items, linkedinActionItems(row.Metrics, 0, row.PacingLabel)...)
+			continue
 		}
+
+		pacingPct := linkedinPacingPct(m, days, now)
+		label := pacingLabelFor(pacingPct)
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)
 		items = append(items, linkedinActionItems(m, pacingPct, label)...)
 	}
 
-	sortByPriority(items, linkedinPriorityRank)
+	sortByPriority(items)
 	return out, items
 }
 
@@ -145,15 +149,21 @@ func linkedinActionItems(m model.AccountCampaignMetrics, pacingPct float64, labe
 	// than only on the BFF's else-branch.
 	if label == model.MonitorPacingUnderspending {
 		add(model.MonitorPriorityHigh,
-			fmt.Sprintf("Underspending — pacing below %d%%", linkedinPacingUnderspending),
+			fmt.Sprintf("Underspending — pacing below %d%%", monitorPacingUnderspendingBelow),
 			"Check targeting breadth, bid strategy, or budget floor")
 	}
 	if label == model.MonitorPacingConstrained || label == model.MonitorPacingOverspending {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Budget constrained — pacing above %d%%", linkedinPacingNormal),
+			fmt.Sprintf("Budget constrained — pacing above %d%%", monitorPacingHealthyTo),
 			"Consider increasing budget if event is in peak registration period")
 	}
-	if m.Ctr > 0 && m.Ctr < linkedinLowCtrPct {
+	// Gated on an impressions floor, like Meta/Google/Reddit, rather than on the BFF's
+	// `ctr > 0` — which excluded a 0% CTR, the WORST case, from the rule meant to catch it.
+	// LinkedIn has no "impressions but no clicks" rule to catch it instead (Google does), so a
+	// campaign with a half-million impressions and zero clicks emitted nothing at all while one
+	// at 0.29% got a MED item. The floor has to land in the same change: without it, removing
+	// `ctr > 0` would fire "Low CTR: 0.00%" on every campaign that has not been served yet.
+	if m.Ctr < linkedinLowCtrPct && m.Impressions > linkedinMinImpressions {
 		add(model.MonitorPriorityMed,
 			fmt.Sprintf("Low CTR: %.2f%%", m.Ctr),
 			"Refresh ad copy or images; review audience targeting")
@@ -169,26 +179,4 @@ func linkedinActionItems(m model.AccountCampaignMetrics, pacingPct float64, labe
 			"Confirm intentional pause or activate")
 	}
 	return items
-}
-
-// linkedinPriorityRank is the KNOWN BUG, ported verbatim — see follow-up ticket: the BFF's
-// sort map is `{ HIGH: 0, MEDIUM: 1, LOW: 2 }`, but every MED-priority item pushed above (and
-// upstream) carries the literal priority string "MED", not "MEDIUM" — so the map lookup always
-// misses for MED and falls through to `?? 3`, the same "unranked" bucket a completely unknown
-// priority string would land in. HIGH still sorts first and LOW still sorts before that
-// fallback bucket, so the net, verifiable effect is: HIGH items first, then LOW items, then
-// EVERY MED item, in original order (Go's sort.SliceStable / this file's sortByPriority is
-// stable, matching Array.prototype.sort). Do not "fix" this to MED:1 — that changes the ported
-// output and defeats the differential verification this migration depends on.
-func linkedinPriorityRank(p model.MonitorPriority) int {
-	switch p {
-	case model.MonitorPriorityHigh:
-		return 0
-	case "MEDIUM": // never matches model.MonitorPriorityMed ("MED") — that is the bug.
-		return 1
-	case model.MonitorPriorityLow:
-		return 2
-	default:
-		return 3
-	}
 }

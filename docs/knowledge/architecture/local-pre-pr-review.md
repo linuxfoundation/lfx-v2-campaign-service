@@ -69,6 +69,24 @@ because a floor only ever removes candidates. The remedy — reading patterns fr
 the union of both revisions — was deferred as out of scope for the rollout that
 introduced this subsystem. It is a recorded follow-up and is **not** solved.
 
+## Sibling claims in comments
+
+A uniqueness or counting claim in a comment — "the one platform", "the only
+probe", "the strongest of the six" — is a claim about every sibling in the repo.
+It goes stale when any sibling changes, in a file the change never touched, so no
+sweep keyed on "what did this commit touch" will find it. LFXV2-2665 hit this
+squarely: `reddit.Client.VerifyAccount` said Reddit was the only probe to read its
+configured account directly, which was true when written and was made false by
+adding X's probe three files away.
+
+The convention that follows: state a cross-cutting fact **once**, in
+`docs/api-catalog.md`, which is the roster of record. A comment says what is true
+of the code it sits on; where it must place that against siblings, it names **the
+reason the relationship holds** rather than re-enumerating the roster, so the claim
+is falsifiable where it stands. Before the pre-PR review round, sweep the branch's
+added comments for this class — it is mechanical, and it front-runs the findings
+this repo generates most.
+
 ## Boundaries
 
 The round stops at PR-open: it never writes a GitHub label, status, check,
