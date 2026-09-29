@@ -61,8 +61,10 @@ formatting and license-header checks cover is defined by `GO_FILES` in the
 `.github/workflows/license-header-check.yml`; `FILTER_REGEX_EXCLUDE` in
 `.mega-linter.yml` scopes MegaLinter's file-based linters only — project-mode
 scanners such as gitleaks and secretlint ignore it, and each one's coverage is
-set by its own configuration (`.gitleaksignore`; secretlint's `.gitignore`
-fallback), see `docs/knowledge/architecture/megalinter-secrets.md`. Not a
+set by its own configuration — gitleaks by `.gitleaks.toml` allowlists and
+`.gitleaksignore`, secretlint by its `.gitignore` fallback — so neither the
+filter nor this sentence promises full coverage; see
+`docs/knowledge/architecture/megalinter-secrets.md`. Not a
 review finding (2026-09-29): a license-header, `gofmt -s` or MegaLinter
 file-linter finding in a path those settings exclude; see
 `docs/reviews/knowledge-base/known-false-positives.md` § 10.

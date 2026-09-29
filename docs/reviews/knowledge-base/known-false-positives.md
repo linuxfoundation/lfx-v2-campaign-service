@@ -265,8 +265,9 @@ Boundaries the table implies, stated so they are not inferred the other way:
   only after checking its own lint mode in MegaLinter's docs. KICS carries its
   own `--exclude-paths="gen/*"` (`.mega-linter.yml:31-32`) and `.gitleaksignore:6`
   fingerprints a real hit inside `gen/`. Each scanner's coverage is set by its own
-  configuration, not by this table — gitleaks by `.gitleaksignore`, secretlint by
-  the `.gitignore` fallback (`megalinter-secrets.md:41-44`) — so check that
+  configuration, not by this table — gitleaks by `.gitleaks.toml` allowlists and
+  `.gitleaksignore`, secretlint by the `.gitignore` fallback
+  (`megalinter-secrets.md:41-44`) — so check that
   configuration before treating a path as scanned or unscanned. A secret-scanner
   finding under `gen/` or `.specify/` is real and outside this entry.
 - **`make lint` has no path exclusion** (`Makefile:90` — `golangci-lint run
