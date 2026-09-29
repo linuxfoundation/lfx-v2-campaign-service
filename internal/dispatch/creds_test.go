@@ -126,6 +126,22 @@ func TestSanitizeSnapshotText(t *testing.T) {
 			"[https://events.lf.org/r?token=SECRET]",
 			"[https://events.lf.org]",
 		},
+		{
+			// An apostrophe is a sub-delimiter, legal inside a query, so it must
+			// not end the run. It used to: the match stopped at the quote and
+			// left `'api_token=SECRET` behind as bare prose in the snapshot.
+			"apostrophe inside the query",
+			"https://events.example/reg?x=discard'api_token=SECRET",
+			"https://events.example",
+		},
+		{
+			// The apostrophe that ends an English possessive still gets swept in
+			// with the URL. Over-matching trailing punctuation costs a snapshot
+			// nothing; under-matching leaks.
+			"possessive apostrophe after a url",
+			"see https://events.lf.org/r?token=SECRET's page",
+			"see https://events.lf.org page",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -990,7 +990,11 @@ published: the query is parsed only to VALIDATE it, and an unreadable one cannot
 credentials at all, so the dispatch fails rather than publishing a query nothing has read. A query
 that parses is then copied into the destination **byte for byte** — parameter order and percent
 escaping included — with the generated `utm_*` pairs appended after it, and a pre-existing `utm_*`
-key dropped where it collides. An earlier build round-tripped the query through Go's encoder, which
+key dropped where it collides. Where nothing collides the query is not reassembled at all — the
+original bytes are used as written, so a query's empty components (`a=1&&b=2&`) survive too. The
+#fragment is screened the same way, and a BARE fragment that looks like a credential (`#access_token`
+with no `=`) is refused rather than published, while section anchors such as `#register` pass. An
+earlier build round-tripped the query through Go's encoder, which
 sorts keys and rewrites `%20` as `+`; that broke the verbatim promise on the one URL in the flow
 where byte fidelity is the point. Validation errors
 redact the URL (**scheme+host only** — the path is dropped too, because a magic-link or reset

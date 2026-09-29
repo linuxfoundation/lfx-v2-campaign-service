@@ -1965,10 +1965,13 @@ func TestBuildTwitterUTMURL_KeepsAHashRouterRoute(t *testing.T) {
 func TestCreateCampaign_RefusesACredentialFragmentOnTheRegistrationURL(t *testing.T) {
 	t.Parallel()
 
-	var mutations int
+	// atomic, not a bare int: the handler goroutine writes this and the test goroutine
+	// reads it, and the read IS the assertion — see the test-hygiene knowledge base,
+	// `httptest-handler-state-needs-synchronized-handoff`.
+	var mutations atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			mutations++
+			mutations.Add(1)
 		}
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -1982,13 +1985,93 @@ func TestCreateCampaign_RefusesACredentialFragmentOnTheRegistrationURL(t *testin
 	if err == nil {
 		t.Fatalf("expected a refusal for a credential-shaped fragment")
 	}
-	if mutations != 0 {
-		t.Errorf("refused only after %d mutating call(s); the screen must run first", mutations)
+	if n := mutations.Load(); n != 0 {
+		t.Errorf("refused only after %d mutating call(s); the screen must run first", n)
 	}
 	if strings.Contains(err.Error(), "s3cr3t-fragment-value") {
 		t.Errorf("the refusal reproduced the credential VALUE: %q", err)
 	}
 	if !strings.Contains(err.Error(), "access_token") {
 		t.Errorf("the refusal should name the offending key: %q", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Round-9 review fixes
+// ---------------------------------------------------------------------------
+
+// TestCredentialFragmentError_ScreensABareFragmentToo closes the exemption that
+// round 8 turned into a publish path. A fragment with no `=` used to pass
+// unconditionally, which was sound while buildTwitterUTMURL stripped the fragment —
+// there was no publish path behind it. Now the fragment IS published, so `#access_token`
+// standing alone would go out in the tweet unexamined.
+//
+// The anchors an operator actually writes still have to clear it, or the fix trades a
+// leak for a broken brief.
+func TestCredentialFragmentError_ScreensABareFragmentToo(t *testing.T) {
+	t.Parallel()
+
+	for _, anchor := range []string{"register", "agenda-day-2", "speakers", "sessions", "session-track", "schedule", "sponsors", "venue", "keynote", "day-pass"} {
+		raw := "https://events.lf.org/kc#" + anchor
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("parse %q: %v", raw, err)
+		}
+		if err := credentialFragmentError(raw, u); err != nil {
+			t.Errorf("section anchor %q refused: %v", anchor, err)
+		}
+	}
+
+	for _, frag := range []string{"access_token", "jwt", "sessionid", "api_key"} {
+		raw := "https://events.lf.org/kc#" + frag
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("parse %q: %v", raw, err)
+		}
+		err = credentialFragmentError(raw, u)
+		if err == nil {
+			t.Errorf("bare credential-shaped fragment %q was not refused", frag)
+			continue
+		}
+		// With no `=`, the whole fragment landed in the key position, so its text may
+		// BE the credential — named as a category, never echoed.
+		if strings.Contains(err.Error(), frag) {
+			t.Errorf("the refusal echoed the bare fragment %q: %v", frag, err)
+		}
+	}
+}
+
+// TestAppendUTMToRawQuery_DoesNotReassembleANonCollidingQuery pins the last gap in
+// "byte for byte". Splitting on `&` and rejoining normalises a query's empty
+// components, so `a=1&&b=2&` came back as `a=1&b=2` — equivalent to every parser, and
+// still a rewrite of a destination that needed no rewriting. When nothing collides the
+// original bytes are now used as written.
+func TestAppendUTMToRawQuery_DoesNotReassembleANonCollidingQuery(t *testing.T) {
+	t.Parallel()
+
+	utm := map[string]string{"utm_source": "twitter", "utm_medium": "paid-social"}
+
+	got := appendUTMToRawQuery("a=1&&b=2&", utm)
+	const wantPrefix = "a=1&&b=2&&"
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Errorf("pre-existing query bytes were rewritten: got %q, want prefix %q", got, wantPrefix)
+	}
+	if !strings.Contains(got, "utm_source=twitter") {
+		t.Errorf("utm params not appended: %q", got)
+	}
+
+	// An empty query gets the UTM set alone — no leading separator.
+	if got := appendUTMToRawQuery("", utm); strings.HasPrefix(got, "&") {
+		t.Errorf("empty query produced a leading separator: %q", got)
+	}
+
+	// The collision path still drops the stale key, and still keeps empty components
+	// around it — they cannot name a UTM key.
+	got = appendUTMToRawQuery("a=1&&utm_source=stale&b=2", utm)
+	if strings.Contains(got, "utm_source=stale") {
+		t.Errorf("colliding key survived: %q", got)
+	}
+	if !strings.HasPrefix(got, "a=1&&b=2&") {
+		t.Errorf("empty component dropped on the collision path: %q", got)
 	}
 }

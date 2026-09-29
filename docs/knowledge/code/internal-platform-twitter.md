@@ -432,11 +432,25 @@ The FRAGMENT gets the same key screen as the query, via
 `credentialFragmentError`. The query tier alone missed the single most likely way
 a live token reaches this gate: the OAuth implicit flow returns its bearer token
 AFTER the `#`, so a URL pasted out of a logged-in browser can carry
-`#access_token=…` with no query string at all. Only a fragment written in
-`key=value` form is screened, because only that has a key to test — `#register`
-and `#agenda-day-2` parse to one valueless component and pass, which is required,
-since a section anchor is how a brief links into a registration page. An
-undecodable fragment fails closed for the reason the query does.
+`#access_token=…` with no query string at all. A fragment written in `key=value`
+form is screened key by key; an undecodable one fails closed for the reason the
+query does.
+
+A BARE fragment — no `=` anywhere — used to pass unconditionally, on the reasoning
+that it has no key to test. That was sound only while the fragment was stripped
+from the published destination: there was no publish path behind it. Publishing the
+fragment made it one, and `#access_token` standing alone would have gone out in the
+tweet unexamined. A bare fragment is now run through the same classifier, under the
+name-vs-category split the query path already uses: with no `=`, the whole fragment
+landed in the KEY position, so its text may BE the credential, and the refusal names
+the category without echoing it. Section anchors are what this had to keep working,
+and they do — `register`, `agenda-day-2`, `speakers`, `sessions`, `session-track`,
+`schedule`, `sponsors`, `venue`, `keynote`, `day-pass` all clear the classifier;
+measured, not assumed. Bare `#session` is the one realistic anchor it refuses, and
+that is the exact-set entry earning its place elsewhere. The honest limit is that
+this catches credential-NAMED shapes, not every credential: the classifier is a
+denylist over names, so a raw `#eyJhbGciOi…` with no recognizable word in it still
+passes.
 
 The query is parsed with `url.ParseQuery` and the gate fails CLOSED on its error,
 NOT with `u.Query()`, which discards that error and returns whatever pairs it
@@ -513,6 +527,15 @@ as BYTES and appends the UTM pairs in sorted key order. Only a component whose
 decoded name COLLIDES with a UTM key is dropped, because a destination carrying two
 `utm_source` values makes click attribution depend on which one the landing page
 reads first.
+
+REASSEMBLY was the last gap in that promise. Splitting on `&` and rejoining
+normalises a query's empty components, so `a=1&&b=2&` came back as `a=1&b=2` —
+equivalent to every parser that will read it, and still a rewrite of a destination
+that needed no rewriting, performed on the path where nothing collided at all. When
+no pre-existing name decodes to a UTM key the original `rawQuery` is now used as
+written, with the UTM suffix appended after it; the split runs only on the collision
+path, and preserves empty components there too, since an empty component cannot name
+a UTM key.
 
 The fragment is dropped in the DISPLAY form and published verbatim in the real
 one. It used to be dropped in both, on the reasoning that it never reaches a server.

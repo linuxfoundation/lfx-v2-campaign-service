@@ -1967,15 +1967,37 @@ func rejectCredentialQueryParams(raw string) error {
 // so a pasted post-login URL carries the live token after the `#` and nothing before it.
 // The query screen never saw that URL's credential because the URL has no query.
 //
-// Only a fragment written in `key=value` form is screened, because only that form has a
-// key to test. An ordinary `#registration`, `#agenda-day-2` or `#speakers` has no `=`,
-// parses to a single valueless component, and passes — which is right: a section anchor
-// is not a credential, and refusing one would fail a working brief. A fragment Go cannot
-// decode fails CLOSED for the same reason the query does; an unreadable fragment is one
-// this gate cannot clear.
+// A fragment with NO `=` is screened as one whole component rather than waved through.
+// It used to pass unconditionally, on the reasoning that a section anchor is not a
+// credential and refusing one would fail a working brief. That reasoning was sound while
+// buildTwitterUTMURL stripped the fragment — the registration URL's fragment was never
+// published, so the exemption had no publish path behind it. Now that the fragment IS
+// published verbatim (it decides where the click lands), `#access_token` or `#jwt`
+// standing alone would go out in the tweet unexamined. The classifier answers the anchor
+// case correctly on its own: `#register`, `#agenda-day-2`, `#speakers`, `#sessions` and
+// `#session-track` all clear it. A bare `#session` does not, and that is the one
+// realistic anchor this costs — the fail-closed direction is the right one when the
+// alternative is publishing a bearer token.
+//
+// This catches credential-NAMED shapes, not every credential: the classifier is a
+// denylist over names, so a raw `#eyJhbGciOi…` with no recognizable word in it still
+// passes. Narrowing that would mean guessing at token SHAPES, which fails working briefs
+// for anything that looks sufficiently random.
+//
+// A fragment Go cannot decode fails CLOSED for the same reason the query does; an
+// unreadable fragment is one this gate cannot clear.
 func credentialFragmentError(raw string, u *url.URL) error {
 	frag := u.Fragment
-	if frag == "" || !strings.Contains(frag, "=") {
+	if frag == "" {
+		return nil
+	}
+	if !strings.Contains(frag, "=") {
+		if isCredentialQueryKey(frag) {
+			// Named as a CATEGORY and never echoed: with no `=`, the whole fragment
+			// landed in the key position, so its text may BE the credential. Same
+			// split the query and the valued-fragment path apply.
+			return fmt.Errorf("URL %q in the tweet text carries a bare fragment that looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
+		}
 		return nil
 	}
 	f, err := url.ParseQuery(frag)
@@ -2122,28 +2144,43 @@ func appendUTMToRawQuery(rawQuery string, utm map[string]string) string {
 	}
 	sort.Strings(keys)
 
-	kept := make([]string, 0, strings.Count(rawQuery, "&")+1)
-	for _, component := range strings.Split(rawQuery, "&") {
-		if component == "" {
-			continue
-		}
-		name, _, _ := strings.Cut(component, "=")
-		decoded, err := url.QueryUnescape(name)
-		if err != nil {
-			// Unescapable, so it cannot be one of this client's own UTM names; keep the
-			// bytes. ParseQuery has already cleared the whole query above, so this is
-			// not the path that decides whether the URL is usable.
-			kept = append(kept, component)
-			continue
-		}
-		if _, isUTM := utm[decoded]; !isUTM {
-			kept = append(kept, component)
-		}
-	}
+	added := make([]string, 0, len(keys))
 	for _, k := range keys {
-		kept = append(kept, url.QueryEscape(k)+"="+url.QueryEscape(utm[k]))
+		added = append(added, url.QueryEscape(k)+"="+url.QueryEscape(utm[k]))
 	}
-	return strings.Join(kept, "&")
+	suffix := strings.Join(added, "&")
+
+	if rawQuery == "" {
+		return suffix
+	}
+
+	kept := make([]string, 0, strings.Count(rawQuery, "&")+1)
+	dropped := false
+	for _, component := range strings.Split(rawQuery, "&") {
+		name, _, _ := strings.Cut(component, "=")
+		// An unescapable name cannot be one of this client's own UTM names, so the
+		// component is kept as bytes. ParseQuery has already cleared the whole query
+		// above, so this is not the path that decides whether the URL is usable.
+		if decoded, err := url.QueryUnescape(name); err == nil {
+			if _, isUTM := utm[decoded]; isUTM {
+				dropped = true
+				continue
+			}
+		}
+		kept = append(kept, component)
+	}
+
+	// Nothing collided, so the original query is not REASSEMBLED at all — it is used
+	// exactly as written. Reassembly was the remaining gap in "byte for byte": splitting
+	// on `&` and rejoining silently normalises a query's empty components, so `a=1&&b=2&`
+	// came back as `a=1&b=2`. Equivalent to every parser, and still not what the contract
+	// says, and still a rewrite of a destination nothing needed to rewrite. The filtering
+	// path below runs only when a pre-existing `utm_*` key really has to be removed, and
+	// it now keeps empty components too — they cannot name a UTM key.
+	if !dropped {
+		return rawQuery + "&" + suffix
+	}
+	return strings.Join(append(kept, added...), "&")
 }
 
 func twitterUTMParams(in CampaignInput) map[string]string {

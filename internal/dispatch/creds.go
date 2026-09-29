@@ -158,11 +158,20 @@ func isHTTPScheme(raw string) bool {
 // snapshotURLRunRe matches an http/https URL run inside free text: everything from the
 // scheme up to the first character that cannot continue a URL. Whitespace ends a run, and
 // so do the characters that in prose almost always belong to the sentence rather than the
-// link — a trailing quote, bracket or angle. Sentence-final punctuation ('.', ',', ')',
-// '!', '?') IS admitted here, because it is legal inside a URL and a run trimmed too
+// link — a trailing double quote, bracket or angle. Sentence-final punctuation ('.', ',',
+// ')', '!', '?') IS admitted here, because it is legal inside a URL and a run trimmed too
 // eagerly leaves the query fragment behind as bare text, which is the exact leak this
 // exists to prevent. Over-matching costs a sanitized URL a trailing period; under-matching
 // costs a token.
+//
+// The stop set holds only characters RFC 3986 excludes from a URI outright, which is what
+// makes stopping at them safe. The APOSTROPHE was in it and does not belong: `'` is a
+// sub-delimiter, legal in a query, so `…/reg?x=1'api_token=SECRET` ended the run at the
+// quote and left `'api_token=SECRET` in the snapshot as bare text — under-matching
+// costing exactly the token this exists to stop. Admitting it costs at most a possessive
+// `'s` being swallowed into a run that is then reduced to scheme+host anyway, which is
+// the cheap side of that trade. The single quote is therefore NOT a stop character; the
+// double quote still is, because `"` cannot appear in a URI unescaped.
 //
 // The leading alternative exists because `]` is in that stop set — it ends a markdown
 // link — and an IPv6 literal host is written INSIDE brackets. Without it,
@@ -180,7 +189,7 @@ func isHTTPScheme(raw string) bool {
 // direction that fails safe here: over-matching a bracketed run that is not a host costs
 // a sanitized fragment of prose, while under-matching costs a token.
 var snapshotURLRunRe = regexp.MustCompile(
-	`(?i)\bhttps?://(?:\[[^\]\s]+\][^\s<>"'\x60\]}|\\^]*|[^\s<>"'\x60\]}|\\^]+)`,
+	`(?i)\bhttps?://(?:\[[^\]\s]+\][^\s<>"\x60\]}|\\^]*|[^\s<>"\x60\]}|\\^]+)`,
 )
 
 // sanitizeSnapshotText strips the query and fragment from every URL embedded in free text

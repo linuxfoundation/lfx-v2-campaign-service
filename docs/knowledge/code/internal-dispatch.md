@@ -140,6 +140,15 @@ inside a URL, and a run trimmed too eagerly leaves the query behind as bare text
 the exact leak this prevents. `]` is one of those terminators — it closes a markdown link
 — which cut an IPv6 literal host in half: `https://[2001:db8::1]/reg?t=…` matched only as
 far as `https://[2001:db8::1`, and the path AND query survived in the snapshot as prose.
+
+The stop set is therefore drawn from what RFC 3986 excludes from a URI OUTRIGHT, not from
+what tends to sit next to one in prose. `'` was in it and did not belong: an apostrophe is
+a sub-delimiter, legal in a query, so `…/reg?x=1'api_token=SECRET` ended the run at the
+quote and left `'api_token=SECRET` in the snapshot as bare text — the same leak as the
+bracket, through a character an operator can type by accident. It is out. The DOUBLE quote
+stays, because `"` cannot appear in a URI unescaped. Over-matching is the safe direction
+here: swallowing an English possessive's `'s` costs a snapshot nothing, and stopping one
+character early costs it a secret.
 The pattern now tries a bracketed host first and only then falls back to the general run,
 so the terminator still ends a bracketed ordinary URL while an IPv6 authority is matched
 whole. That branch admits any non-space run up to the closing `]` rather than a hex/colon
