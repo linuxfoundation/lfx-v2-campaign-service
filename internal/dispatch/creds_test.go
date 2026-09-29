@@ -1042,3 +1042,42 @@ func TestSanitizeSnapshotText_SchemelessLink(t *testing.T) {
 		}
 	}
 }
+
+// Round-13 review fixes
+
+// TestSanitizeSnapshotText_SchemelessUserinfo pins the snapshot half of the same gap: a
+// scheme-less `user:password@host` has no query, so neither earlier pass touched it and
+// the password persisted whole in the UNENCRYPTED config_snapshot.
+func TestSanitizeSnapshotText_SchemelessUserinfo(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"no query at all",
+			"see bob:SECRET@events.example now",
+			"see  now",
+		},
+		{
+			"with a path",
+			"see bob:SECRET@events.example/portal now",
+			"see  now",
+		},
+		{
+			"IPv4 host with a port",
+			"admin:SECRET@198.51.100.7:8443/portal",
+			"",
+		},
+		{
+			"an email address is left alone",
+			"contact bob@events.example for details",
+			"contact bob@events.example for details",
+		},
+		{
+			"a time of day is not userinfo",
+			"doors 9:30, ask bob@events.example",
+			"doors 9:30, ask bob@events.example",
+		},
+	} {
+		if got := sanitizeSnapshotText(tc.in); got != tc.want {
+			t.Errorf("%s: sanitizeSnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}

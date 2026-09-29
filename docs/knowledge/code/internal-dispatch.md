@@ -192,6 +192,16 @@ nothing, while this one REWRITES it, and a pattern starting at the host would le
 Consuming the userinfo makes the whole run fail closed, which is the answer
 `sanitizeSnapshotURL` already gives.
 
+A third pass follows, for `user:password@host` with NO query — a shape neither of the
+other two has anything to say about, since one needs a scheme and the other needs a `?` or
+`#`. It is replaced by nothing rather than reduced to a host: a run reaching this pass has
+already failed to be either of the other shapes, and which site it pointed at is not worth
+the risk of splitting userinfo from authority wrongly on a malformed run. It runs LAST
+precisely because it needs no query — earlier, it would take a query-bearing run down to
+its host before the pass responsible for queries ever saw it. The colon requirement is the
+same one the twitter screen carries, and for the same reason: without it, every email
+address in operator copy is erased from the snapshot.
+
 `campaignFromTwitter` sanitizes a COPY of the config, so the
 text actually sent to X is untouched.
 

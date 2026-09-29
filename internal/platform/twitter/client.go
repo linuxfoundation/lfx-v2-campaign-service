@@ -32,7 +32,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
@@ -2201,6 +2200,27 @@ var schemelessScreenRunRe = regexp.MustCompile(
 		`(?::\d+)?(?:/[^\s<>。、！？，：；]*)?[?#][^\s<>。、！？，：；]+`,
 )
 
+// schemelessUserinfoRunRe matches the OTHER scheme-less shape that carries a credential:
+// `user:password@host.tld`, with or without a query.
+//
+// The pattern above requires a `?` or `#`, because a query is the only thing it reads.
+// Userinfo is not in the query, so `bob:pw@events.example` — no query at all — was
+// screened by nothing, while the scheme-ful `https://bob:pw@events.example` beside it was
+// refused outright. The password is published verbatim either way; whether X renders the
+// run as a link does not change that the bytes go out in the tweet.
+//
+// The COLON in the userinfo is the whole discriminator, and it has to be there. Without
+// it this pattern matches `bob@events.example` — an ordinary email address, which is a
+// shape real tweet copy has constantly, and refusing those would make the screen worse
+// than the hole it closes. `user:password@host` is the RFC 3986 userinfo production with
+// a password in it; nothing else in prose looks like that. A userinfo with no colon
+// carries no password and is not matched.
+var schemelessUserinfoRunRe = regexp.MustCompile(
+	`(?i)[a-z0-9._~%+-]+:[^\s<>@。、！？，：；]*@` +
+		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
+		`(?::\d+)?(?:/[^\s<>。、！？，：；]*)?`,
+)
+
 // schemefulRunMask blanks out every scheme-ful URL run in s, preserving byte offsets, so
 // the scheme-less scan cannot re-report the tail of a link rejectCredentialQueryParamsInText
 // has already screened.
@@ -2226,16 +2246,14 @@ func schemefulRunMask(s string) string {
 // caller's own bytes.
 func findSchemelessScreenRuns(text string) []string {
 	masked := schemefulRunMask(text)
-	idx := schemelessScreenRunRe.FindAllStringIndex(masked, -1)
-	if idx == nil {
-		return nil
-	}
-	runs := make([]string, 0, len(idx))
-	for _, m := range idx {
-		if !urlRunStartIsBounded(masked, m[0]) {
-			continue
+	var runs []string
+	for _, re := range []*regexp.Regexp{schemelessScreenRunRe, schemelessUserinfoRunRe} {
+		for _, m := range re.FindAllStringIndex(masked, -1) {
+			if !urlRunStartIsBounded(masked, m[0]) {
+				continue
+			}
+			runs = append(runs, text[m[0]:m[1]])
 		}
-		runs = append(runs, text[m[0]:m[1]])
 	}
 	return runs
 }
@@ -2419,16 +2437,34 @@ func authoredTweetStatus(id string) string {
 // delimiter it actually is.
 var tweetURLRe = regexp.MustCompile(`(?i)https?://[^\s<>。、！？，：；]+`)
 
-// urlRunStartIsBounded reports whether a scheme match beginning at byte offset start in s
-// is at a real run boundary: the start of the text, or preceded by a character that is not
-// alphanumeric. `_`, `-`, `.`, quotes and brackets are all delimiters here; only a letter
-// or digit in front of the scheme means the `http` is part of a longer word.
+// urlRunStartIsBounded reports whether a run beginning at byte offset start in s is at a
+// real boundary: the start of the text, or preceded by a character that is not an ASCII
+// letter or digit. `_`, `-`, `.`, quotes and brackets are all delimiters here; only an
+// ASCII alphanumeric in front of the run means it is part of a longer word.
+//
+// ASCII, not `unicode.IsLetter`. The wider test was the obvious spelling and it was wrong
+// in exactly the place this file already knows about: CJK copy puts no space before a
+// link. The stop set on both scanners lists `。`, `、`, `！`, `？`, `，`, `：`, `；`
+// precisely because a CJK sentence ends without one — and then this helper turned around
+// and treated the CJK word itself as proof the link was not a link, so
+// `登録events.example/r?access_token=…` was dropped from the candidate set unscreened and
+// published. A run cannot be "part of a longer word" when the script in front of it does
+// not use spaces to make words in the first place.
+//
+// The cost of the narrowing is an accented Latin letter hard against a scheme —
+// `caféhttps://…` is now treated as a link start where it was not before. That is not a
+// shape real copy has, and the direction it errs in is a refusal, not a publication.
 func urlRunStartIsBounded(s string, start int) bool {
 	if start == 0 {
 		return true
 	}
 	r, _ := utf8.DecodeLastRuneInString(s[:start])
-	return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	return !isASCIIAlphanumeric(r)
+}
+
+// isASCIIAlphanumeric reports whether r is one of A-Z, a-z or 0-9.
+func isASCIIAlphanumeric(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 
 // findTweetURLRuns returns the URL runs in s, applying the boundary rule tweetURLRe no

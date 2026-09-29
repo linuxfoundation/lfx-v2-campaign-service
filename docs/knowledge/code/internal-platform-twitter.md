@@ -480,9 +480,16 @@ What counts as a URL is decided twice, by two scanners with different jobs.
 published, weighed and matched. It carries no `\b`: Go's `\b` is defined over `\w`, which
 includes `_`, so there was no boundary between the underscore and the `h` of
 `_https://…` and the whole run went unseen. RE2 has no lookbehind, so `findTweetURLRuns`
-applies the boundary in code instead — a scheme is at a boundary unless a letter or digit
-precedes it. Only the LEADING delimiter is its business; a trailing `_` is swept into the
-run like any other non-stop character, because `tweetURLTrailingPunct` does not list it.
+applies the boundary in code instead — a run is at a boundary unless an ASCII letter or
+digit precedes it. Only the LEADING delimiter is its business; a trailing `_` is swept into
+the run like any other non-stop character, because `tweetURLTrailingPunct` does not list it.
+
+ASCII is load-bearing there, and the wider `unicode.IsLetter` spelling it replaced was
+wrong in the place this package already knows about. CJK copy puts no space before a link —
+which is exactly why both stop sets list `。`, `、`, `！`, `？`, `，`, `：`, `；` — and the
+wide boundary then read the CJK word in front as proof the link was not one, so
+`登録events.example/r?access_token=…` was dropped unscreened and published. A run cannot be
+"part of a longer word" when the script in front of it does not build words out of spaces.
 
 The second scanner exists because a link does not need a scheme to be published. X
 linkifies `www.events.example/r?access_token=…` and bare `events.example/r?…` exactly as
@@ -510,6 +517,15 @@ exotic case, it was missing the entire non-Latin web. `198.51.100.7/r?access_tok
 A dotted-quad alternative and a `[a-z][a-z0-9-]+` label cover both. Scheme-less bracketed
 IPv6 is deliberately still not covered: X does not linkify it, and a leading `[` collides
 with the markdown-link shape operators actually paste.
+
+A THIRD pattern, `schemelessUserinfoRunRe`, covers the scheme-less shape that carries a
+credential with no query to carry it: `user:password@host.tld`. The query scanner requires
+a `?` or `#` because a query is the only thing it reads, so `bob:pw@events.example` was
+screened by nothing while the scheme-ful `https://bob:pw@events.example` beside it was
+refused. The bytes are published either way; whether X renders the run as a link does not
+change what goes out in the tweet. The COLON is the entire discriminator and cannot be
+dropped — without it the pattern matches `bob@events.example`, an ordinary email address,
+and a screen that refuses those is worse than the hole it closes.
 
 The error never renders the caller's key. It points at the offending parameter by
 the fixed VOCABULARY WORD that classified it — `credentialQueryKeyMatch` returns

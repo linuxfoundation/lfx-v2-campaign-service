@@ -2346,3 +2346,68 @@ func TestRejectCredentialQueryParamsInText_IPv4AndPunycodeHosts(t *testing.T) {
 		}
 	}
 }
+
+// Round-13 review fixes
+
+// TestRejectCredentialQueryParamsInText_CJKAdjacentLink pins the boundary bug the
+// round-11 helper introduced: CJK copy puts no space before a link, so treating any
+// Unicode letter as "this run is part of a longer word" dropped a real link, carrying a
+// real credential, out of the candidate set before it was ever screened.
+func TestRejectCredentialQueryParamsInText_CJKAdjacentLink(t *testing.T) {
+	refused := []string{
+		"登録events.example/r?access_token=PLAINTEXT",
+		"詳細はhttps://events.example/r?access_token=PLAINTEXT",
+		"登録はこちら198.51.100.7/r?sessionid=PLAINTEXT",
+	}
+	for _, text := range refused {
+		err := rejectCredentialQueryParamsInText(text)
+		if err == nil {
+			t.Errorf("CJK-adjacent text %q was not screened", text)
+			continue
+		}
+		if strings.Contains(err.Error(), "PLAINTEXT") {
+			t.Errorf("refusal for %q echoed the credential value: %v", text, err)
+		}
+	}
+
+	// An ASCII word hard against a scheme is still not a link — that is the case the
+	// boundary rule exists for, and narrowing it to ASCII must not give it up.
+	long := "https://events.lf.org/" + strings.Repeat("x", 120)
+	if textCarriesURL("foo"+long, long) {
+		t.Error("a scheme buried in an ASCII word was treated as a link run")
+	}
+}
+
+// TestRejectCredentialQueryParamsInText_SchemelessUserinfo covers the scheme-less shape
+// that carries a credential with no query to carry it. The scheme-ful
+// `https://bob:pw@host` was already refused; the scheme-less one beside it was not.
+func TestRejectCredentialQueryParamsInText_SchemelessUserinfo(t *testing.T) {
+	refused := []string{
+		"bob:PLAINTEXT@events.example is the link",
+		"bob:PLAINTEXT@events.example/r?utm_source=x",
+		"admin:PLAINTEXT@198.51.100.7:8443/portal",
+	}
+	for _, text := range refused {
+		err := rejectCredentialQueryParamsInText(text)
+		if err == nil {
+			t.Errorf("scheme-less userinfo text %q was not screened", text)
+			continue
+		}
+		if strings.Contains(err.Error(), "PLAINTEXT") {
+			t.Errorf("refusal for %q echoed the credential value: %v", text, err)
+		}
+	}
+
+	// The colon is the whole discriminator. An email address has none, and refusing
+	// those would make the screen worse than the hole it closes.
+	for _, text := range []string{
+		"contact bob@events.example for details",
+		"questions? email hello@lf.org",
+		"Ratio 3:4@events tomorrow",
+		"Doors 9:30 — see events.lf.org/agenda",
+	} {
+		if err := rejectCredentialQueryParamsInText(text); err != nil {
+			t.Errorf("ordinary tweet copy %q was refused: %v", text, err)
+		}
+	}
+}

@@ -232,10 +232,14 @@ func sanitizeSnapshotText(raw string) string {
 	// every query and fragment it rewrites, and the second only ever matches a run that
 	// still HAS one, so a reduced `https://a.example` is invisible to it. No masking or
 	// offset bookkeeping is needed to get that.
-	return schemelessSnapshotRunRe.ReplaceAllStringFunc(
-		snapshotURLRunRe.ReplaceAllStringFunc(raw, sanitizeSnapshotURL),
-		sanitizeSchemelessSnapshotRun,
-	)
+	// The userinfo pass runs LAST, over what the other two leave. It requires no query,
+	// so running it earlier would take `bob:pw@a.example/r?token=S` down to `a.example`
+	// before the query pass ever saw it — same end state, but by the pass that is not
+	// responsible for queries. Last, it only ever sees runs the first two had nothing to
+	// say about, which is the `user:password@host` with no query at all.
+	out := snapshotURLRunRe.ReplaceAllStringFunc(raw, sanitizeSnapshotURL)
+	out = schemelessSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeSchemelessSnapshotRun)
+	return schemelessUserinfoSnapshotRunRe.ReplaceAllString(out, "")
 }
 
 // schemelessSnapshotRunRe matches a scheme-less link carrying a query or fragment, the
@@ -267,6 +271,22 @@ func sanitizeSnapshotText(raw string) string {
 var schemelessSnapshotRunRe = regexp.MustCompile(
 	`(?i)(?:[^\s/?#@]*@)?(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>"\x60\]}|\\^]*)?[?#][^\s<>"\x60\]}|\\^]+`,
+)
+
+// schemelessUserinfoSnapshotRunRe matches `user:password@host.tld`, the scheme-less shape
+// that carries a credential with no query to carry it. It is replaced by NOTHING rather
+// than reduced to a host: a run reaching this pass has already failed to be either of the
+// other two shapes, and the only part of it worth keeping — which site the link pointed
+// at — is not worth the risk of getting the split between userinfo and authority wrong on
+// a malformed run.
+//
+// The colon is the discriminator, exactly as on schemelessUserinfoRunRe in
+// internal/platform/twitter/client.go: without it this matches every email address an
+// operator writes in their copy. Keep the two in step.
+var schemelessUserinfoSnapshotRunRe = regexp.MustCompile(
+	`(?i)[a-z0-9._~%+-]+:[^\s<>"\x60\]}|\\^@]*@` +
+		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
+		`(?::\d+)?(?:/[^\s<>"\x60\]}|\\^]*)?`,
 )
 
 // sanitizeSchemelessSnapshotRun reduces a scheme-less run to its authority, and fails
