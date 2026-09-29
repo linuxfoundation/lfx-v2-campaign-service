@@ -935,6 +935,44 @@ func TestGenerateEmailCopy_StageReachesThePrompt(t *testing.T) {
 	}
 }
 
+// TestGenerateEmailCopy_SegmentReachesThePrompt guards the same seam TestGenerateEmailCopy_
+// StageReachesThePrompt guards for Stage: composeEmailCopyPrompt's segment switch is exercised
+// directly by other tests in this file, but none of them go through GenerateEmailCopy itself, so
+// none of them prove p.Segment actually reaches vars.segment (internal/service/email_copy.go:885)
+// rather than being dropped on the way from the payload to the composer.
+func TestGenerateEmailCopy_SegmentReachesThePrompt(t *testing.T) {
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+		ID: "brief-456", ProjectID: "proj-123",
+		EventDetails: json.RawMessage(`{"eventName":"KubeCon EU 2026","location":"Barcelona","dates":"June 17-20, 2026"}`),
+	}
+
+	var sentBody atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		sentBody.Store(string(b))
+		w.Header().Set("Content-Type", "application/json")
+		content, _ := json.Marshal(`{"subject":"s","preheader":"p","sections":[{"type":"rich_text","html":"<p>b</p>"},{"type":"button","text":"c"}]}`)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+
+	svc := newTestBriefService(repo)
+	svc.SetLLMClient(newTestLLMClient(t, srv))
+
+	if _, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+		ProjectID: "proj-123", BriefID: "brief-456", BearerToken: strPtr("token"),
+		Stage: strPtr("Registration Push"), Segment: strPtr("alumni"),
+	}); err != nil {
+		t.Fatalf("GenerateEmailCopy() error = %v", err)
+	}
+
+	body, _ := sentBody.Load().(string)
+	if !strings.Contains(body, "SEGMENT: alumni") {
+		t.Errorf("prompt sent upstream does not carry the alumni segment guidance; p.Segment did not reach vars.segment, got body %s", body)
+	}
+}
+
 // A caller that sends NO stage must still succeed. Declaring `stage` in the request BODY made the
 // body itself required -- Goa emits MissingPayloadError on EOF -- so a pre-stage caller POSTing
 // with no body got a 400 instead of the default-stage copy it had always received. It is a query

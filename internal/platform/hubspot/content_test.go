@@ -438,16 +438,74 @@ func wcagContrastRatio(hexA, hexB string) float64 {
 // against silently regressing below WCAG AA's 4.5:1 text-contrast threshold —
 // these are brand colors picked by hand, not computed, so nothing else catches
 // a future edit that swaps in a lower-contrast hex.
+//
+// It captures the values from the actual PATCH body RebuildEmailContent sends,
+// not literals restated in this file: a hex literal here would keep passing even
+// if content.go regressed to a lower-contrast color, which is exactly the
+// regression this test exists to catch.
 func TestHardcodedEmailColors_MeetWCAG_AA(t *testing.T) {
 	const wcagAANormalText = 4.5
+
+	var mu sync.Mutex
+	var sent map[string]any
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			raw, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(raw, &body)
+			mu.Lock()
+			if content, ok := body["content"].(map[string]any); ok {
+				sent, _ = content["widgets"].(map[string]any)
+			}
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"999","content":{"widgets":{"staging_footer_hs":{}},"flexAreas":{"main":{"sections":[{"columns":[{"widgets":["staging_footer_hs"]}]}]}}}}`)
+	})
+
+	_, _ = c.RebuildEmailContent(context.Background(), "999", RebuildEmailContentInput{
+		ButtonText: "Register Now",
+		ButtonURL:  "https://events.lfx.dev/reg",
+		SentByOrg:  "The Linux Foundation Events",
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	widgetColor := func(widgetKey string, path ...string) string {
+		w, ok := sent[widgetKey].(map[string]any)
+		if !ok {
+			t.Fatalf("expected a %q widget in the PATCH body", widgetKey)
+		}
+		var cur any = w
+		for _, p := range path {
+			m, ok := cur.(map[string]any)
+			if !ok {
+				t.Fatalf("expected %q at %v to be an object", widgetKey, path)
+			}
+			cur, ok = m[p]
+			if !ok {
+				t.Fatalf("expected %q at %v to exist", widgetKey, path)
+			}
+		}
+		color, ok := cur.(string)
+		if !ok {
+			t.Fatalf("expected %q at %v to be a string, got %T", widgetKey, path, cur)
+		}
+		return color
+	}
+
+	buttonBackground := widgetColor("staging_button", "body", "background_color")
+	buttonText := widgetColor("staging_button", "body", "font_color")
+	footerLink := widgetColor("staging_footer_hs", "body", "link_font", "color")
 
 	cases := []struct {
 		name       string
 		foreground string
 		background string
 	}{
-		{"CTA button text on its background", "#ffffff", "#2563eb"},
-		{"footer link text on the white email background", "#2563eb", "#ffffff"},
+		{"CTA button text on its background", buttonText, buttonBackground},
+		{"footer link text on the white email background", footerLink, "#ffffff"},
 	}
 	for _, tc := range cases {
 		ratio := wcagContrastRatio(tc.foreground, tc.background)

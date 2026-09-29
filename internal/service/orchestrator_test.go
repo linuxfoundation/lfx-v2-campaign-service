@@ -3046,3 +3046,45 @@ func TestOrchestrator_ReadCampaignSettings_BoundsTheCall(t *testing.T) {
 			settingsCallTimeout, constants.DefaultWriteTimeout)
 	}
 }
+
+// TestHubspotURLFromResult guards the read side of the hubspotUrl seam: internal/dispatch's
+// campaignFromHubSpot writes the cloned email's AppURL into the persisted Result blob under the
+// JSON key "hubspotUrl" (hubspot.Email.AppURL is tagged json:"-" and would not otherwise
+// serialize), and hubspotURLFromResult here reads that same key back out. The matching case
+// below marshals a struct shaped like dispatch's own — not a literal `{"hubspotUrl":"..."}`
+// string — so a rename of either side's JSON tag breaks this test rather than leaving it green.
+func TestHubspotURLFromResult(t *testing.T) {
+	type dispatchShapedResult struct {
+		PortalID   string `json:"portalId"`
+		HubspotURL string `json:"hubspotUrl"`
+	}
+	matching, err := json.Marshal(dispatchShapedResult{PortalID: "8112310", HubspotURL: "https://app.hubspot.com/email/8112310/edit/999/settings"})
+	if err != nil {
+		t.Fatalf("marshal dispatch-shaped result: %v", err)
+	}
+
+	otherPlatform, err := json.Marshal(struct {
+		AdSetID string `json:"adSetId"`
+	}{AdSetID: "42"})
+	if err != nil {
+		t.Fatalf("marshal other-platform result: %v", err)
+	}
+
+	cases := map[string]struct {
+		result json.RawMessage
+		want   string
+	}{
+		"hubspot result carries the key":       {matching, "https://app.hubspot.com/email/8112310/edit/999/settings"},
+		"another platform's result has no key": {otherPlatform, ""},
+		"empty result":                         {json.RawMessage(``), ""},
+		"malformed json":                       {json.RawMessage(`{not json`), ""},
+		"absent result (nil)":                  {nil, ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := hubspotURLFromResult(tc.result); got != tc.want {
+				t.Errorf("hubspotURLFromResult(%s) = %q, want %q", tc.result, got, tc.want)
+			}
+		})
+	}
+}

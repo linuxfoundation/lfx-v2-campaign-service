@@ -579,6 +579,32 @@ func TestHubSpot_DispatchClonesAndSetsSendList(t *testing.T) {
 	}
 }
 
+// TestHubSpot_ResultBlobCarriesTheClonedEmailAppURL guards the only seam that gets the cloned
+// email's human-facing edit link out to a caller polling the job: campaignFromHubSpot restates
+// hubspot.Email.AppURL (tagged json:"-" and so silent on its own) under the real JSON key
+// "hubspotUrl" in the persisted Result blob. internal/service's hubspotURLFromResult reads that
+// same key back out; nothing here proves that side, but a rename of either key would otherwise
+// go uncaught by every other test in this suite, which only checks portalId.
+func TestHubSpot_ResultBlobCarriesTheClonedEmailAppURL(t *testing.T) {
+	srv, _ := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", []string{"9001", "9002"})}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	var blob struct {
+		HubspotURL string `json:"hubspotUrl"`
+	}
+	if err := json.Unmarshal(camp.Result, &blob); err != nil {
+		t.Fatalf("result blob is not valid JSON: %v", err)
+	}
+	if !strings.Contains(blob.HubspotURL, "/edit/999") {
+		t.Errorf("result hubspotUrl = %q, want the cloned email's (id 999) edit link", blob.HubspotURL)
+	}
+}
+
 // TestHubSpot_AppliesGeneratedContent: subject and body from the config reach the draft, and the
 // body is written BEFORE the UTM tagger so the tags survive (LFXV2-2775).
 func TestHubSpot_AppliesGeneratedContent(t *testing.T) {
