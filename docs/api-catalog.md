@@ -902,11 +902,14 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   verbatim beside the UTM parameters, since it is the ad's real
                                   click destination; its #fragment is dropped), then promotes it.
                                   Because that query is PUBLISHED verbatim in the tweet, this is
-                                  the one path that first screens the registration URL's own
-                                  parameters and refuses, pre-create, a key that is a credential
-                                  under any reading (`access_token`, `api_key`, `sessionId`, `jwt`,
-                                  `password`, `signature`, … in any case/separator spelling). The
-                                  error names the offending KEY, never its value. Routing and
+                                  the one path that first screens EVERY URL in the composed tweet
+                                  text — the registration URL's own parameters and any link the
+                                  caller put in their own copy — and refuses, pre-create, a key
+                                  that is a credential under any reading (`access_token`,
+                                  `api_key`, `sessionId`, `jwt`, `password`, `signature`,
+                                  `secret_token`, `auth_key`, `oauth_token_secret`, … in any
+                                  case/separator spelling, compounds included). The error names
+                                  the offending KEY, never its value. Routing and
                                   attribution parameters are unaffected, `code` and `pin` included
                                   — a discount code is not a credential.
                                   The authored tweet is ALWAYS promoted-only
@@ -914,7 +917,9 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   as X's default) — it never appears on the public timeline or to
                                   followers. Rejected pre-create if the composed text (counting any
                                   embedded URL at X's fixed t.co weight of 23 characters each, not
-                                  raw length) exceeds the 280-character cap. That cap is X's WEIGHTED
+                                  raw length — schemes match case-insensitively, and trailing
+                                  sentence punctuation is counted as prose, not as part of the
+                                  link) exceeds the 280-character cap. That cap is X's WEIGHTED
                                   one, not a rune count: runes outside twitter-text's weight-1
                                   ranges (CJK and beyond) cost 2 each, while an emoji presentation
                                   sequence — skin tone, ZWJ family, keycap, country flag — costs 2
@@ -933,7 +938,9 @@ asUserId?: string                — Pins which of the ad account's promotable u
                                   steps, and the ids are visible in X Ads Manager, where whoever
                                   sets `asUserId` is already looking. The candidate list is read
                                   across every page, so a pinned user is not reported absent for
-                                  sitting on page two.
+                                  sitting on page two; if the page cap is reached with results
+                                  still outstanding, the lookup is refused as inconclusive rather
+                                  than concluding from a truncated list.
 ```
 
 Connection prerequisites (from the X connection, not this config): the OAuth1 4-tuple (consumer

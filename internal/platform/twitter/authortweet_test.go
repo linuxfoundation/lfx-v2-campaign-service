@@ -6,6 +6,7 @@ package twitter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -930,4 +931,244 @@ func TestCreateCampaign_RejectsOverWeightCJKText(t *testing.T) {
 	if n := writes.Load(); n != 0 {
 		t.Errorf("%d write(s) issued before the refusal; the length gate must run before anything is created", n)
 	}
+}
+
+// TestIsCredentialQueryKey pins the classifier the publication gate rests on, in
+// both directions. An exact-name denylist was the original shape and it leaked:
+// credential parameters COMPOSE, so `secret_token` and `access_key` are obvious
+// credentials that no enumerated set happened to contain. The rejection rows are
+// therefore all compounds; the acceptance rows are the collisions that make the
+// fragment rules non-obvious, and they matter just as much — a false positive is a
+// refused brief an operator cannot work around.
+func TestIsCredentialQueryKey(t *testing.T) {
+	t.Parallel()
+
+	credential := []string{
+		// Compounds that an exact-name set missed entirely.
+		"secret_token", "access_key", "auth_key", "signing_key", "consumer_key",
+		"csrf_token", "x_request_signature", "encryption_key",
+		// The standard OAuth/OIDC parameter names.
+		"oauth_token", "oauth_token_secret", "oauth_verifier", "oauth_consumer_key",
+		"authorization_code", "client_assertion",
+		// Spelling variants the normalizer folds onto the same name.
+		"Access-Token", "API.KEY", "SESSION_ID",
+	}
+	for _, key := range credential {
+		t.Run("rejects "+key, func(t *testing.T) {
+			t.Parallel()
+			if !isCredentialQueryKey(key) {
+				t.Errorf("%q was not classified as a credential; it would be published verbatim", key)
+			}
+		})
+	}
+
+	benign := []string{
+		// Ordinary routing and attribution parameters on a real LF event page.
+		"ref", "lang", "utm_source", "utm_campaign", "referrer", "source",
+		// Deliberately admitted: a discount code and a PIN are not credentials, and
+		// refusing them would break briefs. See credentialQueryKeys' doc.
+		"code", "pin", "promo_code", "discount",
+		// The collisions that force `key`, `pass`, `sig` and `auth` to stay
+		// exact-match rather than joining the fragment list.
+		"keyword", "bypass", "design", "monkey", "keynote", "passenger",
+	}
+	for _, key := range benign {
+		t.Run("allows "+key, func(t *testing.T) {
+			t.Parallel()
+			if isCredentialQueryKey(key) {
+				t.Errorf("%q was refused as a credential; an ordinary brief would fail to create", key)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_RejectsCredentialQueryParamInCallerTweetCopy covers the half of
+// the exposure the registration-URL-only check could never see.
+//
+// composeTweetText publishes the caller's own copy verbatim next to the destination
+// URL. A second link pasted into that copy is the likeliest carrier of a session
+// token of all — it is the one copied straight out of a logged-in browser — and it
+// reached X without passing any screen at all. Asserting zero writes is again the
+// load-bearing half: the refusal has to land before the campaign and line item exist.
+func TestCreateCampaign_RejectsCredentialQueryParamInCallerTweetCopy(t *testing.T) {
+	for _, param := range []string{"session_token", "oauth_token", "access_key"} {
+		t.Run(param, func(t *testing.T) {
+			var writes atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					writes.Add(1)
+				}
+				w.WriteHeader(http.StatusNotFound)
+			}))
+			defer srv.Close()
+
+			// The registration URL is clean; the credential rides in the operator's copy.
+			in := baseAuthorInput("Full agenda here: https://sched.lf.org/kc?" + param + "=s3cr3t")
+
+			c := newAuthorTweetTestClient(srv.URL)
+			_, err := c.CreateCampaign(context.Background(), in)
+			if err == nil {
+				t.Fatalf("tweet copy carrying %q was accepted for publication", param)
+			}
+			if !strings.Contains(err.Error(), param) {
+				t.Errorf("error should name the offending parameter %q, got: %v", param, err)
+			}
+			if strings.Contains(err.Error(), "s3cr3t") {
+				t.Errorf("error echoes the credential VALUE back: %v", err)
+			}
+			if n := writes.Load(); n != 0 {
+				t.Errorf("%d write(s) were issued before the refusal; the check must run before anything is created", n)
+			}
+		})
+	}
+}
+
+// TestWeightedTweetLen_URLRunBoundaries pins where a matched run stops being the
+// link. Both directions are failures a user sees: a link counted at its raw length
+// rejects valid copy before the create, and punctuation swallowed into the fixed t.co
+// weight lets copy through that X then refuses once the campaign and line item exist.
+func TestWeightedTweetLen_URLRunBoundaries(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		text string
+		want int
+	}{
+		{
+			// RFC 3986 makes the scheme case-insensitive and X wraps this too. Counted
+			// at its raw 24 runes, this rejected copy X accepts.
+			name: "uppercase scheme still counts as the t.co weight",
+			text: "HTTPS://events.lf.org/kc",
+			want: tcoURLWeight,
+		},
+		{
+			name: "mixed-case scheme still counts as the t.co weight",
+			text: "Https://events.lf.org/kc",
+			want: tcoURLWeight,
+		},
+		{
+			// The full stop ends the sentence, not the link: it is one more ordinary
+			// character on top of the link's fixed weight, not free inside it.
+			name: "sentence-final punctuation is not part of the link",
+			text: "Register at https://lfx.dev.",
+			want: utf8.RuneCountInString("Register at ") + tcoURLWeight + 1,
+		},
+		{
+			name: "trailing comma is not part of the link",
+			text: "https://lfx.dev, and more",
+			want: tcoURLWeight + utf8.RuneCountInString(", and more"),
+		},
+		{
+			// A closing bracket with no opener inside the run belongs to the prose.
+			name: "unmatched closing paren is not part of the link",
+			text: "(see https://lfx.dev)",
+			want: utf8.RuneCountInString("(see ") + tcoURLWeight + 1,
+		},
+		{
+			// ...but one the URL itself opened does belong to it, so it must not be
+			// trimmed back off.
+			name: "balanced parens inside the url are kept",
+			text: "https://lf.org/a_(b)",
+			want: tcoURLWeight,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := weightedTweetLen(tc.text); got != tc.want {
+				t.Fatalf("weightedTweetLen(%q) = %d, want %d", tc.text, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestResolvePromotableUser_PageCapIsNotAWholeList covers the bounded cousin of the
+// read-page-one bug. Paginating fixed the case where the walk stopped after one page;
+// it left the case where the walk stops after maxListPages with a cursor still
+// outstanding, and falling out of that loop looked exactly like finishing it.
+//
+// The dangerous shape is the one asserted here: ONE user on the first page and more
+// pages still to come. Concluding from the truncated list auto-picks that user as the
+// tweet's author — the single-candidate shortcut firing on a list that was never
+// enumerated — which is precisely the "never silently pick" guarantee the function
+// exists to keep.
+func TestResolvePromotableUser_PageCapIsNotAWholeList(t *testing.T) {
+	t.Parallel()
+
+	var pages atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := pages.Add(1)
+		body := `{"data":[],"next_cursor":"` + fmt.Sprintf("c%d", n) + `"}`
+		if n == 1 {
+			body = `{"data":[{"user_id":"u1"}],"next_cursor":"c1"}`
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := newAuthorTweetTestClient(srv.URL)
+	got, err := c.resolvePromotableUser(context.Background(), "")
+	if err == nil {
+		t.Fatalf("auto-resolved %q from a list that was never enumerated", got)
+	}
+	if !strings.Contains(err.Error(), "could not be fully enumerated") {
+		t.Errorf("error should say the list was truncated, got: %v", err)
+	}
+	if n := pages.Load(); int(n) != maxListPages {
+		t.Errorf("walked %d pages, want the full cap of %d before giving up", n, maxListPages)
+	}
+}
+
+// TestResolvePromotableUser_ErrorsOmitTheUpstreamCursor guards the leak channel this
+// function's errors sit on. A page cursor is opaque text decoded out of an upstream
+// response body, and these errors are rendered into PromotedTweetWarning and a
+// persisted steps entry — so a cursor rendered into one, or folded into the request
+// path an apiError records, publishes upstream response text into the campaign record.
+func TestResolvePromotableUser_ErrorsOmitTheUpstreamCursor(t *testing.T) {
+	t.Parallel()
+
+	const cursor = "CURSORSECRETVALUE"
+
+	t.Run("a repeated cursor is reported without its value", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"user_id":"u1"}],"next_cursor":"` + cursor + `"}`))
+		}))
+		defer srv.Close()
+
+		c := newAuthorTweetTestClient(srv.URL)
+		_, err := c.resolvePromotableUser(context.Background(), "")
+		if err == nil {
+			t.Fatal("expected a refusal on a cursor that never advances")
+		}
+		if strings.Contains(err.Error(), cursor) {
+			t.Errorf("error carries the upstream cursor into a persisted string: %v", err)
+		}
+	})
+
+	t.Run("an upstream failure mid-walk is reported without the cursor", func(t *testing.T) {
+		t.Parallel()
+		var pages atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if pages.Add(1) == 1 {
+				_, _ = w.Write([]byte(`{"data":[{"user_id":"u1"}],"next_cursor":"` + cursor + `"}`))
+				return
+			}
+			// The second page is fetched WITH the cursor on the wire, and fails: the
+			// resulting apiError records the request path.
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+
+		c := newAuthorTweetTestClient(srv.URL)
+		_, err := c.resolvePromotableUser(context.Background(), "")
+		if err == nil {
+			t.Fatal("expected the upstream 500 to fail the lookup")
+		}
+		if strings.Contains(err.Error(), cursor) {
+			t.Errorf("error carries the upstream cursor into a persisted string: %v", err)
+		}
+	})
 }

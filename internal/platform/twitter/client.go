@@ -944,6 +944,38 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 	return c.doRequestAbs(ctx, method, reqURL, path, queryParams, idempotent)
 }
 
+// requestPage performs one page of an account-scoped paginated GET. The cursor rides
+// on the WIRE URL only; the path recorded in any resulting error stays the caller's
+// query-free collection path.
+//
+// That split is the whole reason this exists. A page cursor is an opaque token decoded
+// straight out of an upstream response body, and doRequestAbs records its logPath into
+// every apiError, transportError and preSendError it builds — errors that, on the
+// authoring path, are rendered into PromotedTweetWarning and a persisted steps entry.
+// Folding the cursor into the path handed to doRequest therefore published upstream
+// response text into the campaign record, which is exactly what
+// platform-error-must-not-carry-untrusted-or-credential-text forbids. ListAdAccounts
+// already passed "the bare collection path, never reqURL" for this reason; the two
+// account-scoped walks simply had no shared way to do the same thing until now.
+func (c *Client) requestPage(ctx context.Context, path, cursor string) (*apiResponse, error) {
+	reqURL := c.accountURL()
+	if p := strings.TrimPrefix(path, "/"); p != "" {
+		reqURL += "/" + p
+	}
+	if cursor != "" {
+		// Escaped, but NOT trimmed: a cursor is an opaque server token and the exact
+		// bytes X sent are the ones that have to go back.
+		sep := "?"
+		if strings.Contains(reqURL, "?") {
+			sep = "&"
+		}
+		reqURL += sep + "cursor=" + url.QueryEscape(cursor)
+	}
+	// Reads are idempotent by construction, as in request: a 429 costs nothing to
+	// re-issue because a GET commits nothing.
+	return c.doRequestAbs(ctx, http.MethodGet, reqURL, path, nil, true /* idempotent */)
+}
+
 // drainAndClose discards a bounded amount of an unread response body before closing
 // it. net/http only returns a connection to the idle pool when its body has been read
 // to EOF and closed; closing an unread body makes the transport tear the connection
@@ -1455,17 +1487,12 @@ func (c *Client) findLineItemByName(ctx context.Context, campaignID, name string
 // follows next_cursor so a match beyond the first page is still found, bounded
 // by maxListPages.
 func (c *Client) findByName(ctx context.Context, path, name string) (string, error) {
-	sep := "&"
-	if !strings.Contains(path, "?") {
-		sep = "?"
-	}
 	cursor := ""
 	for page := 0; page < maxListPages; page++ {
-		p := path
-		if cursor != "" {
-			p = path + sep + "cursor=" + url.QueryEscape(cursor)
-		}
-		resp, err := c.request(ctx, http.MethodGet, p)
+		// requestPage keeps the cursor on the wire URL and off the error path — see
+		// its doc; a lookup failure here surfaces in the same persisted places the
+		// authoring path's does.
+		resp, err := c.requestPage(ctx, path, cursor)
 		if err != nil {
 			return "", fmt.Errorf("lookup %q: %w", name, err)
 		}
@@ -1672,12 +1699,70 @@ var credentialQueryKeys = map[string]struct{}{
 	"sig": {}, "signature": {}, "hmac": {}, "jwt": {},
 }
 
+// credentialQuerySubstrings are the fragments that make a key a credential WHEREVER
+// they appear in it, and they exist because an exact-name set is the wrong shape for
+// this problem: credential parameters compose. `secret_token`, `access_key`,
+// `oauth_token`, `csrf_token` and `x_request_signature` are all obvious credentials
+// and none of them is an entry above, so an exact lookup passed every one of them
+// through to publication. Enumerating compounds does not converge — the vocabulary
+// is small but the combinations are not — so the fragments are matched instead.
+//
+// Only fragments that are unambiguous as a COMPONENT are listed. That is why `key`,
+// `auth`, `sig`, `pass` and `session` are absent here and stay exact-only above:
+// each is a substring of ordinary words a registration page really does use
+// (`keyword`, `bypass`, `design`, `oauth` itself), and matching them anywhere would
+// reject working briefs. `key` is instead handled by the suffix rule below, which is
+// the one shape that carries a credential reading without those collisions.
+var credentialQuerySubstrings = []string{
+	"token", "secret", "password", "passwd", "credential",
+	"signature", "hmac", "jwt", "bearer", "oauth",
+	"authorization", "assertion",
+}
+
+// benignKeySuffixWords are the ordinary English words that end in "key" and would
+// otherwise be caught by the suffix rule. A query parameter whose normalized name
+// ends in "key" is a credential in every spelling that matters — `api_key`,
+// `access_key`, `auth_key`, `signing_key`, `consumer_key` — and enumerating those
+// prefixes has the same non-convergence problem as the compounds above. These are
+// the false positives that rule would otherwise produce.
+var benignKeySuffixWords = map[string]struct{}{
+	"key": {}, "monkey": {}, "donkey": {}, "turkey": {}, "hockey": {},
+	"jockey": {}, "whiskey": {}, "mickey": {}, "lackey": {},
+}
+
 // credentialQueryKeyNormalizer folds the separators a query key can be spelled with, so
 // one denylist entry covers every spelling of the same name.
 var credentialQueryKeyNormalizer = strings.NewReplacer("-", "", "_", "", ".", "")
 
-// rejectCredentialQueryParams refuses a registration URL that carries a credential-like
-// query parameter, and is called ONLY on the tweetText path, before any mutating call.
+// isCredentialQueryKey reports whether a query KEY names authentication material.
+// It reads the key three ways, in order of how specific the evidence is: the exact
+// denylist, an unambiguous credential fragment anywhere in the name, and finally the
+// "…key" suffix. The bare word `key` is itself in the exact set, so the benign-word
+// map below it never has to decide that case.
+func isCredentialQueryKey(key string) bool {
+	norm := strings.ToLower(credentialQueryKeyNormalizer.Replace(key))
+	if norm == "" {
+		return false
+	}
+	if _, bad := credentialQueryKeys[norm]; bad {
+		return true
+	}
+	for _, frag := range credentialQuerySubstrings {
+		if strings.Contains(norm, frag) {
+			return true
+		}
+	}
+	if strings.HasSuffix(norm, "key") {
+		if _, benign := benignKeySuffixWords[norm]; !benign {
+			return true
+		}
+	}
+	return false
+}
+
+// rejectCredentialQueryParams refuses ONE URL that carries a credential-like query
+// parameter. Callers on the create path go through rejectCredentialQueryParamsInText
+// below, which applies this to every URL in the composed tweet before any mutating call.
 //
 // The gate exists because that path is the one that PUBLISHES the URL. buildTwitterUTMURL
 // keeps the brief's pre-existing query verbatim — it has to, since dropping a routing
@@ -1700,12 +1785,35 @@ func rejectCredentialQueryParams(raw string) error {
 		// this value — but fail CLOSED rather than treating an unparseable URL as
 		// having no query, which would hand this helper's guarantee to a caller that
 		// reordered the two checks.
-		return fmt.Errorf("registration URL %q could not be re-parsed to check for credential parameters", redactURLForError(raw))
+		return fmt.Errorf("URL %q in the tweet text could not be parsed to check for credential parameters", redactURLForError(raw))
 	}
 	for key := range u.Query() {
-		norm := strings.ToLower(credentialQueryKeyNormalizer.Replace(key))
-		if _, bad := credentialQueryKeys[norm]; bad {
-			return fmt.Errorf("registration URL query parameter %q looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the registration URL, or supply an explicit tweetId instead of tweetText", key)
+		if isCredentialQueryKey(key) {
+			return fmt.Errorf("the tweet's URL query parameter %q looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the registration URL and from your tweet copy, or supply an explicit tweetId instead of tweetText", key)
+		}
+	}
+	return nil
+}
+
+// rejectCredentialQueryParamsInText screens EVERY URL in a composed tweet, and is the
+// gate that actually runs on the create path. Screening only the registration URL was
+// a gap the moment it was written: composeTweetText publishes the caller's own copy
+// verbatim alongside the destination URL, so a second link pasted into tweetText —
+// exactly the shape that carries a session token, because it is the one copied out of
+// a logged-in browser — reached X without ever passing the check.
+//
+// It runs on the COMPOSED text rather than on the inputs separately so the thing
+// screened is the thing published, byte for byte. A future change to how the text is
+// assembled cannot route a URL around the gate, because the gate no longer knows or
+// cares which input a URL came from.
+//
+// URLs are found with tweetURLRe, the same scanner weightedTweetLen uses to decide
+// what X will wrap in a t.co link. That is the correct set by construction: a run X
+// treats as a link is a run X publishes as a link.
+func rejectCredentialQueryParamsInText(text string) error {
+	for _, raw := range tweetURLRe.FindAllString(text, -1) {
+		if err := rejectCredentialQueryParams(trimTweetURLPunct(raw)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -1777,7 +1885,47 @@ func authoredTweetStatus(id string) string {
 // tweetURLRe matches the URL runs X replaces with a t.co link: an http/https
 // scheme through to the next whitespace. Deliberately not a full URL grammar —
 // see weightedTweetLen's best-effort note.
-var tweetURLRe = regexp.MustCompile(`https?://\S+`)
+//
+// CASE-INSENSITIVE because URI schemes are: RFC 3986 §3.1 makes `HTTPS://` the same
+// scheme as `https://`, X wraps it the same way, and a case-sensitive pattern counted
+// such a link at its raw length instead of 23 — rejecting, before the create, copy X
+// would have accepted.
+var tweetURLRe = regexp.MustCompile(`(?i)\bhttps?://\S+`)
+
+// tweetURLTrailingPunct is the trailing punctuation a URL run absorbs but a link does
+// not own: the sentence the URL sits in ends after the link, not inside it.
+const tweetURLTrailingPunct = `.,;:!?'"`
+
+// trimTweetURLPunct gives back the part of a matched run that is actually the link.
+//
+// `\S+` runs to the next whitespace, so "see https://lfx.dev." hands back a match with
+// the full stop glued on. That miscounts in BOTH directions around the 280 boundary —
+// the period is absorbed into the fixed t.co weight instead of being counted as its own
+// character — and it hands a trailing `.` or `)` to url.Parse in the credential screen.
+//
+// This is the deliberate opposite of sanitizeSnapshotText's greedy run in
+// internal/dispatch/creds.go, and the two must not be made to match. There, over-reach
+// fails SAFE: a character too many is one more character redacted out of a snapshot.
+// Here it fails unsafe in both directions — a false pre-create rejection of valid copy,
+// or a create that X then refuses after the campaign and line item exist.
+//
+// A closing bracket is trimmed only when the run has no matching opener, so a genuine
+// parenthesised URL keeps the bracket that belongs to it.
+func trimTweetURLPunct(run string) string {
+	for len(run) > 0 {
+		last := run[len(run)-1]
+		switch {
+		case strings.IndexByte(tweetURLTrailingPunct, last) >= 0:
+		case last == ')' && strings.Count(run, "(") < strings.Count(run, ")"):
+		case last == ']' && strings.Count(run, "[") < strings.Count(run, "]"):
+		case last == '}' && strings.Count(run, "{") < strings.Count(run, "}"):
+		default:
+			return run
+		}
+		run = run[:len(run)-1]
+	}
+	return run
+}
 
 // weightedTweetLen counts s the way X counts a Tweet's length: EVERY http/https
 // URL in s is counted at the fixed tcoURLWeight rather than its literal rune
@@ -1813,7 +1961,12 @@ func weightedTweetLen(s string) int {
 	// codepoints inside it, so they must not also be weighed rune by rune.
 	n := 0
 	rest := s
-	for _, u := range tweetURLRe.FindAllString(s, -1) {
+	for _, run := range tweetURLRe.FindAllString(s, -1) {
+		// The trimmed link is a PREFIX of the matched run, so it still locates at the
+		// run's own offset; advancing by its length alone leaves the trailing
+		// punctuation in rest, where weightedRunLen charges it as the ordinary
+		// character it is rather than burying it inside the fixed t.co weight.
+		u := trimTweetURLPunct(run)
 		idx := strings.Index(rest, u)
 		if idx < 0 {
 			// Unreachable: u came from rest's own prefix-ordered matches.
@@ -2241,18 +2394,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// (before any mutating call) so Step 4 need not re-validate.
 	var composedTweetText string
 	if in.TweetID == "" && strings.TrimSpace(in.TweetText) != "" {
-		// This is the one workflow that publishes the registration URL's pre-existing
-		// query. Refuse a credential-bearing parameter here, before the campaign and
-		// line item exist, so the failure costs nothing to recover from.
-		if err := rejectCredentialQueryParams(in.RegistrationURL); err != nil {
-			return nil, err
-		}
 		destURL, err := buildTwitterUTMURL(in)
 		if err != nil {
 			return nil, err
 		}
 		text, err := composeTweetText(in.TweetText, destURL)
 		if err != nil {
+			return nil, err
+		}
+		// This is the one workflow that publishes URLs verbatim — the registration
+		// URL's pre-existing query AND any link the caller put in their own copy.
+		// Screen the COMPOSED text, so what is checked is exactly what is published,
+		// and do it here, before the campaign and line item exist, so the refusal
+		// costs nothing to recover from.
+		if err := rejectCredentialQueryParamsInText(text); err != nil {
 			return nil, err
 		}
 		composedTweetText = text
@@ -2847,16 +3002,19 @@ func (c *Client) resolvePromotableUser(ctx context.Context, pinned string) (stri
 	var ids []string
 	cursor := ""
 	seen := map[string]struct{}{}
+	// enumerated records that the walk ended because the LIST ended, rather than
+	// because the page cap cut it short. Falling out of the loop otherwise looks
+	// identical to a clean finish, and every conclusion below — "not among them",
+	// "none at all", and above all the single-candidate auto-pick — is a claim about
+	// the WHOLE list that a truncated one cannot support.
+	enumerated := false
 	for page := 0; page < maxListPages; page++ {
-		path := "promotable_users"
-		if cursor != "" {
-			path += "?cursor=" + url.QueryEscape(cursor)
-		}
-		resp, err := c.request(ctx, http.MethodGet, path)
+		resp, err := c.requestPage(ctx, "promotable_users", cursor)
 		if err != nil {
 			return "", fmt.Errorf("looking up promotable users: %w", err)
 		}
 		if resp == nil {
+			enumerated = true
 			break
 		}
 		var users []struct {
@@ -2882,13 +3040,22 @@ func (c *Client) resolvePromotableUser(ctx context.Context, pinned string) (stri
 			}
 		}
 		if cursorVerdict(resp) != cursorMore {
+			enumerated = true
 			break
 		}
 		if _, dup := seen[resp.NextCursor]; dup {
-			return "", fmt.Errorf("x promotable-user listing repeated cursor %q; refusing to loop", resp.NextCursor)
+			// The cursor's VALUE is deliberately absent: it is upstream response text
+			// and this error is persisted. Mirrors ListAdAccounts' phrasing.
+			return "", fmt.Errorf("x promotable-user listing did not terminate (repeated page cursor)")
 		}
 		seen[resp.NextCursor] = struct{}{}
 		cursor = resp.NextCursor
+	}
+	if !enumerated {
+		// The cap was reached with another page still outstanding, so what was read is
+		// a prefix of the list, not the list. findByName refuses on the same footing
+		// rather than reporting a not-found it cannot stand behind.
+		return "", fmt.Errorf("x promotable-user listing exceeded %d pages with more results remaining, so this account's promotable users could not be fully enumerated; check them in X Ads Manager", maxListPages)
 	}
 	if pinned != "" {
 		return "", fmt.Errorf("the configured asUserId is not among this account's %d promotable users; check the account's promotable users in X Ads Manager", len(ids))

@@ -215,6 +215,25 @@ auto-picking an author the caller never chose, which is precisely the "never
 silently pick" guarantee above. A pinned id short-circuits the walk the moment it
 is seen; auto-resolution must reach the end before it may conclude.
 
+Reaching `maxListPages` with a cursor still outstanding is NOT reaching the end,
+and the walk records which of the two happened. Falling out of the loop otherwise
+looks identical to finishing it, and every conclusion below the loop is a claim
+about the whole list: "not among them", "none at all", and above all the
+single-candidate auto-pick, which on a truncated list picks an author from a set
+the caller was never shown. `findByName` refuses on exactly this footing rather
+than reporting a not-found it cannot stand behind, and this walk now does too.
+
+Its page cursors stay on the WIRE URL and off the error path, via `requestPage`.
+A cursor is opaque text decoded out of an upstream response body, and
+`doRequestAbs` records its `logPath` into every `apiError`, `transportError` and
+`preSendError` — errors that on this path are rendered into `PromotedTweetWarning`
+and a persisted `Steps` entry. Folding the cursor into the path therefore wrote
+upstream response text into the campaign record, which
+`platform-error-must-not-carry-untrusted-or-credential-text` forbids. The
+repeated-cursor refusal names no cursor either. `ListAdAccounts` already passed
+"the bare collection path, never reqURL" for this reason; `requestPage` is what
+lets the two account-scoped walks (`findByName` and this one) do the same.
+
 It differs from `ListAdAccounts` on ONE point, deliberately: `cursorUnknowable`
 ENDS the walk here rather than failing it. `ListAdAccounts` refuses to conclude
 from a possibly-truncated set because its whole job is enumeration. This function
@@ -257,21 +276,60 @@ per-rune pass would have charged a family sequence 14. A BMP codepoint starts a
 cluster only when U+FE0F requests emoji presentation, so a bare `©` stays weight
 1 and `©️` is one 2-weight cluster.
 
-`rejectCredentialQueryParams` screens the registration URL's own query before any
-of this, and ONLY on this path. Everywhere else that URL is a click destination
+The same asymmetry decides where a URL run ENDS. `tweetURLRe` is
+`(?i)\bhttps?://\S+`: case-insensitive because RFC 3986 §3.1 makes the scheme
+case-insensitive and `HTTPS://…` is a link X wraps to t.co like any other, where
+a case-sensitive match charged it its raw length and invented a rejection. `\S+`
+then runs to whitespace, so a link at the end of a sentence swallows the period
+that follows it — so `trimTweetURLPunct` peels trailing `.,;:!?'"` and any
+closing bracket with no opener inside the run. Both directions of that are real:
+the punctuation counted inside the t.co weight under-counts, and the same run
+handed to `url.Parse` for credential screening is not the URL that will be
+fetched. The trimmed link is a PREFIX of the run, so it still locates at the
+run's offset in `weightedTweetLen`; advancing past only its length leaves the
+punctuation in the remaining text to be weighted as the prose it is.
+
+This is the DELIBERATE OPPOSITE of `sanitizeSnapshotText` in
+`internal/dispatch/creds.go`, which takes the greedy run and does not trim, and
+the two must not be "unified". There, over-reach fails SAFE — a period swept into
+a sanitised snapshot costs nothing, and trimming could leave credential text
+outside the run. Here over-reach fails UNSAFE in both directions, because the run
+is used to count a budget and to parse a URL.
+
+`rejectCredentialQueryParams` screens a single URL's query, and
+`rejectCredentialQueryParamsInText` runs it over every URL in the COMPOSED tweet
+text — after `composeTweetText`, before anything mutates. Screening the composed
+artifact rather than the `RegistrationURL` input is the point: what is checked is
+then byte-for-byte what is published, it covers links the caller put in their own
+copy (which the input-level check never saw and which `TweetText` carries
+verbatim), and a future change to how the text is composed cannot route a URL
+around the gate. It is ONLY on this path. Everywhere else that URL is a click destination
 whose query a server reads; here `composeTweetText` puts it in the tweet body,
 where it is world-readable forever — and a registration link pasted out of a
 logged-in browser carries whatever that session put in it. The check is a
 DENYLIST, not an allowlist, and that is the deliberate call: LF event pages carry
 real routing and attribution parameters nobody can enumerate in advance, so an
 allowlist would refuse working briefs to protect against nothing, while a
-denylist refuses only keys that are credentials under any reading
-(`access_token`, `api_key`, `sessionId`, `jwt`, `password`, `signature`, … with
-`-`, `_` and `.` normalised out and case folded). `code` and `pin` are weighed and
-excluded on purpose — a discount code is the common meaning on a registration
-link. The error names the offending KEY and never its value, and it runs in the
-up-front block so the refusal costs a corrected brief rather than an orphaned
-campaign.
+denylist refuses only keys that are credentials under any reading.
+
+`isCredentialQueryKey` is a PREDICATE, not a name list, because credential
+parameter names COMPOSE: `secret_token`, `access_key`, `auth_key`,
+`oauth_token_secret`, `x_request_signature` are all obvious credentials and all
+absent from any set someone thought was finished. Enumeration does not converge.
+Keys are normalised first — `-`, `_` and `.` removed, case folded — then matched
+in three tiers: the exact set for spellings that carry no fragment
+(`jwt`, `password`, `sessionid`); a fragment list of words that are unambiguous
+as a COMPONENT of a compound (`token`, `secret`, `credential`, `signature`,
+`hmac`, `jwt`, `bearer`, `oauth`, `authorization`, `assertion`); and a "…key"
+SUFFIX rule minus an explicit benign set (`monkey`, `donkey`, `turkey`,
+`whiskey`, `jockey`, …). The tiers exist because `key`, `auth`, `sig`, `pass` and
+`session` are exactly the words that CANNOT be fragments — `keyword`, `oauth`
+inside nothing, `design`, `bypass`, `passenger` — so they stay exact-only, and
+`key` gets the suffix rule instead, which is the position where it really is one.
+`code` and `pin` are weighed and excluded on purpose — a discount code is the
+common meaning on a registration link. The error names the offending KEY and
+never its value, and it runs in the up-front block so the refusal costs a
+corrected brief rather than an orphaned campaign.
 
 `buildTwitterUTMURL` diverges from `displayTwitterUtmURL` in one way that
 matters: it preserves the registration URL's own pre-existing query parameters
