@@ -161,10 +161,22 @@ failure surfaces a `preSendError`. BOTH render URL-free: `httpClient.Do` returns
 `*url.Error` whose `%v`/`String()` embeds the full request URL (and X puts create
 parameters in the query string), so a naive `%w`/`%v` of that error would leak the
 URL into the copied `PromotedTweetWarning` and persisted Steps. Each type's
-`Error()` runs the cause through `safeTransportCause`, which peels EVERY nested
-`*url.Error` layer down to the URL-free underlying cause (timeout/EOF/ECONNREFUSED);
-`Unwrap()` retains the real cause so `errors.Is`/`errors.As` (incl.
-`isPreSendDialError`) still match. The retained cause is held in an UNEXPORTED
+`Error()` runs the cause through `safeTransportCause`, which is a FIXED VOCABULARY
+with a default-deny — `context canceled`, `context deadline exceeded`, `timeout`,
+`connection closed`, `connection refused`, `connection reset by peer`,
+`network unreachable`, `dns lookup failed`, and `transport failure` for everything
+else — mirroring `hubspot.safeCause` and the microsoft client's equivalent, so the
+three clients fail the same way under the same threat. It used to peel every nested
+`*url.Error` layer and then render whatever remained. The peel is necessary and is
+NOT sufficient, which is exactly what `hubspot.safeCause`'s own doc comment says:
+`WithHTTPClient` is a supported option, so the innermost cause is CALLER-CONTROLLED
+text — a transport can return any error it likes with the signed URL inside it, and
+peel-and-render hands that straight into `PromotedTweetWarning` and persisted Steps.
+Each named case emits THIS PACKAGE'S OWN string rather than the error's, because a
+custom transport's timeout error is still caller-controlled text even where the
+timeout classification is trustworthy. `Unwrap()` retains the real cause so
+`errors.Is`/`errors.As` (incl. `isPreSendDialError`) still match, which is where a
+caller that needs detail should be looking. The retained cause is held in an UNEXPORTED
 `err` field on all three types — `apiError`, `transportError`, `preSendError` —
 and the lowercase is load-bearing, not style. A clean `Error()` closes only the
 channel that renders the struct as a string; reflection- and JSON-based logging
@@ -443,8 +455,18 @@ answer this, giving the empty string for the value of both `?token=` and `?token
 — and only a key the caller actually wrote as `name=value` is rendered, through
 `safeQueryKeyForError`, which strips control characters and truncates by rune
 before the name reaches an error that is persisted and logged. A bare component
-is named as a CATEGORY and never echoed. The check runs in the up-front block so
-the refusal costs a corrected brief rather than an orphaned campaign.
+is named as a CATEGORY and never echoed. Safety is tracked PER OCCURRENCE, not per
+key: one `=` anywhere used to be enough, so
+`?oauth_token_SECRET&oauth_token_SECRET=x` decoded to a single key whose valued
+occurrence marked it renderable, and the error then reproduced a string whose BARE
+occurrence is the whole credential. A duplicated key is a strange thing for a brief
+to carry, which is the point — the one shape that defeats the check is the one
+nobody writes by accident, and requiring every occurrence to be named costs nothing
+on ordinary input. The same split governs the fragment: the round that added
+`credentialFragmentError` rendered its key unconditionally, so
+`#access_token_<token>&state=…` — where the credential IS the component text —
+was reproduced in the refusal. The check runs in the up-front block so the refusal
+costs a corrected brief rather than an orphaned campaign.
 
 USERINFO is refused outright, before the query is read at all.
 `validateRegistrationURL` already rejects `https://user:password@host/…`, but a
@@ -480,8 +502,30 @@ not merely invisible, they are OVERWRITTEN, because the re-encoded query replace
 `RawQuery` wholesale. A registration URL carrying `?ref=partner;session_token=…`
 would have lost its routing parameters silently, sent real click traffic to the
 wrong page, and reached the credential screen with nothing left to object to.
+
+"Verbatim" is now literally true, and was not. The builder parsed the query and
+re-emitted it with `url.Values.Encode`, which SORTS keys and re-canonicalizes
+escaping — `%20` becomes `+` — so the promise this file and `docs/api-catalog.md`
+both make was broken by the very step that claimed to keep it, on the one URL in
+the flow where byte fidelity is the whole point. `url.ParseQuery` is still called,
+but only to VALIDATE; `appendUTMToRawQuery` then copies each pre-existing component
+as BYTES and appends the UTM pairs in sorted key order. Only a component whose
+decoded name COLLIDES with a UTM key is dropped, because a destination carrying two
+`utm_source` values makes click attribution depend on which one the landing page
+reads first.
+
 The fragment is dropped in both — it never reaches a server, so it cannot carry
 attribution and only widens what gets published.
+
+`composeTweetText` appends the destination only when the text does not already
+carry it, and "already carries it" is decided by `textCarriesURL`, which extracts
+URL runs with the same `tweetURLRe` + `trimTweetURLPunct` pair `weightedTweetLen`
+counts with and requires a whole-run match. A `strings.Contains` test answered a
+different question: a URL is a substring of any URL that carries it in a redirect or
+tracking parameter, so copy holding `https://click.example.net/r?next=<dest>` read
+as already having the destination, the append was skipped, and X wrapped the whole
+run as the OTHER link — leaving the ad with no direct click destination at all,
+silently, on a create that succeeded.
 
 Authoring happens at **Step 4**, immediately before the `promoted_tweets` POST —
 deliberately NOT alongside the campaign/line-item creation earlier in the flow,

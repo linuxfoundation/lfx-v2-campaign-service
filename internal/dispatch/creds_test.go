@@ -15,15 +15,25 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// TestSanitizeSnapshotURL: the query/fragment (which may carry secrets) must be
-// stripped before a URL is stored in the unencrypted config_snapshot.
+// TestSanitizeSnapshotURL: the path, query and fragment (any of which may carry a
+// secret) must be stripped before a URL is stored in the unencrypted config_snapshot.
+// The path was kept until the seventh review round pointed out that a magic-link or
+// reset URL puts its token in a path segment, where a query-and-fragment strip never
+// reaches it.
 func TestSanitizeSnapshotURL(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"", ""},
 		{"  ", ""},
-		{"https://example.com/reg?token=SECRET&x=1", "https://example.com/reg"},
-		{"https://example.com/p#frag-SECRET", "https://example.com/p"},
-		{"https://example.com/path", "https://example.com/path"},
+		{"https://example.com/reg?token=SECRET&x=1", "https://example.com"},
+		{"https://example.com/p#frag-SECRET", "https://example.com"},
+		{"https://example.com/path", "https://example.com"},
+		// The shape the path-drop exists for: nothing but the path is a secret.
+		{"https://example.org/reset/SECRET", "https://example.org"},
+		// The authority keeps its port, and a zone-scoped IPv6 literal must come
+		// back re-escaped — url.URL.Host holds it DECODED, so concatenating it
+		// would emit a bare '%' and produce a URL that no longer parses.
+		{"https://[2001:db8::1]:8443/reg?t=SECRET", "https://[2001:db8::1]:8443"},
+		{"https://[fe80::1%25eth0]/reg?t=SECRET", "https://[fe80::1%25eth0]"},
 		{"t3_abc123", "t3_abc123"}, // reddit thing-id, no query — unchanged
 		{"not a url?token=SECRET", "not a url"},
 		{"https://user:pass@example.com/x?token=SECRET", ""}, // secretlint-disable-line -- fixture asserting userinfo fails closed
@@ -48,17 +58,17 @@ func TestSanitizeSnapshotText(t *testing.T) {
 		{
 			"token in an embedded url",
 			"Register https://events.lf.org/reg?access_token=SECRET now",
-			"Register https://events.lf.org/reg now",
+			"Register https://events.lf.org now",
 		},
 		{
 			"every url in the text is stripped",
 			"See https://a.example/x?sid=SECRET and https://b.example/y?key=SECRET2",
-			"See https://a.example/x and https://b.example/y",
+			"See https://a.example and https://b.example",
 		},
 		{
 			"fragment goes too",
 			"https://events.lf.org/reg#token-SECRET",
-			"https://events.lf.org/reg",
+			"https://events.lf.org",
 		},
 		{
 			// A run sanitizeSnapshotURL fails closed on leaves nothing behind,
@@ -68,14 +78,15 @@ func TestSanitizeSnapshotText(t *testing.T) {
 			"link: ",
 		},
 		{
-			// Sentence-final punctuation is legal in a URL, so the run is allowed
-			// to swallow it. Trimming it off would be prettier and would leave the
-			// query behind as bare text on any URL the trim guessed wrong about.
-			"a clean url survives",
+			// A URL with no query at all still loses its path: the snapshot
+			// cannot tell a routing segment from a one-time token, and it has no
+			// reader who needs the difference. What survives is the host, which
+			// is what makes the redacted value still say anything at all.
+			"a clean url keeps only its host",
 			"Details at https://events.lf.org/kubecon/register",
-			"Details at https://events.lf.org/kubecon/register",
+			"Details at https://events.lf.org",
 		},
-		{"uppercase scheme", "HTTPS://events.lf.org/r?token=SECRET", "https://events.lf.org/r"},
+		{"uppercase scheme", "HTTPS://events.lf.org/r?token=SECRET", "https://events.lf.org"},
 		{
 			// The run must not stop at the ']' closing an IPv6 literal host. It
 			// used to: ']' is a run terminator (it ends a markdown link), so the
@@ -83,12 +94,12 @@ func TestSanitizeSnapshotText(t *testing.T) {
 			// AND the query — stayed in the snapshot as plain prose.
 			"ipv6 literal host",
 			"see https://[2001:db8::1]/reg?ticket=SECRET now",
-			"see https://[2001:db8::1]/reg now",
+			"see https://[2001:db8::1] now",
 		},
 		{
 			"ipv6 literal with a port",
 			"https://[2001:db8::1]:8443/reg?ticket=SECRET",
-			"https://[2001:db8::1]:8443/reg",
+			"https://[2001:db8::1]:8443",
 		},
 		{
 			// A zone-scoped literal is the shape a hex/colon-only bracket class
@@ -96,14 +107,14 @@ func TestSanitizeSnapshotText(t *testing.T) {
 			// truncating at the bracket — the leak the branch exists to close.
 			"ipv6 zone-scoped literal host",
 			"https://[fe80::1%25eth0]/reg?ticket=SECRET",
-			"https://[fe80::1%25eth0]/reg",
+			"https://[fe80::1%25eth0]",
 		},
 		{
 			// The ']' terminator still has to work where it means what it meant
 			// before: a bracket closing around an ordinary URL.
 			"bracketed ordinary url",
 			"[https://events.lf.org/r?token=SECRET]",
-			"[https://events.lf.org/r]",
+			"[https://events.lf.org]",
 		},
 	}
 	for _, tc := range cases {

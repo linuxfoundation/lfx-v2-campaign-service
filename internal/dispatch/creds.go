@@ -82,20 +82,40 @@ func applyCampaignConfig(ctx context.Context, c *model.Campaign, budget float64,
 	}
 }
 
-// sanitizeSnapshotURL strips the query and fragment from a URL before it is stored in
-// config_snapshot (which is persisted UNENCRYPTED). A destination/post URL's query or
-// fragment can carry secrets, so the snapshot keeps only scheme+host+path. An absolute
-// URL is reduced to that; a value that does not parse as an absolute URL (or carries
-// userinfo/credentials) is truncated at the first '?'/'#' and dropped entirely if it
-// still contains a credential delimiter '@', mirroring the reddit client's redactURL
-// fail-closed behavior. An empty input stays empty.
+// sanitizeSnapshotURL strips the PATH, query and fragment from a URL before it is stored
+// in config_snapshot (which is persisted UNENCRYPTED). The snapshot keeps only
+// scheme+host. An absolute URL is reduced to that; a value that does not parse as an
+// absolute URL (or carries userinfo/credentials) is truncated at the first '?'/'#' and
+// dropped entirely if it still contains a credential delimiter '@', mirroring the reddit
+// client's redactURL fail-closed behavior. An empty input stays empty.
+//
+// The path used to be kept, on the reasoning that a path segment is a route and not a
+// secret. `caller-url-must-be-redacted-before-errors-steps-and-snapshots` says otherwise
+// in as many words: `https://litellm.example.com/sup3r-s3cret/v1` parses with the token
+// as a PATH segment, and `redactAIProxyURL` took four rounds to stop making exactly that
+// assumption. A one-time password reset or magic-link URL pasted into tweetText —
+// `https://example.org/reset/SECRET` — is the realistic shape here, and it survives the
+// query-and-fragment strip untouched.
+//
+// The HOST stays, and that is not the same call. The knowledge-base rule is a two-part
+// test — reproduce a component only when it is BOTH structurally incapable of holding a
+// secret AND load-bearing. This snapshot's only reader is a human reconstructing what a
+// campaign was configured with, and "which site did this link point at" is the whole of
+// what a redacted URL can still tell them. The path is not load-bearing for that, so it
+// fails the test's second half and goes; over-redacting a path costs nothing here,
+// because unlike an operator-facing error this value is never used to diagnose anything
+// in the moment.
 func sanitizeSnapshotURL(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return ""
 	}
 	if u, err := url.Parse(trimmed); err == nil && u.IsAbs() && u.Host != "" && u.User == nil {
-		redacted := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
+		// Rebuilt through url.URL.String() rather than concatenated: Host holds the
+		// DECODED authority, so a zone-scoped IPv6 literal comes back as
+		// `[fe80::1%eth0]` — a bare `%` that is not a valid escape, turning a
+		// well-formed URL into one that no longer parses. String() re-escapes it.
+		redacted := url.URL{Scheme: u.Scheme, Host: u.Host}
 		return redacted.String()
 	}
 	if i := strings.IndexAny(trimmed, "?#"); i >= 0 {

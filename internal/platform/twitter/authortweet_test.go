@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1684,5 +1685,234 @@ func TestRedactURLForError_KeepsOnlySchemeAndHost(t *testing.T) {
 				t.Errorf("redactURLForError(%q) reproduced the secret: %q", tc.in, got)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Round-7 review fixes
+// ---------------------------------------------------------------------------
+
+// injectedTransportError replaces the tweet-authoring round trip with an error of the
+// caller's choosing. This is the threat hubspot.safeCause's doc comment names in as many
+// words and that this client's own safeTransportCause used to dismiss: WithHTTPClient is
+// a supported option, so the INNERMOST cause is text this package cannot vouch for, and
+// an http.Client wraps whatever a RoundTripper returns in a *url.Error — peeling that
+// wrapper hands the caller's text straight through.
+type injectedTransportError struct {
+	base  http.RoundTripper
+	cause error
+}
+
+func (t *injectedTransportError) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/tweet") {
+		return nil, t.cause
+	}
+	return t.base.RoundTrip(r)
+}
+
+// TestSafeTransportCause_DoesNotRenderACustomTransportsText proves the fixed-vocabulary
+// allowlist, and proves it where it matters: PromotedTweetWarning and Steps are
+// PERSISTED, so a transport error that embeds the signed request URL used to be written
+// into the campaign row verbatim.
+//
+// The unit half pins the vocabulary; the end-to-end half pins the sinks. Both are needed
+// — a clean Error() proves nothing about a string that reaches Steps by another route.
+func TestSafeTransportCause_DoesNotRenderACustomTransportsText(t *testing.T) {
+	const secret = "https://ads-api.x.com/12/accounts/acc1/tweet?signature=SECRET-abc123&text=copy"
+
+	t.Run("the allowlist collapses an unrecognized cause", func(t *testing.T) {
+		t.Parallel()
+		// As http.Client.Do delivers it: the caller's error inside a *url.Error.
+		wrapped := &url.Error{Op: "Post", URL: secret, Err: errors.New("proxy rejected " + secret)}
+		if got := safeTransportCause(wrapped); got != "transport failure" {
+			t.Errorf("safeTransportCause = %q, want the default-deny %q", got, "transport failure")
+		}
+		// The named causes still classify — the allowlist must not cost diagnosability
+		// for the shapes that actually occur.
+		for cause, want := range map[error]string{
+			context.Canceled:          "context canceled",
+			context.DeadlineExceeded:  "context deadline exceeded",
+			&net.DNSError{Err: "nxd"}: "dns lookup failed",
+		} {
+			if got := safeTransportCause(&url.Error{Op: "Post", URL: secret, Err: cause}); got != want {
+				t.Errorf("safeTransportCause(%v) = %q, want %q", cause, got, want)
+			}
+		}
+	})
+
+	t.Run("nothing reaches the persisted warning or steps", func(t *testing.T) {
+		srv, _ := newAuthorTweetTestServer(t, nil, `{"data":[{"user_id":"u1","promotable_user_type":"FULL"}]}`)
+		defer srv.Close()
+
+		c := NewClient(
+			Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+			AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+			WithBaseURL(srv.URL),
+			WithWriteDelay(0),
+			WithHTTPClient(&http.Client{Transport: &injectedTransportError{
+				base:  http.DefaultTransport,
+				cause: errors.New("upstream said: " + secret),
+			}}),
+		)
+		c.nonceFn = func() string { return "n" }
+		c.timeFn = staticTime
+
+		res, err := c.CreateCampaign(context.Background(), baseAuthorInput("Join us at KubeCon"))
+		if err != nil {
+			t.Fatalf("an authoring failure is non-fatal; CreateCampaign returned: %v", err)
+		}
+		if strings.Contains(res.PromotedTweetWarning, "SECRET-abc123") || strings.Contains(res.PromotedTweetWarning, "signature=") {
+			t.Errorf("PromotedTweetWarning carries the injected transport text: %q", res.PromotedTweetWarning)
+		}
+		for _, s := range res.Steps {
+			if strings.Contains(s, "SECRET-abc123") || strings.Contains(s, "signature=") {
+				t.Errorf("a persisted Steps entry carries the injected transport text: %q", s)
+			}
+		}
+	})
+}
+
+// TestRejectCredentialQueryParams_BareAndValuedOccurrencesOfTheSameKey covers the hole
+// the name-vs-category split left: safety was tracked per KEY, so one occurrence written
+// as `name=value` marked the key renderable and the OTHER occurrence — the bare one,
+// whose whole text is the caller's token — was echoed into an error that is logged and
+// persisted. Safety is now tracked per OCCURRENCE: a key is renderable only if EVERY
+// occurrence was written with a value.
+func TestRejectCredentialQueryParams_BareAndValuedOccurrencesOfTheSameKey(t *testing.T) {
+	t.Parallel()
+
+	const bare = "oauth_token_SECRETMATERIAL"
+
+	err := rejectCredentialQueryParams("https://sched.lf.org/kc?" + bare + "&" + bare + "=x")
+	if err == nil {
+		t.Fatal("a credential-shaped query component was cleared for publication")
+	}
+	if strings.Contains(err.Error(), "SECRETMATERIAL") {
+		t.Errorf("the refusal echoed a bare credential component because a valued twin made it look like a name: %v", err)
+	}
+
+	// The fragment path shares the helper and shared the defect.
+	frag := rejectCredentialQueryParams("https://app.lf.org/cb#" + bare + "&" + bare + "=x")
+	if frag == nil {
+		t.Fatal("a credential-shaped fragment component was cleared for publication")
+	}
+	if strings.Contains(frag.Error(), "SECRETMATERIAL") {
+		t.Errorf("the fragment refusal echoed a bare credential component: %v", frag)
+	}
+}
+
+// TestCredentialFragmentError_NamesAValuedKeyAndRedactsABareOne pins the split the
+// round-6 fragment screen was written without: it rendered the key unconditionally, so a
+// fragment whose entire text is an implicit-flow token — `#access_token_<token>`, no `=`
+// anywhere — was reproduced in the refusal. The query path had had this right since
+// round 4; the new fragment path did not inherit it.
+func TestCredentialFragmentError_NamesAValuedKeyAndRedactsABareOne(t *testing.T) {
+	t.Parallel()
+
+	named := rejectCredentialQueryParams("https://app.lf.org/cb#access_token=s3cr3t")
+	if named == nil {
+		t.Fatal("a credential-shaped fragment parameter was cleared for publication")
+	}
+	if !strings.Contains(named.Error(), "access_token") {
+		t.Errorf("a real fragment parameter name must be named to make the refusal actionable, got: %v", named)
+	}
+	if strings.Contains(named.Error(), "s3cr3t") {
+		t.Errorf("the refusal rendered the fragment parameter VALUE, which is the secret: %v", named)
+	}
+
+	// A BARE component inside a screened fragment — the implicit flow's
+	// `#access_token_<token>&state=xyz` shape, where the credential IS the component
+	// text. Round 6 rendered the key unconditionally and reproduced it.
+	//
+	// A fragment with no `=` at all is deliberately not screened and is not asserted
+	// here: that is the section-anchor form (`#speakers`, `#agenda-day-2`), and
+	// refusing it would fail a working brief for no gain.
+	bare := rejectCredentialQueryParams("https://app.lf.org/cb#access_token_SECRETMATERIAL&state=xyz")
+	if bare == nil {
+		t.Fatal("a bare credential-shaped fragment component was cleared for publication")
+	}
+	if strings.Contains(bare.Error(), "SECRETMATERIAL") {
+		t.Errorf("the refusal echoed a bare fragment token: %v", bare)
+	}
+}
+
+// TestBuildTwitterUTMURL_PreservesTheRawQueryBytes proves the "verbatim" promise the
+// concept file and docs/api-catalog.md both make about the ad's real click destination.
+// The builder used to round-trip through url.Values.Encode, which SORTS keys and
+// re-canonicalizes escaping — `%20` becomes `+` — so a destination whose routing depends
+// on either was silently rewritten before it was published.
+func TestBuildTwitterUTMURL_PreservesTheRawQueryBytes(t *testing.T) {
+	t.Parallel()
+
+	in := baseAuthorInput("")
+	in.RegistrationURL = "https://events.lf.org/kubecon?z=last&a=first&q=hello%20world"
+
+	got, err := buildTwitterUTMURL(in)
+	if err != nil {
+		t.Fatalf("buildTwitterUTMURL: %v", err)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse %q: %v", got, err)
+	}
+	if !strings.HasPrefix(u.RawQuery, "z=last&a=first&q=hello%20world&") {
+		t.Errorf("the pre-existing query was reordered or re-encoded: %q", u.RawQuery)
+	}
+	if strings.Contains(u.RawQuery, "hello+world") {
+		t.Errorf("%%20 was rewritten to '+': %q", u.RawQuery)
+	}
+	if u.Query().Get("utm_source") != "twitter" {
+		t.Errorf("the UTM parameters were not appended: %q", u.RawQuery)
+	}
+
+	// A pre-existing key that COLLIDES with a UTM name is dropped rather than
+	// duplicated — two utm_source values make click attribution depend on which one
+	// the landing page reads first.
+	in.RegistrationURL = "https://events.lf.org/kubecon?utm_source=stale&ref=partner"
+	got, err = buildTwitterUTMURL(in)
+	if err != nil {
+		t.Fatalf("buildTwitterUTMURL: %v", err)
+	}
+	if strings.Contains(got, "utm_source=stale") {
+		t.Errorf("a colliding pre-existing utm_source survived: %q", got)
+	}
+	if !strings.Contains(got, "ref=partner") {
+		t.Errorf("a non-colliding pre-existing parameter was dropped: %q", got)
+	}
+}
+
+// TestComposeTweetText_AppendsWhenTheDestinationIsOnlyNestedInAnotherURL covers the
+// silent failure a substring test allowed: a URL is a substring of any URL that carries
+// it in a redirect or tracking parameter, so copy holding
+// `https://click.example.net/r?next=<dest>` satisfied strings.Contains, the append was
+// skipped, and X wrapped the whole run as the OTHER link. The ad then had no direct
+// click destination at all — and the create succeeded, so nothing surfaced it.
+func TestComposeTweetText_AppendsWhenTheDestinationIsOnlyNestedInAnotherURL(t *testing.T) {
+	t.Parallel()
+
+	const dest = "https://events.lf.org/kc"
+
+	nested := "Register via https://click.example.net/r?next=" + dest
+	got, err := composeTweetText(nested, dest)
+	if err != nil {
+		t.Fatalf("composeTweetText: %v", err)
+	}
+	if got != nested+" "+dest {
+		t.Errorf("the destination was not appended when it only appeared nested in another URL: %q", got)
+	}
+
+	// The append must still be skipped when the destination really is its own link,
+	// including at the end of a sentence — an operator writes the trailing period.
+	for _, text := range []string{
+		"Register at " + dest,
+		"Register at " + dest + ".",
+	} {
+		got, err := composeTweetText(text, dest)
+		if err != nil {
+			t.Fatalf("composeTweetText(%q): %v", text, err)
+		}
+		if got != text {
+			t.Errorf("the destination was appended twice for %q, got %q", text, got)
+		}
 	}
 }

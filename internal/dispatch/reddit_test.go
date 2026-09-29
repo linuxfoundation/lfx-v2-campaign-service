@@ -356,7 +356,7 @@ func TestReddit_DegradedSuccessSetsCreatedDegraded(t *testing.T) {
 func TestReddit_ConfigSnapshotRedactsPostURL(t *testing.T) {
 	camp := campaignFromReddit(context.Background(),
 		&reddit.CampaignResult{CampaignID: "cmp_1", CampaignName: "n"},
-		redditConfig{BudgetUSD: 10, PostURL: "https://example.com/reg?token=SECRET#f"},
+		redditConfig{BudgetUSD: 10, PostURL: "https://example.com/reset/SECRET_PATH?token=SECRET#f"},
 	)
 	if camp.ConfigSnapshot == nil {
 		t.Fatal("expected a config snapshot")
@@ -365,8 +365,13 @@ func TestReddit_ConfigSnapshotRedactsPostURL(t *testing.T) {
 	if strings.Contains(s, "SECRET") {
 		t.Errorf("config snapshot must not carry the PostURL query/fragment secret, got: %s", s)
 	}
-	if !strings.Contains(s, "https://example.com/reg") {
-		t.Errorf("config snapshot should retain the sanitized post URL, got: %s", s)
+	// The path goes with it — a magic-link or reset URL puts the token in a path
+	// segment, and the query-and-fragment strip alone leaves it intact.
+	if strings.Contains(s, "/reset") {
+		t.Errorf("config snapshot carries the PostURL path, got: %s", s)
+	}
+	if !strings.Contains(s, "https://example.com") {
+		t.Errorf("config snapshot should retain the sanitized post host, got: %s", s)
 	}
 }
 
@@ -385,8 +390,11 @@ func TestReddit_ConfigSnapshotRedactsImageURL(t *testing.T) {
 	if strings.Contains(s, "SECRET") {
 		t.Errorf("config snapshot must not carry the ImageURL query/fragment secret, got: %s", s)
 	}
-	if !strings.Contains(s, "https://cdn.example.com/banner.jpg") {
-		t.Errorf("config snapshot should retain the sanitized image URL, got: %s", s)
+	if strings.Contains(s, "/banner.jpg") {
+		t.Errorf("config snapshot carries the ImageURL path, got: %s", s)
+	}
+	if !strings.Contains(s, "https://cdn.example.com") {
+		t.Errorf("config snapshot should retain the sanitized image host, got: %s", s)
 	}
 }
 

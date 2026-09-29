@@ -454,15 +454,17 @@ variants?: [{headline, body}]   — Ad copy variants. When no `postUrl`/`imageUr
 postUrl?: string                — OPTIONAL existing Reddit post to promote. Accepts a t3_ id, a
                                   reddit.com/comments/<id> URL, or a redd.it short link; validated
                                   against reddit.com/redd.it hosts. When set it TAKES PRECEDENCE and
-                                  `imageUrl`/`callToAction` are ignored. Its query/fragment is stripped
-                                  from the stored config snapshot (may carry a secret).
+                                  `imageUrl`/`callToAction` are ignored. The stored config snapshot keeps
+                                  only its scheme and host — path, query and fragment are all stripped,
+                                  because any of the three may carry a secret.
 imageUrl?: string               — OPTIONAL public absolute http(s) image URL. When set and `postUrl`
                                   is absent, the client AUTHORS a promoted ("dark") IMAGE post from it
                                   (Reddit ingests and re-hosts the image at create time; there is no
                                   LINK post type and no separate upload step) and attaches it as the
                                   ad's creative. A malformed URL / embedded userinfo / non-http(s)
-                                  scheme is rejected before any create. Its query/fragment is stripped
-                                  from the stored config snapshot (a signed URL may carry a secret).
+                                  scheme is rejected before any create. The stored config snapshot keeps
+                                  only its scheme and host (a signed URL may carry a secret in its path
+                                  as readily as in its query).
 callToAction?: string           — OPTIONAL button label for an AUTHORED post (see `imageUrl`).
                                   Case-insensitive, resolved to Reddit's exact title-case label (e.g.
                                   'Learn More', 'Sign Up', 'Buy Tickets'); an unknown value is rejected
@@ -981,8 +983,13 @@ upstream create — it must be an absolute **http/https** URL with a real hostna
 embedded userinfo/credentials; a violation fails the dispatch job pre-create. The same userinfo
 rejection now also applies to every URL found in caller-supplied `tweetText`, which the registration
 URL's validator never saw. A registration URL whose query cannot be parsed is refused rather than
-rewritten: the destination URL is built by re-encoding that query, so an unreadable one would have
-been silently dropped and real click traffic sent to the wrong page. Validation errors
+published: the query is parsed only to VALIDATE it, and an unreadable one cannot be screened for
+credentials at all, so the dispatch fails rather than publishing a query nothing has read. A query
+that parses is then copied into the destination **byte for byte** — parameter order and percent
+escaping included — with the generated `utm_*` pairs appended after it, and a pre-existing `utm_*`
+key dropped where it collides. An earlier build round-tripped the query through Go's encoder, which
+sorts keys and rewrites `%20` as `+`; that broke the verbatim promise on the one URL in the flow
+where byte fidelity is the point. Validation errors
 redact the URL (**scheme+host only** — the path is dropped too, because a magic-link or reset
 credential lives in a path segment as often as in a query) so a persisted error can't leak a
 userinfo/path/query secret.

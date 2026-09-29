@@ -97,9 +97,24 @@ revoked or deleted.
 `Campaign.ConfigSnapshot`, and that column is stored in the clear and outlives the
 campaign. A URL's query and fragment are the part of a config most likely to carry a
 secret, so every adapter that snapshots one rewrites it first rather than trusting its
-contents: `sanitizeSnapshotURL` keeps scheme+host+path and nothing else, failing closed
+contents: `sanitizeSnapshotURL` keeps SCHEME AND HOST and nothing else, failing closed
 (to empty) on a value carrying userinfo. `reddit.go` applies it to `PostURL`/`ImageURL`,
 `meta.go` to each variant's `ImageURL`.
+
+The PATH used to survive, on the reasoning that a path segment is a route rather than a
+secret. `caller-url-must-be-redacted-before-errors-steps-and-snapshots` says otherwise in
+as many words — `https://litellm.example.com/sup3r-s3cret/v1` parses with the token as a
+PATH segment, and `redactAIProxyURL` took four rounds to stop making that assumption. A
+password-reset or magic-link URL is the realistic shape here, and it survives a
+query-and-fragment strip untouched. The HOST stays, and that is a different call under
+the same rule's two-part test: this column's only reader is a human reconstructing what a
+campaign was configured with, and "which site did this link point at" is the whole of what
+a redacted URL can still tell them. The path is not load-bearing for that, so it goes;
+over-redacting here costs nothing, because unlike an operator-facing error this value is
+never used to diagnose anything in the moment. The scheme+host is rebuilt through
+`url.URL.String()` rather than concatenated, because `URL.Host` holds the DECODED
+authority — a zone-scoped IPv6 literal would come back as `[fe80::1%eth0]`, a bare `%`
+that is not a valid escape, turning a well-formed URL into one that no longer parses.
 
 X's `tweetText` is the same exposure through a free-text field. It is operator-authored
 prose that routinely carries a registration link, and a link pasted out of a logged-in

@@ -1136,9 +1136,13 @@ func TestCampaignFromTwitter_SnapshotStripsTweetTextURLQuery(t *testing.T) {
 	if strings.Contains(string(c.ConfigSnapshot), "access_token") {
 		t.Errorf("config_snapshot carries the credential parameter name: %s", c.ConfigSnapshot)
 	}
+	// The path goes too — a reset or magic link carries its token there.
+	if strings.Contains(string(c.ConfigSnapshot), "/reg") {
+		t.Errorf("config_snapshot carries the link's path: %s", c.ConfigSnapshot)
+	}
 	// The redaction must not cost the snapshot the rest of the copy.
-	if !strings.Contains(string(c.ConfigSnapshot), "https://events.lf.org/reg") {
-		t.Errorf("config_snapshot lost the link itself: %s", c.ConfigSnapshot)
+	if !strings.Contains(string(c.ConfigSnapshot), "https://events.lf.org") {
+		t.Errorf("config_snapshot lost the link's host: %s", c.ConfigSnapshot)
 	}
 	if !strings.Contains(string(c.ConfigSnapshot), "Register at") {
 		t.Errorf("config_snapshot lost the surrounding copy: %s", c.ConfigSnapshot)

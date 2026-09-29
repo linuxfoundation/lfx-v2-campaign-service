@@ -789,30 +789,61 @@ func (e *preSendError) Error() string {
 
 func (e *preSendError) Unwrap() error { return e.err }
 
-// safeTransportCause returns a URL-free description of a round-trip error. A
-// *url.Error's %v embeds the request URL, so we unwrap to its underlying cause
-// (which does not); anything else is rendered as-is (Do's non-url.Error causes —
-// EOF, i/o timeout — carry no URL). Empty cause falls back to a generic label.
+// safeTransportCause returns a URL-free description of a round-trip error, chosen from
+// a FIXED vocabulary. It is an allowlist with a default-deny, not a peel-and-render, and
+// it mirrors hubspot.safeCause and the microsoft client's equivalent — deliberately, so
+// the three clients fail the same way under the same threat.
+//
+// An earlier revision peeled every *url.Error layer and then rendered the remaining
+// cause with err.Error(). The peel is necessary — http.Client.Do wraps a RoundTripper's
+// error in its own *url.Error whose text embeds the full request URL, and X puts create
+// parameters in the query — but it is NOT SUFFICIENT, which is exactly what
+// hubspot.safeCause's doc comment says and why that client already looks like this.
+// WithHTTPClient is a supported option, so the innermost cause is CALLER-CONTROLLED
+// text: a transport can return any error it likes, with the signed URL in it, and the
+// peel then hands that text straight through. These strings are copied into
+// PromotedTweetWarning and persisted into a campaign's Steps, so "we cannot vouch for
+// this text" has to mean it is not rendered at all.
+//
+// The named cases are the ones worth keeping diagnosable, and each emits OUR OWN fixed
+// string rather than the error's: a custom transport's timeout error is still
+// caller-controlled text even though the timeout classification is trustworthy. The real
+// cause stays reachable through Unwrap() for errors.Is/As, which is where callers that
+// need detail should be looking anyway.
 func safeTransportCause(err error) string {
 	if err == nil {
 		return "transport failure"
 	}
-	// Peel off EVERY *url.Error layer, not just the outermost: http.Client.Do wraps a
-	// RoundTripper's error in its own *url.Error, and a supported injected transport
-	// can itself return a *url.Error, so a single unwrap can leave an inner *url.Error
-	// whose .Error() still embeds the request URL. Loop until the cause is no longer a
-	// *url.Error (or nil), then render that URL-free cause.
-	for {
-		var ue *url.Error
-		if !errors.As(err, &ue) {
-			break
-		}
-		if ue.Err == nil {
-			return "transport failure"
-		}
-		err = ue.Err
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "context canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "context deadline exceeded"
 	}
-	return err.Error()
+	// errors.As reaches a net.Error through a *url.Error wrapper, so no peel is needed
+	// to classify — only to render, which is the step this function no longer does.
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "timeout"
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return "connection closed"
+	}
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.Is(err, syscall.ECONNRESET):
+		return "connection reset by peer"
+	case errors.Is(err, syscall.EHOSTUNREACH), errors.Is(err, syscall.ENETUNREACH):
+		return "network unreachable"
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return "dns lookup failed"
+	}
+	// Default-deny. Any other cause — including every custom-transport error whose text
+	// this package cannot vouch for — collapses to a generic, URL-free description.
+	return "transport failure"
 }
 
 // isPreSendDialError reports whether a httpClient.Do error clearly happened
@@ -1951,10 +1982,18 @@ func credentialFragmentError(raw string, u *url.URL) error {
 	if err != nil {
 		return fmt.Errorf("the fragment of URL %q in the tweet text could not be parsed, so it cannot be screened for credentials before the tweet is published; fix or remove the URL's fragment, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
 	}
+	// The name-vs-category split the query gets applies here for the same reason and with
+	// the same force: `#eyJhbGciOi…` is one bare component whose whole text is the token,
+	// so it is named as a category and never echoed.
+	named := queryKeysWrittenWithAValue(frag)
 	for key := range f {
-		if isCredentialQueryKey(key) {
+		if !isCredentialQueryKey(key) {
+			continue
+		}
+		if named[key] {
 			return fmt.Errorf("the tweet's URL fragment parameter %q looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", safeQueryKeyForError(key))
 		}
+		return fmt.Errorf("URL %q in the tweet text carries a bare fragment component that looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
 	}
 	return nil
 }
@@ -1970,18 +2009,30 @@ func credentialFragmentError(raw string, u *url.URL) error {
 // same way, so a key that reaches this map is the same string ParseQuery produced. An
 // unescapable name is simply left out — it cannot match a parsed key, and omission is
 // the fail-closed direction here: the key goes unnamed rather than being reproduced.
+// A key is reported true only when EVERY occurrence of it was written `name=value`. One
+// `=` anywhere used to be enough, and that is a leak: `?oauth_token_SECRET&oauth_token_SECRET=x`
+// decodes to a single key, the valued occurrence marked it renderable, and the error then
+// reproduced a string whose BARE occurrence is the whole credential. A duplicated key is a
+// strange thing for a brief to carry, which is exactly the point — the one shape that
+// defeats the check is the one nobody writes by accident. Requiring every occurrence to be
+// named costs nothing on ordinary input, where a key appears once.
 func queryKeysWrittenWithAValue(rawQuery string) map[string]bool {
 	named := make(map[string]bool)
+	bare := make(map[string]bool)
 	for _, component := range strings.Split(rawQuery, "&") {
 		name, _, hasEq := strings.Cut(component, "=")
-		if !hasEq {
-			continue
-		}
 		decoded, err := url.QueryUnescape(name)
 		if err != nil {
 			continue
 		}
-		named[decoded] = true
+		if hasEq {
+			named[decoded] = true
+			continue
+		}
+		bare[decoded] = true
+	}
+	for key := range bare {
+		delete(named, key)
 	}
 	return named
 }
@@ -2044,6 +2095,57 @@ func rejectCredentialQueryParamsInText(text string) error {
 
 // twitterUTMParams is the allowlist of utm_* params THIS client generates (the source
 // of truth for both the real destination URL and the sanitized display copy).
+// appendUTMToRawQuery adds the UTM pairs to a raw query string WITHOUT re-encoding the
+// components already in it.
+//
+// The obvious implementation — ParseQuery, Set each UTM key, Encode — does not preserve
+// what this URL's contract says it preserves. url.Values.Encode sorts the keys and
+// re-escapes every value canonically, so `?ref=Acme%20Corp&x=1` comes back as
+// `?utm_campaign=…&x=1&ref=Acme+Corp` with the order changed and `%20` rewritten to `+`.
+// Both are equivalent to a spec-compliant server and neither is to a server that reads
+// its raw query, and this is the AD'S REAL CLICK DESTINATION: it is the one URL in this
+// package where a routing parameter arriving differently than the operator wrote it
+// sends paid traffic to the wrong page. The concept file and the API catalog both
+// promise these parameters survive verbatim, so the code has to keep them, not the
+// promise has to be weakened.
+//
+// Pre-existing components are therefore copied as BYTES. Only a component whose decoded
+// name collides with a UTM key this client is about to set is dropped — otherwise the
+// destination would carry two `utm_source` values and X's click reporting would attribute
+// against whichever one the landing page read first. Keys are emitted in a fixed order so
+// the result is deterministic, which the tests depend on and a reader comparing two
+// briefs does too.
+func appendUTMToRawQuery(rawQuery string, utm map[string]string) string {
+	keys := make([]string, 0, len(utm))
+	for k := range utm {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	kept := make([]string, 0, strings.Count(rawQuery, "&")+1)
+	for _, component := range strings.Split(rawQuery, "&") {
+		if component == "" {
+			continue
+		}
+		name, _, _ := strings.Cut(component, "=")
+		decoded, err := url.QueryUnescape(name)
+		if err != nil {
+			// Unescapable, so it cannot be one of this client's own UTM names; keep the
+			// bytes. ParseQuery has already cleared the whole query above, so this is
+			// not the path that decides whether the URL is usable.
+			kept = append(kept, component)
+			continue
+		}
+		if _, isUTM := utm[decoded]; !isUTM {
+			kept = append(kept, component)
+		}
+	}
+	for _, k := range keys {
+		kept = append(kept, url.QueryEscape(k)+"="+url.QueryEscape(utm[k]))
+	}
+	return strings.Join(kept, "&")
+}
+
 func twitterUTMParams(in CampaignInput) map[string]string {
 	slug := in.EventSlug
 	if slug == "" {
@@ -2093,14 +2195,10 @@ func buildTwitterUTMURL(in CampaignInput) (string, error) {
 	// parameters silently, send real click traffic to the wrong page, and reach the
 	// credential screen with nothing left to find. A query this function cannot read in
 	// full is one it must not rewrite.
-	q, err := url.ParseQuery(u.RawQuery)
-	if err != nil {
+	if _, err := url.ParseQuery(u.RawQuery); err != nil {
 		return "", fmt.Errorf("the query of registration URL %q could not be parsed, so the destination URL cannot be built without silently dropping its parameters; fix or remove the URL's query string", redactURLForError(in.RegistrationURL))
 	}
-	for k, v := range twitterUTMParams(in) {
-		q.Set(k, v)
-	}
-	u.RawQuery = q.Encode()
+	u.RawQuery = appendUTMToRawQuery(u.RawQuery, twitterUTMParams(in))
 	u.Fragment, u.RawFragment = "", ""
 	return u.String(), nil
 }
@@ -2392,13 +2490,39 @@ func emojiClusterLen(rs []rune) int {
 // than its raw length (see weightedTweetLen) — a UTM-decorated registration
 // URL is easily 120+ raw runes, and counting it verbatim would reject valid
 // copy X would accept.
+// textCarriesURL reports whether want appears in text as a LINK IN ITS OWN RIGHT, using
+// the same run scanner and punctuation trim that weightedTweetLen counts with.
+//
+// strings.Contains was the wrong question. A URL is a substring of any URL that carries
+// it in a redirect or tracking parameter, so copy containing
+// `https://click.example.net/r?next=https://events.lf.org/kc` reads as already having
+// the destination — the append is skipped, and X wraps the whole run as the OTHER link.
+// The ad then has no direct click destination at all, which is the one thing the append
+// exists to guarantee, and it fails silently: the create succeeds and the tweet looks
+// fine. Requiring the match to be a whole extracted run is what makes "the text already
+// has this link" mean what the caller meant by it.
+//
+// The runs are trimmed before comparison so `…/kc.` at the end of a sentence still
+// counts as the destination, which is the case an operator actually writes.
+func textCarriesURL(text, want string) bool {
+	if want == "" {
+		return true
+	}
+	for _, run := range tweetURLRe.FindAllString(text, -1) {
+		if trimTweetURLPunct(run) == want {
+			return true
+		}
+	}
+	return false
+}
+
 func composeTweetText(callerText, destURL string) (string, error) {
 	trimmed := strings.TrimSpace(callerText)
 	if trimmed == "" {
 		return "", fmt.Errorf("invalid tweet text: must not be empty")
 	}
 	full := trimmed
-	if !strings.Contains(full, destURL) {
+	if !textCarriesURL(trimmed, destURL) {
 		full = trimmed + " " + destURL
 	}
 	if n := weightedTweetLen(full); n > maxTweetWeightedChars {

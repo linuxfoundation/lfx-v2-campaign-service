@@ -3488,9 +3488,11 @@ func TestTransportError_DoesNotLeakURL(t *testing.T) {
 	if strings.Contains(got, "SECRET-abc123") || strings.Contains(got, secretURL) || strings.Contains(got, "signature=") {
 		t.Errorf("transportError.Error() leaked the request URL (nested *url.Error): %q", got)
 	}
-	// The innermost non-url cause is still surfaced for diagnostics.
-	if !strings.Contains(got, io.ErrUnexpectedEOF.Error()) {
-		t.Errorf("transportError.Error() should surface the cause, got: %q", got)
+	// The cause is still classified for diagnostics — but through the fixed
+	// vocabulary, not by rendering the cause's own text. io.ErrUnexpectedEOF is
+	// "connection closed"; its literal message never reaches the string.
+	if !strings.Contains(got, "connection closed") {
+		t.Errorf("transportError.Error() should classify the cause, got: %q", got)
 	}
 }
 
