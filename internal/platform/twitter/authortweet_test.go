@@ -2126,6 +2126,13 @@ func isFixedCredentialVocabulary(term string) bool {
 			return true
 		}
 	}
+	// The qualified-`key` tier renders two declared literals joined by `_`. Both halves
+	// have to come from the client's own maps for the term to be our vocabulary.
+	if qualifier, ok := strings.CutSuffix(term, "_key"); ok {
+		if _, declared := credentialKeyQualifiers[qualifier]; declared {
+			return true
+		}
+	}
 	return term == "key"
 }
 
@@ -2184,5 +2191,121 @@ func TestCredentialQueryKeyMatch_NeverReturnsCallerText(t *testing.T) {
 		if !isFixedCredentialVocabulary(term) {
 			t.Errorf("key %q produced term %q, which is caller text rather than a declared literal", key, term)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Round-11 review fixes
+// ---------------------------------------------------------------------------
+
+// TestRejectCredentialQueryParamsInText_UnderscorePrefixedURL pins the boundary bug:
+// Go's `\b` counts `_` as a word character, so `_https://…` carried no boundary and the
+// whole run went unscanned. The credential was then published verbatim.
+func TestRejectCredentialQueryParamsInText_UnderscorePrefixedURL(t *testing.T) {
+	for _, text := range []string{
+		"_https://events.example/cb?access_token=PLAINTEXT",
+		"register here _https://events.example/cb?access_token=PLAINTEXT_ today",
+		"__https://events.example/cb?jwt=PLAINTEXT",
+		"see -https://events.example/cb?api_key=PLAINTEXT",
+	} {
+		err := rejectCredentialQueryParamsInText(text)
+		if err == nil {
+			t.Errorf("text %q was not screened: an underscore before the scheme is not a word boundary", text)
+			continue
+		}
+		if strings.Contains(err.Error(), "PLAINTEXT") {
+			t.Errorf("refusal for %q echoed the credential value: %v", text, err)
+		}
+	}
+}
+
+// TestRejectCredentialQueryParamsInText_SchemelessLink covers links X linkifies and
+// publishes but tweetURLRe never saw, because it requires an explicit scheme.
+func TestRejectCredentialQueryParamsInText_SchemelessLink(t *testing.T) {
+	refused := []string{
+		"register at www.events.example/cb?access_token=PLAINTEXT",
+		"register at events.example/cb?access_token=PLAINTEXT",
+		"events.example/r#jwt=PLAINTEXT is the link",
+		"EVENTS.EXAMPLE:8443/r?sessionid=PLAINTEXT",
+	}
+	for _, text := range refused {
+		err := rejectCredentialQueryParamsInText(text)
+		if err == nil {
+			t.Errorf("scheme-less text %q was not screened", text)
+			continue
+		}
+		if strings.Contains(err.Error(), "PLAINTEXT") {
+			t.Errorf("refusal for %q echoed the credential value: %v", text, err)
+		}
+	}
+
+	// Ordinary copy must still pass. The `?`/`#` requirement is what keeps dotted
+	// prose out of the candidate set; a run with neither has no parameter to read.
+	for _, text := range []string{
+		"Join us — see agenda.md and section 3.2? Details at https://events.lf.org/agenda",
+		"Built with Node.js v1.2 and Go 1.25, talk at 3pm",
+		"Register: https://events.lf.org/r?utm_source=x&utm_medium=paid",
+		"Questions? ask us. We're at events.lf.org today",
+		"Read more at events.lf.org/blog/why-we-ship",
+	} {
+		if err := rejectCredentialQueryParamsInText(text); err != nil {
+			t.Errorf("ordinary tweet copy %q was refused: %v", text, err)
+		}
+	}
+}
+
+// TestCredentialQueryKeyMatch_QualifiedKeyComponent covers the gap round 10 recorded and
+// left open: a key name with its own value appended no longer ENDS in `key`, so the
+// suffix tier never fired and `api_key_LEAK` cleared the screen outright.
+func TestCredentialQueryKeyMatch_QualifiedKeyComponent(t *testing.T) {
+	for _, key := range []string{
+		"api_key_LEAK", "access_key_AKIAIOSFODNN7", "secret_key_abc",
+		"API-KEY-LEAK", "client.key.LEAK", "signing_key_v2", "consumer_key_1",
+	} {
+		term, bad := credentialQueryKeyMatch(key)
+		if !bad {
+			t.Errorf("key %q cleared the screen; a qualified `key` component is a credential in every spelling", key)
+			continue
+		}
+		if !isFixedCredentialVocabulary(term) {
+			t.Errorf("key %q named %q, which is not a fixed vocabulary word", key, term)
+		}
+		if strings.Contains(strings.ToLower(term), "leak") || strings.Contains(term, "AKIA") {
+			t.Errorf("key %q leaked caller text through the term %q", key, term)
+		}
+	}
+
+	// The reason `key` is not a plain component match: these are real parameters on a
+	// real conference page, and refusing them is the working-brief regression the
+	// denylist shape exists to avoid. An unqualified `key` component still passes.
+	for _, key := range []string{"key_metrics", "key_takeaways", "key_note", "keyword"} {
+		if _, bad := credentialQueryKeyMatch(key); bad {
+			t.Errorf("routing parameter %q was refused; only a QUALIFIED `key` component is a credential", key)
+		}
+	}
+}
+
+// TestTweetURLRuns_UnderscoreIsADelimiter covers the half of the boundary fix the
+// credential screen does not: weightedTweetLen and textCarriesURL read the same scanner,
+// and while `_https://…` went unmatched, X still wrapped that link in a t.co and this
+// client still charged every rune of it — rejecting, before the create, copy X accepts —
+// and still appended a second copy of a destination the text already carried.
+func TestTweetURLRuns_UnderscoreIsADelimiter(t *testing.T) {
+	long := "https://events.lf.org/" + strings.Repeat("x", 120)
+
+	if got, want := weightedTweetLen("_"+long), 1+tcoURLWeight; got != want {
+		t.Errorf("weightedTweetLen of an underscore-prefixed link = %d, want %d (the underscore plus one t.co weight)", got, want)
+	}
+	// Only the LEADING delimiter is the boundary rule's business. A trailing `_` is
+	// swept into the run like any other non-stop character — tweetURLTrailingPunct
+	// does not list it — so the closing half of markdown italics is left out here
+	// deliberately rather than pinned as working.
+	if !textCarriesURL("register _"+long+" today", long) {
+		t.Error("textCarriesURL missed an underscore-delimited destination, so the client would append a second copy of it")
+	}
+	// A scheme genuinely inside a longer word is still not a link, which is what the
+	// boundary rule is for.
+	if textCarriesURL("foo"+long, long) {
+		t.Error("textCarriesURL matched a scheme buried inside a word")
 	}
 }

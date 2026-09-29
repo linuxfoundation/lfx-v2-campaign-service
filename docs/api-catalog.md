@@ -909,15 +909,28 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   Because that query AND fragment are PUBLISHED verbatim, this is
                                   the one path that first screens EVERY URL in the composed tweet
                                   text — the registration URL's own parameters and any link the
-                                  caller put in their own copy — and refuses, pre-create, a key
-                                  that is a credential under any reading (`access_token`,
-                                  `api_key`, `sessionId`, `jwt`, `password`, `signature`,
-                                  `secret_token`, `auth_key`, `oauth_token_secret`,
-                                  `JSESSIONID`, `PHPSESSID`, `auth_cookie`, `connect.sid`,
-                                  `_csrf`, `SAMLResponse`, … in any
-                                  case/separator spelling, compounds included — a credential word
-                                  standing as a whole `-`/`_`/`.`-delimited component counts, so
-                                  `auth_cookie` is refused while `author` is not). The same screen
+                                  caller put in their own copy, whether or not that link is
+                                  written with an `http(s)://` scheme, since X linkifies and
+                                  publishes `www.host/…?…` and bare `host.tld/…?…` alike — and
+                                  refuses, pre-create, a key that matches its credential
+                                  denylist. That denylist is exactly four tiers, and it is a
+                                  DENYLIST, not a judgement about what looks like a secret: an
+                                  exact name (`access_token`, `sessionId`, `jwt`, `password`,
+                                  `signature`, `JSESSIONID`, `PHPSESSID`, …); an unambiguous
+                                  fragment anywhere in the name (`token`, `secret`, `oauth`,
+                                  `hmac`, `assertion`, `csrf`, `xsrf`, `saml`, …, so
+                                  `secret_token`, `_csrf` and `SAMLResponse` are all refused); a
+                                  credential word standing as a whole `-`/`_`/`.`-delimited
+                                  component (`auth`, `sid`, `pwd`, `passwd` — so `auth_cookie`
+                                  and `connect.sid` are refused while `author` and `aside` are
+                                  not); and `key`, either as the name's final component
+                                  (`api_key`, `auth_key`) or as a component qualified by the word
+                                  in front of it (`access_key_AKIA…`, `api-key-…`). All tiers are
+                                  case-insensitive and separator-insensitive. What this does NOT
+                                  claim to catch: a credential parameter whose name shares no word
+                                  with the lists above, and a secret carried in the URL's PATH
+                                  rather than its query or fragment — an events service cannot
+                                  denylist path words without refusing `/sessions/`. The same screen
                                   runs over a URL's FRAGMENT when it is written in `key=value`
                                   form, because the OAuth implicit flow delivers its bearer token
                                   after the `#` and such a URL may have no query at all; a plain

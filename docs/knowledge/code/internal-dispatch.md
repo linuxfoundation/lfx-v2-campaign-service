@@ -149,6 +149,20 @@ bracket, through a character an operator can type by accident. It is out. The DO
 stays, because `"` cannot appear in a URI unescaped. Over-matching is the safe direction
 here: swallowing an English possessive's `'s` costs a snapshot nothing, and stopping one
 character early costs it a secret.
+
+The pattern also carries no word boundary before the scheme, and that is the same
+asymmetry applied to the other end of the run. `\b` was there, and in Go `\b` is defined
+over `\w`, which includes `_` — so `_https://events.example/cb?access_token=…` had no
+boundary between the underscore and the `h`, matched nothing, and survived whole into the
+UNENCRYPTED snapshot. An underscore is how markdown italicises a link and how one arrives
+out of most chat clients, so that is a shape real operator prose has. Teaching the
+boundary about `_` specifically would have left the identical hole one character over;
+dropping it entirely is what the stop-set reasoning already argues for, because the cost
+of matching a scheme buried inside a longer word is a mangled fragment of prose and the
+cost of missing one is a persisted token. RE2 has no lookbehind either way. The screen in
+`internal/platform/twitter` does keep a boundary rule, because the scanner there also
+drives t.co length weighting and destination matching, where over-matching changes an
+answer; here nothing depends on it.
 The pattern now tries a bracketed host first and only then falls back to the general run,
 so the terminator still ends a bracketed ordinary URL while an IPv6 authority is matched
 whole. That branch admits any non-space run up to the closing `]` rather than a hex/colon

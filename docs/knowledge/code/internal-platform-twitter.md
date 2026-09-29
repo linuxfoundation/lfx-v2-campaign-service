@@ -428,6 +428,22 @@ service and `session_title`, `session_track` and `day_pass` are real parameters
 on a conference registration page — promoting those would refuse working briefs,
 the one cost a denylist exists to avoid.
 
+`key` is the one of those four that got a second tier rather than staying purely
+exact-only, and the reason is that the suffix rule only fires on a name that ENDS
+in `key`. `api_key_LEAK` and `access_key_AKIAIOSFODNN7` — a key name with the
+credential's own value appended, which is how an exported link most often spells
+one — end in the value, cleared every tier, and were published. An earlier round
+found that and left it open, reasoning that closing it meant promoting `key` to a
+plain component match and refusing `key_metrics` and `key_takeaways`. That was
+the wrong shape for the fix rather than a reason to keep the hole: `key` alone is
+ambiguous, `api key` and `access key` and `secret key` are not, on any page, in
+any spelling. So the rule is about the PAIR — a `key` component with a qualifier
+standing directly in front of it — and it needs no new judgement about ordinary
+English. `key_metrics` has no qualifier before `key` and still passes; `sort_key`
+is still caught by the suffix rule. The term the refusal renders is the two
+declared literals joined, so it is still this file's vocabulary and not the
+caller's bytes.
+
 The FRAGMENT gets the same key screen as the query, via
 `credentialFragmentError`. The query tier alone missed the single most likely way
 a live token reaches this gate: the OAuth implicit flow returns its bearer token
@@ -457,6 +473,33 @@ NOT with `u.Query()`, which discards that error and returns whatever pairs it
 decoded. A query Go refuses to decode — an unescaped `;` separator, a bad escape
 — therefore arrived as an empty map, and the screen cleared a URL whose
 parameters it had never read.
+
+What counts as a URL is decided twice, by two scanners with different jobs.
+`tweetURLRe` finds the `http(s)://` runs X wraps in a t.co link, and it is the scanner
+`weightedTweetLen` and `textCarriesURL` read as well — so the thing screened is the thing
+published, weighed and matched. It carries no `\b`: Go's `\b` is defined over `\w`, which
+includes `_`, so there was no boundary between the underscore and the `h` of
+`_https://…` and the whole run went unseen. RE2 has no lookbehind, so `findTweetURLRuns`
+applies the boundary in code instead — a scheme is at a boundary unless a letter or digit
+precedes it. Only the LEADING delimiter is its business; a trailing `_` is swept into the
+run like any other non-stop character, because `tweetURLTrailingPunct` does not list it.
+
+The second scanner exists because a link does not need a scheme to be published. X
+linkifies `www.events.example/r?access_token=…` and bare `events.example/r?…` exactly as
+it linkifies an `https://` one, and `tweetURLRe` requires a scheme, so an operator who
+pasted a scheme-less link out of a logged-in browser had no guard at all.
+`findSchemelessScreenRuns` covers that shape, and it feeds the SCREEN ONLY — the
+weighting keeps its scheme-ful scanner, because matching X's t.co rules for scheme-less
+links means implementing twitter-text's TLD grammar, and guessing at it near the 280
+boundary rejects copy X would have accepted. Screening more than X links costs a refusal;
+weighting more than X links costs a working brief.
+
+What keeps that second scanner out of ordinary prose is that it requires a `?` or `#`. The
+screen only ever asks whether a query or fragment parameter names a credential, so a run
+with neither has nothing to read — which means `agenda.md`, `Node.js`, `v1.2` and every
+other dotted token in real copy is never a candidate, and the alphabetic two-character
+minimum on the TLD keeps `3.2?` out too. Scheme-ful runs are blanked before the scan, by
+byte offset, so a link is never screened twice.
 
 The error never renders the caller's key. It points at the offending parameter by
 the fixed VOCABULARY WORD that classified it — `credentialQueryKeyMatch` returns

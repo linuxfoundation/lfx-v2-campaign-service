@@ -955,3 +955,35 @@ func TestAdoptionRefusesTheSystemFallback(t *testing.T) {
 		}
 	})
 }
+
+// TestSanitizeSnapshotText_UnderscorePrefixedURL pins the boundary bug: Go's `\b` counts
+// `_` as a word character, so `_https://…` matched nothing and the credential survived
+// intact into the UNENCRYPTED config_snapshot.
+func TestSanitizeSnapshotText_UnderscorePrefixedURL(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"underscore before the scheme",
+			"_https://events.example/cb?access_token=SECRET",
+			"_https://events.example",
+		},
+		{
+			"markdown italics around the link",
+			"see _https://events.example/cb?access_token=SECRET_ now",
+			"see _https://events.example now",
+		},
+		{
+			"scheme buried in a word still redacts",
+			"foohttps://events.example/cb?access_token=SECRET",
+			"foohttps://events.example",
+		},
+		{
+			"one bounded and one underscored link in the same text",
+			"see https://a.example/r?token=S1 and _https://b.example/r?sid=S2",
+			"see https://a.example and _https://b.example",
+		},
+	} {
+		if got := sanitizeSnapshotText(tc.in); got != tc.want {
+			t.Errorf("%s: sanitizeSnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}

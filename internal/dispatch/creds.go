@@ -188,8 +188,23 @@ func isHTTPScheme(raw string) bool {
 // was added for. Matching the authority whole and leaving its validity to net/url is the
 // direction that fails safe here: over-matching a bracketed run that is not a host costs
 // a sanitized fragment of prose, while under-matching costs a token.
+//
+// There is NO `\b` before the scheme, and deliberately no replacement for it. Go's `\b`
+// is defined over `\w`, and `\w` includes `_`, so `_https://…` had no boundary between the
+// underscore and the `h` and the whole run went unmatched — `_https://events.example/cb?
+// access_token=…` survived intact into the UNENCRYPTED config_snapshot. An underscore is
+// how markdown italicises and how a copied link arrives out of half the clients an
+// operator pastes from, so that is a shape real text has.
+//
+// Fixing only `_` would leave the same hole one character over. This function redacts
+// what it finds and leaves everything else alone, so the cost of matching a scheme buried
+// inside a longer word is a mangled fragment of prose in a snapshot, and the cost of
+// missing one is a persisted token — the asymmetry the stop set above is already chosen
+// for. The screen in `internal/platform/twitter` keeps a boundary rule because the same
+// scanner there also drives length weighting and destination matching, where
+// over-matching means something. Here nothing depends on it.
 var snapshotURLRunRe = regexp.MustCompile(
-	`(?i)\bhttps?://(?:\[[^\]\s]+\][^\s<>"\x60\]}|\\^]*|[^\s<>"\x60\]}|\\^]+)`,
+	`(?i)https?://(?:\[[^\]\s]+\][^\s<>"\x60\]}|\\^]*|[^\s<>"\x60\]}|\\^]+)`,
 )
 
 // sanitizeSnapshotText strips the query and fragment from every URL embedded in free text

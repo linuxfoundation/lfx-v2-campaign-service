@@ -32,6 +32,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
@@ -1846,6 +1847,28 @@ var credentialQueryComponents = map[string]struct{}{
 	"auth": {}, "sid": {}, "pwd": {}, "passwd": {},
 }
 
+// credentialKeyQualifiers are the words that turn a bare `key` COMPONENT into a
+// credential, when one stands immediately in front of it.
+//
+// The `…key` suffix tier only fires on a name that ENDS in `key`, which is how
+// `api_key_LEAK` and `access_key_AKIAIOSFODNN7` — a key name with the credential's own
+// value appended, the single most common way an exported link spells one — cleared the
+// screen entirely and were published. Round 10 found that and left it open, reasoning
+// that closing it meant promoting `key` to a component match, which would refuse
+// `key_metrics` and `key_takeaways`: real parameters on a real conference page.
+//
+// That was the wrong shape for the fix, not a reason to leave the hole. `key` alone is
+// ambiguous; `api key`, `access key`, `secret key` are not, in any spelling, on any page.
+// So the rule is about the PAIR: a `key` component qualified by one of these words
+// directly before it. `key_metrics` has no qualifier in front of `key` and still passes,
+// `sort_key` is still caught by the suffix tier, and nothing here needs a new judgement
+// call about ordinary English.
+var credentialKeyQualifiers = map[string]struct{}{
+	"api": {}, "access": {}, "secret": {}, "private": {}, "shared": {},
+	"signing": {}, "consumer": {}, "client": {}, "app": {}, "master": {},
+	"encryption": {}, "session": {}, "auth": {},
+}
+
 // credentialQueryKeyComponentSplitter splits a query key on the separators a compound
 // name is spelled with, so each part can be tested against credentialQueryComponents.
 var credentialQueryKeyComponentSplitter = func(r rune) bool {
@@ -1918,9 +1941,23 @@ func credentialQueryKeyMatch(key string) (string, bool) {
 			return frag, true
 		}
 	}
-	for _, part := range strings.FieldsFunc(strings.ToLower(key), credentialQueryKeyComponentSplitter) {
+	parts := strings.FieldsFunc(strings.ToLower(key), credentialQueryKeyComponentSplitter)
+	for _, part := range parts {
 		if _, bad := credentialQueryComponents[part]; bad {
 			return part, true
+		}
+	}
+	// A qualified `key` component, wherever it sits in the name — this is what catches
+	// `api_key_LEAK` and `access_key_AKIA…`, where the value is appended to the name and
+	// the `…key` suffix tier below therefore never fires. The returned term is built from
+	// two literals this file declares, so it is still our vocabulary and not the caller's
+	// bytes.
+	for i := 1; i < len(parts); i++ {
+		if parts[i] != "key" {
+			continue
+		}
+		if _, ok := credentialKeyQualifiers[parts[i-1]]; ok {
+			return parts[i-1] + "_key", true
 		}
 	}
 	if strings.HasSuffix(norm, "key") {
@@ -2113,12 +2150,80 @@ func queryKeysWrittenWithAValue(rawQuery string) map[string]bool {
 // what X will wrap in a t.co link. That is the correct set by construction: a run X
 // treats as a link is a run X publishes as a link.
 func rejectCredentialQueryParamsInText(text string) error {
-	for _, raw := range tweetURLRe.FindAllString(text, -1) {
+	for _, raw := range findTweetURLRuns(text) {
 		if err := rejectCredentialQueryParams(trimTweetURLPunct(raw)); err != nil {
 			return err
 		}
 	}
+	for _, raw := range findSchemelessScreenRuns(text) {
+		// Parsed as https so net/url reads the authority as an authority; the tweet is
+		// published with the caller's own bytes either way, and which scheme X resolves
+		// a bare host to has no bearing on whether its query names a credential.
+		if err := rejectCredentialQueryParams("https://" + trimTweetURLPunct(raw)); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// schemelessScreenRunRe matches a scheme-less link that carries a query or a fragment:
+// a dotted host with an alphabetic TLD, optional path, and then a `?` or `#` with
+// something after it.
+//
+// X linkifies `www.events.example/r?access_token=…` and bare `events.example/r?…` just as
+// it linkifies an `https://` one, and publishes it to the promoted-tweet audience the same
+// way — but tweetURLRe requires a scheme, so the pre-publication screen never inspected
+// either, and an operator who pastes a scheme-less link out of their logged-in browser
+// had no guard at all.
+//
+// The `?`/`#` requirement is the whole of what keeps this from misfiring on prose. This
+// screen only ever asks whether a QUERY OR FRAGMENT parameter names a credential, so a
+// run with neither has nothing for it to read; requiring one means `see agenda.md`,
+// `v1.2`, `Node.js` and every other dotted token in ordinary copy are never candidates.
+// The TLD must be alphabetic and at least two characters for the same reason, which is
+// what keeps `3.2?` out. Over-matching here costs a refusal the operator can fix by
+// deleting a parameter; under-matching costs a published credential.
+var schemelessScreenRunRe = regexp.MustCompile(
+	`(?i)[a-z0-9@][a-z0-9._~%+-]*\.[a-z]{2,}(?::\d+)?(?:/[^\s<>。、！？，：；]*)?[?#][^\s<>。、！？，：；]+`,
+)
+
+// schemefulRunMask blanks out every scheme-ful URL run in s, preserving byte offsets, so
+// the scheme-less scan cannot re-report the tail of a link rejectCredentialQueryParamsInText
+// has already screened.
+func schemefulRunMask(s string) string {
+	idx := tweetURLRe.FindAllStringIndex(s, -1)
+	if idx == nil {
+		return s
+	}
+	b := []byte(s)
+	for _, m := range idx {
+		if !urlRunStartIsBounded(s, m[0]) {
+			continue
+		}
+		for i := m[0]; i < m[1]; i++ {
+			b[i] = ' '
+		}
+	}
+	return string(b)
+}
+
+// findSchemelessScreenRuns returns the scheme-less candidate runs in text. Offsets in the
+// mask line up with the original byte for byte, so the substrings handed back are the
+// caller's own bytes.
+func findSchemelessScreenRuns(text string) []string {
+	masked := schemefulRunMask(text)
+	idx := schemelessScreenRunRe.FindAllStringIndex(masked, -1)
+	if idx == nil {
+		return nil
+	}
+	runs := make([]string, 0, len(idx))
+	for _, m := range idx {
+		if !urlRunStartIsBounded(masked, m[0]) {
+			continue
+		}
+		runs = append(runs, text[m[0]:m[1]])
+	}
+	return runs
 }
 
 // twitterUTMParams is the allowlist of utm_* params THIS client generates (the source
@@ -2287,7 +2392,48 @@ func authoredTweetStatus(id string) string {
 // hypothetical for LF: KubeCon China and Open Source Summit Japan briefs are written
 // this way, and undercounting at the 280 boundary means the campaign and the line item
 // are created before X refuses the tweet.
-var tweetURLRe = regexp.MustCompile(`(?i)\bhttps?://[^\s<>。、！？，：；]+`)
+//
+// The pattern carries NO `\b` in front of the scheme, and findTweetURLRuns applies the
+// boundary itself. Go's `\b` is defined over `\w`, which INCLUDES `_`, so there is no
+// word boundary between the `_` and the `h` of `_https://…` and the whole run went
+// unmatched — a link written `_https://events.example/cb?access_token=…` (an underscore
+// is how markdown italicises, and how a copied link arrives out of half the chat clients
+// an operator pastes from) was neither screened before publication nor redacted out of
+// the snapshot. RE2 has no lookbehind, so the boundary cannot live in the pattern;
+// findTweetURLRuns checks the preceding rune against [A-Za-z0-9] instead, which is `\b`'s
+// intent — do not match a scheme buried inside a longer word — with `_` counted as the
+// delimiter it actually is.
+var tweetURLRe = regexp.MustCompile(`(?i)https?://[^\s<>。、！？，：；]+`)
+
+// urlRunStartIsBounded reports whether a scheme match beginning at byte offset start in s
+// is at a real run boundary: the start of the text, or preceded by a character that is not
+// alphanumeric. `_`, `-`, `.`, quotes and brackets are all delimiters here; only a letter
+// or digit in front of the scheme means the `http` is part of a longer word.
+func urlRunStartIsBounded(s string, start int) bool {
+	if start == 0 {
+		return true
+	}
+	r, _ := utf8.DecodeLastRuneInString(s[:start])
+	return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+}
+
+// findTweetURLRuns returns the URL runs in s, applying the boundary rule tweetURLRe no
+// longer carries. Every consumer of the scanner goes through here, so the screen, the
+// weighting and the destination-match cannot disagree about what counts as a link.
+func findTweetURLRuns(s string) []string {
+	idx := tweetURLRe.FindAllStringIndex(s, -1)
+	if idx == nil {
+		return nil
+	}
+	runs := make([]string, 0, len(idx))
+	for _, m := range idx {
+		if !urlRunStartIsBounded(s, m[0]) {
+			continue
+		}
+		runs = append(runs, s[m[0]:m[1]])
+	}
+	return runs
+}
 
 // tweetURLTrailingPunct is the trailing punctuation a URL run absorbs but a link does
 // not own: the sentence the URL sits in ends after the link, not inside it.
@@ -2379,7 +2525,7 @@ func weightedTweetLen(s string) int {
 	// codepoints inside it, so they must not also be weighed rune by rune.
 	n := 0
 	rest := s
-	for _, run := range tweetURLRe.FindAllString(s, -1) {
+	for _, run := range findTweetURLRuns(s) {
 		// The trimmed link is a PREFIX of the matched run, so it still locates at the
 		// run's own offset; advancing by its length alone leaves the trailing
 		// punctuation in rest, where weightedRunLen charges it as the ordinary
@@ -2563,7 +2709,7 @@ func textCarriesURL(text, want string) bool {
 	if want == "" {
 		return true
 	}
-	for _, run := range tweetURLRe.FindAllString(text, -1) {
+	for _, run := range findTweetURLRuns(text) {
 		if trimTweetURLPunct(run) == want {
 			return true
 		}
