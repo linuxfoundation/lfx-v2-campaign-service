@@ -746,6 +746,13 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
   dispatch layer produces the error, only the two synchronous readers turn it into a status
   code, and the async path turns it into a log attribute rather than into anything the caller
   polling the job can read.
+  `platformResult` also carries `HubspotURL string \`json:"hubspot_url,omitempty"\``, populated only
+  for the HubSpot email channel via `hubspotURLFromResult(result json.RawMessage) string`. It reads
+  back the `hubspotUrl` key that `campaignFromHubSpot` (`internal/dispatch/hubspot.go`) stashed into
+  the campaign's persisted `Result` blob at dispatch time (`HubspotURL: e.AppURL`, restating
+  `hubspot.Email.AppURL` — tagged `json:"-"` on the embedded type — under a real JSON key so it
+  survives the round trip). Every other platform's `Result` blob has no `hubspotUrl` key, so
+  `hubspotURLFromResult` decodes to `""` for them and the field is omitted from the response.
   `validatedLoginCustomerID` in `internal/dispatch/googleads.go` tags the dashed `login_customer_id`,
   and it is now called by all three readers (toggle resolver, discovery resolver, and create dispatcher).
   Neither the cause NOR its text leaves the dispatch layer — not in the response and not in

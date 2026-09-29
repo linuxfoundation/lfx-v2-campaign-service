@@ -107,13 +107,17 @@ const maxPromptSize = 2400 // runes
 // Raised again, from 14000 to 14600, when the segment-conditional content-block guidance was
 // added (composeEmailCopyPrompt): each emailSegment* block is fixed prompt text appended only
 // when emailCopyPromptVars.segment exactly matches one of the recognised values, so it is a FLOOR
-// contributor exactly like the stage template and variant block, not caller input.
+// contributor exactly like the stage template and variant block, not caller input. The same change
+// also added a "scannable rich_text" rule to the shared stage-aware system prompt, which applies
+// to EVERY stage-aware request regardless of segment (~346 runes) -- the segment block itself
+// contributes the rest (~288 runes for the alumni block, the largest of the four).
 // worstStageFloorNamed now composes each stage across BOTH variant-on/off AND every recognised
 // segment (plus none) and takes the max, which moved the worst case from Post-Event with the
 // variant alone to Post-Event with the variant AND the alumni segment block appended -- 11689
-// runes, 634 higher than the variant-only floor. 14600 clears (11689 + maxPromptSize = 14089)
-// with headroom in the same ~500-rune range every earlier revision aimed for; see
-// TestConceptDocSizingArithmetic for the exact current figures.
+// runes, 634 higher than the variant-only floor (346 from the shared rule, 288 from the segment
+// block). 14600 clears (11689 + maxPromptSize = 14089) with headroom in the same ~500-rune range
+// every earlier revision aimed for; see TestConceptDocSizingArithmetic for the exact current
+// figures.
 const maxComposedPromptSize = 14600 // runes
 
 // maxReferenceBlockRunes bounds the reference-email style block EmailReferenceSource builds from

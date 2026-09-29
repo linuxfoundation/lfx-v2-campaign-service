@@ -21,7 +21,10 @@ new segment blocks as floor contributors (fixed prompt text, not caller
 input): `worstStageFloorNamed` (`internal/service/email_copy_test.go`) now
 composes each stage across variant-on/off AND every recognised segment (plus
 none), which moved the worst case from Post-Event + urgency-fomo (11055) to
-**Post-Event + urgency-fomo + the alumni segment (11689)**, 634 runes higher.
+**Post-Event + urgency-fomo + the alumni segment (11689)**, 634 runes higher —
+of which ~346 comes from a new "scannable rich_text" rule added to the shared
+stage-aware system prompt (applies regardless of segment) and ~288 from the
+alumni segment block itself.
 The worst valid composition is now 14089 against the 2400-rune input bound,
 so 14600 clears it with 511 runes of headroom.
 `docs/knowledge/code/internal-service-email-copy.md` and `docs/api-catalog.md`

@@ -1969,6 +1969,21 @@ divider module decodes into the same body struct with an empty HTML string, so c
 object-bodied modules made the ordinary template — one rich-text block plus a header image —
 report two widgets and decline the write.
 
+### `hubspotConfig.HeroImageAlt` and the `hubspotUrl` Result-blob key
+
+`hubspotConfig` (the HubSpot arm of the dispatch config) carries `HeroImageAlt`, forwarded
+unchanged into `hubspot.RebuildEmailContentInput.HeroImageAlt` — see
+[hubspot](internal-platform-hubspot.md) for what the platform package does with it (trims it,
+falls back to a generic "Event banner" when blank).
+
+`campaignFromHubSpot` builds the value persisted as the campaign's `Result` blob from a struct
+that embeds `*hubspot.Email` alongside explicit `PortalID`, `HubspotURL` and `ABTestVariant`
+fields. `HubspotURL: e.AppURL` restates `hubspot.Email.AppURL` — tagged `json:"-"` on the embedded
+type, so it would not otherwise serialize — under the real JSON key `hubspotUrl`. That is the only
+reason the value survives into the persisted blob: `internal/service`'s
+`hubspotURLFromResult` reads that same key back out to populate the polled job result's
+`hubspot_url` field (see [internal/service](internal-service.md)).
+
 ## The system account is a connection row, not a second mechanism
 
 A project that has connected no ad account of its own dispatches through the LF-owned system

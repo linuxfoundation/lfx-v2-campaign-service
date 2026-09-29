@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -323,15 +324,18 @@ func TestRebuildEmailContent_AVerificationReadFailureIsNotAProvenRevert(t *testi
 // then absent from the rebuilt tree — the documented gap, asserted so the comment above the
 // guard and the code cannot drift apart again.
 func TestRebuildEmailContent_AnEmptyBodyDropsTheBodySection(t *testing.T) {
+	var mu sync.Mutex
 	var sent map[string]any
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPatch {
 			raw, _ := io.ReadAll(r.Body)
 			var body map[string]any
 			_ = json.Unmarshal(raw, &body)
+			mu.Lock()
 			if content, ok := body["content"].(map[string]any); ok {
 				sent, _ = content["widgets"].(map[string]any)
 			}
+			mu.Unlock()
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"id":"999","content":{"widgets":{"staging_footer_hs":{}},"flexAreas":{"main":{"sections":[{"columns":[{"widgets":["staging_footer_hs"]}]}]}}}}`)
@@ -339,7 +343,10 @@ func TestRebuildEmailContent_AnEmptyBodyDropsTheBodySection(t *testing.T) {
 
 	_, _ = c.RebuildEmailContent(context.Background(), "999", RebuildEmailContentInput{HeroImageURL: "https://cdn.example/hero.png"})
 
-	if _, ok := sent["staging_body"]; ok {
+	mu.Lock()
+	_, ok := sent["staging_body"]
+	mu.Unlock()
+	if ok {
 		t.Error("an empty body wrote a staging_body widget; it should be omitted, not blanked")
 	}
 }
@@ -350,15 +357,18 @@ func TestRebuildEmailContent_AnEmptyBodyDropsTheBodySection(t *testing.T) {
 // every campaign).
 func TestRebuildEmailContent_HeroImageAlt(t *testing.T) {
 	extractAlt := func(t *testing.T, alt string) string {
+		var mu sync.Mutex
 		var sent map[string]any
 		c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodPatch {
 				raw, _ := io.ReadAll(r.Body)
 				var body map[string]any
 				_ = json.Unmarshal(raw, &body)
+				mu.Lock()
 				if content, ok := body["content"].(map[string]any); ok {
 					sent, _ = content["widgets"].(map[string]any)
 				}
+				mu.Unlock()
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"id":"999","content":{"widgets":{"staging_footer_hs":{}},"flexAreas":{"main":{"sections":[{"columns":[{"widgets":["staging_footer_hs"]}]}]}}}}`)
@@ -367,6 +377,8 @@ func TestRebuildEmailContent_HeroImageAlt(t *testing.T) {
 			HeroImageURL: "https://cdn.example/hero.png",
 			HeroImageAlt: alt,
 		})
+		mu.Lock()
+		defer mu.Unlock()
 		banner, ok := sent["staging_banner"].(map[string]any)
 		if !ok {
 			t.Fatal("expected a staging_banner widget when HeroImageURL is set")
