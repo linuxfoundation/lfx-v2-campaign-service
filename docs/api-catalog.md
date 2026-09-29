@@ -954,7 +954,8 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   (`nullcast=true`, sent explicitly, never relied on
                                   as X's default) — it never appears on the public timeline or to
                                   followers. Rejected pre-create if the composed text (counting any
-                                  embedded URL at X's fixed t.co weight of 23 characters each, not
+                                  embedded `http(s)` URL at X's fixed t.co weight of 23 characters
+                                  each, not
                                   raw length — schemes match case-insensitively, and punctuation
                                   around the link is counted as prose, not as part of it: trailing
                                   ASCII sentence marks and unmatched closing brackets are trimmed
@@ -963,7 +964,16 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   since a CJK sentence puts no space before its stop) exceeds the
                                   280-character cap, or if its raw size
                                   exceeds an 8 KiB request bound that the weighted cap — under
-                                  which any URL costs 23 whatever its length — does not impose. That cap is X's WEIGHTED
+                                  which a scheme-ful URL costs 23 whatever its length — does not
+                                  impose. A SCHEME-LESS link (`events.example/r?…`) is counted at
+                                  its RAW length instead, even though X linkifies and shortens it:
+                                  deciding which dotted token X actually linkifies needs
+                                  twitter-text's TLD registry, and every token guessed wrong near
+                                  the 280 boundary is a create refused for copy X would have
+                                  accepted. The credential screen below does read scheme-less
+                                  links — screening one X does not linkify costs a refusal the
+                                  operator fixes by deleting a parameter, which is the cheap
+                                  direction; weighting one does not. That cap is X's WEIGHTED
                                   one, not a rune count: runes outside twitter-text's weight-1
                                   ranges (CJK and beyond) cost 2 each, while an emoji presentation
                                   sequence — skin tone, ZWJ family, keycap, country flag — costs 2

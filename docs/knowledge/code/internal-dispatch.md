@@ -170,7 +170,29 @@ IP grammar, which looks safer and is not: the tighter class rejected the zone-sc
 `https://[fe80::1%25eth0]/…`, which then fell through to the general alternative and
 truncated at the bracket again — reopening the leak for the one host shape the branch
 exists to close. Validity is left to `net/url`, because over-matching a bracketed run that
-is not a host costs a sanitized fragment of prose while under-matching costs a token. `campaignFromTwitter` sanitizes a COPY of the config, so the
+is not a host costs a sanitized fragment of prose while under-matching costs a token.
+
+Requiring a scheme was itself a hole, and it opened the moment the twitter client learned
+that X publishes links without one. That client screens `www.host/r?…` and bare
+`host.tld/r?…` before it authors a tweet; this redactor still matched only `http(s)://`,
+so a scheme-less link the screen merely did not object to — its parameters not on the
+denylist, or the campaign written before the screen existed — kept its query and fragment
+in the UNENCRYPTED snapshot. Fixing the publication side alone moved the exposure rather
+than closing it. `sanitizeSnapshotText` now runs a second pass with the same host grammar
+the screen uses, reducing each scheme-less run to its authority and adding no scheme back,
+because the operator wrote none.
+
+The two passes need no masking or byte-offset bookkeeping to avoid colliding, only their
+order. The scheme-ful pass runs first and strips every query and fragment it rewrites; the
+scheme-less pattern only ever matches a run that still HAS one, so a reduced
+`https://a.example` is already invisible to it. The one difference from the twitter
+pattern is a userinfo prefix: that screen only READS a run, so where it begins costs
+nothing, while this one REWRITES it, and a pattern starting at the host would leave
+`user:pw@` behind as bare text — the password surviving beside the redacted token.
+Consuming the userinfo makes the whole run fail closed, which is the answer
+`sanitizeSnapshotURL` already gives.
+
+`campaignFromTwitter` sanitizes a COPY of the config, so the
 text actually sent to X is untouched.
 
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a

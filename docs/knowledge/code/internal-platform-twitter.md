@@ -497,9 +497,19 @@ weighting more than X links costs a working brief.
 What keeps that second scanner out of ordinary prose is that it requires a `?` or `#`. The
 screen only ever asks whether a query or fragment parameter names a credential, so a run
 with neither has nothing to read — which means `agenda.md`, `Node.js`, `v1.2` and every
-other dotted token in real copy is never a candidate, and the alphabetic two-character
-minimum on the TLD keeps `3.2?` out too. Scheme-ful runs are blanked before the scan, by
+other dotted token in real copy is never a candidate, and requiring the final label to
+START with a letter keeps `3.2?` out too. Scheme-ful runs are blanked before the scan, by
 byte offset, so a link is never screened twice.
+
+The host forms that label accepts were widened once, and the first shape was wrong for a
+reason worth keeping written down. It was `[a-z]{2,}` — which reads as "a TLD is a word",
+and a TLD is not. A dotted-quad host is not, and neither is any internationalized TLD:
+`xn--` is how every one of them is spelled on the wire, so that pattern was not missing an
+exotic case, it was missing the entire non-Latin web. `198.51.100.7/r?access_token=…` and
+`events.xn--p1ai/r?access_token=…` both cleared the screen and would have been published.
+A dotted-quad alternative and a `[a-z][a-z0-9-]+` label cover both. Scheme-less bracketed
+IPv6 is deliberately still not covered: X does not linkify it, and a leading `[` collides
+with the markdown-link shape operators actually paste.
 
 The error never renders the caller's key. It points at the offending parameter by
 the fixed VOCABULARY WORD that classified it — `credentialQueryKeyMatch` returns

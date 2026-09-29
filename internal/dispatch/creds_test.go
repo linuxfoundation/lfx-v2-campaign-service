@@ -987,3 +987,58 @@ func TestSanitizeSnapshotText_UnderscorePrefixedURL(t *testing.T) {
 		}
 	}
 }
+
+// Round-12 review fixes
+
+// TestSanitizeSnapshotText_SchemelessLink pins the asymmetry the round-11 commit opened:
+// the twitter client learned that X linkifies and publishes scheme-less links, and this
+// redactor still required a scheme — so the query and fragment of one survived whole into
+// the UNENCRYPTED config_snapshot.
+func TestSanitizeSnapshotText_SchemelessLink(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"bare host with a credential query",
+			"register at events.example/cb?access_token=SECRET today",
+			"register at events.example today",
+		},
+		{
+			"www host with a fragment",
+			"see www.events.example/r#sid=SECRET",
+			"see www.events.example",
+		},
+		{
+			"IPv4 host",
+			"go to 198.51.100.7/r?access_token=SECRET",
+			"go to 198.51.100.7",
+		},
+		{
+			"punycode TLD",
+			"go to events.xn--p1ai/r?access_token=SECRET",
+			"go to events.xn--p1ai",
+		},
+		{
+			"port survives, query does not",
+			"events.example:8443/r?token=SECRET",
+			"events.example:8443",
+		},
+		{
+			"a scheme-ful link is reduced once, not twice",
+			"see https://a.example/r?token=S1 and b.example/r?token=S2",
+			"see https://a.example and b.example",
+		},
+		{
+			"userinfo fails closed",
+			"see user:pw@events.example/r?token=SECRET now",
+			"see  now",
+		},
+		{
+			"a dotted token with no query is left alone",
+			"read agenda.md and Node.js v1.2 notes",
+			"read agenda.md and Node.js v1.2 notes",
+		},
+	} {
+		if got := sanitizeSnapshotText(tc.in); got != tc.want {
+			t.Errorf("%s: sanitizeSnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}

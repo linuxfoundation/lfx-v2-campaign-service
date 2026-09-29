@@ -2180,11 +2180,25 @@ func rejectCredentialQueryParamsInText(text string) error {
 // screen only ever asks whether a QUERY OR FRAGMENT parameter names a credential, so a
 // run with neither has nothing for it to read; requiring one means `see agenda.md`,
 // `v1.2`, `Node.js` and every other dotted token in ordinary copy are never candidates.
-// The TLD must be alphabetic and at least two characters for the same reason, which is
-// what keeps `3.2?` out. Over-matching here costs a refusal the operator can fix by
-// deleting a parameter; under-matching costs a published credential.
+// Over-matching here costs a refusal the operator can fix by deleting a parameter;
+// under-matching costs a published credential.
+//
+// The host has two shapes, and the first version of this pattern had only half of one.
+// Requiring the final label to be `[a-z]{2,}` read as "a TLD is a word", which let two
+// perfectly linkifiable forms straight through: a dotted-quad IPv4 host, whose final
+// label is numeric, and a punycode IDN like `events.xn--p1ai`, whose final label carries
+// digits and hyphens — and `xn--` is how EVERY internationalized TLD is spelled on the
+// wire, so that was not an exotic case but the entire non-Latin web. Both are matched
+// now. The TLD still has to START with a letter, which is what keeps `v1.2?` out, and
+// the IPv4 alternative is a separate branch rather than a loosening of the general one.
+//
+// Not covered, deliberately: a scheme-less BRACKETED IPv6 host (`[2001:db8::1]/r?t=…`).
+// X does not linkify that form, so it is not published as a link, and admitting `[` here
+// would collide with the markdown-link convention the scheme-ful scanner already has to
+// reason about.
 var schemelessScreenRunRe = regexp.MustCompile(
-	`(?i)[a-z0-9@][a-z0-9._~%+-]*\.[a-z]{2,}(?::\d+)?(?:/[^\s<>。、！？，：；]*)?[?#][^\s<>。、！？，：；]+`,
+	`(?i)(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9@][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
+		`(?::\d+)?(?:/[^\s<>。、！？，：；]*)?[?#][^\s<>。、！？，：；]+`,
 )
 
 // schemefulRunMask blanks out every scheme-ful URL run in s, preserving byte offsets, so

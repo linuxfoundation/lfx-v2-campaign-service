@@ -2309,3 +2309,40 @@ func TestTweetURLRuns_UnderscoreIsADelimiter(t *testing.T) {
 		t.Error("textCarriesURL matched a scheme buried inside a word")
 	}
 }
+
+// Round-12 review fixes
+
+// TestRejectCredentialQueryParamsInText_IPv4AndPunycodeHosts pins the gap the round-11
+// scheme-less screen opened: its `[a-z]{2,}` final label read as "a TLD is a word", which
+// is true of neither a dotted-quad host nor any internationalized TLD, every one of which
+// is spelled `xn--…` on the wire.
+func TestRejectCredentialQueryParamsInText_IPv4AndPunycodeHosts(t *testing.T) {
+	refused := []string{
+		"register at 198.51.100.7/r?access_token=PLAINTEXT",
+		"register at events.xn--p1ai/r?access_token=PLAINTEXT",
+		"198.51.100.7:8443/r#jwt=PLAINTEXT",
+		"XN--80AK6AA92E.XN--P1AI/cb?sessionid=PLAINTEXT",
+	}
+	for _, text := range refused {
+		err := rejectCredentialQueryParamsInText(text)
+		if err == nil {
+			t.Errorf("scheme-less text %q was not screened", text)
+			continue
+		}
+		if strings.Contains(err.Error(), "PLAINTEXT") {
+			t.Errorf("refusal for %q echoed the credential value: %v", text, err)
+		}
+	}
+
+	// The TLD must still START with a letter, or a version string with a query-looking
+	// tail behind it becomes a candidate. `3.2?` was already covered by the old
+	// two-character minimum and must stay covered by the new shape.
+	for _, text := range []string{
+		"Built on v1.25 — section 3.2? see the agenda",
+		"Ships 2026.10? we'll confirm",
+	} {
+		if err := rejectCredentialQueryParamsInText(text); err != nil {
+			t.Errorf("ordinary tweet copy %q was refused: %v", text, err)
+		}
+	}
+}

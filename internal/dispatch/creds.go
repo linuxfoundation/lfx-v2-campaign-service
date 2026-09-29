@@ -227,7 +227,67 @@ func sanitizeSnapshotText(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	return snapshotURLRunRe.ReplaceAllStringFunc(raw, sanitizeSnapshotURL)
+	// Scheme-ful runs first, then scheme-less ones over the RESULT. The order is what
+	// keeps the second pass off links the first already handled: the first pass strips
+	// every query and fragment it rewrites, and the second only ever matches a run that
+	// still HAS one, so a reduced `https://a.example` is invisible to it. No masking or
+	// offset bookkeeping is needed to get that.
+	return schemelessSnapshotRunRe.ReplaceAllStringFunc(
+		snapshotURLRunRe.ReplaceAllStringFunc(raw, sanitizeSnapshotURL),
+		sanitizeSchemelessSnapshotRun,
+	)
+}
+
+// schemelessSnapshotRunRe matches a scheme-less link carrying a query or fragment, the
+// same shape internal/platform/twitter screens before publication.
+//
+// The two sides have to agree. The twitter client was taught that X linkifies and
+// publishes `www.host/r?…` and bare `host.tld/r?…`, and refuses the ones naming a
+// credential — but tweetText is ALSO persisted, and this redactor still required a
+// scheme, so a scheme-less link the screen merely did not object to (its parameters are
+// not on the denylist, or it reached an older campaign written before that screen
+// existed) kept its full query and fragment in the UNENCRYPTED config_snapshot. Fixing
+// the publication side alone moved the exposure rather than closing it.
+//
+// The `?`/`#` requirement, the letter-initial TLD, the punycode and IPv4 host forms and
+// the reasons for each are documented on `schemelessScreenRunRe` in
+// internal/platform/twitter/client.go. Keep the two in step.
+//
+// That requirement is what keeps this off ordinary prose, but not perfectly: `Vue.js?Check`
+// — a dotted token, no space after the question mark — matches, and its tail is dropped.
+// That is the same trade snapshotURLRunRe's stop set was already chosen under, in the same
+// direction: a mangled fragment of prose in a snapshot no one diagnoses anything with,
+// against a persisted token.
+// One deliberate difference from the twitter pattern: the optional userinfo prefix. The
+// twitter screen only READS a run's parameters, so where a run begins costs it nothing;
+// this one REWRITES the run, so a pattern that starts at the host leaves `user:pw@` behind
+// as bare text — the password surviving the redaction of the token beside it. Consuming
+// the userinfo into the run instead makes url.Parse see it and sanitizeSchemelessSnapshotRun
+// fail the whole run closed, which is the answer sanitizeSnapshotURL already gives.
+var schemelessSnapshotRunRe = regexp.MustCompile(
+	`(?i)(?:[^\s/?#@]*@)?(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
+		`(?::\d+)?(?:/[^\s<>"\x60\]}|\\^]*)?[?#][^\s<>"\x60\]}|\\^]+`,
+)
+
+// sanitizeSchemelessSnapshotRun reduces a scheme-less run to its authority, and fails
+// CLOSED to the empty string on anything that will not parse or carries userinfo —
+// the same answer sanitizeSnapshotURL gives for the scheme-ful case, for the same
+// reason: a run that announced itself as a link and then would not reduce is malformed
+// input, and the truncating fallback would keep the path.
+//
+// The scheme is supplied only so net/url reads the leading token as an AUTHORITY rather
+// than an opaque path, and is not written back — the snapshot should say what the
+// operator wrote, and they wrote no scheme.
+func sanitizeSchemelessSnapshotRun(run string) string {
+	u, err := url.Parse("https://" + run)
+	if err != nil || u.Host == "" || u.User != nil {
+		return ""
+	}
+	// Host holds the DECODED authority, so it is rebuilt through url.URL.String() and
+	// the placeholder scheme trimmed back off, rather than concatenated — the same
+	// re-escaping sanitizeSnapshotURL relies on.
+	rebuilt := url.URL{Scheme: "https", Host: u.Host}
+	return strings.TrimPrefix(rebuilt.String(), "https://")
 }
 
 // parseCampaignDate parses a YYYY-MM-DD config date to a *time.Time (UTC), returning
