@@ -76,6 +76,27 @@ func TestSanitizeSnapshotText(t *testing.T) {
 			"Details at https://events.lf.org/kubecon/register",
 		},
 		{"uppercase scheme", "HTTPS://events.lf.org/r?token=SECRET", "https://events.lf.org/r"},
+		{
+			// The run must not stop at the ']' closing an IPv6 literal host. It
+			// used to: ']' is a run terminator (it ends a markdown link), so the
+			// match was "https://[2001:db8::1" and everything after it — the path
+			// AND the query — stayed in the snapshot as plain prose.
+			"ipv6 literal host",
+			"see https://[2001:db8::1]/reg?ticket=SECRET now",
+			"see https://[2001:db8::1]/reg now",
+		},
+		{
+			"ipv6 literal with a port",
+			"https://[2001:db8::1]:8443/reg?ticket=SECRET",
+			"https://[2001:db8::1]:8443/reg",
+		},
+		{
+			// The ']' terminator still has to work where it means what it meant
+			// before: a bracket closing around an ordinary URL.
+			"bracketed ordinary url",
+			"[https://events.lf.org/r?token=SECRET]",
+			"[https://events.lf.org/r]",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

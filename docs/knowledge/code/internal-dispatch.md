@@ -109,7 +109,12 @@ cannot drift on what "stripped" means, and leaves the surrounding prose exactly 
 written — it redacts links, it does not go looking for secrets in sentences. Runs are
 matched greedily up to whitespace or a quote/bracket: sentence-final punctuation is legal
 inside a URL, and a run trimmed too eagerly leaves the query behind as bare text, which is
-the exact leak this prevents. `campaignFromTwitter` sanitizes a COPY of the config, so the
+the exact leak this prevents. `]` is one of those terminators — it closes a markdown link
+— which cut an IPv6 literal host in half: `https://[2001:db8::1]/reg?t=…` matched only as
+far as `https://[2001:db8::1`, and the path AND query survived in the snapshot as prose.
+The pattern now tries a bracketed host first and only then falls back to the general run,
+so the terminator still ends a bracketed ordinary URL while an IPv6 authority is matched
+whole. `campaignFromTwitter` sanitizes a COPY of the config, so the
 text actually sent to X is untouched.
 
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a

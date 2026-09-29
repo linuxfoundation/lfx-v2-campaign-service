@@ -1011,15 +1011,27 @@ func drainAndClose(resp *http.Response) {
 // idempotent gates the 429 retry, and is an EXPLICIT PARAMETER rather than something
 // inferred from the HTTP method — the same discipline the googleads client states for
 // its own doRequest, where POST `:search` is read-only and POST `:mutate` must not be
-// retried. Here the split does not follow the method either: the campaign, line-item
-// and promoted-tweet creates are all POSTs that are found-or-created (by name, or by
-// X's DUPLICATE_PROMOTABLE_ENTITY), so re-issuing one converges on the same entity and
-// they pass true. Tweet authoring has no lookup and no idempotency key — X publishes a
-// SECOND tweet — so it passes false: its first 429 is returned rather than retried.
+// retried. Here the split does not follow the method either.
+//
+// The question it asks is narrow and easy to get wrong: is a repeat of THIS request,
+// issued from inside this loop, safe? Only server-side convergence answers yes. The
+// promoted-tweets create qualifies — X itself refuses the repeat with
+// DUPLICATE_PROMOTABLE_ENTITY — so it passes true. The campaign and line-item creates
+// do NOT, and an earlier revision passed true for them by conflating two different
+// things: those paths ARE found-or-created by name, but the lookup that makes that
+// true runs in the caller, ABOVE this function. A retry from inside this loop re-POSTs
+// without repeating it, so if X committed the write and then reported a 429, the
+// retry creates a duplicate campaign or line item — the precise outcome the by-name
+// lookup exists to prevent. They pass false. Tweet authoring passes false for the
+// plainer reason that it has no lookup and no idempotency key at all: X publishes a
+// SECOND tweet.
+//
 // A 429 stays an *apiError either way, so createOutcomeAmbiguous still classifies the
 // mutating case as UNCONFIRMED and the caller still tells the operator to verify in X
 // Ads Manager before retrying. What false removes is this layer silently doing the
-// unverified retry on the operator's behalf.
+// unverified retry on the operator's behalf; what it costs is that a throttled create
+// now surfaces for reconciliation instead of riding out the rate limit, which is the
+// correct trade when the alternative is a duplicate nobody was told about.
 func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath string, queryParams map[string]string, idempotent bool) (*apiResponse, error) {
 	// Entry-time only — see errRequestContextAlreadyDone. Without it a caller that had
 	// already cancelled got the context error back out of http.Client.Do wrapped as a
@@ -1634,6 +1646,23 @@ var spaceRe = regexp.MustCompile(`\s+`)
 // persist) never carries the userinfo/query/fragment that can hold secrets. A value
 // that can't be parsed as an absolute URL is reported as an opaque placeholder rather
 // than echoed raw.
+// The PATH is dropped along with the query and fragment, which is where this
+// diverges from the googleads redactor it otherwise mirrors. That redactor keeps the
+// path, and keeping it was defensible while the only URL reaching here was a
+// registration URL an operator typed. It is not defensible now: the tweetText path
+// screens ARBITRARY caller copy, and a magic-link or reset credential lives in a path
+// segment (`https://example.com/reset/<secret>`) at least as often as in a query
+// parameter. The knowledge base states the test this fails —
+// `caller-url-must-be-redacted-before-errors-steps-and-snapshots`: reproduce a
+// component only when it is BOTH structurally incapable of holding a secret AND
+// load-bearing for the diagnosis. A path is capable; a host is not, and the host is
+// what tells the operator WHICH link to fix, so scheme+host is exactly the line.
+//
+// Dropping more can only be safe — the cost is a less specific error, never a leak —
+// so this applies to every caller in the package rather than only the new branches,
+// because a redactor whose strength depends on which caller reached it is one nobody
+// can reason about. The same change is worth making in the googleads client; it is not
+// made here because that client's URLs do not flow into published text.
 func redactURLForError(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || !u.IsAbs() || u.Hostname() == "" {
@@ -1642,7 +1671,7 @@ func redactURLForError(raw string) string {
 		}
 		return "(redacted)"
 	}
-	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
+	return u.Scheme + "://" + u.Host
 }
 
 // validateRegistrationURL ensures a user-supplied registration URL is an absolute
@@ -2660,7 +2689,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				Steps:        steps,
 			}
 		}
-		resp, err := c.createRequest(ctx, "campaigns", campaignParams, true /* idempotent: found-or-created by name */)
+		resp, err := c.createRequest(ctx, "campaigns", campaignParams, false /* NOT retry-safe: the by-name lookup is above the retry loop, not inside it */)
 		if err != nil {
 			// An AMBIGUOUS failure (mutating 3xx/5xx or a transport error) may follow a
 			// committed campaign create — X may have made the PAUSED campaign under the
@@ -2773,7 +2802,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if err := c.pace(ctx); err != nil {
 			return partialResult(), fmt.Errorf("x line item creation aborted (%s): %w", campaignStatus(), err)
 		}
-		resp, err := c.createRequest(ctx, "line_items", lineItemParams, true /* idempotent: found-or-created by name */)
+		resp, err := c.createRequest(ctx, "line_items", lineItemParams, false /* NOT retry-safe: the by-name lookup is above the retry loop, not inside it */)
 		if err != nil {
 			// An AMBIGUOUS failure (mutating 3xx/5xx or a transport error) may follow a
 			// committed line-item create — word it UNCONFIRMED so a caller reconciling

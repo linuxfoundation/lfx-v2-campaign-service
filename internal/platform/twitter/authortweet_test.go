@@ -730,9 +730,12 @@ func TestCreateCampaign_AllowsOrdinaryRegistrationQueryParams(t *testing.T) {
 // TestCreateCampaign_429OnAuthoringIssuesExactlyOneRequest pins the retry decision
 // that makes tweet authoring different from every other create in this package.
 //
-// A 429 is normally retried, and for the other three creates that is right: they are
-// found-or-created by name or answer a repeat with DUPLICATE_PROMOTABLE_ENTITY. A
-// tweet has neither. X can report a 429 at OR AFTER accepting the write, so a
+// A 429 is normally retried, and for the promoted_tweets create that is right: X
+// answers a repeat with DUPLICATE_PROMOTABLE_ENTITY, which is convergence the
+// SERVER performs, inside the retry loop. The campaign and line-item creates do
+// NOT qualify — their find-by-name dedup runs in the caller, above the loop — and
+// they are marked non-idempotent too (see the two tests below). A tweet has no
+// convergence at all. X can report a 429 at OR AFTER accepting the write, so a
 // retried authoring POST can publish a second tweet under the LF handle — and the
 // request layer would have done it twice more before this function returned.
 //
@@ -1463,6 +1466,131 @@ func TestWeightedTweetLen_BMPEmojiSequencesAndDecomposedText(t *testing.T) {
 			t.Parallel()
 			if got := weightedTweetLen(tc.in); got != tc.want {
 				t.Errorf("weightedTweetLen(%q) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_429OnCampaignCreateIssuesExactlyOneRequest is the regression
+// for the retry-safety flag on the campaign create.
+//
+// The flag was originally true on the reasoning that this create is "found or
+// created by name, so re-issuing one converges". It does not: the by-name lookup
+// runs in CreateCampaign, ABOVE doRequestAbs's retry loop, so a retry inside that
+// loop re-POSTs without consulting it and X — which does not dedupe campaign names
+// itself — can accept both. A 429 may also be reported at or after the write was
+// accepted, so the duplicate is a real paid resource.
+//
+// Exactly one POST must therefore reach /campaigns, and the outcome must be
+// UNCONFIRMED rather than a clean failure: the first write may have committed.
+func TestCreateCampaign_429OnCampaignCreateIssuesExactlyOneRequest(t *testing.T) {
+	var posts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			atomic.AddInt32(&posts, 1)
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"errors":[{"code":"RATE_LIMIT","message":"too many requests"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newAuthorTweetTestClient(srv.URL)
+	res, err := c.CreateCampaign(context.Background(), baseAuthorInput("Join us at KubeCon"))
+	if err == nil {
+		t.Fatal("expected an error when the campaign create is rate limited")
+	}
+	if got := atomic.LoadInt32(&posts); got != 1 {
+		t.Errorf("campaign create POSTed %d times, want exactly 1 — a retry can create a duplicate paid campaign", got)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a mutating 429 may have committed; error must be UNCONFIRMED, got: %v", err)
+	}
+	// The name-carrying partial is what makes the UNCONFIRMED outcome reconcilable.
+	if res == nil || res.CampaignName == "" {
+		t.Errorf("expected a name-carrying partial result for reconciliation, got %+v", res)
+	}
+}
+
+// TestCreateCampaign_429OnLineItemCreateIssuesExactlyOneRequest is the same
+// regression one step down the chain. The line-item create shared the campaign
+// create's disproven "converges by name" justification and has the same exposure:
+// its find-by-name lookup is in the caller, so an in-loop retry duplicates a paid
+// line item under an already-created campaign.
+func TestCreateCampaign_429OnLineItemCreateIssuesExactlyOneRequest(t *testing.T) {
+	var posts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			atomic.AddInt32(&posts, 1)
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"errors":[{"code":"RATE_LIMIT","message":"too many requests"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newAuthorTweetTestClient(srv.URL)
+	res, err := c.CreateCampaign(context.Background(), baseAuthorInput("Join us at KubeCon"))
+	if err == nil {
+		t.Fatal("expected an error when the line item create is rate limited")
+	}
+	if got := atomic.LoadInt32(&posts); got != 1 {
+		t.Errorf("line item create POSTed %d times, want exactly 1 — a retry can create a duplicate paid line item", got)
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a mutating 429 may have committed; error must be UNCONFIRMED, got: %v", err)
+	}
+	// The already-created campaign must come back so the orphan is identifiable.
+	if res == nil || res.CampaignID != "cmp1" {
+		t.Errorf("expected a partial result carrying the created campaign cmp1, got %+v", res)
+	}
+}
+
+// TestRedactURLForError_KeepsOnlySchemeAndHost pins the redactor's line.
+//
+// It used to keep the path, on the reasoning that only a query parameter can hold
+// a secret. A magic-link or password-reset credential lives in a path segment at
+// least as often — and this helper now screens ARBITRARY caller copy, not only an
+// operator-typed registration URL. A host cannot be the secret and is what tells
+// the operator which link to fix; everything past it can be and is dropped.
+func TestRedactURLForError_KeepsOnlySchemeAndHost(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"path segment is dropped", "https://example.com/reset/SECRET", "https://example.com"},
+		{"query and fragment go too", "https://example.com/r?token=SECRET#SECRET", "https://example.com"},
+		{"userinfo never appears", "https://user:SECRET@example.com/x", "https://example.com"}, // secretlint-disable-line -- fixture asserting userinfo is dropped
+		{"port is part of the host", "https://example.com:8443/a/SECRET", "https://example.com:8443"},
+		{"ipv6 literal host", "https://[2001:db8::1]/reset/SECRET", "https://[2001:db8::1]"},
+		{"surrounding space is trimmed", "  https://example.com/SECRET  ", "https://example.com"},
+		{"relative url has no host to name", "/reset/SECRET", "(redacted)"},
+		{"unparseable url", "https://exa mple.com/\x7f/SECRET", "(redacted)"},
+		{"empty", "", "(redacted)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactURLForError(tc.in)
+			if got != tc.want {
+				t.Errorf("redactURLForError(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if strings.Contains(got, "SECRET") {
+				t.Errorf("redactURLForError(%q) reproduced the secret: %q", tc.in, got)
 			}
 		})
 	}

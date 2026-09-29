@@ -112,14 +112,18 @@ Retry eligibility is an explicit `idempotent bool` parameter threaded through
 the HTTP method, and a non-idempotent call takes the retry-exhausted exit on its
 FIRST 429 (`attempt >= retryMax || !idempotent`). The method cannot carry this: X
 answers a 429 at OR AFTER committing the write it throttled, so "POST" says
-nothing about whether re-issuing is safe. What decides it is whether the endpoint
-converges on a repeat, and three of this client's four creates do — campaigns and
-line items are found-or-created by name, a repeated `promoted_tweets` POST comes
-back `DUPLICATE_PROMOTABLE_ENTITY`. Tweet authoring is the one that does not: a
+nothing about whether re-issuing is safe. What decides it is whether the SERVER
+converges on a repeat, and only one of this client's four creates does: a repeated
+`promoted_tweets` POST comes back `DUPLICATE_PROMOTABLE_ENTITY`. Campaign and line
+item creates look like they qualify — both are found-or-created by name — but that
+dedup runs in `CreateCampaign`, ABOVE the retry loop, and a retry inside
+`doRequestAbs` re-POSTs without consulting it; X does not dedupe those names
+itself, so both writes can be accepted and the account ends up paying for two.
+Caller-side convergence is not retry safety. Tweet authoring has neither form: a
 tweet has no name to find it by and no idempotency key, so a retried 429 publishes
 a SECOND tweet under the LF handle, and the request layer would have done it twice
-more before `createNullcastTweet` returned. It therefore passes `false`, alone in
-this package. The throttle still surfaces as an `*apiError`, which
+more before `createNullcastTweet` returned. Three of the four therefore pass
+`false`. The throttle still surfaces as an `*apiError`, which
 `createOutcomeAmbiguous` classifies as ambiguous, so the caller renders UNCONFIRMED
 and asks the operator to verify in X Ads Manager — a human check before a second
 publish is the only safe form a retry of that call can take. (This is the same
@@ -405,6 +409,21 @@ and this gate read only query keys — so an embedded credential in a URL with n
 query string at all was published verbatim. Neither half of the userinfo is named
 in the refusal; the URL is redacted, which is what locates the offending link
 without the error becoming the leak it exists to prevent.
+
+"Redacted" here means `redactURLForError`, and it keeps SCHEME AND HOST ONLY. It
+kept the path too while its only caller was an operator-typed registration URL;
+that stopped being defensible once the same helper began screening arbitrary
+caller copy, because a magic-link or reset credential sits in a path segment
+(`https://example.com/reset/<secret>`) at least as often as in a query parameter.
+The knowledge-base rule is the test: reproduce a component only when it is BOTH
+structurally incapable of holding a secret AND load-bearing for the diagnosis. A
+path is capable; a host is not, and the host is what tells the operator which link
+to fix. The stronger form applies to every caller in the package rather than only
+the newer branches — dropping more can only cost specificity, never leak, and a
+redactor whose strength depends on which caller reached it is one nobody can
+reason about. The googleads client has a mirror of this helper that still keeps
+the path; the same change is worth making there, and is not made here only because
+that client's URLs do not flow into published text.
 
 `buildTwitterUTMURL` diverges from `displayTwitterUtmURL` in one way that
 matters: it preserves the registration URL's own pre-existing query parameters

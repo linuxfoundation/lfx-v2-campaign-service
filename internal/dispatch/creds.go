@@ -115,7 +115,17 @@ func sanitizeSnapshotURL(raw string) string {
 // eagerly leaves the query fragment behind as bare text, which is the exact leak this
 // exists to prevent. Over-matching costs a sanitized URL a trailing period; under-matching
 // costs a token.
-var snapshotURLRunRe = regexp.MustCompile(`(?i)\bhttps?://[^\s<>"'\x60\]}|\\^]+`)
+//
+// The leading alternative exists because `]` is in that stop set — it ends a markdown
+// link — and an IPv6 literal host is written INSIDE brackets. Without it,
+// `https://[2001:db8::1]/reg?ticket=…` matched only as far as `https://[2001:db8::1`,
+// the truncated prefix went to sanitizeSnapshotURL, and `]/reg?ticket=…` stayed in the
+// snapshot as bare text — under-matching costing exactly the token this guards. A
+// bracketed host is therefore consumed whole first, and only the REST of the run is
+// subject to the stop set.
+var snapshotURLRunRe = regexp.MustCompile(
+	`(?i)\bhttps?://(?:\[[0-9a-f:.]+\][^\s<>"'\x60\]}|\\^]*|[^\s<>"'\x60\]}|\\^]+)`,
+)
 
 // sanitizeSnapshotText strips the query and fragment from every URL embedded in free text
 // before that text is stored in config_snapshot (which is persisted UNENCRYPTED).

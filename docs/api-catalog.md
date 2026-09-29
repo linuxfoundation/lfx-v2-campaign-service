@@ -972,7 +972,9 @@ rejection now also applies to every URL found in caller-supplied `tweetText`, wh
 URL's validator never saw. A registration URL whose query cannot be parsed is refused rather than
 rewritten: the destination URL is built by re-encoding that query, so an unreadable one would have
 been silently dropped and real click traffic sent to the wrong page. Validation errors
-redact the URL (scheme+host+path only) so a persisted error can't leak a userinfo/query secret.
+redact the URL (**scheme+host only** — the path is dropped too, because a magic-link or reset
+credential lives in a path segment as often as in a query) so a persisted error can't leak a
+userinfo/path/query secret.
 **On the `tweetText` path that protection is not sufficient by itself:** the registration URL is
 embedded in the tweet that gets published, INCLUDING its own pre-existing query parameters, which
 are kept verbatim because they are what routes the visitor. It is then publicly visible — in the
