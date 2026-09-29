@@ -11,60 +11,6 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// TestLinkedinPriorityRank_MedMediumBug proves the KNOWN BUG documented on
-// linkedinPriorityRank: the BFF's sort map is {HIGH:0, MEDIUM:1, LOW:2}, but every MED item
-// this file emits carries the literal string "MED" (model.MonitorPriorityMed), which never
-// matches the "MEDIUM" case — so it falls through to the `default: 3` bucket, the same bucket
-// an entirely unrecognized priority string would land in.
-//
-// Net, verifiable effect (per the doc comment): HIGH items sort first, then LOW items, then
-// every MED item, in original relative order (the sort is stable). This test feeds items in
-// the order [MED, HIGH, LOW, MED] and asserts the sorted order is [HIGH, LOW, MED, MED] — both
-// MEDs pushed to the tail, in their original relative order.
-//
-// follow-up: do not "fix" this expectation to HIGH, MED, MED, LOW — that is the CORRECT
-// behavior this port deliberately does not have yet. Fixing linkedinPriorityRank's "MEDIUM"
-// case to model.MonitorPriorityMed is tracked as a follow-up ticket, and doing so here would
-// silently defeat the differential verification this migration depends on.
-func TestLinkedinPriorityRank_MedMediumBug(t *testing.T) {
-	items := []model.AccountMonitorActionItem{
-		{CampaignID: "med-1", Priority: model.MonitorPriorityMed},
-		{CampaignID: "high", Priority: model.MonitorPriorityHigh},
-		{CampaignID: "low", Priority: model.MonitorPriorityLow},
-		{CampaignID: "med-2", Priority: model.MonitorPriorityMed},
-	}
-	sortByPriority(items, linkedinPriorityRank)
-
-	want := []string{"high", "low", "med-1", "med-2"}
-	got := itemIDs(items)
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("sorted order = %v, want %v — MED items must be pushed to the tail behind LOW, "+
-				"in original relative order, per the ported MED/MEDIUM sort-key bug", got, want)
-		}
-	}
-}
-
-// TestLinkedinPriorityRank_RanksInIsolation pins the four individual rank values the bug
-// produces, since the ordering test above could in principle pass by accident if two ranks
-// happened to collide differently.
-func TestLinkedinPriorityRank_RanksInIsolation(t *testing.T) {
-	tests := []struct {
-		priority model.MonitorPriority
-		want     int
-	}{
-		{model.MonitorPriorityHigh, 0},
-		{model.MonitorPriorityMed, 3}, // KNOWN BUG: falls through to the default/unranked bucket.
-		{model.MonitorPriorityLow, 2},
-		{model.MonitorPriority("UNKNOWN"), 3},
-	}
-	for _, tc := range tests {
-		if got := linkedinPriorityRank(tc.priority); got != tc.want {
-			t.Errorf("linkedinPriorityRank(%q) = %d, want %d", tc.priority, got, tc.want)
-		}
-	}
-}
-
 // TestLinkedinPacingPct_IsUnrounded pins the property called out at length in
 // model.AccountMonitorRow.PacingPct's doc comment: LinkedIn, uniquely among the four
 // platforms, does NOT round its pacing percentage. A spend/expected ratio chosen to produce a
@@ -108,6 +54,7 @@ func TestLinkedinActionItems_UnderspendingAndConstrained(t *testing.T) {
 	t.Run("low CTR is MED", func(t *testing.T) {
 		row := base
 		row.Ctr = 0.1
+		row.Impressions = 5000
 		items := linkedinActionItems(row, 0, model.MonitorPacingNormal)
 		mustContainIssue(t, items, "Low CTR", model.MonitorPriorityMed)
 	})
@@ -162,5 +109,40 @@ func TestEvaluateLinkedInMonitor_SkipsFetchFailedRows(t *testing.T) {
 	}
 	if len(items) != 0 {
 		t.Errorf("FetchFailed row produced action items, want none: %+v", items)
+	}
+}
+
+// TestLinkedinLowCtr_ZeroCtrIsTheWorstCaseNotAnExemption is the regression test for the guard
+// this port carried from linkedin-ads.service.ts: `ctr > 0 && ctr < 0.3`. A 0% CTR is the worst
+// possible case of the condition the rule exists to detect, and it was the one case excluded.
+//
+// LinkedIn is also the only one of the four platforms with no "impressions but no clicks" rule
+// (googleActionItems has one), so nothing else caught it either: a campaign with half a million
+// impressions and not one click produced no action item at all, while one at 0.29% produced a
+// MED. Both halves are asserted here, since the rule is only correct with both.
+func TestLinkedinLowCtr_ZeroCtrIsTheWorstCaseNotAnExemption(t *testing.T) {
+	served := model.AccountCampaignMetrics{
+		PlatformCampaignID: "c1", Name: "c", Impressions: 500000, Clicks: 0, Ctr: 0,
+	}
+	items := linkedinActionItems(served, 0, model.MonitorPacingNormal)
+	mustContainIssue(t, items, "Low CTR", model.MonitorPriorityMed)
+}
+
+// TestLinkedinLowCtr_NeedsVolumeBeforeItMeansAnything pins the other half. Removing the `ctr > 0`
+// exclusion without an impressions floor would fire "Low CTR: 0.00%" on every campaign that has
+// not been served yet — turning the fix above into a false alert on every new campaign. Meta,
+// Reddit and Google all gate this rule on volume; LinkedIn did not, and now does.
+func TestLinkedinLowCtr_NeedsVolumeBeforeItMeansAnything(t *testing.T) {
+	for _, impressions := range []int64{0, 1, linkedinMinImpressions} {
+		row := model.AccountCampaignMetrics{
+			PlatformCampaignID: "c1", Name: "c", Impressions: impressions, Ctr: 0,
+		}
+		for _, it := range linkedinActionItems(row, 0, model.MonitorPacingNormal) {
+			if strings.Contains(it.Issue, "Low CTR") {
+				t.Errorf("impressions = %d: emitted %q; the floor is exclusive (> %d), and a "+
+					"campaign with no delivery has no CTR to judge",
+					impressions, it.Issue, linkedinMinImpressions)
+			}
+		}
 	}
 }

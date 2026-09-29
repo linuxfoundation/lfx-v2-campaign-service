@@ -393,8 +393,9 @@ func SafeInconclusiveDetail(err error) string {
 // and 404 just as much — are kept OUT of that sentinel instead: LinkedIn received the request and
 // refused it on the merits, so it will not start succeeding on its own, and wrapping any of them
 // in the inconclusive sentinel let TestLinkedinAds's errors.Is(err,
-// ErrOrgVerificationInconclusive) check — which runs before any other classification — report a
-// broken connection as OK: true. 429 is the one exempt status because a rate limit really does
+// ErrOrgVerificationInconclusive) check — which runs before any other classification — describe a
+// broken connection as LinkedIn being unreachable: an invitation to retry, forever, against a
+// refusal that will never change. 429 is the one exempt status because a rate limit really does
 // say nothing about the pairing. Those refusals do not all mean the same thing: a credential
 // failure carries its own sentinel, a 403 is a confirmed verdict on this connection, and every
 // remaining 4xx carries ErrAccountDiscoveryRejected because the walk names neither id and so
@@ -423,7 +424,8 @@ func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, confi
 	// reach one of two wrong answers — "not found among this token's own ad accounts", which
 	// misdescribes a malformed stored field as a permissions problem, or, if the walk failed
 	// for any other reason, ErrOrgVerificationInconclusive, which TestLinkedinAds reports as
-	// OK: true. Mirrors ValidateAccountID's use in LinkedInDispatcher.ListAccountCampaignMetrics.
+	// "linkedin could not be reached" — blaming the platform for a malformed value on the row.
+	// Mirrors ValidateAccountID's use in LinkedInDispatcher.ListAccountCampaignMetrics.
 	//
 	// The empty string falls into these guards rather than returning nil. Returning nil for a
 	// caller with nothing to compare looked permissive-but-harmless for a client package, but
@@ -437,9 +439,10 @@ func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, confi
 	// without contacting LinkedIn at all. orgIDRE is this client's configuration invariant:
 	// resolveOrgID (targeting.go) refuses the same value because it cannot build a valid
 	// "urn:li:organization:<id>" URN, so a campaign creation on this connection is already
-	// guaranteed to fail. Reporting it as inconclusive (nil) made TestLinkedinAds answer
-	// OK: true for a connection known in advance to be unusable — the exact "broken
-	// connection reported healthy" outcome this verification exists to prevent.
+	// guaranteed to fail. Reporting it as inconclusive (nil) made TestLinkedinAds answer for a
+	// connection known in advance to be unusable — originally "healthy", and since the `ok`
+	// contract moved, "linkedin could not be reached". Both hide the same thing: a stored value
+	// this service can see is wrong without asking LinkedIn anything.
 	//
 	// It is deliberately NOT reported as a mismatch. LinkedIn's own reference is always
 	// numeric, so this value never was a comparable org id; calling it a "different
@@ -484,8 +487,9 @@ func (c *Client) VerifyAccountOrgReference(ctx context.Context, accountID, confi
 		// thing they do: LinkedIn RECEIVED this request, evaluated it, and refused it.
 		// Unlike a transport failure or the page-cap/runaway guards, that is not "the walk
 		// could not complete": none of these improve on their own, and folding a
-		// permanently-failing discovery path into the inconclusive sentinel would report
-		// OK: true for it forever. Only 429 is exempt — rate limiting genuinely is an
+		// permanently-failing discovery path into the inconclusive sentinel would report it
+		// as an unreachable LinkedIn forever, inviting a retry that cannot ever succeed.
+		// Only 429 is exempt — rate limiting genuinely is an
 		// interrupted walk a later attempt can complete — and so is 5xx, which is LinkedIn
 		// failing to answer rather than answering with a refusal.
 		//

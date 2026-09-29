@@ -353,8 +353,9 @@ func TestInstallWritesNothingWhenItCannotProceed(t *testing.T) {
 // TestInstallRejectsMisshapenValues: the installer writes PAST the API, so a value the rest of
 // the system refuses must not reach an ACTIVE system row and turn into a dispatch failure nobody
 // connects back to install time. Both sources of the rule are covered: design/connection.go's
-// Pattern() (Meta, X, LinkedIn) AND the runtime validators for the three providers whose design
-// checks presence alone (Google Ads, Microsoft, Reddit) — reading only the design was the gap.
+// Pattern() AND the runtime validators — which is the point, since the installer writes past
+// Goa and so past every Pattern, and reading only the design was the gap. Google Ads, Reddit
+// and Microsoft now carry a design Pattern too; their runtime validators still decide here.
 // An OMITTED account id is not a misshapen one; that is the legal credentials-first state.
 func TestInstallRejectsMisshapenValues(t *testing.T) {
 	metaCreds := []byte(`{"access_token":"tok","app_secret":"sec"}`)
@@ -385,6 +386,20 @@ func TestInstallRejectsMisshapenValues(t *testing.T) {
 		"google ads values in shape":              {model.ProviderGoogleAds, "8666746580", map[string]string{"login_customer_id": "9746983954"}, gaCreds, false},
 		"microsoft customer id not numeric":       {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "cus-9"}, msCreds, true},
 		"microsoft values in shape":               {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "9"}, msCreds, false},
+		// Both Microsoft ids are IDENTITY claims — positive int64, no leading zero — at the
+		// design and at runtime, and this installer writes past the API straight to the
+		// repository. The digits-only shape admitted every row below onto the SHARED fallback
+		// that every project without its own connection dispatches through, where the probe
+		// and the create path then refuse it.
+		"microsoft account id zero":                 {model.ProviderMicrosoftAds, "0", map[string]string{"customer_id": "9"}, msCreds, true},
+		"microsoft account id leading zero":         {model.ProviderMicrosoftAds, "007", map[string]string{"customer_id": "9"}, msCreds, true},
+		"microsoft account id over nineteen digits": {model.ProviderMicrosoftAds, "12345678901234567890", map[string]string{"customer_id": "9"}, msCreds, true},
+		// Nineteen digits, so it matches the pattern; above MaxInt64, so only the runtime
+		// validator catches it. This is the case a regexp cannot express, and the reason
+		// valueValidators exists beside valueShapes rather than being folded into it.
+		"microsoft account id nineteen digits above MaxInt64": {model.ProviderMicrosoftAds, "9999999999999999999", map[string]string{"customer_id": "9"}, msCreds, true},
+		"microsoft customer id zero":                          {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "0"}, msCreds, true},
+		"microsoft customer id above MaxInt64":                {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "9999999999999999999"}, msCreds, true},
 		// Reddit now REQUIRES conversion_pixel_id (see requiredConfigKeys), so the in-shape
 		// case must supply one -- these rows assert the ACCOUNT ID's shape, and omitting the
 		// pixel would make them fail for an unrelated reason and stop testing what they name.

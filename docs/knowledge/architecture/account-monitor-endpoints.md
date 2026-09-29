@@ -42,27 +42,59 @@ reaches), not project-scoped ones.
   same way discovery does; Reddit additionally scopes the requested
   `account_id` to its own resolved connection's single account, since a
   Reddit connection is bound to exactly one ad account.
-- The four rule engines (`internal/service/rules/monitor_*.go`) are ported as
-  four separate files, deliberately **not** unified onto the shared
-  `internal/service/rules` package (`pacing.go`/`actions.go`) — unifying
-  would change output and break the empty-diff proof against the legacy BFF
-  path. Follow-up ticket #7 tracks that unification.
+- The four rule engines (`internal/service/rules/monitor_*.go`) were ported as
+  four separate files so the empty-diff proof against the legacy BFF path
+  stayed meaningful. That diff is no longer the plan of record, so what the
+  four genuinely share now lives in `monitor_shared.go` — one pacing ladder
+  (`pacingLabelFor`), one priority rank (`priorityRank`/`sortByPriority`),
+  one unknown-pacing row. Each `EvaluateXMonitor` keeps its own guard for
+  whether a campaign has a pacing figure worth placing at all, because the
+  platforms report budget differently. They are still **not** routed onto
+  `pacing.go`/`actions.go`, which run a different ladder (50/100/130) for
+  the single-campaign brief path; merging the two read paths would move
+  operator-facing alerting bands and remains its own decision.
 - `internal/service/connection_monitor.go`'s `monitorAccount` is the shared
   handler body: validate → resolve backend → `ReadAccountCampaignMetrics` →
-  per-platform `evaluate` closure → `ReadAccountTotals` (Reddit's only —
-  its totals come from a separate account-level call, not a row sum) →
-  `monitorTotalsFallback` for everyone else.
+  per-platform `evaluate` closure → `monitorTotals`, which sums the
+  post-`evaluate` rows on every platform, so the aggregate always describes
+  exactly the campaigns array returned beside it.
 
-## Known-verbatim-ported quirks
+## Ported BFF quirks, and where each one now stands
 
-Five threshold/labeling bugs from the BFF are carried over on purpose, so the
-OLD-vs-NEW differential diff stays a meaningful faithfulness check rather
-than a mix of "moved" and "fixed": LinkedIn's `MED`-vs-`MEDIUM` sort-map key
-mismatch, Google/Reddit's local pacing literals (not the shared
-`Thresholds`), Reddit's hardcoded `conversions: 0` in its rule input, Reddit's
-underspend threshold/label mismatch (fires at `<40`, labeled `<50`), and
-Reddit's totals coming from an independent upstream call rather than a row
-sum. Each has (or will have) its own follow-up issue.
+Five threshold/labeling bugs from the BFF were carried over on purpose, so the
+OLD-vs-NEW differential diff stayed a meaningful faithfulness check rather
+than a mix of "moved" and "fixed". **That diff is no longer the plan of
+record**, which removes the reason to preserve them, so each is being fixed
+against its own filed issue rather than frozen — and the "do not fix this"
+comments come out with each fix.
+
+| Ported quirk | Issue | Status |
+| --- | --- | --- |
+| LinkedIn's `MED`-vs-`MEDIUM` sort-map key mismatch sorted MED action items *behind* LOW ones | `linuxfoundation/lfx-self-serve#3018` | **Fixed** — one shared `priorityRank` |
+| Google/Reddit's local pacing literals rather than a shared constant | `linuxfoundation/lfx-self-serve#3019` | **Fixed** — one shared `pacingLabelFor` |
+| Reddit's hardcoded `conversions: 0` in its rule input | `linuxfoundation/lfx-self-serve#3020` | **Fixed** — absent, not a measured 0, on the row **and** in the account totals |
+| Reddit's underspend threshold/label mismatch (fires at `<40`, labeled `<50`) | `linuxfoundation/lfx-self-serve#3021` | **Fixed** — the alert is keyed off the label |
+| Reddit's account totals from an independent upstream call rather than a row sum | `linuxfoundation/lfx-self-serve#3022` | **Fixed** — every platform sums its rows |
+
+Three further defects were found in this code rather than carried across it, so
+none has a BFF-side ticket: a campaign with no budget at all presented as
+though its pacing were known, which turned out to affect all four platforms in
+two different ways. Google and Meta reported it as `underspending` outright, and
+so did Reddit for a campaign that had a flight but no total budget. LinkedIn's
+`hasBudget` guard genuinely held the row off the ladder but did not *say* so:
+it went out as `normal` with `PacingUnknown` left false, which a consumer reads
+as "on plan" — a quieter version of the same claim (**fixed**; all four now
+route a budget-less campaign through `unknownPacingRow`; see the two log entries
+of 2026-09-28) — and the
+Google `zz`-prefix name filter, which dropped any campaign whose name merely
+began with those two letters rather than only those using the operator's
+`zz` scratch-naming convention (**fixed**; the prefix must now be followed
+by a separator, or be the whole name, to count). The third is LinkedIn's
+low-CTR rule, which was gated on `ctr > 0 && ctr < 0.3` — excluding a 0% CTR,
+the worst case of the very thing it detects, with no "impressions but no
+clicks" rule to catch it instead (**fixed**; gated on an impressions floor
+like the other three platforms, so a 0% CTR now fires and an unserved
+campaign does not).
 
 Meta has two deliberate departures rather than the usual verbatim port. Its
 pagination is the first — the legacy BFF silently truncates past 100
@@ -284,10 +316,12 @@ differential diff, since fixed:
    whole endpoint with an error whenever Reddit's separate account-totals
    call (`AccountTotalsReader.ReadAccountTotals`) failed, discarding the
    per-campaign rows and action items already fetched successfully. A
-   totals-call error now falls back to `monitorTotalsFallback` the same way
-   the capability-absent (`!ok`) arm already did — the per-campaign data is
+   totals-call error fell back to the row sum the same way the
+   capability-absent (`!ok`) arm already did — the per-campaign data is
    the response's primary content, and the account-wide totals are a
-   secondary, derivable figure not worth a 5xx over.
+   secondary, derivable figure not worth a 5xx over. (That whole call, and
+   the `AccountTotalsReader` capability behind it, were later removed by
+   `#3022`; Reddit now sums its rows like everyone else.)
 4. Three more false-absence/false-zero defects, found by Copilot's second PR
    review pass and fixed in round 24: Google Ads'
    `internal/platform/googleads/monitor.go` converted a present-but-unparseable

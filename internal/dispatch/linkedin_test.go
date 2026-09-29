@@ -181,10 +181,10 @@ func TestLinkedIn_VerifyAccountOrg(t *testing.T) {
 		if errors.Is(err, domain.ErrOrgVerificationFailed) {
 			t.Errorf("VerifyAccountOrg: %v, want NOT domain.ErrOrgVerificationFailed — no account and no organization were compared", err)
 		}
-		// And it must not fold into the healthy-reporting bucket either: a 400 does not
-		// clear on its own, so calling the walk incomplete answers OK: true forever.
+		// And it must not fold into the try-again bucket either: a 400 does not clear on
+		// its own, so calling the walk incomplete tells the operator to retry forever.
 		if errors.Is(err, domain.ErrOrgVerificationInconclusive) {
-			t.Errorf("VerifyAccountOrg: %v, want NOT domain.ErrOrgVerificationInconclusive — a refusal is permanent and that sentinel reports OK: true", err)
+			t.Errorf("VerifyAccountOrg: %v, want NOT domain.ErrOrgVerificationInconclusive — a refusal is permanent and that sentinel reports a platform that could not be reached, inviting a retry that can never succeed", err)
 		}
 	})
 

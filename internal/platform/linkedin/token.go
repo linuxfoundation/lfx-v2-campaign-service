@@ -212,12 +212,14 @@ func tokenExchangeFailure(err error) error { return &tokenExchangeError{err: err
 //
 // errTokenExchangeFailed alone leaves an error carrying no classified sentinel, and
 // VerifyAccountOrgReference folds every such error into ErrOrgVerificationInconclusive — the
-// bucket TestLinkedinAds maps to OK: true. That is correct for a token endpoint that is
+// bucket TestLinkedinAds reports as LinkedIn not having been reachable. That is correct for a
+// token endpoint that is
 // unreachable, answering 5xx, rate-limiting, or dropping a body mid-read: a later attempt
 // genuinely may complete. It is WRONG for a token endpoint answering 403 or 404, for a 200
 // carrying no access_token, and for a request this service could not even build — none of those
-// clears on its own, so the connection test would answer "healthy" for a permanently broken
-// credential path forever. That is the same "broken connection reported healthy" defect the
+// clears on its own, so the connection test would blame LinkedIn's availability for a
+// permanently broken credential path forever, and never name the fault. That is the same
+// "the connection test does not say what is actually wrong" defect the
 // discovery walk's 4xx escape exists to close, reached one hop earlier.
 //
 // It answers Is for TWO targets, deliberately. errTokenExchangeFailed keeps
@@ -571,9 +573,15 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// walk's 4xx escape splits, and for the same reason: a 429 is an interrupted attempt
 		// and a 5xx is LinkedIn failing to answer, so both stay retryable — but a 403, 404 or
 		// 410 is LinkedIn RECEIVING this exchange and refusing it, permanently. Folding those
-		// into the inconclusive bucket reports a connection that can never mint a token as
-		// OK: true, forever.
-		if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < http.StatusInternalServerError {
+		// into the inconclusive bucket reports a connection that can never mint a token as a
+		// LinkedIn that could not be reached, forever — a retry instruction for a permanent
+		// refusal.
+		// 408 stays retryable alongside 429 for the same reason the three sibling clients keep
+		// it out of their refusal arm: the endpoint gave up waiting for the request, so it is
+		// an interrupted attempt and not LinkedIn refusing this exchange on the merits.
+		if resp.StatusCode != http.StatusTooManyRequests &&
+			resp.StatusCode != http.StatusRequestTimeout &&
+			resp.StatusCode < http.StatusInternalServerError {
 			return "", permanentTokenExchangeFailure(fmt.Errorf("linkedin token refresh -> %d", resp.StatusCode))
 		}
 		return "", tokenExchangeFailure(fmt.Errorf("linkedin token refresh -> %d", resp.StatusCode))
@@ -602,8 +610,8 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 	if tok.AccessToken == "" {
 		// Fail closed: never fall back to the stale token on a malformed success. PERMANENT
 		// for the same reason as the decode failure above — a 200 with no access_token is a
-		// contract violation, and calling it inconclusive answers OK: true for a connection
-		// that never actually obtained a token.
+		// contract violation, and calling it inconclusive blames LinkedIn's availability for a
+		// connection that never actually obtained a token.
 		return "", permanentTokenExchangeFailure(errors.New("linkedin token refresh returned an empty access_token"))
 	}
 

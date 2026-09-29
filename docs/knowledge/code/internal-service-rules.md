@@ -16,12 +16,21 @@ resource: "internal/service"
 **This package (`pacing.go`/`actions.go`) is not the only rule engine in this
 directory.** The four `monitor_*.go` files (`monitor_google.go`,
 `monitor_linkedin.go`, `monitor_meta.go`, `monitor_reddit.go`) back the
-account-scoped `/account-monitor` endpoints and are deliberately **separate,
-unshared, per-platform ports** of the LFX One BFF's own four historically
-divergent rule engines — including the divergent thresholds and known bugs this
-package exists to replace — kept unmerged so an OLD-vs-NEW differential diff
-against the BFF stays a meaningful faithfulness check. Unifying them onto this
-package is follow-up ticket #7, tracked in
+account-scoped `/account-monitor` endpoints, ported from the LFX One BFF's own
+four historically divergent rule engines.
+
+They were originally kept unmerged, bug for bug, so an OLD-vs-NEW differential
+diff against the still-live BFF stayed a meaningful faithfulness check. That
+diff is no longer the plan of record, so the duplication no longer buys
+anything: the four now share **one** pacing ladder, `pacingLabelFor` in
+`monitor_shared.go`, and the deliberately-ported defects are being fixed under
+their own tickets instead of frozen.
+
+What remains separate is the **ladder itself**. The monitor path's bands are
+50/90/100; this package's are 50/100/130 with `Constrained` as an inclusive top.
+They are two different ladders for two different read paths, and routing one
+through the other would move operator-facing alerting bands as a side effect of
+a refactor — so merging the two is its own decision, tracked in
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md), which
 is the concept file for that surface.
 
@@ -163,7 +172,8 @@ conversions at all**, the same way `zero_delivery` is gated on the channel billi
 `Conversions` is a POINTER on both `model.CampaignMetrics` and `rules.Input` precisely so absent
 stays distinguishable from a measured zero. Only Google Ads, LinkedIn and Microsoft populate it;
 Meta and X expose conversions solely as per-action-type structures with no scalar to read,
-Reddit's reporting contract is undocumented, and the email channel has no conversion concept.
+Reddit's reporting read does not request a conversion field at all, and the email channel has no
+conversion concept.
 Flattening a nil to 0 anywhere along the path would flag **every** campaign on those four
 platforms, forever — reporting the absence of measurement as a campaign defect, which is the
 failure mode the whole pointer exists to prevent.

@@ -306,30 +306,6 @@ type AccountMetricsReader interface {
 		accountID string, days int) ([]model.AccountCampaignMetrics, error)
 }
 
-// AccountTotalsReader is a SECOND OPTIONAL dispatcher capability, orthogonal to
-// AccountMetricsReader: read the account-wide monitor totals from a SEPARATE upstream call,
-// independent of any per-campaign row.
-//
-// This exists ONLY because of Reddit. model.AccountMonitorTotals' own doc comment records
-// that Reddit's accountTotals come from a distinct account-level report
-// (reddit-ads.service.ts's fetchAccountMetrics), made independently of the per-campaign
-// fan-out fetchCampaignMetrics performs — NOT a sum of the rows AccountMetricsReader
-// returns. Every other ported platform's totals ARE a sum of its rows, computed by the
-// service layer (connection_monitor.go) without ever calling this interface; a dispatcher
-// that has no reason to diverge from that sum (Meta/GoogleAds/LinkedIn today) simply does
-// not implement it, and the service layer's summing path covers it. Folding this into
-// AccountMetricsReader's own signature would force every platform to answer a question only
-// one of them actually has a different answer to.
-type AccountTotalsReader interface {
-	// ReadAccountTotals returns the account-wide totals for accountID over the trailing
-	// `days` days. campaignCount is supplied by the CALLER (the count of rows
-	// AccountMetricsReader already returned for the same request), matching
-	// getRedditAnalytics' own accountTotals.campaignCount, which counts the filtered
-	// per-campaign result rather than anything this call could independently know.
-	ReadAccountTotals(ctx context.Context, projectID string, platform model.Provider,
-		accountID string, days, campaignCount int) (*model.AccountMonitorTotals, error)
-}
-
 // EmailSearcher is an OPTIONAL dispatcher capability: search the marketing emails reachable
 // through a project's stored connection. Discovered by type assertion like StatusToggler,
 // MetricsReader and AccountLister; a dispatcher that doesn't implement it yields a clean
@@ -412,6 +388,59 @@ type CampaignAdopter interface {
 	LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error)
 }
 
+// ConnectionProber is a REQUIRED dispatcher capability for every platform whose connection can
+// be tested: reach the platform with the project's OWN stored credential and report what it
+// said. It is the capability the connection-test endpoints were missing — six of the seven
+// answered OK the moment a credential blob existed in the row, never decrypting it, never
+// authenticating, and never reaching the configured account (LFXV2-2665).
+//
+// Unlike OrgReferenceVerifier below, its absence is NOT a designed outcome for any dispatcher
+// that reaches Orchestrator.ProbeConnection. Every platform this service can dispatch to can be
+// asked "does this credential still work", so a dispatcher that arrives here without
+// implementing this is mis-wired, and ProbeConnection says so unconditionally rather than
+// consulting a per-platform table.
+//
+// That is a statement about THIS call path, not about the seven providers. LinkedIn's
+// dispatcher does not implement ConnectionProber and is not missing anything: TestLinkedinAds
+// (internal/service/connection.go) never routes through here, verifying instead via
+// OrgReferenceVerifier/VerifyAccountOrg, which subsumes the probe's question and adds the org
+// cross-check on top. So ConnectionProber has exactly six implementations, and
+// internal/dispatch/probe_owned_resolver_test.go pins that roster — including LinkedIn's
+// absence. Do not "repair" LinkedIn by adding a ProbeConnection method: a second verification
+// path on the one endpoint that already has a stronger one is how the two drift apart.
+type ConnectionProber interface {
+	// ProbeConnection resolves the project's OWN connection — never the shared LF system row,
+	// whose acceptance would report a connection the project does not have as healthy — and
+	// makes one live call with it.
+	//
+	// nil means the credential authenticated and, where the connection HAS a configured
+	// account, that the account was reached. HubSpot is the one exception, and deliberately:
+	// it has no configured account to check, because portal_id is not one — nothing routes on
+	// it, and the portal a campaign lands in is the token's own (docs/api-catalog.md). nil
+	// from that implementation means the private-app token authenticated and claims no more
+	// than that. Every
+	// other outcome is an error carrying exactly one of four meanings, which the implementation
+	// fixes and the caller must not re-derive:
+	//
+	//   - domain.ErrConnectionProbeFailed: a CONFIRMED broken connection — the platform
+	//     rejected the credential, or it authenticated but does not reach the configured
+	//     account, or no account is configured to reach. Its text is authored by this service
+	//     and is the one probe error a caller may echo.
+	//   - domain.ErrConnectionProbeInconclusive: the check could not be completed — a timeout,
+	//     a dial failure, a rate limit, a platform 5xx. It proves nothing about the connection,
+	//     so it must not be rendered as a CONFIRMED connection failure or credential rejection.
+	//     It still answers OK: false, with an inconclusive advisory: ok reports a CONJUNCTION
+	//     (the credential authenticated AND the configured account passed the platform's own
+	//     check), and a check that did not complete establishes neither half as a whole. See
+	//     design/connection.go's TestResult description, which is the contract this must match.
+	//   - domain.ErrServiceDefect (with domain.ErrConnectionProbeRequestRejected, or
+	//     domain.ErrCredentialDecryptionFailed and the other resolution defects): nothing the
+	//     operator owns is at fault.
+	//   - domain.ErrConnectionNotUsable / domain.ErrNotFound and the other resolution
+	//     outcomes, passed through from the credential resolver unchanged.
+	ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error
+}
+
 // OrgReferenceVerifier is an OPTIONAL dispatcher capability: cross-check a project's stored
 // connection against the platform's OWN record of the org/account pairing it is scoped to,
 // for use by a connection-test endpoint. Discovered by type assertion like the other optional
@@ -436,8 +465,9 @@ type OrgReferenceVerifier interface {
 	// be numeric) is a REAL error too, decidable without contacting the platform at all:
 	// campaign creation on that connection is already guaranteed to fail. So is a request the
 	// platform RECEIVED and refused against THIS token's authorization — a 403. It will not
-	// start succeeding on its own, so calling it an incomplete walk would answer "healthy"
-	// for a permanently broken cross-check forever.
+	// start succeeding on its own, so calling it an incomplete walk would route a permanently
+	// broken cross-check to the retry advisory forever — OK: false either way, but an operator
+	// told to wait out an outage instead of one told what to repair.
 	//
 	// The remaining 4xx refusals (a rate limit aside) are neither: the enumeration request
 	// names no account and no organization, so a 400 or a 404 says this service built the
@@ -619,7 +649,6 @@ const (
 	opReadSettings               = "read_settings"
 	opListAccounts               = "list_accounts"
 	opListAccountCampaignMetrics = "list_account_campaign_metrics"
-	opReadAccountTotals          = "read_account_totals"
 	opSearchEmails               = "search_emails"
 	opSearchCampaign             = "search_campaign"
 	opCreateCampaign             = "create_campaign"
@@ -627,6 +656,7 @@ const (
 	opReadAudience               = "read_audience"
 	opKeywordActions             = "keyword_actions"
 	opVerifyAccountOrg           = "verify_account_org"
+	opProbeConnection            = "probe_connection"
 )
 
 // recordUpstream times one upstream platform call. It is called ONLY after the
@@ -2106,6 +2136,106 @@ func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID
 	return rows, nil
 }
 
+// ProbeConnection verifies a project's own stored connection against the platform, for the
+// connection-test endpoints (LFXV2-2665). It is the call that makes those endpoints mean
+// something: before it, six of the seven reported a broken connection as healthy because their
+// answer was "a credential blob exists in the row", not "it decrypts, authenticates, and
+// reaches the configured account".
+//
+// There is deliberately NO per-platform required-capability table here, unlike VerifyAccountOrg
+// above. That table exists because only LinkedIn's ad-account resource exposes a `reference`
+// field to cross-check, so the other platforms' silence is the designed outcome. Nothing
+// analogous is true of a credential probe: every platform this service dispatches to can be
+// asked whether its stored credential still works. So a missing dispatcher, or a registered one
+// that does not implement ConnectionProber, is UNCONDITIONALLY a wiring defect in this service.
+// Returning nil for it would restore the exact bug this work removes — a test that answers
+// OK: true having verified nothing — and the operator would have no way to tell the difference.
+//
+// ErrConnectionProbeUnwired is the reason token; ErrServiceDefect selects the typed 500. Per
+// that sentinel's contract the two are separate decisions, and the response carries no detail,
+// so the token is the only thing telling an operator reading the log that nothing they own is
+// broken and no amount of re-saving the connection will help.
+func (o *Orchestrator) ProbeConnection(ctx context.Context, projectID string, platform model.Provider) error {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return fmt.Errorf("%w: %w: no %s dispatcher is registered, so the connection could not be verified against the platform",
+			domain.ErrServiceDefect, domain.ErrConnectionProbeUnwired, platform)
+	}
+	prober, ok := d.(ConnectionProber)
+	if !ok {
+		return fmt.Errorf("%w: %w: the registered %s dispatcher does not implement ConnectionProber, so the connection could not be verified against the platform",
+			domain.ErrServiceDefect, domain.ErrConnectionProbeUnwired, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	err := prober.ProbeConnection(callCtx, projectID, platform)
+	if probeReachedThePlatform(err) {
+		o.recordUpstream(ctx, platform, opProbeConnection, start, err)
+	}
+	return err
+}
+
+// probeReachedThePlatform reports whether a ProbeConnection outcome describes work the platform
+// actually saw, and so belongs on campaign_upstream_call_duration_seconds.
+//
+// ProbeConnection is the one orchestrator call whose local guards run INSIDE the dispatcher —
+// loading the connection row, decrypting it, checking it is active, decoding the credential blob,
+// and the three id checks — so they cannot be hoisted above the timer the way every other
+// operation's are. Recording those would put near-zero-latency `error` samples on a platform that
+// was never contacted: exactly the local refusal recordUpstream's own doc says it is called after
+// the guards to avoid. A datastore outage or a batch of misconfigured rows would read as a
+// provider outage on the one series that is supposed to mean the provider.
+//
+// It excludes by naming the LOCAL outcomes rather than allow-listing the probe vocabulary,
+// because the two directions fail differently and only one of them fails safely here. An
+// allow-list drops any outcome it does not recognise, so a post-call error a future dispatcher
+// returns outside the probe vocabulary would vanish from the upstream series silently — the
+// series would simply stop seeing a real platform failure. Naming the local set keeps the default
+// on "record it": an unclassified error still lands, which is wrong in the cheap direction (a
+// visible sample for something that deserves investigation anyway) rather than the expensive one.
+//
+// The local set is closed and checkable, which is what makes that default safe: every credential
+// resolution failure in internal/dispatch/creds.go carries one of these sentinels, and
+// TestProbeLocalRefusalsCoverTheResolverVocabulary derives that list from the source so a sentinel
+// added there later fails this gate loudly instead of quietly re-entering the upstream series.
+func probeReachedThePlatform(err error) bool {
+	if err == nil {
+		return true
+	}
+	for _, local := range probeLocalRefusalSentinels {
+		if errors.Is(err, local) {
+			return false
+		}
+	}
+	return true
+}
+
+// probeLocalRefusalSentinels are the outcomes ProbeConnection can return without any request
+// having left this service.
+//
+// ErrConnectionProbeNotAttempted is the dispatcher's own marker for an outcome reached with
+// nothing sent — the verdicts decided before a request is built, and an inconclusive outcome
+// whose platform error proves the request whose failure DECIDED it was never sent (see that
+// sentinel's doc, and the ProbeNotSent predicate each platform package exposes; on a multi-leg
+// probe an earlier token request may already have reached the platform and succeeded, and the
+// suppressed sample is the error sample for the decisive leg). The rest are the credential resolver's
+// vocabulary, plus the unwired-dispatcher defect the orchestrator raises before the timer even
+// starts. ErrConnectionNotUsable is the family head for the inactive, incomplete, undecodable and
+// no-account-selected cases, which are always wrapped alongside it.
+var probeLocalRefusalSentinels = []error{
+	domain.ErrConnectionProbeNotAttempted,
+	domain.ErrConnectionProbeUnwired,
+	domain.ErrConnectionLoadFailed,
+	domain.ErrNotFound,
+	domain.ErrConnectionNotUsable,
+	domain.ErrCredentialDecryptionFailed,
+	domain.ErrCredentialsAbsent,
+	domain.ErrCredentialsMalformed,
+	domain.ErrSystemConnectionMissing,
+	domain.ErrSystemConnectionNotUsable,
+}
+
 // orgVerificationRequired names the platforms whose dispatcher MUST implement
 // OrgReferenceVerifier. Membership is a claim about the PLATFORM, not about this service's
 // wiring: LinkedIn's ad-account resource EXPOSES a `reference` field naming the sponsoring
@@ -2161,50 +2291,6 @@ func (o *Orchestrator) VerifyAccountOrg(ctx context.Context, projectID string, p
 	err := verifier.VerifyAccountOrg(callCtx, projectID, platform)
 	o.recordUpstream(ctx, platform, opVerifyAccountOrg, start, err)
 	return err
-}
-
-// errAccountTotalsContractViolation wraps ReadAccountTotals' nil-result contract-violation
-// error, unlike the repo's other seven "(nil, nil) is a contract violation" sites (see the
-// grep for "returned a nil result with no error"): those all fold into a generic upstream-
-// failure path with no severity distinction, but this one's sole caller
-// (connection_monitor.go's monitorAccount) treats any non-nil error from this function as a
-// routine, WARN-level reason to serve the row-summed fallback — the same log line an ordinary
-// timeout or 500 gets. A broken AccountTotalsReader adapter is not that: it deserves an
-// ERROR-level log distinct from "Reddit's API had a bad day," so this sentinel exists solely
-// to let the caller tell the two apart. It is deliberately unexported and local to this one
-// return path rather than a case added to unusableConnectionReason's fixed vocabulary
-// (connection.go), which classifies credential/connection failures, not adapter defects.
-var errAccountTotalsContractViolation = errors.New("account totals reader returned a nil result with no error")
-
-// ReadAccountTotals reads accountID's separately-fetched monitor totals when platform's
-// dispatcher implements AccountTotalsReader, reporting ok=false (with a nil error) when it
-// does not — that is NOT a failure, it means the caller should fall back to summing the rows
-// AccountMetricsReader already returned, exactly as connection_monitor.go does for every
-// platform but Reddit. Modeled on ReadAccountCampaignMetrics, except a missing capability is
-// expected and routine here rather than being reported through ErrAccountMetricsUnsupported:
-// AccountTotalsReader is not a per-platform monitor gate the caller must react to, it is an
-// override only Reddit needs.
-func (o *Orchestrator) ReadAccountTotals(ctx context.Context, projectID string, platform model.Provider, accountID string, days, campaignCount int) (*model.AccountMonitorTotals, bool, error) {
-	d, ok := o.dispatchers[platform]
-	if !ok {
-		return nil, false, nil
-	}
-	reader, ok := d.(AccountTotalsReader)
-	if !ok {
-		return nil, false, nil
-	}
-	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
-	defer cancel()
-	start := time.Now()
-	totals, rerr := reader.ReadAccountTotals(callCtx, projectID, platform, accountID, days, campaignCount)
-	o.recordUpstream(ctx, platform, opReadAccountTotals, start, rerr)
-	if rerr != nil {
-		return nil, true, rerr
-	}
-	if totals == nil {
-		return nil, true, fmt.Errorf("%s: %w", platform, errAccountTotalsContractViolation)
-	}
-	return totals, true, nil
 }
 
 // SearchCampaigns looks up marketing campaigns by name on platform.

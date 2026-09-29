@@ -1,0 +1,125 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package microsoft
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+)
+
+// refreshScopeObservationWindow is how long the token endpoint holds a request open waiting to
+// be cancelled. Long enough that a cancellation travelling normally arrives well inside it,
+// short enough that the detached case — which is SUPPOSED to sit here — does not slow the suite.
+// The real detached deadline is msAdsRequestTimeout, which is far longer, so nothing about
+// this window can make a detached refresh look cancelled.
+const refreshScopeObservationWindow = 500 * time.Millisecond
+
+// TestCallerScopedTokenRefresh_BindsTheRefreshToItsCaller pins both halves of the option, because
+// each half is a different bug.
+//
+// The token refresh runs in a goroutine the leader starts and nobody joins. Detached — the
+// default — it survives its caller on purpose: a shared client's other waiters are parked on that
+// one flight, and the token it mints is reused by callers that have not arrived yet. A probe's
+// client has neither: it is built inside ProbeConnection, used for one enumeration and dropped.
+// So when the orchestrator's probe deadline fires, a detached refresh keeps a goroutine, a
+// socket and a file descriptor alive for the remainder of msAdsRequestTimeout to produce a
+// token no one can read — once per probe, on every connection on the platform, and precisely when
+// Microsoft's token endpoint is the thing that is slow, which is when probes are being cancelled.
+//
+// The other half matters just as much: flipping the default would break the sharing the
+// single-flight exists for, so the test asserts the detached client still IGNORES its caller's
+// cancellation.
+func TestCallerScopedTokenRefresh_BindsTheRefreshToItsCaller(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		opts          []Option
+		wantCancelled bool
+		why           string
+	}{
+		{
+			name:          "caller-scoped, as a probe builds it",
+			opts:          []Option{WithCallerScopedTokenRefresh()},
+			wantCancelled: true,
+			why: "the refresh outlived the probe that is its only consumer, holding a goroutine and " +
+				"its connection open for the rest of msAdsRequestTimeout",
+		},
+		{
+			name:          "detached, the shared-client default",
+			opts:          nil,
+			wantCancelled: false,
+			why: "one caller's cancellation tore down a refresh the other waiters on this shared " +
+				"client are parked on — the exact failure the single-flight's detach prevents",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reached := make(chan struct{})
+			cancelled := make(chan bool, 1)
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Drain the form body first: net/http only starts the background read
+				// that notices a client hang-up — and so only cancels r.Context() —
+				// once the request body has been consumed.
+				_, _ = io.Copy(io.Discard, r.Body)
+				close(reached)
+				select {
+				case <-r.Context().Done():
+					// The server sees the client hang up, which only happens if the
+					// context the request was built from was cancelled.
+					cancelled <- true
+				case <-time.After(refreshScopeObservationWindow):
+					cancelled <- false
+					tokenHandler(w, r)
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			c := NewClient(testCreds(), testAccount(),
+				append([]Option{WithTokenURL(srv.URL), WithClock(fixedClock())}, tc.opts...)...)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, _ = c.accessTokenValue(ctx)
+			}()
+
+			// Cancel only once the refresh is genuinely in flight; cancelling earlier would
+			// be refused by accessTokenValue's own already-done guard and prove nothing.
+			//
+			// Bounded, like the two receives below it. A bare receive here hangs the whole
+			// package if a regression stops the request ever leaving this client — and under
+			// `go test -race`, which `make test` runs, that surfaces as some unrelated test
+			// timing out on a loaded runner rather than as this one failing.
+			select {
+			case <-reached:
+			case <-time.After(refreshScopeObservationWindow + 2*time.Second):
+				t.Fatal("the token endpoint was never reached, so the refresh never went in flight")
+			}
+			cancel()
+
+			// The CALLER returns promptly either way — that is the select on its own ctx, and
+			// it is not what this test is about.
+			select {
+			case <-done:
+			case <-time.After(refreshScopeObservationWindow + 2*time.Second):
+				t.Fatal("accessTokenValue did not return after its context was cancelled")
+			}
+
+			select {
+			case got := <-cancelled:
+				if got != tc.wantCancelled {
+					t.Errorf("token request cancelled = %v, want %v: %s", got, tc.wantCancelled, tc.why)
+				}
+			case <-time.After(refreshScopeObservationWindow + 2*time.Second):
+				t.Fatal("the token endpoint never reported an outcome")
+			}
+		})
+	}
+}

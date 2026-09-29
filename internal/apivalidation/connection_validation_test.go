@@ -17,6 +17,9 @@ import (
 	"testing"
 
 	connsrv "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 )
 
 func strp(s string) *string { return &s }
@@ -240,5 +243,244 @@ func TestValidateCreateGoogleAds_AccountIDIsOptionalAtTheTransport(t *testing.T)
 			},
 		}
 		assertValidation(t, connsrv.ValidateCreateGoogleAdsRequestBody(body), true, "developer_token")
+	})
+}
+
+// TestValidateGoogleAdsConnectionConfig_IDPatterns closes the gap the local review found on
+// this provider: the design declared account_id and login_customer_id as bare strings while
+// googleads.customerIDRE (`^[0-9]+$`) refuses anything but digits before a request is built.
+// A dashed id — "866-674-6580", the form the Google Ads UI DISPLAYS, and therefore the form an
+// operator copies — was storable on an active connection that could never create a campaign.
+//
+// The empty string is accepted here on purpose, and it is the one place this pattern is
+// deliberately looser than googleads.ValidateCustomerID. account_id is optional on this
+// provider because a credentials-first connection has not chosen an account yet; "" is that
+// state as the row stores it, and the dispatch path names it (reason=account_not_selected)
+// rather than treating it as a malformed id. Rejecting it at the transport would refuse the
+// documented way to un-select an account.
+func TestValidateGoogleAdsConnectionConfig_IDPatterns(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      *connsrv.GoogleAdsConnectionConfigRequestBody
+		wantErr   bool
+		errSubstr string
+	}{
+		{name: "digits", body: &connsrv.GoogleAdsConnectionConfigRequestBody{AccountID: strp("8666746580")}},
+		{name: "account_id absent (credentials-first bootstrap)", body: &connsrv.GoogleAdsConnectionConfigRequestBody{}},
+		{name: "account_id empty (un-selecting an account)", body: &connsrv.GoogleAdsConnectionConfigRequestBody{AccountID: strp("")}},
+		{name: "login_customer_id digits", body: &connsrv.GoogleAdsConnectionConfigRequestBody{AccountID: strp("1"), LoginCustomerID: strp("9746983954")}},
+		// The dashed form is the headline case: it is what the Google Ads UI shows.
+		{name: "dashed account_id", body: &connsrv.GoogleAdsConnectionConfigRequestBody{AccountID: strp("866-674-6580")}, wantErr: true, errSubstr: "account_id"},
+		{name: "padded account_id", body: &connsrv.GoogleAdsConnectionConfigRequestBody{AccountID: strp(" 8666746580")}, wantErr: true, errSubstr: "account_id"},
+		{name: "non-numeric account_id", body: &connsrv.GoogleAdsConnectionConfigRequestBody{AccountID: strp("customers/866")}, wantErr: true, errSubstr: "account_id"},
+		{name: "dashed login_customer_id", body: &connsrv.GoogleAdsConnectionConfigRequestBody{AccountID: strp("1"), LoginCustomerID: strp("974-698-3954")}, wantErr: true, errSubstr: "login_customer_id"},
+		{name: "overlong account_id", body: &connsrv.GoogleAdsConnectionConfigRequestBody{AccountID: strp(strings.Repeat("9", 65))}, wantErr: true, errSubstr: "account_id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertValidation(t, connsrv.ValidateGoogleAdsConnectionConfigRequestBody(tc.body), tc.wantErr, tc.errSubstr)
+		})
+	}
+}
+
+// TestValidateGoogleAdsConnectionConfig_AgreesWithThePlatformValidatorOnEveryNonEmptyID is the
+// drift guard for the asymmetry the test above documents. The two layers exist for different
+// reasons — Goa refuses a malformed id at the transport, googleads.ValidateCustomerID re-checks
+// because a non-HTTP caller skips Goa entirely — so they must not disagree about what a
+// MALFORMED id is. The empty string is the single deliberate exception, and it is excluded here
+// explicitly rather than by a case list that happens to omit it.
+func TestValidateGoogleAdsConnectionConfig_AgreesWithThePlatformValidatorOnEveryNonEmptyID(t *testing.T) {
+	for _, id := range []string{"8666746580", "0", "866-674-6580", " 8666746580", "8666746580 ", "abc", "customers/1", "1\n", "12.3"} {
+		t.Run(id, func(t *testing.T) {
+			designOK := connsrv.ValidateGoogleAdsConnectionConfigRequestBody(
+				&connsrv.GoogleAdsConnectionConfigRequestBody{AccountID: strp(id)}) == nil
+			platformOK := googleads.ValidateCustomerID(id) == nil
+			if designOK != platformOK {
+				t.Errorf("account_id %q: design validator accepts=%v, googleads.ValidateCustomerID accepts=%v — "+
+					"the connection-config shape check and the client's own have drifted apart", id, designOK, platformOK)
+			}
+		})
+	}
+	// State the exception rather than leaving it to an omitted case.
+	if err := connsrv.ValidateGoogleAdsConnectionConfigRequestBody(
+		&connsrv.GoogleAdsConnectionConfigRequestBody{AccountID: strp("")}); err != nil {
+		t.Errorf("the empty account_id must stay accepted at the transport: it is the un-selected state a "+
+			"credentials-first connection is created in, not a malformed id: %v", err)
+	}
+}
+
+// TestValidateRedditAdsConnectionConfig_AccountIDPattern closes the same gap on Reddit, where
+// the charset is a path-safety boundary rather than a formatting rule: reddit.accountIDRe
+// (`^[A-Za-z0-9_]+$`) exists because the id is CONCATENATED into every request path
+// ("/ad_accounts/"+accountID+"/..."), so an id carrying "/" or ".." would address a different
+// resource. Required("account_id") only checked that the KEY was present, so `""` — and a
+// slashed id — were storable on an active connection.
+//
+// Unlike Google Ads and Meta, Reddit has no credentials-first state, so "" here is a malformed
+// value rather than a deferred selection and is rejected.
+func TestValidateRedditAdsConnectionConfig_AccountIDPattern(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      *connsrv.RedditAdsConnectionConfigRequestBody
+		wantErr   bool
+		errSubstr string
+	}{
+		{name: "the LF advertiser id", body: &connsrv.RedditAdsConnectionConfigRequestBody{AccountID: strp("t2_gv9wtbfa")}},
+		{name: "missing account_id", body: &connsrv.RedditAdsConnectionConfigRequestBody{}, wantErr: true, errSubstr: "account_id"},
+		{name: "empty account_id", body: &connsrv.RedditAdsConnectionConfigRequestBody{AccountID: strp("")}, wantErr: true, errSubstr: "account_id"},
+		{name: "path traversal", body: &connsrv.RedditAdsConnectionConfigRequestBody{AccountID: strp("../t2_other")}, wantErr: true, errSubstr: "account_id"},
+		{name: "extra path segment", body: &connsrv.RedditAdsConnectionConfigRequestBody{AccountID: strp("t2_abc/campaigns")}, wantErr: true, errSubstr: "account_id"},
+		{name: "padded", body: &connsrv.RedditAdsConnectionConfigRequestBody{AccountID: strp(" t2_gv9wtbfa")}, wantErr: true, errSubstr: "account_id"},
+		{name: "overlong", body: &connsrv.RedditAdsConnectionConfigRequestBody{AccountID: strp(strings.Repeat("a", 65))}, wantErr: true, errSubstr: "account_id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertValidation(t, connsrv.ValidateRedditAdsConnectionConfigRequestBody(tc.body), tc.wantErr, tc.errSubstr)
+		})
+	}
+	// Drift guard against the client's own rule, which is the one that protects the path.
+	for _, id := range []string{"t2_gv9wtbfa", "", "../x", "t2_abc/campaigns", " t2_abc", "t2-abc", "t2_abc\n"} {
+		designOK := connsrv.ValidateRedditAdsConnectionConfigRequestBody(
+			&connsrv.RedditAdsConnectionConfigRequestBody{AccountID: strp(id)}) == nil
+		platformOK := reddit.ValidateAccountID(id) == nil
+		if designOK != platformOK {
+			t.Errorf("account_id %q: design validator accepts=%v, reddit.ValidateAccountID accepts=%v — "+
+				"the two path-safety checks have drifted apart", id, designOK, platformOK)
+		}
+	}
+}
+
+// TestValidateMicrosoftAdsConnectionConfig_IDPatterns extends the same fix to the provider the
+// review did not flag but which carries the identical defect — and says so in its own source:
+// microsoft.accountIDRE's comment reads "The connection's account_id is user-supplied and its
+// Goa design only checks presence, so it must be validated here before being placed in a header
+// — a padded/dashed id yields an invalid request, and control characters could inject a header."
+// Both ids travel as REQUEST HEADERS (CustomerAccountId, CustomerId), so this is a header-
+// injection boundary.
+//
+// customer_id admits "" and account_id does not, and the asymmetry is the providers' own:
+// microsoft.ValidateCustomerID treats an empty customer_id as "no customer configured" — a
+// supported state in which discoveryCustomerIDs walks every customer the credential reaches —
+// while account_id is Required and has no unselected state on this provider.
+func TestValidateMicrosoftAdsConnectionConfig_IDPatterns(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      *connsrv.MicrosoftAdsConnectionConfigRequestBody
+		wantErr   bool
+		errSubstr string
+	}{
+		{name: "digits", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567"), CustomerID: strp("9999999")}},
+		{name: "customer_id absent", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567")}},
+		{name: "customer_id empty (no customer configured)", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567"), CustomerID: strp("")}},
+		{name: "missing account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{}, wantErr: true, errSubstr: "account_id"},
+		{name: "empty account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("")}, wantErr: true, errSubstr: "account_id"},
+		{name: "non-numeric customer_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567"), CustomerID: strp("abc")}, wantErr: true, errSubstr: "customer_id"},
+		// A header-injection attempt is the reason the charset is pinned at all.
+		{name: "header injection in account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("123\r\nX-Injected: 1")}, wantErr: true, errSubstr: "account_id"},
+		{name: "dashed account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("123-4567")}, wantErr: true, errSubstr: "account_id"},
+		{name: "overlong account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp(strings.Repeat("9", 65))}, wantErr: true, errSubstr: "account_id"},
+		// account_id is an IDENTITY as well as header bytes, and carries customer_id's rule:
+		// numberID refuses these in ListAdAccounts, so the API must not persist them either.
+		{name: "zero account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("0")}, wantErr: true, errSubstr: "account_id"},
+		{name: "leading-zero account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("007")}, wantErr: true, errSubstr: "account_id"},
+		{name: "20-digit account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp(strings.Repeat("9", 20))}, wantErr: true, errSubstr: "account_id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertValidation(t, connsrv.ValidateMicrosoftAdsConnectionConfigRequestBody(tc.body), tc.wantErr, tc.errSubstr)
+		})
+	}
+	accountIDAccepted := func(id string) bool {
+		return connsrv.ValidateMicrosoftAdsConnectionConfigRequestBody(
+			&connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp(id)}) == nil
+	}
+
+	// The same drift guard for account_id, against microsoft.ValidateAccountID — the rule
+	// every request path applies to this field once the row is stored. "" is in the list and
+	// both layers must refuse it: account_id has no unselected state on this provider.
+	for _, id := range []string{"", "1234567", "0", "-1", "1.5", "abc", "1e3", "007", "99999999999999999999999"} {
+		if designOK, platformOK := accountIDAccepted(id), microsoft.ValidateAccountID(id) == nil; designOK != platformOK {
+			t.Errorf("account_id %q: design validator accepts=%v, microsoft.ValidateAccountID accepts=%v — "+
+				"the transport check and the client's own have drifted apart", id, designOK, platformOK)
+		}
+	}
+
+	t.Run("a 19-digit account_id above MaxInt64 is now refused at BOTH layers", func(t *testing.T) {
+		// This used to be asserted as a deliberate residual gap: the pattern admitted the value
+		// and only ValidateAccountID refused it, so the API could store an id on an ACTIVE
+		// connection that every probe and dispatch deterministically rejects. A Pattern still
+		// cannot express the int64 range, so the design closes it by LENGTH instead — eighteen
+		// digits, every one of which is a valid int64.
+		const overflow = "9999999999999999999" // 19 digits, > math.MaxInt64
+		if accountIDAccepted(overflow) {
+			t.Error("the transport accepted an account_id above MaxInt64; it can never dispatch, and " +
+				"storing it on an active connection is the defect the 18-digit bound exists to prevent")
+		}
+		if err := microsoft.ValidateAccountID(overflow); err == nil {
+			t.Error("ValidateAccountID must still reject an out-of-int64-range account id — the design " +
+				"pattern binds HTTP alone, and bootstrap, migrations and pre-pattern rows never met it")
+		}
+	})
+
+	customerIDAccepted := func(id string) bool {
+		return connsrv.ValidateMicrosoftAdsConnectionConfigRequestBody(
+			&connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567"), CustomerID: strp(id)}) == nil
+	}
+
+	// Drift guard for customer_id against microsoft.ValidateCustomerID, the rule the probe
+	// path applies to the SAME field. The empty string is in this list rather than carved out
+	// of it: both layers accept it, because "no customer configured" is a real state on this
+	// provider and neither layer may treat it as malformed.
+	for _, id := range []string{"", "9999999", "0", "-1", "1.5", "abc", "1e3", "007", "99999999999999999999999"} {
+		if designOK, platformOK := customerIDAccepted(id), microsoft.ValidateCustomerID(id) == nil; designOK != platformOK {
+			t.Errorf("customer_id %q: design validator accepts=%v, microsoft.ValidateCustomerID accepts=%v — "+
+				"the transport check and the probe's own have drifted apart", id, designOK, platformOK)
+		}
+	}
+
+	// The two places the layers deliberately do NOT match, asserted rather than omitted from
+	// the list above — an omitted case looks like an oversight and invites someone to "fix"
+	// the pattern in the wrong direction.
+	t.Run("a padded id is refused at the transport even though ValidateCustomerID trims", func(t *testing.T) {
+		// ValidateCustomerID trims because it reads a STORED value, which a non-HTTP caller
+		// may have written with whitespace. The transport is the outer, stricter layer and has
+		// no reason to accept padding — being stricter here cannot let a bad id through.
+		if customerIDAccepted(" 9999999") {
+			t.Error("the transport accepted a padded customer_id; no other provider's id pattern tolerates padding")
+		}
+		if err := microsoft.ValidateCustomerID(" 9999999"); err != nil {
+			t.Errorf("ValidateCustomerID must keep trimming a stored value: %v", err)
+		}
+	})
+	t.Run("a 19-digit customer_id above MaxInt64 is now refused at BOTH layers", func(t *testing.T) {
+		const overflow = "9999999999999999999" // 19 digits, > math.MaxInt64
+		if customerIDAccepted(overflow) {
+			t.Error("the transport accepted a customer_id above MaxInt64; the probe refuses it, so the " +
+				"API would be storing a value it then reports the connection as broken for")
+		}
+		if err := microsoft.ValidateCustomerID(overflow); err == nil {
+			t.Error("ValidateCustomerID must still reject an out-of-int64-range customer id — removing it " +
+				"in favour of \"the design already validates that\" would reopen the gap for every " +
+				"non-HTTP writer, and the probe's verdict depends on it")
+		}
+	})
+	t.Run("a 19-digit value at or below MaxInt64 is the new deliberate mismatch", func(t *testing.T) {
+		// The cost of closing the range gap by length: this value IS a valid int64, so both
+		// runtime validators accept it, and the 18-digit pattern does not. Asserted rather than
+		// left implicit so nobody "fixes" the pattern back to nineteen digits on the grounds
+		// that it rejects something the platform layer allows — that is the trade, and the
+		// range it gives up (10^18 .. MaxInt64) names no Microsoft account, which are seven to
+		// nine digits.
+		const nineteenOK = "1234567890123456789" // 19 digits, < math.MaxInt64
+		if accountIDAccepted(nineteenOK) || customerIDAccepted(nineteenOK) {
+			t.Error("the pattern admitted a 19-digit id; it is bounded at 18 so that every value it " +
+				"accepts is a valid int64")
+		}
+		if err := microsoft.ValidateAccountID(nineteenOK); err != nil {
+			t.Errorf("ValidateAccountID must still accept a valid int64: %v", err)
+		}
+		if err := microsoft.ValidateCustomerID(nineteenOK); err != nil {
+			t.Errorf("ValidateCustomerID must still accept a valid int64: %v", err)
+		}
 	})
 }

@@ -1,0 +1,253 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package googleads
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+// reachServer answers the three endpoints ProbeAccountReach can touch: the token endpoint,
+// customers:listAccessibleCustomers (flat mode's first leg), and googleAds:search (the
+// customer_client read, used by both modes). searchRows is the payload the search returns;
+// searchPath records which customer the search ran under, because in flat mode running it
+// under the wrong customer would be a silent behaviour change.
+type reachServer struct {
+	accessible []string
+	searchRows []map[string]any
+	searchCode int
+
+	// The handler runs on the httptest server's own goroutines, so what it records is handed
+	// to the asserting goroutine under this mutex rather than read straight off the fields —
+	// see docs/reviews/knowledge-base/test-hygiene.md, httptest-handler-state-needs-
+	// synchronized-handoff. Without it -race can flag a passing test, and the assertion is
+	// reading whatever the compiler felt like caching.
+	mu          sync.Mutex
+	searchPath  string
+	searchQuery string
+	searches    int
+}
+
+// reachObserved is a snapshot of what the handler recorded, taken under the mutex so the
+// assertions read a consistent set of values rather than three separately-racing fields.
+type reachObserved struct {
+	path     string
+	query    string
+	searches int
+}
+
+func (rs *reachServer) observed() reachObserved {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return reachObserved{path: rs.searchPath, query: rs.searchQuery, searches: rs.searches}
+}
+
+func (rs *reachServer) start(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/customers:listAccessibleCustomers"):
+			_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: rs.accessible})
+		case strings.HasSuffix(r.URL.Path, "/googleAds:search"):
+			var body searchRequest
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			rs.mu.Lock()
+			rs.searches++
+			rs.searchPath = r.URL.Path
+			rs.searchQuery = body.Query
+			rs.mu.Unlock()
+			if rs.searchCode != 0 {
+				w.WriteHeader(rs.searchCode)
+				_, _ = w.Write([]byte(`{"error":{"code":500,"message":"boom"}}`))
+				return
+			}
+			rows := rs.searchRows
+			if rows == nil {
+				rows = []map[string]any{}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"results": rows})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func clientRow(id string, manager bool, status string) map[string]any {
+	return map[string]any{"customerClient": map[string]any{
+		"id": id, "descriptiveName": "acct", "manager": manager, "status": status,
+	}}
+}
+
+// customerRow is what flat mode's second leg reads: the account's own `customer` record,
+// which nests under a DIFFERENT key from customerClient. The two helpers are kept apart on
+// purpose — a test that fed a customer_client row to the flat-mode read would decode a zero
+// value and quietly assert the wrong resource's contract.
+func customerRow(id string, manager bool, status string) map[string]any {
+	return map[string]any{"customer": map[string]any{
+		"id": id, "manager": manager, "status": status,
+	}}
+}
+
+func reachClient(t *testing.T, srv *httptest.Server, loginCustomerID string) *Client {
+	t.Helper()
+	return NewClient(
+		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
+		AccountConfig{CustomerID: "1234567890", LoginCustomerID: loginCustomerID, Label: "Test"},
+		WithBaseURL(srv.URL),
+		WithTokenURL(srv.URL+"/token"),
+		WithAPIVersion("v23"),
+		WithClock(func() time.Time { return time.Unix(0, 0) }),
+	)
+}
+
+// TestProbeAccountReach_FlatMode pins the second leg flat mode did not used to have.
+//
+// customers:listAccessibleCustomers is UNFILTERED and carries neither the manager flag nor the
+// status, so membership alone answered AccountReachable for an account a campaign can never run
+// in. A manager account configured as account_id therefore tested green and failed at the first
+// create — the production failure this endpoint exists to catch, recreated by the endpoint
+// meant to catch it. Presence is now followed by the account's own `customer` record, which
+// carries the same pair manager mode reads from the hierarchy walk.
+//
+// The resource matters as much as the pair. customer_client is documented as existing for
+// MANAGER customers, so reading it under the ordinary direct account flat mode serves rests
+// on an unpromised behaviour; an empty result there turns a working connection amber. These
+// cases therefore answer with `customer` rows and assert the query names that resource, so a
+// silent drift back to customer_client fails here rather than in production.
+func TestProbeAccountReach_FlatMode(t *testing.T) {
+	const configured = "1234567890"
+
+	cases := []struct {
+		name string
+		rows []map[string]any
+		want AccountReach
+	}{
+		{"an enabled non-manager is reachable", []map[string]any{customerRow(configured, false, "ENABLED")}, AccountReachable},
+		{"a manager account is not somewhere a campaign can run", []map[string]any{customerRow(configured, true, "ENABLED")}, AccountIsManager},
+		{"a suspended account is reached but not enabled", []map[string]any{customerRow(configured, false, "SUSPENDED")}, AccountNotEnabled},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rs := &reachServer{accessible: []string{"customers/" + configured}, searchRows: tc.rows}
+			srv := rs.start(t)
+			got, err := reachClient(t, srv, "").ProbeAccountReach(context.Background(), configured)
+			if err != nil {
+				t.Fatalf("ProbeAccountReach: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("reach = %v, want %v", got, tc.want)
+			}
+			obs := rs.observed()
+			if obs.searches != 1 {
+				t.Errorf("%d searches; flat mode must read the account's own row exactly once", obs.searches)
+			}
+			// Under the CONFIGURED customer, not under some manager — flat mode has none.
+			if !strings.Contains(obs.path, "/customers/"+configured+"/googleAds:search") {
+				t.Errorf("search ran at %q, want it scoped to the configured customer", obs.path)
+			}
+			// The account's own record, not the manager-only link resource. `FROM customer`
+			// is already scoped to the customer the search runs under, so it needs no WHERE —
+			// and it is defined for a direct account, which customer_client is not.
+			if !strings.Contains(obs.query, "FROM customer") || strings.Contains(obs.query, "customer_client") {
+				t.Errorf("query = %q, want the account's own customer record and not customer_client", obs.query)
+			}
+		})
+	}
+
+	t.Run("an account absent from the enumeration is unreachable, and costs no second call", func(t *testing.T) {
+		rs := &reachServer{accessible: []string{"customers/9999999999"}}
+		srv := rs.start(t)
+		got, err := reachClient(t, srv, "").ProbeAccountReach(context.Background(), configured)
+		if err != nil {
+			t.Fatalf("ProbeAccountReach: %v", err)
+		}
+		if got != AccountUnreachable {
+			t.Errorf("reach = %v, want AccountUnreachable", got)
+		}
+		if obs := rs.observed(); obs.searches != 0 {
+			t.Error("the properties read ran for an account the credential does not reach")
+		}
+	})
+
+	// The honest answer for "reached, properties unknown". AccountReachable would be a success
+	// nothing established, and AccountUnreachable a confirmed verdict contradicting the
+	// enumeration that just named the account — so this leaves as an error, which
+	// ProbeInconclusive classifies as inconclusive by its default for an unrecognised error.
+	t.Run("a missing self row is inconclusive, not a verdict", func(t *testing.T) {
+		rs := &reachServer{accessible: []string{"customers/" + configured}, searchRows: []map[string]any{}}
+		srv := rs.start(t)
+		got, err := reachClient(t, srv, "").ProbeAccountReach(context.Background(), configured)
+		if err == nil {
+			t.Fatalf("reach = %v with no error; an unestablished property must not read as a verdict", got)
+		}
+		if got != AccountUnreachable {
+			t.Errorf("reach = %v alongside an error; the zero value is the only safe pairing", got)
+		}
+		if !ProbeInconclusive(err) {
+			t.Errorf("err = %v is not inconclusive; it would become a confirmed answer about the connection", err)
+		}
+		if ProbeCredentialRejected(err) {
+			t.Errorf("err = %v reads as a credential refusal; nothing here evaluated the credential", err)
+		}
+	})
+
+	t.Run("a 5xx on the properties read stays inconclusive", func(t *testing.T) {
+		rs := &reachServer{accessible: []string{"customers/" + configured}, searchCode: http.StatusInternalServerError}
+		srv := rs.start(t)
+		_, err := reachClient(t, srv, "").ProbeAccountReach(context.Background(), configured)
+		if err == nil {
+			t.Fatal("a 5xx on the second leg must not be swallowed into a verdict")
+		}
+		if !ProbeInconclusive(err) {
+			t.Errorf("err = %v is not inconclusive", err)
+		}
+	})
+}
+
+// TestProbeAccountReach_ManagerMode is the regression guard on the mode flat mode now matches:
+// the walk is unfiltered, so a manager or non-enabled account is reported as what it IS rather
+// than vanishing into an absence and being reported as unreachable.
+func TestProbeAccountReach_ManagerMode(t *testing.T) {
+	const configured = "1234567890"
+	const manager = "5555555555"
+
+	cases := []struct {
+		name string
+		rows []map[string]any
+		want AccountReach
+	}{
+		{"enabled non-manager", []map[string]any{clientRow(configured, false, "ENABLED")}, AccountReachable},
+		{"manager", []map[string]any{clientRow(configured, true, "ENABLED")}, AccountIsManager},
+		{"cancelled", []map[string]any{clientRow(configured, false, "CANCELED")}, AccountNotEnabled},
+		{"absent from the hierarchy", []map[string]any{clientRow("9999999999", false, "ENABLED")}, AccountUnreachable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rs := &reachServer{searchRows: tc.rows}
+			srv := rs.start(t)
+			got, err := reachClient(t, srv, manager).ProbeAccountReach(context.Background(), configured)
+			if err != nil {
+				t.Fatalf("ProbeAccountReach: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("reach = %v, want %v", got, tc.want)
+			}
+			if obs := rs.observed(); !strings.Contains(obs.path, "/customers/"+manager+"/googleAds:search") {
+				t.Errorf("search ran at %q, want it scoped to the manager", obs.path)
+			}
+		})
+	}
+}
