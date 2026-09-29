@@ -260,8 +260,9 @@ Boundaries the table implies, stated so they are not inferred the other way:
 - **Project-mode scanners ignore `FILTER_REGEX_EXCLUDE`.** secretlint runs in
   MegaLinter's `project` CLI lint mode, where the filter-regex variables do not
   apply (`docs/knowledge/architecture/megalinter-secrets.md:64-66`), and gitleaks
-  scans committed content governed only by `.gitleaksignore`
-  (`megalinter-secrets.md:31`); treat any other `REPOSITORY_*` linter the same way
+  scans committed content subject to its own `.gitleaks.toml` allowlists (test
+  files, `go.mod`/`go.sum`, `CLAUDE.md`; `megalinter-secrets.md:22-31`) and
+  `.gitleaksignore` fingerprints; treat any other `REPOSITORY_*` linter the same way
   only after checking its own lint mode in MegaLinter's docs. KICS carries its
   own `--exclude-paths="gen/*"` (`.mega-linter.yml:31-32`) and `.gitleaksignore:6`
   fingerprints a real hit inside `gen/`. Each scanner's coverage is set by its own
