@@ -1211,27 +1211,76 @@ func TestRejectCredentialQueryParams_FailsClosedOnAnUnparseableQuery(t *testing.
 	}
 }
 
-// TestRejectCredentialQueryParams_BoundsTheKeyItNames keeps both halves of the
-// contract at once. The KEY is named because the operator cannot find the offending
-// parameter otherwise — but "key" is whatever sits left of the first `=`, and a URL
-// ending in a bare `?<token>` has no `=`, so the whole token becomes the key. It is
-// truncated and stripped of control characters rather than dropped.
-func TestRejectCredentialQueryParams_BoundsTheKeyItNames(t *testing.T) {
+// TestRejectCredentialQueryParams_NamesRealKeysAndRedactsBareOnes pins the split that
+// decides whether a key may be reproduced at all. A key written as `name=value` IS a
+// parameter name — the secret is the value, which the parser holds separately and which
+// is never rendered — so it is named, because the operator cannot find the offending
+// parameter otherwise. A BARE component has no `=` behind it and is therefore not a name:
+// the whole run landed in the key position and may be the credential itself, so it is
+// named only as a category. Truncating it would bound the leak without redacting it.
+func TestRejectCredentialQueryParams_NamesRealKeysAndRedactsBareOnes(t *testing.T) {
 	t.Parallel()
 
-	token := "oauth_token_" + strings.Repeat("A", 300)
-	err := rejectCredentialQueryParams("https://sched.lf.org/kc?" + token)
+	bare := "oauth_token_" + strings.Repeat("A", 300)
+	err := rejectCredentialQueryParams("https://sched.lf.org/kc?" + bare)
 	if err == nil {
-		t.Fatal("a bare credential-shaped query key was cleared for publication")
+		t.Fatal("a bare credential-shaped query component was cleared for publication")
 	}
-	if strings.Contains(err.Error(), token) {
-		t.Error("the refusal reproduces the whole caller-controlled key; it must be truncated")
+	// No PREFIX of the bare token may survive, however short — a credential prefix is
+	// still credential material. 12 runes is well inside the old 40-rune bound, so this
+	// assertion fails against truncation-only behaviour.
+	if strings.Contains(err.Error(), bare[:12]) {
+		t.Errorf("the refusal echoes part of a bare caller-controlled token: %v", err)
 	}
-	if !strings.Contains(err.Error(), "oauth_token") {
-		t.Errorf("the refusal must still name enough of the key to be actionable, got: %v", err)
+
+	named := rejectCredentialQueryParams("https://sched.lf.org/kc?oauth_token=s3cr3t")
+	if named == nil {
+		t.Fatal("a credential-shaped query parameter was cleared for publication")
 	}
+	if !strings.Contains(named.Error(), "oauth_token") {
+		t.Errorf("a real parameter name must be named to make the refusal actionable, got: %v", named)
+	}
+	if strings.Contains(named.Error(), "s3cr3t") {
+		t.Errorf("the refusal rendered the parameter VALUE, which is the secret: %v", named)
+	}
+
+	// A real name is still untrusted text: bounded, and stripped of anything that could
+	// forge structure in the log line it lands in.
 	if got := safeQueryKeyForError("a\x00b\nc"); strings.ContainsAny(got, "\x00\n") {
 		t.Errorf("control characters survived into an error that reaches the log: %q", got)
+	}
+	long := strings.Repeat("k", 300)
+	if got := safeQueryKeyForError(long); len([]rune(got)) > 41 {
+		t.Errorf("an over-long parameter name was not bounded: %d runes", len([]rune(got)))
+	}
+}
+
+// TestRejectCredentialQueryParams_RejectsEmbeddedUserinfo covers the hole the
+// query-only screen left wide open: validateRegistrationURL refuses userinfo, but a
+// link the caller pasted into their OWN copy never reaches that validator, and a URL
+// like https://user:password@host/path has no query at all — so it passed a screen that
+// only ever read query keys, and was published verbatim.
+func TestRejectCredentialQueryParams_RejectsEmbeddedUserinfo(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		"https://user:password@example.com/path",
+		"https://deploykey@example.com/path?utm_source=x",
+	} {
+		err := rejectCredentialQueryParams(raw)
+		if err == nil {
+			t.Errorf("a URL with embedded userinfo was cleared for publication: %s", raw)
+			continue
+		}
+		if strings.Contains(err.Error(), "password") || strings.Contains(err.Error(), "deploykey") {
+			t.Errorf("the refusal reproduced the embedded credential: %v", err)
+		}
+	}
+
+	// The whole point is that this runs on composed text, not only on the registration
+	// URL, so the same link inside caller copy must be refused too.
+	if err := rejectCredentialQueryParamsInText("Register now https://user:password@example.com/path today"); err == nil {
+		t.Error("userinfo inside caller-supplied tweet copy was cleared for publication")
 	}
 }
 
@@ -1315,5 +1364,106 @@ func TestResolvePromotableUser_FullPageWithNoUsableCursorIsRefused(t *testing.T)
 		t.Fatal("reported a pinned user absent from a list that was never confirmed complete")
 	} else if !strings.Contains(err.Error(), "cannot be confirmed complete") {
 		t.Errorf("error should say the list is unconfirmed, got: %v", err)
+	}
+}
+
+// TestResolvePromotableUser_AbsentDataFieldIsRefused pins the difference between an
+// empty page and a MISSING one. `{"data":[]}` is X saying there are no more users;
+// `{}` or `{"data":null}` is X not answering, and reading the second as the first is
+// how the single user seen on page one gets auto-selected off an unconfirmed list —
+// publishing a tweet under a handle the caller never chose. findByName already refuses
+// this shape; identity selection has strictly more to lose than a duplicate lookup.
+func TestResolvePromotableUser_AbsentDataFieldIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for name, terminal := range map[string]string{
+		"absent data field": `{"next_cursor":null}`,
+		"explicit null":     `{"data":null,"next_cursor":null}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var calls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls++
+				if calls == 1 {
+					// A full page, so the walk is obliged to continue — and one user,
+					// so a wrongly-cleared terminal page would auto-select it.
+					var b strings.Builder
+					b.WriteString(`{"data":[{"user_id":"u1"}`)
+					for i := 1; i < listPageSize; i++ {
+						fmt.Fprintf(&b, `,{"user_id":"u%d"}`, i)
+					}
+					b.WriteString(`],"next_cursor":"c2"}`)
+					_, _ = w.Write([]byte(b.String()))
+					return
+				}
+				_, _ = w.Write([]byte(terminal))
+			}))
+			defer srv.Close()
+
+			c := newAuthorTweetTestClient(srv.URL)
+			if _, err := c.resolvePromotableUser(context.Background(), ""); err == nil {
+				t.Fatal("a page with no data field was read as an empty page and the list concluded")
+			} else if !strings.Contains(err.Error(), "no data field") {
+				t.Errorf("error should name the missing data field, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestBuildTwitterUTMURL_FailsClosedOnAnUnreadableQuery covers the same u.Query() trap
+// one call site away from where it was first fixed, where it is worse: the unreadable
+// pairs are not merely invisible to the credential screen, they are OVERWRITTEN when
+// the re-encoded query replaces RawQuery. A brief would have been created with its
+// routing parameters silently dropped, sending real click traffic to the wrong page —
+// and the credential screen downstream would have found nothing left to object to.
+func TestBuildTwitterUTMURL_FailsClosedOnAnUnreadableQuery(t *testing.T) {
+	t.Parallel()
+
+	in := baseAuthorInput("Join us")
+	in.RegistrationURL = "https://sched.lf.org/kc?ref=partner;session_token=s3cr3t"
+
+	got, err := buildTwitterUTMURL(in)
+	if err == nil {
+		t.Fatalf("an unreadable registration query was silently rewritten into %q", got)
+	}
+	if strings.Contains(err.Error(), "s3cr3t") {
+		t.Errorf("the refusal reproduced the credential it was refusing: %v", err)
+	}
+}
+
+// TestWeightedTweetLen_BMPEmojiSequencesAndDecomposedText guards the OVER-count
+// direction, the one the concept file says no retry fixes and no error explains.
+func TestWeightedTweetLen_BMPEmojiSequencesAndDecomposedText(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		in   string
+		want int
+	}{
+		// U+270A is BMP and carries NO U+FE0F before its skin-tone modifier; X charges
+		// 2 for the whole sequence, a per-rune pass charged 4.
+		"BMP base with skin tone": {"✊\U0001F3FD", 2},
+		// A keycap without the optional variation selector: digit + U+20E3.
+		"bare keycap": {"1⃣", 2},
+		// Still one cluster when the selector IS present, and still 2.
+		"keycap with selector": {"1️⃣", 2},
+		// Decomposed "é" is two runes and one character to X after NFC.
+		"decomposed accent": {"e\u0301", 1},
+		// Precomposed must agree with decomposed — that is the whole point of NFC.
+		"precomposed accent": {"\u00e9", 1},
+		// Two decomposed characters, to catch a fold that only handles the first.
+		"decomposed pair": {"e\u0301a\u0301", 2},
+		// A bare BMP codepoint with no request stays weight 1, unchanged.
+		"bare copyright": {"©", 1},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := weightedTweetLen(tc.in); got != tc.want {
+				t.Errorf("weightedTweetLen(%q) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
 	}
 }

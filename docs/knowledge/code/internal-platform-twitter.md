@@ -292,8 +292,24 @@ collapses an emoji presentation sequence into ONE 2-weight cluster
 (`emojiClusterLen`) rather than charging 2 per codepoint: a skin-tone modifier, a
 ZWJ family, a keycap and a country flag each cost 2 in total, where a naive
 per-rune pass would have charged a family sequence 14. A BMP codepoint starts a
-cluster only when U+FE0F requests emoji presentation, so a bare `©` stays weight
-1 and `©️` is one 2-weight cluster.
+cluster only when it ASKS to be an emoji, so a bare `©` stays weight 1 and `©️`
+is one 2-weight cluster — but U+FE0F is not the only way it asks. A skin-tone
+modifier or an enclosing keycap directly after a BMP base is itself the request:
+`✊🏽` is U+270A followed by U+1F3FD with NO variation selector between them, and
+`1⃣` is a digit followed by U+20E3. Requiring U+FE0F saw neither sequence and
+charged 2 per codepoint — 4 for a fist X charges 2 for — which is the OVER-count
+direction this whole paragraph exists to prevent. Reading a modifier as a request
+cannot err the other way: a modifier after a base that is not really an emoji is
+malformed text, and folding it into one cluster charges 2 where the per-rune pass
+charged 3, still downward.
+
+The count is taken over the NFC-normalised text, as twitter-text does, because X
+weighs the normalised form and a guard is only worth having if it counts what X
+counts. A decomposed `é` (U+0065 U+0301) is two runes here and one character to
+X. Normalising is conservative by construction — NFC composition never lengthens
+a string in runes — and it is used for COUNTING ONLY: the text published is the
+caller's own bytes, because silently rewriting an operator's copy is not this
+function's business.
 
 A second, much looser cap bounds the RAW size of the composed text
 (`maxTweetRawBytes`, 8 KiB). The weighted cap is no bound on raw size at all —
@@ -368,20 +384,39 @@ decoded. A query Go refuses to decode — an unescaped `;` separator, a bad esca
 — therefore arrived as an empty map, and the screen cleared a URL whose
 parameters it had never read.
 
-The error names the offending KEY and never its value: a parameter name is not
-the secret, and it is what the operator needs to fix the brief. But "key" is
-whatever sits left of the first `=`, and a URL ending in a bare `?eyJhbGciOi…`
-has no `=` at all, so the whole token lands in the key position — hence
+The error names the offending KEY and never its value — but only when that key is
+really a name. The reasoning holds because the secret is the VALUE, which the
+parser holds separately and which is never rendered; it fails entirely for a URL
+ending in a bare `?eyJhbGciOi…`, which has no `=` at all, so the whole token lands
+in the key position. Bounding that is not redacting it: a credential prefix is
+still credential material. So the two cases are split.
+`queryKeysWrittenWithAValue` re-reads the raw query — `url.ParseQuery` cannot
+answer this, giving the empty string for the value of both `?token=` and `?token`
+— and only a key the caller actually wrote as `name=value` is rendered, through
 `safeQueryKeyForError`, which strips control characters and truncates by rune
-before the key reaches an error that is persisted and logged. The check runs in
-the up-front block so the refusal costs a corrected brief rather than an orphaned
-campaign.
+before the name reaches an error that is persisted and logged. A bare component
+is named as a CATEGORY and never echoed. The check runs in the up-front block so
+the refusal costs a corrected brief rather than an orphaned campaign.
+
+USERINFO is refused outright, before the query is read at all.
+`validateRegistrationURL` already rejects `https://user:password@host/…`, but a
+link the caller pasted into their own copy never passes through that validator,
+and this gate read only query keys — so an embedded credential in a URL with no
+query string at all was published verbatim. Neither half of the userinfo is named
+in the refusal; the URL is redacted, which is what locates the offending link
+without the error becoming the leak it exists to prevent.
 
 `buildTwitterUTMURL` diverges from `displayTwitterUtmURL` in one way that
 matters: it preserves the registration URL's own pre-existing query parameters
 verbatim alongside the UTM ones, because this URL is the ad's actual click
 destination and those parameters are frequently what routes the visitor.
 The display form strips them because its job is safe persistence, not routing.
+That query is parsed with `url.ParseQuery` and fails CLOSED on its error, for the
+same reason the credential screen does and with more at stake: here the pairs are
+not merely invisible, they are OVERWRITTEN, because the re-encoded query replaces
+`RawQuery` wholesale. A registration URL carrying `?ref=partner;session_token=…`
+would have lost its routing parameters silently, sent real click traffic to the
+wrong page, and reached the credential screen with nothing left to object to.
 The fragment is dropped in both — it never reaches a server, so it cannot carry
 attribution and only widens what gets published.
 

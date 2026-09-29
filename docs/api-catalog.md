@@ -911,8 +911,15 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   `JSESSIONID`, … in any
                                   case/separator spelling, compounds included). A query string
                                   that cannot be parsed is refused rather than read as having no
-                                  parameters. The error names the offending KEY — bounded and
-                                  stripped of control characters — never its value. Routing and
+                                  parameters. A URL carrying embedded userinfo
+                                  (`https://user:pass@host/…`) is refused whether or not it has a
+                                  query, which closes the gap that the registration URL's own
+                                  userinfo check never covered links pasted into caller copy. The
+                                  error names the offending KEY — bounded and stripped of control
+                                  characters — only when the caller wrote it as `name=value`,
+                                  where the name cannot be the secret; a BARE query component with
+                                  no `=` may itself be the credential and is named only as a
+                                  category, never echoed. Values are never rendered. Routing and
                                   attribution parameters are unaffected, `code` and `pin` included
                                   — a discount code is not a credential.
                                   The authored tweet is ALWAYS promoted-only
@@ -960,7 +967,11 @@ a 4xx at connection creation rather than surfacing as an asynchronous dispatch f
 
 Destination URL: the ad points at the brief's registration URL. The X client validates it before any
 upstream create — it must be an absolute **http/https** URL with a real hostname and carry NO
-embedded userinfo/credentials; a violation fails the dispatch job pre-create. Validation errors
+embedded userinfo/credentials; a violation fails the dispatch job pre-create. The same userinfo
+rejection now also applies to every URL found in caller-supplied `tweetText`, which the registration
+URL's validator never saw. A registration URL whose query cannot be parsed is refused rather than
+rewritten: the destination URL is built by re-encoding that query, so an unreadable one would have
+been silently dropped and real click traffic sent to the wrong page. Validation errors
 redact the URL (scheme+host+path only) so a persisted error can't leak a userinfo/query secret.
 **On the `tweetText` path that protection is not sufficient by itself:** the registration URL is
 embedded in the tweet that gets published, INCLUDING its own pre-existing query parameters, which

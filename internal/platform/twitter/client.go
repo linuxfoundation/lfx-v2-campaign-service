@@ -33,6 +33,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // ---------------------------------------------------------------------------
@@ -1816,12 +1818,59 @@ func rejectCredentialQueryParams(raw string) error {
 	if err != nil {
 		return fmt.Errorf("the query of URL %q in the tweet text could not be parsed, so it cannot be screened for credentials before the tweet is published; fix or remove the URL's query string, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
 	}
+	// USERINFO is refused outright, before the query is read at all. validateRegistrationURL
+	// already rejects `https://user:password@host/...` for the registration URL, but a link
+	// the caller pasted into their own copy never passes through that validator, and this
+	// gate screened only the query — so an embedded credential with no query string at all
+	// was published verbatim. The password is the secret and the username is close enough
+	// to one that neither is named; the URL is redacted, which is what the operator needs
+	// to find the offending link without this error becoming the leak it exists to prevent.
+	if u.User != nil {
+		return fmt.Errorf("URL %q in the tweet text carries embedded userinfo credentials and would be PUBLISHED verbatim in the authored tweet; remove the credentials from the link, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
+	}
+	named := queryKeysWrittenWithAValue(u.RawQuery)
 	for key := range q {
-		if isCredentialQueryKey(key) {
+		if !isCredentialQueryKey(key) {
+			continue
+		}
+		// A key that was written as `name=value` IS a parameter name: structurally
+		// incapable of being the secret, because the secret is the value the parser put
+		// on the other side of the `=`. A key with no `=` behind it is not a name at
+		// all — the whole component landed in the key position — so it is named only as
+		// a category. See safeQueryKeyForError.
+		if named[key] {
 			return fmt.Errorf("the tweet's URL query parameter %q looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the registration URL and from your tweet copy, or supply an explicit tweetId instead of tweetText", safeQueryKeyForError(key))
 		}
+		return fmt.Errorf("URL %q in the tweet text ends in a bare query component that looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
 	}
 	return nil
+}
+
+// queryKeysWrittenWithAValue reports which of a raw query's decoded keys were actually
+// written in `name=value` form. url.ParseQuery cannot answer this: it yields the empty
+// string for the value of both `?token=` and `?token`, and those two are not the same
+// risk — the first names a parameter whose value the parser holds separately, the second
+// is one opaque run that the parser had no choice but to file under "key".
+//
+// Components are split the way net/url splits them (on `&` alone; a `;` is a parse error
+// upstream, which this gate has already failed closed on), and names are unescaped the
+// same way, so a key that reaches this map is the same string ParseQuery produced. An
+// unescapable name is simply left out — it cannot match a parsed key, and omission is
+// the fail-closed direction here: the key goes unnamed rather than being reproduced.
+func queryKeysWrittenWithAValue(rawQuery string) map[string]bool {
+	named := make(map[string]bool)
+	for _, component := range strings.Split(rawQuery, "&") {
+		name, _, hasEq := strings.Cut(component, "=")
+		if !hasEq {
+			continue
+		}
+		decoded, err := url.QueryUnescape(name)
+		if err != nil {
+			continue
+		}
+		named[decoded] = true
+	}
+	return named
 }
 
 // safeQueryKeyForError bounds a caller-controlled query key before it is named in an
@@ -1829,12 +1878,16 @@ func rejectCredentialQueryParams(raw string) error {
 //
 // Naming the key is deliberate and stays: it is what makes the refusal actionable, the
 // operator cannot find the offending parameter without it, and a parameter NAME is not
-// the secret — the value is, and the value is never rendered. But "key" is whatever the
-// parser put on the left of the first `=`, and a URL ending in a bare `?eyJhbGciOi...`
-// has no `=` at all, so the entire token becomes the key. Two bounds close that without
-// giving up the name: control characters are stripped, so the key cannot forge log
-// structure, and the result is truncated well below any real parameter name, so a
-// credential that lands in the key position is not reproduced in full.
+// the secret — the value is, and the value is never rendered.
+//
+// That reasoning holds ONLY for a key the caller wrote as `name=value`. A URL ending in
+// a bare `?eyJhbGciOi...` has no `=` at all, so the whole token becomes the "key", and
+// truncating it still reproduces a credential prefix. Bounding is not redaction, so the
+// bare case does not reach this function at all — rejectCredentialQueryParams names it
+// as a category instead, and only keys carrying a real value are rendered here. What is
+// left for this function is the untrusted-text hygiene every named key still needs:
+// control characters are stripped, so the key cannot forge log structure, and the result
+// is truncated well below the length of any real parameter name.
 func safeQueryKeyForError(key string) string {
 	const maxKeyInError = 40
 	clean := strings.Map(func(r rune) rune {
@@ -1919,7 +1972,18 @@ func buildTwitterUTMURL(in CampaignInput) (string, error) {
 	if err != nil || !u.IsAbs() || u.Hostname() == "" {
 		return "", fmt.Errorf("registration URL %q is not usable to build a destination URL", redactURLForError(in.RegistrationURL))
 	}
-	q := u.Query()
+	// u.Query() DISCARDS the error ParseQuery returns — the same trap
+	// rejectCredentialQueryParams fails closed on, and it is WORSE here. There the
+	// unreadable pairs were merely invisible to the screen; here they are invisible and
+	// then OVERWRITTEN, because the re-encoded query replaces RawQuery wholesale. A
+	// registration URL carrying `?ref=partner;session_token=...` would lose its routing
+	// parameters silently, send real click traffic to the wrong page, and reach the
+	// credential screen with nothing left to find. A query this function cannot read in
+	// full is one it must not rewrite.
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return "", fmt.Errorf("the query of registration URL %q could not be parsed, so the destination URL cannot be built without silently dropping its parameters; fix or remove the URL's query string", redactURLForError(in.RegistrationURL))
+	}
 	for k, v := range twitterUTMParams(in) {
 		q.Set(k, v)
 	}
@@ -2014,7 +2078,19 @@ func trimTweetURLPunct(run string) string {
 // refuses; overcounting blocks a valid one outright, so the collapse is the arm
 // that must be right.
 func weightedTweetLen(s string) int {
-	// URLs first: X rewrites each to a t.co link of fixed weight regardless of the
+	// NFC FIRST, exactly as twitter-text does, because X weighs the normalized form and
+	// this guard is only worth having if it counts what X counts. A decomposed "é"
+	// (U+0065 U+0301) is two runes here and one to X: near the limit that is another
+	// OVER-count inventing a rejection of copy X would have accepted. Normalizing is
+	// also the conservative direction by construction — NFC composition never lengthens
+	// a string in runes — so it can only move this count toward safety.
+	//
+	// The normalized form is used for COUNTING ONLY. The text published is the caller's
+	// own bytes, unchanged: X normalizes on its side, and silently rewriting an
+	// operator's copy is not this function's business.
+	s = norm.NFC.String(s)
+
+	// URLs next: X rewrites each to a t.co link of fixed weight regardless of the
 	// codepoints inside it, so they must not also be weighed rune by rune.
 	n := 0
 	rest := s
@@ -2129,8 +2205,21 @@ func emojiClusterLen(rs []rune) int {
 	}
 	first := rs[0]
 	inPlane := first >= emojiPlaneLo && first <= emojiPlaneHi
-	// A BMP codepoint is only an emoji when it ASKS to be one.
-	requested := len(rs) > 1 && rs[1] == variationSelector16
+	// A BMP codepoint is only an emoji when it ASKS to be one — and U+FE0F is not the
+	// only way it asks. A skin-tone modifier or an enclosing keycap after a BMP base is
+	// itself the request: `✊🏽` is U+270A followed by U+1F3FD with NO variation selector
+	// between them, and `1⃣` is a digit followed by U+20E3. Requiring U+FE0F refused to
+	// see either sequence and charged 2 per codepoint — 4 for a fist X charges 2 for —
+	// which is the OVER-count direction the asymmetry above forbids, because it invents
+	// a rejection of copy X would have accepted.
+	//
+	// Reading a modifier as a request cannot err the other way. A modifier following a
+	// base that is not really an emoji is malformed text no operator writes, and folding
+	// it into one cluster charges 2 where the per-rune pass charged 3 — still down,
+	// still the safe direction.
+	requested := len(rs) > 1 && (rs[1] == variationSelector16 ||
+		rs[1] == combiningEnclosingKeycap ||
+		(rs[1] >= skinToneLo && rs[1] <= skinToneHi))
 	if !inPlane && !requested {
 		return 0
 	}
@@ -3123,6 +3212,16 @@ func (c *Client) resolvePromotableUser(ctx context.Context, pinned string) (stri
 			if err := json.Unmarshal(resp.Data, &users); err != nil {
 				return "", fmt.Errorf("decoding promotable users: %w", err)
 			}
+		}
+		// A body with no `data` field, or an explicit `data: null`, leaves users NIL —
+		// and a nil slice is not an empty page. An empty page is X saying "there are no
+		// more"; a missing data field is X not answering, and reading the second as the
+		// first is how a page-one-of-one user gets auto-selected off the back of a
+		// malformed terminal response. findByName already refuses that shape for exactly
+		// this reason, and identity selection here has strictly more to lose: the wrong
+		// answer publishes a tweet under a handle the caller never chose.
+		if users == nil {
+			return "", fmt.Errorf("x returned a promotable-users page with no data field, so this account's promotable users cannot be confirmed; set asUserId to pick the author explicitly")
 		}
 		for _, u := range users {
 			if u.UserID != "" {
