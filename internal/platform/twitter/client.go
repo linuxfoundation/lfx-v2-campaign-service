@@ -629,19 +629,21 @@ type apiError struct {
 	// for the bounds applied at parse time. Empty when the body wasn't a
 	// recognizable X error envelope.
 	ErrorCodes []string
-	// Err optionally carries an underlying cause, set when the status is inferred
+	// err optionally carries an underlying cause, set when the status is inferred
 	// rather than read straight off a final response — today only when a 429's
 	// retry backoff is cut short by context cancellation. Keeping the cause
 	// attached (via Unwrap) lets callers still match errors.Is(err,
 	// context.DeadlineExceeded) while the 429 status drives the ambiguity
 	// classification. Deliberately NOT rendered by Error(): the status/method/path
-	// line stays the stable, body-free string that gets persisted into Steps.
-	Err error
+	// line stays the stable, body-free string that gets persisted into Steps. It is
+	// unexported for the reason transportError.err is: a clean Error() does not stop
+	// reflection- or JSON-based logging from walking an exported field.
+	err error
 }
 
-// Unwrap exposes the cause behind an inferred status (see Err) so errors.Is/As can
+// Unwrap exposes the cause behind an inferred status (see err) so errors.Is/As can
 // still reach it. Nil for the ordinary response-derived case.
-func (e *apiError) Unwrap() error { return e.Err }
+func (e *apiError) Unwrap() error { return e.err }
 
 func (e *apiError) Error() string {
 	// Deliberately DO NOT include e.ErrorCodes (or any body-derived text): the
@@ -723,7 +725,15 @@ func parseErrorCodes(body []byte) []string {
 type transportError struct {
 	Method string
 	Path   string
-	Err    error
+	// err is UNEXPORTED on purpose, and the lowercase is doing real work rather than
+	// expressing taste. It holds the *url.Error out of http.Client.Do, which carries
+	// the full request URL, and a clean Error() only closes the channel that renders
+	// this struct as a string. Reflection- and JSON-based logging walks EXPORTED
+	// fields and never calls Error() at all, so an exported cause hands the URL
+	// straight back to the first structured logger that touches one of these. Unwrap
+	// below keeps errors.Is/As reaching the cause, which is the access that is
+	// actually needed.
+	err error
 }
 
 func (e *transportError) Error() string {
@@ -734,10 +744,10 @@ func (e *transportError) Error() string {
 	// Steps — so surfacing the raw error would leak the URL. safeTransportCause
 	// strips a *url.Error down to its underlying cause (timeout/EOF/reset) with no
 	// URL. Mirrors the apiError body-suppression discipline.
-	return fmt.Sprintf("x ads api %s %s: %s", e.Method, e.Path, safeTransportCause(e.Err))
+	return fmt.Sprintf("x ads api %s %s: %s", e.Method, e.Path, safeTransportCause(e.err))
 }
 
-func (e *transportError) Unwrap() error { return e.Err }
+func (e *transportError) Unwrap() error { return e.err }
 
 // errRequestContextAlreadyDone marks a request this client never attempted because the
 // CALLER's context was already cancelled or past its deadline when doRequestAbs was entered.
@@ -769,14 +779,15 @@ var errRequestContextAlreadyDone = errors.New("x ads api: the request was not at
 type preSendError struct {
 	Method string
 	Path   string
-	Err    error
+	// err is unexported for the reason transportError.err is — see there.
+	err error
 }
 
 func (e *preSendError) Error() string {
-	return fmt.Sprintf("x ads api %s %s: %s", e.Method, e.Path, safeTransportCause(e.Err))
+	return fmt.Sprintf("x ads api %s %s: %s", e.Method, e.Path, safeTransportCause(e.err))
 }
 
-func (e *preSendError) Unwrap() error { return e.Err }
+func (e *preSendError) Unwrap() error { return e.err }
 
 // safeTransportCause returns a URL-free description of a round-trip error. A
 // *url.Error's %v embeds the request URL, so we unwrap to its underlying cause
@@ -1079,9 +1090,9 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 				// *url.Error whose render embeds the request URL, which would leak into
 				// persisted Steps. preSendError.Error() strips the URL but Unwrap()
 				// retains the cause for errors.Is/As.
-				return nil, &preSendError{Method: method, Path: path, Err: err}
+				return nil, &preSendError{Method: method, Path: path, err: err}
 			}
-			return nil, &transportError{Method: method, Path: path, Err: err}
+			return nil, &transportError{Method: method, Path: path, err: err}
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
@@ -1131,7 +1142,7 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 					StatusCode: http.StatusTooManyRequests,
 					Method:     method,
 					Path:       path,
-					Err:        err,
+					err:        err,
 				}
 			}
 			// Re-reserve a pacing slot before re-issuing a WRITE. The backoff above waits
@@ -1149,7 +1160,7 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 						StatusCode: http.StatusTooManyRequests,
 						Method:     method,
 						Path:       path,
-						Err:        perr,
+						err:        perr,
 					}
 				}
 			}
@@ -1173,7 +1184,7 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 			// A 2xx with a body we couldn't fully/cleanly read is AMBIGUOUS on a
 			// mutating call: X may have committed but we can't read the result. Wrap
 			// as transportError so a create is treated as "may exist".
-			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", readErr)}
+			return nil, &transportError{Method: method, Path: path, err: fmt.Errorf("read response body: %w", readErr)}
 		}
 
 		var out apiResponse
@@ -1182,7 +1193,7 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 				// A 2xx we can't decode is AMBIGUOUS on a mutating call: X returned
 				// success but we can't read the payload (id). Wrap as transportError so a
 				// create is treated as "may exist" rather than a definite failure.
-				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("decode response: %w", err)}
+				return nil, &transportError{Method: method, Path: path, err: fmt.Errorf("decode response: %w", err)}
 			}
 		}
 		return &out, nil
@@ -1763,10 +1774,42 @@ var credentialQueryKeys = map[string]struct{}{
 // to `jsessionid` and `aspnetsessionid`, neither of which is an exact entry. Unlike
 // bare `session`, the full `sessionid` has no ordinary-word collision: it is not a
 // substring of any routing parameter an event page uses.
+// `sessid` is listed for the same reason and covers the third standard spelling the
+// pair above misses: PHP's `PHPSESSID` normalizes to `phpsessid`, which contains
+// neither `sessionid` nor any exact entry. It has no ordinary-word collision either.
+// `cookie` is here on the same footing: a query parameter carrying a cookie by any
+// name — `auth_cookie`, `session_cookie`, `cookie` — is carrying the session itself,
+// and no ordinary English word contains it.
 var credentialQuerySubstrings = []string{
 	"token", "secret", "password", "passwd", "credential",
 	"signature", "hmac", "jwt", "bearer", "oauth",
-	"authorization", "assertion", "sessionid",
+	"authorization", "assertion", "sessionid", "sessid", "cookie",
+}
+
+// credentialQueryComponents are credential names that are unambiguous as a WHOLE
+// separator-delimited component but not as a substring. They exist because folding the
+// separators away before matching loses the boundary that makes them safe to judge:
+// `auth_cookie` and `connect.sid` normalize to `authcookie` and `connectsid`, which are
+// not exact entries and contain no listed fragment, so both passed the screen and would
+// have been published. Matching them as substrings instead is not an option — `auth` is
+// inside `author` and `sid` is inside `aside`, `subsidy` and `president`, all of which a
+// registration page really can use. Splitting the ORIGINAL key on its separators and
+// testing each component gives the exactness without the collisions: `author` is one
+// component and does not match, `auth_cookie` is two and does.
+//
+// `session`, `pass`, `sig` and `key` are deliberately NOT here even though they are in
+// the exact set. This is an EVENTS service: `session_title`, `session_track` and
+// `day_pass` are real parameters on a conference registration page, and promoting those
+// words to component matches would refuse working briefs — the one cost the denylist
+// shape exists to avoid. They stay exact-only, matching the whole key or nothing.
+var credentialQueryComponents = map[string]struct{}{
+	"auth": {}, "sid": {}, "pwd": {}, "passwd": {},
+}
+
+// credentialQueryKeyComponentSplitter splits a query key on the separators a compound
+// name is spelled with, so each part can be tested against credentialQueryComponents.
+var credentialQueryKeyComponentSplitter = func(r rune) bool {
+	return r == '-' || r == '_' || r == '.'
 }
 
 // benignKeySuffixWords are the ordinary English words that end in "key" and would
@@ -1785,10 +1828,17 @@ var benignKeySuffixWords = map[string]struct{}{
 var credentialQueryKeyNormalizer = strings.NewReplacer("-", "", "_", "", ".", "")
 
 // isCredentialQueryKey reports whether a query KEY names authentication material.
-// It reads the key three ways, in order of how specific the evidence is: the exact
-// denylist, an unambiguous credential fragment anywhere in the name, and finally the
-// "…key" suffix. The bare word `key` is itself in the exact set, so the benign-word
-// map below it never has to decide that case.
+// It reads the key four ways, in order of how specific the evidence is: the exact
+// denylist, an unambiguous credential fragment anywhere in the name, a credential word
+// standing as a whole separator-delimited component, and finally the "…key" suffix. The
+// bare word `key` is itself in the exact set, so the benign-word map below it never has
+// to decide that case.
+//
+// The component pass reads the ORIGINAL key, not the normalized one — folding `-`, `_`
+// and `.` away is what destroys the boundaries it needs. That is why it sits here rather
+// than being expressed as more entries in either set above: `auth_cookie` and
+// `connect.sid` are credentials, `author` and `aside` are not, and only the separators
+// tell them apart.
 func isCredentialQueryKey(key string) bool {
 	norm := strings.ToLower(credentialQueryKeyNormalizer.Replace(key))
 	if norm == "" {
@@ -1799,6 +1849,11 @@ func isCredentialQueryKey(key string) bool {
 	}
 	for _, frag := range credentialQuerySubstrings {
 		if strings.Contains(norm, frag) {
+			return true
+		}
+	}
+	for _, part := range strings.FieldsFunc(strings.ToLower(key), credentialQueryKeyComponentSplitter) {
+		if _, bad := credentialQueryComponents[part]; bad {
 			return true
 		}
 	}
@@ -1871,6 +1926,35 @@ func rejectCredentialQueryParams(raw string) error {
 			return fmt.Errorf("the tweet's URL query parameter %q looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the registration URL and from your tweet copy, or supply an explicit tweetId instead of tweetText", safeQueryKeyForError(key))
 		}
 		return fmt.Errorf("URL %q in the tweet text ends in a bare query component that looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
+	}
+	return credentialFragmentError(raw, u)
+}
+
+// credentialFragmentError screens a URL's FRAGMENT with the same key test the query got.
+// The fragment is not a second-order concern here: the OAuth implicit flow delivers its
+// bearer token in exactly this position — `https://app.example.org/cb#access_token=…` —
+// so a pasted post-login URL carries the live token after the `#` and nothing before it.
+// The query screen never saw that URL's credential because the URL has no query.
+//
+// Only a fragment written in `key=value` form is screened, because only that form has a
+// key to test. An ordinary `#registration`, `#agenda-day-2` or `#speakers` has no `=`,
+// parses to a single valueless component, and passes — which is right: a section anchor
+// is not a credential, and refusing one would fail a working brief. A fragment Go cannot
+// decode fails CLOSED for the same reason the query does; an unreadable fragment is one
+// this gate cannot clear.
+func credentialFragmentError(raw string, u *url.URL) error {
+	frag := u.Fragment
+	if frag == "" || !strings.Contains(frag, "=") {
+		return nil
+	}
+	f, err := url.ParseQuery(frag)
+	if err != nil {
+		return fmt.Errorf("the fragment of URL %q in the tweet text could not be parsed, so it cannot be screened for credentials before the tweet is published; fix or remove the URL's fragment, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
+	}
+	for key := range f {
+		if isCredentialQueryKey(key) {
+			return fmt.Errorf("the tweet's URL fragment parameter %q looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", safeQueryKeyForError(key))
+		}
 	}
 	return nil
 }
@@ -2040,10 +2124,24 @@ func authoredTweetStatus(id string) string {
 // scheme as `https://`, X wraps it the same way, and a case-sensitive pattern counted
 // such a link at its raw length instead of 23 — rejecting, before the create, copy X
 // would have accepted.
-var tweetURLRe = regexp.MustCompile(`(?i)\bhttps?://\S+`)
+//
+// The run also stops at a handful of characters that cannot appear unescaped in a URL
+// and DO appear immediately after one: `<` and `>`, the plain-text convention for
+// delimiting a bare link, and the CJK sentence punctuation that follows a link with no
+// space in front of it. Trimming the tail is not enough for these — `…lfx.dev、そして`
+// has the comma in the MIDDLE of the whitespace-delimited run, so a trailing trim never
+// reaches it and the whole tail vanishes into the link's fixed 23. This is not
+// hypothetical for LF: KubeCon China and Open Source Summit Japan briefs are written
+// this way, and undercounting at the 280 boundary means the campaign and the line item
+// are created before X refuses the tweet.
+var tweetURLRe = regexp.MustCompile(`(?i)\bhttps?://[^\s<>。、！？，：；]+`)
 
 // tweetURLTrailingPunct is the trailing punctuation a URL run absorbs but a link does
 // not own: the sentence the URL sits in ends after the link, not inside it.
+//
+// The characters that end a run OUTRIGHT — `<`, `>` and the CJK sentence marks — are not
+// listed here; tweetURLRe excludes them from the run in the first place, because those
+// arrive mid-run rather than at the tail. See its comment.
 const tweetURLTrailingPunct = `.,;:!?'"`
 
 // trimTweetURLPunct gives back the part of a matched run that is actually the link.
@@ -2061,18 +2159,23 @@ const tweetURLTrailingPunct = `.,;:!?'"`
 //
 // A closing bracket is trimmed only when the run has no matching opener, so a genuine
 // parenthesised URL keeps the bracket that belongs to it.
+//
+// The walk is by RUNE, not by byte. A byte-wise loop could only ever trim the ASCII set,
+// because every character in tweetURLTrailingPunct outside it is multi-byte and its last
+// byte matches nothing; worse, comparing a single byte of a multi-byte character against
+// an ASCII table is a comparison against a fragment of a character.
 func trimTweetURLPunct(run string) string {
 	for len(run) > 0 {
-		last := run[len(run)-1]
+		last, size := utf8.DecodeLastRuneInString(run)
 		switch {
-		case strings.IndexByte(tweetURLTrailingPunct, last) >= 0:
+		case strings.ContainsRune(tweetURLTrailingPunct, last):
 		case last == ')' && strings.Count(run, "(") < strings.Count(run, ")"):
 		case last == ']' && strings.Count(run, "[") < strings.Count(run, "]"):
 		case last == '}' && strings.Count(run, "{") < strings.Count(run, "}"):
 		default:
 			return run
 		}
-		run = run[:len(run)-1]
+		run = run[:len(run)-size]
 	}
 	return run
 }
@@ -3322,10 +3425,13 @@ func (c *Client) createNullcastTweet(ctx context.Context, text, asUserID string)
 	if asUserID != "" {
 		params["as_user_id"] = asUserID
 	}
-	// idempotent=FALSE, alone among this package's creates. The other three converge on
-	// re-issue — campaigns and line items are found-or-created by name, a repeated
-	// promoted_tweets POST comes back DUPLICATE_PROMOTABLE_ENTITY — but a tweet has no
-	// name to find it by and no idempotency key, so X publishes a second one. A 429 can
+	// idempotent=FALSE, as it is for the campaign and line-item creates. Only
+	// promoted_tweets is declared retry-safe, because only it converges on the SERVER:
+	// a repeated POST comes back DUPLICATE_PROMOTABLE_ENTITY. Campaign and line-item
+	// creates are found-or-created by name, but that lookup runs above the request
+	// layer's retry loop and a retry from inside it re-POSTs regardless. Tweet
+	// authoring has neither form: no name to find it by and no idempotency key, so X
+	// publishes a second tweet rather than refusing the repeat. A 429 can
 	// be reported AT or AFTER the write is accepted, so the request layer's automatic
 	// retry could publish two or three tweets under the LF handle before this function
 	// ever returned. The 429 comes back as an *apiError, which createOutcomeAmbiguous

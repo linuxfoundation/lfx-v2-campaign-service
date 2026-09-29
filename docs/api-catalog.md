@@ -908,8 +908,15 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   that is a credential under any reading (`access_token`,
                                   `api_key`, `sessionId`, `jwt`, `password`, `signature`,
                                   `secret_token`, `auth_key`, `oauth_token_secret`,
-                                  `JSESSIONID`, … in any
-                                  case/separator spelling, compounds included). A query string
+                                  `JSESSIONID`, `PHPSESSID`, `auth_cookie`, `connect.sid`, … in any
+                                  case/separator spelling, compounds included — a credential word
+                                  standing as a whole `-`/`_`/`.`-delimited component counts, so
+                                  `auth_cookie` is refused while `author` is not). The same screen
+                                  runs over a URL's FRAGMENT when it is written in `key=value`
+                                  form, because the OAuth implicit flow delivers its bearer token
+                                  after the `#` and such a URL may have no query at all; a plain
+                                  section anchor (`#register`) has no key and passes. A query
+                                  string or fragment
                                   that cannot be parsed is refused rather than read as having no
                                   parameters. A URL carrying embedded userinfo
                                   (`https://user:pass@host/…`) is refused whether or not it has a
@@ -927,9 +934,13 @@ tweetText?: string               — Used ONLY when tweetId is empty: authors a 
                                   as X's default) — it never appears on the public timeline or to
                                   followers. Rejected pre-create if the composed text (counting any
                                   embedded URL at X's fixed t.co weight of 23 characters each, not
-                                  raw length — schemes match case-insensitively, and trailing
-                                  sentence punctuation is counted as prose, not as part of the
-                                  link) exceeds the 280-character cap, or if its raw size
+                                  raw length — schemes match case-insensitively, and punctuation
+                                  around the link is counted as prose, not as part of it: trailing
+                                  ASCII sentence marks and unmatched closing brackets are trimmed
+                                  off the end, while `<`, `>` and CJK sentence punctuation
+                                  (`。`, `、`, `！`, `？`, `，`, `：`, `；`) end the link outright,
+                                  since a CJK sentence puts no space before its stop) exceeds the
+                                  280-character cap, or if its raw size
                                   exceeds an 8 KiB request bound that the weighted cap — under
                                   which any URL costs 23 whatever its length — does not impose. That cap is X's WEIGHTED
                                   one, not a rune count: runes outside twitter-text's weight-1

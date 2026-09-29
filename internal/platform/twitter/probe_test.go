@@ -92,13 +92,13 @@ func TestProbePredicates(t *testing.T) {
 		},
 		{
 			name:            "pre-send failure",
-			err:             &preSendError{Method: "GET", Path: "/accounts/x", Err: errors.New("dial tcp: i/o timeout")},
+			err:             &preSendError{Method: "GET", Path: "/accounts/x", err: errors.New("dial tcp: i/o timeout")},
 			wantRejected:    false,
 			wantInconclusiv: true,
 		},
 		{
 			name:            "mid-flight transport failure",
-			err:             &transportError{Method: "GET", Path: "/accounts/x", Err: errors.New("connection reset by peer")},
+			err:             &transportError{Method: "GET", Path: "/accounts/x", err: errors.New("connection reset by peer")},
 			wantRejected:    false,
 			wantInconclusiv: true,
 		},

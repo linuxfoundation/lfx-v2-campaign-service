@@ -1075,6 +1075,27 @@ func TestWeightedTweetLen_URLRunBoundaries(t *testing.T) {
 			text: "https://lf.org/a_(b)",
 			want: tcoURLWeight,
 		},
+		{
+			// The ideographic full stop is the realistic case: LF runs KubeCon China and
+			// Open Source Summit Japan, CJK sentences put no space before the stop, and
+			// `\S+` swallows it into the run. It weighs 2 on its own, so a byte-wise trim
+			// that cannot see it undercounts by 2 at the 280 boundary.
+			name: "ideographic full stop is not part of the link",
+			text: "詳細 https://lfx.dev。",
+			want: (2 * utf8.RuneCountInString("詳細")) + 1 + tcoURLWeight + 2,
+		},
+		{
+			name: "ideographic comma is not part of the link",
+			text: "https://lfx.dev、そして",
+			want: tcoURLWeight + 2 + (2 * utf8.RuneCountInString("そして")),
+		},
+		{
+			// <https://…> is the plain-text convention for delimiting a bare link;
+			// neither bracket belongs to it.
+			name: "angle brackets around a link are not part of it",
+			text: "<https://lfx.dev>",
+			want: 1 + tcoURLWeight + 1,
+		},
 	}
 
 	for _, tc := range tests {
@@ -1194,6 +1215,76 @@ func TestIsCredentialQueryKey_SessionIDCompounds(t *testing.T) {
 			t.Errorf("%q was refused; an ordinary conference-agenda parameter would break the brief", key)
 		}
 	}
+}
+
+// TestIsCredentialQueryKey_CompoundComponents pins the gap the separator normalizer
+// opened. Folding `-`, `_` and `.` away before matching is what lets `auth-key` and
+// `ASP.NET_SessionId` be recognized — and the same fold is what turned `auth_cookie` and
+// `connect.sid` into `authcookie` and `connectsid`, names that match no exact entry and
+// contain no listed fragment. Both cleared the screen and would have been published
+// alongside a live session. `PHPSESSID` was a third spelling of the same miss.
+//
+// The benign half is the part that constrains the fix. `author` and `aside` contain the
+// credential words as substrings, so the repair has to be component-wise rather than a
+// wider substring list — and `session_title` proves `session` stayed OUT of the component
+// set: this is an events service, and a brief whose registration link carries a session
+// name is normal input, not an attack.
+func TestIsCredentialQueryKey_CompoundComponents(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{
+		"auth_cookie", "connect.sid", "PHPSESSID", "session_cookie",
+		"auth-ticket", "user.pwd", "AUTH",
+	} {
+		if !isCredentialQueryKey(key) {
+			t.Errorf("%q was not classified as a credential; it would be published verbatim in the tweet", key)
+		}
+	}
+	for _, key := range []string{
+		"author", "authors", "aside", "president", "subsidy",
+		"session_title", "day_pass", "utm_campaign", "keyword",
+	} {
+		if isCredentialQueryKey(key) {
+			t.Errorf("%q was refused; an ordinary registration-link parameter would break the brief", key)
+		}
+	}
+}
+
+// TestRejectCredentialQueryParams_ScreensTheFragment covers the component the query
+// screen never looked at. The OAuth implicit flow returns its bearer token AFTER the
+// `#` — `https://app.example.org/cb#access_token=…` — so a pasted post-login URL carries
+// a live token in a URL that has no query string at all, and the gate cleared it.
+//
+// The benign rows are the reason this is not simply "reject any fragment": `#register`
+// and `#agenda-day-2` are how a brief links to a section of the registration page, and
+// refusing them would fail working copy for an exposure that is not there.
+func TestRejectCredentialQueryParams_ScreensTheFragment(t *testing.T) {
+	t.Parallel()
+
+	t.Run("implicit-flow token in the fragment is refused", func(t *testing.T) {
+		t.Parallel()
+		raw := "https://events.lf.org/cb#access_token=SECRET-abc123&token_type=bearer"
+		err := rejectCredentialQueryParams(raw)
+		if err == nil {
+			t.Fatal("a bearer token in the fragment was cleared for publication")
+		}
+		if strings.Contains(err.Error(), "SECRET-abc123") {
+			t.Errorf("the refusal reproduced the token it refused: %v", err)
+		}
+	})
+
+	t.Run("section anchors still pass", func(t *testing.T) {
+		t.Parallel()
+		for _, raw := range []string{
+			"https://events.lf.org/kubecon#register",
+			"https://events.lf.org/kubecon#agenda-day-2",
+			"https://events.lf.org/kubecon?utm_source=x#speakers",
+		} {
+			if err := rejectCredentialQueryParams(raw); err != nil {
+				t.Errorf("rejectCredentialQueryParams(%q) refused an ordinary anchor: %v", raw, err)
+			}
+		}
+	})
 }
 
 // TestRejectCredentialQueryParams_FailsClosedOnAnUnparseableQuery covers the hole

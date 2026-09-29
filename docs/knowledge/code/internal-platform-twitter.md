@@ -164,7 +164,15 @@ URL into the copied `PromotedTweetWarning` and persisted Steps. Each type's
 `Error()` runs the cause through `safeTransportCause`, which peels EVERY nested
 `*url.Error` layer down to the URL-free underlying cause (timeout/EOF/ECONNREFUSED);
 `Unwrap()` retains the real cause so `errors.Is`/`errors.As` (incl.
-`isPreSendDialError`) still match. `preSendError` is DEFINITE (request never sent →
+`isPreSendDialError`) still match. The retained cause is held in an UNEXPORTED
+`err` field on all three types — `apiError`, `transportError`, `preSendError` —
+and the lowercase is load-bearing, not style. A clean `Error()` closes only the
+channel that renders the struct as a string; reflection- and JSON-based logging
+walks EXPORTED fields and never calls `Error()` at all, so an exported `Err`
+hands the `*url.Error`'s full request URL back to the first structured logger
+that touches one of these. That is the shape
+`platform-error-must-not-carry-untrusted-or-credential-text` prescribes: kept for
+`Unwrap()`, never exported and never rendered. `preSendError` is DEFINITE (request never sent →
 not applied), distinct from the ambiguous `transportError`.
 `createOutcomeAmbiguous` treats a mutating 3xx/5xx (and transport error) as
 UNCONFIRMED so a create that may have committed is not blind-retried into a
@@ -326,12 +334,20 @@ refuse copy X would accept. 280 weighted characters of four-byte runes is 1120
 bytes, so no legitimate brief comes near 8 KiB.
 
 The same asymmetry decides where a URL run ENDS. `tweetURLRe` is
-`(?i)\bhttps?://\S+`: case-insensitive because RFC 3986 §3.1 makes the scheme
-case-insensitive and `HTTPS://…` is a link X wraps to t.co like any other, where
-a case-sensitive match charged it its raw length and invented a rejection. `\S+`
-then runs to whitespace, so a link at the end of a sentence swallows the period
-that follows it — so `trimTweetURLPunct` peels trailing `.,;:!?'"` and any
-closing bracket with no opener inside the run. Both directions of that are real:
+`(?i)\bhttps?://[^\s<>。、！？，：；]+`: case-insensitive because RFC 3986 §3.1 makes
+the scheme case-insensitive and `HTTPS://…` is a link X wraps to t.co like any
+other, where a case-sensitive match charged it its raw length and invented a
+rejection. The run then goes to whitespace, so a link at the end of a sentence
+swallows the period that follows it — so `trimTweetURLPunct` peels trailing
+`.,;:!?'"` and any closing bracket with no opener inside the run, walking by RUNE
+rather than by byte. Two groups of characters are excluded from the run instead
+of trimmed off it, because they do not arrive at the TAIL. `<` and `>` delimit a
+bare link in plain text, and CJK sentence punctuation follows a link with no
+space in front of it, so `…lfx.dev、そして` has the comma mid-run where a trailing
+trim never reaches it and the whole Japanese tail disappeared into the link's
+fixed 23. None of those characters is legal unescaped in a URL, so ending the run
+at them loses nothing. This is not a hypothetical shape for LF, which runs
+KubeCon China and Open Source Summit Japan. Both directions of that are real:
 the punctuation counted inside the t.co weight under-counts, and the same run
 handed to `url.Parse` for credential screening is not the URL that will be
 fetched. The trimmed link is a PREFIX of the run, so it still locates at the
@@ -366,10 +382,11 @@ parameter names COMPOSE: `secret_token`, `access_key`, `auth_key`,
 `oauth_token_secret`, `x_request_signature` are all obvious credentials and all
 absent from any set someone thought was finished. Enumeration does not converge.
 Keys are normalised first — `-`, `_` and `.` removed, case folded — then matched
-in three tiers: the exact set for spellings that carry no fragment
+in four tiers: the exact set for spellings that carry no fragment
 (`jwt`, `password`, `sessionid`); a fragment list of words that are unambiguous
 as a COMPONENT of a compound (`token`, `secret`, `credential`, `signature`,
-`hmac`, `jwt`, `bearer`, `oauth`, `authorization`, `assertion`); and a "…key"
+`hmac`, `jwt`, `bearer`, `oauth`, `authorization`, `assertion`); a COMPONENT tier
+over the separator-delimited parts of the ORIGINAL key; and a "…key"
 SUFFIX rule minus an explicit benign set (`monkey`, `donkey`, `turkey`,
 `whiskey`, `jockey`, …). The tiers exist because `key`, `auth`, `sig`, `pass` and
 `session` are exactly the words that CANNOT be fragments — `keyword`, `oauth`
@@ -378,9 +395,36 @@ inside nothing, `design`, `bypass`, `passenger` — so they stay exact-only, and
 `sessionid` is the one compound promoted INTO the fragment tier: the two standard
 spellings of a session cookie carried in a URL, `JSESSIONID` and
 `ASP.NET_SessionId`, normalise to names the exact set never had, and unlike bare
-`session` the full `sessionid` collides with no routing parameter. `code` and
+`session` the full `sessionid` collides with no routing parameter. `sessid` and
+`cookie` joined it for the same reason: `PHPSESSID` normalises to a name that
+contains neither `sessionid` nor any exact entry, and a parameter carrying a
+cookie under any name is carrying the session itself. `code` and
 `pin` are weighed and excluded on purpose — a discount code is the common meaning
 on a registration link.
+
+The COMPONENT tier exists because the separator fold that makes the other tiers
+work is also what breaks them. `auth_cookie` and `connect.sid` normalise to
+`authcookie` and `connectsid` — no exact entry, no listed fragment — and both
+cleared the screen. They cannot be repaired by adding fragments, because `auth`
+is inside `author` and `sid` is inside `aside`, `subsidy` and `president`, all of
+which a registration page genuinely uses. Splitting the ORIGINAL key on `-`, `_`
+and `.` restores the boundary that tells them apart: `author` is one component
+and does not match, `auth_cookie` is two and does. Only `auth`, `sid`, `pwd` and
+`passwd` are in that set. `session`, `pass`, `sig` and `key` stay exact-only even
+though they are unambiguous as components elsewhere, because this is an EVENTS
+service and `session_title`, `session_track` and `day_pass` are real parameters
+on a conference registration page — promoting those would refuse working briefs,
+the one cost a denylist exists to avoid.
+
+The FRAGMENT gets the same key screen as the query, via
+`credentialFragmentError`. The query tier alone missed the single most likely way
+a live token reaches this gate: the OAuth implicit flow returns its bearer token
+AFTER the `#`, so a URL pasted out of a logged-in browser can carry
+`#access_token=…` with no query string at all. Only a fragment written in
+`key=value` form is screened, because only that has a key to test — `#register`
+and `#agenda-day-2` parse to one valueless component and pass, which is required,
+since a section anchor is how a brief links into a registration page. An
+undecodable fragment fails closed for the reason the query does.
 
 The query is parsed with `url.ParseQuery` and the gate fails CLOSED on its error,
 NOT with `u.Query()`, which discards that error and returns whatever pairs it

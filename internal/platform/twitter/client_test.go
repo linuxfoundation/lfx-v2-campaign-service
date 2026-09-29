@@ -739,7 +739,7 @@ func TestMutating429InterruptedByDeadlineStaysUnconfirmed(t *testing.T) {
 func TestAPIErrorUnwrapDoesNotDisturbClassification(t *testing.T) {
 	withCause := &apiError{
 		StatusCode: http.StatusTooManyRequests, Method: http.MethodPut,
-		Path: "campaigns/1", Err: context.DeadlineExceeded,
+		Path: "campaigns/1", err: context.DeadlineExceeded,
 	}
 	var te *transportError
 	if errors.As(withCause, &te) {
@@ -769,7 +769,7 @@ func TestAPIErrorUnwrapDoesNotDisturbClassification(t *testing.T) {
 	// A 429 on a NON-mutating method stays definite — the read was throttled, nothing wrote.
 	get := &apiError{
 		StatusCode: http.StatusTooManyRequests, Method: http.MethodGet,
-		Path: "campaigns", Err: context.Canceled,
+		Path: "campaigns", err: context.Canceled,
 	}
 	if createOutcomeAmbiguous(get) {
 		t.Error("a 429 on a GET must stay definite even with a cause attached")
@@ -3482,7 +3482,7 @@ func TestTransportError_DoesNotLeakURL(t *testing.T) {
 	te := &transportError{
 		Method: http.MethodPost,
 		Path:   "promoted_tweets",
-		Err:    &url.Error{Op: "Post", URL: secretURL, Err: inner},
+		err:    &url.Error{Op: "Post", URL: secretURL, Err: inner},
 	}
 	got := te.Error()
 	if strings.Contains(got, "SECRET-abc123") || strings.Contains(got, secretURL) || strings.Contains(got, "signature=") {
@@ -3506,7 +3506,7 @@ func TestPreSendError_DoesNotLeakURL(t *testing.T) {
 	pse := &preSendError{
 		Method: http.MethodPost,
 		Path:   "campaigns",
-		Err:    &url.Error{Op: "Post", URL: secretURL, Err: dialErr},
+		err:    &url.Error{Op: "Post", URL: secretURL, Err: dialErr},
 	}
 	got := pse.Error()
 	if strings.Contains(got, "SECRET-abc123") || strings.Contains(got, secretURL) || strings.Contains(got, "signature=") {
@@ -3541,9 +3541,9 @@ func TestCreateOutcomeAmbiguous_Twitter(t *testing.T) {
 		{"429-POST-exhausted", &apiError{StatusCode: http.StatusTooManyRequests, Method: http.MethodPost, Path: "campaigns"}, true},
 		{"429-GET-not-a-create", &apiError{StatusCode: http.StatusTooManyRequests, Method: http.MethodGet, Path: "campaigns"}, false},
 		{"400", &apiError{StatusCode: http.StatusBadRequest, Method: http.MethodPost, Path: "campaigns"}, false},
-		{"transport", &transportError{Method: http.MethodPost, Path: "campaigns", Err: io.ErrUnexpectedEOF}, true},
+		{"transport", &transportError{Method: http.MethodPost, Path: "campaigns", err: io.ErrUnexpectedEOF}, true},
 		{"5xx-not-method-gated", &apiError{StatusCode: http.StatusBadGateway, Method: http.MethodGet, Path: "campaigns"}, true},
-		{"transport-not-method-gated", &transportError{Method: http.MethodGet, Path: "campaigns", Err: io.ErrUnexpectedEOF}, true},
+		{"transport-not-method-gated", &transportError{Method: http.MethodGet, Path: "campaigns", err: io.ErrUnexpectedEOF}, true},
 		{"plain error", errors.New("boom"), false},
 		{"nil", nil, false},
 	}

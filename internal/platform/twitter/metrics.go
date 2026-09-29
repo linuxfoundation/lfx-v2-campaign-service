@@ -217,7 +217,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		return nil, &transportError{
 			Method: http.MethodGet,
 			Path:   "stats",
-			Err:    fmt.Errorf("decode campaign metrics response: %w", err),
+			err:    fmt.Errorf("decode campaign metrics response: %w", err),
 		}
 	}
 
