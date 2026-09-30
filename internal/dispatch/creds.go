@@ -143,16 +143,40 @@ func sanitizeSnapshotURL(raw string) string {
 	if strings.Contains(trimmed, "@") {
 		return "" // fail closed: don't store a value that may embed userinfo credentials
 	}
+	// A scheme-LESS value can still be a link with its secret in the path —
+	// `example.org/reset/SECRET` announces no scheme, so the reduction above declined it
+	// and there is no '?', '#' or '@' left to truncate at. Reduce it the same way
+	// sanitizeSnapshotText's fourth pass does, through the same helper, so a field and the
+	// same link written inside tweetText do not redact differently. A value that is not
+	// link-shaped (a reddit thing id, say) has no dotted TLD-shaped host followed by a
+	// slash and falls through untouched, which is what the truncating branch is for.
+	if m := schemelessPathSnapshotRunRe.FindString(trimmed); m == trimmed {
+		return sanitizeSchemelessPathSnapshotRun(trimmed)
+	}
 	return trimmed
 }
 
-// isHTTPScheme reports whether raw begins with an http or https scheme. Case-insensitive
+// isHTTPScheme reports whether raw ANNOUNCES an http or https scheme. Case-insensitive
 // because RFC 3986 §3.1 makes schemes case-insensitive and snapshotURLRunRe matches
 // `HTTPS://` runs accordingly — a case-sensitive test here would let exactly those runs
 // fall through to the truncating fallback the check exists to keep them out of.
+//
+// The `//` is NOT required, and that is the whole point of the test. It used to be, so a
+// value with the scheme and a malformed authority — `http:/reset/SECRET`, one slash,
+// which is how a hand-typed or line-wrapped link arrives — failed the scheme+host
+// reduction above, failed this check, and then fell into the truncating branch with no
+// '?', '#' or '@' to truncate at. It was stored whole, path and all: the exact exposure
+// the reduction exists to close, reached by dropping a single character. `http:` with no
+// slashes at all (the opaque form, `http:reset/SECRET`) has the same shape and the same
+// answer.
+//
+// Requiring only the scheme costs nothing a caller has: every caller here supplies a URL
+// (see sanitizeSnapshotURL), so an http-announcing value that will not reduce is
+// malformed input rather than data with another meaning. A value that never claimed to be
+// a URL does not start with `http:` and is untouched by this.
 func isHTTPScheme(raw string) bool {
 	lower := strings.ToLower(raw)
-	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
+	return strings.HasPrefix(lower, "http:") || strings.HasPrefix(lower, "https:")
 }
 
 // snapshotURLRunRe matches an http/https URL run inside free text: everything from the
@@ -203,8 +227,16 @@ func isHTTPScheme(raw string) bool {
 // for. The screen in `internal/platform/twitter` keeps a boundary rule because the same
 // scanner there also drives length weighting and destination matching, where
 // over-matching means something. Here nothing depends on it.
+// The `//` is OPTIONAL, for the reason documented on isHTTPScheme: a run that announces
+// the scheme and then malforms the authority — `http:/reset/SECRET`, or the opaque
+// `http:reset/SECRET` — is a link, and requiring the double slash left it unmatched in
+// free text and therefore stored verbatim. The third alternative consumes it, and
+// sanitizeSnapshotURL fails it closed. It cannot swallow ordinary prose: something has to
+// follow the colon with no space between, and a sentence-final `http:` is not matched at
+// all.
 var snapshotURLRunRe = regexp.MustCompile(
-	`(?i)https?://(?:\[[^\]\s]+\][^\s<>"\x60\]}|\\^]*|[^\s<>"\x60\]}|\\^]+)`,
+	`(?i)https?:(?://(?:\[[^\]\s]+\][^\s<>"\x60\]}|\\^]*|[^\s<>"\x60\]}|\\^]+)` +
+		`|/?[^\s<>"\x60\]}|\\^/][^\s<>"\x60\]}|\\^]*)`,
 )
 
 // sanitizeSnapshotText strips the query and fragment from every URL embedded in free text
@@ -237,9 +269,18 @@ func sanitizeSnapshotText(raw string) string {
 	// before the query pass ever saw it — same end state, but by the pass that is not
 	// responsible for queries. Last, it only ever sees runs the first two had nothing to
 	// say about, which is the `user:password@host` with no query at all.
+	// The PATH-ONLY pass runs after all three, and last for the same reason the userinfo
+	// pass was already last: it is the least discriminating of the four, so it must only
+	// ever see what the others had nothing to say about. Running it before the userinfo
+	// pass would reduce `bob:pw@a.example/r` to `bob:pw@a.example` and hand that pass a
+	// run it no longer matches in full; running it before the query pass would take
+	// `a.example/r?token=S` down to `a.example` by the pass that is not responsible for
+	// queries. Placed last it sees neither: every earlier pass rewrites its runs to a bare
+	// authority or to nothing, and a bare authority has no path for this one to match.
 	out := snapshotURLRunRe.ReplaceAllStringFunc(raw, sanitizeSnapshotURL)
 	out = schemelessSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeSchemelessSnapshotRun)
-	return schemelessUserinfoSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeUserinfoSnapshotRun)
+	out = schemelessUserinfoSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeUserinfoSnapshotRun)
+	return schemelessPathSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeSchemelessPathSnapshotRun)
 }
 
 // schemelessSnapshotRunRe matches a scheme-less link carrying a query or fragment, the
@@ -256,6 +297,11 @@ func sanitizeSnapshotText(raw string) string {
 // The `?`/`#` requirement, the letter-initial TLD, the punycode and IPv4 host forms and
 // the reasons for each are documented on `schemelessScreenRunRe` in
 // internal/platform/twitter/client.go. Keep the two in step.
+//
+// The `?`/`#` requirement is the one thing NOT kept in step, and schemelessPathSnapshotRunRe
+// below is where this side goes further: a path-only link has no parameter for the screen to
+// read but still carries its secret into the snapshot. See that pattern for why the extra
+// reach is affordable here and not there.
 //
 // That requirement is what keeps this off ordinary prose, but not perfectly: `Vue.js?Check`
 // — a dotted token, no space after the question mark — matches, and its tail is dropped.
@@ -317,6 +363,74 @@ func sanitizeUserinfoSnapshotRun(run string) string {
 		return run
 	}
 	return ""
+}
+
+// schemelessPathSnapshotRunRe matches a scheme-less link whose secret is in the PATH and
+// which carries no query or fragment at all: `example.org/reset/SECRET`. Every other pass
+// needs a scheme, a '?'/'#', or a userinfo colon to fire, so this shape — the one-time
+// password reset link that sanitizeSnapshotURL's own doc comment names as the realistic
+// case — was the single URL shape that reached config_snapshot with its path intact.
+//
+// The host production is schemelessSnapshotRunRe's, minus the userinfo prefix (the pass
+// before this one has already blanked those) and with the '?'/'#' requirement replaced by
+// a REQUIRED '/'. That slash is now the only thing holding this off ordinary prose, which
+// is why the TLD-shaped final label matters more here than it does there: a letter-initial
+// label of two or more characters after a dot, so `and/or` and `9.5/10` do not match and
+// `Vue.js/x` does — losing a mangled `/x` from a snapshot, the same trade the other
+// patterns are already chosen under.
+//
+// This is deliberately NOT mirrored into internal/platform/twitter's screen, and the
+// divergence note on schemelessScreenRunRe records why: the two patterns are kept in step
+// on what a LINK looks like, not on what to do about one, because their cost directions
+// are opposite. Over-matching here loses a fragment of the operator's own copy from a
+// snapshot no one diagnoses anything with; over-matching there refuses a brief X would
+// have accepted, and no retry fixes a refusal. A pattern whose only discriminator is a
+// slash is affordable on this side and not on that one.
+//
+// The optional `@` prefix is matched only so the run can be RECOGNISED and then left
+// alone — Go's regexp has no lookbehind, so consuming the prefix is the only way to see
+// that a host was written hard against one. By the time this pass runs, the userinfo pass
+// has already blanked every `user:password@host` run, so an `@` still standing belongs to
+// something that pass deliberately kept: a clock (`9:30@main.stage/agenda`) or a
+// colon-less email. Reducing those would undo a decision already made one pass earlier by
+// the code that owns it.
+var schemelessPathSnapshotRunRe = regexp.MustCompile(
+	`(?i)(?:[^\s<>"\x60\]}|\\^/?#]*@)?` +
+		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
+		`(?::\d+)?/[^\s<>"\x60\]}|\\^]*`,
+)
+
+// sanitizeSchemelessPathSnapshotRun reduces a path-only scheme-less run to its authority.
+//
+// It reduces rather than blanking, which is where it parts company with
+// sanitizeUserinfoSnapshotRun. That pass blanks because a run reaching it has already
+// failed to be either of the other shapes and getting the userinfo/authority split wrong
+// on a malformed run risks writing a password back out. Here there is no userinfo to split
+// — the run begins at the host by construction, and the pass before this one has blanked
+// the credential-carrying shape — so the host is safe to keep, and "which site did this
+// link point at" is exactly the load-bearing fact sanitizeSnapshotURL keeps for the
+// scheme-ful case. Blanking instead would make the same link redact differently depending
+// on whether the operator typed `https://` in front of it.
+func sanitizeSchemelessPathSnapshotRun(run string) string {
+	if strings.IndexByte(run, '@') >= 0 {
+		// Not this pass's run to rewrite — see the pattern's note on the `@` prefix. The
+		// credential-carrying shape is already gone; what is left was kept on purpose.
+		return run
+	}
+	host := run
+	if i := strings.IndexByte(host, '/'); i >= 0 {
+		host = host[:i]
+	}
+	// Parsed with a placeholder scheme so net/url reads the token as an AUTHORITY rather
+	// than an opaque path, and trimmed back off so the snapshot says what the operator
+	// wrote — the same round trip (and the same re-escaping of a decoded Host) as
+	// sanitizeSchemelessSnapshotRun.
+	u, err := url.Parse("https://" + host)
+	if err != nil || u.Host == "" || u.User != nil {
+		return ""
+	}
+	rebuilt := url.URL{Scheme: "https", Host: u.Host}
+	return strings.TrimPrefix(rebuilt.String(), "https://")
 }
 
 func isAllASCIIDigits(s string) bool {

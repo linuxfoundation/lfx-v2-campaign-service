@@ -124,6 +124,16 @@ http scheme and will not reduce is malformed input, not data with another meanin
 The truncating branch still serves a value that never claimed to be a URL, such as a
 reddit thing id.
 
+"Announced an http scheme" is decided on the SCHEME ALONE, not on `http://`. Requiring the
+double slash left one character between a link and a leak: `http:/reset/SECRET` — one
+slash, which is how a hand-typed or line-wrapped link arrives — parses with an empty host,
+so it failed the reduction, then failed the scheme test, then reached the truncating branch
+with no `?`, `#` or `@` to truncate at and was stored whole. The opaque form
+`http:reset/SECRET` has the same shape and the same answer. The run pattern matching free
+text makes the `//` optional for the same reason; it cannot swallow prose, because
+something has to follow the colon with no space between, so a sentence that merely ends a
+clause with the word `http:` is never a candidate.
+
 The scheme+host is rebuilt through
 `url.URL.String()` rather than concatenated, because `URL.Host` holds the DECODED
 authority — a zone-scoped IPv6 literal would come back as `[fe80::1%eth0]`, a bare `%`
@@ -213,6 +223,40 @@ the operator's own copy from a diagnostic snapshot, where over-refusing on the t
 side blocks a brief before anything is created. Milder is not free, since the snapshot
 exists to be read by a human, and the digits-both-sides test gives up no credential shape
 to buy it.
+
+A FOURTH pass covers the last shape that reached the snapshot with its path intact: a
+scheme-less link whose secret is in the PATH and which carries no query, fragment or
+userinfo — `events.example/reset/SECRET`, the password-reset link this whole section names
+as the realistic case. One pass needs a scheme, one needs a `?` or `#`, one needs a
+userinfo colon; none of them fires on that. It reduces to the host rather than blanking,
+which is where it parts company with the userinfo pass: there is no userinfo to split
+wrongly, the run begins at the host by construction, and blanking would make the same link
+redact differently depending on whether the operator typed `https://` in front of it.
+
+It runs last, and for the same reason the userinfo pass used to be last: it is the least
+discriminating of the four, so it must only ever see what the others had nothing to say
+about. Every earlier pass rewrites its runs to a bare authority or to nothing, and a bare
+authority has no path for this one to match. An `@` still standing when this pass runs
+belongs to something an earlier pass kept ON PURPOSE — a clock, a colon-less email — so a
+matched run carrying one is returned untouched. Go's `regexp` has no lookbehind, which is
+why the pattern consumes the `@` prefix at all: consuming it is the only way to recognise
+the shape in order to leave it alone.
+
+This is the ONE point where the redactor deliberately reaches further than the twitter
+screen, and the divergence is recorded on both patterns. The two are kept in step on what a
+link LOOKS like — the host production, the letter-initial TLD, the punycode and IPv4 forms
+— and not on what to do about one, because their cost directions are opposite. This
+pattern's only discriminator is a slash, and a slash is everywhere in prose: over-matching
+costs a fragment of the operator's copy from a snapshot no one diagnoses anything with,
+while over-matching on the publication side refuses a brief X would have accepted, which no
+retry fixes. The screen also has nothing to READ in such a run — it asks whether a query or
+fragment parameter names a credential, and a path-only run has neither — so mirroring it
+would buy refusals and no new detection.
+
+`sanitizeSnapshotURL` applies the same reduction, through the same helper, to a field whose
+whole value is that shape. A field and the same link written inside `tweetText` must not
+redact differently; a value that is not link-shaped has no dotted TLD-shaped host followed
+by a slash and still falls through the truncating branch.
 
 `campaignFromTwitter` sanitizes a COPY of the config, so the
 text actually sent to X is untouched.

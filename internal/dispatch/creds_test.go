@@ -1100,3 +1100,121 @@ func TestSanitizeSnapshotText_SchemelessUserinfo(t *testing.T) {
 		}
 	}
 }
+
+// Round-15 review fixes
+
+// TestSanitizeSnapshot_MalformedHTTPAuthority pins the gap a single missing slash opened.
+// `http:/reset/SECRET` announces the scheme, so it is a link by anyone's reading — but it
+// parses with an EMPTY host, which failed the scheme+host reduction, and the `//`
+// requirement on both the run pattern and isHTTPScheme then failed it out of the
+// fail-closed branch too. It reached config_snapshot whole, path and all.
+func TestSanitizeSnapshot_MalformedHTTPAuthority(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"one slash, as a field", "http:/reset/SECRET", ""},
+		{"no slashes (opaque), as a field", "https:reset/SECRET", ""},
+		{"uppercase scheme, as a field", "HTTP:/reset/SECRET", ""},
+	} {
+		if got := sanitizeSnapshotURL(tc.in); got != tc.want {
+			t.Errorf("%s: sanitizeSnapshotURL(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"one slash, inside free text",
+			"reset here http:/reset/SECRET now",
+			"reset here  now",
+		},
+		{
+			"no slashes, inside free text",
+			"reset here https:reset/SECRET now",
+			"reset here  now",
+		},
+		{
+			// The run pattern needs something hard against the colon, so prose that
+			// merely ends a clause with the word is untouched.
+			"a bare scheme word in prose is untouched",
+			"over http: and https: alike",
+			"over http: and https: alike",
+		},
+		{
+			"a well-formed link beside a malformed one still reduces normally",
+			"see https://a.example/r?t=S1 or http:/reset/S2",
+			"see https://a.example or ",
+		},
+	} {
+		if got := sanitizeSnapshotText(tc.in); got != tc.want {
+			t.Errorf("%s: sanitizeSnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestSanitizeSnapshot_SchemelessPathOnlyLink pins the one URL shape that reached
+// config_snapshot with its path intact: a scheme-less link whose secret is IN the path and
+// which carries no query, fragment or userinfo for any earlier pass to fire on — the
+// password-reset link sanitizeSnapshotURL's own doc comment names as the realistic case.
+//
+// It reduces to the host rather than blanking: the host is the load-bearing half for the
+// human reading the snapshot, and blanking would make the same link redact differently
+// depending on whether the operator typed `https://` in front of it.
+func TestSanitizeSnapshot_SchemelessPathOnlyLink(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"path-only reset link",
+			"reset at events.example/reset/SECRET today",
+			"reset at events.example today",
+		},
+		{
+			"www host",
+			"see www.events.example/reset/SECRET",
+			"see www.events.example",
+		},
+		{
+			"IPv4 host with a port",
+			"go to 198.51.100.7:8443/reset/SECRET",
+			"go to 198.51.100.7:8443",
+		},
+		{
+			"trailing slash only",
+			"events.example/ is the site",
+			"events.example is the site",
+		},
+		{
+			// The earlier passes own these two, and this one must not second-guess
+			// them: the userinfo pass already blanked every credential-carrying run, so
+			// an '@' still standing was kept on purpose.
+			"a clock with a path is still left alone",
+			"session 9:30@main.stage/agenda",
+			"session 9:30@main.stage/agenda",
+		},
+		{
+			"an email with a path is left alone",
+			"contact bob@events.example/team for details",
+			"contact bob@events.example/team for details",
+		},
+		{
+			"a reduced scheme-ful link is not reduced a second time",
+			"see https://a.example/r?token=S",
+			"see https://a.example",
+		},
+		{
+			// A slash is the only discriminator here, so the TLD-shaped final label is
+			// what holds the pass off ordinary prose.
+			"prose with a slash and no dotted host",
+			"and/or, 9.5/10, read agenda.md",
+			"and/or, 9.5/10, read agenda.md",
+		},
+	} {
+		if got := sanitizeSnapshotText(tc.in); got != tc.want {
+			t.Errorf("%s: sanitizeSnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+	// The field path reduces it the same way, through the same helper — a field and the
+	// same link written inside tweetText must not redact differently.
+	if got := sanitizeSnapshotURL("events.example/reset/SECRET"); got != "events.example" {
+		t.Errorf("sanitizeSnapshotURL path-only link = %q, want %q", got, "events.example")
+	}
+	// A value that never claimed to be a link still falls through the truncating branch.
+	if got := sanitizeSnapshotURL("t3_abc123"); got != "t3_abc123" {
+		t.Errorf("sanitizeSnapshotURL(%q) = %q, want it untouched", "t3_abc123", got)
+	}
+}

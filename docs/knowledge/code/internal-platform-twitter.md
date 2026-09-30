@@ -524,6 +524,17 @@ A dotted-quad alternative and a `[a-z][a-z0-9-]+` label cover both. Scheme-less 
 IPv6 is deliberately still not covered: X does not linkify it, and a leading `[` collides
 with the markdown-link shape operators actually paste.
 
+A scheme-less link with a PATH and no query or fragment — `events.example/reset/SECRET` —
+is also not covered here, and that one is a DIVERGENCE from the snapshot redactor rather
+than a gap in both. `internal/dispatch`'s `schemelessPathSnapshotRunRe` does match it. The
+two sides are kept in step on what a link LOOKS like and deliberately not on what to do
+about one, because their cost directions are opposite: that pattern's only discriminator is
+a slash, and over-matching a slash on the redactor's side loses a fragment of the
+operator's own copy from a diagnostic snapshot, while over-matching it HERE refuses a brief
+X would have published, which no retry fixes. This screen also has nothing to read in such
+a run — it asks whether a query or fragment parameter names a credential, and a path-only
+run has neither — so mirroring the pattern would buy refusals and no new detection.
+
 A THIRD pattern, `schemelessUserinfoRunRe`, covers the scheme-less shape that carries a
 credential with no query to carry it: `user:password@host.tld`. The query scanner requires
 a `?` or `#` because a query is the only thing it reads, so `bob:pw@events.example` was
@@ -707,6 +718,17 @@ somebody deletes it. A cancellation between authoring and the `promoted_tweets`
 POST therefore returns `AuthoredTweetID` populated and an error naming the
 tweet as PUBLISHED-but-unpromoted, instead of reporting `""` for a tweet that
 provably exists and leaving the prose Steps entry as its only trace.
+
+`authoredTweetStatus` names the id AND what to do with it, and the second half is
+not decoration. Authoring is unconditional — Step 4 says so in its own comment, and
+the guard is deferred to the LFXV2-2665 idempotency work — so the retry the operator
+chooses decides between two very different outcomes: passing this id back as
+`tweetId` skips authoring entirely and promotes the tweet that is already live,
+while retrying without it publishes a SECOND tweet under the LF handle. The message
+says both. Returning the id and stopping there left the operator to infer the one
+thing that matters, which is how "the id is returned" gets read — as it was, in a PR
+description — as "the retry reuses it". It does not; the message now says which
+retry does.
 
 The authoring response's id is read by `extractTweetID`, not the generic
 `extractID` every other endpoint on this client uses: `accounts/:id/tweet`

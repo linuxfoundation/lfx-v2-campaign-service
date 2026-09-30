@@ -670,6 +670,15 @@ func TestCreateCampaign_AbortBetweenAuthoringAndPromotionRetainsTweetID(t *testi
 	if !strings.Contains(err.Error(), "authored tweet 123456789 PUBLISHED, not yet promoted") {
 		t.Errorf("abort error does not name the published tweet: %v", err)
 	}
+	// Naming the id is only half of it. Authoring is unconditional, so a retry that
+	// omits tweetId publishes a second tweet under the LF handle — the error has to
+	// say which retry promotes the existing tweet and which duplicates it.
+	if !strings.Contains(err.Error(), "retry with tweetId=123456789") {
+		t.Errorf("abort error names the published tweet but not how to reuse it on retry: %v", err)
+	}
+	if !strings.Contains(err.Error(), "publishes a SECOND tweet") {
+		t.Errorf("abort error does not warn that a retry without tweetId duplicates the tweet: %v", err)
+	}
 }
 
 // TestCreateCampaign_RejectsCredentialQueryParamBeforeAnythingIsCreated covers the
@@ -2090,7 +2099,6 @@ func TestAppendUTMToRawQuery_DoesNotReassembleANonCollidingQuery(t *testing.T) {
 		t.Errorf("empty component dropped on the collision path: %q", got)
 	}
 }
-
 
 // assertNamesClassifyingTerm checks that a refusal points the operator at the offending
 // parameter by the fixed vocabulary word that classified it, and never by reproducing

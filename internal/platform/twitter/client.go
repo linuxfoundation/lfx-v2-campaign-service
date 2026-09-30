@@ -2201,6 +2201,19 @@ func rejectCredentialQueryParamsInText(text string) error {
 // X does not linkify that form, so it is not published as a link, and admitting `[` here
 // would collide with the markdown-link convention the scheme-ful scanner already has to
 // reason about.
+//
+// Also not covered, and this one is a DIVERGENCE from the snapshot redactor rather than a
+// gap in both: a scheme-less link with a path and NO query or fragment
+// (`events.example/reset/SECRET`). internal/dispatch's schemelessPathSnapshotRunRe does
+// match that shape. The two sides are kept in step on what a link LOOKS like — the host
+// production, the letter-initial TLD, the punycode and IPv4 forms — and deliberately not
+// on what to do about one, because their cost directions are opposite. That pattern's only
+// discriminator is a slash, and a slash is everywhere in prose; over-matching it on the
+// redactor's side loses a fragment of the operator's own copy from a diagnostic snapshot,
+// while over-matching it HERE refuses a brief X would have published, which no retry
+// fixes. This screen also has nothing to read in such a run: it asks whether a QUERY OR
+// FRAGMENT parameter names a credential, and a path-only run has neither. Adding it would
+// buy refusals and no new detection.
 var schemelessScreenRunRe = regexp.MustCompile(
 	`(?i)(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9@][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>。、！？，：；]*)?[?#][^\s<>。、！？，：；]+`,
@@ -2463,11 +2476,18 @@ func buildTwitterUTMURL(in CampaignInput) (string, error) {
 // call published a tweet — the one artifact in this flow a retry does NOT reuse.
 // Empty when nothing was authored, so it appends nothing to the campaign/line-item
 // status pair it sits beside.
+//
+// It names the id AND what to do with it. Authoring is unconditional (see Step 4):
+// a retry that leaves tweetId empty re-runs it and publishes a SECOND tweet under
+// the LF handle, while a retry that passes this id back as tweetId skips authoring
+// entirely and promotes the tweet that is already live. Naming the id without that
+// sentence left the operator to infer the one thing that decides between those two
+// outcomes, which is how "the id is returned" gets read as "the retry reuses it".
 func authoredTweetStatus(id string) string {
 	if id == "" {
 		return ""
 	}
-	return fmt.Sprintf(" / authored tweet %s PUBLISHED, not yet promoted", id)
+	return fmt.Sprintf(" / authored tweet %s PUBLISHED, not yet promoted — retry with tweetId=%s to promote it; retrying without it publishes a SECOND tweet", id, id)
 }
 
 // tweetURLRe matches the URL runs X replaces with a t.co link: an http/https
