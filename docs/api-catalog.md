@@ -1019,6 +1019,13 @@ An OPTIONAL `as_user_id` (numeric, `^[0-9]+$`, `MaxLength 32`) declares which pr
 this connection's tweets are authored under. It is an authorization control rather than a routing
 value: where it is set, a campaign config naming a different `asUserId` is refused pre-create and
 one naming none inherits it; where it is absent, dispatch behaves exactly as before.
+That refusal is scoped to requests that actually AUTHOR a tweet — `tweetId` empty and `tweetText`
+non-empty. An explicit `tweetId` wins, so no tweet is authored, no promotable user is resolved, and
+a mismatched `asUserId` is ignored along with the `tweetText` it would have signed, rather than
+failing a request over a field nothing reads (the same treatment an unused, malformed `tweetText`
+gets). Bootstrap holds a seeded `as_user_id` to the same 32-character bound as the HTTP contract —
+it writes past Goa straight to the repository, and the shared fallback row has no second opinion
+downstream.
 
 Destination URL: the ad points at the brief's registration URL. The X client validates it before any
 upstream create — it must be an absolute **http/https** URL with a real hostname and carry NO

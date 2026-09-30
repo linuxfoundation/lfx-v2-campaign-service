@@ -1873,6 +1873,23 @@ The refusal names NEITHER the requested nor the configured id. Promotable-user i
 persisted error text is a defect this branch already fixed once, and naming the connection's
 own identity back to a caller who guessed wrong would confirm the guess.
 
+The check is GATED on authoring actually happening, and the gate is a copy of the client's own
+condition — `TweetID == "" && TrimSpace(TweetText) != ""` — rather than an approximation of it.
+`as_user_id` authorizes ONE act, publishing a tweet under a handle, and an explicit `tweetId`
+wins over `tweetText`: no tweet is authored, no promotable user is resolved, and the value is
+never read. Run unconditionally, the check refused a promote-an-existing-tweet request over a
+field nothing would have used, and contradicted `docs/api-catalog.md`'s own "only meaningful
+with `tweetText`". It is also the treatment the client already gives an unused `tweetText` — a
+malformed but ignored field must not fail an otherwise-valid campaign.
+
+Copying the condition rather than restating it is the point: the two have to stay identical, or
+one side authorizes text the other does not publish, or publishes text the other never
+authorized. The scope of an authorization check is part of the check, and a gate is the one kind
+of edit that can narrow it to nothing while every existing test still passes — which is why the
+ignored case has a test asserting the OUTCOME (the supplied tweet is promoted, the authoring
+endpoint and the promotable-users read are never touched) rather than merely the absence of an
+error.
+
 ## Forced-primary mode: the system account as the account of record
 
 The section above is the DEFAULT — the system row is a fallback, used only when a project has no

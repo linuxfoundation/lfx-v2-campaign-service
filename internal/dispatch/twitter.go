@@ -181,9 +181,25 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// none, behaviour is unchanged — and the gap that leaves is narrow, because the
 	// client already refuses to guess when several candidates exist and the caller pinned
 	// nothing. Seeding as_user_id on the shared connection is what closes it for real.
-	asUserID, err := authorizedTwitterAsUserID(brief.ProjectID, res, cfg.AsUserID)
-	if err != nil {
-		return nil, notCreated(err)
+	//
+	// The check is GATED on authoring actually happening, and the gate mirrors the
+	// client's own condition (`TweetID == "" && TrimSpace(TweetText) != ""`,
+	// internal/platform/twitter/client.go) rather than approximating it. as_user_id
+	// authorizes ONE act — publishing a tweet under a handle — and an explicit tweetId
+	// wins over tweetText, so on that path no tweet is authored, no promotable user is
+	// resolved, and this value is never read. Run unconditionally, it refused a
+	// promote-an-existing-tweet request over a field nothing would have used, which is
+	// also what docs/api-catalog.md promises ("only meaningful with tweetText"). It is
+	// the same treatment the client already gives an unused TweetText: a malformed but
+	// ignored field must not fail an otherwise-valid campaign. The two conditions have
+	// to stay identical — if they drift, one side authorizes text the other does not
+	// publish, or publishes text the other never authorized.
+	var asUserID string
+	if cfg.TweetID == "" && strings.TrimSpace(cfg.TweetText) != "" {
+		asUserID, err = authorizedTwitterAsUserID(brief.ProjectID, res, cfg.AsUserID)
+		if err != nil {
+			return nil, notCreated(err)
+		}
 	}
 
 	// hsToken is a documented TOP-LEVEL config envelope field (docs/api-catalog.md);
