@@ -5,6 +5,7 @@ package meta
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -56,6 +57,63 @@ type AdSetBudget struct {
 func (b *AdSetBudget) CampaignBudgetOptimized() bool {
 	return b.CampaignDailyBudgetMinor != nil || b.CampaignLifetimeBudgetMinor != nil
 }
+
+// ErrBudgetAmountInvalid marks every refusal budgetToMinorUnits makes, so a caller can tell
+// "this amount is permanently unacceptable" apart from "the platform call failed" or "the
+// account's currency could not be resolved".
+//
+// It exists because the distinction decides an HTTP status. Meta's floor is ONE MINOR UNIT in
+// the account's own currency, a value nothing above this package can know — the service layer
+// holds no per-platform floor by design — so without a sentinel this refusal reaches the
+// service as a bare error, is classified as an upstream failure and answered 503 with an
+// invitation to retry a request that can never succeed. The dispatcher maps this to domain's
+// ErrBudgetAmountRejected, which is answered 400.
+//
+// SCOPE IS DELIBERATELY NARROW. resolveCurrencyOffset's failures (a failed account preflight,
+// an unknown currency, a conflicting explicit offset) do NOT wrap it: none of them is a
+// statement about the caller's amount, and a failed preflight in particular may well be
+// transient. Blanket-wrapping ResolveBudgetMinorUnits would turn a transport failure into a
+// 400 telling the caller their amount was wrong.
+var ErrBudgetAmountInvalid = errors.New("meta: budget amount is not acceptable")
+
+// budgetAmountError is the concrete type every amount refusal returns. It carries ONLY the
+// validator's own sentence as its message and reaches ErrBudgetAmountInvalid through Unwrap,
+// so errors.Is matches while the text stays a clean, client-safe sentence — wrapping the
+// sentinel with %w instead would append its text to every message and make the sentence a
+// caller can be shown indistinguishable from the chain it arrived in.
+type budgetAmountError struct{ msg string }
+
+func (e *budgetAmountError) Error() string { return e.msg }
+func (e *budgetAmountError) Unwrap() error { return ErrBudgetAmountInvalid }
+
+func invalidBudgetAmount(format string, args ...any) error {
+	return &budgetAmountError{msg: fmt.Sprintf(format, args...)}
+}
+
+// BudgetAmountReason reports whether err came from this package's budget-amount validation
+// and, if so, returns the validator's own sentence. It is the ONLY sanctioned way to turn one
+// of these refusals into text shown to a caller: the sentence names the amount and Meta's
+// published minimum and nothing about upstream account configuration, which is what makes it
+// safe to return where the surrounding error chain is not.
+func BudgetAmountReason(err error) (string, bool) {
+	var amountErr *budgetAmountError
+	if errors.As(err, &amountErr) {
+		return amountErr.msg, true
+	}
+	return "", false
+}
+
+// ErrAccountCurrencyUnresolvable marks a budget write refused because the AD ACCOUNT's
+// currency does not resolve to a minor-unit scale — Meta reported a code this service's
+// supported-currency map does not carry, or a stored explicit offset contradicts it.
+//
+// It is a permanent property of that account, not a transient upstream failure and not a
+// property of the requested amount, which is why it is neither ErrBudgetAmountInvalid nor left
+// bare: the dispatcher maps it to domain.ErrBudgetUnwritable and it is answered as a settled
+// refusal, rather than falling through to a 503 that invites a retry nothing can change.
+//
+// A failed account PREFLIGHT is deliberately not marked with it: that may well be transient.
+var ErrAccountCurrencyUnresolvable = errors.New("meta: the ad account's currency has no known minor-unit scale")
 
 // resolveCurrencyOffset derives the minor-unit multiplier used to encode a budget, from the
 // account preflight's currency and the optionally-configured explicit offset.
@@ -109,17 +167,19 @@ func (c *Client) resolveCurrencyOffset(acctCurrency string, preflightErr error) 
 // NaN is rejected explicitly rather than left to the comparisons: NaN fails every ordered
 // comparison, so it would slip past the range check and convert to an implementation-defined
 // int64 rather than being named for what it is.
+// Every refusal wraps ErrBudgetAmountInvalid; the currency-offset failures above deliberately
+// do NOT, because those are upstream account configuration, not the caller's amount.
 func budgetToMinorUnits(budget float64, offset int64) (int64, error) {
 	if math.IsNaN(budget) {
-		return 0, fmt.Errorf("budget must be a finite number, got %v", budget)
+		return 0, invalidBudgetAmount("budget must be a finite number, got %v", budget)
 	}
 	scaled := math.Round(budget * float64(offset))
 	if scaled >= float64(math.MaxInt64) {
-		return 0, fmt.Errorf("budget too large after applying currency offset %d: exceeds the representable minor-unit range", offset)
+		return 0, invalidBudgetAmount("budget too large after applying currency offset %d: exceeds the representable minor-unit range", offset)
 	}
 	budgetMinor := int64(scaled)
 	if budgetMinor < 1 {
-		return 0, fmt.Errorf("budget too small: must be at least one minor currency unit (offset %d)", offset)
+		return 0, invalidBudgetAmount("budget too small: must be at least one minor currency unit (offset %d)", offset)
 	}
 	return budgetMinor, nil
 }
@@ -131,6 +191,17 @@ func budgetToMinorUnits(budget float64, offset int64) (int64, error) {
 // exists so the budget-write path encodes an amount by exactly the rule the create path uses,
 // against the SAME authoritative source — the account's own currency — rather than assuming a
 // scale. An unknown currency fails HERE, before anything is written.
+//
+// IT CANNOT FALL BACK TO AN EXPLICIT OFFSET, and that is a real limitation rather than an
+// oversight. The budget path's client is built from the connection row alone, so
+// AccountConfig.CurrencyOffset is always zero here — the value only ever reaches the client on
+// a CREATE, from that request's own per-campaign config, and it is persisted nowhere the write
+// path could read it back. The consequence is narrow but real: a project whose ad account is
+// denominated in a currency Meta reports but this service's map does not carry can be CREATED
+// with an explicit offset and can never have its budget EDITED here. That is the fail-closed
+// side of the trade — the alternative is encoding an amount at a guessed scale, which is how a
+// budget gets written 100x wrong — and the refusal says so without advising a setting this
+// endpoint has no way to accept.
 //
 // Unlike the create path this does NOT gate on account_status: an ad account in a non-serving
 // state still has a real budget, and LOWERING it is a reasonable thing to do on an account
@@ -147,7 +218,23 @@ func (c *Client) ResolveBudgetMinorUnits(ctx context.Context, budget float64) (i
 	}
 	offset, err := c.resolveCurrencyOffset(acct.Currency, preflightErr)
 	if err != nil {
-		return 0, 0, err
+		// resolveCurrencyOffset's texts are written for the CREATE path, which is handed an
+		// AccountConfig built from the caller's own per-campaign config and can therefore
+		// act on "set CurrencyOffset explicitly". THIS path cannot: its client is built from
+		// the connection row alone (see the dispatcher's cachedMetaClient), the offset is
+		// not carried on the row or on the campaign, and there is no request field that
+		// reaches here — so repeating that advice would send an operator to a setting this
+		// endpoint has no way to read. The underlying error is still wrapped, for the log.
+		//
+		// The two causes are classified differently on purpose. A failed preflight may be
+		// transient, so it stays an ordinary failure. Everything else — a currency Meta
+		// reports that is not in the supported map, or a stored offset conflicting with it —
+		// is a permanent property of the ad account, so it is marked unresolvable and
+		// answered as a settled refusal rather than as a retryable upstream error.
+		if preflightErr != nil {
+			return 0, 0, fmt.Errorf("meta: the ad account's currency could not be determined because the account preflight failed, and the minor-unit scale a budget is encoded in cannot be assumed: %w", err)
+		}
+		return 0, 0, fmt.Errorf("meta: the ad account's currency does not resolve to a minor-unit scale this service can encode a budget in, so the amount cannot be written safely; the remedy is in Meta Ads Manager or in this service's supported-currency map, not in the request (%w): %w", err, ErrAccountCurrencyUnresolvable)
 	}
 	minor, err := budgetToMinorUnits(budget, offset)
 	if err != nil {

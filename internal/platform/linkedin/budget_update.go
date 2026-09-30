@@ -5,6 +5,7 @@ package linkedin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -50,6 +51,47 @@ type CampaignBudget struct {
 // raw float. See ValidateBudgetAmount.
 const budgetWireDecimals = 2
 
+// ErrBudgetAmountInvalid marks every refusal ValidateBudgetAmount makes, so a caller can tell
+// "this amount is permanently unacceptable" apart from "the platform call failed".
+//
+// It exists because the distinction decides an HTTP status. LinkedIn's minimums ($10 daily,
+// $100 lifetime) have no equivalent anywhere above this package — the service layer holds no
+// per-platform floor by design — so without a sentinel these refusals reach the service as
+// bare errors, are classified as an upstream failure and answered 503 with an invitation to
+// retry a request that can never succeed. The dispatcher maps this to domain's
+// ErrBudgetAmountRejected, which is answered 400.
+//
+// It marks ONLY amount validation. Nothing in this package's transport or read paths wraps it:
+// a failed GET is not the caller's amount being wrong.
+var ErrBudgetAmountInvalid = errors.New("linkedin: budget amount is not acceptable")
+
+// budgetAmountError is the concrete type every amount refusal returns. It carries ONLY the
+// validator's own sentence as its message and reaches ErrBudgetAmountInvalid through Unwrap,
+// so errors.Is matches while the text stays a clean, client-safe sentence — wrapping the
+// sentinel with %w instead would append its text to every message and make the sentence a
+// caller can be shown indistinguishable from the chain it arrived in.
+type budgetAmountError struct{ msg string }
+
+func (e *budgetAmountError) Error() string { return e.msg }
+func (e *budgetAmountError) Unwrap() error { return ErrBudgetAmountInvalid }
+
+func invalidBudgetAmount(format string, args ...any) error {
+	return &budgetAmountError{msg: fmt.Sprintf(format, args...)}
+}
+
+// BudgetAmountReason reports whether err came from this package's budget-amount validation
+// and, if so, returns the validator's own sentence. It is the ONLY sanctioned way to turn one
+// of these refusals into text shown to a caller: the sentence names the amount and LinkedIn's
+// published minimum and nothing about upstream account configuration, which is what makes it
+// safe to return where the surrounding error chain is not.
+func BudgetAmountReason(err error) (string, bool) {
+	var amountErr *budgetAmountError
+	if errors.As(err, &amountErr) {
+		return amountErr.msg, true
+	}
+	return "", false
+}
+
 // ValidateBudgetAmount normalizes a whole-USD budget to the exact string this client sends on
 // the wire and enforces every rule LinkedIn applies to it, returning the wire string and the
 // rounded value it represents.
@@ -60,7 +102,8 @@ const budgetWireDecimals = 2
 // campaign to an amount this service would have refused to CREATE it with — the same class of
 // divergence the Google Ads slice closed by extracting ValidateBudgetMicros. The rules and
 // their error texts are carried over unchanged, so a create that was refused before is refused
-// identically now.
+// identically now. Every refusal additionally wraps ErrBudgetAmountInvalid so a caller can
+// classify it without matching on text; see that sentinel for why the distinction matters.
 //
 // Validation is against the ROUNDED wire value, never the raw float. 9.999 is sent as "10.00"
 // and therefore MEETS the $10 daily minimum; checking the raw float rejected it, which is a
@@ -71,10 +114,10 @@ const budgetWireDecimals = 2
 // currencyCode "USD".
 func ValidateBudgetAmount(budgetUSD float64, lifetime bool) (wire string, rounded float64, err error) {
 	if math.IsNaN(budgetUSD) || math.IsInf(budgetUSD, 0) {
-		return "", 0, fmt.Errorf("budget must be a finite number, got %v", budgetUSD)
+		return "", 0, invalidBudgetAmount("budget must be a finite number, got %v", budgetUSD)
 	}
 	if budgetUSD <= 0 {
-		return "", 0, fmt.Errorf("budget must be greater than zero, got %v", budgetUSD)
+		return "", 0, invalidBudgetAmount("budget must be greater than zero, got %v", budgetUSD)
 	}
 	// Round to the SAME precision the wire uses and validate against THAT value, so the
 	// amount checked here is exactly the amount sent.
@@ -83,20 +126,20 @@ func ValidateBudgetAmount(budgetUSD float64, lifetime bool) (wire string, rounde
 	if parseErr != nil {
 		// Should be unreachable for a finite float already validated above, but fail
 		// closed rather than proceed with an unverified budget.
-		return "", 0, fmt.Errorf("budget %v could not be normalized to a 2-decimal amount: %w", budgetUSD, parseErr)
+		return "", 0, invalidBudgetAmount("budget %v could not be normalized to a 2-decimal amount (%v)", budgetUSD, parseErr)
 	}
 	// A sub-cent budget (e.g. 0.001) passes the > 0 / NaN / Inf checks yet rounds to
 	// "0.00" at the wire precision — a zero budget the platform rejects only after the
 	// request has been made. Reject it here.
 	if wire == "0.00" {
-		return "", 0, fmt.Errorf("budget %v is below the minimum billable amount (0.01) and would round to zero at the API boundary", budgetUSD)
+		return "", 0, invalidBudgetAmount("budget %v is below the minimum billable amount (0.01) and would round to zero at the API boundary", budgetUSD)
 	}
 	if lifetime {
 		if rounded < minLifetimeBudgetUSD {
-			return "", 0, fmt.Errorf("lifetime budget %v is below LinkedIn's minimum of $%.0f for a total (lifetime) budget", budgetUSD, minLifetimeBudgetUSD)
+			return "", 0, invalidBudgetAmount("lifetime budget %v is below LinkedIn's minimum of $%.0f for a total (lifetime) budget", budgetUSD, minLifetimeBudgetUSD)
 		}
 	} else if rounded < minDailyBudgetUSD {
-		return "", 0, fmt.Errorf("daily budget %v is below LinkedIn's minimum of $%.0f for a daily budget", budgetUSD, minDailyBudgetUSD)
+		return "", 0, invalidBudgetAmount("daily budget %v is below LinkedIn's minimum of $%.0f for a daily budget", budgetUSD, minDailyBudgetUSD)
 	}
 	return wire, rounded, nil
 }

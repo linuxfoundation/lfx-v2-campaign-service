@@ -1356,7 +1356,12 @@ who opened Monitor, saw a campaign pacing over budget and clicked through to Opt
 exactly one action available — pause it.
 
 **The platform call happens FIRST and the row is written only after it confirms**, exactly as
-`ToggleCampaignStatus` works, so this service never reports a budget the platform does not have.
+`ToggleCampaignStatus` works, so this service never reports a budget the platform never accepted.
+**What is persisted is the REQUESTED amount, not a readback of the applied one** — the dispatcher
+confirms acceptance and does not re-read, so the two can differ by less than the platform's
+smallest settable unit (LinkedIn settles on two decimals, Meta on the account currency's minor
+unit, Google on a micro). That is the same meaning the column already carries, and a sub-unit
+drift is exactly what the settings readback exists to surface rather than to hide.
 Writing those columns does NOT breach the readback's "never write an observation back" rule: the
 budget columns record what a dispatch ASKED FOR, and a budget change is a new REQUEST, so the
 column keeps meaning exactly what it already meant and the readback keeps comparing
@@ -1392,7 +1397,8 @@ wait, so a request that is going to be rejected anyway must never turn another w
 into a 409.
 
 **The dispatcher error switch** maps `ErrBudgetWriteUnsupported` → 400 (no dispatcher, or one
-that is not a `BudgetWriter`; no retry adds the capability), `ErrBudgetShared` and
+that is not a `BudgetWriter`; no retry adds the capability), `ErrBudgetAmountRejected` → 400,
+`ErrBudgetShared` and
 `ErrBudgetUnwritable` → 409, `ErrPlatformCampaignAbsent` → 404,
 `ErrCampaignProvenanceUnknown` → 409 **above** the `ErrCampaignAccountMismatch` arm (a row that
 names no account cannot be told to reconnect one; the remedy is a re-dispatch), the two system
@@ -1400,6 +1406,18 @@ connection sentinels and `ErrCredentialDecryptionFailed` → 500, `ErrConnection
 above the unconfirmed check, and `ErrNotFound` → 404. The shared-budget and unwritable arms log
 through `safeErrSummary` and return a generic message: each cause names upstream configuration,
 which the caller can act on only in the ad platform.
+
+**The `ErrBudgetAmountRejected` arm is the one that returns a SPECIFIC message, and it is
+specific by construction rather than by string-handling.** A platform's own floor — LinkedIn's
+`$10` daily / `$100` lifetime, Meta's one minor unit — has no equivalent at this layer, which
+validates only what is true for every platform at once (finite, `> 0`, `<= 1e9`, `>= half a
+micro`) and deliberately holds no per-platform floor. Without this arm such a refusal fell to the
+default 503, inviting a retry of a request that can never succeed. The adapter therefore hands
+up a client-safe sentence through a behavioural interface — `BudgetAmountReason() string`,
+detected with `errors.As` exactly as `Unconfirmed() bool` already is — and only that sentence is
+appended to the 400. **The rendered error chain is never interpolated into a client message**:
+`safeErrSummary` strips non-graphic runes and bounds length, it does not redact, so returning a
+wrapped chain would publish whatever an adapter or transport put in it.
 
 **A positive amount that rounds to zero micros is refused 400 here too**, alongside NaN, Inf,
 zero and the ceiling. Every supported platform bills in micros, so an amount under 0.000001 of

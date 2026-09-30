@@ -131,11 +131,29 @@ var (
 	// ErrToggleUnsupported: a platform dispatcher can return it directly without
 	// importing the orchestration layer.
 	//
-	// Google Ads is the only platform that implements the capability today, the same
-	// way it was the only SettingsReader when that capability landed. Budget writing is
-	// added per platform, and each addition is a separate deliberate decision about that
-	// platform's budget model — not a gap to be closed mechanically.
+	// Google Ads, LinkedIn and Meta implement the capability today; every other platform
+	// still answers 400. Budget writing is added per platform, and each addition is a
+	// separate deliberate decision about that platform's budget model — not a gap to be
+	// closed mechanically. The service layer holds NO allowlist, so what a platform
+	// supports is decided solely by whether its dispatcher is a BudgetWriter.
 	ErrBudgetWriteUnsupported = errors.New("budget writes are not supported for this platform")
+
+	// ErrBudgetAmountRejected indicates the requested AMOUNT was refused by the platform
+	// adapter's own validator, before anything was written. The platform may have been
+	// read, but it was never mutated.
+	//
+	// Maps to 400, NOT 503: these are permanent properties of the amount against that
+	// platform's rules — LinkedIn's $10 daily / $100 lifetime minimums, Meta's
+	// one-minor-unit floor in the account's currency — and no retry of the same request
+	// can succeed. The service layer validates the amount it can validate for every
+	// platform (finite, > 0, <= the contract maximum, >= half a micro) but deliberately
+	// holds no per-platform floor, which is exactly the set of refusals this sentinel
+	// carries back. Google Ads needs it least: its adapter's floor is the one the service
+	// already mirrors, so its validator is unreachable through this endpoint.
+	//
+	// The validator's own text is safe to return to the caller: it names the amount and
+	// the platform's published minimum, never upstream account configuration.
+	ErrBudgetAmountRejected = errors.New("the requested budget amount was rejected by the platform's rules")
 
 	// ErrBudgetShared indicates the campaign's upstream budget is SHARED across more than
 	// one campaign (Google Ads: campaign_budget.explicitly_shared is true), so writing it
@@ -152,6 +170,16 @@ var (
 	// ExplicitlyShared=false (internal/platform/googleads/campaign.go), so each gets a
 	// dedicated budget. An ADOPTED campaign (see CampaignAdopter) carries whatever budget
 	// it was already attached to, which is the case this guard exists for.
+	//
+	// THIS SENTINEL IS GOOGLE-ONLY, and deliberately so: it has a subject only where the
+	// budget is a resource that can be attached to several campaigns at once. LinkedIn's
+	// budget is a pair of fields on the campaign itself, so there is nothing to share and
+	// the guard has no analogue. Meta's analogue is NOT absent but is a different shape —
+	// Campaign Budget Optimization, where the campaign holds one amount distributed across
+	// every ad set beneath it — and that adapter refuses it with ErrBudgetUnwritable rather
+	// than this sentinel, because it is a property of the ad set's addressability, not of a
+	// budget shared between named campaigns. A platform adding this sentinel must mean the
+	// Google shape, not merely "the budget is not exclusively ours".
 	ErrBudgetShared = errors.New("the campaign's budget is shared across campaigns and cannot be written through this campaign")
 
 	// ErrBudgetUnwritable indicates the campaign's upstream budget cannot be addressed for

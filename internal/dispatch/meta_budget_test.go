@@ -164,7 +164,12 @@ func TestMeta_WriteBudget_Guards(t *testing.T) {
 		currency  string
 		change    model.BudgetChange
 		wantErr   error
-		wantText  string
+		// wantNotErr asserts a refusal is NOT classified as the given sentinel. It exists
+		// for the currency case: an unresolvable account currency is UPSTREAM
+		// configuration, not the caller's amount, and mapping it to a 400 would tell an
+		// operator to change a number that is perfectly valid.
+		wantNotErr error
+		wantText   string
 	}{
 		{
 			name:      "an unreadable current amount is refused, not read as absent",
@@ -227,12 +232,22 @@ func TestMeta_WriteBudget_Guards(t *testing.T) {
 			adSetJSON: metaAdSetHead + `,"daily_budget":"10000"}`,
 			currency:  "XYZ",
 			change:    model.BudgetChange{Amount: 250, Type: model.BudgetDaily},
-			wantText:  "unsupported or missing currency code",
+			// A permanent property of the AD ACCOUNT, so a settled 409 — not the 503 that
+			// invites a retry, and not the 400 that would blame a perfectly valid amount.
+			wantErr:    domain.ErrBudgetUnwritable,
+			wantNotErr: domain.ErrBudgetAmountRejected,
+			wantText:   "unsupported or missing currency code",
 		},
 		{
+			// Meta's floor is one minor unit of the ACCOUNT's currency, a value the
+			// service layer cannot know, so it can only be refused down here. wantErr
+			// is the load-bearing half: unclassified, this reaches the service's
+			// default arm and is answered 503 with a retry invitation for a request
+			// that can never succeed.
 			name:      "an amount below one minor unit is refused",
 			adSetJSON: metaAdSetHead + `,"daily_budget":"10000"}`,
 			change:    model.BudgetChange{Amount: 0.004, Type: model.BudgetDaily},
+			wantErr:   domain.ErrBudgetAmountRejected,
 			wantText:  "budget too small",
 		},
 	}
@@ -250,6 +265,9 @@ func TestMeta_WriteBudget_Guards(t *testing.T) {
 			}
 			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
 				t.Errorf("error does not wrap %v: %v", tc.wantErr, err)
+			}
+			if tc.wantNotErr != nil && errors.Is(err, tc.wantNotErr) {
+				t.Errorf("error must NOT be classified as %v: %v", tc.wantNotErr, err)
 			}
 			if !strings.Contains(err.Error(), tc.wantText) {
 				t.Errorf("error %q does not mention %q", err, tc.wantText)

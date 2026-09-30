@@ -571,6 +571,9 @@ var (
 	ErrBudgetShared = domain.ErrBudgetShared
 	// ErrBudgetUnwritable: the campaign's upstream budget could not be addressed for a write.
 	ErrBudgetUnwritable = domain.ErrBudgetUnwritable
+	// ErrBudgetAmountRejected: the requested amount was refused by the platform adapter's own
+	// validator, before anything was written — a permanent request fault, answered 400.
+	ErrBudgetAmountRejected = domain.ErrBudgetAmountRejected
 
 	// ErrAccountsUnsupported: the platform has no account-listing capability wired.
 	ErrAccountsUnsupported = domain.ErrAccountsUnsupported

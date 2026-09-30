@@ -419,6 +419,13 @@ to zero at the API boundary, and enforces `minDailyBudgetUSD = 10.0` / `minLifet
 as `"10.00"` and so meets the $10 minimum; checking the raw float would refuse an amount the
 platform accepts. The wire string it returns is what callers send verbatim.
 
+**Every refusal it makes also wraps `ErrBudgetAmountInvalid`**, so a caller classifies the
+refusal without matching on its text; `BudgetAmountReason(err)` returns the refusal's sentence
+for a caller that needs to show one. The sentinel is attached through an `Unwrap` method rather
+than a `%w` in the message: wrapping with `%w` would append the sentinel's own text to every
+message and make the client-safe sentence indistinguishable from its chain — which matters
+because the dispatcher hands exactly that sentence to an API client.
+
 `GetCampaignBudget(ctx, campaignID)` reads the campaign under the resolved account
 (`adAccounts/{acct}/adCampaigns/{id}`, numeric ids only) and returns a `CampaignBudget` carrying
 `DailyBudget`, `TotalBudget`, `CurrencyCode` and `Status`. An **absent** field stays `nil`

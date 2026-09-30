@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -284,11 +285,16 @@ func TestUpdateAdSetBudget_WritesTheFieldThePacingSelects(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var body map[string]any
-			var path string
+			// Captured on the server's goroutine, read on the test's: the mutex is the
+			// happens-before edge -race requires, and these values ARE the assertions.
+			var mu sync.Mutex
+			var capturedBody map[string]any
+			var capturedPath string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				path = r.URL.Path
-				_ = json.NewDecoder(r.Body).Decode(&body)
+				mu.Lock()
+				defer mu.Unlock()
+				capturedPath = r.URL.Path
+				_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, `{"success":true}`)
 			}))
@@ -297,6 +303,9 @@ func TestUpdateAdSetBudget_WritesTheFieldThePacingSelects(t *testing.T) {
 			if err := budgetClient(srv.URL, AccountConfig{AccountID: "act_1"}).UpdateAdSetBudget(context.Background(), "777", 2550, tc.lifetime); err != nil {
 				t.Fatalf("UpdateAdSetBudget: %v", err)
 			}
+			mu.Lock()
+			body, path := capturedBody, capturedPath
+			mu.Unlock()
 			if path != "/777" {
 				t.Errorf("wrote to %q, want the ad set node /777", path)
 			}

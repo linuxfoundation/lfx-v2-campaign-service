@@ -87,21 +87,7 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 			campaign.PlatformCampaignID, domain.ErrBudgetUnwritable)
 	}
 
-	// GUARD 2 — CURRENCY. The minimums enforced below ($10 daily, $100 lifetime) are
-	// USD-specific, and this client only ever SENDS currencyCode "USD". A campaign
-	// denominated in anything else is one whose minimums this service cannot check and
-	// whose existing amount it would silently redenominate by writing USD over it. Refuse
-	// rather than write a number in a currency nobody chose.
-	//
-	// An EMPTY currency is permitted: it means the platform did not report the field, which
-	// is the shape a campaign with no budget set yet returns, and the write below supplies
-	// USD explicitly. Only a reported, non-USD currency is a refusal.
-	if current.CurrencyCode != "" && !strings.EqualFold(current.CurrencyCode, "USD") {
-		return fmt.Errorf("write linkedin campaign budget: campaign %s is denominated in %s, but this service writes and validates LinkedIn budgets in USD only; change the amount in LinkedIn Campaign Manager where its currency is applied: %w",
-			campaign.PlatformCampaignID, current.CurrencyCode, domain.ErrBudgetUnwritable)
-	}
-
-	// GUARD 3 — THE PACING MODEL MUST ALREADY MATCH. This capability changes HOW MUCH a
+	// GUARD 2 — THE PACING MODEL MUST ALREADY MATCH. This capability changes HOW MUCH a
 	// campaign may spend, never HOW it is paced — the same refusal the Google Ads path
 	// makes, and for the same reason: switching a live campaign between daily pacing and a
 	// whole-flight cap reinterprets every figure it has already spent against, and doing it
@@ -132,6 +118,31 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 			campaign.PlatformCampaignID, upstreamType, budget.Type, domain.ErrBudgetUnwritable)
 	}
 
+	// GUARD 3 — CURRENCY. Ordered AFTER the pacing guard, and that order is the guard.
+	//
+	// The minimums enforced below ($10 daily, $100 lifetime) are USD-specific, and this
+	// client only ever SENDS currencyCode "USD". A campaign denominated in anything else is
+	// one whose minimums this service cannot check and whose existing amount it would
+	// silently redenominate by writing USD over it.
+	//
+	// AN EMPTY CURRENCY IS REFUSED HERE, where an earlier placement had to permit it. The
+	// currency is read off whichever budget field the platform reported, so "empty" used to
+	// have two meanings — a campaign with NO budget yet (where it is harmless), and a
+	// campaign that HAS a budget whose currencyCode LinkedIn did not report. Guard 2 has
+	// already refused the first: a campaign reporting neither field never reaches this line.
+	// So the only empty currency left is the second, and writing USD over an amount whose
+	// currency the platform declined to state is exactly the redenomination this guard
+	// exists to prevent. Permitting it was an escape hatch aimed at a case that is no longer
+	// reachable here.
+	if !strings.EqualFold(current.CurrencyCode, "USD") {
+		reported := current.CurrencyCode
+		if reported == "" {
+			reported = "a currency LinkedIn did not report"
+		}
+		return fmt.Errorf("write linkedin campaign budget: campaign %s holds a budget denominated in %s, but this service writes and validates LinkedIn budgets in USD only, so writing here would redenominate it; change the amount in LinkedIn Campaign Manager where its currency is applied: %w",
+			campaign.PlatformCampaignID, reported, domain.ErrBudgetUnwritable)
+	}
+
 	// Converted and validated through the SAME helper the create path uses, so an amount
 	// this service would refuse to create with cannot be reached by editing. The WIRE
 	// STRING it returns is what is sent — the float is never re-formatted downstream —
@@ -139,6 +150,18 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 	lifetime := upstreamType == model.BudgetLifetime
 	wire, _, err := linkedin.ValidateBudgetAmount(budget.Amount, lifetime)
 	if err != nil {
+		// A refused AMOUNT is a permanent request fault, not an upstream one. LinkedIn's
+		// $10 daily / $100 lifetime minimums have no equivalent in the service layer (which
+		// holds no per-platform floor by design), so without this mapping the refusal falls
+		// through every errors.Is arm to the default and is answered 503 "the campaign was
+		// not modified" — inviting a retry of a request that can never succeed. Nothing has
+		// been written at this point; this is still a read-side failure.
+		if reason, ok := linkedin.BudgetAmountReason(err); ok {
+			return &rejectedBudgetAmountError{
+				reason: reason,
+				err:    fmt.Errorf("write linkedin campaign budget: %w: %w", err, domain.ErrBudgetAmountRejected),
+			}
+		}
 		return fmt.Errorf("write linkedin campaign budget: %w", err)
 	}
 

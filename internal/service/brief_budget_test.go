@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -348,6 +350,9 @@ func TestUpdateCampaignBudget_DispatcherSentinelsMapToStatuses(t *testing.T) {
 		{"not provisioned", ErrCampaignNotProvisioned, isConflict},
 		{"shared budget", ErrBudgetShared, isConflict},
 		{"unwritable budget", ErrBudgetUnwritable, isConflict},
+		// A refused AMOUNT is a permanent request fault, so 400 and never the 503 that
+		// invites a retry of a request that can never succeed.
+		{"rejected amount", ErrBudgetAmountRejected, isBadRequest},
 		{"platform campaign absent", domain.ErrPlatformCampaignAbsent, isNotFound},
 		{"unknown provenance", domain.ErrCampaignProvenanceUnknown, isConflict},
 		{"account mismatch", ErrCampaignAccountMismatch, isConflict},
@@ -383,6 +388,52 @@ func TestUpdateCampaignBudget_DispatcherSentinelsMapToStatuses(t *testing.T) {
 		})
 	}
 }
+
+// The 400 for a refused amount CARRIES the adapter's own sentence, because that sentence is
+// what lets the caller correct the request — and it must carry that sentence alone, not the
+// rendered error chain, which accumulates the dispatcher's prefix and two sentinel texts
+// around it. Anything without a client-safe reason still gets the generic message.
+func TestUpdateCampaignBudget_RejectedAmountCarriesTheAdapterReasonOnly(t *testing.T) {
+	reason := "daily budget 5 is below LinkedIn's minimum of $10 for a daily budget"
+	d := &budgetWriterDispatcher{err: &reasonedBudgetAmountError{
+		reason: reason,
+		err:    fmt.Errorf("write linkedin campaign budget: %s: %w", reason, ErrBudgetAmountRejected),
+	}}
+	s, camps := budgetService(t, budgetCampaign(), d)
+
+	_, err := s.UpdateCampaignBudget(context.Background(), budgetPayload(5, "daily", "3"))
+	if !isBadRequest(err) {
+		t.Fatalf("want a 400, got %T: %v", err, err)
+	}
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("unexpected error type %T", err)
+	}
+	if !strings.Contains(bad.Message, reason) {
+		t.Errorf("the 400 must carry the adapter's reason, got %q", bad.Message)
+	}
+	// The chain around the reason must NOT reach the caller: it names this service's own
+	// internal wrapping, which tells an operator nothing they can act on.
+	if strings.Contains(bad.Message, "write linkedin campaign budget") {
+		t.Errorf("the 400 must not render the error chain, got %q", bad.Message)
+	}
+	if camps.got != nil {
+		t.Error("the row must not be written when the amount was refused before the write")
+	}
+}
+
+// reasonedBudgetAmountError mirrors the dispatch package's rejectedBudgetAmountError: it wraps
+// the domain sentinel and exposes the client-safe reason through the same behavioral interface
+// the service detects with errors.As. Defined here rather than imported because the dispatch
+// type is unexported, and the service's contract is with the BEHAVIOUR, not with that type.
+type reasonedBudgetAmountError struct {
+	reason string
+	err    error
+}
+
+func (e *reasonedBudgetAmountError) Error() string              { return e.err.Error() }
+func (e *reasonedBudgetAmountError) Unwrap() error              { return e.err }
+func (e *reasonedBudgetAmountError) BudgetAmountReason() string { return e.reason }
 
 // A provenance-unknown error that ALSO carries the mismatch sentinel (which is how the
 // dispatcher reports an absent provenance) must be reported as "re-dispatch", not as

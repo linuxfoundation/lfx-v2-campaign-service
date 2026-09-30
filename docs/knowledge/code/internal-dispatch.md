@@ -803,13 +803,19 @@ dominates the Google path has no analogue here and is deliberately absent rather
 
 `LinkedInDispatcher.WriteBudget` refuses, before any mutate: an unparseable current amount
 (`ErrBudgetUnwritable` — a value that failed to parse reads as "this field is unused", which is
-the answer that selects the wrong field to write); a campaign denominated in a **non-USD**
-currency, because the minimums are USD-specific and this client only ever SENDS `currencyCode
-"USD"`, so writing over another currency would silently redenominate the campaign (an EMPTY
-currency is permitted — it is the shape a campaign with no budget yet returns); and the same
-pacing guard Google makes, reached through a different fact — LinkedIn reports its pacing model
-by WHICH FIELD IS PRESENT, so BOTH present is ambiguous and NEITHER present identifies no shape
-to write.
+the answer that selects the wrong field to write); the same pacing guard Google makes, reached
+through a different fact — LinkedIn reports its pacing model by WHICH FIELD IS PRESENT, so BOTH
+present is ambiguous and NEITHER present identifies no shape to write; and then a campaign whose
+currency is not USD, because the minimums are USD-specific and this client only ever SENDS
+`currencyCode "USD"`, so writing over another currency would silently redenominate the campaign.
+
+**The currency guard sits BELOW the pacing guard, and that ORDER is itself the guard.** The
+currency is read off whichever budget field the platform reported, so an EMPTY currency has two
+possible meanings — a campaign with no budget at all, where it is harmless, and a campaign that
+HAS a budget whose `currencyCode` LinkedIn did not report, where writing USD over it is exactly
+the redenomination the guard exists to prevent. Placed above the pacing guard it had to permit
+empty to let the first case through; placed below it, the first case has already been refused
+("NEITHER budget present"), so the only empty left is the second and it is REFUSED.
 
 The amount then converts through `linkedin.ValidateBudgetAmount`, the same function the create
 path calls — `$10` daily and `$100` lifetime minimums — and **the WIRE STRING it returns is what
@@ -818,6 +824,17 @@ written. Its rules are checked against the ROUNDED value, which is load-bearing:
 as `"10.00"` and therefore meets the $10 minimum, where checking the raw float would refuse an
 amount the platform accepts. The mutate is a `PARTIAL_UPDATE` that returns **no body**, so the
 2xx itself is the confirmation.
+
+**A refused AMOUNT is classified, not passed through as a generic failure.** Every refusal
+`ValidateBudgetAmount` makes wraps `linkedin.ErrBudgetAmountInvalid` and carries a client-safe
+sentence, retrievable with `linkedin.BudgetAmountReason`. The dispatcher maps exactly those to
+`domain.ErrBudgetAmountRejected` inside a `rejectedBudgetAmountError`, whose
+`BudgetAmountReason() string` method is the behavioural interface the service reads — the same
+shape as `unconfirmedBudgetWriteError`'s `Unconfirmed() bool`. That is what keeps LinkedIn's
+`$10`/`$100` minimums a **400** rather than falling to the default 503: the service layer holds
+no per-platform floor, so without this the caller would be invited to retry a request that can
+never succeed. Only the adapter's own sentence reaches the client; the rendered error chain
+never does.
 
 ### Meta — the budget is on the AD SET, in MINOR UNITS
 
@@ -846,6 +863,20 @@ Unlike the create path, the budget write **deliberately does NOT gate on `accoun
 lowering the budget of an account under review is precisely the action that reduces exposure.
 A reported amount that is present but unparseable — including a fractional one — is refused, not
 truncated, because truncation is a silent change to money.
+
+Meta classifies refusals the same way LinkedIn does, and the SPLIT is the point.
+`ResolveBudgetMinorUnits` can fail three ways and they are not the same fault. A refused amount
+wraps `meta.ErrBudgetAmountInvalid`, is read back with `meta.BudgetAmountReason`, and becomes
+`domain.ErrBudgetAmountRejected` → **400**. An ad account whose currency has no known minor-unit
+scale wraps `meta.ErrAccountCurrencyUnresolvable` and becomes `ErrBudgetUnwritable` → **409**:
+the amount is perfectly valid and the remedy is in Meta Ads Manager or in this service's
+currency map, so mapping it to a 400 would tell an operator to change a number that is not the
+problem. A failed account preflight stays the default 503. **This path cannot fall back to an
+explicit `AccountConfig.CurrencyOffset`** the way the create path can — the client here is built
+from the connection row alone and the offset is carried on neither the row nor the campaign — so
+a project whose account uses an unmapped currency can be CREATED with an explicit offset and
+never EDITED here. That is the fail-closed side of the trade: a budget encoded at the wrong
+scale is off by a factor of a hundred.
 
 `UpdateAdSetBudget` writes exactly one field, `daily_budget` or `lifetime_budget`, as a decimal
 STRING, and **sends no `end_time`**: it only ever writes `lifetime_budget` on an ad set that

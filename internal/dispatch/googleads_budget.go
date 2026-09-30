@@ -166,3 +166,29 @@ func (e *unconfirmedBudgetWriteError) Error() string {
 }
 func (e *unconfirmedBudgetWriteError) Unwrap() error     { return e.err }
 func (e *unconfirmedBudgetWriteError) Unconfirmed() bool { return true }
+
+// rejectedBudgetAmountError marks a budget write refused because the REQUESTED AMOUNT is
+// outside what the platform accepts — LinkedIn's $10 daily / $100 lifetime minimums, Meta's
+// one-minor-unit floor in the account's currency — and carries the one sentence that is safe
+// and useful to hand back to the caller.
+//
+// It carries `reason` separately rather than letting the service render the error chain,
+// because the chain is not a client message: it accumulates the dispatcher's own prefix and
+// two sentinel texts around the single sentence the caller actually needs. reason is the
+// adapter validator's own text, which names the amount and the platform's PUBLISHED minimum
+// and nothing about upstream account configuration.
+//
+// It satisfies the same errors.Is/errors.As split the unconfirmed wrapper does: Unwrap reaches
+// domain.ErrBudgetAmountRejected so the service's switch arm matches, while the reason comes
+// back through a behavioral interface. Nothing has been written when this is returned — every
+// amount validation happens before the first mutating call.
+type rejectedBudgetAmountError struct {
+	reason string
+	err    error
+}
+
+func (e *rejectedBudgetAmountError) Error() string { return e.err.Error() }
+func (e *rejectedBudgetAmountError) Unwrap() error { return e.err }
+
+// BudgetAmountReason returns the client-safe explanation of why the amount was refused.
+func (e *rejectedBudgetAmountError) BudgetAmountReason() string { return e.reason }

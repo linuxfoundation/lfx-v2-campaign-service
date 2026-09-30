@@ -167,6 +167,17 @@ func TestLinkedIn_WriteBudget_Guards(t *testing.T) {
 			wantText: "BOTH a daily and a total budget",
 		},
 		{
+			// The currency guard sits BELOW the pacing guard precisely so this case is
+			// reachable and refusable: a campaign that HAS a budget whose currencyCode
+			// LinkedIn did not report. Writing here would send "USD" over an amount
+			// denominated in something the platform declined to name.
+			name:     "a budget whose currency LinkedIn did not report is refused",
+			readJSON: `{"id":777,"dailyBudget":{"amount":"100.00"}}`,
+			change:   model.BudgetChange{Amount: 250, Type: model.BudgetDaily},
+			wantErr:  domain.ErrBudgetUnwritable,
+			wantText: "a currency LinkedIn did not report",
+		},
+		{
 			name:     "NEITHER budget present gives nothing to write",
 			readJSON: `{"id":777,"status":"ACTIVE"}`,
 			change:   model.BudgetChange{Amount: 250, Type: model.BudgetDaily},
@@ -190,9 +201,23 @@ func TestLinkedIn_WriteBudget_Guards(t *testing.T) {
 		{
 			// The shared validator's rules reach the write path: an amount this
 			// service would refuse to CREATE with cannot be reached by editing.
+			//
+			// wantErr is the load-bearing half here. LinkedIn's minimums have no
+			// equivalent in the service layer, so an UNCLASSIFIED refusal falls to
+			// that layer's default arm and is answered 503 "the campaign was not
+			// modified" — with a retry invitation, for a request that can never
+			// succeed. Asserting the text alone passes while the status is wrong.
 			name:     "an amount below LinkedIn's daily minimum is refused",
 			readJSON: liDaily("100.00"),
 			change:   model.BudgetChange{Amount: 5, Type: model.BudgetDaily},
+			wantErr:  domain.ErrBudgetAmountRejected,
+			wantText: "below LinkedIn's minimum",
+		},
+		{
+			name:     "an amount below LinkedIn's lifetime minimum is refused",
+			readJSON: `{"id":777,"totalBudget":{"amount":"1000.00","currencyCode":"USD"}}`,
+			change:   model.BudgetChange{Amount: 50, Type: model.BudgetLifetime},
+			wantErr:  domain.ErrBudgetAmountRejected,
 			wantText: "below LinkedIn's minimum",
 		},
 	}

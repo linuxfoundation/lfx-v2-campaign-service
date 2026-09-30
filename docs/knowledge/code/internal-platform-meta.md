@@ -391,13 +391,28 @@ same rules, same error texts — so an amount this service would refuse to creat
 reached by editing a live campaign. The scaling is likewise shared, as `budgetToMinorUnits`,
 which rejects NaN explicitly rather than relying on an ordered comparison (NaN fails every one,
 so it previously reached the `int64` conversion), refuses an amount below one minor unit, and
-refuses one that overflows the representable range after scaling.
+refuses one that overflows the representable range after scaling. **Those three refusals wrap
+`ErrBudgetAmountInvalid`** and expose their sentence through `BudgetAmountReason(err)`; the
+currency-offset failures deliberately do NOT, because an unknown account currency is upstream
+configuration, not the caller's amount.
 
 `ResolveBudgetMinorUnits(ctx, budget)` runs the account GET and returns the encoded amount. It
 refuses an empty account id — the account's CURRENCY is what determines the scale, so there is
 no value that could be assumed — but **deliberately does NOT gate on `account_status`**, unlike
 the create path: lowering the budget of an account under review is precisely the action that
 reduces exposure, and refusing it would leave the spend running.
+
+Its currency failure is **split into two distinct errors**, because the caller answers them
+differently. A currency the offset map does not know wraps `ErrAccountCurrencyUnresolvable` —
+the amount is valid and the remedy is in Meta Ads Manager or in this service's map. A failed
+account preflight is left as the underlying error, since nothing about the currency was
+established at all. The texts are rewritten rather than reused from `resolveCurrencyOffset`:
+those are written for the CREATE path, where an explicit `AccountConfig.CurrencyOffset` is a
+real remedy, and **this path has no such fallback** — its client is built from the connection row
+alone and the offset is carried on neither the row nor the campaign. So a project whose account
+uses an unmapped currency can be created with an explicit offset and never edited here; that is
+the fail-closed side of the trade, since a budget encoded at the wrong scale is off by a factor
+of a hundred.
 
 `GetAdSetBudget(ctx, adSetID)` returns an `AdSetBudget` that **deliberately carries BOTH
 levels** — the ad set's `daily_budget`/`lifetime_budget` and the parent campaign's — fetched in

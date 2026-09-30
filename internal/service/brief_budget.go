@@ -29,7 +29,15 @@ const microsPerCurrencyUnit = 1_000_000.0
 
 // UpdateCampaignBudget changes how much a campaign may spend ON THE AD PLATFORM, then persists
 // the new amount. The platform call happens FIRST — the row is updated only after the platform
-// confirms — so this service never reports a budget the platform does not have.
+// confirms — so this service never reports a budget the platform never accepted.
+//
+// WHAT IS PERSISTED IS THE REQUESTED AMOUNT, NOT A READBACK OF THE APPLIED ONE. The dispatcher
+// confirms that the platform ACCEPTED the write; it does not re-read what the platform then
+// holds, and the two can differ by less than the platform's smallest settable unit — LinkedIn
+// settles on two decimal places, Meta on the account currency's minor unit, Google on a micro.
+// That is the same meaning the column already carries (see the next paragraph), not a new
+// looseness: a readback compares live-against-requested, and a sub-unit rounding difference is
+// exactly the kind of drift that comparison is there to surface rather than to hide.
 //
 // THE ROW IS WRITTEN, AND THAT DOES NOT BREACH THE READBACK'S CONTRACT. The campaign row's
 // budget columns record WHAT A DISPATCH ASKED FOR (see the Orchestrator's note on
@@ -160,6 +168,36 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID)
 			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign's budget is shared with other campaigns, so changing it here would change their spend too; give the campaign its own budget in the ad platform, or make the change there where its full effect is visible"}
+		case errors.Is(werr, ErrBudgetAmountRejected):
+			// The AMOUNT was refused by the platform adapter's own validator, before anything
+			// was written. This layer validates every bound it can state for all platforms at
+			// once (finite, > 0, <= the contract maximum, >= half a micro) and deliberately
+			// holds NO per-platform floor — adding one would put an allowlist's worth of
+			// platform knowledge in the layer whose whole design is not to have it. So a
+			// LinkedIn $5 daily budget, a $50 lifetime budget, or a Meta amount below one
+			// minor unit of the account's currency can only be refused down in the adapter,
+			// and this arm is what keeps that refusal a 400 instead of falling to the default
+			// and being answered 503 — an "unconfirmed upstream" answer, with a retry
+			// invitation, to a request that can never succeed.
+			//
+			// The validator's own text IS returned: it names the amount and the platform's
+			// published minimum, which is exactly what the caller needs to correct the
+			// request, and it names no upstream account configuration. That is why this arm
+			// carries a message the ErrBudgetUnwritable arm below deliberately withholds.
+			slog.InfoContext(ctx, "campaign budget change refused: the requested amount is outside the platform's accepted range",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+				"requested_budget_type", budgetType, "error", safeErrSummary(werr))
+			msg := "the requested budget amount is not accepted by this campaign's ad platform"
+			var rejected interface{ BudgetAmountReason() string }
+			if errors.As(werr, &rejected) {
+				// The adapter's own sentence, never the rendered chain: the chain carries the
+				// dispatcher's prefix and two sentinel texts around it. safeErrSummary still
+				// applies — it strips non-graphic runes and bounds the length, which is a
+				// property of anything that reaches a client, not a judgement about this text.
+				msg = msg + ": " + safeErrSummary(errors.New(rejected.BudgetAmountReason()))
+			}
+			return nil, &briefs.BadRequestError{Code: "400", Message: msg}
 		case errors.Is(werr, ErrBudgetUnwritable):
 			// The budget could not be ADDRESSED: the platform did not report which budget
 			// resource is attached, did not report whether it is shared, did not report its

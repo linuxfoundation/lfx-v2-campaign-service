@@ -147,6 +147,29 @@ func (d *MetaDispatcher) WriteBudget(ctx context.Context, projectID string, plat
 	// currency. Still a read: it fails definitely, before anything is written.
 	minor, _, err := client.ResolveBudgetMinorUnits(ctx, budget.Amount)
 	if err != nil {
+		// A refused AMOUNT is a permanent request fault, not an upstream one. Meta's floor
+		// is one minor unit in the ACCOUNT's currency, a value the service layer cannot
+		// know, so without this mapping the refusal falls through every errors.Is arm to the
+		// default and is answered 503 "the campaign was not modified" — inviting a retry of
+		// a request that can never succeed.
+		//
+		// Only the amount is mapped. The other failures this call can return — a failed
+		// account preflight, an unresolvable currency — are upstream and keep the 503 the
+		// default arm gives them, which is why the platform sentinel marks the amount alone.
+		// Either way nothing has been written; this is still a read-side failure.
+		// An ad account whose currency has no known minor-unit scale is a PERMANENT property
+		// of that account: no retry resolves it, and the remedy is in Meta Ads Manager or in
+		// this service's currency map, never in the request. Classified as unwritable for the
+		// same reason the guards above are — a settled refusal, not a retryable failure.
+		if errors.Is(err, meta.ErrAccountCurrencyUnresolvable) {
+			return fmt.Errorf("write meta campaign budget: %w: %w", err, domain.ErrBudgetUnwritable)
+		}
+		if reason, ok := meta.BudgetAmountReason(err); ok {
+			return &rejectedBudgetAmountError{
+				reason: reason,
+				err:    fmt.Errorf("write meta campaign budget: %w: %w", err, domain.ErrBudgetAmountRejected),
+			}
+		}
 		return fmt.Errorf("write meta campaign budget: %w", err)
 	}
 

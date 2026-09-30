@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -92,9 +93,15 @@ func formatWire(v float64) string {
 }
 
 func TestGetCampaignBudget_ReadsEachFieldAndTheCurrency(t *testing.T) {
-	var gotPath string
+	// Captured on the SERVER's goroutine and read on the test's, so the handoff needs a
+	// happens-before edge: `make test` runs with -race, and this value is exactly what the
+	// assertions below read.
+	var mu sync.Mutex
+	var capturedPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
+		mu.Lock()
+		capturedPath = r.URL.Path
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"id":123456,"status":"ACTIVE",
 			"dailyBudget":{"amount":"250.00","currencyCode":"USD"}}`)
@@ -105,6 +112,9 @@ func TestGetCampaignBudget_ReadsEachFieldAndTheCurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetCampaignBudget: %v", err)
 	}
+	mu.Lock()
+	gotPath := capturedPath
+	mu.Unlock()
 	// The campaign is addressed UNDER the resolved account, which is what keeps the read
 	// inside the account the project's connection resolves to.
 	if !strings.Contains(gotPath, "adAccounts/509430019/adCampaigns/123456") {
@@ -186,11 +196,16 @@ func TestUpdateCampaignBudget_WritesTheFieldThePacingSelects(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var body map[string]any
-			var method string
+			// Captured on the server's goroutine, read on the test's: the mutex is the
+			// happens-before edge -race requires, and these values ARE the assertions.
+			var mu sync.Mutex
+			var capturedBody map[string]any
+			var capturedMethod string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				method = r.Header.Get("X-Restli-Method")
-				_ = json.NewDecoder(r.Body).Decode(&body)
+				mu.Lock()
+				defer mu.Unlock()
+				capturedMethod = r.Header.Get("X-Restli-Method")
+				_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 				w.WriteHeader(http.StatusNoContent)
 			}))
 			defer srv.Close()
@@ -198,6 +213,9 @@ func TestUpdateCampaignBudget_WritesTheFieldThePacingSelects(t *testing.T) {
 			if err := budgetClient(srv.URL).UpdateCampaignBudget(context.Background(), "123456", "250.00", tc.lifetime); err != nil {
 				t.Fatalf("UpdateCampaignBudget: %v", err)
 			}
+			mu.Lock()
+			body, method := capturedBody, capturedMethod
+			mu.Unlock()
 			if method != "PARTIAL_UPDATE" {
 				t.Errorf("X-Restli-Method = %q, want PARTIAL_UPDATE", method)
 			}
