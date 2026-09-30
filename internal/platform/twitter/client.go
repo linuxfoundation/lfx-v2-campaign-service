@@ -2162,11 +2162,27 @@ func queryKeysWrittenWithAValue(rawQuery string) map[string]bool {
 // assembled cannot route a URL around the gate, because the gate no longer knows or
 // cares which input a URL came from.
 //
-// URLs are found with tweetURLRe, the same scanner weightedTweetLen uses to decide
-// what X will wrap in a t.co link. That is the correct set by construction: a run X
-// treats as a link is a run X publishes as a link.
+// URLs are found with tweetURLRe, the same scanner weightedTweetLen uses — but WITHOUT
+// the boundary rule that findTweetURLRuns applies, because the two answer different
+// questions. findTweetURLRuns answers "what will X wrap in a t.co link", and dropping a
+// run glued to a preceding letter or digit is right for weighting and for matching the
+// destination. This screen answers "what bytes are we about to PUBLISH", and an
+// unlinkified credential is published just the same — visible in the copy, in X Ads
+// Manager, and to everyone the ad reaches.
+//
+// The two sets diverge on exactly one shape, and it is a shape real copy has: a missing
+// space after a word. `Register herehttps://host/r?access_token=…` is one keystroke from
+// ordinary. For a DOTTED host the scheme-less pass below happened to rescue it — the
+// authority inside the run starts after `//`, which is a bounded position — but a DOTLESS
+// host has no dot for schemelessScreenRunRe to match on, so `foohttps://intranet/x?api_key=…`
+// went out unscreened. That is the `https://sup3r-s3cret/` shape the knowledge base names
+// outright: a well-formed absolute URL whose entire content is the token, in the host.
+//
+// Screening the unbounded set is a strict WIDENING of what gets checked, so the only thing
+// it can produce that the narrow set did not is a REFUSAL — never a publication. That is
+// the same direction urlRunStartIsBounded's own comment accepts for `caféhttps://…`.
 func rejectCredentialQueryParamsInText(text string) error {
-	for _, raw := range findTweetURLRuns(text) {
+	for _, raw := range findScreenURLRuns(text) {
 		if err := rejectCredentialQueryParams(trimTweetURLPunct(raw)); err != nil {
 			return err
 		}
@@ -2259,6 +2275,15 @@ var schemelessUserinfoRunRe = regexp.MustCompile(
 // schemefulRunMask blanks out every scheme-ful URL run in s, preserving byte offsets, so
 // the scheme-less scan cannot re-report the tail of a link rejectCredentialQueryParamsInText
 // has already screened.
+//
+// It masks the SAME set that screen covers — findScreenURLRuns, boundary rule not applied
+// — and the two have to be kept that way. Mask less than the screen covers and the
+// scheme-less pass re-reports an authority already checked; mask more and a run nothing
+// screened is hidden from the pass that would have caught it. The boundary rule used to
+// apply here, which put this helper in the first category: the unbounded run stayed
+// visible, and for a dotted host the scheme-less pass caught its authority as a second
+// line of defence. That rescue was real but incidental — it needed the host to contain a
+// dot — and it is not what the mask is for.
 func schemefulRunMask(s string) string {
 	idx := tweetURLRe.FindAllStringIndex(s, -1)
 	if idx == nil {
@@ -2266,9 +2291,6 @@ func schemefulRunMask(s string) string {
 	}
 	b := []byte(s)
 	for _, m := range idx {
-		if !urlRunStartIsBounded(s, m[0]) {
-			continue
-		}
 		for i := m[0]; i < m[1]; i++ {
 			b[i] = ' '
 		}
@@ -2562,9 +2584,32 @@ func isASCIIAlphanumeric(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 
+// findScreenURLRuns returns EVERY scheme-ful run in s, boundary rule not applied.
+//
+// This is the set the credential screen and schemefulRunMask work on. It is deliberately
+// wider than findTweetURLRuns: a run X will not linkify is still a run X publishes, and
+// the screen's question is what gets published rather than what gets wrapped in a t.co
+// link. See rejectCredentialQueryParamsInText for the shape that divides the two.
+//
+// Keep both helpers reading from tweetURLRe here rather than letting either re-derive the
+// match set — the difference between them must stay exactly the boundary rule, visible in
+// one place, and not drift into two subtly different scanners.
+func findScreenURLRuns(s string) []string {
+	idx := tweetURLRe.FindAllStringIndex(s, -1)
+	if idx == nil {
+		return nil
+	}
+	runs := make([]string, 0, len(idx))
+	for _, m := range idx {
+		runs = append(runs, s[m[0]:m[1]])
+	}
+	return runs
+}
+
 // findTweetURLRuns returns the URL runs in s, applying the boundary rule tweetURLRe no
-// longer carries. Every consumer of the scanner goes through here, so the screen, the
-// weighting and the destination-match cannot disagree about what counts as a link.
+// longer carries. This is the LINKIFICATION set: what X wraps in a t.co link, used by the
+// weighting and the destination match. The credential screen deliberately does NOT use it
+// — see findScreenURLRuns.
 func findTweetURLRuns(s string) []string {
 	idx := tweetURLRe.FindAllStringIndex(s, -1)
 	if idx == nil {

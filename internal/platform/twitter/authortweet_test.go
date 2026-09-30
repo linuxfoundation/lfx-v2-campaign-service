@@ -2478,3 +2478,49 @@ func TestWeightedRunLen_TextPresentationSelector(t *testing.T) {
 		}
 	}
 }
+
+// TestCredentialScreenCoversGluedURLRuns pins the credential screen to the PUBLISHED set
+// rather than the LINKIFIED one.
+//
+// findTweetURLRuns drops a run glued to a preceding letter or digit, which is correct for
+// t.co weighting and for the destination match but wrong here: X publishes the copy either
+// way, so an unlinkified credential is exposed just the same. `Register herehttps://…` — a
+// missing space after a word — is the realistic shape.
+//
+// The dotless rows are the ones that actually escaped. With a DOTTED host the scheme-less
+// pass caught the authority inside the run as a second line of defence, so those rows
+// passed even before the screen was widened; a dotless host gives schemelessScreenRunRe no
+// dot to match on, and `foohttps://intranet/x?api_key=…` went out unscreened. Keep both
+// kinds: a regression that re-narrows the screen fails on the dotless rows, and one that
+// also breaks the scheme-less pass fails on the dotted ones.
+func TestCredentialScreenCoversGluedURLRuns(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		text    string
+		refused bool
+	}{
+		{"glued dotless host", "foohttps://intranet/r?access_token=SEC", true},
+		{"glued dotless host with port", "foohttps://localhost:8080/r?access_token=SEC", true},
+		{"glued single-label host is the whole secret", "herehttps://sup3r-s3cret/?access_token=SEC", true},
+		{"glued after a digit", "a1https://vpn/x?session_token=SEC", true},
+		{"missing space after a word", "Register herehttps://events.example/r?access_token=SEC", true},
+		{"ordinary separated link", "https://events.example/r?access_token=SEC", true},
+		{"legitimate copy is not refused", "Join us at KubeCon https://events.example/register?utm_source=x", false},
+		{"copy with no link at all", "plain copy with no link at all", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := rejectCredentialQueryParamsInText(tt.text)
+			if tt.refused && err == nil {
+				t.Fatalf("credential-bearing copy %q was NOT refused; it would be published verbatim", tt.text)
+			}
+			if !tt.refused && err != nil {
+				t.Fatalf("legitimate copy %q was refused: %v", tt.text, err)
+			}
+		})
+	}
+}

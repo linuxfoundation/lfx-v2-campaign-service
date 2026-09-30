@@ -494,8 +494,7 @@ parameters it had never read.
 
 What counts as a URL is decided twice, by two scanners with different jobs.
 `tweetURLRe` finds the `http(s)://` runs X wraps in a t.co link, and it is the scanner
-`weightedTweetLen` and `textCarriesURL` read as well — so the thing screened is the thing
-published, weighed and matched. It carries no `\b`: Go's `\b` is defined over `\w`, which
+`weightedTweetLen` and `textCarriesURL` read as well. It carries no `\b`: Go's `\b` is defined over `\w`, which
 includes `_`, so there was no boundary between the underscore and the `h` of
 `_https://…` and the whole run went unseen. RE2 has no lookbehind, so `findTweetURLRuns`
 applies the boundary in code instead — a run is at a boundary unless an ASCII letter or
@@ -508,6 +507,31 @@ which is exactly why both stop sets list `。`, `、`, `！`, `？`, `，`, `：
 wide boundary then read the CJK word in front as proof the link was not one, so
 `登録events.example/r?access_token=…` was dropped unscreened and published. A run cannot be
 "part of a longer word" when the script in front of it does not build words out of spaces.
+
+**The boundary rule belongs to LINKIFICATION, and the credential screen does not use it.**
+That was the second half of the same lesson, learned a round later. `findTweetURLRuns`
+answers "what will X wrap in a t.co link" — right for `weightedTweetLen` and
+`textCarriesURL`. The screen asks a different question: "what bytes are we about to
+PUBLISH". An unlinkified credential is published just the same, so the screen reads
+`findScreenURLRuns`, the same `tweetURLRe` matches with no boundary applied. Both helpers
+read that one regexp so the difference between them stays exactly the boundary rule,
+visible in one place.
+
+The two sets diverge on one shape, and it is a shape real copy has: a missing space after a
+word. `Register herehttps://host/r?access_token=…` is one keystroke from ordinary. It only
+ever ESCAPED for a DOTLESS host, though — with a dotted one the scheme-less pass caught the
+authority inside the run, because after `//` the position is bounded. That rescue was
+incidental, not designed; `foohttps://intranet/x?api_key=…` offers
+`schemelessScreenRunRe` no dot to match on and went out unscreened. It is the
+`https://sup3r-s3cret/` shape the knowledge base names outright — a well-formed absolute
+URL whose whole content is the token, sitting in the host.
+
+`schemefulRunMask` masks that same unbounded set, and the two must be kept equal. Mask less
+than the screen covers and the scheme-less pass re-reports an authority already checked;
+mask more and a run nothing screened is hidden from the pass that would have caught it.
+Widening the screen is safe in the one direction that matters: it is a strict widening of
+what gets CHECKED, so the only new outcome it can produce is a refusal, never a
+publication — the same trade `urlRunStartIsBounded` already accepts for `caféhttps://…`.
 
 The second scanner exists because a link does not need a scheme to be published. X
 linkifies `www.events.example/r?access_token=…` and bare `events.example/r?…` exactly as
