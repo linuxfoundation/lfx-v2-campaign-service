@@ -1056,9 +1056,15 @@ func drainAndClose(resp *http.Response) {
 // retried. Here the split does not follow the method either.
 //
 // The question it asks is narrow and easy to get wrong: is a repeat of THIS request,
-// issued from inside this loop, safe? Only server-side convergence answers yes. The
-// promoted-tweets create qualifies — X itself refuses the repeat with
-// DUPLICATE_PROMOTABLE_ENTITY — so it passes true. The campaign and line-item creates
+// issued from inside this loop, safe? Only server-side convergence answers yes. NOTHING
+// on the create path qualifies, promoted_tweets included — an earlier revision passed
+// true for it on the reasoning that X refuses the repeat with DUPLICATE_PROMOTABLE_ENTITY,
+// which is true and is not convergence. X returns that same code when the tweet is
+// promoted by a DIFFERENT line item, so the refusal does not say the association this
+// call wanted exists; the caller (deliberately) does not treat it as success, and turns
+// it into a manual-verification warning instead. Retrying therefore converts a transient
+// throttle into a permanent "verify this by hand" on an association that may well have
+// been made correctly the first time. It passes false. The campaign and line-item creates
 // do NOT, and an earlier revision passed true for them by conflating two different
 // things: those paths ARE found-or-created by name, but the lookup that makes that
 // true runs in the caller, ABOVE this function. A retry from inside this loop re-POSTs
@@ -3487,7 +3493,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		resp, err := c.createRequest(ctx, "promoted_tweets", map[string]string{
 			"line_item_id": lineItemID,
 			"tweet_ids":    tweetID,
-		}, true /* idempotent: a repeat is refused as DUPLICATE_PROMOTABLE_ENTITY, handled below */)
+		}, false /* NOT idempotent: DUPLICATE_PROMOTABLE_ENTITY does not name the holder */)
 		switch {
 		case err != nil && isDuplicatePromotedTweetErr(err):
 			// X reports the tweet is already promoted (DUPLICATE_PROMOTABLE_ENTITY).

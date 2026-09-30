@@ -322,7 +322,11 @@ var valueShapes = map[model.Provider]map[string]*regexp.Regexp{
 	// design/connection.go Pattern()
 	model.ProviderLinkedInAds: {"account_id": numericID, "org_id": numericID},
 	model.ProviderMetaAds:     {"account_id": regexp.MustCompile(`^act_[0-9]+$`), "page_id": numericID},
-	model.ProviderTwitterAds:  {"account_id": alnumID, "funding_instrument_id": alnumID},
+	// as_user_id is numericID, not alnumID, and it is the one key here whose shape rule
+	// matters for more than a dead row: it is the connection's declared publishing
+	// identity, and bootstrap is the ONLY way it gets seeded. A malformed one installs a
+	// connection that refuses every caller-supplied asUserId without ever matching one.
+	model.ProviderTwitterAds: {"account_id": alnumID, "funding_instrument_id": alnumID, "as_user_id": numericID},
 	// design/connection.go Pattern() as of LFXV2-2665; runtime validators before that.
 	model.ProviderGoogleAds: {"account_id": numericID, "login_customer_id": numericID},
 	// positiveID, not numericID: both Microsoft ids are held to `^[1-9][0-9]{0,17}$` with

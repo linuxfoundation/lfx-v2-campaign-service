@@ -941,6 +941,18 @@ wrong destination. A foundation with no HubSpot connection of its own now reache
 on every audience build and email dispatch, which after the fallback change is the ordinary case
 rather than the exception.
 
+**Migration 000034** adds `as_user_id` to `twitter_ads_connections`: the promotable X handle
+this connection's nullcast tweets are authored UNDER. It is on the CONNECTION rather than the
+campaign because it answers an authorization question, and the campaign config is caller JSON —
+the client's promotable-users lookup only says a handle is promotable by this AD ACCOUNT, which
+on the shared LF system connection is true of every LF handle. NULLABLE and not backfilled,
+and that is the compatibility guarantee rather than an omission: where the column is NULL the
+dispatcher behaves exactly as it did before, so no existing connection starts refusing briefs it
+used to accept. The reversal is silent in the same way — dropping the column keeps every create
+working and only reopens the confused-deputy path, which is why the `.down.sql` says so. No
+repository code changes with it: `connection_repo.go` builds its column list from
+`provider.ConfigKeys()`, so the key added to `providerConfigKeys` flows through generically.
+
 `TestDisconnectedProbeIsIndexed` binds it across all seven providers (it walks
 `AllProviders()` rather than the paid-ads subset), and it is a PLAN assertion rather than a timing
 one: the query returns the same answer indexed or not, so no correctness test can see the

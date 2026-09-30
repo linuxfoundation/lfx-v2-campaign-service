@@ -113,16 +113,22 @@ the HTTP method, and a non-idempotent call takes the retry-exhausted exit on its
 FIRST 429 (`attempt >= retryMax || !idempotent`). The method cannot carry this: X
 answers a 429 at OR AFTER committing the write it throttled, so "POST" says
 nothing about whether re-issuing is safe. What decides it is whether the SERVER
-converges on a repeat, and only one of this client's four creates does: a repeated
-`promoted_tweets` POST comes back `DUPLICATE_PROMOTABLE_ENTITY`. Campaign and line
-item creates look like they qualify — both are found-or-created by name — but that
+converges on a repeat, and NONE of this client's four creates does. `promoted_tweets`
+was the one that looked like it did, and an earlier revision passed `true` for it: a
+repeated POST comes back `DUPLICATE_PROMOTABLE_ENTITY`, which is true and is not
+convergence. X returns that same code when the tweet is promoted by a DIFFERENT line
+item, so the refusal does not say the association THIS call wanted exists — the client
+says so itself a few paragraphs up, and deliberately turns it into a manual-verification
+warning rather than success. Retrying therefore converts a transient throttle into a
+permanent "verify this by hand" on an association that may well have been made correctly
+on the first attempt. Campaign and line item creates look like they qualify — both are found-or-created by name — but that
 dedup runs in `CreateCampaign`, ABOVE the retry loop, and a retry inside
 `doRequestAbs` re-POSTs without consulting it; X does not dedupe those names
 itself, so both writes can be accepted and the account ends up paying for two.
 Caller-side convergence is not retry safety. Tweet authoring has neither form: a
 tweet has no name to find it by and no idempotency key, so a retried 429 publishes
 a SECOND tweet under the LF handle, and the request layer would have done it twice
-more before `createNullcastTweet` returned. Three of the four therefore pass
+more before `createNullcastTweet` returned. All four therefore pass
 `false`. The throttle still surfaces as an `*apiError`, which
 `createOutcomeAmbiguous` classifies as ambiguous, so the caller renders UNCONFIRMED
 and asks the operator to verify in X Ads Manager — a human check before a second

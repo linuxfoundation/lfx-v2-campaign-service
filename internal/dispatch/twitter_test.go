@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -1149,5 +1150,119 @@ func TestCampaignFromTwitter_SnapshotStripsTweetTextURLQuery(t *testing.T) {
 	}
 	if cfg.TweetText != text {
 		t.Errorf("the caller's config was mutated; X would have been sent the redacted text: %q", cfg.TweetText)
+	}
+}
+
+// Round-14 review fixes
+
+// TestAuthorizedTwitterAsUserID pins the connection-over-caller rule for the publishing
+// identity. The check exists because `resolvePromotableUser` in the client answers a
+// DIFFERENT question — "is this handle promotable by this ad account" — which on the shared
+// LF system connection is true of every LF handle, so it cannot answer whether THIS project
+// may publish as that handle.
+//
+// The empty-configured rows are the compatibility half and matter as much as the refusals:
+// a connection that declares no identity must behave exactly as it did before, or every
+// existing X connection starts refusing briefs it used to accept.
+func TestAuthorizedTwitterAsUserID(t *testing.T) {
+	cases := map[string]struct {
+		configured string
+		requested  string
+		want       string
+		wantErr    bool
+	}{
+		"no declared identity passes the caller's through": {"", "111", "111", false},
+		"no declared identity and no request stays empty":  {"", "", "", false},
+		"a declared identity is inherited when none asked": {"222", "", "222", false},
+		"a matching request is allowed":                    {"222", "222", "222", false},
+		"surrounding space does not make a mismatch":       {" 222 ", "  222", "222", false},
+		"a different request is refused":                   {"222", "333", "", true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			res := &resolved{providerConfig: map[string]string{"as_user_id": tc.configured}}
+			got, err := authorizedTwitterAsUserID("proj-1", res, tc.requested)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("as_user_id %q vs requested %q must be refused, got %q",
+						tc.configured, tc.requested, got)
+				}
+				// Round 9 fixed promotable-user ids leaking into persisted error text.
+				// Naming the connection's own identity back to a caller who guessed
+				// wrong would confirm the guess, so neither id may appear.
+				for _, leak := range []string{tc.configured, tc.requested} {
+					if strings.Contains(err.Error(), strings.TrimSpace(leak)) {
+						t.Errorf("error echoes a promotable-user id %q: %v", leak, err)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected refusal: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("as_user_id = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAuthorizedTwitterAsUserID_MissingKeyIsUnchangedBehaviour guards the failure mode this
+// fix nearly shipped with: `as_user_id` was not a storable ProviderConfig key, so the lookup
+// would have returned "" for every connection and the check could never have fired. A
+// connection whose config map has no such key at all must still be the pass-through case,
+// and must not be confused with one that declares an empty string.
+func TestAuthorizedTwitterAsUserID_MissingKeyIsUnchangedBehaviour(t *testing.T) {
+	res := &resolved{providerConfig: map[string]string{"funding_instrument_id": "fi1"}}
+	got, err := authorizedTwitterAsUserID("proj-1", res, "444")
+	if err != nil {
+		t.Fatalf("a connection declaring no identity must not refuse: %v", err)
+	}
+	if got != "444" {
+		t.Errorf("as_user_id = %q, want the caller's %q", got, "444")
+	}
+}
+
+// TestAsUserIDIsAStorableConfigKey is the other half of the same near-miss: the check above
+// is only alive if the repository can actually persist the key. ConfigKeys() is what the
+// connection repository builds its column list from, so this is the seam where a dropped
+// migration or a reverted model change turns the authorization check into dead code.
+func TestAsUserIDIsAStorableConfigKey(t *testing.T) {
+	keys := model.ProviderTwitterAds.ConfigKeys()
+	for _, k := range keys {
+		if k == "as_user_id" {
+			return
+		}
+	}
+	t.Fatalf("as_user_id is not a storable X Ads config key (%v); the publishing-identity check cannot fire", keys)
+}
+
+// TestTwitter_MismatchedAsUserIDIsPreCreate pins the CALL SITE, which the unit tests above
+// do not: a helper that is never called is exactly the dead-code failure this fix nearly
+// shipped. A caller naming a handle the connection does not declare must be refused before
+// anything reaches X, and the httptest server exists only to fail loudly if it is not.
+func TestTwitter_MismatchedAsUserIDIsPreCreate(t *testing.T) {
+	var hits int32
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer api.Close()
+
+	conn := activeTwitterConn(goodTwitterCreds)
+	conn.ProviderConfig = map[string]string{"funding_instrument_id": "fi1", "as_user_id": "222"}
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: conn}, identityEncryptor{},
+		twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+	)
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds,
+		json.RawMessage(`{"twitterConfig":{"budgetAmount":500,"startDate":"2099-03-01","endDate":"2099-03-10","tweetId":"1234567890","asUserId":"333"}}`))
+	var nuc interface{ NoUpstreamCreate() bool }
+	if err == nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Fatalf("a handle the connection does not declare must be a pre-create refusal, got %T: %v", err, err)
+	}
+	if got := atomic.LoadInt32(&hits); got != 0 {
+		t.Errorf("the refusal reached X %d times; it must happen before any request", got)
 	}
 }

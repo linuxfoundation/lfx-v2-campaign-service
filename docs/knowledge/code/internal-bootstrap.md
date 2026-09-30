@@ -101,7 +101,10 @@ enforced on the system row:
   Both sources are still needed: a `Pattern` binds the HTTP transport, and this installer writes
   past it straight to the repository, so a row written by bootstrap, by a migration, or before
   the pattern existed never passed through Goa. Where the two differ in SUBSTANCE is Microsoft,
-  below.
+  below. X's `as_user_id` (migration `000034`) joined the map for a reason the
+  rest of it does not have: bootstrap is the ONLY way that key gets seeded, and it is the
+  connection's declared publishing identity rather than a routing value, so a malformed one
+  installs a row that refuses every caller-supplied `asUserId` without ever matching one.
 - **Some rules a regexp cannot state at all**, so `valueValidators` runs the real validator as a
   second pass after the pattern. Microsoft's `account_id` and `customer_id` are the case: both are
   positive-int64 at runtime, and the int64 RANGE is the half no pattern expresses —

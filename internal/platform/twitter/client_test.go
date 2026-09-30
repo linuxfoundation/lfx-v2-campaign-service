@@ -4486,3 +4486,65 @@ func TestPaceCancelAtWaitExpiryReservesNothing(t *testing.T) {
 			violations, trials, rate*100, maxViolationRate*100)
 	}
 }
+
+// Round-14 review fixes
+
+// TestPromotedTweetsIsNotRetriedOn429 pins the promoted_tweets create as NON-idempotent
+// at its CALL SITE: a throttled association POST must be issued exactly once and then
+// surface, not be retried from inside doRequestAbs.
+//
+// An earlier revision passed idempotent=true there, on the reasoning that X refuses a
+// repeat with DUPLICATE_PROMOTABLE_ENTITY. That is true and it is not convergence — X
+// returns the same code when the tweet is promoted by a DIFFERENT line item, which is
+// exactly why this flow deliberately does not treat the duplicate as success. Retrying
+// therefore converts a transient throttle into a permanent manual-verification warning
+// on an association that may have been made correctly on the first attempt.
+func TestPromotedTweetsIsNotRetriedOn429(t *testing.T) {
+	var promotedPosts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			atomic.AddInt32(&promotedPosts, 1)
+			w.WriteHeader(http.StatusTooManyRequests)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err != nil {
+		t.Fatalf("a throttled promoted-tweet POST must stay non-fatal: %v", err)
+	}
+	if got := atomic.LoadInt32(&promotedPosts); got != 1 {
+		t.Errorf("promoted_tweets was retried on 429: expected exactly 1 POST, got %d", got)
+	}
+	// The retry is replaced by the reconciliation path, not by silence: a mutating 429
+	// classifies as ambiguous, so the operator is told to verify before re-creating.
+	if !strings.Contains(res.PromotedTweetWarning, "UNCONFIRMED") {
+		t.Errorf("a throttled promoted-tweet POST must be UNCONFIRMED, got: %q", res.PromotedTweetWarning)
+	}
+}

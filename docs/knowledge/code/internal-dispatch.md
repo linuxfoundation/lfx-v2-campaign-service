@@ -1791,6 +1791,44 @@ snake_case wire form. The config an adapter refuses to create without (LinkedIn 
 `page_id`, X `funding_instrument_id`) is required of the map about to be WRITTEN — on rotation the
 existing columns MERGED with the flags, since `Update` rewrites every config column.
 
+### The publishing identity is a connection fact, not a campaign one (X)
+
+X is the one provider whose campaign config used to name an IDENTITY. `asUserId` picks which
+of the ad account's promotable users a nullcast tweet is authored UNDER, and it arrived from
+caller JSON and went straight to the client. The client's `resolvePromotableUser` then
+confirmed the id is promotable BY THIS AD ACCOUNT — which is a different question, and on the
+SHARED system connection above it is true of every LF handle. A project could therefore name
+another project's handle, pass the check, and publish as them: the caller supplies the
+identity and the service supplies the authority, which is the confused-deputy shape. Nothing
+else was asking the authorization question, because nothing else knew there was one.
+
+`as_user_id` is now a stored X Ads `ProviderConfig` key (migration `000034`), optional, and
+`authorizedTwitterAsUserID` makes the connection authoritative WHERE IT DECLARES ONE: a caller
+value must equal it, and a caller that sends none inherits it rather than falling through to
+an auto-resolve that could land on a different handle. This follows the same rule as LinkedIn's
+`org_id` and the brief's `Project` field — identity is stamped from the authenticated scope,
+never read from caller JSON — and only more sharply, since a wrong `org_id` fails while a wrong
+`asUserId` succeeds under someone else's name.
+
+Where the connection declares nothing, behaviour is EXACTLY as before. That compatibility is
+deliberate and it is also the limit of the fix: the check is inert until an operator seeds
+`as_user_id` on the shared LF system row (`bootstrap -config as_user_id=...`, whose
+`valueShapes` entry holds it to digits). The gap it leaves meanwhile is narrow rather than
+open, because the client already refuses to guess when several promotable candidates exist and
+the caller pinned nothing — but "narrow" is the honest word, not "closed".
+
+The near-miss is worth recording because it is the failure mode a reviewer would not have
+caught: the check was first written reading `res.providerConfig["as_user_id"]` while
+`as_user_id` was not a storable key, so the lookup returned `""` for every connection and the
+refusal could never fire. A check that cannot fire is worse than no check, because it reads as
+protection. `TestAsUserIDIsAStorableConfigKey` pins the seam — `ConfigKeys()` is what the
+connection repository builds its column list from — so a dropped migration or a reverted model
+change fails a test instead of silently disarming the authorization.
+
+The refusal names NEITHER the requested nor the configured id. Promotable-user ids in
+persisted error text is a defect this branch already fixed once, and naming the connection's
+own identity back to a caller who guessed wrong would confirm the guess.
+
 ## Forced-primary mode: the system account as the account of record
 
 The section above is the DEFAULT — the system row is a fallback, used only when a project has no

@@ -165,6 +165,27 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		return nil, notCreated(err)
 	}
 
+	// The PUBLISHING IDENTITY comes from the connection, not from caller JSON — the same
+	// rule linkedin's org_id follows, and for a sharper reason here.
+	//
+	// AsUserID names which handle a nullcast tweet is authored UNDER. The client's
+	// resolvePromotableUser confirms the id is promotable by this ad account, which is a
+	// different question: on the shared LF system connection every LF handle is promotable
+	// by the same account, so a project supplying another project's handle passes that
+	// check and publishes as them. That is a confused deputy — the caller names the
+	// identity, the service supplies the authority.
+	//
+	// So when the connection declares as_user_id, it WINS: a caller value must match it,
+	// and a caller that sends none inherits it rather than falling through to an
+	// auto-resolve that could land on a different handle. When the connection declares
+	// none, behaviour is unchanged — and the gap that leaves is narrow, because the
+	// client already refuses to guess when several candidates exist and the caller pinned
+	// nothing. Seeding as_user_id on the shared connection is what closes it for real.
+	asUserID, err := authorizedTwitterAsUserID(brief.ProjectID, res, cfg.AsUserID)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+
 	// hsToken is a documented TOP-LEVEL config envelope field (docs/api-catalog.md);
 	// a request-supplied token takes precedence over the brief blobs so it drives the
 	// promoted-tweet utm_campaign instead of being silently ignored (matches the other
@@ -189,7 +210,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		EndDate:         cfg.EndDate,
 		TweetID:         cfg.TweetID,
 		TweetText:       cfg.TweetText,
-		AsUserID:        cfg.AsUserID,
+		AsUserID:        asUserID,
 	}
 
 	// Built through the client cache, so concurrent dispatches for this account share ONE
@@ -284,6 +305,32 @@ func campaignFromTwitter(ctx context.Context, r *twitter.CampaignResult, cfg twi
 // Tagging HERE rather than in each caller is what keeps Dispatch and ToggleStatus from
 // having to agree about it; the named return plus defer means a return site added later
 // cannot forget to re-attribute the error to the LF system row.
+// authorizedTwitterAsUserID decides which promotable user a nullcast tweet is authored
+// under, given the connection's declared identity and the caller's requested one.
+//
+// The connection is authoritative when it declares one. `resolvePromotableUser` in the
+// client answers "is this id promotable by this ad account", which on the SHARED LF system
+// connection is true of every LF handle — so it cannot answer "may THIS project publish as
+// that handle", and nothing else was asking. This is that check.
+//
+// Neither id appears in the returned error. Promotable-user ids in persisted error text is
+// a defect this branch has already fixed once (see the round-9 log entry); the operator
+// remedy is to correct the request or the connection, and naming the connection's own
+// identity back to a caller who guessed wrong would confirm the guess.
+func authorizedTwitterAsUserID(projectID string, res *resolved, requested string) (string, error) {
+	configured := strings.TrimSpace(res.providerConfig["as_user_id"])
+	requested = strings.TrimSpace(requested)
+	if configured == "" {
+		// No declared identity: unchanged behaviour. The client still refuses to guess
+		// between several promotable candidates when requested is empty.
+		return requested, nil
+	}
+	if requested != "" && requested != configured {
+		return "", fmt.Errorf("twitter connection for project %s does not authorize the requested asUserId; the connection pins which handle authors its tweets, so omit asUserId or have the connection updated", projectID)
+	}
+	return configured, nil
+}
+
 func validateTwitterConnection(projectID string, res *resolved) (creds twitterCreds, accountID string, err error) {
 	defer func() { err = res.systemScoped(err) }()
 	if res.status != model.StatusActive {
