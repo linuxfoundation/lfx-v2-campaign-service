@@ -125,29 +125,34 @@ type Service interface {
 	// period; its counterpart, CUSTOM_PERIOD, is a narrower thing). Change the
 	// pacing in the ad platform, then set the amount here. The amount is in the AD
 	// ACCOUNT's own currency, not USD, and this service neither knows nor converts
-	// it. Google Ads only today: a campaign on any other platform is refused with
-	// 400. Budget writing is added per platform, because each platform's budget
-	// model is its own deliberate decision. **409** when the change is refused
-	// BEFORE the platform is written, so nothing has changed: the campaign is
-	// unprovisioned (no platform campaign id); the campaign belongs to a different
-	// ad account than the project's connection now resolves to, or does not record
-	// which ad account it was created under; the campaign's budget is SHARED
-	// across campaigns, where changing the amount would change the spend of
-	// campaigns this request never named — including campaigns this service does
-	// not own and cannot see (give the campaign its own budget in the ad platform,
-	// or make the change there where its full effect is visible); or the budget
-	// could not be addressed at all — the platform did not report which budget
-	// resource is attached, did not report whether it is shared, did not report
-	// its pacing, or reports a pacing this service has no mapping for. An
-	// unreported fact is refused rather than assumed: 'we could not establish that
-	// this budget is private' and 'this budget is private' are opposite facts, and
-	// only one of them justifies a write that could move a stranger's spend. None
-	// of the 409s is retryable — each needs a change in the ad platform or a
-	// re-dispatch. **400** for a request fault: a non-positive, non-finite or
-	// out-of-range amount, an unknown budget type, or a platform with no
-	// budget-write capability wired. **503** when the platform could not be
-	// reached or did not confirm; the row is unchanged, and re-applying the same
-	// amount converges on the same state, so a retry is safe.
+	// it. Google Ads, LinkedIn and Meta today: a campaign on any other platform is
+	// refused with 400. Budget writing is added per platform, because each
+	// platform's budget model is its own deliberate decision, and the refusals
+	// below are the union of what those models can refuse — a platform whose model
+	// has no analogue of a given refusal simply never raises it (LinkedIn budgets
+	// are fields on the campaign and cannot be shared, so the shared-budget 409 is
+	// a Google and Meta answer; Meta's form of it is a campaign-level,
+	// ad-set-spanning budget). **409** when the change is refused BEFORE the
+	// platform is written, so nothing has changed: the campaign is unprovisioned
+	// (no platform campaign id); the campaign belongs to a different ad account
+	// than the project's connection now resolves to, or does not record which ad
+	// account it was created under; the campaign's budget is SHARED across
+	// campaigns, where changing the amount would change the spend of campaigns
+	// this request never named — including campaigns this service does not own and
+	// cannot see (give the campaign its own budget in the ad platform, or make the
+	// change there where its full effect is visible); or the budget could not be
+	// addressed at all — the platform did not report which budget resource is
+	// attached, did not report whether it is shared, did not report its pacing, or
+	// reports a pacing this service has no mapping for. An unreported fact is
+	// refused rather than assumed: 'we could not establish that this budget is
+	// private' and 'this budget is private' are opposite facts, and only one of
+	// them justifies a write that could move a stranger's spend. None of the 409s
+	// is retryable — each needs a change in the ad platform or a re-dispatch.
+	// **400** for a request fault: a non-positive, non-finite or out-of-range
+	// amount, an unknown budget type, or a platform with no budget-write
+	// capability wired. **503** when the platform could not be reached or did not
+	// confirm; the row is unchanged, and re-applying the same amount converges on
+	// the same state, so a retry is safe.
 	UpdateCampaignBudget(context.Context, *UpdateCampaignBudgetPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads keywords on one campaign. A MUTATION on a live
 	// paid campaign: pausing or removing a keyword changes what serves, so it is

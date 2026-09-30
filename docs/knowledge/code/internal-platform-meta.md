@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/meta"
-description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, optional single-image ad creatives attached EITHER by URL as `link_data.picture` OR by stored bytes uploaded to `/adimages` as `link_data.image_hash` (mutually exclusive per creative, both supported), campaign status toggle cascade over ad set and ads, live campaign metrics reads, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
+description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, optional single-image ad creatives attached EITHER by URL as `link_data.picture` OR by stored bytes uploaded to `/adimages` as `link_data.image_hash` (mutually exclusive per creative, both supported), campaign status toggle cascade over ad set and ads, live campaign metrics reads, ad-set budget reads and writes in the account currency's minor units through the same currency-offset resolver and encoder the create path uses, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
 resource: "internal/platform/meta"
 tags:
   - platform-client
@@ -381,6 +381,42 @@ constraint, not from this field — and the field is UNTAGGED like the rest of t
 persisted key is the Go field name. Rows written before it existed stay checkable via the `act=`
 parameter of `metaUrl`, which carries the digits with the `act_` prefix STRIPPED; the dispatcher
 normalises both sides. See `internal-dispatch.md` for the guard itself.
+
+## Budget read and write (`budget_update.go`, LFXV2-2665)
+
+Meta's budget lives on the **ad set**, in the account currency's **minor units**, sent as a
+decimal string. The currency-offset precedence described above is no longer inline in
+`CreateCampaign`: it lives in `resolveCurrencyOffset`, **shared with the budget-write path** —
+same rules, same error texts — so an amount this service would refuse to create with cannot be
+reached by editing a live campaign. The scaling is likewise shared, as `budgetToMinorUnits`,
+which rejects NaN explicitly rather than relying on an ordered comparison (NaN fails every one,
+so it previously reached the `int64` conversion), refuses an amount below one minor unit, and
+refuses one that overflows the representable range after scaling.
+
+`ResolveBudgetMinorUnits(ctx, budget)` runs the account GET and returns the encoded amount. It
+refuses an empty account id — the account's CURRENCY is what determines the scale, so there is
+no value that could be assumed — but **deliberately does NOT gate on `account_status`**, unlike
+the create path: lowering the budget of an account under review is precisely the action that
+reduces exposure, and refusing it would leave the spend running.
+
+`GetAdSetBudget(ctx, adSetID)` returns an `AdSetBudget` that **deliberately carries BOTH
+levels** — the ad set's `daily_budget`/`lifetime_budget` and the parent campaign's — fetched in
+**one request** via field expansion (`campaign{id,daily_budget,lifetime_budget}`, braces
+percent-encoded). One request rather than two is the point: a campaign-level budget appearing
+between two separate calls would slip past the `CampaignBudgetOptimized()` guard that exists to
+catch it, and CBO is Meta's form of the shared-budget problem. A response echoing a different
+ad-set id is refused, as is a non-numeric id, before any call.
+
+`parseMinorUnits` keeps "no budget" and "a budget this client could not read" distinct: an empty
+value yields `nil` (not reported), while a present-but-unparseable one yields `nil` **and** sets
+`AmountUnparseable`. A fractional value such as `"25.50"` is REFUSED rather than truncated —
+truncation is a silent change to money.
+
+`UpdateAdSetBudget(ctx, adSetID, budgetMinor, lifetime)` writes exactly one field as a string,
+guards at construction against an amount that did not come from the encoder (naming
+`ResolveBudgetMinorUnits`), and **sends no `end_time`**: it only ever writes `lifetime_budget`
+on an ad set that already reports one, which already has its end time. Its errors are returned
+unwrapped so the caller can classify them through `IsOutcomeUnconfirmed`.
 
 ## Campaign status toggle
 

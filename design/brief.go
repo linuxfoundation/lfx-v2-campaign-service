@@ -1491,8 +1491,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"pacing in the ad platform, then set the amount here. " +
 			"The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor " +
 			"converts it. " +
-			"Google Ads only today: a campaign on any other platform is refused with 400. Budget writing is " +
-			"added per platform, because each platform's budget model is its own deliberate decision. " +
+			"Google Ads, LinkedIn and Meta today: a campaign on any other platform is refused with 400. " +
+			"Budget writing is added per platform, because each platform's budget model is its own " +
+			"deliberate decision, and the refusals below are the union of what those models can refuse — " +
+			"a platform whose model has no analogue of a given refusal simply never raises it (LinkedIn " +
+			"budgets are fields on the campaign and cannot be shared, so the shared-budget 409 is a " +
+			"Google and Meta answer; Meta's form of it is a campaign-level, ad-set-spanning budget). " +
 			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: " +
 			"the campaign is unprovisioned (no platform campaign id); the campaign belongs to a different " +
 			"ad account than the project's connection now resolves to, or does not record which ad account " +
@@ -1519,13 +1523,16 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// Minimum is ONE MICRO, not zero. Goa's Minimum is inclusive, so Minimum(0)
 			// would publish an OpenAPI contract admitting a value — zero — that the service
 			// refuses unconditionally, leaving a generated client to discover the real
-			// floor only from a 400. One micro is the true floor: every supported platform
-			// bills in micros, and an amount below half of one rounds to zero there. Zero
-			// is not a budget — it is a request to stop spending, and pausing is what
-			// expresses that. NaN and Inf remain the only runtime rejections a Goa range
-			// cannot express, and the service checks them first. The maximum matches the
-			// platform adapter's own cap, so a figure this service would refuse to create
-			// with cannot be reached by editing.
+			// floor only from a 400. One micro is the LOOSEST floor any supported platform
+			// has — Google Ads bills in micros, LinkedIn in whole cents, Meta in its
+			// account currency's minor unit — so it is the only floor this contract can
+			// state for every platform at once. Each adapter enforces its own, stricter
+			// floor and its own platform minimums, which is where a 400 still comes from
+			// for an amount this range admits. Zero is not a budget — it is a request to
+			// stop spending, and pausing is what expresses that. NaN and Inf remain the
+			// only runtime rejections a Goa range cannot express, and the service checks
+			// them first. The maximum matches the platform adapter's own cap, so a figure
+			// this service would refuse to create with cannot be reached by editing.
 			Attribute("budget", Float64, "New budget amount, in the AD ACCOUNT's own currency (NOT USD). Must be strictly positive.", func() {
 				Minimum(0.000001)
 				Maximum(1000000000)

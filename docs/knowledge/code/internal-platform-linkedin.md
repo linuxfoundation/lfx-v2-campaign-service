@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -402,6 +402,38 @@ the runtime config (same as create); ids must be numeric. `IsOutcomeUnconfirmed(
 the shared ambiguity classifier (and honors the `Unconfirmed()` behavioral interface) so a
 caller can tell a maybe-applied outcome (including a partial cascade) from a definite rejection.
 `doRequest` gained an optional per-call headers map to carry the `X-Restli-Method` header.
+
+## Budget read and write (`budget_update.go`, LFXV2-2665)
+
+LinkedIn's budget is **a pair of fields on the campaign**, not a separate resource:
+`dailyBudget` and `totalBudget`, each `{"amount":"100.00","currencyCode":"USD"}` with the amount
+a **two-decimal string** (`budgetWireDecimals = 2`). A campaign id therefore fully addresses its
+budget, and there is nothing a budget can be shared with.
+
+`ValidateBudgetAmount(amount, lifetime) (wire string, rounded float64, err error)` is the single
+authority on what a valid LinkedIn budget is, and **the create path calls it too** — extracted
+rather than copied, so the two cannot drift into disagreeing. It rejects non-finite and
+non-positive amounts, rounds to the wire precision, refuses a sub-cent amount that would round
+to zero at the API boundary, and enforces `minDailyBudgetUSD = 10.0` / `minLifetimeBudgetUSD =
+100.0`. **The minimums are checked against the ROUNDED value, not the input** — `9.999` is sent
+as `"10.00"` and so meets the $10 minimum; checking the raw float would refuse an amount the
+platform accepts. The wire string it returns is what callers send verbatim.
+
+`GetCampaignBudget(ctx, campaignID)` reads the campaign under the resolved account
+(`adAccounts/{acct}/adCampaigns/{id}`, numeric ids only) and returns a `CampaignBudget` carrying
+`DailyBudget`, `TotalBudget`, `CurrencyCode` and `Status`. An **absent** field stays `nil`
+rather than becoming zero — nil is what a caller reads as "this campaign does not use this
+field" — while a field that is PRESENT but unparseable sets `AmountUnparseable` instead of
+silently reading as absent; those are opposite facts and only one of them is safe to write
+against. A response echoing a different campaign id is refused.
+
+`UpdateCampaignBudget(ctx, campaignID, amount string, lifetime bool)` sends a single
+`PARTIAL_UPDATE` setting exactly one of the two fields, with the caller's wire string passed
+through untouched and `currencyCode` always `"USD"`. An amount that did not come from
+`ValidateBudgetAmount` is refused at construction, naming the validator, so a caller that
+formatted its own string cannot bypass every minimum. The call returns **no body**, so the 2xx
+itself is the confirmation; `IsOutcomeUnconfirmed` still separates a maybe-applied 5xx from a
+definite 4xx.
 
 ## Metrics read
 
