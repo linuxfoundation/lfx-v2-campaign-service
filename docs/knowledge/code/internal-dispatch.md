@@ -113,6 +113,25 @@ a redacted URL can still tell them. The path is not load-bearing for that, so it
 over-redacting here costs nothing, because unlike an operator-facing error this value is
 never used to diagnose anything in the moment.
 
+That test has to be RE-RUN per consumer, and it does not always land the same way. The
+twitter client's `displayTwitterUtmURL` builds the Steps entry for the manual workflow —
+the destination link an operator PASTES INTO the tweet they post by hand — and it keeps
+the path while dropping userinfo, fragment and the brief's pre-existing query. A review
+round has read that as the snapshot rule being broken, since both values land in the
+unencrypted `campaigns.result`. It is the same rule reaching the other answer: the path
+is exactly what is load-bearing for THIS reader. Reduced to scheme+host the link points
+at the site root instead of the registration page, and the operator either rebuilds it by
+hand from the brief or ships the wrong URL in a real ad. Over-redacting costs nothing in
+the snapshot column and costs the whole value of the entry here.
+
+So the residual exposure — a brief whose registration URL hides a secret in its PATH — is
+accepted on this one path, and it is accepted because the alternatives are worse rather
+than because it is not real. It cannot be screened the way the query is: the query gate
+matches a bounded list of KEY NAMES, and a path segment offers no equivalent. Nothing
+separates `/reset/abc123` from `/blog/kubecon-recap` except a heuristic that either
+catches nothing or fails a create over an ordinary deep link. The same reasoning is why
+`rejectCredentialQueryParams` screens only the query on the publication path.
+
 An http(s)-scheme value that will NOT reduce to scheme+host — it does not parse, has
 no host, or carries userinfo — fails closed to empty rather than falling through to
 the truncating fallback, which keeps the path. `https:///reset/SECRET` parses cleanly
