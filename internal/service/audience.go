@@ -7,12 +7,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 
 	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 
@@ -347,6 +349,58 @@ func audienceFromInput(projectID, briefID string, in *audiences.AudienceInput) *
 		a.Status = a.StatusOrDefault()
 	}
 	return a
+}
+
+// audienceFromCompose builds the domain model for an audience the audience builder just
+// composed, rather than one a client described.
+//
+// Three things differ from audienceFromInput, and each is the point of having a separate
+// constructor. The status is `built` unconditionally, because the lists provably exist —
+// this is a record of a completed create, not a request to start one. The portal is
+// stamped from the outcome, which read it off the same build-scoped client that created
+// the lists, so the row satisfies refuseProvenanceBreakingPatch from birth and needs no
+// later PATCH (which would be refused anyway). And nothing here is caller-supplied except
+// the summary: a client cannot nominate a master list id, a suppression id or a portal it
+// did not just compose.
+func audienceFromCompose(projectID, briefID string, outcome *audience.ComposeOutcome, inclusionSummary string) *model.CampaignAudience {
+	suppression := []string{}
+	if outcome.Suppression != nil {
+		suppression = append(suppression, outcome.Suppression.ListID)
+	}
+	suppression = append(suppression, outcome.AttachedSuppressionIDs...)
+	summary := inclusionSummary
+	if summary == "" {
+		summary = composedInclusionSummary(outcome)
+	}
+	return &model.CampaignAudience{
+		ProjectID:            projectID,
+		BriefID:              briefID,
+		Platform:             model.ProviderHubSpot,
+		PlatformMasterListID: outcome.Master.ListID,
+		SuppressionListIDs:   marshalStrings(suppression),
+		InclusionSummary:     summary,
+		BuiltInPortalID:      outcome.PortalID,
+		Status:               model.AudienceBuilt,
+	}
+}
+
+// composedInclusionSummary describes the composition when the caller supplied no summary
+// of its own. Deliberately plain and countable: the operator-facing description of WHICH
+// signals were chosen lives in the UI that chose them, and inventing a richer one here
+// would put words in its mouth about a selection this layer never saw.
+func composedInclusionSummary(outcome *audience.ComposeOutcome) string {
+	if outcome.Attached {
+		summary := "Reused existing list " + outcome.Master.Name
+		if n := len(outcome.AttachedSuppressionIDs); n > 0 {
+			summary += fmt.Sprintf(" with %d suppression list(s)", n)
+		}
+		return summary
+	}
+	summary := fmt.Sprintf("Composed from %d source list(s)", len(outcome.SourceListIDs))
+	if outcome.Suppression != nil {
+		summary += " with a combined suppression list"
+	}
+	return summary
 }
 
 // audienceResult maps the domain model to the API response view (ETag mirrors version).

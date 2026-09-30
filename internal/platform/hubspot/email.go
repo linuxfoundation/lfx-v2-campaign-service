@@ -687,6 +687,16 @@ func (c *Client) patchEmail(ctx context.Context, id string, payload map[string]a
 	return e, nil
 }
 
+// EmailDetailsURL links to a SENT email's performance page. The edit link is wrong for a
+// published email: HubSpot opens it read-only or bounces it, which reads as a broken link from
+// the audience builder's "recent sends" panel. Empty when the portal id is unset.
+func (c *Client) EmailDetailsURL(emailID string) string {
+	if c.account.PortalID == "" || emailID == "" {
+		return ""
+	}
+	return c.appBaseURL + "/email/" + c.account.PortalID + "/details/" + emailID + "/performance"
+}
+
 // emailEditURL builds a human-facing edit link. Empty when the portal id is unset.
 func (c *Client) emailEditURL(emailID string) string {
 	if c.account.PortalID == "" || emailID == "" {

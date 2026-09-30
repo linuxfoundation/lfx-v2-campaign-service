@@ -1382,6 +1382,178 @@ func EncodeComposeAudienceMasterError(encoder func(context.Context, http.Respons
 	}
 }
 
+// EncodeAttachExistingAudienceResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-audience-builder
+// attach-existing-audience endpoint.
+func EncodeAttachExistingAudienceResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceaudiencebuilder.AudienceAttachExistingResult)
+		enc := encoder(ctx, w)
+		body := NewAttachExistingAudienceResponseBody(res)
+		w.WriteHeader(http.StatusCreated)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeAttachExistingAudienceRequest returns a decoder for requests sent to
+// the lfx-v2-campaign-service-audience-builder attach-existing-audience
+// endpoint.
+func DecodeAttachExistingAudienceRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceaudiencebuilder.AttachExistingAudiencePayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceaudiencebuilder.AttachExistingAudiencePayload, error) {
+		var payload *lfxv2campaignserviceaudiencebuilder.AttachExistingAudiencePayload
+		var (
+			body AttachExistingAudienceRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateAttachExistingAudienceRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		payload = NewAttachExistingAudiencePayload(&body, projectID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeAttachExistingAudienceError returns an encoder for errors returned by
+// the attach-existing-audience lfx-v2-campaign-service-audience-builder
+// endpoint.
+func EncodeAttachExistingAudienceError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceaudiencebuilder.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAttachExistingAudienceBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignserviceaudiencebuilder.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAttachExistingAudienceConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceaudiencebuilder.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAttachExistingAudienceServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceaudiencebuilder.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAttachExistingAudienceInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceaudiencebuilder.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAttachExistingAudienceNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceaudiencebuilder.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAttachExistingAudiencePayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceaudiencebuilder.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAttachExistingAudienceUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeRunAudienceQaResponse returns an encoder for responses returned by the
 // lfx-v2-campaign-service-audience-builder run-audience-qa endpoint.
 func EncodeRunAudienceQaResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
@@ -1670,6 +1842,7 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceListBriefToAudienceListBr
 		Size:                 v.Size,
 		Missing:              v.Missing,
 		ResolvedFromLegacyID: v.ResolvedFromLegacyID,
+		HubspotURL:           v.HubspotURL,
 	}
 
 	return res
@@ -1695,9 +1868,11 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceMasterListBriefToAudience
 // of type *AudienceComposeMasterInputRequestBody.
 func unmarshalAudienceComposeMasterInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceComposeMasterInput(v *AudienceComposeMasterInputRequestBody) *lfxv2campaignserviceaudiencebuilder.AudienceComposeMasterInput {
 	res := &lfxv2campaignserviceaudiencebuilder.AudienceComposeMasterInput{
-		Name:       v.Name,
-		BrandShort: v.BrandShort,
-		EventName:  v.EventName,
+		Name:             v.Name,
+		BrandShort:       v.BrandShort,
+		EventName:        v.EventName,
+		BriefID:          v.BriefID,
+		InclusionSummary: v.InclusionSummary,
 	}
 	res.ListIds = make([]string, len(v.ListIds))
 	for i, val := range v.ListIds {
@@ -1728,6 +1903,44 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceCom
 		Name:       v.Name,
 		HubspotURL: v.HubspotURL,
 		Size:       v.Size,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceaudiencebuilderAudienceComposeRecordedAudienceToAudienceComposeRecordedAudienceResponseBody
+// builds a value of type *AudienceComposeRecordedAudienceResponseBody from a
+// value of type
+// *lfxv2campaignserviceaudiencebuilder.AudienceComposeRecordedAudience.
+func marshalLfxv2campaignserviceaudiencebuilderAudienceComposeRecordedAudienceToAudienceComposeRecordedAudienceResponseBody(v *lfxv2campaignserviceaudiencebuilder.AudienceComposeRecordedAudience) *AudienceComposeRecordedAudienceResponseBody {
+	if v == nil {
+		return nil
+	}
+	res := &AudienceComposeRecordedAudienceResponseBody{
+		ID:                   v.ID,
+		Status:               v.Status,
+		Version:              v.Version,
+		PlatformMasterListID: v.PlatformMasterListID,
+	}
+
+	return res
+}
+
+// unmarshalAudienceAttachExistingInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceAttachExistingInput
+// builds a value of type
+// *lfxv2campaignserviceaudiencebuilder.AudienceAttachExistingInput from a
+// value of type *AudienceAttachExistingInputRequestBody.
+func unmarshalAudienceAttachExistingInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceAttachExistingInput(v *AudienceAttachExistingInputRequestBody) *lfxv2campaignserviceaudiencebuilder.AudienceAttachExistingInput {
+	res := &lfxv2campaignserviceaudiencebuilder.AudienceAttachExistingInput{
+		BriefID:          *v.BriefID,
+		MasterListID:     *v.MasterListID,
+		InclusionSummary: v.InclusionSummary,
+	}
+	if v.SuppressionListIds != nil {
+		res.SuppressionListIds = make([]string, len(v.SuppressionListIds))
+		for i, val := range v.SuppressionListIds {
+			res.SuppressionListIds[i] = val
+		}
 	}
 
 	return res

@@ -36,7 +36,7 @@ func TestSearchLists_ReturnsAndBuildsURL(t *testing.T) {
 	if got[0].Size != 1200 {
 		t.Errorf("Size must be parsed from hs_list_size string, got %d", got[0].Size)
 	}
-	if !strings.Contains(got[0].AppURL, "/lists/26991") {
+	if !strings.Contains(got[0].AppURL, "/objectLists/26991/filters") {
 		t.Errorf("AppURL = %q", got[0].AppURL)
 	}
 	// The search body must constrain to contact lists server-side (objectTypeId 0-1 —

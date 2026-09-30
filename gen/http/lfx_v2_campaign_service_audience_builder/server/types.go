@@ -38,6 +38,14 @@ type ComposeAudienceMasterRequestBody struct {
 	Compose *AudienceComposeMasterInputRequestBody `form:"compose,omitempty" json:"compose,omitempty" xml:"compose,omitempty"`
 }
 
+// AttachExistingAudienceRequestBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP request body.
+type AttachExistingAudienceRequestBody struct {
+	// The existing lists to attach
+	Attach *AudienceAttachExistingInputRequestBody `form:"attach,omitempty" json:"attach,omitempty" xml:"attach,omitempty"`
+}
+
 // RunAudienceQaRequestBody is the type of the
 // "lfx-v2-campaign-service-audience-builder" service "run-audience-qa"
 // endpoint HTTP request body.
@@ -133,6 +141,23 @@ type ComposeAudienceMasterResponseBody struct {
 	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
 	// The inclusion lists the master unions
 	SourceListIds []string `form:"source_list_ids" json:"source_list_ids" xml:"source_list_ids"`
+	// The audience row recorded for brief_id, when one was requested and written
+	Audience *AudienceComposeRecordedAudienceResponseBody `form:"audience,omitempty" json:"audience,omitempty" xml:"audience,omitempty"`
+	// Whether the master was recorded as the brief's audience; false when no
+	// brief_id was supplied
+	Recorded bool `form:"recorded" json:"recorded" xml:"recorded"`
+}
+
+// AttachExistingAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body.
+type AttachExistingAudienceResponseBody struct {
+	// The existing master list, as read back from the portal
+	Master *AudienceComposedListResponseBody `form:"master" json:"master" xml:"master"`
+	// The suppression list ids recorded beside it
+	SuppressionListIds []string `form:"suppression_list_ids" json:"suppression_list_ids" xml:"suppression_list_ids"`
+	// The audience row recorded for brief_id
+	Audience *AudienceComposeRecordedAudienceResponseBody `form:"audience" json:"audience" xml:"audience"`
 }
 
 // RunAudienceQaResponseBody is the type of the
@@ -707,6 +732,9 @@ type ComposeAudienceMasterComposePartialResponseBody struct {
 	// is unconfirmed (HubSpot may have created it) -- search for this name in
 	// HubSpot before composing again
 	MasterName *string `form:"master_name,omitempty" json:"master_name,omitempty" xml:"master_name,omitempty"`
+	// The master list that WAS created, set only when recording it as the brief's
+	// audience failed
+	Master *AudienceComposedListResponseBody `form:"master,omitempty" json:"master,omitempty" xml:"master,omitempty"`
 }
 
 // ComposeAudienceMasterInternalServerErrorResponseBody is the type of the
@@ -776,6 +804,86 @@ type ComposeAudienceMasterPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-audience-builder" service "compose-audience-master"
 // endpoint HTTP response body for the "Unauthorized" error.
 type ComposeAudienceMasterUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// AttachExistingAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the "BadRequest"
+// error.
+type AttachExistingAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// AttachExistingAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the "Conflict"
+// error.
+type AttachExistingAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// AttachExistingAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type AttachExistingAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// AttachExistingAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the
+// "InternalServerError" error.
+type AttachExistingAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// AttachExistingAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the "NotFound"
+// error.
+type AttachExistingAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// AttachExistingAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type AttachExistingAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// AttachExistingAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the
+// "Unauthorized" error.
+type AttachExistingAudienceUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -953,6 +1061,8 @@ type AudienceListBriefResponseBody struct {
 	Missing bool `form:"missing" json:"missing" xml:"missing"`
 	// Legacy list id this row was translated from
 	ResolvedFromLegacyID *string `form:"resolved_from_legacy_id,omitempty" json:"resolved_from_legacy_id,omitempty" xml:"resolved_from_legacy_id,omitempty"`
+	// Deep link to the list in the HubSpot UI; absent when it no longer resolves
+	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 }
 
 // AudienceMasterListBriefResponseBody is used to define fields on response
@@ -979,6 +1089,19 @@ type AudienceComposedListResponseBody struct {
 	HubspotURL string `form:"hubspot_url" json:"hubspot_url" xml:"hubspot_url"`
 	// Membership size, when HubSpot reported one
 	Size *int64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
+}
+
+// AudienceComposeRecordedAudienceResponseBody is used to define fields on
+// response body types.
+type AudienceComposeRecordedAudienceResponseBody struct {
+	// Audience id
+	ID string `form:"id" json:"id" xml:"id"`
+	// Audience status; always built for a recorded compose
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// The master list this audience sends to
+	PlatformMasterListID string `form:"platform_master_list_id" json:"platform_master_list_id" xml:"platform_master_list_id"`
 }
 
 // AudienceQaCandidateResponseBody is used to define fields on response body
@@ -1060,6 +1183,26 @@ type AudienceComposeMasterInputRequestBody struct {
 	EventName *string `form:"event_name,omitempty" json:"event_name,omitempty" xml:"event_name,omitempty"`
 	// Event dates; drive the derived name's quarter segment
 	EventDates []string `form:"event_dates,omitempty" json:"event_dates,omitempty" xml:"event_dates,omitempty"`
+	// Record the composed master as this brief's built audience, stamped with the
+	// portal it was composed in
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
+	// Operator-visible provenance for the recorded audience; derived from the
+	// source lists when omitted
+	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
+}
+
+// AudienceAttachExistingInputRequestBody is used to define fields on request
+// body types.
+type AudienceAttachExistingInputRequestBody struct {
+	// The brief to record the audience under
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
+	// The existing contact list the send goes to
+	MasterListID *string `form:"master_list_id,omitempty" json:"master_list_id,omitempty" xml:"master_list_id,omitempty"`
+	// Existing lists the send suppresses
+	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
+	// Operator-visible provenance for the recorded audience; derived from the
+	// master list when omitted
+	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
 }
 
 // NewGetAudienceBuilderCapabilitiesResponseBody builds the HTTP response body
@@ -1203,7 +1346,9 @@ func NewPreviewAudienceCountResponseBody(res *lfxv2campaignserviceaudiencebuilde
 // result of the "compose-audience-master" endpoint of the
 // "lfx-v2-campaign-service-audience-builder" service.
 func NewComposeAudienceMasterResponseBody(res *lfxv2campaignserviceaudiencebuilder.AudienceComposeMasterResult) *ComposeAudienceMasterResponseBody {
-	body := &ComposeAudienceMasterResponseBody{}
+	body := &ComposeAudienceMasterResponseBody{
+		Recorded: res.Recorded,
+	}
 	if res.Master != nil {
 		body.Master = marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceComposedListResponseBody(res.Master)
 	}
@@ -1217,6 +1362,31 @@ func NewComposeAudienceMasterResponseBody(res *lfxv2campaignserviceaudiencebuild
 		}
 	} else {
 		body.SourceListIds = []string{}
+	}
+	if res.Audience != nil {
+		body.Audience = marshalLfxv2campaignserviceaudiencebuilderAudienceComposeRecordedAudienceToAudienceComposeRecordedAudienceResponseBody(res.Audience)
+	}
+	return body
+}
+
+// NewAttachExistingAudienceResponseBody builds the HTTP response body from the
+// result of the "attach-existing-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewAttachExistingAudienceResponseBody(res *lfxv2campaignserviceaudiencebuilder.AudienceAttachExistingResult) *AttachExistingAudienceResponseBody {
+	body := &AttachExistingAudienceResponseBody{}
+	if res.Master != nil {
+		body.Master = marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceComposedListResponseBody(res.Master)
+	}
+	if res.SuppressionListIds != nil {
+		body.SuppressionListIds = make([]string, len(res.SuppressionListIds))
+		for i, val := range res.SuppressionListIds {
+			body.SuppressionListIds[i] = val
+		}
+	} else {
+		body.SuppressionListIds = []string{}
+	}
+	if res.Audience != nil {
+		body.Audience = marshalLfxv2campaignserviceaudiencebuilderAudienceComposeRecordedAudienceToAudienceComposeRecordedAudienceResponseBody(res.Audience)
 	}
 	return body
 }
@@ -1821,6 +1991,9 @@ func NewComposeAudienceMasterComposePartialResponseBody(res *lfxv2campaignservic
 	if res.Suppression != nil {
 		body.Suppression = marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceComposedListResponseBody(res.Suppression)
 	}
+	if res.Master != nil {
+		body.Master = marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceComposedListResponseBody(res.Master)
+	}
 	return body
 }
 
@@ -1896,6 +2069,84 @@ func NewComposeAudienceMasterPayloadTooLargeResponseBody(res *lfxv2campaignservi
 // "lfx-v2-campaign-service-audience-builder" service.
 func NewComposeAudienceMasterUnauthorizedResponseBody(res *lfxv2campaignserviceaudiencebuilder.UnauthorizedError) *ComposeAudienceMasterUnauthorizedResponseBody {
 	body := &ComposeAudienceMasterUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewAttachExistingAudienceBadRequestResponseBody builds the HTTP response
+// body from the result of the "attach-existing-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewAttachExistingAudienceBadRequestResponseBody(res *lfxv2campaignserviceaudiencebuilder.BadRequestError) *AttachExistingAudienceBadRequestResponseBody {
+	body := &AttachExistingAudienceBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewAttachExistingAudienceConflictResponseBody builds the HTTP response body
+// from the result of the "attach-existing-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewAttachExistingAudienceConflictResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConflictError) *AttachExistingAudienceConflictResponseBody {
+	body := &AttachExistingAudienceConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewAttachExistingAudienceServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "attach-existing-audience" endpoint of
+// the "lfx-v2-campaign-service-audience-builder" service.
+func NewAttachExistingAudienceServiceUnavailableResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConnServiceUnavailableError) *AttachExistingAudienceServiceUnavailableResponseBody {
+	body := &AttachExistingAudienceServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewAttachExistingAudienceInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "attach-existing-audience" endpoint of
+// the "lfx-v2-campaign-service-audience-builder" service.
+func NewAttachExistingAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceaudiencebuilder.InternalServerError) *AttachExistingAudienceInternalServerErrorResponseBody {
+	body := &AttachExistingAudienceInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewAttachExistingAudienceNotFoundResponseBody builds the HTTP response body
+// from the result of the "attach-existing-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewAttachExistingAudienceNotFoundResponseBody(res *lfxv2campaignserviceaudiencebuilder.NotFoundError) *AttachExistingAudienceNotFoundResponseBody {
+	body := &AttachExistingAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewAttachExistingAudiencePayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "attach-existing-audience" endpoint of
+// the "lfx-v2-campaign-service-audience-builder" service.
+func NewAttachExistingAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceaudiencebuilder.PayloadTooLargeError) *AttachExistingAudiencePayloadTooLargeResponseBody {
+	body := &AttachExistingAudiencePayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewAttachExistingAudienceUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "attach-existing-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewAttachExistingAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceaudiencebuilder.UnauthorizedError) *AttachExistingAudienceUnauthorizedResponseBody {
+	body := &AttachExistingAudienceUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -2083,6 +2334,18 @@ func NewComposeAudienceMasterPayload(body *ComposeAudienceMasterRequestBody, pro
 	return v
 }
 
+// NewAttachExistingAudiencePayload builds a
+// lfx-v2-campaign-service-audience-builder service attach-existing-audience
+// endpoint payload.
+func NewAttachExistingAudiencePayload(body *AttachExistingAudienceRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceaudiencebuilder.AttachExistingAudiencePayload {
+	v := &lfxv2campaignserviceaudiencebuilder.AttachExistingAudiencePayload{}
+	v.Attach = unmarshalAudienceAttachExistingInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceAttachExistingInput(body.Attach)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // NewRunAudienceQaPayload builds a lfx-v2-campaign-service-audience-builder
 // service run-audience-qa endpoint payload.
 func NewRunAudienceQaPayload(body *RunAudienceQaRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceaudiencebuilder.RunAudienceQaPayload {
@@ -2135,6 +2398,20 @@ func ValidateComposeAudienceMasterRequestBody(body *ComposeAudienceMasterRequest
 	return
 }
 
+// ValidateAttachExistingAudienceRequestBody runs the validations defined on
+// Attach-Existing-AudienceRequestBody
+func ValidateAttachExistingAudienceRequestBody(body *AttachExistingAudienceRequestBody) (err error) {
+	if body.Attach == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("attach", "body"))
+	}
+	if body.Attach != nil {
+		if err2 := ValidateAudienceAttachExistingInputRequestBody(body.Attach); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
 // ValidateRunAudienceQaRequestBody runs the validations defined on
 // Run-Audience-QaRequestBody
 func ValidateRunAudienceQaRequestBody(body *RunAudienceQaRequestBody) (err error) {
@@ -2163,6 +2440,32 @@ func ValidateAudienceComposeMasterInputRequestBody(body *AudienceComposeMasterIn
 	}
 	if len(body.ExcludeListIds) > 200 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.exclude_list_ids", body.ExcludeListIds, len(body.ExcludeListIds), 200, false))
+	}
+	if body.BriefID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.brief_id", *body.BriefID, goa.FormatUUID))
+	}
+	return
+}
+
+// ValidateAudienceAttachExistingInputRequestBody runs the validations defined
+// on audience-attach-existing-inputRequestBody
+func ValidateAudienceAttachExistingInputRequestBody(body *AudienceAttachExistingInputRequestBody) (err error) {
+	if body.BriefID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_id", "body"))
+	}
+	if body.MasterListID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("master_list_id", "body"))
+	}
+	if body.BriefID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.brief_id", *body.BriefID, goa.FormatUUID))
+	}
+	if body.MasterListID != nil {
+		if utf8.RuneCountInString(*body.MasterListID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.master_list_id", *body.MasterListID, utf8.RuneCountInString(*body.MasterListID), 1, true))
+		}
+	}
+	if len(body.SuppressionListIds) > 200 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.suppression_list_ids", body.SuppressionListIds, len(body.SuppressionListIds), 200, false))
 	}
 	return
 }

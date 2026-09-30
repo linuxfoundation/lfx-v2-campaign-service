@@ -879,7 +879,7 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 		row := audience.LastSentEmail{
 			EmailID:          r.row.email.ID,
 			EmailName:        r.row.email.Name,
-			HubSpotURL:       r.row.email.AppURL,
+			HubSpotURL:       sendDetailsURL(client, r.row.email),
 			IncludedLists:    []audience.ListBrief{},
 			SuppressionLists: []audience.ListBrief{},
 		}
@@ -1112,8 +1112,29 @@ func sentInTheFuture(publishDate string, now time.Time) bool {
 
 // listBriefs resolves referenced list ids to names, v3 ids first and legacy ids
 // second.
+//
+// A marketing email records each send list under BOTH its ILS id and its legacy id, so
+// resolving the two sides independently listed every list twice -- the second copy
+// "size unknown", because the legacy API reports no size. A legacy id is therefore mapped
+// to its ILS id first and dropped when that list is already present; one HubSpot has no
+// mapping for is still dropped when its name duplicates a list already listed.
 func (x *AudienceExplorer) listBriefs(ctx context.Context, client *hubspot.Client, ids, legacyIDs []string) []audience.ListBrief {
 	out := make([]audience.ListBrief, 0, len(ids)+len(legacyIDs))
+	seenIDs := map[string]struct{}{}
+	seenNames := map[string]struct{}{}
+	add := func(brief audience.ListBrief) {
+		if !brief.Missing {
+			brief.HubSpotURL = client.ListURL(brief.ListID)
+		}
+		if name := strings.ToLower(strings.TrimSpace(brief.Name)); name != "" {
+			if _, dup := seenNames[name]; dup {
+				return
+			}
+			seenNames[name] = struct{}{}
+		}
+		seenIDs[brief.ListID] = struct{}{}
+		out = append(out, brief)
+	}
 	for _, id := range audience.UniqueIDs(ids) {
 		brief := audience.ListBrief{ListID: id, Missing: true}
 		if list, err := client.GetList(ctx, id); err == nil && list != nil {
@@ -1122,14 +1143,23 @@ func (x *AudienceExplorer) listBriefs(ctx context.Context, client *hubspot.Clien
 			// A v3 id that only resolves under the legacy API still names a real list.
 			brief.Name, brief.Missing = name, false
 		}
-		out = append(out, brief)
+		add(brief)
 	}
 	for _, id := range audience.UniqueIDs(legacyIDs) {
+		if mapped := client.ListIDForLegacy(ctx, id); mapped != "" {
+			if _, dup := seenIDs[mapped]; dup {
+				continue
+			}
+			if list, err := client.GetList(ctx, mapped); err == nil && list != nil {
+				add(audience.ListBrief{ListID: mapped, ResolvedFromLegacyID: id, Name: list.Name, Size: sizeOf(list)})
+				continue
+			}
+		}
 		brief := audience.ListBrief{ListID: id, ResolvedFromLegacyID: id, Missing: true}
 		if name := client.LegacyListName(ctx, id); name != "" {
 			brief.Name, brief.Missing = name, false
 		}
-		out = append(out, brief)
+		add(brief)
 	}
 	return out
 }
@@ -1370,14 +1400,67 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 	// One resolved client for the whole composition. Both lists must land in the SAME
 	// portal, or the master references a suppression id that does not exist beside it.
 	ctx = x.builder.BeginBuild(ctx)
-	if _, _, err := x.builder.cachedClient(ctx, projectID); err != nil {
-		return nil, err
+	client, fromSystem, cerr := x.builder.cachedClient(ctx, projectID)
+	if cerr != nil {
+		return nil, cerr
+	}
+
+	// When the composition will be RECORDED as a brief's audience, resolve the portal here:
+	// after the build-scoped client is cached, and before the first list exists.
+	//
+	// Both halves of that placement are load-bearing. Reading it from the cached client is
+	// what makes the stamp provably describe the ids about to be created — a lookup made
+	// afterwards resolves a fresh credential, so a connection rotated mid-compose would
+	// stamp the new portal onto lists that live in the old one, which is worse than not
+	// stamping at all. Reading it BEFORE any create means an unavailable lookup fails with
+	// zero upstream state and a clean retry, rather than leaving a `built` row with empty
+	// provenance that assertAudiencePortal refuses permanently. This mirrors, and is
+	// mirrored by, the same inversion argued at length in service/audience_build.go.
+	//
+	// The exploratory path (no brief to record under) skips it entirely and keeps its
+	// existing behaviour byte for byte: no extra round trip, no new failure mode.
+	var portalID string
+	if in.RecordUnderBriefID != "" {
+		id, perr := x.builder.BuiltInPortalID(ctx, projectID)
+		if perr != nil {
+			return nil, fmt.Errorf("audience compose: resolve portal: %w", perr)
+		}
+		if strings.TrimSpace(id) == "" {
+			return nil, audience.ErrComposePortalUnconfirmed
+		}
+		portalID = id
 	}
 
 	identity := audience.EventIdentity{Name: in.EventName, BrandShort: in.BrandShort, Dates: in.EventDates}
 	masterName := strings.TrimSpace(in.Name)
 	if masterName == "" {
 		masterName = audience.MasterListName(identity, "Master", x.now())
+	}
+
+	suppressionName := audience.CombinedSuppressionName(in.Name, identity, x.now())
+
+	// HubSpot list names are unique per portal and the derived names repeat for every
+	// compose against one event, so a second compose was refused upstream and surfaced as an
+	// opaque 500 ("master lists are not building"). Resolve the names BEFORE creating
+	// anything: when either derived name is already taken, both are tagged with the
+	// selection's fingerprint, and a tagged master that already exists is THIS selection's
+	// earlier compose — reused rather than duplicated or refused.
+	names, nerr := x.resolveComposeNames(ctx, client, masterName, suppressionName, len(exclude) > 0,
+		audience.SelectionFingerprint(include, exclude))
+	if nerr != nil {
+		return nil, fmt.Errorf("audience compose: check list names: %w", systemScopedHubSpot(nerr, fromSystem))
+	}
+	masterName, suppressionName = names.master, names.suppression
+	if names.existingMaster != nil {
+		outcome := &audience.ComposeOutcome{
+			Master:        audience.ComposedList{ListRow: listRow(names.existingMaster)},
+			SourceListIDs: include,
+			PortalID:      portalID,
+		}
+		if names.existingSuppression != nil {
+			outcome.Suppression = &audience.ComposedList{ListRow: listRow(names.existingSuppression)}
+		}
+		return outcome, nil
 	}
 
 	var suppression *audience.ComposedList
@@ -1389,7 +1472,6 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 		if ferr != nil {
 			return nil, ferr
 		}
-		suppressionName := audience.CombinedSuppressionName(in.Name, identity, x.now())
 		created, cerr := x.createList(ctx, projectID, suppressionName, suppressionFilter)
 		if cerr != nil {
 			if hubspot.IsUnconfirmed(cerr) {
@@ -1413,7 +1495,8 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 		return nil, err
 	}
 
-	master, cerr := x.createList(ctx, projectID, masterName, filter)
+	var master *audience.ComposedList
+	master, cerr = x.createList(ctx, projectID, masterName, filter)
 	if cerr != nil {
 		wrapped := fmt.Errorf("audience compose: create master list: %w", cerr)
 		if hubspot.IsUnconfirmed(cerr) {
@@ -1433,7 +1516,134 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 		Master:        *master,
 		Suppression:   suppression,
 		SourceListIDs: include,
+		PortalID:      portalID,
 	}, nil
+}
+
+// AttachExisting verifies lists that ALREADY exist and returns them as a compose outcome
+// that can be recorded as a brief's audience: the "send to the same lists as this earlier
+// email" path, which composes nothing and so cannot hit a duplicate name or leave an orphan.
+//
+// Every id is caller-supplied, so each is read back from the project's portal: a mistyped or
+// foreign id is a 404 now rather than a send that fails at dispatch. The portal is resolved
+// from the same build-scoped client that did the reads, for the reason ComposeMaster gives.
+func (x *AudienceExplorer) AttachExisting(ctx context.Context, projectID, masterListID string, suppressionIDs []string) (outcome *audience.ComposeOutcome, err error) {
+	masterListID = strings.TrimSpace(masterListID)
+	if masterListID == "" {
+		return nil, audience.ErrNoInclusionLists
+	}
+	for _, id := range suppressionIDs {
+		if strings.TrimSpace(id) == "" {
+			return nil, audience.ErrBlankExclusionID
+		}
+	}
+	suppress := audience.ExclusionIDs(suppressionIDs, []string{masterListID})
+
+	ctx = x.builder.BeginBuild(ctx)
+	client, fromSystem, cerr := x.builder.cachedClient(ctx, projectID)
+	if cerr != nil {
+		return nil, cerr
+	}
+	defer func() { err = systemScopedHubSpot(err, fromSystem) }()
+
+	read := func(id string) (*hubspot.List, error) {
+		l, gerr := client.GetList(ctx, id)
+		if gerr != nil {
+			if hubspot.IsNotFound(gerr) {
+				return nil, fmt.Errorf("audience attach: list %s: %w", id, audience.ErrListNotFound)
+			}
+			return nil, fmt.Errorf("audience attach: read list %s: %w", id, gerr)
+		}
+		// A company or deal list cannot be an email send list; refuse it as absent rather
+		// than record an audience dispatch would reject.
+		if l.ObjectTypeID != "" && l.ObjectTypeID != "0-1" {
+			return nil, fmt.Errorf("audience attach: list %s is not a contact list: %w", id, audience.ErrListNotFound)
+		}
+		return l, nil
+	}
+	master, merr := read(masterListID)
+	if merr != nil {
+		return nil, merr
+	}
+	for _, id := range suppress {
+		if _, serr := read(id); serr != nil {
+			return nil, serr
+		}
+	}
+
+	portalID, perr := x.builder.BuiltInPortalID(ctx, projectID)
+	if perr != nil {
+		return nil, fmt.Errorf("audience attach: resolve portal: %w", perr)
+	}
+	if strings.TrimSpace(portalID) == "" {
+		return nil, audience.ErrComposePortalUnconfirmed
+	}
+	return &audience.ComposeOutcome{
+		Master:                 audience.ComposedList{ListRow: listRow(master)},
+		SourceListIDs:          []string{master.ListID},
+		PortalID:               portalID,
+		AttachedSuppressionIDs: suppress,
+		Attached:               true,
+	}, nil
+}
+
+// composeNames is the outcome of resolveComposeNames.
+type composeNames struct {
+	master, suppression string
+	// existingMaster is set when the fingerprinted master already exists: the same
+	// selection was composed before, and its lists are reused instead of recreated.
+	existingMaster, existingSuppression *hubspot.List
+}
+
+// resolveComposeNames picks names HubSpot will accept for a compose.
+//
+// The derived names are kept when neither is taken. Otherwise BOTH are tagged with the
+// selection fingerprint — together, so a reused master is always found beside the
+// suppression it excludes — and an existing tagged master is returned for reuse.
+func (x *AudienceExplorer) resolveComposeNames(ctx context.Context, client *hubspot.Client, master, suppression string, withSuppression bool, tag string) (composeNames, error) {
+	out := composeNames{master: master, suppression: suppression}
+	taken, err := exactList(ctx, client, master)
+	if err != nil {
+		return out, err
+	}
+	if taken == nil && withSuppression {
+		if taken, err = exactList(ctx, client, suppression); err != nil {
+			return out, err
+		}
+	}
+	if taken == nil {
+		return out, nil
+	}
+	out.master = audience.WithFingerprint(master, tag)
+	out.suppression = audience.WithFingerprint(suppression, tag)
+	if out.existingMaster, err = exactList(ctx, client, out.master); err != nil {
+		return out, err
+	}
+	if out.existingMaster != nil && withSuppression {
+		if out.existingSuppression, err = exactList(ctx, client, out.suppression); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
+// exactList is the contact list whose name equals name (case-insensitively), or nil.
+//
+// HubSpot's list search is a fuzzy token match, so its hits are filtered here; case is
+// ignored because a name differing only in case is still refused as a duplicate.
+func exactList(ctx context.Context, client *hubspot.Client, name string) (*hubspot.List, error) {
+	name = strings.TrimSpace(name)
+	lists, err := client.SearchLists(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	for i := range lists {
+		if strings.EqualFold(strings.TrimSpace(lists[i].Name), name) {
+			l := lists[i]
+			return &l, nil
+		}
+	}
+	return nil, nil
 }
 
 // createList creates one list and reads it back for its size and link.
@@ -1715,3 +1925,12 @@ func sizeOf(l *hubspot.List) *int64 {
 // property name in HubSpot's schema, not part of this service's contract — and this
 // is the only caller that needs to tell "absent" from "zero".
 const hsListSizePropKey = "hs_list_size"
+
+// sendDetailsURL links a past send to its performance page, falling back to the edit link the
+// email read carried when the portal id is unknown.
+func sendDetailsURL(client *hubspot.Client, email hubspot.Email) string {
+	if u := client.EmailDetailsURL(email.ID); u != "" {
+		return u
+	}
+	return email.AppURL
+}

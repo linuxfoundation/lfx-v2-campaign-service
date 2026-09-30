@@ -38,8 +38,13 @@ type Service interface {
 	// selected list did not report a size. Creates nothing.
 	PreviewAudienceCount(context.Context, *PreviewAudienceCountPayload) (res *AudiencePreviewCount, err error)
 	// Create the combined suppression list and then the master list in the
-	// project's HubSpot portal. NOT idempotent.
+	// project's HubSpot portal, and when brief_id is supplied record the master as
+	// that brief's built audience. NOT idempotent.
 	ComposeAudienceMaster(context.Context, *ComposeAudienceMasterPayload) (res *AudienceComposeMasterResult, err error)
+	// Record lists that already exist in the project's HubSpot portal as a brief's
+	// built audience, without composing a new master. Every id is read back from
+	// the portal first. Creates nothing in HubSpot.
+	AttachExistingAudience(context.Context, *AttachExistingAudiencePayload) (res *AudienceAttachExistingResult, err error)
 	// Audit a composed master list's filters: signal mapping, regulatory
 	// suppression, and exclusion completeness. Creates nothing.
 	RunAudienceQa(context.Context, *RunAudienceQaPayload) (res *AudienceQaResult, err error)
@@ -65,7 +70,43 @@ const ServiceName = "lfx-v2-campaign-service-audience-builder"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [9]string{"get-audience-builder-capabilities", "discover-audience-lists", "search-audience-lists", "get-audience-suppression-lists", "get-audience-last-sent", "get-existing-audience-master-lists", "preview-audience-count", "compose-audience-master", "run-audience-qa"}
+var MethodNames = [10]string{"get-audience-builder-capabilities", "discover-audience-lists", "search-audience-lists", "get-audience-suppression-lists", "get-audience-last-sent", "get-existing-audience-master-lists", "preview-audience-count", "compose-audience-master", "attach-existing-audience", "run-audience-qa"}
+
+// AttachExistingAudiencePayload is the payload type of the
+// lfx-v2-campaign-service-audience-builder service attach-existing-audience
+// method.
+type AttachExistingAudiencePayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The existing lists to attach
+	Attach *AudienceAttachExistingInput
+}
+
+type AudienceAttachExistingInput struct {
+	// The brief to record the audience under
+	BriefID string
+	// The existing contact list the send goes to
+	MasterListID string
+	// Existing lists the send suppresses
+	SuppressionListIds []string
+	// Operator-visible provenance for the recorded audience; derived from the
+	// master list when omitted
+	InclusionSummary *string
+}
+
+// AudienceAttachExistingResult is the result type of the
+// lfx-v2-campaign-service-audience-builder service attach-existing-audience
+// method.
+type AudienceAttachExistingResult struct {
+	// The existing master list, as read back from the portal
+	Master *AudienceComposedList
+	// The suppression list ids recorded beside it
+	SuppressionListIds []string
+	// The audience row recorded for brief_id
+	Audience *AudienceComposeRecordedAudience
+}
 
 // AudienceBuilderCapabilities is the result type of the
 // lfx-v2-campaign-service-audience-builder service
@@ -90,6 +131,12 @@ type AudienceComposeMasterInput struct {
 	EventName *string
 	// Event dates; drive the derived name's quarter segment
 	EventDates []string
+	// Record the composed master as this brief's built audience, stamped with the
+	// portal it was composed in
+	BriefID *string
+	// Operator-visible provenance for the recorded audience; derived from the
+	// source lists when omitted
+	InclusionSummary *string
 }
 
 // AudienceComposeMasterResult is the result type of the
@@ -102,6 +149,22 @@ type AudienceComposeMasterResult struct {
 	Suppression *AudienceComposedList
 	// The inclusion lists the master unions
 	SourceListIds []string
+	// The audience row recorded for brief_id, when one was requested and written
+	Audience *AudienceComposeRecordedAudience
+	// Whether the master was recorded as the brief's audience; false when no
+	// brief_id was supplied
+	Recorded bool
+}
+
+type AudienceComposeRecordedAudience struct {
+	// Audience id
+	ID string
+	// Audience status; always built for a recorded compose
+	Status string
+	// Optimistic-concurrency version
+	Version int64
+	// The master list this audience sends to
+	PlatformMasterListID string
 }
 
 type AudienceComposedList struct {
@@ -187,6 +250,8 @@ type AudienceListBrief struct {
 	Missing bool
 	// Legacy list id this row was translated from
 	ResolvedFromLegacyID *string
+	// Deep link to the list in the HubSpot UI; absent when it no longer resolves
+	HubspotURL *string
 }
 
 type AudienceListSearchResult struct {
@@ -484,6 +549,9 @@ type AudienceComposePartialError struct {
 	// is unconfirmed (HubSpot may have created it) -- search for this name in
 	// HubSpot before composing again
 	MasterName *string
+	// The master list that WAS created, set only when recording it as the brief's
+	// audience failed
+	Master *AudienceComposedList
 }
 
 type BadRequestError struct {

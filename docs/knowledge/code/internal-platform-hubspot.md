@@ -485,6 +485,12 @@ credit, which would turn a correctly-excluded audience into a QA finding about a
 exclusion. `IsNotFound` lets a caller tell "deleted" apart from "unreadable", which are
 different answers for an operator.
 
+`ListIDForLegacy` maps a legacy id to its v3 (ILS) id through `GET /crm/v3/lists/idmapping`, and
+returns `""` on any failure so the caller falls back to `LegacyListName`. It exists because a
+marketing email carries the SAME list in both `contactIlsLists` and the legacy `contactLists`,
+under two different ids — reading them as two lists rendered every inclusion and suppression of a
+pre-cut-off send twice ([[2026-09-30-audience-suppression-and-last-sent-scoping]]).
+
 `email_sendlists.go` reads the same `to.contactIlsLists` object `SetSendList` WRITES — otherwise
 the builder would report a precedent the sender never used. The legacy `to.contactLists`
 selection is read only here: it has been non-functional for sending since 2024-10-31, but a

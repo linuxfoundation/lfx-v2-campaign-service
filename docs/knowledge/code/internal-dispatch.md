@@ -3034,6 +3034,15 @@ ordering is what makes a partial failure describable: the suppression list exist
 does not, which is exactly what `ComposePartialError` carries up so the handler can report the
 created list instead of inviting a blind retry that would duplicate it.
 
+When `ComposeInput.RecordUnderBriefID` is set, `ComposeMaster` resolves the portal right after
+`cachedClient` and BEFORE that first create, returning it on `ComposeOutcome.PortalID`. Both halves
+of the ordering are load-bearing: read afterwards, a failed lookup would leave two real lists with
+nothing to attach them to; read from a second credential resolution, the stamped portal would vouch
+for list ids it never saw. The orchestration records nothing itself — it only resolves what the
+service layer cannot obtain anywhere else honestly. With no brief id the path is unchanged, which
+is why the lookup is conditional: it is a live round trip the exploratory caller should not pay
+for.
+
 `LastSent` is ONE portal sweep, ranked by when each email WENT OUT. Every part of that sentence was
 once otherwise, and the endpoint returned no recent sends at all. The event name was searched as a
 single contiguous substring, so `"KubeCon + CloudNativeCon North America"` had to appear verbatim in
@@ -3087,7 +3096,9 @@ The fan-out is TWO phases, and that is what keeps ordering correct on a portal t
 projected date blank. Candidates are ordered by the projected date, trimmed to a shortlist of
 `limit + 12` capped at 22, and the authoritative date is read for each of those; the shortlist is then
 re-sorted on that date by the SAME comparator and trimmed to `limit`, and only the survivors pay the
-expensive `listBriefs` fan-out. Truncating to `limit` before reading any authoritative date — which
+expensive `listBriefs` fan-out (which resolves v3 ids first, then maps each legacy id through
+`ListIDForLegacy` and drops any id or name already listed, so one list selected under both
+selections is one row). Truncating to `limit` before reading any authoritative date — which
 is what this replaced — discarded the newest send on the strength of an edit timestamp, and no later
 sort can bring back a row already cut. The claim is therefore bounded rather than unconditional:
 "most recently sent first" holds for any portal whose most recent send is within the shortlist, and

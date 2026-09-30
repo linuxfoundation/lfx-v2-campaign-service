@@ -188,6 +188,7 @@ var AudienceListBrief = Type("audience-list-brief", func() {
 	Attribute("size", Int64, "Membership size, when HubSpot reported one")
 	Attribute("missing", Boolean, "True when the referenced list could not be resolved")
 	Attribute("resolved_from_legacy_id", String, "Legacy list id this row was translated from")
+	Attribute("hubspot_url", String, "Deep link to the list in the HubSpot UI; absent when it no longer resolves")
 	Required("list_id", "name", "missing")
 })
 
@@ -274,7 +275,29 @@ var AudienceComposeMasterInput = Type("audience-compose-master-input", func() {
 	Attribute("brand_short", String, "Short brand token for the derived name")
 	Attribute("event_name", String, "Event name for the derived name")
 	Attribute("event_dates", ArrayOf(String), "Event dates; drive the derived name's quarter segment")
+	// brief_id turns compose from a pure create into a create-and-attach. It is optional
+	// because the builder is also used exploratorily, with no campaign to attach to --
+	// which is why these routes are scoped to the project rather than to a brief.
+	Attribute("brief_id", String, "Record the composed master as this brief's built audience, stamped with the portal it was composed in", func() {
+		Format(FormatUUID)
+	})
+	Attribute("inclusion_summary", String, "Operator-visible provenance for the recorded audience; derived from the source lists when omitted")
 	Required("list_ids")
+})
+
+// AudienceComposeRecordedAudience is the audience row a compose created, when it was asked
+// to record one.
+//
+// Deliberately slim: it carries what a caller needs to show the attachment and to address
+// the row later, and NOT built_in_portal_id. The portal is provenance the service asserts
+// against at dispatch; exposing it would invite a caller to send it back, and provenance a
+// client can supply is provenance that proves nothing.
+var AudienceComposeRecordedAudience = Type("audience-compose-recorded-audience", func() {
+	Attribute("id", String, "Audience id")
+	Attribute("status", String, "Audience status; always built for a recorded compose")
+	Attribute("version", Int64, "Optimistic-concurrency version")
+	Attribute("platform_master_list_id", String, "The master list this audience sends to")
+	Required("id", "status", "version", "platform_master_list_id")
 })
 
 // AudienceComposeMasterResult reports what was created.
@@ -282,7 +305,41 @@ var AudienceComposeMasterResult = Type("audience-compose-master-result", func() 
 	Attribute("master", AudienceComposedList, "The created master list")
 	Attribute("suppression", AudienceComposedList, "The combined suppression list, when exclusions were requested")
 	Attribute("source_list_ids", ArrayOf(String), "The inclusion lists the master unions")
-	Required("master", "source_list_ids")
+	Attribute("audience", AudienceComposeRecordedAudience, "The audience row recorded for brief_id, when one was requested and written")
+	// Required, and separate from `audience`, so no caller has to infer "attached" from an
+	// absent object. An older client reading only `audience` and a newer one reading
+	// `recorded` must never disagree about whether the send list is wired up.
+	Attribute("recorded", Boolean, "Whether the master was recorded as the brief's audience; false when no brief_id was supplied")
+	Required("master", "source_list_ids", "recorded")
+})
+
+// AudienceAttachExistingInput nominates lists that ALREADY exist as a brief's audience.
+//
+// The "use the same selections as this earlier send" path: the master a previous email
+// sent to is reused as-is, so no new list is composed. The ids are client-supplied, which
+// is why the service reads every one of them back from the project's portal before
+// recording anything, and why the portal is still stamped server-side rather than taken
+// from the caller.
+var AudienceAttachExistingInput = Type("audience-attach-existing-input", func() {
+	Attribute("brief_id", String, "The brief to record the audience under", func() {
+		Format(FormatUUID)
+	})
+	Attribute("master_list_id", String, "The existing contact list the send goes to", func() {
+		MinLength(1)
+	})
+	Attribute("suppression_list_ids", ArrayOf(String), "Existing lists the send suppresses", func() {
+		MaxLength(200)
+	})
+	Attribute("inclusion_summary", String, "Operator-visible provenance for the recorded audience; derived from the master list when omitted")
+	Required("brief_id", "master_list_id")
+})
+
+// AudienceAttachExistingResult reports the verified lists and the row recorded for them.
+var AudienceAttachExistingResult = Type("audience-attach-existing-result", func() {
+	Attribute("master", AudienceComposedList, "The existing master list, as read back from the portal")
+	Attribute("suppression_list_ids", ArrayOf(String), "The suppression list ids recorded beside it")
+	Attribute("audience", AudienceComposeRecordedAudience, "The audience row recorded for brief_id")
+	Required("master", "suppression_list_ids", "audience")
 })
 
 // AudienceComposePartialError is the error body for a compose that created SOME platform
@@ -301,6 +358,12 @@ var AudienceComposePartialError = Type("audience-compose-partial-error", func() 
 	Attribute("master_name", String,
 		"The master list's deterministic name, set only when the master create itself is unconfirmed "+
 			"(HubSpot may have created it) -- search for this name in HubSpot before composing again")
+	// The fifth reachable shape: both lists exist and are usable, and only the attachment
+	// failed. It is the one partial where the master can be named rather than merely
+	// searched for, so it carries the list itself -- the operator can attach it by hand,
+	// and must not compose again to get one they already have.
+	Attribute("master", AudienceComposedList,
+		"The master list that WAS created, set only when recording it as the brief's audience failed")
 })
 
 // AudienceQaFinding is one problem found by a QA check.
@@ -547,7 +610,7 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 	})
 
 	Method("compose-audience-master", func() {
-		Description("Create the combined suppression list and then the master list in the project's HubSpot portal. NOT idempotent.")
+		Description("Create the combined suppression list and then the master list in the project's HubSpot portal, and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -568,6 +631,25 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 			Response(StatusCreated)
 			briefErrorResponses()
 			Response("ComposePartial", StatusInternalServerError)
+		})
+	})
+
+	Method("attach-existing-audience", func() {
+		Description("Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. Creates nothing in HubSpot.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("attach", AudienceAttachExistingInput, "The existing lists to attach")
+			Required("project_id", "attach")
+		})
+		Result(AudienceAttachExistingResult)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/audience-builder/attach-existing")
+			Header("bearer_token:Authorization")
+			// 201: a new audience row is the outcome.
+			Response(StatusCreated)
+			briefErrorResponses()
 		})
 	})
 

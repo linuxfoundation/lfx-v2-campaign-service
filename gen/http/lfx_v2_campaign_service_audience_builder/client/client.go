@@ -50,6 +50,10 @@ type Client struct {
 	// compose-audience-master endpoint.
 	ComposeAudienceMasterDoer goahttp.Doer
 
+	// AttachExistingAudience Doer is the HTTP client used to make requests to the
+	// attach-existing-audience endpoint.
+	AttachExistingAudienceDoer goahttp.Doer
+
 	// RunAudienceQa Doer is the HTTP client used to make requests to the
 	// run-audience-qa endpoint.
 	RunAudienceQaDoer goahttp.Doer
@@ -83,6 +87,7 @@ func NewClient(
 		GetExistingAudienceMasterListsDoer: doer,
 		PreviewAudienceCountDoer:           doer,
 		ComposeAudienceMasterDoer:          doer,
+		AttachExistingAudienceDoer:         doer,
 		RunAudienceQaDoer:                  doer,
 		RestoreResponseBody:                restoreBody,
 		scheme:                             scheme,
@@ -287,6 +292,31 @@ func (c *Client) ComposeAudienceMaster() goa.Endpoint {
 		resp, err := c.ComposeAudienceMasterDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-audience-builder", "compose-audience-master", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// AttachExistingAudience returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-audience-builder service attach-existing-audience
+// server.
+func (c *Client) AttachExistingAudience() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeAttachExistingAudienceRequest(c.encoder)
+		decodeResponse = DecodeAttachExistingAudienceResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildAttachExistingAudienceRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.AttachExistingAudienceDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-audience-builder", "attach-existing-audience", err)
 		}
 		return decodeResponse(resp)
 	}

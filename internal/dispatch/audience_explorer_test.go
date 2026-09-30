@@ -5,12 +5,14 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -358,6 +360,9 @@ func TestComposeMaster_SuppressionCreateUnconfirmed_ReturnsPartialWithNameOnly(t
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/crm/v3/lists/search":
+			// The pre-create name check: no list holds either name yet.
+			_, _ = io.WriteString(w, `{"lists":[]}`)
 		case hubSpotTokenInfoPath:
 			_, _ = io.WriteString(w, `{"hubId":8112310}`)
 		default:
@@ -402,6 +407,9 @@ func TestComposeMaster_MasterCreateUnconfirmed_ReturnsPartialWithMasterName(t *t
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.URL.Path == "/crm/v3/lists/search":
+			// The pre-create name check: no list holds either name yet.
+			_, _ = io.WriteString(w, `{"lists":[]}`)
 		case r.URL.Path == hubSpotTokenInfoPath:
 			_, _ = io.WriteString(w, `{"hubId":8112310}`)
 		case r.URL.Path == "/crm/v3/lists" && r.Method == http.MethodPost && !suppressionCreated.Load():
@@ -435,6 +443,106 @@ func TestComposeMaster_MasterCreateUnconfirmed_ReturnsPartialWithMasterName(t *t
 		"the master's deterministic name is the only reconcile key an unconfirmed create can give")
 	assert.Equal(t, "999", partial.Suppression.ListID,
 		"the suppression list DID confirm-create, so its real id must still be reported alongside the unconfirmed master")
+}
+
+// TestComposeMaster_Recording_ResolvesThePortalBeforeCreatingAnything pins the
+// ordering that makes the recorded provenance TRUE rather than merely plausible.
+//
+// The portal is read from the same build-scoped client the lists are created with, and
+// it is read BEFORE the first create. Both halves matter. Read afterwards, a portal
+// lookup that failed would leave two real lists behind with nothing to attach them to;
+// read from a second credential resolution, the stamped portal would vouch for ids it
+// never saw. assertAudiencePortal refuses a dispatch whose recorded portal does not
+// match, and refuseProvenanceBreakingPatch makes the stamp unrepairable, so a wrong
+// value here is a permanently undispatchable audience.
+func TestComposeMaster_Recording_ResolvesThePortalBeforeCreatingAnything(t *testing.T) {
+	var mu sync.Mutex
+	var seq []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seq = append(seq, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/crm/v3/lists/search":
+			// The pre-create name check: no list holds either name yet.
+			_, _ = io.WriteString(w, `{"lists":[]}`)
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/crm/v3/lists" && r.Method == http.MethodPost:
+			_, _ = io.WriteString(w, `{"list":{"listId":"999","name":"created","objectTypeId":"0-1","size":7}}`)
+		default:
+			_, _ = io.WriteString(w, `{}`)
+		}
+	}))
+	defer srv.Close()
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	outcome, err := x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs:            []string{"111"},
+		ExcludeListIDs:     []string{"222"},
+		Name:               "KubeCon NA 2026 — master",
+		RecordUnderBriefID: "brief-1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "8112310", outcome.PortalID,
+		"the recorded provenance is the portal the lists were actually created in")
+
+	mu.Lock()
+	defer mu.Unlock()
+	firstCreate := -1
+	firstTokenInfo := -1
+	for i, call := range seq {
+		if firstTokenInfo < 0 && strings.HasSuffix(call, hubSpotTokenInfoPath) {
+			firstTokenInfo = i
+		}
+		if firstCreate < 0 && call == "POST /crm/v3/lists" {
+			firstCreate = i
+		}
+	}
+	require.GreaterOrEqual(t, firstTokenInfo, 0, "the portal must be resolved from the portal itself")
+	require.GreaterOrEqual(t, firstCreate, 0, "the compose must have created a list")
+	assert.Less(t, firstTokenInfo, firstCreate,
+		"a portal lookup that fails after the creates leaves real lists with nothing to attach them to")
+}
+
+// The exploratory compose must not pay for the portal lookup, and must not report a
+// portal it was never asked to confirm: an empty PortalID is what tells the service
+// layer there is nothing here to stamp provenance with.
+func TestComposeMaster_WithoutRecording_ReportsNoPortal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/crm/v3/lists/search":
+			// The pre-create name check: no list holds either name yet.
+			_, _ = io.WriteString(w, `{"lists":[]}`)
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/crm/v3/lists" && r.Method == http.MethodPost:
+			_, _ = io.WriteString(w, `{"list":{"listId":"999","name":"created","objectTypeId":"0-1","size":7}}`)
+		default:
+			_, _ = io.WriteString(w, `{}`)
+		}
+	}))
+	defer srv.Close()
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	outcome, err := x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs: []string{"111"},
+		Name:    "KubeCon NA 2026 — master",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, outcome.PortalID)
 }
 
 // TestRunQA_ByName_FetchesRealFiltersRatherThanCachedSearchHit pins that QA-by-name
@@ -1625,4 +1733,204 @@ func TestLastSent_ADegenerateEventNameStillSweepsOnAUsableBrand(t *testing.T) {
 		"a populated brand tier is evidence, and answering an empty history without looking discards it")
 	assert.Equal(t, []string{"a"}, sentIDs(rows),
 		"the brand fallback must still be able to answer, exactly as it does for a real event name that matched nothing")
+}
+
+// TestLastSent_ALegacyIDForAListAlreadyListedIsNotRepeated pins the fix for every list on
+// a recent send appearing twice, once with its size and once "size unknown". HubSpot
+// records a send list under both its ILS id (contactIlsLists) and its legacy id
+// (contactLists); naming the two sides separately produced the duplicate.
+func TestLastSent_ALegacyIDForAListAlreadyListedIsNotRepeated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/marketing/v3/emails":
+			_, _ = io.WriteString(w, `{"results":[{"id":"e1","name":"AGNTCon Japan Invite","state":"PUBLISHED",`+
+				`"updatedAt":"2026-09-01T00:00:00Z","publishDate":"2026-02-01T09:00:00Z"}]}`)
+		case r.URL.Path == "/marketing/v3/emails/e1":
+			_, _ = io.WriteString(w, `{"id":"e1","publishDate":"2026-02-01T09:00:00Z","to":{`+
+				`"contactIlsLists":{"include":[500],"exclude":[600]},`+
+				`"contactLists":{"include":[50,51],"exclude":[60]}}}`)
+		case r.URL.Path == "/crm/v3/lists/idmapping":
+			switch r.URL.Query().Get("legacyListId") {
+			case "50":
+				_, _ = io.WriteString(w, `{"legacyListId":"50","listId":"500"}`)
+			case "60":
+				_, _ = io.WriteString(w, `{"legacyListId":"60","listId":"600"}`)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		case r.URL.Path == "/crm/v3/lists/500":
+			_, _ = io.WriteString(w, `{"list":{"listId":"500","name":"AGNTCon Master","objectTypeId":"0-1","size":1200}}`)
+		case r.URL.Path == "/crm/v3/lists/600":
+			_, _ = io.WriteString(w, `{"list":{"listId":"600","name":"LF Global Opt-Outs","objectTypeId":"0-1","size":90}}`)
+		case r.URL.Path == "/contacts/v1/lists/51":
+			// Unmapped, and a name already present: still a duplicate.
+			_, _ = io.WriteString(w, `{"name":"agntcon master"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	rows, err := x.LastSent(context.Background(), "proj-1", "AGNTCon + MCPCon Japan 2026", "LF", 3)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	require.Len(t, rows[0].IncludedLists, 1, "the legacy copy of the master list must not be listed again")
+	assert.Equal(t, "500", rows[0].IncludedLists[0].ListID)
+	require.NotNil(t, rows[0].IncludedLists[0].Size)
+	assert.Equal(t, int64(1200), *rows[0].IncludedLists[0].Size)
+
+	require.Len(t, rows[0].SuppressionLists, 1, "the legacy copy of the opt-out list must not be listed again")
+	assert.False(t, rows[0].SuppressionLists[0].Missing)
+}
+
+// composeNameServer answers the pre-create name check from `existing` (name → id) and
+// records every list create, so a test can assert what compose chose to name — and
+// whether it created anything at all.
+func composeNameServer(t *testing.T, existing map[string]string) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var created []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/crm/v3/lists/search":
+			var body struct {
+				Query string `json:"query"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			lists := []map[string]any{}
+			if id, ok := existing[body.Query]; ok {
+				lists = append(lists, map[string]any{"listId": id, "name": body.Query, "objectTypeId": "0-1"})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"lists": lists, "hasMore": false})
+		case r.URL.Path == "/crm/v3/lists" && r.Method == http.MethodPost:
+			var body struct {
+				Name string `json:"name"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			created = append(created, body.Name)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"list": map[string]any{
+				"listId": fmt.Sprintf("new-%d", len(created)), "name": body.Name, "objectTypeId": "0-1",
+			}})
+		default:
+			_, _ = io.WriteString(w, `{}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), created...)
+	}
+}
+
+func composeExplorer(srvURL string) *AudienceExplorer {
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"proj-1": activeHubSpotConn(goodHubSpotCreds),
+	}}
+	return NewAudienceExplorer(NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srvURL)), nil, nil, nil)
+}
+
+// TestComposeMaster_TakenName_CreatesUnderTheSelectionFingerprint is the "master lists are
+// not building" regression: a second compose for one event derived the same name as the
+// first, and HubSpot refused the duplicate. Both lists must move to the fingerprinted names.
+func TestComposeMaster_TakenName_CreatesUnderTheSelectionFingerprint(t *testing.T) {
+	const base = "AGNTCon Japan"
+	srv, created := composeNameServer(t, map[string]string{base + " - Master": "31349"})
+	x := composeExplorer(srv.URL)
+
+	outcome, err := x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs: []string{"111"}, ExcludeListIDs: []string{"222"}, Name: base + " - Master",
+	})
+	require.NoError(t, err)
+
+	tag := audience.SelectionFingerprint([]string{"111"}, []string{"222"})
+	assert.Equal(t, []string{
+		audience.WithFingerprint(base+" - Master - Combined Suppression", tag),
+		audience.WithFingerprint(base+" - Master", tag),
+	}, created())
+	assert.Equal(t, audience.WithFingerprint(base+" - Master", tag), outcome.Master.Name)
+}
+
+// TestComposeMaster_SameSelectionAgain_ReusesItsEarlierLists: re-running an identical
+// compose finds its own fingerprinted lists and returns them, creating nothing.
+func TestComposeMaster_SameSelectionAgain_ReusesItsEarlierLists(t *testing.T) {
+	const name = "AGNTCon Japan - Master"
+	tag := audience.SelectionFingerprint([]string{"111"}, []string{"222"})
+	srv, created := composeNameServer(t, map[string]string{
+		name:                                "31349",
+		audience.WithFingerprint(name, tag): "40001",
+		audience.WithFingerprint(name+" - Combined Suppression", tag): "40000",
+	})
+	x := composeExplorer(srv.URL)
+
+	outcome, err := x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs: []string{"111"}, ExcludeListIDs: []string{"222"}, Name: name, RecordUnderBriefID: "brief-1",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, created(), "an identical compose must not create a duplicate list")
+	assert.Equal(t, "40001", outcome.Master.ListID)
+	require.NotNil(t, outcome.Suppression)
+	assert.Equal(t, "40000", outcome.Suppression.ListID)
+	assert.Equal(t, "8112310", outcome.PortalID, "a reused list is still recorded with its portal")
+	assert.Contains(t, outcome.Master.HubSpotURL, "/objectLists/40001/filters")
+}
+
+// TestAttachExisting_VerifiesEveryListAndCreatesNothing: reusing an earlier send's lists
+// reads each id back, stamps the portal, and never POSTs a create.
+func TestAttachExisting_VerifiesEveryListAndCreatesNothing(t *testing.T) {
+	var mu sync.Mutex
+	var seq []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seq = append(seq, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/crm/v3/lists/404":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"status":"error","message":"not found"}`)
+		case strings.HasPrefix(r.URL.Path, "/crm/v3/lists/") && r.Method == http.MethodGet:
+			id := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
+			_ = json.NewEncoder(w).Encode(map[string]any{"list": map[string]any{
+				"listId": id, "name": "list " + id, "objectTypeId": "0-1", "size": 10,
+			}})
+		default:
+			w.WriteHeader(http.StatusTeapot)
+		}
+	}))
+	defer srv.Close()
+	x := composeExplorer(srv.URL)
+
+	outcome, err := x.AttachExisting(context.Background(), "proj-1", "31027", []string{"s1", "31027", "s1"})
+	require.NoError(t, err)
+	assert.Equal(t, "31027", outcome.Master.ListID)
+	assert.Equal(t, []string{"s1"}, outcome.AttachedSuppressionIDs,
+		"the master is not its own suppression, and a repeated id is recorded once")
+	assert.Equal(t, "8112310", outcome.PortalID)
+	assert.True(t, outcome.Attached)
+	mu.Lock()
+	for _, call := range seq {
+		assert.NotEqual(t, "POST /crm/v3/lists", call, "attach must never create a list")
+	}
+	mu.Unlock()
+
+	_, err = x.AttachExisting(context.Background(), "proj-1", "31027", []string{"404"})
+	assert.ErrorIs(t, err, audience.ErrListNotFound)
 }
