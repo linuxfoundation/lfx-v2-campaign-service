@@ -28,6 +28,7 @@ type Server struct {
 	GetExistingAudienceMasterLists http.Handler
 	PreviewAudienceCount           http.Handler
 	ComposeAudienceMaster          http.Handler
+	AttachExistingAudience         http.Handler
 	RunAudienceQa                  http.Handler
 }
 
@@ -67,6 +68,7 @@ func New(
 			{"GetExistingAudienceMasterLists", "GET", "/projects/{project_id}/audience-builder/existing-master-lists"},
 			{"PreviewAudienceCount", "POST", "/projects/{project_id}/audience-builder/preview-count"},
 			{"ComposeAudienceMaster", "POST", "/projects/{project_id}/audience-builder/compose-master"},
+			{"AttachExistingAudience", "POST", "/projects/{project_id}/audience-builder/attach-existing"},
 			{"RunAudienceQa", "POST", "/projects/{project_id}/audience-builder/qa/run"},
 		},
 		GetAudienceBuilderCapabilities: NewGetAudienceBuilderCapabilitiesHandler(e.GetAudienceBuilderCapabilities, mux, decoder, encoder, errhandler, formatter),
@@ -77,6 +79,7 @@ func New(
 		GetExistingAudienceMasterLists: NewGetExistingAudienceMasterListsHandler(e.GetExistingAudienceMasterLists, mux, decoder, encoder, errhandler, formatter),
 		PreviewAudienceCount:           NewPreviewAudienceCountHandler(e.PreviewAudienceCount, mux, decoder, encoder, errhandler, formatter),
 		ComposeAudienceMaster:          NewComposeAudienceMasterHandler(e.ComposeAudienceMaster, mux, decoder, encoder, errhandler, formatter),
+		AttachExistingAudience:         NewAttachExistingAudienceHandler(e.AttachExistingAudience, mux, decoder, encoder, errhandler, formatter),
 		RunAudienceQa:                  NewRunAudienceQaHandler(e.RunAudienceQa, mux, decoder, encoder, errhandler, formatter),
 	}
 }
@@ -94,6 +97,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.GetExistingAudienceMasterLists = m(s.GetExistingAudienceMasterLists)
 	s.PreviewAudienceCount = m(s.PreviewAudienceCount)
 	s.ComposeAudienceMaster = m(s.ComposeAudienceMaster)
+	s.AttachExistingAudience = m(s.AttachExistingAudience)
 	s.RunAudienceQa = m(s.RunAudienceQa)
 }
 
@@ -111,6 +115,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountGetExistingAudienceMasterListsHandler(mux, h.GetExistingAudienceMasterLists)
 	MountPreviewAudienceCountHandler(mux, h.PreviewAudienceCount)
 	MountComposeAudienceMasterHandler(mux, h.ComposeAudienceMaster)
+	MountAttachExistingAudienceHandler(mux, h.AttachExistingAudience)
 	MountRunAudienceQaHandler(mux, h.RunAudienceQa)
 }
 
@@ -537,6 +542,61 @@ func NewComposeAudienceMasterHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "compose-audience-master")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-audience-builder")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountAttachExistingAudienceHandler configures the mux to serve the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint.
+func MountAttachExistingAudienceHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/audience-builder/attach-existing", f)
+}
+
+// NewAttachExistingAudienceHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint.
+func NewAttachExistingAudienceHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeAttachExistingAudienceRequest(mux, decoder)
+		encodeResponse = EncodeAttachExistingAudienceResponse(encoder)
+		encodeError    = EncodeAttachExistingAudienceError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "attach-existing-audience")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-audience-builder")
 		payload, err := decodeRequest(r)
 		if err != nil {

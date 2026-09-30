@@ -1328,6 +1328,17 @@ act on; the same failure reported as a 500 sends them looking for an outage that
 handlers stay testable without a live HubSpot portal, and a deployment with no connection store
 degrades to the contract's typed 503 instead of a nil dereference.
 
+A compose carrying `brief_id` records the master as that brief's built audience, and every
+refusal it can raise happens BEFORE the orchestration is entered: a missing audience or brief
+repository is a typed 503 rather than a silent downgrade to composing-unattached, and an unknown
+brief is a 404 — both with zero HubSpot lists created, because compose is not idempotent and a
+refusal raised after two real creates can be neither rolled back nor retried. That brief read uses
+`composeBriefErr`, not `audienceExploreErr`, where `domain.ErrNotFound` means "no usable HubSpot
+connection": a mistyped brief id reported as a connection outage sends the operator to reconnect
+HubSpot over something no reconnection can fix. The insert is plain `CreateAudience` — the approval
+gate exists to stop a build from CREATING platform state, and recording a pointer to lists that
+already exist creates none.
+
 `GetAudienceBuilderCapabilities` returns no error on purpose — an unusable connection is this
 endpoint's ANSWER, not its failure, and it is what lets the UI render one explanatory banner
 with the actions disabled instead of nine broken buttons.
@@ -1338,7 +1349,7 @@ response header — which a proxying BFF does not see. So the BODY is the discri
 `ComposePartial` body carries whichever of three fields describes what actually happened, and the
 presence of ANY of them is the discriminator.
 
-**Four shapes are reachable, and only ONE carries `suppression`** — so keying on
+**Five shapes are reachable, and only ONE carries `suppression`** — so keying on
 `suppression.list_id` alone silently rethrows the other three as ordinary failures. That is the
 worst available outcome here, because the fields it discards are the deterministic NAMES the
 operator needs to find lists that may already exist:
@@ -1347,6 +1358,9 @@ operator needs to find lists that may already exist:
 - `suppression_name` set — the suppression create itself is UNCONFIRMED (no id came back).
 - `master_name` set — no exclusions requested, or suppression failed outright; master unconfirmed.
 - `suppression` + `master_name` — suppression exists, master unconfirmed.
+- `master` set — a RECORDING compose (one carrying `brief_id`) whose lists were both created and
+  whose attachment to the brief failed. The only shape with a CONFIRMED master object rather than
+  a name: the lists are usable, so the operator attaches one by hand instead of composing again.
 
 `suppression` and `suppression_name` are never both set. See `docs/api-catalog.md` for the
 authoritative list. This is what lets a caller show the operator what WAS or MAY HAVE BEEN created

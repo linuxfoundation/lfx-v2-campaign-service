@@ -186,6 +186,13 @@ Three declarations are load-bearing:
   internal error carries only code and message — the body is what a proxying caller can actually
   read. See [internal/service](internal-service.md).
 
+`audience-compose-master-input` carries an optional `brief_id`, and supplying it makes the same
+call ALSO record the composed master as that brief's built audience — `recorded` (Required) and an
+optional slim `audience` object report that half. `recorded` is explicit so no caller infers
+attachment from an absent object, and the slim type deliberately omits `built_in_portal_id`: the
+portal is provenance the service stamps, not a field a client has any use for. `ComposePartial`
+gained a fifth shape, `master`, for the case where both lists exist and only the attachment failed.
+
 `audience-compose-master-input` deliberately has NO `event_url`. Composition works from the lists
 and names an operator has already reviewed; re-fetching the page at write time would let a page
 edited since discovery change what gets created.

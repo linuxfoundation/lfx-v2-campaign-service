@@ -247,7 +247,7 @@ func BuildPreviewAudienceCountPayload(lfxV2CampaignServiceAudienceBuilderPreview
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ids\": [\n         \"Nihil enim sit est atque.\",\n         \"Quaerat qui vitae.\"\n      ]\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ids\": [\n         \"Consequatur eum ea voluptatum pariatur non ratione.\",\n         \"Ullam dolores occaecati hic ut.\",\n         \"Facilis non facilis dolor consectetur sed error.\"\n      ]\n   }'")
 		}
 		if body.ListIds == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("list_ids", "body"))
@@ -296,7 +296,7 @@ func BuildComposeAudienceMasterPayload(lfxV2CampaignServiceAudienceBuilderCompos
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Sit totam ut et.\",\n         \"event_dates\": [\n            \"Earum voluptas est consequatur rerum.\",\n            \"Velit nulla modi.\"\n         ],\n         \"event_name\": \"Quibusdam ea nam aut.\",\n         \"exclude_list_ids\": [\n            \"Consequatur aut vero.\",\n            \"Excepturi natus est est saepe doloribus unde.\",\n            \"Aut perspiciatis.\"\n         ],\n         \"list_ids\": [\n            \"Eligendi est.\"\n         ],\n         \"name\": \"Adipisci ut.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Provident nostrum vel ut nulla et.\",\n         \"brief_id\": \"11535d49-e9fe-4d2b-b58c-d98f4ccd5ad5\",\n         \"event_dates\": [\n            \"Magnam nemo cum delectus.\",\n            \"Minus est dolor.\",\n            \"Et voluptatem mollitia placeat aut laudantium.\"\n         ],\n         \"event_name\": \"Dicta illum omnis magnam dolor et.\",\n         \"exclude_list_ids\": [\n            \"Dolor quod nihil quia id sed.\",\n            \"Fuga officia nulla temporibus recusandae.\",\n            \"Nulla quam.\"\n         ],\n         \"inclusion_summary\": \"Dolore expedita.\",\n         \"list_ids\": [\n            \"Ea sequi quos qui quo et praesentium.\",\n            \"Et unde.\"\n         ],\n         \"name\": \"Consequuntur qui qui impedit assumenda voluptas cumque.\"\n      }\n   }'")
 		}
 		if body.Compose == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("compose", "body"))
@@ -330,6 +330,49 @@ func BuildComposeAudienceMasterPayload(lfxV2CampaignServiceAudienceBuilderCompos
 	return v, nil
 }
 
+// BuildAttachExistingAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-audience-builder attach-existing-audience endpoint
+// from CLI flags.
+func BuildAttachExistingAudiencePayload(lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceBody string, lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceProjectID string, lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceBearerToken string) (*lfxv2campaignserviceaudiencebuilder.AttachExistingAudiencePayload, error) {
+	var err error
+	var body AttachExistingAudienceRequestBody
+	{
+		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"attach\": {\n         \"brief_id\": \"a6850780-39ed-4e81-87e5-21f8ca42009e\",\n         \"inclusion_summary\": \"Non sed sed dolorum cupiditate.\",\n         \"master_list_id\": \"1\",\n         \"suppression_list_ids\": [\n            \"Aut numquam est accusantium ut vitae.\",\n            \"Soluta beatae error enim velit voluptates officiis.\",\n            \"Possimus rerum mollitia molestiae veniam exercitationem blanditiis.\"\n         ]\n      }\n   }'")
+		}
+		if body.Attach == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("attach", "body"))
+		}
+		if body.Attach != nil {
+			if err2 := ValidateAudienceAttachExistingInputRequestBody(body.Attach); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceaudiencebuilder.AttachExistingAudiencePayload{}
+	if body.Attach != nil {
+		v.Attach = marshalAudienceAttachExistingInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceAttachExistingInput(body.Attach)
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildRunAudienceQaPayload builds the payload for the
 // lfx-v2-campaign-service-audience-builder run-audience-qa endpoint from CLI
 // flags.
@@ -339,7 +382,7 @@ func BuildRunAudienceQaPayload(lfxV2CampaignServiceAudienceBuilderRunAudienceQaB
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderRunAudienceQaBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ref\": \"x27\",\n      \"targets_ca\": true,\n      \"targets_eu\": false\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ref\": \"b\",\n      \"targets_ca\": false,\n      \"targets_eu\": false\n   }'")
 		}
 		if utf8.RuneCountInString(body.ListRef) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ref", body.ListRef, utf8.RuneCountInString(body.ListRef), 1, true))

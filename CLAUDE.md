@@ -48,6 +48,27 @@ The current active speckit feature spec/plan/tasks live under
 See `README.md` for the `make` targets used to build, test, lint, and run
 the service.
 
+## Git Workflow
+
+**Commits**. Always include both flags:
+
+```bash
+git commit -S --signoff
+```
+
+Commit message format:
+
+```text
+<type>(<scope>): <subject>
+
+<body>
+
+Refs: JIRA-123  # if applicable
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+Signed-off-by: <Your Name> <you@example.com>
+```
+
 ## Local work cycle — post-commit and pre-PR review
 
 Run, from this repo, **after every normal signed commit** while working toward a

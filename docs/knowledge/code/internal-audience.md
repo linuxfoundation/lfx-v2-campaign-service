@@ -414,6 +414,18 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
   role `MatchLastSent` had taken over, and a scoring helper that looks usable but is not is how
   the contiguous-phrase defect shipped in the first place. `SharesKeyword` remains, and is the
   live boolean form.
+  `MatchesStandardSuppression` compares NORMALISED names — lowercased, quarter tokens (`26Q1`,
+  `Q1 2026`) and years stripped, separator runs collapsed, a trailing `list`/`lists` dropped —
+  and requires equality, not containment. A raw comparison missed every portal whose hygiene lists
+  are named `"Unsubscribed - Lists"` or `"GDPR_Suppression 26Q1"`, so the standard suppressions
+  resolved as "not found in this portal" while existing.
+  `MatchLastSent` also refuses ANOTHER EDITION of the same series: `editionRegions` reads the
+  region an event or email names (`editionRegionAliases`, token → edition region — not
+  `region.go`'s `countryToRegion`, which maps MARKETING regions and would fold Japan into APAC), and
+  a row that names regions none of which is the event's is dropped before scoring. A row naming no
+  region is kept, so an unlabelled send is never lost. Without it, the location words the
+  distinctive tier admitted (`japan`, now in `genericEventWords` with the other place names)
+  returned every Japan event's sends as precedent for one of them.
 - **`builder_qa.go`** — three pre-send checks, inferred from a list's own `filterBranch` plus the
   NAMES of the lists it references, because the portal carries no machine-readable marker for
   "this is the GDPR list". `NEEDS VERIFY` is the honest and most common verdict, and no caller

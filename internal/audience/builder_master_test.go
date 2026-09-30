@@ -287,3 +287,17 @@ func TestUnknownSizePreviewCountOffersNoNumber(t *testing.T) {
 		t.Errorf("the reason must tell the operator WHY there is no total, so they can check the lists; got %q", got.Reason)
 	}
 }
+
+func TestSelectionFingerprint_IsOrderAndBlankInsensitive(t *testing.T) {
+	a := SelectionFingerprint([]string{"2", "1", " "}, []string{"9"})
+	b := SelectionFingerprint([]string{"1", "2", "2"}, []string{" 9 "})
+	if a != b || len(a) != 8 {
+		t.Fatalf("fingerprints differ for the same selection: %q vs %q", a, b)
+	}
+	if a == SelectionFingerprint([]string{"1", "2"}, nil) {
+		t.Fatal("moving a list out of the exclusions must change the fingerprint")
+	}
+	if a == SelectionFingerprint([]string{"1"}, []string{"2", "9"}) {
+		t.Fatal("an id must count differently as an inclusion and as an exclusion")
+	}
+}

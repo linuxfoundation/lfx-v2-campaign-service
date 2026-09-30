@@ -351,9 +351,16 @@ func (c *Client) decodeListEnvelope(raw []byte, op string) (*List, error) {
 }
 
 // listURL builds a human-facing link to a list. Empty when the portal id is unset.
+//
+// The `objectLists/{id}/filters` route, not the legacy `lists/{id}`: these ids are v3
+// (ILS) list ids, and the legacy route resolves only legacy ids, so every link it built
+// opened HubSpot on a "list not found" page.
+// ListURL is the human-facing link to a contact list; see listURL.
+func (c *Client) ListURL(listID string) string { return c.listURL(listID) }
+
 func (c *Client) listURL(listID string) string {
 	if c.account.PortalID == "" || listID == "" {
 		return ""
 	}
-	return c.appBaseURL + "/contacts/" + c.account.PortalID + "/lists/" + listID
+	return c.appBaseURL + "/contacts/" + c.account.PortalID + "/objectLists/" + listID + "/filters"
 }

@@ -87,7 +87,7 @@ func TestMatchLastSent_AnOrdinaryEnglishWordInTheEventNameIsNotEvidence(t *testi
 		assert.Equal(t, 1, m.Overlap, "%q must still RANK on the shared token — it is only barred from admitting", name)
 	}
 
-	assert.True(t, MatchLastSent("Open Source Summit NA", "", oss).Matched,
+	assert.True(t, MatchLastSent("Open Source Summit - Call for Proposals", "", oss).Matched,
 		"the event's own sends must survive: several ordinary words together are specific again")
 
 	// The motivating case must not be collateral damage. A distinctive token still admits on
@@ -175,4 +175,71 @@ func TestStripYear_RemovesTheEditionAndClosesTheGap(t *testing.T) {
 	assert.Equal(t, "KubeCon Europe", StripYear("KubeCon Europe"), "a name with no year is unchanged")
 	assert.Equal(t, "Room 404 Sessions", StripYear("Room 404 Sessions"),
 		"only a four-digit 19xx/20xx year is an edition; an arbitrary number is part of the name")
+}
+
+// agntconJapan is the event behind the report that motivated edition matching: its
+// last-sent panel listed AGNTCon NA, Open Source Summit Japan and PyTorch Day Japan.
+var agntconJapan = NewLastSentTerms("AGNTCon + MCPCon Japan 2026", "LF")
+
+// TestMatchLastSent_ALocationAloneIsNotEvidence pins that sharing "Japan" does not make
+// another event's send precedent for this one.
+func TestMatchLastSent_ALocationAloneIsNotEvidence(t *testing.T) {
+	for _, name := range []string{
+		"Open Source Summit Japan 2025 - Registration Open",
+		"PyTorch Day Japan - Save the Date",
+	} {
+		assert.False(t, MatchLastSent(name, "", agntconJapan).Matched,
+			"%q shares only the location with AGNTCon Japan", name)
+	}
+	assert.True(t, MatchLastSent("AGNTCon Japan - Early Bird Ends", "", agntconJapan).Matched,
+		"the event's own send must still match")
+	assert.True(t, MatchLastSent("MCPCon speakers announced", "", agntconJapan).Matched,
+		"a send that names no region is not evidence of another edition")
+}
+
+// TestMatchLastSent_AnotherEditionOfTheSameSeriesIsRejected pins that a distinctive
+// series token does not carry a send across editions.
+func TestMatchLastSent_AnotherEditionOfTheSameSeriesIsRejected(t *testing.T) {
+	for _, name := range []string{
+		"AGNTCon North America - Registration Open",
+		"AGNTCon NA 2026 - Last Chance",
+		"AGNTCon + MCPCon Europe CFP",
+	} {
+		assert.False(t, MatchLastSent(name, "", agntconJapan).Matched,
+			"%q is a different edition of AGNTCon", name)
+	}
+	assert.True(t, MatchLastSent("KubeCon NA 2026 - Registration Open", "", kubeConTerms).Matched,
+		"NA is the event's own region for KubeCon North America")
+	assert.False(t, MatchLastSent("KubeCon Latin America CFP", "", kubeConTerms).Matched,
+		"Latin America is LATAM, not North America")
+
+	unplaced := NewLastSentTerms("AGNTCon 2026", "LF")
+	assert.True(t, MatchLastSent("AGNTCon NA - Registration Open", "", unplaced).Matched,
+		"an event with no region has no edition to protect")
+}
+
+// TestMatchesStandardSuppression_NormalisesSeparatorsQuartersAndSuffix pins the fix for
+// four of six hygiene rows reporting "not found" for lists that exist in the portal.
+func TestMatchesStandardSuppression_NormalisesSeparatorsQuartersAndSuffix(t *testing.T) {
+	accept := map[string]string{
+		"LF Events GDPR Suppression - 26Q1":    "LF Events GDPR Suppression",
+		"LF Europe GDPR Suppression (Q2 2026)": "LF Europe GDPR Suppression",
+		"LF Master Exclusion List":             "LF Master Exclusion",
+		"LF_Events_Suppression_List":           "LF Events Suppression List",
+		"LF Global Opt Outs":                   "LF Global Opt-Outs",
+		"lf europe global opt-outs":            "LF Europe Global Opt-Outs",
+	}
+	for name, term := range accept {
+		assert.True(t, MatchesStandardSuppression(name, term), "%q should satisfy %q", name, term)
+	}
+	reject := map[string]string{
+		"LF Events Suppression List":                   "LF Events GDPR Suppression",
+		"LF Global Opt-Outs - without Internal Emails": "LF Global Opt-Outs",
+		"AAIF LF Global Opt-Outs":                      "LF Global Opt-Outs",
+		"LF Training Global Opt-Outs":                  "LF Global Opt-Outs",
+		"anything":                                     "   ",
+	}
+	for name, term := range reject {
+		assert.False(t, MatchesStandardSuppression(name, term), "%q must not satisfy %q", name, term)
+	}
 }
