@@ -91,6 +91,201 @@ revoked or deleted.
    human or monitor to reconcile. The orchestrator fills project/brief/job/platform
    (and, for a retained ambiguous orphan, a `pending` status).
 
+## `config_snapshot` is persisted UNENCRYPTED, so URLs are stripped before they reach it
+
+`applyCampaignConfig` marshals the validated per-platform config struct whole into
+`Campaign.ConfigSnapshot`, and that column is stored in the clear and outlives the
+campaign. A URL's query and fragment are the part of a config most likely to carry a
+secret, so every adapter that snapshots one rewrites it first rather than trusting its
+contents: `sanitizeSnapshotURL` keeps SCHEME AND HOST and nothing else, failing closed
+(to empty) on a value carrying userinfo. `reddit.go` applies it to `PostURL`/`ImageURL`,
+`meta.go` to each variant's `ImageURL`.
+
+The PATH used to survive, on the reasoning that a path segment is a route rather than a
+secret. `caller-url-must-be-redacted-before-errors-steps-and-snapshots` says otherwise in
+as many words — `https://litellm.example.com/sup3r-s3cret/v1` parses with the token as a
+PATH segment, and `redactAIProxyURL` took four rounds to stop making that assumption. A
+password-reset or magic-link URL is the realistic shape here, and it survives a
+query-and-fragment strip untouched. The HOST stays, and that is a different call under
+the same rule's two-part test: this column's only reader is a human reconstructing what a
+campaign was configured with, and "which site did this link point at" is the whole of what
+a redacted URL can still tell them. The path is not load-bearing for that, so it goes;
+over-redacting here costs nothing, because unlike an operator-facing error this value is
+never used to diagnose anything in the moment.
+
+That test has to be RE-RUN per consumer, and it does not always land the same way. The
+twitter client's `displayTwitterUtmURL` builds the Steps entry for the manual workflow —
+the destination link an operator PASTES INTO the tweet they post by hand — and it keeps
+the path while dropping userinfo, fragment and the brief's pre-existing query. A review
+round has read that as the snapshot rule being broken, since both values land in the
+unencrypted `campaigns.result`. It is the same rule reaching the other answer: the path
+is exactly what is load-bearing for THIS reader. Reduced to scheme+host the link points
+at the site root instead of the registration page, and the operator either rebuilds it by
+hand from the brief or ships the wrong URL in a real ad. Over-redacting costs nothing in
+the snapshot column and costs the whole value of the entry here.
+
+So the residual exposure — a brief whose registration URL hides a secret in its PATH — is
+accepted on this one path, and it is accepted because the alternatives are worse rather
+than because it is not real. It cannot be screened the way the query is: the query gate
+matches a bounded list of KEY NAMES, and a path segment offers no equivalent. Nothing
+separates `/reset/abc123` from `/blog/kubecon-recap` except a heuristic that either
+catches nothing or fails a create over an ordinary deep link. The same reasoning is why
+`rejectCredentialQueryParams` screens only the query on the publication path.
+
+An http(s)-scheme value that will NOT reduce to scheme+host — it does not parse, has
+no host, or carries userinfo — fails closed to empty rather than falling through to
+the truncating fallback, which keeps the path. `https:///reset/SECRET` parses cleanly
+with an EMPTY host and offers no `?`, `#` or `@` to truncate at, and
+`https://example.org/reset/SEC%zz` does not parse at all; both used to come back
+whole, which is the exposure the reduction exists to close. Nothing legitimate is
+lost, because every caller of this helper supplies a URL — a value that announced an
+http scheme and will not reduce is malformed input, not data with another meaning.
+The truncating branch still serves a value that never claimed to be a URL, such as a
+reddit thing id.
+
+"Announced an http scheme" is decided on the SCHEME ALONE, not on `http://`. Requiring the
+double slash left one character between a link and a leak: `http:/reset/SECRET` — one
+slash, which is how a hand-typed or line-wrapped link arrives — parses with an empty host,
+so it failed the reduction, then failed the scheme test, then reached the truncating branch
+with no `?`, `#` or `@` to truncate at and was stored whole. The opaque form
+`http:reset/SECRET` has the same shape and the same answer. The run pattern matching free
+text makes the `//` optional for the same reason; it cannot swallow prose, because
+something has to follow the colon with no space between, so a sentence that merely ends a
+clause with the word `http:` is never a candidate.
+
+The scheme+host is rebuilt through
+`url.URL.String()` rather than concatenated, because `URL.Host` holds the DECODED
+authority — a zone-scoped IPv6 literal would come back as `[fe80::1%eth0]`, a bare `%`
+that is not a valid escape, turning a well-formed URL into one that no longer parses.
+
+X's `tweetText` is the same exposure through a free-text field. It is operator-authored
+prose that routinely carries a registration link, and a link pasted out of a logged-in
+browser brings whatever query that session put in it. `sanitizeSnapshotText` rewrites
+every `http`/`https` run in the text through `sanitizeSnapshotURL`, so the two paths
+cannot drift on what "stripped" means, and leaves the surrounding prose exactly as
+written — it redacts links, it does not go looking for secrets in sentences. Runs are
+matched greedily up to whitespace or a quote/bracket: sentence-final punctuation is legal
+inside a URL, and a run trimmed too eagerly leaves the query behind as bare text, which is
+the exact leak this prevents. `]` is one of those terminators — it closes a markdown link
+— which cut an IPv6 literal host in half: `https://[2001:db8::1]/reg?t=…` matched only as
+far as `https://[2001:db8::1`, and the path AND query survived in the snapshot as prose.
+
+The stop set is therefore drawn from what RFC 3986 excludes from a URI OUTRIGHT, not from
+what tends to sit next to one in prose. `'` was in it and did not belong: an apostrophe is
+a sub-delimiter, legal in a query, so `…/reg?x=1'api_token=SECRET` ended the run at the
+quote and left `'api_token=SECRET` in the snapshot as bare text — the same leak as the
+bracket, through a character an operator can type by accident. It is out. The DOUBLE quote
+stays, because `"` cannot appear in a URI unescaped. Over-matching is the safe direction
+here: swallowing an English possessive's `'s` costs a snapshot nothing, and stopping one
+character early costs it a secret.
+
+The pattern also carries no word boundary before the scheme, and that is the same
+asymmetry applied to the other end of the run. `\b` was there, and in Go `\b` is defined
+over `\w`, which includes `_` — so `_https://events.example/cb?access_token=…` had no
+boundary between the underscore and the `h`, matched nothing, and survived whole into the
+UNENCRYPTED snapshot. An underscore is how markdown italicises a link and how one arrives
+out of most chat clients, so that is a shape real operator prose has. Teaching the
+boundary about `_` specifically would have left the identical hole one character over;
+dropping it entirely is what the stop-set reasoning already argues for, because the cost
+of matching a scheme buried inside a longer word is a mangled fragment of prose and the
+cost of missing one is a persisted token. RE2 has no lookbehind either way. The screen in
+`internal/platform/twitter` does keep a boundary rule, because the scanner there also
+drives t.co length weighting and destination matching, where over-matching changes an
+answer; here nothing depends on it.
+The pattern now tries a bracketed host first and only then falls back to the general run,
+so the terminator still ends a bracketed ordinary URL while an IPv6 authority is matched
+whole. That branch admits any non-space run up to the closing `]` rather than a hex/colon
+IP grammar, which looks safer and is not: the tighter class rejected the zone-scoped form
+`https://[fe80::1%25eth0]/…`, which then fell through to the general alternative and
+truncated at the bracket again — reopening the leak for the one host shape the branch
+exists to close. Validity is left to `net/url`, because over-matching a bracketed run that
+is not a host costs a sanitized fragment of prose while under-matching costs a token.
+
+Requiring a scheme was itself a hole, and it opened the moment the twitter client learned
+that X publishes links without one. That client screens `www.host/r?…` and bare
+`host.tld/r?…` before it authors a tweet; this redactor still matched only `http(s)://`,
+so a scheme-less link the screen merely did not object to — its parameters not on the
+denylist, or the campaign written before the screen existed — kept its query and fragment
+in the UNENCRYPTED snapshot. Fixing the publication side alone moved the exposure rather
+than closing it. `sanitizeSnapshotText` now runs a second pass with the same host grammar
+the screen uses, reducing each scheme-less run to its authority and adding no scheme back,
+because the operator wrote none.
+
+The two passes need no masking or byte-offset bookkeeping to avoid colliding, only their
+order. The scheme-ful pass runs first and strips every query and fragment it rewrites; the
+scheme-less pattern only ever matches a run that still HAS one, so a reduced
+`https://a.example` is already invisible to it. The one difference from the twitter
+pattern is a userinfo prefix: that screen only READS a run, so where it begins costs
+nothing, while this one REWRITES it, and a pattern starting at the host would leave
+`user:pw@` behind as bare text — the password surviving beside the redacted token.
+Consuming the userinfo makes the whole run fail closed, which is the answer
+`sanitizeSnapshotURL` already gives.
+
+A third pass follows, for `user:password@host` with NO query — a shape neither of the
+other two has anything to say about, since one needs a scheme and the other needs a `?` or
+`#`. It is replaced by nothing rather than reduced to a host: a run reaching this pass has
+already failed to be either of the other shapes, and which site it pointed at is not worth
+the risk of splitting userinfo from authority wrongly on a malformed run. It runs LAST
+precisely because it needs no query — earlier, it would take a query-bearing run down to
+its host before the pass responsible for queries ever saw it. The colon requirement is the
+same one the twitter screen carries, and for the same reason: without it, every email
+address in operator copy is erased from the snapshot.
+
+So is the second discriminator. `sanitizeUserinfoSnapshotRun` leaves a run alone when both
+sides of the colon are ASCII digits, because that makes it a clock (`keynote
+14:00@events.example`), a score or a ratio rather than a credential pair — identical to
+`userinfoRunIsClockShaped` in `internal/platform/twitter/client.go`, and deliberately so:
+a discriminator living on only one of the two patterns puts the screen and the redactor
+back out of agreement, which is the exact defect this third pass was added to fix. The
+COST direction differs and this side is the milder one — over-redacting loses a line of
+the operator's own copy from a diagnostic snapshot, where over-refusing on the twitter
+side blocks a brief before anything is created. Milder is not free, since the snapshot
+exists to be read by a human, and the digits-both-sides test gives up no credential shape
+to buy it.
+
+A FOURTH pass covers the last shape that reached the snapshot with its path intact: a
+scheme-less link whose secret is in the PATH and which carries no query, fragment or
+userinfo — `events.example/reset/SECRET`, the password-reset link this whole section names
+as the realistic case. One pass needs a scheme, one needs a `?` or `#`, one needs a
+userinfo colon; none of them fires on that. It reduces to the host rather than blanking,
+which is where it parts company with the userinfo pass: there is no userinfo to split
+wrongly, the run begins at the host by construction, and blanking would make the same link
+redact differently depending on whether the operator typed `https://` in front of it.
+
+It runs last, and for the same reason the userinfo pass used to be last: it is the least
+discriminating of the four, so it must only ever see what the others had nothing to say
+about. Every earlier pass rewrites its runs to a bare authority or to nothing, and a bare
+authority has no path for this one to match. An `@` still standing when this pass runs
+belongs to something an earlier pass kept ON PURPOSE — a clock, a colon-less email — so a
+matched run carrying one is returned untouched. Go's `regexp` has no lookbehind, which is
+why the pattern consumes the `@` prefix at all: consuming it is the only way to recognise
+the shape in order to leave it alone.
+
+This is the ONE point where the redactor deliberately reaches further than the twitter
+screen, and the divergence is recorded on both patterns. The two are kept in step on what a
+link LOOKS like — the host production, the letter-initial TLD, the punycode and IPv4 forms
+— and not on what to do about one, because their cost directions are opposite. This
+pattern's only discriminator is a slash, and a slash is everywhere in prose: over-matching
+costs a fragment of the operator's copy from a snapshot no one diagnoses anything with,
+while over-matching on the publication side refuses a brief X would have accepted, which no
+retry fixes. The screen also has nothing to READ in such a run — it asks whether a query or
+fragment parameter names a credential, and a path-only run has neither — so mirroring it
+would buy refusals and no new detection.
+
+`sanitizeSnapshotURL` applies the same reduction, through the same helper, to a field whose
+whole value is that shape. A field and the same link written inside `tweetText` must not
+redact differently; a value that is not link-shaped has no dotted TLD-shaped host followed
+by a slash and still falls through the truncating branch.
+
+`campaignFromTwitter` sanitizes a COPY of the config, so the
+text actually sent to X is untouched.
+
+This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a
+credential-SHAPED parameter because the text is about to be PUBLISHED, and it is a
+denylist that cannot name every credential parameter a registration page might use, and it
+does not apply at all to rows written before it existed. The snapshot does not have to
+guess, so it keeps nothing.
+
 ## The claim contract (release vs retain)
 
 The claim is PERMANENT until released — deliberately NOT auto-reclaimed on a timer. `pending`
@@ -1658,6 +1853,77 @@ falls back to a case-insensitive match that cannot bridge the underscore in the 
 snake_case wire form. The config an adapter refuses to create without (LinkedIn `org_id`, Meta
 `page_id`, X `funding_instrument_id`) is required of the map about to be WRITTEN — on rotation the
 existing columns MERGED with the flags, since `Update` rewrites every config column.
+
+### The publishing identity is a connection fact, not a campaign one (X)
+
+X is the one provider whose campaign config used to name an IDENTITY. `asUserId` picks which
+of the ad account's promotable users a nullcast tweet is authored UNDER, and it arrived from
+caller JSON and went straight to the client. The client's `resolvePromotableUser` then
+confirmed the id is promotable BY THIS AD ACCOUNT — which is a different question, and on the
+SHARED system connection above it is true of every LF handle. A project could therefore name
+another project's handle, pass the check, and publish as them: the caller supplies the
+identity and the service supplies the authority, which is the confused-deputy shape. Nothing
+else was asking the authorization question, because nothing else knew there was one.
+
+`as_user_id` is now a stored X Ads `ProviderConfig` key (migration `000034`), optional, and
+`authorizedTwitterAsUserID` makes the connection authoritative WHERE IT DECLARES ONE: a caller
+value must equal it, and a caller that sends none inherits it rather than falling through to
+an auto-resolve that could land on a different handle. This follows the same rule as LinkedIn's
+`org_id` and the brief's `Project` field — identity is stamped from the authenticated scope,
+never read from caller JSON — and only more sharply, since a wrong `org_id` fails while a wrong
+`asUserId` succeeds under someone else's name.
+
+Where the connection declares nothing, behaviour is EXACTLY as before. That compatibility is
+deliberate and it is also the limit of the fix: the check is inert until an operator seeds
+`as_user_id` on the shared LF system row (`bootstrap -config as_user_id=...`, whose
+`valueShapes` entry holds it to digits). The gap it leaves meanwhile is narrow rather than
+open, because the client already refuses to guess when several promotable candidates exist and
+the caller pinned nothing — but "narrow" is the honest word, not "closed".
+
+The near-miss is worth recording because it is the failure mode a reviewer would not have
+caught: the check was first written reading `res.providerConfig["as_user_id"]` while
+`as_user_id` was not a storable key, so the lookup returned `""` for every connection and the
+refusal could never fire. A check that cannot fire is worse than no check, because it reads as
+protection. `TestAsUserIDIsAStorableConfigKey` pins the seam — `ConfigKeys()` is what the
+connection repository builds its column list from — so a dropped migration or a reverted model
+change fails a test instead of silently disarming the authorization.
+
+The refusal names NEITHER the requested nor the configured id. Promotable-user ids in
+persisted error text is a defect this branch already fixed once, and naming the connection's
+own identity back to a caller who guessed wrong would confirm the guess.
+
+The check is GATED on authoring actually happening.
+`as_user_id` authorizes ONE act, publishing a tweet under a handle, and an explicit `tweetId`
+wins over `tweetText`: no tweet is authored, no promotable user is resolved, and the value is
+never read. Run unconditionally, the check refused a promote-an-existing-tweet request over a
+field nothing would have used, and contradicted `docs/api-catalog.md`'s own "only meaningful
+with `tweetText`". It is also the treatment the client already gives an unused `tweetText` — a
+malformed but ignored field must not fail an otherwise-valid campaign.
+
+A gate on an authorization check has to agree with the guarded condition on EVERY input, not on
+the inputs a test happens to pass, and the first attempt did not — which is the part worth
+keeping. It read `cfg.TweetID == ""` to mirror the client, but the client TRIMS before its own
+emptiness test (`in.TweetID = strings.TrimSpace(in.TweetID)`). A `tweetId` of `"   "` was
+therefore non-empty at the gate and empty at the client: the check was skipped and the client
+authored `tweetText` anyway, auto-resolving a promotable user while the connection's declared
+identity was neither inherited nor enforced. Whitespace is the cheapest input an attacker
+controls on a caller-supplied field.
+
+The fix is to NORMALIZE ONCE — dispatch trims `tweetId` and passes that same value into
+`CampaignInput`, so the client's own trim is idempotent and the two cannot disagree about
+emptiness. Restating `TrimSpace` at the gate would have fixed this input and moved the next
+drift one edit further out; sharing the value removes the disagreement instead. The general
+rule this instance teaches: when a gate is described as "mirroring" a condition in another
+package, the mirror is only as good as the normalization on both sides, and the safe form is to
+compute the value once and hand it over.
+
+The scope of an authorization check is part of the check, and a gate is the one kind of edit
+that can narrow it to nothing while every existing test still passes. So both directions are
+pinned by outcome, not by the absence of an error: the ignored case asserts the supplied tweet
+is promoted and the authoring endpoint and promotable-users read are never touched, and the
+whitespace case asserts both a pre-create refusal with zero upstream requests AND that a
+whitespace `tweetId` with no `asUserId` still INHERITS the declared identity — the half a fix
+aimed only at the refusal would have left broken.
 
 ## Forced-primary mode: the system account as the account of record
 

@@ -15,15 +15,35 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// TestSanitizeSnapshotURL: the query/fragment (which may carry secrets) must be
-// stripped before a URL is stored in the unencrypted config_snapshot.
+// TestSanitizeSnapshotURL: the path, query and fragment (any of which may carry a
+// secret) must be stripped before a URL is stored in the unencrypted config_snapshot.
+// The path was kept until the seventh review round pointed out that a magic-link or
+// reset URL puts its token in a path segment, where a query-and-fragment strip never
+// reaches it.
 func TestSanitizeSnapshotURL(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"", ""},
 		{"  ", ""},
-		{"https://example.com/reg?token=SECRET&x=1", "https://example.com/reg"},
-		{"https://example.com/p#frag-SECRET", "https://example.com/p"},
-		{"https://example.com/path", "https://example.com/path"},
+		{"https://example.com/reg?token=SECRET&x=1", "https://example.com"},
+		{"https://example.com/p#frag-SECRET", "https://example.com"},
+		{"https://example.com/path", "https://example.com"},
+		// The shape the path-drop exists for: nothing but the path is a secret.
+		{"https://example.org/reset/SECRET", "https://example.org"},
+		// The authority keeps its port, and a zone-scoped IPv6 literal must come
+		// back re-escaped — url.URL.Host holds it DECODED, so concatenating it
+		// would emit a bare '%' and produce a URL that no longer parses.
+		{"https://[2001:db8::1]:8443/reg?t=SECRET", "https://[2001:db8::1]:8443"},
+		{"https://[fe80::1%25eth0]/reg?t=SECRET", "https://[fe80::1%25eth0]"},
+		// An http(s)-shaped value that will not reduce to scheme+host fails CLOSED.
+		// Both of these used to fall through to the truncating branch and come back
+		// with their paths intact — the exact exposure the reduction exists to close.
+		// `https:///reset/SECRET` parses cleanly with an EMPTY host and has no '?',
+		// '#' or '@' to truncate at; the second fails to parse on the bad escape.
+		{"https:///reset/SECRET", ""},
+		{"https://example.org/reset/SEC%zzRET", ""},
+		{"HTTPS:///reset/SECRET", ""}, // the run regex is case-insensitive, so this test is too
+		// A value that never claimed to be a URL keeps the conservative fallback:
+		// there is no scheme+host to reduce it to, and it is not URL data.
 		{"t3_abc123", "t3_abc123"}, // reddit thing-id, no query — unchanged
 		{"not a url?token=SECRET", "not a url"},
 		{"https://user:pass@example.com/x?token=SECRET", ""}, // secretlint-disable-line -- fixture asserting userinfo fails closed
@@ -32,6 +52,106 @@ func TestSanitizeSnapshotURL(t *testing.T) {
 		if got := sanitizeSnapshotURL(tc.in); got != tc.want {
 			t.Errorf("sanitizeSnapshotURL(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestSanitizeSnapshotText: config_snapshot is persisted UNENCRYPTED, and X's
+// tweetText is operator-authored prose that routinely carries a registration link
+// pasted out of a logged-in browser — query string and all. Every http/https run in
+// the text goes through sanitizeSnapshotURL, so the two paths cannot disagree about
+// what "stripped" means; the surrounding prose is left exactly as written, because
+// this redacts links and does not go looking for secrets in sentences.
+func TestSanitizeSnapshotText(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"empty", "", ""},
+		{"no url", "Join us at KubeCon!", "Join us at KubeCon!"},
+		{
+			"token in an embedded url",
+			"Register https://events.lf.org/reg?access_token=SECRET now",
+			"Register https://events.lf.org now",
+		},
+		{
+			"every url in the text is stripped",
+			"See https://a.example/x?sid=SECRET and https://b.example/y?key=SECRET2",
+			"See https://a.example and https://b.example",
+		},
+		{
+			"fragment goes too",
+			"https://events.lf.org/reg#token-SECRET",
+			"https://events.lf.org",
+		},
+		{
+			// A run sanitizeSnapshotURL fails closed on leaves nothing behind,
+			// which is the same answer the single-URL path gives.
+			"embedded userinfo fails closed",
+			"link: https://user:pass@example.com/x?token=SECRET", // secretlint-disable-line -- fixture asserting userinfo fails closed
+			"link: ",
+		},
+		{
+			// A URL with no query at all still loses its path: the snapshot
+			// cannot tell a routing segment from a one-time token, and it has no
+			// reader who needs the difference. What survives is the host, which
+			// is what makes the redacted value still say anything at all.
+			"a clean url keeps only its host",
+			"Details at https://events.lf.org/kubecon/register",
+			"Details at https://events.lf.org",
+		},
+		{"uppercase scheme", "HTTPS://events.lf.org/r?token=SECRET", "https://events.lf.org"},
+		{
+			// The run must not stop at the ']' closing an IPv6 literal host. It
+			// used to: ']' is a run terminator (it ends a markdown link), so the
+			// match was "https://[2001:db8::1" and everything after it — the path
+			// AND the query — stayed in the snapshot as plain prose.
+			"ipv6 literal host",
+			"see https://[2001:db8::1]/reg?ticket=SECRET now",
+			"see https://[2001:db8::1] now",
+		},
+		{
+			"ipv6 literal with a port",
+			"https://[2001:db8::1]:8443/reg?ticket=SECRET",
+			"https://[2001:db8::1]:8443",
+		},
+		{
+			// A zone-scoped literal is the shape a hex/colon-only bracket class
+			// rejects, sending it back through the general alternative and
+			// truncating at the bracket — the leak the branch exists to close.
+			"ipv6 zone-scoped literal host",
+			"https://[fe80::1%25eth0]/reg?ticket=SECRET",
+			"https://[fe80::1%25eth0]",
+		},
+		{
+			// The ']' terminator still has to work where it means what it meant
+			// before: a bracket closing around an ordinary URL.
+			"bracketed ordinary url",
+			"[https://events.lf.org/r?token=SECRET]",
+			"[https://events.lf.org]",
+		},
+		{
+			// An apostrophe is a sub-delimiter, legal inside a query, so it must
+			// not end the run. It used to: the match stopped at the quote and
+			// left `'api_token=SECRET` behind as bare prose in the snapshot.
+			"apostrophe inside the query",
+			"https://events.example/reg?x=discard'api_token=SECRET",
+			"https://events.example",
+		},
+		{
+			// The apostrophe that ends an English possessive still gets swept in
+			// with the URL. Over-matching trailing punctuation costs a snapshot
+			// nothing; under-matching leaks.
+			"possessive apostrophe after a url",
+			"see https://events.lf.org/r?token=SECRET's page",
+			"see https://events.lf.org page",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeSnapshotText(tc.in); got != tc.want {
+				t.Errorf("sanitizeSnapshotText(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if strings.Contains(sanitizeSnapshotText(tc.in), "SECRET") {
+				t.Errorf("sanitizeSnapshotText(%q) left a secret in the snapshot", tc.in)
+			}
+		})
 	}
 }
 
@@ -834,4 +954,267 @@ func TestAdoptionRefusesTheSystemFallback(t *testing.T) {
 			t.Fatalf("err = %v, want the account-not-selected defect from the step after the gate", err)
 		}
 	})
+}
+
+// TestSanitizeSnapshotText_UnderscorePrefixedURL pins the boundary bug: Go's `\b` counts
+// `_` as a word character, so `_https://…` matched nothing and the credential survived
+// intact into the UNENCRYPTED config_snapshot.
+func TestSanitizeSnapshotText_UnderscorePrefixedURL(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"underscore before the scheme",
+			"_https://events.example/cb?access_token=SECRET",
+			"_https://events.example",
+		},
+		{
+			"markdown italics around the link",
+			"see _https://events.example/cb?access_token=SECRET_ now",
+			"see _https://events.example now",
+		},
+		{
+			"scheme buried in a word still redacts",
+			"foohttps://events.example/cb?access_token=SECRET",
+			"foohttps://events.example",
+		},
+		{
+			"one bounded and one underscored link in the same text",
+			"see https://a.example/r?token=S1 and _https://b.example/r?sid=S2",
+			"see https://a.example and _https://b.example",
+		},
+	} {
+		if got := sanitizeSnapshotText(tc.in); got != tc.want {
+			t.Errorf("%s: sanitizeSnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
+// Round-12 review fixes
+
+// TestSanitizeSnapshotText_SchemelessLink pins the asymmetry the round-11 commit opened:
+// the twitter client learned that X linkifies and publishes scheme-less links, and this
+// redactor still required a scheme — so the query and fragment of one survived whole into
+// the UNENCRYPTED config_snapshot.
+func TestSanitizeSnapshotText_SchemelessLink(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"bare host with a credential query",
+			"register at events.example/cb?access_token=SECRET today",
+			"register at events.example today",
+		},
+		{
+			"www host with a fragment",
+			"see www.events.example/r#sid=SECRET",
+			"see www.events.example",
+		},
+		{
+			"IPv4 host",
+			"go to 198.51.100.7/r?access_token=SECRET",
+			"go to 198.51.100.7",
+		},
+		{
+			"punycode TLD",
+			"go to events.xn--p1ai/r?access_token=SECRET",
+			"go to events.xn--p1ai",
+		},
+		{
+			"port survives, query does not",
+			"events.example:8443/r?token=SECRET",
+			"events.example:8443",
+		},
+		{
+			"a scheme-ful link is reduced once, not twice",
+			"see https://a.example/r?token=S1 and b.example/r?token=S2",
+			"see https://a.example and b.example",
+		},
+		{
+			"userinfo fails closed",
+			"see user:pw@events.example/r?token=SECRET now",
+			"see  now",
+		},
+		{
+			"a dotted token with no query is left alone",
+			"read agenda.md and Node.js v1.2 notes",
+			"read agenda.md and Node.js v1.2 notes",
+		},
+	} {
+		if got := sanitizeSnapshotText(tc.in); got != tc.want {
+			t.Errorf("%s: sanitizeSnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
+// Round-13 review fixes
+
+// TestSanitizeSnapshotText_SchemelessUserinfo pins the snapshot half of the same gap: a
+// scheme-less `user:password@host` has no query, so neither earlier pass touched it and
+// the password persisted whole in the UNENCRYPTED config_snapshot.
+func TestSanitizeSnapshotText_SchemelessUserinfo(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"no query at all",
+			"see bob:SECRET@events.example now",
+			"see  now",
+		},
+		{
+			"with a path",
+			"see bob:SECRET@events.example/portal now",
+			"see  now",
+		},
+		{
+			"IPv4 host with a port",
+			"admin:SECRET@198.51.100.7:8443/portal",
+			"",
+		},
+		{
+			"an email address is left alone",
+			"contact bob@events.example for details",
+			"contact bob@events.example for details",
+		},
+		{
+			"a time of day is not userinfo",
+			"doors 9:30, ask bob@events.example",
+			"doors 9:30, ask bob@events.example",
+		},
+		// Round-14: the rows above all put punctuation between the clock and the host,
+		// which is what hid the false positive. Hard against the host is the shape an
+		// events platform actually writes, and it is the userinfo production byte for
+		// byte. Kept in step with userinfoRunIsClockShaped on the twitter side.
+		{
+			"a clock hard against a host is left alone",
+			"keynote 14:00@events.example",
+			"keynote 14:00@events.example",
+		},
+		{
+			"a clock with a path is left alone",
+			"session 9:30@main.stage/agenda",
+			"session 9:30@main.stage/agenda",
+		},
+		{
+			"one non-digit side is a credential again",
+			"see 9:SECRET@events.example now",
+			"see  now",
+		},
+	} {
+		if got := sanitizeSnapshotText(tc.in); got != tc.want {
+			t.Errorf("%s: sanitizeSnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
+// Round-15 review fixes
+
+// TestSanitizeSnapshot_MalformedHTTPAuthority pins the gap a single missing slash opened.
+// `http:/reset/SECRET` announces the scheme, so it is a link by anyone's reading — but it
+// parses with an EMPTY host, which failed the scheme+host reduction, and the `//`
+// requirement on both the run pattern and isHTTPScheme then failed it out of the
+// fail-closed branch too. It reached config_snapshot whole, path and all.
+func TestSanitizeSnapshot_MalformedHTTPAuthority(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"one slash, as a field", "http:/reset/SECRET", ""},
+		{"no slashes (opaque), as a field", "https:reset/SECRET", ""},
+		{"uppercase scheme, as a field", "HTTP:/reset/SECRET", ""},
+	} {
+		if got := sanitizeSnapshotURL(tc.in); got != tc.want {
+			t.Errorf("%s: sanitizeSnapshotURL(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"one slash, inside free text",
+			"reset here http:/reset/SECRET now",
+			"reset here  now",
+		},
+		{
+			"no slashes, inside free text",
+			"reset here https:reset/SECRET now",
+			"reset here  now",
+		},
+		{
+			// The run pattern needs something hard against the colon, so prose that
+			// merely ends a clause with the word is untouched.
+			"a bare scheme word in prose is untouched",
+			"over http: and https: alike",
+			"over http: and https: alike",
+		},
+		{
+			"a well-formed link beside a malformed one still reduces normally",
+			"see https://a.example/r?t=S1 or http:/reset/S2",
+			"see https://a.example or ",
+		},
+	} {
+		if got := sanitizeSnapshotText(tc.in); got != tc.want {
+			t.Errorf("%s: sanitizeSnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestSanitizeSnapshot_SchemelessPathOnlyLink pins the one URL shape that reached
+// config_snapshot with its path intact: a scheme-less link whose secret is IN the path and
+// which carries no query, fragment or userinfo for any earlier pass to fire on — the
+// password-reset link sanitizeSnapshotURL's own doc comment names as the realistic case.
+//
+// It reduces to the host rather than blanking: the host is the load-bearing half for the
+// human reading the snapshot, and blanking would make the same link redact differently
+// depending on whether the operator typed `https://` in front of it.
+func TestSanitizeSnapshot_SchemelessPathOnlyLink(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"path-only reset link",
+			"reset at events.example/reset/SECRET today",
+			"reset at events.example today",
+		},
+		{
+			"www host",
+			"see www.events.example/reset/SECRET",
+			"see www.events.example",
+		},
+		{
+			"IPv4 host with a port",
+			"go to 198.51.100.7:8443/reset/SECRET",
+			"go to 198.51.100.7:8443",
+		},
+		{
+			"trailing slash only",
+			"events.example/ is the site",
+			"events.example is the site",
+		},
+		{
+			// The earlier passes own these two, and this one must not second-guess
+			// them: the userinfo pass already blanked every credential-carrying run, so
+			// an '@' still standing was kept on purpose.
+			"a clock with a path is still left alone",
+			"session 9:30@main.stage/agenda",
+			"session 9:30@main.stage/agenda",
+		},
+		{
+			"an email with a path is left alone",
+			"contact bob@events.example/team for details",
+			"contact bob@events.example/team for details",
+		},
+		{
+			"a reduced scheme-ful link is not reduced a second time",
+			"see https://a.example/r?token=S",
+			"see https://a.example",
+		},
+		{
+			// A slash is the only discriminator here, so the TLD-shaped final label is
+			// what holds the pass off ordinary prose.
+			"prose with a slash and no dotted host",
+			"and/or, 9.5/10, read agenda.md",
+			"and/or, 9.5/10, read agenda.md",
+		},
+	} {
+		if got := sanitizeSnapshotText(tc.in); got != tc.want {
+			t.Errorf("%s: sanitizeSnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+	// The field path reduces it the same way, through the same helper — a field and the
+	// same link written inside tweetText must not redact differently.
+	if got := sanitizeSnapshotURL("events.example/reset/SECRET"); got != "events.example" {
+		t.Errorf("sanitizeSnapshotURL path-only link = %q, want %q", got, "events.example")
+	}
+	// A value that never claimed to be a link still falls through the truncating branch.
+	if got := sanitizeSnapshotURL("t3_abc123"); got != "t3_abc123" {
+		t.Errorf("sanitizeSnapshotURL(%q) = %q, want it untouched", "t3_abc123", got)
+	}
 }

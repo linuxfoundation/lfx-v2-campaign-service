@@ -1846,12 +1846,14 @@ func TestMeta_ConfigSnapshotRedactsVariantImageURL(t *testing.T) {
 	if strings.Contains(s, "SECRET_FRAG") {
 		t.Errorf("config snapshot carries the image URL fragment, got: %s", s)
 	}
-	// The sanitized URL must survive so the snapshot still identifies the image.
-	if !strings.Contains(s, "https://cdn.example.org/a.png") {
-		t.Errorf("config snapshot lost the sanitized image URL entirely, got: %s", s)
+	// The PATH goes too: a signed-asset URL can carry the token in a path segment as
+	// readily as in the query, and the snapshot has no diagnostic consumer that needs it.
+	if strings.Contains(s, "/a.png") || strings.Contains(s, "/b.png") {
+		t.Errorf("config snapshot carries the image URL path, got: %s", s)
 	}
-	if !strings.Contains(s, "https://cdn.example.org/b.png") {
-		t.Errorf("config snapshot lost the second sanitized image URL, got: %s", s)
+	// Scheme+host survives so the snapshot still says which CDN served the image.
+	if !strings.Contains(s, "https://cdn.example.org") {
+		t.Errorf("config snapshot lost the sanitized image host entirely, got: %s", s)
 	}
 }
 

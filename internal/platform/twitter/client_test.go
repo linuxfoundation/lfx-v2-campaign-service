@@ -471,7 +471,14 @@ func TestRetryOn429(t *testing.T) {
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
 
-	resp, err := c.createRequest(context.Background(), "campaigns", map[string]string{"name": "x"})
+	// A READ, deliberately. This is a transport test — what it exercises is doRequest's
+	// retry loop, which needs an idempotent caller to enter at all — and `request` is the
+	// only helper that is idempotent by construction. It used to call createRequest on
+	// "campaigns" with idempotent=true and a comment calling that endpoint found-or-created
+	// by name, which no longer describes production: ALL FOUR creates pass false, because
+	// the by-name lookup runs above this loop and a retry from inside it re-POSTs anyway.
+	// A test asserting a policy the code rejects is the more expensive half of that drift.
+	resp, err := c.request(context.Background(), http.MethodGet, "campaigns")
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -524,7 +531,9 @@ func TestRetryOn429ReusesTheConnection(t *testing.T) {
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
 
-	if _, err := c.createRequest(context.Background(), "campaigns", map[string]string{"name": "x"}); err != nil {
+	// A read, for the reason given in TestRetryOn429 above: the retry loop is what is under
+	// test, and only an idempotent caller reaches it.
+	if _, err := c.request(context.Background(), http.MethodGet, "campaigns"); err != nil {
 		t.Fatalf("request: %v", err)
 	}
 
@@ -739,7 +748,7 @@ func TestMutating429InterruptedByDeadlineStaysUnconfirmed(t *testing.T) {
 func TestAPIErrorUnwrapDoesNotDisturbClassification(t *testing.T) {
 	withCause := &apiError{
 		StatusCode: http.StatusTooManyRequests, Method: http.MethodPut,
-		Path: "campaigns/1", Err: context.DeadlineExceeded,
+		Path: "campaigns/1", err: context.DeadlineExceeded,
 	}
 	var te *transportError
 	if errors.As(withCause, &te) {
@@ -769,7 +778,7 @@ func TestAPIErrorUnwrapDoesNotDisturbClassification(t *testing.T) {
 	// A 429 on a NON-mutating method stays definite — the read was throttled, nothing wrote.
 	get := &apiError{
 		StatusCode: http.StatusTooManyRequests, Method: http.MethodGet,
-		Path: "campaigns", Err: context.Canceled,
+		Path: "campaigns", err: context.Canceled,
 	}
 	if createOutcomeAmbiguous(get) {
 		t.Error("a 429 on a GET must stay definite even with a cause attached")
@@ -3482,15 +3491,17 @@ func TestTransportError_DoesNotLeakURL(t *testing.T) {
 	te := &transportError{
 		Method: http.MethodPost,
 		Path:   "promoted_tweets",
-		Err:    &url.Error{Op: "Post", URL: secretURL, Err: inner},
+		err:    &url.Error{Op: "Post", URL: secretURL, Err: inner},
 	}
 	got := te.Error()
 	if strings.Contains(got, "SECRET-abc123") || strings.Contains(got, secretURL) || strings.Contains(got, "signature=") {
 		t.Errorf("transportError.Error() leaked the request URL (nested *url.Error): %q", got)
 	}
-	// The innermost non-url cause is still surfaced for diagnostics.
-	if !strings.Contains(got, io.ErrUnexpectedEOF.Error()) {
-		t.Errorf("transportError.Error() should surface the cause, got: %q", got)
+	// The cause is still classified for diagnostics — but through the fixed
+	// vocabulary, not by rendering the cause's own text. io.ErrUnexpectedEOF is
+	// "connection closed"; its literal message never reaches the string.
+	if !strings.Contains(got, "connection closed") {
+		t.Errorf("transportError.Error() should classify the cause, got: %q", got)
 	}
 }
 
@@ -3506,7 +3517,7 @@ func TestPreSendError_DoesNotLeakURL(t *testing.T) {
 	pse := &preSendError{
 		Method: http.MethodPost,
 		Path:   "campaigns",
-		Err:    &url.Error{Op: "Post", URL: secretURL, Err: dialErr},
+		err:    &url.Error{Op: "Post", URL: secretURL, Err: dialErr},
 	}
 	got := pse.Error()
 	if strings.Contains(got, "SECRET-abc123") || strings.Contains(got, secretURL) || strings.Contains(got, "signature=") {
@@ -3541,9 +3552,9 @@ func TestCreateOutcomeAmbiguous_Twitter(t *testing.T) {
 		{"429-POST-exhausted", &apiError{StatusCode: http.StatusTooManyRequests, Method: http.MethodPost, Path: "campaigns"}, true},
 		{"429-GET-not-a-create", &apiError{StatusCode: http.StatusTooManyRequests, Method: http.MethodGet, Path: "campaigns"}, false},
 		{"400", &apiError{StatusCode: http.StatusBadRequest, Method: http.MethodPost, Path: "campaigns"}, false},
-		{"transport", &transportError{Method: http.MethodPost, Path: "campaigns", Err: io.ErrUnexpectedEOF}, true},
+		{"transport", &transportError{Method: http.MethodPost, Path: "campaigns", err: io.ErrUnexpectedEOF}, true},
 		{"5xx-not-method-gated", &apiError{StatusCode: http.StatusBadGateway, Method: http.MethodGet, Path: "campaigns"}, true},
-		{"transport-not-method-gated", &transportError{Method: http.MethodGet, Path: "campaigns", Err: io.ErrUnexpectedEOF}, true},
+		{"transport-not-method-gated", &transportError{Method: http.MethodGet, Path: "campaigns", err: io.ErrUnexpectedEOF}, true},
 		{"plain error", errors.New("boom"), false},
 		{"nil", nil, false},
 	}
@@ -4399,7 +4410,7 @@ func TestWriteRetryRePacesButReadRetryDoesNot(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			_, _ = c.doRequestAbs(ctx, tc.method, srv.URL+"/x", "x", nil)
+			_, _ = c.doRequestAbs(ctx, tc.method, srv.URL+"/x", "x", nil, true /* idempotent */)
 
 			if got := calls.Load(); got != tc.wantCalls {
 				t.Errorf("%s reached the server %d times; want %d", tc.method, got, tc.wantCalls)
@@ -4482,5 +4493,67 @@ func TestPaceCancelAtWaitExpiryReservesNothing(t *testing.T) {
 			"context, want <= %.0f%% — pace is not re-checking cancellation after its wait, so a "+
 			"write that can never be issued is delaying the next real writer",
 			violations, trials, rate*100, maxViolationRate*100)
+	}
+}
+
+// Round-14 review fixes
+
+// TestPromotedTweetsIsNotRetriedOn429 pins the promoted_tweets create as NON-idempotent
+// at its CALL SITE: a throttled association POST must be issued exactly once and then
+// surface, not be retried from inside doRequestAbs.
+//
+// An earlier revision passed idempotent=true there, on the reasoning that X refuses a
+// repeat with DUPLICATE_PROMOTABLE_ENTITY. That is true and it is not convergence — X
+// returns the same code when the tweet is promoted by a DIFFERENT line item, which is
+// exactly why this flow deliberately does not treat the duplicate as success. Retrying
+// therefore converts a transient throttle into a permanent manual-verification warning
+// on an association that may have been made correctly on the first attempt.
+func TestPromotedTweetsIsNotRetriedOn429(t *testing.T) {
+	var promotedPosts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			atomic.AddInt32(&promotedPosts, 1)
+			w.WriteHeader(http.StatusTooManyRequests)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "KubeCon EU", Project: "CNCF", BudgetUsd: 500,
+		StartDate: "2099-03-01", EndDate: "2099-03-10", TweetID: "123",
+		RegistrationURL: "https://events.lf.org/reg",
+	})
+	if err != nil {
+		t.Fatalf("a throttled promoted-tweet POST must stay non-fatal: %v", err)
+	}
+	if got := atomic.LoadInt32(&promotedPosts); got != 1 {
+		t.Errorf("promoted_tweets was retried on 429: expected exactly 1 POST, got %d", got)
+	}
+	// The retry is replaced by the reconciliation path, not by silence: a mutating 429
+	// classifies as ambiguous, so the operator is told to verify before re-creating.
+	if !strings.Contains(res.PromotedTweetWarning, "UNCONFIRMED") {
+		t.Errorf("a throttled promoted-tweet POST must be UNCONFIRMED, got: %q", res.PromotedTweetWarning)
 	}
 }

@@ -101,7 +101,19 @@ enforced on the system row:
   Both sources are still needed: a `Pattern` binds the HTTP transport, and this installer writes
   past it straight to the repository, so a row written by bootstrap, by a migration, or before
   the pattern existed never passed through Goa. Where the two differ in SUBSTANCE is Microsoft,
-  below.
+  below. X's `as_user_id` (migration `000034`) joined the map for a reason the
+  rest of it does not have: bootstrap is the ONLY way that key gets seeded, and it is the
+  connection's declared publishing identity rather than a routing value, so a malformed one
+  installs a row that refuses every caller-supplied `asUserId` without ever matching one.
+- **Length is per-key where the design says so** (`maxValueLens`, consulted by `maxLenFor`).
+  `maxValueLen = 64` is the bound MOST of these ids carry, not a fact about all of them, and
+  treating it as one let a 33–64 digit `as_user_id` through bootstrap while the HTTP contract —
+  `MaxLength(32)` at `design/connection.go` — refused it. A shape map that mirrors the pattern
+  and drops the length is mirroring half the rule. The value would have installed ACTIVE on the
+  SHARED fallback row, which has no second opinion downstream, and surfaced only at
+  tweet-authoring time. An entry belongs here whenever a design `MaxLength` is narrower than 64;
+  a key with no entry keeps the default, and a test fails an entry naming a key `valueShapes`
+  does not carry, since a bound that is never looked up reads as enforced and is not.
 - **Some rules a regexp cannot state at all**, so `valueValidators` runs the real validator as a
   second pass after the pattern. Microsoft's `account_id` and `customer_id` are the case: both are
   positive-int64 at runtime, and the int64 RANGE is the half no pattern expresses —

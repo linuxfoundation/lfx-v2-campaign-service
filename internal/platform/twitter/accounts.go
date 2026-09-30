@@ -177,7 +177,7 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 		// query, and apiError/transportError render their Path into strings that are
 		// persisted into a campaign's Steps and logged by the discovery handler. A query
 		// string has no place in either.
-		resp, err := c.doRequestAbs(ctx, http.MethodGet, reqURL, "accounts", nil)
+		resp, err := c.doRequestAbs(ctx, http.MethodGet, reqURL, "accounts", nil, true /* idempotent: read */)
 		if err != nil {
 			return nil, fmt.Errorf("list x ad accounts: %w", err)
 		}

@@ -207,7 +207,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	// endpoint this client calls is (it's /stats/accounts/{id}), so this uses
 	// doRequestAbs directly against statsURL() rather than doRequest (which
 	// always prefixes accountURL()).
-	resp, err := c.doRequestAbs(ctx, http.MethodGet, c.statsURL(), "stats", params)
+	resp, err := c.doRequestAbs(ctx, http.MethodGet, c.statsURL(), "stats", params, true /* idempotent: read */)
 	if err != nil {
 		return nil, fmt.Errorf("get campaign metrics: %w", err)
 	}
@@ -217,7 +217,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		return nil, &transportError{
 			Method: http.MethodGet,
 			Path:   "stats",
-			Err:    fmt.Errorf("decode campaign metrics response: %w", err),
+			err:    fmt.Errorf("decode campaign metrics response: %w", err),
 		}
 	}
 

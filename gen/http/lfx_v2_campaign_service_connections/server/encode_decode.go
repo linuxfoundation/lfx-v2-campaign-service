@@ -8814,6 +8814,7 @@ func unmarshalTwitterAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnect
 		Label:               v.Label,
 		AccountID:           v.AccountID,
 		FundingInstrumentID: *v.FundingInstrumentID,
+		AsUserID:            v.AsUserID,
 	}
 
 	return res

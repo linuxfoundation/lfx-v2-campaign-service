@@ -58,8 +58,14 @@ var providerConfigKeys = map[Provider][]string{
 	// campaign created through it. Reddit requires it on EVERY campaign create observed on
 	// the LF account (2026-08-13) — including CLICKS/Traffic, not only CONVERSIONS as the
 	// docs describe — so a campaign that cannot supply one cannot be created at all.
-	ProviderRedditAds:    {"conversion_pixel_id"},
-	ProviderTwitterAds:   {"funding_instrument_id"},
+	ProviderRedditAds: {"conversion_pixel_id"},
+	// as_user_id is the connection's declared PUBLISHING IDENTITY: which promotable handle
+	// a nullcast tweet is authored under. It is a connection fact rather than a campaign
+	// one because it is an authorization answer — the client's promotable-users check says
+	// a handle is promotable by this AD ACCOUNT, which on the shared LF system connection
+	// is true of every LF handle, so it cannot say whether a given project may publish as
+	// it. Optional: where it is absent the dispatcher behaves as before.
+	ProviderTwitterAds:   {"funding_instrument_id", "as_user_id"},
 	ProviderMicrosoftAds: {"customer_id"},
 	ProviderHubSpot:      {"portal_id", "sender_email", "sender_name", "brand_kit"},
 }

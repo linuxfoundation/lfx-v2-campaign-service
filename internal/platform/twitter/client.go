@@ -33,6 +33,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // ---------------------------------------------------------------------------
@@ -88,6 +90,27 @@ const (
 	// guarding against a hostile/oversized reply while comfortably exceeding any
 	// normal X Ads response or error envelope.
 	maxResponseBody = 1 << 20 // 1 MiB
+	// maxTweetWeightedChars is X's per-Tweet character cap.
+	maxTweetWeightedChars = 280
+	// maxTweetRawBytes bounds the RAW size of the composed tweet, which the weighted
+	// cap above does not: a URL weighs a fixed 23 no matter how long it actually is,
+	// so a single multi-kilobyte link passes the 280 check and is then percent-encoded
+	// into the tweet-create request URI, where an oversized URI is rejected by X or an
+	// intermediary — after the campaign and line item have been created.
+	//
+	// It is set far above any real tweet on purpose. The two directions of error are
+	// not symmetric here either: this bound exists to catch an absurd input, so it must
+	// not be tight enough to refuse copy X would have accepted. 280 weighted characters
+	// of 4-byte runes is 1120 bytes even before URLs, so 8 KiB cannot be reached by any
+	// legitimate brief and is still two orders of magnitude below a URI limit.
+	maxTweetRawBytes = 8 << 10 // 8 KiB
+	// tcoURLWeight is the fixed weight X counts ANY http/https URL as, regardless
+	// of its actual length (every URL is wrapped to a t.co link at post time).
+	// Counting a UTM-decorated registration URL at its raw rune length would
+	// reject copy X would accept — a registration URL alone is easily 120+ runes
+	// once utm_* params are appended — so authored tweet text is weighted using
+	// this constant for any embedded URL rather than counted verbatim.
+	tcoURLWeight = 23
 )
 
 // ---------------------------------------------------------------------------
@@ -175,6 +198,18 @@ type Client struct {
 	// dead. Both order and liveness have to be observed at the reservation itself.
 	// Never set in production.
 	onAdmit func(context.Context, time.Time)
+
+	// onPaceWait, when set, is called by pace immediately BEFORE it sleeps out a
+	// reservation, with the waiting caller's context and the remaining wait, while
+	// writeMu is still held. onAdmit's sibling and its complement: onAdmit fires once
+	// the wait is over, so it cannot be used to act DURING the window a caller is
+	// parked in.
+	//
+	// That window is the only place some behaviour is observable — a cancellation
+	// between two writes has to land inside it, and a test that arranges that with a
+	// sleep is asserting on a race it can lose silently. Firing here makes the same
+	// window an ordinary synchronous callback. Never set in production.
+	onPaceWait func(context.Context, time.Duration)
 }
 
 // Option customizes a Client at construction time.
@@ -594,19 +629,21 @@ type apiError struct {
 	// for the bounds applied at parse time. Empty when the body wasn't a
 	// recognizable X error envelope.
 	ErrorCodes []string
-	// Err optionally carries an underlying cause, set when the status is inferred
+	// err optionally carries an underlying cause, set when the status is inferred
 	// rather than read straight off a final response — today only when a 429's
 	// retry backoff is cut short by context cancellation. Keeping the cause
 	// attached (via Unwrap) lets callers still match errors.Is(err,
 	// context.DeadlineExceeded) while the 429 status drives the ambiguity
 	// classification. Deliberately NOT rendered by Error(): the status/method/path
-	// line stays the stable, body-free string that gets persisted into Steps.
-	Err error
+	// line stays the stable, body-free string that gets persisted into Steps. It is
+	// unexported for the reason transportError.err is: a clean Error() does not stop
+	// reflection- or JSON-based logging from walking an exported field.
+	err error
 }
 
-// Unwrap exposes the cause behind an inferred status (see Err) so errors.Is/As can
+// Unwrap exposes the cause behind an inferred status (see err) so errors.Is/As can
 // still reach it. Nil for the ordinary response-derived case.
-func (e *apiError) Unwrap() error { return e.Err }
+func (e *apiError) Unwrap() error { return e.err }
 
 func (e *apiError) Error() string {
 	// Deliberately DO NOT include e.ErrorCodes (or any body-derived text): the
@@ -688,7 +725,15 @@ func parseErrorCodes(body []byte) []string {
 type transportError struct {
 	Method string
 	Path   string
-	Err    error
+	// err is UNEXPORTED on purpose, and the lowercase is doing real work rather than
+	// expressing taste. It holds the *url.Error out of http.Client.Do, which carries
+	// the full request URL, and a clean Error() only closes the channel that renders
+	// this struct as a string. Reflection- and JSON-based logging walks EXPORTED
+	// fields and never calls Error() at all, so an exported cause hands the URL
+	// straight back to the first structured logger that touches one of these. Unwrap
+	// below keeps errors.Is/As reaching the cause, which is the access that is
+	// actually needed.
+	err error
 }
 
 func (e *transportError) Error() string {
@@ -699,10 +744,10 @@ func (e *transportError) Error() string {
 	// Steps — so surfacing the raw error would leak the URL. safeTransportCause
 	// strips a *url.Error down to its underlying cause (timeout/EOF/reset) with no
 	// URL. Mirrors the apiError body-suppression discipline.
-	return fmt.Sprintf("x ads api %s %s: %s", e.Method, e.Path, safeTransportCause(e.Err))
+	return fmt.Sprintf("x ads api %s %s: %s", e.Method, e.Path, safeTransportCause(e.err))
 }
 
-func (e *transportError) Unwrap() error { return e.Err }
+func (e *transportError) Unwrap() error { return e.err }
 
 // errRequestContextAlreadyDone marks a request this client never attempted because the
 // CALLER's context was already cancelled or past its deadline when doRequestAbs was entered.
@@ -734,39 +779,71 @@ var errRequestContextAlreadyDone = errors.New("x ads api: the request was not at
 type preSendError struct {
 	Method string
 	Path   string
-	Err    error
+	// err is unexported for the reason transportError.err is — see there.
+	err error
 }
 
 func (e *preSendError) Error() string {
-	return fmt.Sprintf("x ads api %s %s: %s", e.Method, e.Path, safeTransportCause(e.Err))
+	return fmt.Sprintf("x ads api %s %s: %s", e.Method, e.Path, safeTransportCause(e.err))
 }
 
-func (e *preSendError) Unwrap() error { return e.Err }
+func (e *preSendError) Unwrap() error { return e.err }
 
-// safeTransportCause returns a URL-free description of a round-trip error. A
-// *url.Error's %v embeds the request URL, so we unwrap to its underlying cause
-// (which does not); anything else is rendered as-is (Do's non-url.Error causes —
-// EOF, i/o timeout — carry no URL). Empty cause falls back to a generic label.
+// safeTransportCause returns a URL-free description of a round-trip error, chosen from
+// a FIXED vocabulary. It is an allowlist with a default-deny, not a peel-and-render, and
+// it mirrors hubspot.safeCause and the microsoft client's equivalent — deliberately, so
+// the three clients fail the same way under the same threat.
+//
+// An earlier revision peeled every *url.Error layer and then rendered the remaining
+// cause with err.Error(). The peel is necessary — http.Client.Do wraps a RoundTripper's
+// error in its own *url.Error whose text embeds the full request URL, and X puts create
+// parameters in the query — but it is NOT SUFFICIENT, which is exactly what
+// hubspot.safeCause's doc comment says and why that client already looks like this.
+// WithHTTPClient is a supported option, so the innermost cause is CALLER-CONTROLLED
+// text: a transport can return any error it likes, with the signed URL in it, and the
+// peel then hands that text straight through. These strings are copied into
+// PromotedTweetWarning and persisted into a campaign's Steps, so "we cannot vouch for
+// this text" has to mean it is not rendered at all.
+//
+// The named cases are the ones worth keeping diagnosable, and each emits OUR OWN fixed
+// string rather than the error's: a custom transport's timeout error is still
+// caller-controlled text even though the timeout classification is trustworthy. The real
+// cause stays reachable through Unwrap() for errors.Is/As, which is where callers that
+// need detail should be looking anyway.
 func safeTransportCause(err error) string {
 	if err == nil {
 		return "transport failure"
 	}
-	// Peel off EVERY *url.Error layer, not just the outermost: http.Client.Do wraps a
-	// RoundTripper's error in its own *url.Error, and a supported injected transport
-	// can itself return a *url.Error, so a single unwrap can leave an inner *url.Error
-	// whose .Error() still embeds the request URL. Loop until the cause is no longer a
-	// *url.Error (or nil), then render that URL-free cause.
-	for {
-		var ue *url.Error
-		if !errors.As(err, &ue) {
-			break
-		}
-		if ue.Err == nil {
-			return "transport failure"
-		}
-		err = ue.Err
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "context canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "context deadline exceeded"
 	}
-	return err.Error()
+	// errors.As reaches a net.Error through a *url.Error wrapper, so no peel is needed
+	// to classify — only to render, which is the step this function no longer does.
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "timeout"
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return "connection closed"
+	}
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.Is(err, syscall.ECONNRESET):
+		return "connection reset by peer"
+	case errors.Is(err, syscall.EHOSTUNREACH), errors.Is(err, syscall.ENETUNREACH):
+		return "network unreachable"
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return "dns lookup failed"
+	}
+	// Default-deny. Any other cause — including every custom-transport error whose text
+	// this package cannot vouch for — collapses to a generic, URL-free description.
+	return "transport failure"
 }
 
 // isPreSendDialError reports whether a httpClient.Do error clearly happened
@@ -885,7 +962,9 @@ func (c *Client) statsURL() string {
 // signing and 429 exponential-backoff retry. Any parameters must be encoded
 // into path as a query string. Mirrors twitterRequest in the TS for reads.
 func (c *Client) request(ctx context.Context, method, path string) (*apiResponse, error) {
-	return c.doRequest(ctx, method, path, nil)
+	// Reads are idempotent by construction: this helper is GET/list only, so a 429
+	// costs nothing to re-issue.
+	return c.doRequest(ctx, method, path, nil, true /* idempotent */)
 }
 
 // createRequest performs an X Ads API create (POST) call. Per the X Ads v12
@@ -894,8 +973,24 @@ func (c *Client) request(ctx context.Context, method, path string) (*apiResponse
 // appended to the request URL and also folded into the OAuth signature base
 // string (OAuth 1.0a signs query params), and the request is sent with no
 // body. Callers own the 1-req/sec write delay.
-func (c *Client) createRequest(ctx context.Context, path string, params map[string]string) (*apiResponse, error) {
-	return c.doRequest(ctx, http.MethodPost, path, params)
+//
+// idempotent is passed through to doRequest's 429 handling and is a PER-ENDPOINT
+// property, not a property of POST: see doRequestAbs. Every caller states it
+// explicitly rather than inheriting a default.
+//
+// As it stands, EVERY create passes false — campaigns, line_items, promoted_tweets and
+// tweet alike — so the parameter currently distinguishes this helper from `request`
+// above rather than one create from another. It is still a parameter, and still stated
+// at each call site, because the REASONS differ and only one of them is permanent:
+// campaigns and line_items are found-or-created by name, but that lookup runs above
+// this retry loop and a retry from inside it re-POSTs regardless; promoted_tweets is
+// refused on a repeat, but with DUPLICATE_PROMOTABLE_ENTITY, which does not name the
+// holder, so the refusal is not proof of success. Tweet authoring is the one whose
+// accidental repeat is irreversible — X publishes a SECOND tweet — and the one whose
+// false can never be relaxed. Moving any of the others is an argument about that
+// endpoint, which is what the per-call-site comments are for.
+func (c *Client) createRequest(ctx context.Context, path string, params map[string]string, idempotent bool) (*apiResponse, error) {
+	return c.doRequest(ctx, http.MethodPost, path, params, idempotent)
 }
 
 // doRequest is the shared HTTP path with OAuth1 signing and 429
@@ -905,7 +1000,7 @@ func (c *Client) createRequest(ctx context.Context, path string, params map[stri
 // (accountURL) — callers whose endpoint is NOT nested under
 // /accounts/{accountID} (e.g. the stats endpoint, which is
 // /stats/accounts/{accountID}) must use doRequestAbs directly instead.
-func (c *Client) doRequest(ctx context.Context, method, path string, queryParams map[string]string) (*apiResponse, error) {
+func (c *Client) doRequest(ctx context.Context, method, path string, queryParams map[string]string, idempotent bool) (*apiResponse, error) {
 	// An empty path targets the account root itself (accountURL) — used by
 	// verifyAccount's GET — so don't append a bare "/" that would change the URL.
 	reqURL := c.accountURL()
@@ -913,7 +1008,39 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 		reqURL += "/" + p
 	}
 
-	return c.doRequestAbs(ctx, method, reqURL, path, queryParams)
+	return c.doRequestAbs(ctx, method, reqURL, path, queryParams, idempotent)
+}
+
+// requestPage performs one page of an account-scoped paginated GET. The cursor rides
+// on the WIRE URL only; the path recorded in any resulting error stays the caller's
+// query-free collection path.
+//
+// That split is the whole reason this exists. A page cursor is an opaque token decoded
+// straight out of an upstream response body, and doRequestAbs records its logPath into
+// every apiError, transportError and preSendError it builds — errors that, on the
+// authoring path, are rendered into PromotedTweetWarning and a persisted steps entry.
+// Folding the cursor into the path handed to doRequest therefore published upstream
+// response text into the campaign record, which is exactly what
+// platform-error-must-not-carry-untrusted-or-credential-text forbids. ListAdAccounts
+// already passed "the bare collection path, never reqURL" for this reason; the two
+// account-scoped walks simply had no shared way to do the same thing until now.
+func (c *Client) requestPage(ctx context.Context, path, cursor string) (*apiResponse, error) {
+	reqURL := c.accountURL()
+	if p := strings.TrimPrefix(path, "/"); p != "" {
+		reqURL += "/" + p
+	}
+	if cursor != "" {
+		// Escaped, but NOT trimmed: a cursor is an opaque server token and the exact
+		// bytes X sent are the ones that have to go back.
+		sep := "?"
+		if strings.Contains(reqURL, "?") {
+			sep = "&"
+		}
+		reqURL += sep + "cursor=" + url.QueryEscape(cursor)
+	}
+	// Reads are idempotent by construction, as in request: a 429 costs nothing to
+	// re-issue because a GET commits nothing.
+	return c.doRequestAbs(ctx, http.MethodGet, reqURL, path, nil, true /* idempotent */)
 }
 
 // drainAndClose discards a bounded amount of an unread response body before closing
@@ -933,7 +1060,38 @@ func drainAndClose(resp *http.Response) {
 // prefixing). logPath is used only for error labeling (apiError/transportError
 // Path field), so callers whose reqURL isn't accountURL()-rooted can still
 // pass a meaningful label. queryParams, when non-nil, are appended to reqURL.
-func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath string, queryParams map[string]string) (*apiResponse, error) {
+//
+// idempotent gates the 429 retry, and is an EXPLICIT PARAMETER rather than something
+// inferred from the HTTP method — the same discipline the googleads client states for
+// its own doRequest, where POST `:search` is read-only and POST `:mutate` must not be
+// retried. Here the split does not follow the method either.
+//
+// The question it asks is narrow and easy to get wrong: is a repeat of THIS request,
+// issued from inside this loop, safe? Only server-side convergence answers yes. NOTHING
+// on the create path qualifies, promoted_tweets included — an earlier revision passed
+// true for it on the reasoning that X refuses the repeat with DUPLICATE_PROMOTABLE_ENTITY,
+// which is true and is not convergence. X returns that same code when the tweet is
+// promoted by a DIFFERENT line item, so the refusal does not say the association this
+// call wanted exists; the caller (deliberately) does not treat it as success, and turns
+// it into a manual-verification warning instead. Retrying therefore converts a transient
+// throttle into a permanent "verify this by hand" on an association that may well have
+// been made correctly the first time. It passes false. The campaign and line-item creates
+// do NOT, and an earlier revision passed true for them by conflating two different
+// things: those paths ARE found-or-created by name, but the lookup that makes that
+// true runs in the caller, ABOVE this function. A retry from inside this loop re-POSTs
+// without repeating it, so if X committed the write and then reported a 429, the
+// retry creates a duplicate campaign or line item — the precise outcome the by-name
+// lookup exists to prevent. They pass false. Tweet authoring passes false for the
+// plainer reason that it has no lookup and no idempotency key at all: X publishes a
+// SECOND tweet.
+//
+// A 429 stays an *apiError either way, so createOutcomeAmbiguous still classifies the
+// mutating case as UNCONFIRMED and the caller still tells the operator to verify in X
+// Ads Manager before retrying. What false removes is this layer silently doing the
+// unverified retry on the operator's behalf; what it costs is that a throttled create
+// now surfaces for reconciliation instead of riding out the rate limit, which is the
+// correct trade when the alternative is a duplicate nobody was told about.
+func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath string, queryParams map[string]string, idempotent bool) (*apiResponse, error) {
 	// Entry-time only — see errRequestContextAlreadyDone. Without it a caller that had
 	// already cancelled got the context error back out of http.Client.Do wrapped as a
 	// transportError, which ProbeNotSent does not recognise: the probe then charged X's
@@ -980,17 +1138,19 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 				// *url.Error whose render embeds the request URL, which would leak into
 				// persisted Steps. preSendError.Error() strips the URL but Unwrap()
 				// retains the cause for errors.Is/As.
-				return nil, &preSendError{Method: method, Path: path, Err: err}
+				return nil, &preSendError{Method: method, Path: path, err: err}
 			}
-			return nil, &transportError{Method: method, Path: path, Err: err}
+			return nil, &transportError{Method: method, Path: path, err: err}
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			// If this was the last attempt, don't sleep+retry: the loop would
 			// exit and the 429 would otherwise fall through to the generic
 			// non-2xx return below. Surface the intended exhausted-rate-limit
-			// error instead.
-			if attempt >= retryMax {
+			// error instead. A NON-idempotent call takes the same exit on its
+			// FIRST 429: X may already have committed the write it throttled,
+			// and re-issuing it would publish a duplicate.
+			if attempt >= retryMax || !idempotent {
 				drainAndClose(resp)
 				return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
 			}
@@ -1030,7 +1190,7 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 					StatusCode: http.StatusTooManyRequests,
 					Method:     method,
 					Path:       path,
-					Err:        err,
+					err:        err,
 				}
 			}
 			// Re-reserve a pacing slot before re-issuing a WRITE. The backoff above waits
@@ -1048,7 +1208,7 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 						StatusCode: http.StatusTooManyRequests,
 						Method:     method,
 						Path:       path,
-						Err:        perr,
+						err:        perr,
 					}
 				}
 			}
@@ -1072,7 +1232,7 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 			// A 2xx with a body we couldn't fully/cleanly read is AMBIGUOUS on a
 			// mutating call: X may have committed but we can't read the result. Wrap
 			// as transportError so a create is treated as "may exist".
-			return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("read response body: %w", readErr)}
+			return nil, &transportError{Method: method, Path: path, err: fmt.Errorf("read response body: %w", readErr)}
 		}
 
 		var out apiResponse
@@ -1081,7 +1241,7 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 				// A 2xx we can't decode is AMBIGUOUS on a mutating call: X returned
 				// success but we can't read the payload (id). Wrap as transportError so a
 				// create is treated as "may exist" rather than a definite failure.
-				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("decode response: %w", err)}
+				return nil, &transportError{Method: method, Path: path, err: fmt.Errorf("decode response: %w", err)}
 			}
 		}
 		return &out, nil
@@ -1258,6 +1418,9 @@ func (c *Client) pace(ctx context.Context) error {
 	// client goes immediately rather than paying a delay for a slot nobody used.
 	if !c.nextWrite.IsZero() {
 		if wait := c.nextWrite.Sub(now); wait > 0 {
+			if c.onPaceWait != nil {
+				c.onPaceWait(ctx, wait)
+			}
 			if err := sleepCtx(ctx, wait); err != nil {
 				// Cancelled while waiting: no write is issued, so do NOT advance the
 				// reservation. Advancing here would make a cancelled caller push the
@@ -1409,17 +1572,12 @@ func (c *Client) findLineItemByName(ctx context.Context, campaignID, name string
 // follows next_cursor so a match beyond the first page is still found, bounded
 // by maxListPages.
 func (c *Client) findByName(ctx context.Context, path, name string) (string, error) {
-	sep := "&"
-	if !strings.Contains(path, "?") {
-		sep = "?"
-	}
 	cursor := ""
 	for page := 0; page < maxListPages; page++ {
-		p := path
-		if cursor != "" {
-			p = path + sep + "cursor=" + url.QueryEscape(cursor)
-		}
-		resp, err := c.request(ctx, http.MethodGet, p)
+		// requestPage keeps the cursor on the wire URL and off the error path — see
+		// its doc; a lookup failure here surfaces in the same persisted places the
+		// authoring path's does.
+		resp, err := c.requestPage(ctx, path, cursor)
 		if err != nil {
 			return "", fmt.Errorf("lookup %q: %w", name, err)
 		}
@@ -1547,6 +1705,23 @@ var spaceRe = regexp.MustCompile(`\s+`)
 // persist) never carries the userinfo/query/fragment that can hold secrets. A value
 // that can't be parsed as an absolute URL is reported as an opaque placeholder rather
 // than echoed raw.
+// The PATH is dropped along with the query and fragment, which is where this
+// diverges from the googleads redactor it otherwise mirrors. That redactor keeps the
+// path, and keeping it was defensible while the only URL reaching here was a
+// registration URL an operator typed. It is not defensible now: the tweetText path
+// screens ARBITRARY caller copy, and a magic-link or reset credential lives in a path
+// segment (`https://example.com/reset/<secret>`) at least as often as in a query
+// parameter. The knowledge base states the test this fails —
+// `caller-url-must-be-redacted-before-errors-steps-and-snapshots`: reproduce a
+// component only when it is BOTH structurally incapable of holding a secret AND
+// load-bearing for the diagnosis. A path is capable; a host is not, and the host is
+// what tells the operator WHICH link to fix, so scheme+host is exactly the line.
+//
+// Dropping more can only be safe — the cost is a less specific error, never a leak —
+// so this applies to every caller in the package rather than only the new branches,
+// because a redactor whose strength depends on which caller reached it is one nobody
+// can reason about. The same change is worth making in the googleads client; it is not
+// made here because that client's URLs do not flow into published text.
 func redactURLForError(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || !u.IsAbs() || u.Hostname() == "" {
@@ -1555,7 +1730,7 @@ func redactURLForError(raw string) string {
 		}
 		return "(redacted)"
 	}
-	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
+	return u.Scheme + "://" + u.Host
 }
 
 // validateRegistrationURL ensures a user-supplied registration URL is an absolute
@@ -1596,8 +1771,671 @@ func validateRegistrationURL(raw string) error {
 	}
 }
 
+// credentialQueryKeys names registration-URL query KEYS whose value is authentication
+// material rather than routing. Keys are compared case-insensitively with `-`, `_` and
+// `.` removed, so `access-token`, `Access_Token` and `accesstoken` are one entry.
+//
+// This is a DENYLIST, deliberately, and the reviewer's stricter suggestion — allow only
+// modeled routing params — was considered and rejected: the registration URL belongs to
+// whoever wrote the brief, and the routing params real LF event pages use (`ref`,
+// `lang`, `discount`, tracking ids of a dozen vendors) cannot be enumerated in advance.
+// An allowlist would reject working briefs, and the operator's only recourse would be
+// to drop a parameter the page needs. A denylist inverts that: it fails the create for
+// the shapes that are credentials under any reading, and passes everything else.
+//
+// The asymmetry is the point. A false positive is a pre-mutation rejection naming the
+// key, which an operator fixes in seconds. A false negative publishes a live credential
+// to X Ads Manager and to every viewer of the ad, permanently. So where a name is
+// arguable, it is listed. Names that are NOT listed, having been weighed: `code` and
+// `pin`, because `?code=SAVE20` is an ordinary discount parameter on an LF events page
+// and rejecting it would break real briefs — an OAuth authorization code, the credential
+// reading of `code`, is single-use and scoped to a redirect that has already happened.
+var credentialQueryKeys = map[string]struct{}{
+	"token": {}, "accesstoken": {}, "idtoken": {}, "refreshtoken": {}, "authtoken": {},
+	"apitoken": {}, "sessiontoken": {}, "bearertoken": {},
+	"secret": {}, "clientsecret": {}, "consumersecret": {}, "apisecret": {},
+	"key": {}, "apikey": {}, "privatekey": {}, "sharedkey": {}, "secretkey": {},
+	"password": {}, "passwd": {}, "pwd": {}, "pass": {},
+	"auth": {}, "authorization": {}, "bearer": {}, "credential": {}, "credentials": {},
+	"session": {}, "sessionid": {}, "sid": {},
+	"sig": {}, "signature": {}, "hmac": {}, "jwt": {},
+}
+
+// credentialQuerySubstrings are the fragments that make a key a credential WHEREVER
+// they appear in it, and they exist because an exact-name set is the wrong shape for
+// this problem: credential parameters compose. `secret_token`, `access_key`,
+// `oauth_token`, `csrf_token` and `x_request_signature` are all obvious credentials
+// and none of them is an entry above, so an exact lookup passed every one of them
+// through to publication. Enumerating compounds does not converge — the vocabulary
+// is small but the combinations are not — so the fragments are matched instead.
+//
+// Only fragments that are unambiguous as a COMPONENT are listed. That is why `key`,
+// `auth`, `sig`, `pass` and `session` are absent here and stay exact-only above:
+// each is a substring of ordinary words a registration page really does use
+// (`keyword`, `bypass`, `design`, `oauth` itself), and matching them anywhere would
+// reject working briefs. `key` is instead handled by the suffix rule below, which is
+// the one shape that carries a credential reading without those collisions.
+//
+// `sessionid` is the compound form of one of those exact-only names, and it is listed
+// here rather than left to the exact set because the two standard spellings of a web
+// session cookie carried into a URL — `JSESSIONID` and `ASP.NET_SessionId` — normalize
+// to `jsessionid` and `aspnetsessionid`, neither of which is an exact entry. Unlike
+// bare `session`, the full `sessionid` has no ordinary-word collision: it is not a
+// substring of any routing parameter an event page uses.
+// `sessid` is listed for the same reason and covers the third standard spelling the
+// pair above misses: PHP's `PHPSESSID` normalizes to `phpsessid`, which contains
+// neither `sessionid` nor any exact entry. It has no ordinary-word collision either.
+// `cookie` is here on the same footing: a query parameter carrying a cookie by any
+// name — `auth_cookie`, `session_cookie`, `cookie` — is carrying the session itself,
+// and no ordinary English word contains it.
+//
+// `csrf`, `xsrf` and `saml` close the last standard names the other tiers all miss.
+// `csrf_token` and `x_csrf_token` were already caught by `token`, but the bare
+// `_csrf` that Rails, Spring Security and Express all emit normalizes to `csrf` —
+// no exact entry, no listed fragment, not a component — and `SAMLResponse` carries a
+// signed assertion in a single parameter that matches nothing above. All three are
+// safe as fragments: no ordinary English word and no routing parameter an events page
+// uses contains any of them.
+var credentialQuerySubstrings = []string{
+	"token", "secret", "password", "passwd", "credential",
+	"signature", "hmac", "jwt", "bearer", "oauth",
+	"authorization", "assertion", "sessionid", "sessid", "cookie",
+	"csrf", "xsrf", "saml",
+}
+
+// credentialQueryComponents are credential names that are unambiguous as a WHOLE
+// separator-delimited component but not as a substring. They exist because folding the
+// separators away before matching loses the boundary that makes them safe to judge:
+// `auth_cookie` and `connect.sid` normalize to `authcookie` and `connectsid`, which are
+// not exact entries and contain no listed fragment, so both passed the screen and would
+// have been published. Matching them as substrings instead is not an option — `auth` is
+// inside `author` and `sid` is inside `aside`, `subsidy` and `president`, all of which a
+// registration page really can use. Splitting the ORIGINAL key on its separators and
+// testing each component gives the exactness without the collisions: `author` is one
+// component and does not match, `auth_cookie` is two and does.
+//
+// `session`, `pass`, `sig` and `key` are deliberately NOT here even though they are in
+// the exact set. This is an EVENTS service: `session_title`, `session_track` and
+// `day_pass` are real parameters on a conference registration page, and promoting those
+// words to component matches would refuse working briefs — the one cost the denylist
+// shape exists to avoid. They stay exact-only, matching the whole key or nothing.
+var credentialQueryComponents = map[string]struct{}{
+	"auth": {}, "sid": {}, "pwd": {}, "passwd": {},
+}
+
+// credentialKeyQualifiers are the words that turn a bare `key` COMPONENT into a
+// credential, when one stands immediately in front of it.
+//
+// The `…key` suffix tier only fires on a name that ENDS in `key`, which is how
+// `api_key_LEAK` and `access_key_AKIAIOSFODNN7` — a key name with the credential's own
+// value appended, the single most common way an exported link spells one — cleared the
+// screen entirely and were published. Round 10 found that and left it open, reasoning
+// that closing it meant promoting `key` to a component match, which would refuse
+// `key_metrics` and `key_takeaways`: real parameters on a real conference page.
+//
+// That was the wrong shape for the fix, not a reason to leave the hole. `key` alone is
+// ambiguous; `api key`, `access key`, `secret key` are not, in any spelling, on any page.
+// So the rule is about the PAIR: a `key` component qualified by one of these words
+// directly before it. `key_metrics` has no qualifier in front of `key` and still passes,
+// `sort_key` is still caught by the suffix tier, and nothing here needs a new judgement
+// call about ordinary English.
+var credentialKeyQualifiers = map[string]struct{}{
+	"api": {}, "access": {}, "secret": {}, "private": {}, "shared": {},
+	"signing": {}, "consumer": {}, "client": {}, "app": {}, "master": {},
+	"encryption": {}, "session": {}, "auth": {},
+}
+
+// credentialQueryKeyComponentSplitter splits a query key on the separators a compound
+// name is spelled with, so each part can be tested against credentialQueryComponents.
+var credentialQueryKeyComponentSplitter = func(r rune) bool {
+	return r == '-' || r == '_' || r == '.'
+}
+
+// benignKeySuffixWords are the ordinary English words that end in "key" and would
+// otherwise be caught by the suffix rule. A query parameter whose normalized name
+// ends in "key" is a credential in every spelling that matters — `api_key`,
+// `access_key`, `auth_key`, `signing_key`, `consumer_key` — and enumerating those
+// prefixes has the same non-convergence problem as the compounds above. These are
+// the false positives that rule would otherwise produce.
+var benignKeySuffixWords = map[string]struct{}{
+	"key": {}, "monkey": {}, "donkey": {}, "turkey": {}, "hockey": {},
+	"jockey": {}, "whiskey": {}, "mickey": {}, "lackey": {},
+}
+
+// credentialQueryKeyNormalizer folds the separators a query key can be spelled with, so
+// one denylist entry covers every spelling of the same name.
+var credentialQueryKeyNormalizer = strings.NewReplacer("-", "", "_", "", ".", "")
+
+// isCredentialQueryKey reports whether a query KEY names authentication material.
+// It reads the key four ways, in order of how specific the evidence is: the exact
+// denylist, an unambiguous credential fragment anywhere in the name, a credential word
+// standing as a whole separator-delimited component, and finally the "…key" suffix. The
+// bare word `key` is itself in the exact set, so the benign-word map below it never has
+// to decide that case.
+//
+// The component pass reads the ORIGINAL key, not the normalized one — folding `-`, `_`
+// and `.` away is what destroys the boundaries it needs. That is why it sits here rather
+// than being expressed as more entries in either set above: `auth_cookie` and
+// `connect.sid` are credentials, `author` and `aside` are not, and only the separators
+// tell them apart.
+func isCredentialQueryKey(key string) bool {
+	_, bad := credentialQueryKeyMatch(key)
+	return bad
+}
+
+// credentialQueryKeyMatch reports the same verdict as isCredentialQueryKey and, with it,
+// the TERM that produced the verdict — always a literal from one of the fixed lists
+// above, never a slice of the caller's key.
+//
+// That distinction is the whole reason this function exists. Naming the offending
+// parameter is what makes the refusal actionable, but the key is caller-controlled free
+// text, and a NAME can hold a secret as easily as a value can: `?oauth_token_<secret>=x`
+// classifies on `oauth` and then reproduces the secret in the error, which reaches the
+// dispatcher, the campaign's persisted Steps and the service log. Truncating to 40 runes
+// bounds that; it does not redact it, and a credential prefix is still credential
+// material.
+//
+// So the error names OUR word, not THEIR key — the same default-deny shape as
+// `safeCause` in `internal/platform/hubspot/client.go`, and the same rule the knowledge
+// base states: reproduce a component only when it is both structurally incapable of
+// holding a secret and load-bearing for the diagnosis. A fixed vocabulary entry is
+// structurally incapable, because we wrote it. It stays load-bearing because the
+// operator finds the parameter by searching their own URL for that word, which is
+// exactly how they would have used the key itself.
+func credentialQueryKeyMatch(key string) (string, bool) {
+	norm := strings.ToLower(credentialQueryKeyNormalizer.Replace(key))
+	if norm == "" {
+		return "", false
+	}
+	if _, bad := credentialQueryKeys[norm]; bad {
+		// The exact tier is the one case where the term IS the whole (normalized) key,
+		// so naming it gives up nothing.
+		return norm, true
+	}
+	for _, frag := range credentialQuerySubstrings {
+		if strings.Contains(norm, frag) {
+			return frag, true
+		}
+	}
+	parts := strings.FieldsFunc(strings.ToLower(key), credentialQueryKeyComponentSplitter)
+	for _, part := range parts {
+		if _, bad := credentialQueryComponents[part]; bad {
+			return part, true
+		}
+	}
+	// A qualified `key` component, wherever it sits in the name — this is what catches
+	// `api_key_LEAK` and `access_key_AKIA…`, where the value is appended to the name and
+	// the `…key` suffix tier below therefore never fires. The returned term is built from
+	// two literals this file declares, so it is still our vocabulary and not the caller's
+	// bytes.
+	for i := 1; i < len(parts); i++ {
+		if parts[i] != "key" {
+			continue
+		}
+		if _, ok := credentialKeyQualifiers[parts[i-1]]; ok {
+			return parts[i-1] + "_key", true
+		}
+	}
+	if strings.HasSuffix(norm, "key") {
+		if _, benign := benignKeySuffixWords[norm]; !benign {
+			return "key", true
+		}
+	}
+	return "", false
+}
+
+// rejectCredentialQueryParams refuses ONE URL that carries a credential-like query
+// parameter. Callers on the create path go through rejectCredentialQueryParamsInText
+// below, which applies this to every URL in the composed tweet before any mutating call.
+//
+// The gate exists because that path is the one that PUBLISHES the URL. buildTwitterUTMURL
+// keeps the brief's pre-existing query verbatim — it has to, since dropping a routing
+// param would send real ad traffic to the wrong page — and the result goes into the text
+// of a tweet, visible in X Ads Manager and to anyone the ad reaches. validateRegistrationURL
+// rejects userinfo, which is the other place a URL hides a secret, but says nothing about
+// the query; a `?token=...` therefore travelled all the way to publication. Documenting
+// "do not put secrets in the registration URL" does not stop a brief that already has one.
+//
+// Deliberately NOT applied to the other two workflows. When TweetID is set, or when
+// neither TweetID nor TweetText is, the only URL this client emits is displayTwitterUtmURL's,
+// which strips the pre-existing query outright — nothing is published and nothing is
+// persisted, so rejecting those briefs would fail a create for an exposure that cannot
+// occur. The error names the KEY and never the value: a key name is not itself a secret,
+// and it is what the operator needs in order to fix the brief.
+func rejectCredentialQueryParams(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		// Unreachable in the create flow — validateRegistrationURL has already parsed
+		// this value — but fail CLOSED rather than treating an unparseable URL as
+		// having no query, which would hand this helper's guarantee to a caller that
+		// reordered the two checks.
+		return fmt.Errorf("URL %q in the tweet text could not be parsed to check for credential parameters", redactURLForError(raw))
+	}
+	// url.Values.Query() DISCARDS the error ParseQuery returns, and returns whatever
+	// pairs it managed to decode. A query Go refuses to decode — an unescaped `;`
+	// separator, a `%zz` escape — therefore arrives here as an empty or partial map,
+	// every unparsed pair invisible, and the URL is published anyway. Parsing
+	// explicitly and failing CLOSED is the only reading that keeps the guarantee:
+	// a query this gate could not read in full is a query it cannot clear.
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return fmt.Errorf("the query of URL %q in the tweet text could not be parsed, so it cannot be screened for credentials before the tweet is published; fix or remove the URL's query string, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
+	}
+	// USERINFO is refused outright, before the query is read at all. validateRegistrationURL
+	// already rejects `https://user:password@host/...` for the registration URL, but a link
+	// the caller pasted into their own copy never passes through that validator, and this
+	// gate screened only the query — so an embedded credential with no query string at all
+	// was published verbatim. The password is the secret and the username is close enough
+	// to one that neither is named; the URL is redacted, which is what the operator needs
+	// to find the offending link without this error becoming the leak it exists to prevent.
+	if u.User != nil {
+		return fmt.Errorf("URL %q in the tweet text carries embedded userinfo credentials and would be PUBLISHED verbatim in the authored tweet; remove the credentials from the link, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
+	}
+	named := queryKeysWrittenWithAValue(u.RawQuery)
+	for key := range q {
+		term, bad := credentialQueryKeyMatch(key)
+		if !bad {
+			continue
+		}
+		// A key written as `name=value` is a parameter name, so the refusal can point at
+		// it — but by the WORD that classified it, never by the caller's spelling. A name
+		// is free text and can carry a secret itself (`?oauth_token_<secret>=x`); the
+		// matched term is a literal from this file's own lists and cannot. A key with no
+		// `=` behind it is not a name at all — the whole component landed in the key
+		// position — so that shape names no term and redacts the URL instead.
+		if named[key] {
+			return fmt.Errorf("the tweet's URL carries a query parameter whose name contains %q, which looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the registration URL and from your tweet copy, or supply an explicit tweetId instead of tweetText", term)
+		}
+		return fmt.Errorf("URL %q in the tweet text ends in a bare query component that looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
+	}
+	return credentialFragmentError(raw, u)
+}
+
+// credentialFragmentError screens a URL's FRAGMENT with the same key test the query got.
+// The fragment is not a second-order concern here: the OAuth implicit flow delivers its
+// bearer token in exactly this position — `https://app.example.org/cb#access_token=…` —
+// so a pasted post-login URL carries the live token after the `#` and nothing before it.
+// The query screen never saw that URL's credential because the URL has no query.
+//
+// A fragment with NO `=` is screened as one whole component rather than waved through.
+// It used to pass unconditionally, on the reasoning that a section anchor is not a
+// credential and refusing one would fail a working brief. That reasoning was sound while
+// buildTwitterUTMURL stripped the fragment — the registration URL's fragment was never
+// published, so the exemption had no publish path behind it. Now that the fragment IS
+// published verbatim (it decides where the click lands), `#access_token` or `#jwt`
+// standing alone would go out in the tweet unexamined. The classifier answers the anchor
+// case correctly on its own: `#register`, `#agenda-day-2`, `#speakers`, `#sessions` and
+// `#session-track` all clear it. A bare `#session` does not, and that is the one
+// realistic anchor this costs — the fail-closed direction is the right one when the
+// alternative is publishing a bearer token.
+//
+// This catches credential-NAMED shapes, not every credential: the classifier is a
+// denylist over names, so a raw `#eyJhbGciOi…` with no recognizable word in it still
+// passes. Narrowing that would mean guessing at token SHAPES, which fails working briefs
+// for anything that looks sufficiently random.
+//
+// A fragment Go cannot decode fails CLOSED for the same reason the query does; an
+// unreadable fragment is one this gate cannot clear.
+func credentialFragmentError(raw string, u *url.URL) error {
+	frag := u.Fragment
+	if frag == "" {
+		return nil
+	}
+	if !strings.Contains(frag, "=") {
+		if isCredentialQueryKey(frag) {
+			// Named as a CATEGORY and never echoed: with no `=`, the whole fragment
+			// landed in the key position, so its text may BE the credential. Same
+			// split the query and the valued-fragment path apply.
+			return fmt.Errorf("URL %q in the tweet text carries a bare fragment that looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
+		}
+		return nil
+	}
+	f, err := url.ParseQuery(frag)
+	if err != nil {
+		return fmt.Errorf("the fragment of URL %q in the tweet text could not be parsed, so it cannot be screened for credentials before the tweet is published; fix or remove the URL's fragment, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
+	}
+	// The name-vs-category split the query gets applies here for the same reason and with
+	// the same force: `#eyJhbGciOi…` is one bare component whose whole text is the token,
+	// so it is named as a category and never echoed.
+	named := queryKeysWrittenWithAValue(frag)
+	for key := range f {
+		term, bad := credentialQueryKeyMatch(key)
+		if !bad {
+			continue
+		}
+		if named[key] {
+			return fmt.Errorf("the tweet's URL carries a fragment parameter whose name contains %q, which looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", term)
+		}
+		return fmt.Errorf("URL %q in the tweet text carries a bare fragment component that looks like a credential and would be PUBLISHED verbatim in the authored tweet; remove it from the link, or supply an explicit tweetId instead of tweetText", redactURLForError(raw))
+	}
+	return nil
+}
+
+// queryKeysWrittenWithAValue reports which of a raw query's decoded keys were actually
+// written in `name=value` form. url.ParseQuery cannot answer this: it yields the empty
+// string for the value of both `?token=` and `?token`, and those two are not the same
+// risk — the first names a parameter whose value the parser holds separately, the second
+// is one opaque run that the parser had no choice but to file under "key".
+//
+// Components are split the way net/url splits them (on `&` alone; a `;` is a parse error
+// upstream, which this gate has already failed closed on), and names are unescaped the
+// same way, so a key that reaches this map is the same string ParseQuery produced. An
+// unescapable name is simply left out — it cannot match a parsed key, and omission is
+// the fail-closed direction here: the key goes unnamed rather than being reproduced.
+// A key is reported true only when EVERY occurrence of it was written `name=value`. One
+// `=` anywhere used to be enough, and that is a leak: `?oauth_token_SECRET&oauth_token_SECRET=x`
+// decodes to a single key, the valued occurrence marked it renderable, and the error then
+// reproduced a string whose BARE occurrence is the whole credential. A duplicated key is a
+// strange thing for a brief to carry, which is exactly the point — the one shape that
+// defeats the check is the one nobody writes by accident. Requiring every occurrence to be
+// named costs nothing on ordinary input, where a key appears once.
+func queryKeysWrittenWithAValue(rawQuery string) map[string]bool {
+	named := make(map[string]bool)
+	bare := make(map[string]bool)
+	for _, component := range strings.Split(rawQuery, "&") {
+		name, _, hasEq := strings.Cut(component, "=")
+		decoded, err := url.QueryUnescape(name)
+		if err != nil {
+			continue
+		}
+		if hasEq {
+			named[decoded] = true
+			continue
+		}
+		bare[decoded] = true
+	}
+	for key := range bare {
+		delete(named, key)
+	}
+	return named
+}
+
+// rejectCredentialQueryParamsInText screens EVERY URL in a composed tweet, and is the
+// gate that actually runs on the create path. Screening only the registration URL was
+// a gap the moment it was written: composeTweetText publishes the caller's own copy
+// verbatim alongside the destination URL, so a second link pasted into tweetText —
+// exactly the shape that carries a session token, because it is the one copied out of
+// a logged-in browser — reached X without ever passing the check.
+//
+// It runs on the COMPOSED text rather than on the inputs separately so the thing
+// screened is the thing published, byte for byte. A future change to how the text is
+// assembled cannot route a URL around the gate, because the gate no longer knows or
+// cares which input a URL came from.
+//
+// URLs are found with tweetURLRe, the same scanner weightedTweetLen uses — but WITHOUT
+// the boundary rule that findTweetURLRuns applies, because the two answer different
+// questions. findTweetURLRuns answers "what will X wrap in a t.co link", and dropping a
+// run glued to a preceding letter or digit is right for weighting and for matching the
+// destination. This screen answers "what bytes are we about to PUBLISH", and an
+// unlinkified credential is published just the same — visible in the copy, in X Ads
+// Manager, and to everyone the ad reaches.
+//
+// The two sets diverge on exactly one shape, and it is a shape real copy has: a missing
+// space after a word. `Register herehttps://host/r?access_token=…` is one keystroke from
+// ordinary. For a DOTTED host the scheme-less pass below happened to rescue it — the
+// authority inside the run starts after `//`, which is a bounded position — but a DOTLESS
+// host has no dot for schemelessScreenRunRe to match on, so `foohttps://intranet/x?api_key=…`
+// went out unscreened. That is the `https://sup3r-s3cret/` shape the knowledge base names
+// outright: a well-formed absolute URL whose entire content is the token, in the host.
+//
+// Screening the unbounded set is a strict WIDENING of what gets checked, so the only thing
+// it can produce that the narrow set did not is a REFUSAL — never a publication. That is
+// the same direction urlRunStartIsBounded's own comment accepts for `caféhttps://…`.
+func rejectCredentialQueryParamsInText(text string) error {
+	for _, raw := range findScreenURLRuns(text) {
+		if err := rejectCredentialQueryParams(trimTweetURLPunct(raw)); err != nil {
+			return err
+		}
+	}
+	for _, raw := range findSchemelessScreenRuns(text) {
+		// Parsed as https so net/url reads the authority as an authority; the tweet is
+		// published with the caller's own bytes either way, and which scheme X resolves
+		// a bare host to has no bearing on whether its query names a credential.
+		if err := rejectCredentialQueryParams("https://" + trimTweetURLPunct(raw)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// schemelessScreenRunRe matches a scheme-less link that carries a query or a fragment:
+// a dotted host with an alphabetic TLD, optional path, and then a `?` or `#` with
+// something after it.
+//
+// X linkifies `www.events.example/r?access_token=…` and bare `events.example/r?…` just as
+// it linkifies an `https://` one, and publishes it to the promoted-tweet audience the same
+// way — but tweetURLRe requires a scheme, so the pre-publication screen never inspected
+// either, and an operator who pastes a scheme-less link out of their logged-in browser
+// had no guard at all.
+//
+// The `?`/`#` requirement is the whole of what keeps this from misfiring on prose. This
+// screen only ever asks whether a QUERY OR FRAGMENT parameter names a credential, so a
+// run with neither has nothing for it to read; requiring one means `see agenda.md`,
+// `v1.2`, `Node.js` and every other dotted token in ordinary copy are never candidates.
+// Over-matching here costs a refusal the operator can fix by deleting a parameter;
+// under-matching costs a published credential.
+//
+// The host has two shapes, and the first version of this pattern had only half of one.
+// Requiring the final label to be `[a-z]{2,}` read as "a TLD is a word", which let two
+// perfectly linkifiable forms straight through: a dotted-quad IPv4 host, whose final
+// label is numeric, and a punycode IDN like `events.xn--p1ai`, whose final label carries
+// digits and hyphens — and `xn--` is how EVERY internationalized TLD is spelled on the
+// wire, so that was not an exotic case but the entire non-Latin web. Both are matched
+// now. The TLD still has to START with a letter, which is what keeps `v1.2?` out, and
+// the IPv4 alternative is a separate branch rather than a loosening of the general one.
+//
+// Not covered, deliberately: a scheme-less BRACKETED IPv6 host (`[2001:db8::1]/r?t=…`).
+// X does not linkify that form, so it is not published as a link, and admitting `[` here
+// would collide with the markdown-link convention the scheme-ful scanner already has to
+// reason about.
+//
+// Also not covered, and this one is a DIVERGENCE from the snapshot redactor rather than a
+// gap in both: a scheme-less link with a path and NO query or fragment
+// (`events.example/reset/SECRET`). internal/dispatch's schemelessPathSnapshotRunRe does
+// match that shape. The two sides are kept in step on what a link LOOKS like — the host
+// production, the letter-initial TLD, the punycode and IPv4 forms — and deliberately not
+// on what to do about one, because their cost directions are opposite. That pattern's only
+// discriminator is a slash, and a slash is everywhere in prose; over-matching it on the
+// redactor's side loses a fragment of the operator's own copy from a diagnostic snapshot,
+// while over-matching it HERE refuses a brief X would have published, which no retry
+// fixes. This screen also has nothing to read in such a run: it asks whether a QUERY OR
+// FRAGMENT parameter names a credential, and a path-only run has neither. Adding it would
+// buy refusals and no new detection.
+var schemelessScreenRunRe = regexp.MustCompile(
+	`(?i)(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9@][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
+		`(?::\d+)?(?:/[^\s<>。、！？，：；]*)?[?#][^\s<>。、！？，：；]+`,
+)
+
+// schemelessUserinfoRunRe matches the OTHER scheme-less shape that carries a credential:
+// `user:password@host.tld`, with or without a query.
+//
+// The pattern above requires a `?` or `#`, because a query is the only thing it reads.
+// Userinfo is not in the query, so `bob:pw@events.example` — no query at all — was
+// screened by nothing, while the scheme-ful `https://bob:pw@events.example` beside it was
+// refused outright. The password is published verbatim either way; whether X renders the
+// run as a link does not change that the bytes go out in the tweet.
+//
+// The COLON in the userinfo is the whole discriminator, and it has to be there. Without
+// it this pattern matches `bob@events.example` — an ordinary email address, which is a
+// shape real tweet copy has constantly, and refusing those would make the screen worse
+// than the hole it closes. `user:password@host` is the RFC 3986 userinfo production with
+// a password in it; nothing else in prose looks like that. A userinfo with no colon
+// carries no password and is not matched.
+//
+// The colon is not QUITE the whole discriminator, and the gap is one this service's own
+// copy walks into constantly: a clock. `keynote 14:00@events.example` and
+// `session 9:30@main.stage` are the userinfo production byte for byte, and an events
+// platform writes that sentence every day. See userinfoRunIsClockShaped.
+var schemelessUserinfoRunRe = regexp.MustCompile(
+	`(?i)[a-z0-9._~%+-]+:[^\s<>@。、！？，：；]*@` +
+		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
+		`(?::\d+)?(?:/[^\s<>。、！？，：；]*)?`,
+)
+
+// schemefulRunMask blanks out every scheme-ful URL run in s, preserving byte offsets, so
+// the scheme-less scan cannot re-report the tail of a link rejectCredentialQueryParamsInText
+// has already screened.
+//
+// It masks the SAME set that screen covers — findScreenURLRuns, boundary rule not applied
+// — and the two have to be kept that way. Mask less than the screen covers and the
+// scheme-less pass re-reports an authority already checked; mask more and a run nothing
+// screened is hidden from the pass that would have caught it. The boundary rule used to
+// apply here, which put this helper in the first category: the unbounded run stayed
+// visible, and for a dotted host the scheme-less pass caught its authority as a second
+// line of defence. That rescue was real but incidental — it needed the host to contain a
+// dot — and it is not what the mask is for.
+func schemefulRunMask(s string) string {
+	idx := tweetURLRe.FindAllStringIndex(s, -1)
+	if idx == nil {
+		return s
+	}
+	b := []byte(s)
+	for _, m := range idx {
+		for i := m[0]; i < m[1]; i++ {
+			b[i] = ' '
+		}
+	}
+	return string(b)
+}
+
+// findSchemelessScreenRuns returns the scheme-less candidate runs in text. Offsets in the
+// mask line up with the original byte for byte, so the substrings handed back are the
+// caller's own bytes.
+func findSchemelessScreenRuns(text string) []string {
+	masked := schemefulRunMask(text)
+	scans := []struct {
+		re   *regexp.Regexp
+		skip func(string) bool
+	}{
+		{re: schemelessScreenRunRe},
+		{re: schemelessUserinfoRunRe, skip: userinfoRunIsClockShaped},
+	}
+	var runs []string
+	for _, scan := range scans {
+		for _, m := range scan.re.FindAllStringIndex(masked, -1) {
+			if !urlRunStartIsBounded(masked, m[0]) {
+				continue
+			}
+			run := text[m[0]:m[1]]
+			if scan.skip != nil && scan.skip(run) {
+				continue
+			}
+			runs = append(runs, run)
+		}
+	}
+	return runs
+}
+
+// userinfoRunIsClockShaped reports whether a scheme-less userinfo run is a time of day, a
+// score or a ratio written hard against a host rather than a credential pair.
+//
+// `keynote 14:00@events.example` parses as userinfo `14:00` on host `events.example`, and
+// there is no syntax that separates it from `bob:pw@events.example`. What separates them
+// is that BOTH sides of the colon are digits. A clock, a score (`3:4`) and a ratio are all
+// digits either side; a password that is also all digits sitting behind a username that is
+// also all digits is a shape nothing in this service produces, and one the scheme-ful
+// screen still catches the moment the operator writes the `https://`.
+//
+// The narrower test — reject when only the username is numeric — was the first spelling
+// and it gives up `9:hunter2@events.example` for nothing. Requiring both sides keeps that
+// refusal.
+//
+// This is a REFUSAL path, so the cost direction is what decides it: a false positive here
+// blocks a working brief before anything is created, and "keynote 14:00@…" is copy an
+// events platform writes every day.
+func userinfoRunIsClockShaped(run string) bool {
+	at := strings.IndexByte(run, '@')
+	if at < 0 {
+		return false
+	}
+	userinfo := run[:at]
+	colon := strings.IndexByte(userinfo, ':')
+	if colon < 0 {
+		return false
+	}
+	return isAllASCIIDigits(userinfo[:colon]) && isAllASCIIDigits(userinfo[colon+1:])
+}
+
+func isAllASCIIDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // twitterUTMParams is the allowlist of utm_* params THIS client generates (the source
 // of truth for both the real destination URL and the sanitized display copy).
+// appendUTMToRawQuery adds the UTM pairs to a raw query string WITHOUT re-encoding the
+// components already in it.
+//
+// The obvious implementation — ParseQuery, Set each UTM key, Encode — does not preserve
+// what this URL's contract says it preserves. url.Values.Encode sorts the keys and
+// re-escapes every value canonically, so `?ref=Acme%20Corp&x=1` comes back as
+// `?utm_campaign=…&x=1&ref=Acme+Corp` with the order changed and `%20` rewritten to `+`.
+// Both are equivalent to a spec-compliant server and neither is to a server that reads
+// its raw query, and this is the AD'S REAL CLICK DESTINATION: it is the one URL in this
+// package where a routing parameter arriving differently than the operator wrote it
+// sends paid traffic to the wrong page. The concept file and the API catalog both
+// promise these parameters survive verbatim, so the code has to keep them, not the
+// promise has to be weakened.
+//
+// Pre-existing components are therefore copied as BYTES. Only a component whose decoded
+// name collides with a UTM key this client is about to set is dropped — otherwise the
+// destination would carry two `utm_source` values and X's click reporting would attribute
+// against whichever one the landing page read first. Keys are emitted in a fixed order so
+// the result is deterministic, which the tests depend on and a reader comparing two
+// briefs does too.
+func appendUTMToRawQuery(rawQuery string, utm map[string]string) string {
+	keys := make([]string, 0, len(utm))
+	for k := range utm {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	added := make([]string, 0, len(keys))
+	for _, k := range keys {
+		added = append(added, url.QueryEscape(k)+"="+url.QueryEscape(utm[k]))
+	}
+	suffix := strings.Join(added, "&")
+
+	if rawQuery == "" {
+		return suffix
+	}
+
+	kept := make([]string, 0, strings.Count(rawQuery, "&")+1)
+	dropped := false
+	for _, component := range strings.Split(rawQuery, "&") {
+		name, _, _ := strings.Cut(component, "=")
+		// An unescapable name cannot be one of this client's own UTM names, so the
+		// component is kept as bytes. ParseQuery has already cleared the whole query
+		// above, so this is not the path that decides whether the URL is usable.
+		if decoded, err := url.QueryUnescape(name); err == nil {
+			if _, isUTM := utm[decoded]; isUTM {
+				dropped = true
+				continue
+			}
+		}
+		kept = append(kept, component)
+	}
+
+	// Nothing collided, so the original query is not REASSEMBLED at all — it is used
+	// exactly as written. Reassembly was the remaining gap in "byte for byte": splitting
+	// on `&` and rejoining silently normalises a query's empty components, so `a=1&&b=2&`
+	// came back as `a=1&b=2`. Equivalent to every parser, and still not what the contract
+	// says, and still a rewrite of a destination nothing needed to rewrite. The filtering
+	// path below runs only when a pre-existing `utm_*` key really has to be removed, and
+	// it now keeps empty components too — they cannot name a UTM key.
+	if !dropped {
+		return rawQuery + "&" + suffix
+	}
+	return strings.Join(append(kept, added...), "&")
+}
+
 func twitterUTMParams(in CampaignInput) map[string]string {
 	slug := in.EventSlug
 	if slug == "" {
@@ -1616,13 +2454,498 @@ func twitterUTMParams(in CampaignInput) map[string]string {
 	}
 }
 
+// buildTwitterUTMURL builds the REAL destination URL sent to X as part of an
+// authored tweet's text — the non-display counterpart of displayTwitterUtmURL
+// below. It is not itself persisted raw: it is embedded in TweetText, and
+// TweetText/Steps use the sanitized display form. validateRegistrationURL must
+// be called before this — it does not re-validate.
+//
+// THE REGISTRATION URL'S PRE-EXISTING QUERY IS PUBLISHED VERBATIM, and that is a
+// deliberate divergence from displayTwitterUtmURL, which strips it. The display
+// form's job is safe PERSISTENCE, so it can afford to drop params; this one is
+// the ad's actual click destination, and dropping a routing param would send
+// real traffic to the wrong page. The consequence is that a brief's registration
+// URL becomes publicly visible — in the tweet and in X Ads Manager — so it must
+// not carry a secret (a ?token=... style credential). docs/api-catalog.md states
+// the same constraint on the consumer-facing side.
+//
+// THE FRAGMENT IS PUBLISHED VERBATIM TOO, for the same reason as the query. It
+// used to be dropped, on the reasoning that a fragment is never transmitted to a
+// server and so cannot affect routing. That is true of the SERVER and false of the
+// page: `#register` scrolls to and focuses the registration form, and a hash-router
+// SPA reads the fragment as the ROUTE, so `https://events.example/#/register` with
+// its fragment removed lands on the site's front page instead. Dropping it sent paid
+// click traffic somewhere the brief did not ask for, and did it silently — the create
+// succeeded and the destination looked right in every step we print.
+//
+// The exposure argument does not survive the comparison either: the fragment is one
+// component of a URL this function already publishes whole. What actually protects it
+// is the screen, not the strip — the composed text goes through
+// rejectCredentialQueryParamsInText, whose credentialFragmentError arm refuses a
+// credential-shaped fragment before any mutating call. Stripping the fragment HERE
+// meant that arm never once saw the registration URL it was written for; it only ever
+// examined links the operator typed into their own copy.
+func buildTwitterUTMURL(in CampaignInput) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(in.RegistrationURL))
+	if err != nil || !u.IsAbs() || u.Hostname() == "" {
+		return "", fmt.Errorf("registration URL %q is not usable to build a destination URL", redactURLForError(in.RegistrationURL))
+	}
+	// u.Query() DISCARDS the error ParseQuery returns — the same trap
+	// rejectCredentialQueryParams fails closed on, and it is WORSE here. There the
+	// unreadable pairs were merely invisible to the screen; here they are invisible and
+	// then OVERWRITTEN, because the re-encoded query replaces RawQuery wholesale. A
+	// registration URL carrying `?ref=partner;session_token=...` would lose its routing
+	// parameters silently, send real click traffic to the wrong page, and reach the
+	// credential screen with nothing left to find. A query this function cannot read in
+	// full is one it must not rewrite.
+	if _, err := url.ParseQuery(u.RawQuery); err != nil {
+		return "", fmt.Errorf("the query of registration URL %q could not be parsed, so the destination URL cannot be built without silently dropping its parameters; fix or remove the URL's query string", redactURLForError(in.RegistrationURL))
+	}
+	u.RawQuery = appendUTMToRawQuery(u.RawQuery, twitterUTMParams(in))
+	return u.String(), nil
+}
+
+// authoredTweetStatus renders, for a partial-failure error message, whether this
+// call published a tweet — the one artifact in this flow a retry does NOT reuse.
+// Empty when nothing was authored, so it appends nothing to the campaign/line-item
+// status pair it sits beside.
+//
+// It names the id AND what to do with it. Authoring is unconditional (see Step 4):
+// a retry that leaves tweetId empty re-runs it and publishes a SECOND tweet under
+// the LF handle, while a retry that passes this id back as tweetId skips authoring
+// entirely and promotes the tweet that is already live. Naming the id without that
+// sentence left the operator to infer the one thing that decides between those two
+// outcomes, which is how "the id is returned" gets read as "the retry reuses it".
+func authoredTweetStatus(id string) string {
+	if id == "" {
+		return ""
+	}
+	return fmt.Sprintf(" / authored tweet %s PUBLISHED, not yet promoted — retry with tweetId=%s to promote it; retrying without it publishes a SECOND tweet", id, id)
+}
+
+// tweetURLRe matches the URL runs X replaces with a t.co link: an http/https
+// scheme through to the next whitespace. Deliberately not a full URL grammar —
+// see weightedTweetLen's best-effort note.
+//
+// CASE-INSENSITIVE because URI schemes are: RFC 3986 §3.1 makes `HTTPS://` the same
+// scheme as `https://`, X wraps it the same way, and a case-sensitive pattern counted
+// such a link at its raw length instead of 23 — rejecting, before the create, copy X
+// would have accepted.
+//
+// The run also stops at a handful of characters that cannot appear unescaped in a URL
+// and DO appear immediately after one: `<` and `>`, the plain-text convention for
+// delimiting a bare link, and the CJK sentence punctuation that follows a link with no
+// space in front of it. Trimming the tail is not enough for these — `…lfx.dev、そして`
+// has the comma in the MIDDLE of the whitespace-delimited run, so a trailing trim never
+// reaches it and the whole tail vanishes into the link's fixed 23. This is not
+// hypothetical for LF: KubeCon China and Open Source Summit Japan briefs are written
+// this way, and undercounting at the 280 boundary means the campaign and the line item
+// are created before X refuses the tweet.
+//
+// The pattern carries NO `\b` in front of the scheme, and findTweetURLRuns applies the
+// boundary itself. Go's `\b` is defined over `\w`, which INCLUDES `_`, so there is no
+// word boundary between the `_` and the `h` of `_https://…` and the whole run went
+// unmatched — a link written `_https://events.example/cb?access_token=…` (an underscore
+// is how markdown italicises, and how a copied link arrives out of half the chat clients
+// an operator pastes from) was neither screened before publication nor redacted out of
+// the snapshot. RE2 has no lookbehind, so the boundary cannot live in the pattern;
+// findTweetURLRuns checks the preceding rune against [A-Za-z0-9] instead, which is `\b`'s
+// intent — do not match a scheme buried inside a longer word — with `_` counted as the
+// delimiter it actually is.
+var tweetURLRe = regexp.MustCompile(`(?i)https?://[^\s<>。、！？，：；]+`)
+
+// urlRunStartIsBounded reports whether a run beginning at byte offset start in s is at a
+// real boundary: the start of the text, or preceded by a character that is not an ASCII
+// letter or digit. `_`, `-`, `.`, quotes and brackets are all delimiters here; only an
+// ASCII alphanumeric in front of the run means it is part of a longer word.
+//
+// ASCII, not `unicode.IsLetter`. The wider test was the obvious spelling and it was wrong
+// in exactly the place this file already knows about: CJK copy puts no space before a
+// link. The stop set on both scanners lists `。`, `、`, `！`, `？`, `，`, `：`, `；`
+// precisely because a CJK sentence ends without one — and then this helper turned around
+// and treated the CJK word itself as proof the link was not a link, so
+// `登録events.example/r?access_token=…` was dropped from the candidate set unscreened and
+// published. A run cannot be "part of a longer word" when the script in front of it does
+// not use spaces to make words in the first place.
+//
+// The cost of the narrowing is an accented Latin letter hard against a scheme —
+// `caféhttps://…` is now treated as a link start where it was not before. That is not a
+// shape real copy has, and the direction it errs in is a refusal, not a publication.
+func urlRunStartIsBounded(s string, start int) bool {
+	if start == 0 {
+		return true
+	}
+	r, _ := utf8.DecodeLastRuneInString(s[:start])
+	return !isASCIIAlphanumeric(r)
+}
+
+// isASCIIAlphanumeric reports whether r is one of A-Z, a-z or 0-9.
+func isASCIIAlphanumeric(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
+
+// findScreenURLRuns returns EVERY scheme-ful run in s, boundary rule not applied.
+//
+// This is the set the credential screen and schemefulRunMask work on. It is deliberately
+// wider than findTweetURLRuns: a run X will not linkify is still a run X publishes, and
+// the screen's question is what gets published rather than what gets wrapped in a t.co
+// link. See rejectCredentialQueryParamsInText for the shape that divides the two.
+//
+// Keep both helpers reading from tweetURLRe here rather than letting either re-derive the
+// match set — the difference between them must stay exactly the boundary rule, visible in
+// one place, and not drift into two subtly different scanners.
+func findScreenURLRuns(s string) []string {
+	idx := tweetURLRe.FindAllStringIndex(s, -1)
+	if idx == nil {
+		return nil
+	}
+	runs := make([]string, 0, len(idx))
+	for _, m := range idx {
+		runs = append(runs, s[m[0]:m[1]])
+	}
+	return runs
+}
+
+// findTweetURLRuns returns the URL runs in s, applying the boundary rule tweetURLRe no
+// longer carries. This is the LINKIFICATION set: what X wraps in a t.co link, used by the
+// weighting and the destination match. The credential screen deliberately does NOT use it
+// — see findScreenURLRuns.
+func findTweetURLRuns(s string) []string {
+	idx := tweetURLRe.FindAllStringIndex(s, -1)
+	if idx == nil {
+		return nil
+	}
+	runs := make([]string, 0, len(idx))
+	for _, m := range idx {
+		if !urlRunStartIsBounded(s, m[0]) {
+			continue
+		}
+		runs = append(runs, s[m[0]:m[1]])
+	}
+	return runs
+}
+
+// tweetURLTrailingPunct is the trailing punctuation a URL run absorbs but a link does
+// not own: the sentence the URL sits in ends after the link, not inside it.
+//
+// The characters that end a run OUTRIGHT — `<`, `>` and the CJK sentence marks — are not
+// listed here; tweetURLRe excludes them from the run in the first place, because those
+// arrive mid-run rather than at the tail. See its comment.
+const tweetURLTrailingPunct = `.,;:!?'"`
+
+// trimTweetURLPunct gives back the part of a matched run that is actually the link.
+//
+// `\S+` runs to the next whitespace, so "see https://lfx.dev." hands back a match with
+// the full stop glued on. That miscounts in BOTH directions around the 280 boundary —
+// the period is absorbed into the fixed t.co weight instead of being counted as its own
+// character — and it hands a trailing `.` or `)` to url.Parse in the credential screen.
+//
+// This is the deliberate opposite of sanitizeSnapshotText's greedy run in
+// internal/dispatch/creds.go, and the two must not be made to match. There, over-reach
+// fails SAFE: a character too many is one more character redacted out of a snapshot.
+// Here it fails unsafe in both directions — a false pre-create rejection of valid copy,
+// or a create that X then refuses after the campaign and line item exist.
+//
+// A closing bracket is trimmed only when the run has no matching opener, so a genuine
+// parenthesised URL keeps the bracket that belongs to it.
+//
+// The walk is by RUNE, not by byte. A byte-wise loop could only ever trim the ASCII set,
+// because every character in tweetURLTrailingPunct outside it is multi-byte and its last
+// byte matches nothing; worse, comparing a single byte of a multi-byte character against
+// an ASCII table is a comparison against a fragment of a character.
+func trimTweetURLPunct(run string) string {
+	for len(run) > 0 {
+		last, size := utf8.DecodeLastRuneInString(run)
+		switch {
+		case strings.ContainsRune(tweetURLTrailingPunct, last):
+		case last == ')' && strings.Count(run, "(") < strings.Count(run, ")"):
+		case last == ']' && strings.Count(run, "[") < strings.Count(run, "]"):
+		case last == '}' && strings.Count(run, "{") < strings.Count(run, "}"):
+		default:
+			return run
+		}
+		run = run[:len(run)-size]
+	}
+	return run
+}
+
+// weightedTweetLen counts s the way X counts a Tweet's length: EVERY http/https
+// URL in s is counted at the fixed tcoURLWeight rather than its literal rune
+// length, because X wraps every URL it finds — not only the destination URL this
+// client appends — to a t.co link of that weight.
+//
+// Scanning s is the point, and is what the helper's contract always claimed. An
+// earlier revision discounted only URLs the caller passed in, so a URL the
+// operator had typed into their OWN copy was counted at full rune length: copy
+// composed to the documented rule, and accepted by X, was rejected before the
+// create. Counting every occurrence rather than the first matters for the same
+// reason — X weights each one.
+//
+// Every OTHER rune is weighted by X's published weighted-ranges rule rather than
+// counted as one: a codepoint inside tweetWeightOneRanges costs 1 and everything
+// else costs 2, and an emoji presentation sequence costs 2 in total however many
+// codepoints it spans. An earlier revision counted every non-URL rune as 1, which
+// UNDERCOUNTED CJK and made the pre-create guard a promise the create could not
+// keep: docs/api-catalog.md says text over the 280-character cap is rejected before
+// anything is created, but 200 Japanese characters (400 to X) passed the guard, the
+// campaign and line item were created, and only then did X refuse the tweet — the
+// exact avoidable degrade the up-front validation block exists to prevent.
+//
+// The emoji collapse is not a refinement, it is what keeps the fix from breaking
+// the other direction. Weighing an emoji per-codepoint would charge a ZWJ family
+// sequence 10 or 12 where X charges 2, and a guard that OVERCOUNTS invents a
+// rejection: copy X would have accepted is refused before the create, with no way
+// for the operator to tell why. Undercounting only degrades a create that X then
+// refuses; overcounting blocks a valid one outright, so the collapse is the arm
+// that must be right.
+func weightedTweetLen(s string) int {
+	// NFC FIRST, exactly as twitter-text does, because X weighs the normalized form and
+	// this guard is only worth having if it counts what X counts. A decomposed "é"
+	// (U+0065 U+0301) is two runes here and one to X: near the limit that is another
+	// OVER-count inventing a rejection of copy X would have accepted. Normalizing is
+	// also the conservative direction by construction — NFC composition never lengthens
+	// a string in runes — so it can only move this count toward safety.
+	//
+	// The normalized form is used for COUNTING ONLY. The text published is the caller's
+	// own bytes, unchanged: X normalizes on its side, and silently rewriting an
+	// operator's copy is not this function's business.
+	s = norm.NFC.String(s)
+
+	// URLs next: X rewrites each to a t.co link of fixed weight regardless of the
+	// codepoints inside it, so they must not also be weighed rune by rune.
+	n := 0
+	rest := s
+	for _, run := range findTweetURLRuns(s) {
+		// The trimmed link is a PREFIX of the matched run, so it still locates at the
+		// run's own offset; advancing by its length alone leaves the trailing
+		// punctuation in rest, where weightedRunLen charges it as the ordinary
+		// character it is rather than burying it inside the fixed t.co weight.
+		u := trimTweetURLPunct(run)
+		idx := strings.Index(rest, u)
+		if idx < 0 {
+			// Unreachable: u came from rest's own prefix-ordered matches.
+			continue
+		}
+		n += weightedRunLen(rest[:idx]) + tcoURLWeight
+		rest = rest[idx+len(u):]
+	}
+	return n + weightedRunLen(rest)
+}
+
+// runeRange is an inclusive codepoint interval.
+type runeRange struct{ lo, hi rune }
+
+// tweetWeightOneRanges are the codepoint ranges X weighs at 1; every codepoint
+// outside them weighs 2. These are X's published weighted ranges (the
+// `weightedRanges` of twitter-text's v3 configuration, whose weights of 100 against
+// a scale of 100 and a defaultWeight of 200 are 1 and 2 here). Latin, digits and
+// punctuation fall in the first range; CJK, Hangul, Cyrillic beyond the first range,
+// and the emoji planes do not, which is the whole point.
+var tweetWeightOneRanges = []runeRange{
+	{0x0000, 0x10FF},
+	{0x2000, 0x200D},
+	{0x2010, 0x201F},
+	{0x2032, 0x2037},
+}
+
+// emojiPlaneLo/emojiPlaneHi bound the supplementary planes X's emoji set lives in.
+// A codepoint at or above emojiPlaneLo starts an emoji presentation sequence on its
+// own; a BMP codepoint starts one only when followed by U+FE0F, the variation
+// selector that REQUESTS emoji presentation. That split is what keeps a bare "©" or
+// "▶" weighed by the range table (X weighs those as text, and "©" as 1) while
+// "©️" and "▶️" collapse to 2 like any other emoji.
+const (
+	emojiPlaneLo = 0x1F000
+	emojiPlaneHi = 0x1FFFD
+	// zeroWidthJoiner binds the parts of a composed emoji (family, profession).
+	zeroWidthJoiner = 0x200D
+	// variationSelector16 requests emoji presentation for a BMP codepoint.
+	variationSelector16 = 0xFE0F
+	// variationSelector15 requests TEXT presentation. It ENDS an emoji cluster rather
+	// than joining one — see emojiClusterLen.
+	variationSelector15 = 0xFE0E
+	// combiningEnclosingKeycap completes a keycap sequence ("1️⃣").
+	combiningEnclosingKeycap = 0x20E3
+	skinToneLo               = 0x1F3FB
+	skinToneHi               = 0x1F3FF
+	// regionalIndicatorLo/Hi are the letters a country flag is spelled with: a flag is
+	// exactly TWO of them and X weighs the pair as one emoji. They are handled as their
+	// own case because a regional indicator is not a modifier of the one before it —
+	// left to the joiner rules a flag would be read as two separate emoji and weighed 4.
+	regionalIndicatorLo = 0x1F1E6
+	regionalIndicatorHi = 0x1F1FF
+	// tagLo/tagHi are the tag characters that spell out subdivision flags.
+	tagLo = 0xE0020
+	tagHi = 0xE007F
+)
+
+// weightedRunLen weighs a stretch of text that contains no URL.
+func weightedRunLen(s string) int {
+	n := 0
+	rs := []rune(s)
+	for i := 0; i < len(rs); {
+		if size := emojiClusterLen(rs[i:]); size > 0 {
+			// The whole sequence costs what a single default-weight codepoint costs.
+			n += 2
+			i += size
+			continue
+		}
+		n += runeWeight(rs[i])
+		i++
+	}
+	return n
+}
+
+// runeWeight is X's per-codepoint weight: 1 inside the published weighted ranges,
+// 2 outside them.
+func runeWeight(r rune) int {
+	for _, rr := range tweetWeightOneRanges {
+		if r >= rr.lo && r <= rr.hi {
+			return 1
+		}
+	}
+	return 2
+}
+
+// isRegionalIndicator reports whether r is one of the 26 letters country flags are
+// spelled with.
+func isRegionalIndicator(r rune) bool {
+	return r >= regionalIndicatorLo && r <= regionalIndicatorHi
+}
+
+// emojiClusterLen returns how many runes of rs form ONE emoji presentation sequence
+// starting at rs[0], or 0 when no such sequence starts there. It is deliberately
+// permissive about what it will absorb once a sequence has started — joiners, skin
+// tones, variation selectors, keycaps and tag characters — because every one of
+// those is a modifier X folds into the single emoji it modifies, and absorbing one
+// too many can only move this count DOWN toward the safe direction, never up into
+// inventing a rejection.
+func emojiClusterLen(rs []rune) int {
+	if len(rs) == 0 {
+		return 0
+	}
+	first := rs[0]
+	inPlane := first >= emojiPlaneLo && first <= emojiPlaneHi
+	// A BMP codepoint is only an emoji when it ASKS to be one — and U+FE0F is not the
+	// only way it asks. A skin-tone modifier or an enclosing keycap after a BMP base is
+	// itself the request: `✊🏽` is U+270A followed by U+1F3FD with NO variation selector
+	// between them, and `1⃣` is a digit followed by U+20E3. Requiring U+FE0F refused to
+	// see either sequence and charged 2 per codepoint — 4 for a fist X charges 2 for —
+	// which is the OVER-count direction the asymmetry above forbids, because it invents
+	// a rejection of copy X would have accepted.
+	//
+	// Reading a modifier as a request cannot err the other way. A modifier following a
+	// base that is not really an emoji is malformed text no operator writes, and folding
+	// it into one cluster charges 2 where the per-rune pass charged 3 — still down,
+	// still the safe direction.
+	requested := len(rs) > 1 && (rs[1] == variationSelector16 ||
+		rs[1] == combiningEnclosingKeycap ||
+		(rs[1] >= skinToneLo && rs[1] <= skinToneHi))
+	if !inPlane && !requested {
+		return 0
+	}
+	// A flag is a PAIR of regional indicators and nothing else; consume exactly two so
+	// the pair weighs 2 rather than 2 each, and so a run of four (two flags) is read as
+	// two emoji rather than one long one.
+	if isRegionalIndicator(first) {
+		if len(rs) > 1 && isRegionalIndicator(rs[1]) {
+			return 2
+		}
+		return 1
+	}
+	i := 1
+	for i < len(rs) {
+		r := rs[i]
+		switch {
+		// U+FE0E is absent on purpose, and it is the one selector that must NOT be
+		// absorbed. It requests TEXT presentation — it is the codepoint that says "do
+		// not render the one before me as an emoji" — so a sequence containing it is
+		// not an emoji sequence at all. No RGI emoji sequence contains U+FE0E, and
+		// twitter-text's generated data has none, so ending the cluster before it is
+		// what twitter-text does rather than a guess about it: `U+1F5A5 U+FE0E` weighs
+		// 4 there, and absorbing the selector charged 2. Terminating here needs none of
+		// the generated table the round-13 decline was about.
+		case r == variationSelector16,
+			r == combiningEnclosingKeycap,
+			r >= skinToneLo && r <= skinToneHi,
+			r >= tagLo && r <= tagHi:
+			i++
+		case r == zeroWidthJoiner && i+1 < len(rs):
+			// The joiner AND the codepoint it joins belong to this one emoji.
+			i += 2
+		case r == variationSelector15:
+			return i
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+// composeTweetText builds the FINAL text of an authored tweet from caller
+// copy plus the real destination URL, and validates it before any mutating
+// call. The destination URL is appended (space-separated) unless the caller's
+// copy already embeds it verbatim, so an authored ad always carries a click
+// destination. The composed text must be non-empty and within X's per-Tweet
+// character cap, counting the embedded URL at its fixed t.co weight rather
+// than its raw length (see weightedTweetLen) — a UTM-decorated registration
+// URL is easily 120+ raw runes, and counting it verbatim would reject valid
+// copy X would accept.
+// textCarriesURL reports whether want appears in text as a LINK IN ITS OWN RIGHT, using
+// the same run scanner and punctuation trim that weightedTweetLen counts with.
+//
+// strings.Contains was the wrong question. A URL is a substring of any URL that carries
+// it in a redirect or tracking parameter, so copy containing
+// `https://click.example.net/r?next=https://events.lf.org/kc` reads as already having
+// the destination — the append is skipped, and X wraps the whole run as the OTHER link.
+// The ad then has no direct click destination at all, which is the one thing the append
+// exists to guarantee, and it fails silently: the create succeeds and the tweet looks
+// fine. Requiring the match to be a whole extracted run is what makes "the text already
+// has this link" mean what the caller meant by it.
+//
+// The runs are trimmed before comparison so `…/kc.` at the end of a sentence still
+// counts as the destination, which is the case an operator actually writes.
+func textCarriesURL(text, want string) bool {
+	if want == "" {
+		return true
+	}
+	for _, run := range findTweetURLRuns(text) {
+		if trimTweetURLPunct(run) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func composeTweetText(callerText, destURL string) (string, error) {
+	trimmed := strings.TrimSpace(callerText)
+	if trimmed == "" {
+		return "", fmt.Errorf("invalid tweet text: must not be empty")
+	}
+	full := trimmed
+	if !textCarriesURL(trimmed, destURL) {
+		full = trimmed + " " + destURL
+	}
+	if n := weightedTweetLen(full); n > maxTweetWeightedChars {
+		return "", fmt.Errorf("invalid tweet text: weighted length %d (including the destination URL) exceeds X's %d-character limit", n, maxTweetWeightedChars)
+	}
+	// The weighted cap counts any URL as 23 regardless of its real length, so it is
+	// no bound at all on raw size. See maxTweetRawBytes.
+	if n := len(full); n > maxTweetRawBytes {
+		return "", fmt.Errorf("invalid tweet text: %d raw bytes (including the destination URL) exceeds the %d-byte request limit; shorten the URL or the copy", n, maxTweetRawBytes)
+	}
+	return full, nil
+}
+
 // displayTwitterUtmURL builds a click URL SAFE TO PERSIST in Steps / return to callers:
 // it strips any userinfo, fragment, and PRE-EXISTING query params from the registration
 // URL (which may carry secrets like ?token=...) and keeps ONLY the generated utm_*
-// params. This is the ONLY UTM URL this client emits (in the manual-tweet step); the
-// query-bearing registration URL is NOT sent to X by this client — the ad destination
-// on the promoted-tweet path comes from the tweet itself. Mirrors the reddit client's
-// displayRedditUTMURL.
+// params. When TweetID/TweetText are both empty (the manual-tweet workflow), this is
+// the only UTM URL this client emits, as a template for the operator to compose their
+// own tweet around. When TweetText IS set, the real (non-display) counterpart
+// buildTwitterUTMURL is embedded directly in the authored tweet's text — this display
+// form is still used for the corresponding Steps entry so a query-bearing URL is never
+// persisted. Mirrors the reddit client's displayRedditUTMURL.
 func displayTwitterUtmURL(in CampaignInput) string {
 	u, err := url.Parse(strings.TrimSpace(in.RegistrationURL))
 	if err != nil || !u.IsAbs() || u.Hostname() == "" {
@@ -1649,6 +2972,17 @@ func displayTwitterUtmURL(in CampaignInput) string {
 
 // CampaignInput carries the fields required to create an X Ads campaign.
 // Mirrors the TS TwitterCampaignCreateRequest.
+//
+// TweetID and TweetText are mutually exclusive inputs for Step 4 (the
+// promoted-tweet association): a non-empty TweetID always wins — it promotes
+// the caller's existing tweet as-is and TweetText, if also set, is ignored (a
+// step records that it was ignored). TweetText, when TweetID is empty, makes
+// CreateCampaign AUTHOR a NEW tweet via the X Ads API's account-scoped
+// "POST accounts/:id/tweet" endpoint and promote it. An authored tweet is
+// ALWAYS created with nullcast=true ("Promoted-Only"): it can be attached to
+// a Promoted Tweets campaign but does not appear on the public timeline or
+// in the poster's followers' feeds. This client never creates an organic
+// (nullcast=false) tweet.
 type CampaignInput struct {
 	EventName       string
 	EventSlug       string
@@ -1657,6 +2991,8 @@ type CampaignInput struct {
 	StartDate       string // YYYY-MM-DD
 	EndDate         string // YYYY-MM-DD
 	TweetID         string
+	TweetText       string
+	AsUserID        string
 	RegistrationURL string
 	HSToken         string
 }
@@ -1676,9 +3012,14 @@ type CampaignResult struct {
 	// There is NO recoverable fallback: TwitterURL is the bare ads-manager constant and
 	// carries no account id, so a row written before this field existed records no
 	// provenance and is waved through as "unknown". Only re-dispatch can give it one.
-	AccountID       string
-	LineItemName    string
-	LineItemID      string
+	AccountID    string
+	LineItemName string
+	LineItemID   string
+	// AuthoredTweetID is the id of a NEW promoted-only tweet this call authored
+	// (via TweetText), as opposed to an existing tweet the caller supplied via
+	// TweetID. Empty when TweetID was used, when no creative input was supplied
+	// at all, or when authoring did not confirm an id (see PromotedTweetWarning).
+	AuthoredTweetID string
 	PromotedTweetID string
 	// PromotedTweetWarning is non-empty when the promoted-tweet association could
 	// not be confirmed (POST failed, or returned a malformed/empty response). The
@@ -1853,6 +3194,33 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
+	// TweetText authors a NEW tweet in Step 4 and is only USED when TweetID is
+	// empty (an explicit TweetID always wins — see CampaignInput's doc). Only
+	// validate it when it will actually be used: if both are supplied, the text
+	// is ignored (a step records that), so a malformed-but-unused TweetText must
+	// not fail an otherwise-valid campaign. composedTweetText is precomputed here
+	// (before any mutating call) so Step 4 need not re-validate.
+	var composedTweetText string
+	if in.TweetID == "" && strings.TrimSpace(in.TweetText) != "" {
+		destURL, err := buildTwitterUTMURL(in)
+		if err != nil {
+			return nil, err
+		}
+		text, err := composeTweetText(in.TweetText, destURL)
+		if err != nil {
+			return nil, err
+		}
+		// This is the one workflow that publishes URLs verbatim — the registration
+		// URL's pre-existing query AND any link the caller put in their own copy.
+		// Screen the COMPOSED text, so what is checked is exactly what is published,
+		// and do it here, before the campaign and line item exist, so the refusal
+		// costs nothing to recover from.
+		if err := rejectCredentialQueryParamsInText(text); err != nil {
+			return nil, err
+		}
+		composedTweetText = text
+	}
+
 	// Validate required account config before any mutating call. account_id and
 	// funding_instrument_id are both required by the X Ads campaign-create
 	// contract, but a stored connection may persist them as empty (or
@@ -1949,7 +3317,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				Steps:        steps,
 			}
 		}
-		resp, err := c.createRequest(ctx, "campaigns", campaignParams)
+		resp, err := c.createRequest(ctx, "campaigns", campaignParams, false /* NOT retry-safe: the by-name lookup is above the retry loop, not inside it */)
 		if err != nil {
 			// An AMBIGUOUS failure (mutating 3xx/5xx or a transport error) may follow a
 			// committed campaign create — X may have made the PAUSED campaign under the
@@ -1982,16 +3350,24 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// line item on retry) needs provider idempotency keys / the orchestrator claim,
 	// tracked in LFXV2-2665. Mirrors the meta/reddit clients' partial-result helper.
 	// lineItemID is captured by reference so the returned result includes it once
-	// Step 3 has created it.
+	// Step 3 has created it. authoredTweetID is captured for the same reason and is
+	// the most load-bearing of the three: a published tweet is the only IRREVERSIBLE
+	// artifact this flow creates — a PAUSED campaign and line item are reused by name
+	// on a retry, but a tweet is not, and it sits under the LF handle until someone
+	// deletes it. Declaring it below this closure (as it originally was) meant an
+	// abort between authoring and promotion persisted AuthoredTweetID: "" for a tweet
+	// that provably exists, leaving the prose Steps entry as its only trace.
 	var lineItemID string
 	var lineItemReused bool
+	var authoredTweetID string
 	partialResult := func() *CampaignResult {
 		return &CampaignResult{
-			Platform:     "twitter-ads",
-			CampaignName: campaignName,
-			CampaignID:   campaignID,
-			LineItemName: lineItemName,
-			LineItemID:   lineItemID,
+			Platform:        "twitter-ads",
+			CampaignName:    campaignName,
+			CampaignID:      campaignID,
+			LineItemName:    lineItemName,
+			LineItemID:      lineItemID,
+			AuthoredTweetID: authoredTweetID,
 			// Reused must be set on partial results too, not just the final success —
 			// a downstream error AFTER a campaign/line-item reuse still carries the
 			// config-drift signal (the closure reads the current campaignReused/
@@ -2054,7 +3430,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if err := c.pace(ctx); err != nil {
 			return partialResult(), fmt.Errorf("x line item creation aborted (%s): %w", campaignStatus(), err)
 		}
-		resp, err := c.createRequest(ctx, "line_items", lineItemParams)
+		resp, err := c.createRequest(ctx, "line_items", lineItemParams, false /* NOT retry-safe: the by-name lookup is above the retry loop, not inside it */)
 		if err != nil {
 			// An AMBIGUOUS failure (mutating 3xx/5xx or a transport error) may follow a
 			// committed line-item create — word it UNCONFIRMED so a caller reconciling
@@ -2077,21 +3453,112 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Line item created: %s (PAUSED, ALL_ON_TWITTER, AUTO bid)", lineItemID))
 	}
 
-	// Step 4: create promoted tweet if a tweet ID was provided. in.TweetID was
-	// already trimmed AND format-validated (numeric) in the up-front validation
-	// block, so a whitespace-only value ("   ") is treated as absent, a padded
-	// value (" 123 ") is sent as "123", and a non-numeric value never reaches
-	// here — it fails before the campaign + line item are created.
+	// Step 4: promote a tweet — either the caller's existing TweetID, or (when
+	// that is empty) a NEW promoted-only tweet authored from TweetText. in.TweetID
+	// was already trimmed AND format-validated (numeric) in the up-front
+	// validation block, so a whitespace-only value ("   ") is treated as absent,
+	// a padded value (" 123 ") is sent as "123", and a non-numeric value never
+	// reaches here — it fails before the campaign + line item are created.
+	// composedTweetText was similarly precomputed and validated up front.
 	tweetID := in.TweetID
 	var promotedTweetID string
 	var promotedTweetWarning string
+	// authoredTweetID is declared above the partialResult closure, not here, so an
+	// abort after a successful authoring still returns the tweet's id.
+
+	if tweetID != "" && strings.TrimSpace(in.TweetText) != "" {
+		// Explicit TweetID always wins (mirrors the reddit client's
+		// PostURL-beats-ImageURL precedence) — the supplied tweet is promoted
+		// as-is and no new tweet is authored. composedTweetText is only computed
+		// (and validated) when TweetID is empty, so it is intentionally NOT
+		// checked here — an unused, possibly-malformed TweetText must not fail an
+		// otherwise-valid campaign (see the up-front validation block).
+		steps = append(steps, "Both an explicit tweet ID and tweet text were supplied; the explicit tweet ID is promoted and the tweet text is ignored")
+	}
+
+	// NOT find-or-create, unlike Steps 2 and 3. Authoring is unconditional, so a
+	// repeat CreateCampaign that REUSES the campaign and line item by name still
+	// publishes a second tweet. The orchestrator's claim short-circuits an ordinary
+	// re-dispatch, so the reachable case is an operator-initiated retry after a
+	// partial failure — which is exactly what the UNCONFIRMED warnings below invite.
+	//
+	// Deferred to the LFXV2-2665 idempotency work rather than solved here, because
+	// the guard needs a promoted_tweets read on the reused line item and a decision
+	// about what to do with a tweet that is published but unattached. What makes the
+	// deferral tolerable is the partial-result fix above: the authored tweet's id now
+	// survives every abort on this path, so the operator retrying has the handle to
+	// the existing tweet instead of only a prose Steps line.
+	if tweetID == "" && composedTweetText != "" {
+		// Resolution stays HERE, after the campaign and line item exist, rather than
+		// moving into the up-front validation block. A resolve failure is a non-fatal
+		// degrade — a PAUSED campaign and line item plus instructions to post the
+		// tweet manually — and that is the same treatment an authoring failure gets
+		// three lines below. Hoisting it would turn one of those two sibling outcomes
+		// into a hard "nothing created" failure while the other kept degrading, for no
+		// gain: the campaign and line item are found-or-created BY NAME, so the retry
+		// this degrade invites reuses them rather than accumulating duplicates.
+		//
+		// It runs BEFORE pace, and that order is load-bearing. pace RESERVES the next
+		// write slot; it does not hold one open. With the reservation taken first, the
+		// promotable_users GET sat between the reservation and the write it was meant
+		// to space out, and a concurrent writer sharing this client (the dispatch layer
+		// shares one per connection, deliberately — see internal-platform-twitter) could
+		// reserve and issue inside that window, so the two writes landed together and
+		// rebuilt the burst the pacer exists to prevent. Reads are not paced and cost
+		// nothing to move, so the fix is simply to finish the read first and reserve
+		// immediately before the write.
+		asUserID, resolveErr := c.resolvePromotableUser(ctx, in.AsUserID)
+		if resolveErr != nil {
+			promotedTweetWarning = fmt.Sprintf("could not author a tweet: %s — post one manually, then add it as a promoted tweet in X Ads Manager", resolveErr.Error())
+			steps = append(steps, fmt.Sprintf("Tweet authoring skipped: %s", resolveErr.Error()))
+		} else {
+			if err := c.pace(ctx); err != nil {
+				return partialResult(), fmt.Errorf("x tweet authoring aborted (%s / %s): %w", campaignStatus(), lineItemStatus(), err)
+			}
+			resp, authorErr := c.createNullcastTweet(ctx, composedTweetText, asUserID)
+			switch {
+			case authorErr != nil && createOutcomeAmbiguous(authorErr):
+				// An AMBIGUOUS failure may follow a committed tweet publish — a blind
+				// retry could publish a SECOND tweet under the LF handle. Surface
+				// UNCONFIRMED so the caller verifies in X Ads Manager (and deletes any
+				// stray tweet not attached to an ad) before retrying, rather than the
+				// "safe to retry" wording used for a definite rejection.
+				promotedTweetWarning = fmt.Sprintf("tweet authoring is UNCONFIRMED: the request may have reached X but its outcome is unknown (%s) — a tweet MAY have been published; verify in X Ads Manager before retrying, and delete any stray tweet not attached to an ad", authorErr.Error())
+				steps = append(steps, fmt.Sprintf("Tweet authoring UNCONFIRMED (%s) — verify in X Ads Manager before retrying", authorErr.Error()))
+			case authorErr != nil:
+				// A DEFINITE failure (4xx rejection or pre-send error): no tweet was
+				// published, so it is safe to retry or compose one manually.
+				promotedTweetWarning = fmt.Sprintf("tweet authoring failed: %s — post one manually, then add it as a promoted tweet in X Ads Manager", authorErr.Error())
+				steps = append(steps, fmt.Sprintf("Tweet authoring failed: %s", authorErr.Error()))
+			default:
+				authoredTweetID = extractTweetID(resp)
+				if authoredTweetID == "" {
+					// A 2xx with no id is a malformed SUCCESS: a tweet may have been
+					// published without a usable id returned. UNCONFIRMED, not a clean
+					// failure — mirrors the promoted-tweet no-id handling below.
+					promotedTweetWarning = "tweet authoring is UNCONFIRMED: X returned a 2xx with no tweet ID (malformed response) — a tweet MAY have been published; verify in X Ads Manager before retrying, and delete any stray tweet not attached to an ad"
+					steps = append(steps, "Tweet authoring UNCONFIRMED (2xx with no ID, malformed response) — verify in X Ads Manager before retrying")
+				} else {
+					tweetID = authoredTweetID
+					steps = append(steps, fmt.Sprintf("Authored promoted-only tweet: %s (nullcast — not visible on the public timeline or to followers)", authoredTweetID))
+				}
+			}
+		}
+	}
+
 	if tweetID != "" {
 		if err := c.pace(ctx); err != nil {
-			// The campaign AND line item are already created (both PAUSED). Returning
-			// a nil result would discard both IDs, preventing cleanup/reconciliation
-			// and letting a caller retry create a duplicate. Return a partial result
-			// carrying both IDs (and the steps so far) alongside the wrapped error.
-			return partialResult(), fmt.Errorf("x promoted tweet creation aborted (%s / %s): %w", campaignStatus(), lineItemStatus(), err)
+			// The campaign AND line item are already created (both PAUSED), and when
+			// this call authored the tweet, so is that. Returning a nil result would
+			// discard every one of those IDs, preventing cleanup/reconciliation and
+			// letting a caller retry create a duplicate. Return a partial result
+			// carrying them (and the steps so far) alongside the wrapped error.
+			//
+			// The authored tweet is named in the message as well as the struct: it is
+			// the one artifact here that a retry will NOT reuse, so an operator
+			// reading only the error still learns a tweet is live and needs either
+			// promoting or deleting.
+			return partialResult(), fmt.Errorf("x promoted tweet creation aborted (%s / %s%s): %w", campaignStatus(), lineItemStatus(), authoredTweetStatus(authoredTweetID), err)
 		}
 		// The promoted_tweets endpoint does not accept entity_status; the API
 		// creates the association ACTIVE. Delivery is still gated by the PAUSED
@@ -2102,7 +3569,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		resp, err := c.createRequest(ctx, "promoted_tweets", map[string]string{
 			"line_item_id": lineItemID,
 			"tweet_ids":    tweetID,
-		})
+		}, false /* NOT idempotent: DUPLICATE_PROMOTABLE_ENTITY does not name the holder */)
 		switch {
 		case err != nil && isDuplicatePromotedTweetErr(err):
 			// X reports the tweet is already promoted (DUPLICATE_PROMOTABLE_ENTITY).
@@ -2146,13 +3613,31 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			}
 		}
 	} else {
+		// No tweet was promoted, so the operator is in the manual workflow. The two
+		// steps below are gated SEPARATELY, because they answer different questions
+		// and only one of them is specific to how we got here.
+		if composedTweetText == "" {
+			// Neither an explicit TweetID nor TweetText was supplied — the historical
+			// manual workflow. When TweetText WAS supplied but authoring failed, the
+			// authoring branch above already recorded a self-contained warning/step;
+			// this generic "no tweet ID provided" message would be misleading there
+			// (it reads as if nothing was even attempted), so it is gated out.
+			steps = append(steps, "No tweet ID provided — post a tweet manually, then add it as a promoted tweet in X Ads Manager")
+		}
+		// The destination template is NOT gated on that condition. Every degrade above
+		// — authoring refused, failed, or UNCONFIRMED — tells the operator to post a
+		// tweet manually, and this is the only place they are handed the UTM'd
+		// destination to put in it. Gating it alongside the sentence above gave the
+		// tweetText caller strictly LESS than the caller who supplied nothing, in the
+		// very same manual workflow, leaving them to rebuild the utm_* set by hand —
+		// exactly the divergence twitterUTMParams exists to prevent.
+		//
 		// Use the SANITIZED display URL for the persisted step — the raw registration
 		// URL can carry secrets in its userinfo/query/fragment, and Steps is written to
 		// the unencrypted campaigns.result column. It is a TEMPLATE (only the generated
 		// utm_* params survive; the brief URL's original query/fragment are dropped), so
 		// tell the operator to reapply any required routing params from the brief's
 		// original registration URL — mirrors the reddit manual workflow.
-		steps = append(steps, "No tweet ID provided — post a tweet manually, then add it as a promoted tweet in X Ads Manager")
 		steps = append(steps, fmt.Sprintf("Destination URL template (sanitized — utm_* only; reapply any required params from the brief's registration URL): %s", displayTwitterUtmURL(in)))
 	}
 
@@ -2162,6 +3647,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		CampaignID:           campaignID,
 		LineItemName:         lineItemName,
 		LineItemID:           lineItemID,
+		AuthoredTweetID:      authoredTweetID,
 		PromotedTweetID:      promotedTweetID,
 		PromotedTweetWarning: promotedTweetWarning,
 		Reused:               campaignReused || lineItemReused,
@@ -2217,6 +3703,46 @@ func extractID(resp *apiResponse) string {
 	return ""
 }
 
+// extractTweetID returns the id of a tweet created via accounts/:id/tweet.
+// The response is wrapped in {"data": ...} like every other endpoint, but the
+// tweet object inside carries a NUMERIC "id" (a legacy v1.1-shaped tweet
+// object, unlike every other Ads API entity's string id) — extractID's
+// string-typed "id" field silently fails to unmarshal against it, returning
+// "" even though Data holds a valid tweet. Read id_str instead: X's own
+// string-typed escape hatch for the same value, present on every tweet object
+// specifically because the numeric id can exceed float64's exact-integer range.
+//
+// The extracted value is held to the SAME shape an explicit TweetID must satisfy —
+// tweetIDRe plus the int64 range check — because it is used the same way: it is
+// promoted via promoted_tweets, recorded in AuthoredTweetID, and persisted into the
+// campaign's Steps as the id an operator will look up. The caller only tests it for
+// emptiness, so without this an arbitrary non-numeric string in a 2xx body (a proxy's
+// error document, a field X reshapes) would be reported as a CONFIRMED authored tweet
+// and then fail at promoted_tweets — after the campaign and line item exist, which is
+// exactly what validating the explicit id up front was meant to prevent. An invalid
+// value returns "" and so takes the existing malformed-2xx path, where the create is
+// reported as UNCONFIRMED rather than as a success carrying an id that is not one.
+// Nothing echoes the rejected value: it is upstream response text.
+func extractTweetID(resp *apiResponse) string {
+	if resp == nil || len(resp.Data) == 0 {
+		return ""
+	}
+	var obj struct {
+		IDStr string `json:"id_str"`
+	}
+	if err := json.Unmarshal(resp.Data, &obj); err != nil {
+		return ""
+	}
+	id := strings.TrimSpace(obj.IDStr)
+	if !tweetIDRe.MatchString(id) {
+		return ""
+	}
+	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+		return ""
+	}
+	return id
+}
+
 // isDuplicatePromotedTweetErr reports whether err from a promoted_tweets POST is
 // X's DUPLICATE_PROMOTABLE_ENTITY rejection. It checks the typed apiError's
 // machine-readable error codes (not the — no-longer-surfaced — body). A match does
@@ -2264,6 +3790,183 @@ func extractPromotedTweetID(resp *apiResponse) string {
 		return ""
 	}
 	return extractID(resp)
+}
+
+// resolvePromotableUser decides which X user id should author a nullcast
+// tweet on this ad account, via GET accounts/:id/promotable_users. It fails
+// closed rather than guessing: if pinned is non-empty, it must appear among
+// the account's promotable users, or the call is refused; if empty and
+// exactly one user is returned, that one is used; if empty and several are
+// returned, the call is refused so a caller can pin one. Never returns a user
+// id this call didn't itself verify against the account's promotable-user
+// list.
+//
+// Its errors carry COUNTS, never the user ids themselves. These strings travel
+// all the way out to an operator-facing warning on the campaign response and
+// into `steps`, which is persisted and rendered in the UI — so naming the
+// candidates published the account's promotable X user ids to every reader of
+// that campaign, including ones with no standing to see which handles the
+// account can post as. The count is what makes the message actionable ("there
+// is more than one, pin one"); the ids only ever needed to be visible in X Ads
+// Manager, where the operator setting asUserId is already looking.
+//
+// It PAGINATES, where it used to read page one and treat it as the whole list.
+// A pinned user sitting on page two was reported as not promotable at all, and
+// the single-candidate shortcut fired on an account whose second page held
+// more — picking an author the caller never chose. The walk is bounded by
+// maxListPages and dedupes cursors, exactly as findByName and ListAdAccounts
+// do.
+//
+// It differs from ListAdAccounts deliberately on ONE point: cursorUnknowable
+// ends the walk rather than failing it. ListAdAccounts is picking from a set
+// whose truncation is invisible and so refuses to conclude; here the code
+// paginated not at all until now, so every response shape that works today
+// reached a decision from page one. Turning an absent or empty next_cursor
+// into a hard error would break live accounts to fix a case that cannot be
+// worse than the status quo. What is read stays a superset of what was read
+// before, and the failure modes stay the ones the caller already handles.
+func (c *Client) resolvePromotableUser(ctx context.Context, pinned string) (string, error) {
+	var ids []string
+	cursor := ""
+	seen := map[string]struct{}{}
+	// enumerated records that the walk ended because the LIST ended, rather than
+	// because the page cap cut it short. Falling out of the loop otherwise looks
+	// identical to a clean finish, and every conclusion below — "not among them",
+	// "none at all", and above all the single-candidate auto-pick — is a claim about
+	// the WHOLE list that a truncated one cannot support.
+	enumerated := false
+	// endConfirmed is the STRONGER claim: the list is known to have ENDED, rather than
+	// merely having stopped producing a cursor this client can interpret. Only the
+	// single-candidate auto-pick needs it — see the switch below. It is satisfied two
+	// ways, and they are the same two findByName already relies on: an explicit
+	// cursorExhausted, or a SHORT page, which X documents as conclusively the last one
+	// ("If less than count entities are returned in the current page of the result set,
+	// the next_cursor value will be null"). A FULL page owing a cursor and not giving
+	// one is the ambiguous case, and the only one that blocks the pick.
+	endConfirmed := false
+	// count is requested explicitly so the short-page test above has a denominator.
+	// Under X's default page size the same body is short or full depending on a number
+	// this client never saw, which is not evidence anything may be concluded from.
+	countedPath := "promotable_users?count=" + strconv.Itoa(listPageSize)
+	for page := 0; page < maxListPages; page++ {
+		resp, err := c.requestPage(ctx, countedPath, cursor)
+		if err != nil {
+			return "", fmt.Errorf("looking up promotable users: %w", err)
+		}
+		if resp == nil {
+			// No body at all: there is no page to be short or full and no cursor to
+			// read, so this ends the walk on the same footing an empty page would.
+			// ids is whatever earlier pages held — with none, the tail reports the
+			// account as having no promotable users, which is what an empty list is.
+			enumerated = true
+			endConfirmed = true
+			break
+		}
+		var users []struct {
+			UserID string `json:"user_id"`
+		}
+		if len(resp.Data) > 0 {
+			if err := json.Unmarshal(resp.Data, &users); err != nil {
+				return "", fmt.Errorf("decoding promotable users: %w", err)
+			}
+		}
+		// A body with no `data` field, or an explicit `data: null`, leaves users NIL —
+		// and a nil slice is not an empty page. An empty page is X saying "there are no
+		// more"; a missing data field is X not answering, and reading the second as the
+		// first is how a page-one-of-one user gets auto-selected off the back of a
+		// malformed terminal response. findByName already refuses that shape for exactly
+		// this reason, and identity selection here has strictly more to lose: the wrong
+		// answer publishes a tweet under a handle the caller never chose.
+		if users == nil {
+			return "", fmt.Errorf("x returned a promotable-users page with no data field, so this account's promotable users cannot be confirmed; set asUserId to pick the author explicitly")
+		}
+		for _, u := range users {
+			if u.UserID != "" {
+				ids = append(ids, u.UserID)
+			}
+		}
+		// A pinned id can be confirmed the moment it is seen; there is no reason to
+		// walk the remaining pages to answer a membership question.
+		if pinned != "" {
+			for _, id := range ids {
+				if id == pinned {
+					return pinned, nil
+				}
+			}
+		}
+		if verdict := cursorVerdict(resp); verdict != cursorMore {
+			enumerated = true
+			endConfirmed = verdict == cursorExhausted || len(users) < listPageSize
+			break
+		}
+		if _, dup := seen[resp.NextCursor]; dup {
+			// The cursor's VALUE is deliberately absent: it is upstream response text
+			// and this error is persisted. Mirrors ListAdAccounts' phrasing.
+			return "", fmt.Errorf("x promotable-user listing did not terminate (repeated page cursor)")
+		}
+		seen[resp.NextCursor] = struct{}{}
+		cursor = resp.NextCursor
+	}
+	if !enumerated {
+		// The cap was reached with another page still outstanding, so what was read is
+		// a prefix of the list, not the list. findByName refuses on the same footing
+		// rather than reporting a not-found it cannot stand behind.
+		return "", fmt.Errorf("x promotable-user listing exceeded %d pages with more results remaining, so this account's promotable users could not be fully enumerated; check them in X Ads Manager", maxListPages)
+	}
+	// Every conclusion below is a claim about the WHOLE list, and the walk may have
+	// stopped on a page that said nothing about whether more exist. A FULL page owes a
+	// cursor under X's contract, so a full page with an unknowable one leaves the list
+	// unconfirmed — refuse rather than report a not-found or pick an author from it.
+	// A SHORT page is conclusively last on X's own documented rule and needs no cursor,
+	// which is what keeps ordinary small accounts working; see endConfirmed.
+	if !endConfirmed {
+		return "", fmt.Errorf("x returned a full page of promotable users with no next_cursor it gives a meaning to (absent or empty, not the documented null), so this account's promotable users cannot be confirmed complete; set asUserId to pick the author explicitly")
+	}
+	if pinned != "" {
+		return "", fmt.Errorf("the configured asUserId is not among this account's %d promotable users; check the account's promotable users in X Ads Manager", len(ids))
+	}
+	switch len(ids) {
+	case 0:
+		return "", fmt.Errorf("account %s has no promotable users to author a tweet as", c.account.AccountID)
+	case 1:
+		return ids[0], nil
+	default:
+		return "", fmt.Errorf("account %s has %d promotable users; set asUserId to pick one", c.account.AccountID, len(ids))
+	}
+}
+
+// createNullcastTweet authors a new promoted-only tweet via the X Ads API's
+// account-scoped tweet-create endpoint. nullcast is ALWAYS sent explicitly as
+// "true" — never relied on as a default — because the failure mode of an
+// omitted/wrong value is a real tweet published to the LF handle's public
+// timeline. It does not classify its own error/response; the caller applies
+// the same ambiguous/definite/duplicate handling used for the promoted_tweets
+// POST.
+func (c *Client) createNullcastTweet(ctx context.Context, text, asUserID string) (*apiResponse, error) {
+	params := map[string]string{
+		"text":     text,
+		"nullcast": "true",
+	}
+	if asUserID != "" {
+		params["as_user_id"] = asUserID
+	}
+	// idempotent=FALSE, as it is for all three of the other creates — none of this
+	// client's create endpoints is declared retry-safe. Campaign and line-item creates
+	// are found-or-created by name, but that lookup runs above the request layer's retry
+	// loop and a retry from inside it re-POSTs regardless. promoted_tweets comes closest
+	// to converging on the SERVER — a repeated POST comes back
+	// DUPLICATE_PROMOTABLE_ENTITY — but that code does not name the line item HOLDING the
+	// tweet, so it is not proof the association this call wanted exists, and its call
+	// site handles the duplicate explicitly rather than letting the loop swallow it.
+	// Tweet authoring has neither form: no name to find it by and no idempotency key, so X
+	// publishes a second tweet rather than refusing the repeat. A 429 can
+	// be reported AT or AFTER the write is accepted, so the request layer's automatic
+	// retry could publish two or three tweets under the LF handle before this function
+	// ever returned. The 429 comes back as an *apiError, which createOutcomeAmbiguous
+	// classifies as ambiguous, so the caller renders it UNCONFIRMED and tells the
+	// operator to verify in X Ads Manager — a human check before a second publish,
+	// which is the only safe form a retry of this call can take.
+	return c.createRequest(ctx, "tweet", params, false /* NOT idempotent: a retry publishes a second tweet */)
 }
 
 // Run states an X campaign/line item can be toggled between. X calls this
@@ -2317,7 +4020,7 @@ func (c *Client) updateEntityStatus(ctx context.Context, path, status string) er
 	if err := c.pace(ctx); err != nil {
 		return err
 	}
-	_, err := c.doRequest(ctx, http.MethodPut, path, map[string]string{"entity_status": status})
+	_, err := c.doRequest(ctx, http.MethodPut, path, map[string]string{"entity_status": status}, true /* idempotent: setting a status converges */)
 	return err
 }
 

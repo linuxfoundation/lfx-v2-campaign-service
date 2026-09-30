@@ -1544,6 +1544,8 @@ type TwitterAdsConnection struct {
 	Etag string
 	// Funding instrument for the ad account
 	FundingInstrumentID *string
+	// X/Twitter user id authorized to author this connection's tweets
+	AsUserID *string
 }
 
 type TwitterAdsConnectionConfig struct {
@@ -1553,6 +1555,8 @@ type TwitterAdsConnectionConfig struct {
 	AccountID *string
 	// X/Twitter funding instrument id (alphanumeric)
 	FundingInstrumentID string
+	// X/Twitter user id authorized to author this connection's tweets (numeric)
+	AsUserID *string
 }
 
 // X/Twitter Ads OAuth 1.0a credential set. Write-only; never returned.

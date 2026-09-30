@@ -539,6 +539,8 @@ type CreateTwitterAdsResponseBody struct {
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 	// Funding instrument for the ad account
 	FundingInstrumentID *string `form:"funding_instrument_id,omitempty" json:"funding_instrument_id,omitempty" xml:"funding_instrument_id,omitempty"`
+	// X/Twitter user id authorized to author this connection's tweets
+	AsUserID *string `form:"as_user_id,omitempty" json:"as_user_id,omitempty" xml:"as_user_id,omitempty"`
 }
 
 // GetTwitterAdsResponseBody is the type of the
@@ -561,6 +563,8 @@ type GetTwitterAdsResponseBody struct {
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 	// Funding instrument for the ad account
 	FundingInstrumentID *string `form:"funding_instrument_id,omitempty" json:"funding_instrument_id,omitempty" xml:"funding_instrument_id,omitempty"`
+	// X/Twitter user id authorized to author this connection's tweets
+	AsUserID *string `form:"as_user_id,omitempty" json:"as_user_id,omitempty" xml:"as_user_id,omitempty"`
 }
 
 // UpdateTwitterAdsResponseBody is the type of the
@@ -583,6 +587,8 @@ type UpdateTwitterAdsResponseBody struct {
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 	// Funding instrument for the ad account
 	FundingInstrumentID *string `form:"funding_instrument_id,omitempty" json:"funding_instrument_id,omitempty" xml:"funding_instrument_id,omitempty"`
+	// X/Twitter user id authorized to author this connection's tweets
+	AsUserID *string `form:"as_user_id,omitempty" json:"as_user_id,omitempty" xml:"as_user_id,omitempty"`
 }
 
 // TestTwitterAdsResponseBody is the type of the
@@ -4697,6 +4703,8 @@ type TwitterAdsConnectionConfigRequestBody struct {
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// X/Twitter funding instrument id (alphanumeric)
 	FundingInstrumentID string `form:"funding_instrument_id" json:"funding_instrument_id" xml:"funding_instrument_id"`
+	// X/Twitter user id authorized to author this connection's tweets (numeric)
+	AsUserID *string `form:"as_user_id,omitempty" json:"as_user_id,omitempty" xml:"as_user_id,omitempty"`
 }
 
 // TwitterAdsCredentialsRequestBody is used to define fields on request body
@@ -7327,6 +7335,7 @@ func NewCreateTwitterAdsTwitterAdsConnectionCreated(body *CreateTwitterAdsRespon
 		Status:              *body.Status,
 		Version:             *body.Version,
 		FundingInstrumentID: body.FundingInstrumentID,
+		AsUserID:            body.AsUserID,
 	}
 	v.Etag = etag
 
@@ -7417,6 +7426,7 @@ func NewGetTwitterAdsTwitterAdsConnectionOK(body *GetTwitterAdsResponseBody, eta
 		Status:              *body.Status,
 		Version:             *body.Version,
 		FundingInstrumentID: body.FundingInstrumentID,
+		AsUserID:            body.AsUserID,
 	}
 	v.Etag = etag
 
@@ -7505,6 +7515,7 @@ func NewUpdateTwitterAdsTwitterAdsConnectionOK(body *UpdateTwitterAdsResponseBod
 		Status:              *body.Status,
 		Version:             *body.Version,
 		FundingInstrumentID: body.FundingInstrumentID,
+		AsUserID:            body.AsUserID,
 	}
 	v.Etag = etag
 
@@ -15808,6 +15819,14 @@ func ValidateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionCon
 	err = goa.MergeErrors(err, goa.ValidatePattern("body.funding_instrument_id", body.FundingInstrumentID, "^[A-Za-z0-9]+$"))
 	if utf8.RuneCountInString(body.FundingInstrumentID) > 64 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.funding_instrument_id", body.FundingInstrumentID, utf8.RuneCountInString(body.FundingInstrumentID), 64, false))
+	}
+	if body.AsUserID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.as_user_id", *body.AsUserID, "^[0-9]+$"))
+	}
+	if body.AsUserID != nil {
+		if utf8.RuneCountInString(*body.AsUserID) > 32 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.as_user_id", *body.AsUserID, utf8.RuneCountInString(*body.AsUserID), 32, false))
+		}
 	}
 	return
 }

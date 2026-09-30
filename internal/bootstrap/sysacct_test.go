@@ -1263,3 +1263,59 @@ func TestSupportedCredentialKeysStillInstall(t *testing.T) {
 		})
 	}
 }
+
+// TestTwitterAsUserIDIsHeldToTheDesignLength: as_user_id is MaxLength(32) at
+// design/connection.go, but the shared maxValueLen here is 64, so a 33–64 digit value
+// passed bootstrap while the HTTP contract refused it. This installer writes past Goa
+// straight to the repository, so bootstrap was the one door that value could come through —
+// and it is the SHARED fallback row's publishing identity, so it would install ACTIVE and
+// only surface as a failure at tweet-authoring time, far from the operator who typed it.
+//
+// The 32-digit case is asserted beside the 33-digit one deliberately: a bound is only
+// pinned when both sides of it are, or a later tightening to, say, 19 (a real X user id is
+// a snowflake) passes a test that only checks that 33 is refused.
+func TestTwitterAsUserIDIsHeldToTheDesignLength(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		digits  int
+		refused bool
+	}{
+		{"at the design maximum", 32, false},
+		{"one past it", 33, true},
+		{"inside the old shared 64", 64, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := strings.Repeat("1", tc.digits)
+			err := requireShapes(model.ProviderTwitterAds, "acc1", map[string]string{"as_user_id": v})
+			if tc.refused {
+				if err == nil {
+					t.Fatalf("%d-digit as_user_id accepted; the connection contract caps it at 32", tc.digits)
+				}
+				if !strings.Contains(err.Error(), "as_user_id") {
+					t.Errorf("error %q does not name the key, so the operator cannot act on it", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("%d-digit as_user_id refused: %v", tc.digits, err)
+			}
+		})
+	}
+}
+
+// TestMaxValueLensOverridesAreLive guards the way this override can go quiet: maxValueLens
+// is keyed by provider and key, and a key that valueShapes does not carry is never looked
+// up — so a typo, or a key later dropped from valueShapes, leaves a bound that reads as
+// enforced and is not. The same failure mode as a shape rule for a key nobody validates.
+func TestMaxValueLensOverridesAreLive(t *testing.T) {
+	for provider, keys := range maxValueLens {
+		for key, n := range keys {
+			if _, ok := valueShapes[provider][key]; !ok {
+				t.Errorf("maxValueLens[%s][%s] = %d, but valueShapes has no rule for that key, so the bound never runs", provider, key, n)
+			}
+			if n >= maxValueLen {
+				t.Errorf("maxValueLens[%s][%s] = %d does not TIGHTEN the %d default; drop the entry or fix the bound", provider, key, n, maxValueLen)
+			}
+		}
+	}
+}

@@ -322,7 +322,11 @@ var valueShapes = map[model.Provider]map[string]*regexp.Regexp{
 	// design/connection.go Pattern()
 	model.ProviderLinkedInAds: {"account_id": numericID, "org_id": numericID},
 	model.ProviderMetaAds:     {"account_id": regexp.MustCompile(`^act_[0-9]+$`), "page_id": numericID},
-	model.ProviderTwitterAds:  {"account_id": alnumID, "funding_instrument_id": alnumID},
+	// as_user_id is numericID, not alnumID, and it is the one key here whose shape rule
+	// matters for more than a dead row: it is the connection's declared publishing
+	// identity, and bootstrap is the ONLY way it gets seeded. A malformed one installs a
+	// connection that refuses every caller-supplied asUserId without ever matching one.
+	model.ProviderTwitterAds: {"account_id": alnumID, "funding_instrument_id": alnumID, "as_user_id": numericID},
 	// design/connection.go Pattern() as of LFXV2-2665; runtime validators before that.
 	model.ProviderGoogleAds: {"account_id": numericID, "login_customer_id": numericID},
 	// positiveID, not numericID: both Microsoft ids are held to `^[1-9][0-9]{0,17}$` with
@@ -336,10 +340,34 @@ var valueShapes = map[model.Provider]map[string]*regexp.Regexp{
 	model.ProviderRedditAds:    {"account_id": regexp.MustCompile(`^[A-Za-z0-9_]+$`)},
 }
 
-// maxValueLen is design/connection.go's MaxLength(64). The runtime-only validators bound
-// nothing, so applying it to them too is a tightening, not a mirror — 64 characters is far
-// past any real numeric account id, and an unbounded value here reaches a header or a path.
+// maxValueLen is design/connection.go's MaxLength(64), the bound MOST of these ids carry.
+// The runtime-only validators bound nothing, so applying it to them too is a tightening, not
+// a mirror — 64 characters is far past any real numeric account id, and an unbounded value
+// here reaches a header or a path.
 const maxValueLen = 64
+
+// maxValueLens overrides that default where the design declares a TIGHTER MaxLength for one
+// key. The default is a ceiling shared by the keys that predate this map, not a fact about
+// every id: X's as_user_id is MaxLength(32) at design/connection.go, so a 33–64 digit value
+// passed here while the HTTP contract refused it — and this installer writes past Goa to the
+// repository, so bootstrap was the one door it could come through. It is a SHARED-row field
+// with no second opinion downstream, which is why the mismatch is worth a map rather than a
+// comment: the value would install ACTIVE and only surface as a failure at tweet-authoring
+// time, far from the operator who typed it.
+//
+// Add an entry here whenever a design MaxLength is narrower than 64; a key with no entry
+// keeps maxValueLen.
+var maxValueLens = map[model.Provider]map[string]int{
+	model.ProviderTwitterAds: {"as_user_id": 32}, // design/connection.go MaxLength(32)
+}
+
+// maxLenFor returns the length bound this provider/key is held to elsewhere.
+func maxLenFor(provider model.Provider, key string) int {
+	if n, ok := maxValueLens[provider][key]; ok {
+		return n
+	}
+	return maxValueLen
+}
 
 // requireShapes validates the values as SUPPLIED, and only those: an omitted account id is
 // the legal credentials-first state, and a key not supplied on a rotation keeps whatever the
@@ -361,9 +389,10 @@ func requireShapes(provider model.Provider, accountID string, cfg map[string]str
 		if !ok {
 			continue
 		}
-		if len(v) > maxValueLen || !re.MatchString(v) {
+		maxLen := maxLenFor(provider, key)
+		if len(v) > maxLen || !re.MatchString(v) {
 			return fmt.Errorf("bootstrap: %s %s %q does not match the shape this value is held to elsewhere (%s, at most %d chars) — see valueShapes",
-				provider, key, v, re, maxValueLen)
+				provider, key, v, re, maxLen)
 		}
 	}
 	// Second pass, not folded into the loop above: a key may carry a runtime rule the pattern

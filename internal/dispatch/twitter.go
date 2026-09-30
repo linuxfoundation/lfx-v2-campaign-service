@@ -46,6 +46,16 @@ type twitterConfig struct {
 	StartDate    string  `json:"startDate"` // YYYY-MM-DD
 	EndDate      string  `json:"endDate"`   // YYYY-MM-DD
 	TweetID      string  `json:"tweetId"`
+	// TweetText, when TweetID is empty, authors a NEW promoted-only (nullcast) tweet
+	// carrying the UTM'd registration URL, then promotes it — closing the manual-tweet
+	// gap. An explicit TweetID always wins over TweetText; if both are set, TweetText
+	// is ignored (a step records that). The authored tweet is ALWAYS nullcast — it
+	// never posts to the public timeline.
+	TweetText string `json:"tweetText"`
+	// AsUserID pins which of the ad account's promotable users authors the tweet. When
+	// empty, the client auto-resolves it (exactly one candidate) or refuses (zero or
+	// several candidates) rather than guessing which LF handle publishes.
+	AsUserID string `json:"asUserId"`
 }
 
 // TwitterDispatcher creates X (Twitter) campaigns for the orchestrator.
@@ -155,6 +165,56 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		return nil, notCreated(err)
 	}
 
+	// The PUBLISHING IDENTITY comes from the connection, not from caller JSON — the same
+	// rule linkedin's org_id follows, and for a sharper reason here.
+	//
+	// AsUserID names which handle a nullcast tweet is authored UNDER. The client's
+	// resolvePromotableUser confirms the id is promotable by this ad account, which is a
+	// different question: on the shared LF system connection every LF handle is promotable
+	// by the same account, so a project supplying another project's handle passes that
+	// check and publishes as them. That is a confused deputy — the caller names the
+	// identity, the service supplies the authority.
+	//
+	// So when the connection declares as_user_id, it WINS: a caller value must match it,
+	// and a caller that sends none inherits it rather than falling through to an
+	// auto-resolve that could land on a different handle. When the connection declares
+	// none, behaviour is unchanged — and the gap that leaves is narrow, because the
+	// client already refuses to guess when several candidates exist and the caller pinned
+	// nothing. Seeding as_user_id on the shared connection is what closes it for real.
+	//
+	// The check is GATED on authoring actually happening. as_user_id authorizes ONE act —
+	// publishing a tweet under a handle — and an explicit tweetId wins over tweetText, so
+	// on that path no tweet is authored, no promotable user is resolved, and this value is
+	// never read. Run unconditionally, it refused a promote-an-existing-tweet request over
+	// a field nothing would have used, which is also what docs/api-catalog.md promises
+	// ("only meaningful with tweetText"). It is the same treatment the client already gives
+	// an unused TweetText: a malformed but ignored field must not fail an otherwise-valid
+	// campaign.
+	//
+	// The gate decides WHETHER AN AUTHORIZATION CHECK RUNS, so it has to agree with the
+	// client's authoring condition on every input, not merely on the inputs a test happens
+	// to pass. The way it first failed to is worth keeping: it read `cfg.TweetID == ""`
+	// against a client that TRIMS (`in.TweetID = strings.TrimSpace(in.TweetID)`, client.go,
+	// before the emptiness test the gate was copied from), so a tweetId of "  " was
+	// non-empty HERE and empty THERE — the gate skipped the check and the client authored
+	// anyway, auto-resolving a promotable user while the connection's declared identity was
+	// neither inherited nor enforced. A whitespace string is the cheapest possible input to
+	// a field an attacker controls.
+	//
+	// Both sides now read the SAME normalized value: tweetID is trimmed once here and is
+	// what goes into CampaignInput, so the client's own trim is idempotent and the two
+	// conditions cannot disagree about emptiness. Normalizing once and passing it on is the
+	// fix; restating TrimSpace at the gate would only have moved the next drift one edit
+	// further out.
+	tweetID := strings.TrimSpace(cfg.TweetID)
+	var asUserID string
+	if tweetID == "" && strings.TrimSpace(cfg.TweetText) != "" {
+		asUserID, err = authorizedTwitterAsUserID(brief.ProjectID, res, cfg.AsUserID)
+		if err != nil {
+			return nil, notCreated(err)
+		}
+	}
+
 	// hsToken is a documented TOP-LEVEL config envelope field (docs/api-catalog.md);
 	// a request-supplied token takes precedence over the brief blobs so it drives the
 	// promoted-tweet utm_campaign instead of being silently ignored (matches the other
@@ -177,7 +237,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		BudgetUsd:       cfg.BudgetAmount, // account-currency amount (client field name is legacy)
 		StartDate:       cfg.StartDate,
 		EndDate:         cfg.EndDate,
-		TweetID:         cfg.TweetID,
+		TweetID:         tweetID, // normalized above; the gate and the client must agree on empty
+		TweetText:       cfg.TweetText,
+		AsUserID:        asUserID,
 	}
 
 	// Built through the client cache, so concurrent dispatches for this account share ONE
@@ -205,8 +267,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	//   1. a non-empty PromotedTweetWarning — the promoted-tweet association was
 	//      attempted but failed or is unconfirmed; OR
 	//   2. an empty PromotedTweetID — no tweet was attached at all (the documented
-	//      manual-tweet workflow when tweetId is omitted, or a silent 2xx-no-id
-	//      association); OR
+	//      manual-tweet workflow when neither tweetId nor tweetText is supplied, a
+	//      requested tweetText that failed/was unconfirmed to author, or a silent
+	//      2xx-no-id association); OR
 	//   3. Reused — the client REUSED an existing campaign and/or line item by name and
 	//      did NOT apply this request's budget/config/flight-dates, so it may be serving
 	//      under a different budget or an already-ENABLED line item with different dates
@@ -232,7 +295,16 @@ func campaignFromTwitter(ctx context.Context, r *twitter.CampaignResult, cfg twi
 	// Persist the budget/schedule/config the caller supplied. BudgetAmount is a daily
 	// cap in the account currency (X has no lifetime-budget flag on this path).
 	// ConfigSnapshot captures the validated config.
-	applyCampaignConfig(ctx, c, cfg.BudgetAmount, false, cfg.StartDate, cfg.EndDate, cfg)
+	//
+	// TweetText goes through sanitizeSnapshotText first, exactly as reddit.go does for
+	// its PostURL/ImageURL: config_snapshot is persisted UNENCRYPTED, and tweetText is
+	// the one field in this config that is operator-authored prose carrying a link. A
+	// registration URL pasted from a logged-in browser brings its query with it, and
+	// that query is what the snapshot would otherwise keep forever. The copy sent to X
+	// is untouched — only the stored copy is stripped.
+	snapshot := cfg
+	snapshot.TweetText = sanitizeSnapshotText(cfg.TweetText)
+	applyCampaignConfig(ctx, c, cfg.BudgetAmount, false, cfg.StartDate, cfg.EndDate, snapshot)
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT
 		// swallow it: on the created_degraded / UNCONFIRMED paths Result is the main
@@ -262,6 +334,32 @@ func campaignFromTwitter(ctx context.Context, r *twitter.CampaignResult, cfg twi
 // Tagging HERE rather than in each caller is what keeps Dispatch and ToggleStatus from
 // having to agree about it; the named return plus defer means a return site added later
 // cannot forget to re-attribute the error to the LF system row.
+// authorizedTwitterAsUserID decides which promotable user a nullcast tweet is authored
+// under, given the connection's declared identity and the caller's requested one.
+//
+// The connection is authoritative when it declares one. `resolvePromotableUser` in the
+// client answers "is this id promotable by this ad account", which on the SHARED LF system
+// connection is true of every LF handle — so it cannot answer "may THIS project publish as
+// that handle", and nothing else was asking. This is that check.
+//
+// Neither id appears in the returned error. Promotable-user ids in persisted error text is
+// a defect this branch has already fixed once (see the round-9 log entry); the operator
+// remedy is to correct the request or the connection, and naming the connection's own
+// identity back to a caller who guessed wrong would confirm the guess.
+func authorizedTwitterAsUserID(projectID string, res *resolved, requested string) (string, error) {
+	configured := strings.TrimSpace(res.providerConfig["as_user_id"])
+	requested = strings.TrimSpace(requested)
+	if configured == "" {
+		// No declared identity: unchanged behaviour. The client still refuses to guess
+		// between several promotable candidates when requested is empty.
+		return requested, nil
+	}
+	if requested != "" && requested != configured {
+		return "", fmt.Errorf("twitter connection for project %s does not authorize the requested asUserId; the connection pins which handle authors its tweets, so omit asUserId or have the connection updated", projectID)
+	}
+	return configured, nil
+}
+
 func validateTwitterConnection(projectID string, res *resolved) (creds twitterCreds, accountID string, err error) {
 	defer func() { err = res.systemScoped(err) }()
 	if res.status != model.StatusActive {

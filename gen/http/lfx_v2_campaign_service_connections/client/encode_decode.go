@@ -11506,6 +11506,7 @@ func marshalLfxv2campaignserviceconnectionsTwitterAdsConnectionConfigToTwitterAd
 		Label:               v.Label,
 		AccountID:           v.AccountID,
 		FundingInstrumentID: v.FundingInstrumentID,
+		AsUserID:            v.AsUserID,
 	}
 
 	return res
@@ -11534,6 +11535,7 @@ func marshalTwitterAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectio
 		Label:               v.Label,
 		AccountID:           v.AccountID,
 		FundingInstrumentID: v.FundingInstrumentID,
+		AsUserID:            v.AsUserID,
 	}
 
 	return res

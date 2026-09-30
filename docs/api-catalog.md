@@ -252,7 +252,7 @@ Because the connection is a singleton, there is **no service-generated `{id}` in
 >
 > **The reserved `system:linuxfoundation` scope is not addressable.** It holds the LF-owned credentials a project falls back to when it has connected no account of its own, and every one of the **seven** endpoints taking a caller-supplied `projectId` refuses it: `POST` with `400` (the colon cannot satisfy the slug pattern above), and `GET`/`PUT`/`DELETE`/`test`/`set-credential`/`accounts` with `404`. `404` rather than `403` — the reserved scope is not a project this API exposes, and answering "forbidden" would confirm to an unauthorized caller that something is there. Account discovery is the seventh and the only one that does not reach storage through a shared helper, so it needs its own guard: left open, `GET /projects/system:linuxfoundation/connection-google-ads/accounts` would decrypt the LF credential and enumerate the Linux Foundation's own ad accounts. A project that has no connection of its own still sees the system account's accounts through *its own* `projectId`, deliberately — it is shown the accounts its campaigns would actually run on. Dispatch reaches the reserved scope internally; nothing reaches it over HTTP.
 >
-> **Installing the system account is out-of-band, by construction.** Because no request can address the reserved scope, the credentials are installed with the service binary's `bootstrap-system-account` subcommand, which speaks to the repository and encryptor directly: `DATABASE_URL=… CREDENTIAL_ENCRYPTION_KEY=… campaign-service bootstrap-system-account -provider google-ads [-account-id …] [-config login_customer_id=…] < creds.json`. Keys use the documented snake_case form, and `-provider` accepts EVERY valid provider — the six paid-ads platforms and HubSpot. HubSpot was once refused here, while the reserved-scope fallback was classification-gated to paid ads: a HubSpot system row installed cleanly, reported success, and was then reachable by nothing. The fallback now serves the email channel, so the row this installs is the credential every foundation's HubSpot operations resolve. `-config` accepts only the keys the SELECTED provider stores (`login_customer_id` for Google Ads, `org_id` for LinkedIn, `page_id`/`app_id` for Meta, `funding_instrument_id` for X, `customer_id` for Microsoft, `portal_id`/`sender_email`/`sender_name`/`brand_kit` for HubSpot, none for Reddit — `model.Provider.ConfigKeys`). Anything else is refused rather than accepted: storage has one column per key, so an unrecognised one has nowhere to go, and the earlier behaviour dropped it while still exiting 0 — telling the operator a setting was installed that nothing held. It is idempotent (a second run rotates the credential rather than violating the singleton index), reads the credential from stdin rather than a flag, requires the `-config` keys an adapter refuses to create without (LinkedIn `org_id`, Meta `page_id`, X `funding_instrument_id`), and `-account-id` may be omitted **for Google Ads, Meta and — as of LFXV2-3319 — X**, leaving the row credentials-only, and **for HubSpot**, which is a different exemption with a different reason: the three ad providers have account DISCOVERY to finish the row later, while an email connection has no ad account to select at all — `requireAccountID` exempts it by asking `!IsPaidAds()`, and nothing in the HubSpot adapter reads `AccountID`. The remaining three ad providers require it, and the reason is worth stating precisely, because **discovery capability and credentials-first bootstrap are not the same thing** and conflating them hides which half is actually missing. Two halves are needed: an endpoint that can enumerate the accounts a credential reaches, AND a failure on the path that needs the id which NAMES the missing choice, so an operator is told to go and use that endpoint. The three still require it, but for DIFFERENT reasons, and the difference is what tells you how far each is from eligibility. **This whole framework is about PAID-ADS providers, and HubSpot sits outside it entirely.** The two halves answer "can this row be finished later?", which presumes there is an account to choose. An email connection has none: nothing in the HubSpot adapter reads `AccountID`, `hubspot.AccountConfig` carries only an optional `PortalID`, and the adapter is documented above as the one that never answers `reason=account_not_selected`. So `requireAccountID` exempts it by asking `!IsPaidAds()` rather than by adding it to `accountDiscoveryProviders` — it is not a provider whose row can be finished later, it is a provider with nothing to finish. Read every clause below as applying to the six paid-ads providers; where HubSpot is named alongside them (installable, clearable), it is for this reason and not because it acquired the two halves. **Reddit lacks the first half**: no account-discovery endpoint exists for it, because its platform client has no `ListAdAccounts`, so nothing inside this API could tell an operator what to put there. **X now has BOTH halves** as of LFXV2-3319, which added `twitter.ListAdAccounts` and `TwitterDispatcher.ListAccounts`; the second half it already had, because `validateTwitterConnection` tags an empty account id with `ErrAccountNotSelected` and `Dispatch` calls that validator itself rather than validating inline — the Microsoft shape, not the LinkedIn one. X's toggle and metrics paths share the same validator and answer synchronously, so the naming is not log-only there. It JOINED `accountDiscoveryProviders` in LFXV2-3319, in the same change that dropped its `Required("account_id")` — the two gates were relaxed together deliberately, because relaxing one alone leaves a provider credentials-first for the CLI and not over HTTP, or the reverse. `funding_instrument_id` is unaffected and still required at both gates: it has no discovery endpoint, so an account-less X row is finishable from inside this API but a funding-instrument-less one is not. **Microsoft now has BOTH halves** as of LFXV2-3064, which added its discovery endpoint; `MicrosoftDispatcher.Dispatch` resolves through `validateMicrosoftConnection`, which tags a missing account with `domain.ErrAccountNotSelected`. It is therefore eligible to join `accountDiscoveryProviders` and has deliberately NOT been added yet — that is a change to what the bootstrap CLI accepts, and it belongs in its own change rather than riding along with the endpoints. **LinkedIn gained only the FIRST half** in the same ticket, and this document previously claimed otherwise by naming `resolveLinkedInCredentials` — a function that does tag `ErrAccountNotSelected`, but which the CREATE path never reaches. `LinkedInDispatcher.Dispatch` resolves the connection inline and answers a missing account id with a bare `notCreated`, so adding LinkedIn to `accountDiscoveryProviders` today would still produce an unclassified create failure that never names the missing choice. Routing `Dispatch` through the shared resolver — preserving its `notCreated` semantics — is the remaining work, and it is what earns LinkedIn the second half. Stating which half is missing matters because the halves are earned separately. Meta is the one provider where the halves ever came apart: it gained enumeration in LFXV2-3062 (the row above) and was still refused here, because its `Dispatch` answered an empty account id with a generic error. LFXV2-3061 supplied the second half — `requireMetaAccountID` tags it `ErrAccountNotSelected` + `ErrConnectionNotUsable`, which `unusableConnectionReason` reports as `account_not_selected`, so the dispatch-failure log line names the missing choice from a fixed vocabulary instead of carrying an unclassified error. State that precisely rather than as "the job result says so": create is queued work and `dispatchPlatform` collapses every dispatcher error into `"platform campaign creation failed"`, so the reason token is log-only on this path — for Google Ads too. LFXV2-3061 also dropped `Required("account_id")` from `MetaAdsConnectionConfig` to match. Meta is in `accountDiscoveryProviders` as of that ticket. Both halves, not either alone, are the bar for adding the next provider. The account-discovery endpoint above then LISTS the accounts those credentials can reach, but it is a GET and assigns nothing: selecting one means re-running `bootstrap-system-account` with `-account-id`, which rotates onto the same row. On that rotation an omitted flag means KEEP, not clear — restating the whole row should not be required — so removals are said explicitly: `-clear-account-id` returns a Google Ads, Meta, X or HubSpot row to credentials-only — the first three because discovery can re-select an account, HubSpot because it never needed one — and `-config login_customer_id=` (empty value) drops a config column. Both are refused where the state they would produce is one the installer already refuses to create: clearing LinkedIn's `org_id` or its account id fails exactly as omitting them at install time does, and a clear issued before the row exists is refused rather than dropped. Finally, an UNRECOGNISED first argument now exits 2 instead of falling through to server startup — `campaign-service bootstrap-system-acount …` used to parse cleanly and bring up an idle HTTP server, leaving the Job green with nothing installed.
+> **Installing the system account is out-of-band, by construction.** Because no request can address the reserved scope, the credentials are installed with the service binary's `bootstrap-system-account` subcommand, which speaks to the repository and encryptor directly: `DATABASE_URL=… CREDENTIAL_ENCRYPTION_KEY=… campaign-service bootstrap-system-account -provider google-ads [-account-id …] [-config login_customer_id=…] < creds.json`. Keys use the documented snake_case form, and `-provider` accepts EVERY valid provider — the six paid-ads platforms and HubSpot. HubSpot was once refused here, while the reserved-scope fallback was classification-gated to paid ads: a HubSpot system row installed cleanly, reported success, and was then reachable by nothing. The fallback now serves the email channel, so the row this installs is the credential every foundation's HubSpot operations resolve. `-config` accepts only the keys the SELECTED provider stores (`login_customer_id` for Google Ads, `org_id` for LinkedIn, `page_id`/`app_id` for Meta, `funding_instrument_id`/`as_user_id` for X, `customer_id` for Microsoft, `portal_id`/`sender_email`/`sender_name`/`brand_kit` for HubSpot, none for Reddit — `model.Provider.ConfigKeys`). Anything else is refused rather than accepted: storage has one column per key, so an unrecognised one has nowhere to go, and the earlier behaviour dropped it while still exiting 0 — telling the operator a setting was installed that nothing held. It is idempotent (a second run rotates the credential rather than violating the singleton index), reads the credential from stdin rather than a flag, requires the `-config` keys an adapter refuses to create without (LinkedIn `org_id`, Meta `page_id`, X `funding_instrument_id`), and `-account-id` may be omitted **for Google Ads, Meta and — as of LFXV2-3319 — X**, leaving the row credentials-only, and **for HubSpot**, which is a different exemption with a different reason: the three ad providers have account DISCOVERY to finish the row later, while an email connection has no ad account to select at all — `requireAccountID` exempts it by asking `!IsPaidAds()`, and nothing in the HubSpot adapter reads `AccountID`. The remaining three ad providers require it, and the reason is worth stating precisely, because **discovery capability and credentials-first bootstrap are not the same thing** and conflating them hides which half is actually missing. Two halves are needed: an endpoint that can enumerate the accounts a credential reaches, AND a failure on the path that needs the id which NAMES the missing choice, so an operator is told to go and use that endpoint. The three still require it, but for DIFFERENT reasons, and the difference is what tells you how far each is from eligibility. **This whole framework is about PAID-ADS providers, and HubSpot sits outside it entirely.** The two halves answer "can this row be finished later?", which presumes there is an account to choose. An email connection has none: nothing in the HubSpot adapter reads `AccountID`, `hubspot.AccountConfig` carries only an optional `PortalID`, and the adapter is documented above as the one that never answers `reason=account_not_selected`. So `requireAccountID` exempts it by asking `!IsPaidAds()` rather than by adding it to `accountDiscoveryProviders` — it is not a provider whose row can be finished later, it is a provider with nothing to finish. Read every clause below as applying to the six paid-ads providers; where HubSpot is named alongside them (installable, clearable), it is for this reason and not because it acquired the two halves. **Reddit lacks the first half**: no account-discovery endpoint exists for it, because its platform client has no `ListAdAccounts`, so nothing inside this API could tell an operator what to put there. **X now has BOTH halves** as of LFXV2-3319, which added `twitter.ListAdAccounts` and `TwitterDispatcher.ListAccounts`; the second half it already had, because `validateTwitterConnection` tags an empty account id with `ErrAccountNotSelected` and `Dispatch` calls that validator itself rather than validating inline — the Microsoft shape, not the LinkedIn one. X's toggle and metrics paths share the same validator and answer synchronously, so the naming is not log-only there. It JOINED `accountDiscoveryProviders` in LFXV2-3319, in the same change that dropped its `Required("account_id")` — the two gates were relaxed together deliberately, because relaxing one alone leaves a provider credentials-first for the CLI and not over HTTP, or the reverse. `funding_instrument_id` is unaffected and still required at both gates: it has no discovery endpoint, so an account-less X row is finishable from inside this API but a funding-instrument-less one is not. **Microsoft now has BOTH halves** as of LFXV2-3064, which added its discovery endpoint; `MicrosoftDispatcher.Dispatch` resolves through `validateMicrosoftConnection`, which tags a missing account with `domain.ErrAccountNotSelected`. It is therefore eligible to join `accountDiscoveryProviders` and has deliberately NOT been added yet — that is a change to what the bootstrap CLI accepts, and it belongs in its own change rather than riding along with the endpoints. **LinkedIn gained only the FIRST half** in the same ticket, and this document previously claimed otherwise by naming `resolveLinkedInCredentials` — a function that does tag `ErrAccountNotSelected`, but which the CREATE path never reaches. `LinkedInDispatcher.Dispatch` resolves the connection inline and answers a missing account id with a bare `notCreated`, so adding LinkedIn to `accountDiscoveryProviders` today would still produce an unclassified create failure that never names the missing choice. Routing `Dispatch` through the shared resolver — preserving its `notCreated` semantics — is the remaining work, and it is what earns LinkedIn the second half. Stating which half is missing matters because the halves are earned separately. Meta is the one provider where the halves ever came apart: it gained enumeration in LFXV2-3062 (the row above) and was still refused here, because its `Dispatch` answered an empty account id with a generic error. LFXV2-3061 supplied the second half — `requireMetaAccountID` tags it `ErrAccountNotSelected` + `ErrConnectionNotUsable`, which `unusableConnectionReason` reports as `account_not_selected`, so the dispatch-failure log line names the missing choice from a fixed vocabulary instead of carrying an unclassified error. State that precisely rather than as "the job result says so": create is queued work and `dispatchPlatform` collapses every dispatcher error into `"platform campaign creation failed"`, so the reason token is log-only on this path — for Google Ads too. LFXV2-3061 also dropped `Required("account_id")` from `MetaAdsConnectionConfig` to match. Meta is in `accountDiscoveryProviders` as of that ticket. Both halves, not either alone, are the bar for adding the next provider. The account-discovery endpoint above then LISTS the accounts those credentials can reach, but it is a GET and assigns nothing: selecting one means re-running `bootstrap-system-account` with `-account-id`, which rotates onto the same row. On that rotation an omitted flag means KEEP, not clear — restating the whole row should not be required — so removals are said explicitly: `-clear-account-id` returns a Google Ads, Meta, X or HubSpot row to credentials-only — the first three because discovery can re-select an account, HubSpot because it never needed one — and `-config login_customer_id=` (empty value) drops a config column. Both are refused where the state they would produce is one the installer already refuses to create: clearing LinkedIn's `org_id` or its account id fails exactly as omitting them at install time does, and a clear issued before the row exists is refused rather than dropped. Finally, an UNRECOGNISED first argument now exits 2 instead of falling through to server startup — `campaign-service bootstrap-system-acount …` used to parse cleanly and bring up an idle HTTP server, leaving the Job green with nothing installed.
 >
 > Because the connection is a singleton, `GET /projects/{projectId}/connection-google-ads` *is* the read — there is no collection listing and no Query Service index for connections. There is no present use case for a cross-project inventory of connections (the UI reads a project's connection directly), so the connection tables are intentionally not indexed; if such an inventory is ever needed, indexing can be added then.
 
@@ -454,15 +454,18 @@ variants?: [{headline, body}]   — Ad copy variants. When no `postUrl`/`imageUr
 postUrl?: string                — OPTIONAL existing Reddit post to promote. Accepts a t3_ id, a
                                   reddit.com/comments/<id> URL, or a redd.it short link; validated
                                   against reddit.com/redd.it hosts. When set it TAKES PRECEDENCE and
-                                  `imageUrl`/`callToAction` are ignored. Its query/fragment is stripped
-                                  from the stored config snapshot (may carry a secret).
+                                  `imageUrl`/`callToAction` are ignored. The stored config snapshot keeps
+                                  only its scheme and host — path, query and fragment are all stripped,
+                                  because any of the three may carry a secret; an http(s) value that
+                                  cannot be reduced to a scheme and host is dropped entirely.
 imageUrl?: string               — OPTIONAL public absolute http(s) image URL. When set and `postUrl`
                                   is absent, the client AUTHORS a promoted ("dark") IMAGE post from it
                                   (Reddit ingests and re-hosts the image at create time; there is no
                                   LINK post type and no separate upload step) and attaches it as the
                                   ad's creative. A malformed URL / embedded userinfo / non-http(s)
-                                  scheme is rejected before any create. Its query/fragment is stripped
-                                  from the stored config snapshot (a signed URL may carry a secret).
+                                  scheme is rejected before any create. The stored config snapshot keeps
+                                  only its scheme and host (a signed URL may carry a secret in its path
+                                  as readily as in its query).
 callToAction?: string           — OPTIONAL button label for an AUTHORED post (see `imageUrl`).
                                   Case-insensitive, resolved to Reddit's exact title-case label (e.g.
                                   'Learn More', 'Sign Up', 'Buy Tickets'); an unknown value is rejected
@@ -887,12 +890,123 @@ startDate: string               — YYYY-MM-DD. Must be in the future by at leas
 endDate: string                 — YYYY-MM-DD. Must be STRICTLY AFTER startDate. (Both date rules
                                   are enforced by the client during dispatch — a violation fails the
                                   platform job pre-create, not a synchronous 4xx.)
-tweetId?: string                — An existing promotable tweet id to promote. Omitted → the
-                                  manual-tweet workflow: the campaign + line item are created and
-                                  the operator attaches the promoted tweet manually (the result
-                                  carries a warning + the sanitized destination URL). A create that
-                                  can't confirm the promoted-tweet association is reported as an
-                                  UNCONFIRMED degraded outcome, not a clean success.
+tweetId?: string                — An existing promotable tweet id to promote. Takes precedence
+                                  over tweetText — if both are set, tweetId is promoted as-is and
+                                  tweetText is ignored (recorded as a step). Omitted (and tweetText
+                                  also omitted) → the manual-tweet workflow: the campaign + line
+                                  item are created and the operator attaches the promoted tweet
+                                  manually (the result carries a warning + the sanitized destination
+                                  URL). A create that can't confirm the promoted-tweet association
+                                  is reported as an UNCONFIRMED degraded outcome, not a clean
+                                  success.
+tweetText?: string               — Used ONLY when tweetId is empty: authors a NEW tweet carrying
+                                  this text (the brief's UTM'd registration URL is appended if not
+                                  already embedded — that URL keeps its own existing query string
+                                  verbatim beside the UTM parameters, since it is the ad's real
+                                  click destination, and keeps its #fragment for the same reason —
+                                  `#register` and a hash-router route both decide where the click
+                                  actually lands), then promotes it.
+                                  Because that query AND fragment are PUBLISHED verbatim, this is
+                                  the one path that first screens EVERY URL in the composed tweet
+                                  text — the registration URL's own parameters and any link the
+                                  caller put in their own copy, whether or not that link is
+                                  written with an `http(s)://` scheme, since X linkifies and
+                                  publishes `www.host/…?…` and bare `host.tld/…?…` alike — and
+                                  refuses, pre-create, a key that matches its credential
+                                  denylist. That denylist is exactly four tiers, and it is a
+                                  DENYLIST, not a judgement about what looks like a secret: an
+                                  exact name (`access_token`, `sessionId`, `jwt`, `password`,
+                                  `signature`, `JSESSIONID`, `PHPSESSID`, …); an unambiguous
+                                  fragment anywhere in the name (`token`, `secret`, `oauth`,
+                                  `hmac`, `assertion`, `csrf`, `xsrf`, `saml`, …, so
+                                  `secret_token`, `_csrf` and `SAMLResponse` are all refused); a
+                                  credential word standing as a whole `-`/`_`/`.`-delimited
+                                  component (`auth`, `sid`, `pwd`, `passwd` — so `auth_cookie`
+                                  and `connect.sid` are refused while `author` and `aside` are
+                                  not); and `key`, either as the name's final component
+                                  (`api_key`, `auth_key`) or as a component qualified by the word
+                                  in front of it (`access_key_AKIA…`, `api-key-…`). All tiers are
+                                  case-insensitive and separator-insensitive. What this does NOT
+                                  claim to catch: a credential parameter whose name shares no word
+                                  with the lists above, and a secret carried in the URL's PATH
+                                  rather than its query or fragment — an events service cannot
+                                  denylist path words without refusing `/sessions/`. The same screen
+                                  runs over a URL's FRAGMENT when it is written in `key=value`
+                                  form, because the OAuth implicit flow delivers its bearer token
+                                  after the `#` and such a URL may have no query at all; a plain
+                                  section anchor (`#register`) has no key and passes. A query
+                                  string or fragment
+                                  that cannot be parsed is refused rather than read as having no
+                                  parameters. A URL carrying embedded userinfo
+                                  (`https://user:pass@host/…`) is refused whether or not it has a
+                                  query, which closes the gap that the registration URL's own
+                                  userinfo check never covered links pasted into caller copy. The
+                                  error never renders the caller's key: it points at the parameter
+                                  by the fixed VOCABULARY WORD that classified it, because a
+                                  parameter NAME is free text too and
+                                  `?oauth_token_<secret>=x` would otherwise reproduce the secret in
+                                  a persisted, logged error. A BARE query component with no `=` may
+                                  itself be the credential, names no word at all, and redacts the
+                                  URL instead. Values are never rendered. Routing and
+                                  attribution parameters are unaffected, `code` and `pin` included
+                                  — a discount code is not a credential.
+                                  The authored tweet is ALWAYS promoted-only
+                                  (`nullcast=true`, sent explicitly, never relied on
+                                  as X's default) — it never appears on the public timeline or to
+                                  followers. Rejected pre-create if the composed text (counting any
+                                  embedded `http(s)` URL at X's fixed t.co weight of 23 characters
+                                  each, not
+                                  raw length — schemes match case-insensitively, and punctuation
+                                  around the link is counted as prose, not as part of it: trailing
+                                  ASCII sentence marks and unmatched closing brackets are trimmed
+                                  off the end, while `<`, `>` and CJK sentence punctuation
+                                  (`。`, `、`, `！`, `？`, `，`, `：`, `；`) end the link outright,
+                                  since a CJK sentence puts no space before its stop) exceeds the
+                                  280-character cap, or if its raw size
+                                  exceeds an 8 KiB request bound that the weighted cap — under
+                                  which a scheme-ful URL costs 23 whatever its length — does not
+                                  impose. A SCHEME-LESS link (`events.example/r?…`) is counted at
+                                  its RAW length instead, even though X linkifies and shortens it:
+                                  deciding which dotted token X actually linkifies needs
+                                  twitter-text's TLD registry, and every token guessed wrong near
+                                  the 280 boundary is a create refused for copy X would have
+                                  accepted. The credential screen below does read scheme-less
+                                  links — screening one X does not linkify costs a refusal the
+                                  operator fixes by deleting a parameter, which is the cheap
+                                  direction; weighting one does not. That cap is X's WEIGHTED
+                                  one, not a rune count: runes outside twitter-text's weight-1
+                                  ranges (CJK and beyond) cost 2 each, while an emoji presentation
+                                  sequence — skin tone, ZWJ family, keycap, country flag — costs 2
+                                  in total. An authoring failure is
+                                  non-fatal — the campaign + line item still return, degraded — with
+                                  three distinct outcomes: a definite rejection (safe to retry/author
+                                  manually), an UNCONFIRMED outcome (may have published — verify in
+                                  X Ads Manager and delete any stray tweet before retrying), or a
+                                  clean id that is then promoted like an explicit tweetId.
+asUserId?: string                — Pins which of the ad account's promotable users authors the
+                                  tweet (only meaningful with tweetText). Omitted → auto-resolved
+                                  via the account's promotable-users list: exactly one candidate is
+                                  used, zero or several are refused (never guessed). The refusal
+                                  carries the COUNT of candidates, never their user ids: the message
+                                  reaches an operator through the campaign's persisted warning and
+                                  steps, and the ids are visible in X Ads Manager, where whoever
+                                  sets `asUserId` is already looking. The candidate list is read
+                                  across every page, so a pinned user is not reported absent for
+                                  sitting on page two; if the page cap is reached with results
+                                  still outstanding, the lookup is refused as inconclusive rather
+                                  than concluding from a truncated list; so is a FULL page that
+                                  returns no next_cursor X gives a meaning to. A short page is
+                                  conclusively last under X's documented rule and resolves
+                                  normally.
+                                  The CONNECTION wins when it declares `as_user_id`: a request
+                                  naming a different handle is refused pre-create, and one naming
+                                  none inherits the connection's rather than auto-resolving. The
+                                  promotable-users list answers "is this handle promotable by this
+                                  ad account", which on the SHARED LF system connection is true of
+                                  every LF handle — so it cannot answer whether THIS project may
+                                  publish as that handle, and without `as_user_id` nothing was
+                                  asking. The refusal names neither the requested nor the
+                                  configured id.
 ```
 
 Connection prerequisites (from the X connection, not this config): the OAuth1 4-tuple (consumer
@@ -901,11 +1015,43 @@ REQUIRED, both ALPHANUMERIC (`^[A-Za-z0-9]+$`, e.g. `account_id` `8r7gb`), and b
 pattern/length-validated (`MaxLength 64`) at connection creation. The X client requires both and
 interpolates them into the account-scoped request path, so a missing/malformed value is rejected as
 a 4xx at connection creation rather than surfacing as an asynchronous dispatch failure.
+An OPTIONAL `as_user_id` (numeric, `^[0-9]+$`, `MaxLength 32`) declares which promotable handle
+this connection's tweets are authored under. It is an authorization control rather than a routing
+value: where it is set, a campaign config naming a different `asUserId` is refused pre-create and
+one naming none inherits it; where it is absent, dispatch behaves exactly as before.
+That refusal is scoped to requests that actually AUTHOR a tweet — `tweetId` empty and `tweetText`
+non-empty, both judged AFTER trimming, so a whitespace-only `tweetId` counts as absent here
+exactly as it does at the client and cannot skip the check by looking present. An explicit `tweetId` wins, so no tweet is authored, no promotable user is resolved, and
+a mismatched `asUserId` is ignored along with the `tweetText` it would have signed, rather than
+failing a request over a field nothing reads (the same treatment an unused, malformed `tweetText`
+gets). Bootstrap holds a seeded `as_user_id` to the same 32-character bound as the HTTP contract —
+it writes past Goa straight to the repository, and the shared fallback row has no second opinion
+downstream.
 
 Destination URL: the ad points at the brief's registration URL. The X client validates it before any
 upstream create — it must be an absolute **http/https** URL with a real hostname and carry NO
-embedded userinfo/credentials; a violation fails the dispatch job pre-create. Validation errors
-redact the URL (scheme+host+path only) so a persisted error can't leak a userinfo/query secret.
+embedded userinfo/credentials; a violation fails the dispatch job pre-create. The same userinfo
+rejection now also applies to every URL found in caller-supplied `tweetText`, which the registration
+URL's validator never saw. A registration URL whose query cannot be parsed is refused rather than
+published: the query is parsed only to VALIDATE it, and an unreadable one cannot be screened for
+credentials at all, so the dispatch fails rather than publishing a query nothing has read. A query
+that parses is then copied into the destination **byte for byte** — parameter order and percent
+escaping included — with the generated `utm_*` pairs appended after it, and a pre-existing `utm_*`
+key dropped where it collides. Where nothing collides the query is not reassembled at all — the
+original bytes are used as written, so a query's empty components (`a=1&&b=2&`) survive too. The
+#fragment is screened the same way, and a BARE fragment that looks like a credential (`#access_token`
+with no `=`) is refused rather than published, while section anchors such as `#register` pass. An
+earlier build round-tripped the query through Go's encoder, which
+sorts keys and rewrites `%20` as `+`; that broke the verbatim promise on the one URL in the flow
+where byte fidelity is the point. Validation errors
+redact the URL (**scheme+host only** — the path is dropped too, because a magic-link or reset
+credential lives in a path segment as often as in a query) so a persisted error can't leak a
+userinfo/path/query secret.
+**On the `tweetText` path that protection is not sufficient by itself:** the registration URL is
+embedded in the tweet that gets published, INCLUDING its own pre-existing query parameters, which
+are kept verbatim because they are what routes the visitor. It is then publicly visible — in the
+tweet and in X Ads Manager — so the registration URL must not carry a `?token=…`-style credential.
+Redaction protects what is *persisted*; nothing can un-publish what was sent to X.
 
 ### JobCreateResponse (returned immediately from `POST .../campaigns`)
 
@@ -1056,7 +1202,7 @@ pacingLabel: string             — underspending | normal | constrained | overs
 ### X/Twitter Ads
 - OAuth 1.0a with HMAC-SHA1 signing (not OAuth 2.0)
 - 1 request/second write rate limit
-- Exponential backoff retry on 429 responses
+- Exponential backoff retry on 429 responses **for reads only**. Retry eligibility is an explicit per-endpoint `idempotent` flag, never inferred from the HTTP method, and every one of the client's four creates (campaigns, line_items, promoted_tweets, tweet) passes `false` — they take the retry-exhausted exit on their FIRST 429. X answers a 429 at OR AFTER committing the write it throttled, so a create's repeat is not free: the find-or-create lookups run above the retry loop, `DUPLICATE_PROMOTABLE_ENTITY` does not name the line item holding the tweet, and tweet authoring has no idempotency key at all, so a retry publishes a SECOND tweet. A create's 429 therefore surfaces as an ambiguous outcome for an operator to verify, not as an automatic re-issue.
 - Only "lf-events" account currently supported
 
 ### HubSpot

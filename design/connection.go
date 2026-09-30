@@ -966,6 +966,22 @@ var TwitterAdsConnectionConfig = Type("twitter-ads-connection-config", func() {
 		Pattern(`^[A-Za-z0-9]+$`)
 		MaxLength(64)
 	})
+	// as_user_id declares WHICH HANDLE this connection's nullcast tweets are authored
+	// under. It is OPTIONAL and is an authorization control, not a routing value: when it
+	// is set, a campaign config naming a different asUserId is refused pre-create and one
+	// naming none inherits it. The client's promotable-users lookup cannot serve this
+	// purpose — it answers "is this handle promotable by this ad account", and on the
+	// SHARED LF system connection every LF handle is, so a project could name another
+	// project's handle and publish as them.
+	//
+	// Numeric, unlike account_id and funding_instrument_id: X user ids are snowflake ids
+	// and the client reads them from id_str. Pattern-checking here rejects a malformed one
+	// as a 4xx at connection time rather than as a pre-create dispatch refusal.
+	Attribute("as_user_id", String, "X/Twitter user id authorized to author this connection's tweets (numeric)", func() {
+		Example("1234567890123456789")
+		Pattern(`^[0-9]+$`)
+		MaxLength(32)
+	})
 	// An explicit JSON `null` decodes identically to an ABSENT key (both yield a nil *string,
 	// which strVal renders as ""), and that conflation is deliberate rather than overlooked.
 	// It is not a new state: on these endpoints PUT is a FULL REPLACE, so an absent account_id
@@ -992,6 +1008,9 @@ var TwitterAdsConnectionConfig = Type("twitter-ads-connection-config", func() {
 var TwitterAdsConnection = Type("twitter-ads-connection", func() {
 	commonConnectionAttrs()
 	Attribute("funding_instrument_id", String, "Funding instrument for the ad account")
+	// Readable back so an operator can see which identity the connection declares; the
+	// value is a public X user id, not a secret.
+	Attribute("as_user_id", String, "X/Twitter user id authorized to author this connection's tweets")
 	commonConnectionRequired()
 })
 
