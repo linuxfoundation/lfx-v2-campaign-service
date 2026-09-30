@@ -135,8 +135,34 @@ func (d *GoogleAdsDispatcher) WriteBudget(ctx context.Context, projectID string,
 	}
 
 	// Every guard has passed; this is the first and only mutating call.
+	//
+	// Its error MUST be classified, unlike the settings read above: that read changes nothing,
+	// so its failure is definite, but a timeout, 5xx or dropped connection on
+	// campaignBudgets:mutate may leave the new amount applied upstream. Google Ads carries that
+	// ambiguity in the error's SHAPE, not in an Unconfirmed() method, so an unwrapped return
+	// here would reach the service as a definite failure and be answered "the campaign was not
+	// modified" — an affirmative false claim about a money-moving write, with the claim lock
+	// released inline instead of held through the cooldown. Same wrap every other mutating
+	// Google Ads path uses (see wrapUnconfirmed in googleads.go).
 	if err := client.UpdateCampaignBudget(ctx, *settings.BudgetID, micros, *settings.BudgetPeriod); err != nil {
-		return fmt.Errorf("write google ads campaign budget for campaign %s: %w", campaign.PlatformCampaignID, err)
+		werr := fmt.Errorf("write google ads campaign budget for campaign %s: %w", campaign.PlatformCampaignID, err)
+		if googleads.IsOutcomeUnconfirmed(err) {
+			return &unconfirmedBudgetWriteError{err: werr}
+		}
+		return werr
 	}
 	return nil
 }
+
+// unconfirmedBudgetWriteError wraps a budget mutate whose platform outcome is unknowable (the
+// new amount may have been applied). It is a sibling of unconfirmedToggleError rather than a
+// reuse of it: both satisfy the same Unconfirmed() behavioral interface the service detects with
+// errors.As, but that type's message says "status change", and a budget write reported in a log
+// as a status change misdirects whoever reads it during exactly the incident it exists for.
+type unconfirmedBudgetWriteError struct{ err error }
+
+func (e *unconfirmedBudgetWriteError) Error() string {
+	return "budget write outcome is unconfirmed (it may have been applied): " + e.err.Error()
+}
+func (e *unconfirmedBudgetWriteError) Unwrap() error     { return e.err }
+func (e *unconfirmedBudgetWriteError) Unconfirmed() bool { return true }

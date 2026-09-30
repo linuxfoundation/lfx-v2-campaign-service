@@ -1401,6 +1401,18 @@ above the unconfirmed check, and `ErrNotFound` → 404. The shared-budget and un
 through `safeErrSummary` and return a generic message: each cause names upstream configuration,
 which the caller can act on only in the ad platform.
 
+**A positive amount that rounds to zero micros is refused 400 here too**, alongside NaN, Inf,
+zero and the ceiling. Every supported platform bills in micros, so an amount under 0.000001 of
+the account's currency rounds to nothing upstream and the adapter refuses it with a bare error
+the switch below can classify only as 503 — an "unconfirmed upstream outcome" answer to a
+request that was never going to succeed, inviting a retry that cannot. The check compares the
+ROUNDED value rather than a literal floor so it stays in step with the adapter's own
+`math.Round`, and it sits with the other validations, ahead of the load, the claim and the live
+settings read: a doomed request must not take the write lock. This floor is also what the
+design publishes as the attribute's `Minimum` — Goa's `Minimum` is inclusive, so declaring zero
+there would advertise a value the service refuses unconditionally and leave a generated client
+to discover the real bound from a 400.
+
 **The UNCONFIRMED arm holds the claim lock for a bounded cooldown** rather than releasing it
 inline, the same way the toggle does: an immediate release lets the next caller claim the SAME
 still-unbumped version and write the platform again while this call's outcome is unknown. The

@@ -98,8 +98,32 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, budgetID string, amou
 	}
 
 	req := mutateRequest{Operations: []mutateOperation{{Update: update, UpdateMask: mask}}}
-	if _, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaignBudgets:mutate"), req, true); err != nil {
+	body, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaignBudgets:mutate"), req, true)
+	if err != nil {
 		return fmt.Errorf("google-ads campaign budget %s amount update failed: %w", id, err)
+	}
+	// A 2xx is not yet a confirmed write. The caller's contract is that a nil return means the
+	// platform APPLIED the change — it persists the new amount on that basis — so a success
+	// carrying no result, or a result naming a DIFFERENT budget, must not be reported as one.
+	// Both are answered as ambiguous rather than definite: the request reached Google and was
+	// accepted, so "nothing was modified" is precisely the claim that cannot be made.
+	rn, rid, err := firstResourceName(body)
+	if err != nil {
+		return &unconfirmedBudgetMutateError{err: fmt.Errorf("google-ads campaign budget %s amount update returned an unusable response: %w", id, err)}
+	}
+	if rid != id {
+		return &unconfirmedBudgetMutateError{err: fmt.Errorf("google-ads campaign budget %s amount update was acknowledged for a different resource %q", id, rn)}
 	}
 	return nil
 }
+
+// unconfirmedBudgetMutateError marks a budget mutate that Google ACCEPTED but did not
+// acknowledge usably — no result, or a result naming another resource. The change may have
+// been applied, so it satisfies the same Unconfirmed() behavioral interface
+// IsOutcomeUnconfirmed honors, and the dispatcher's classification carries it through to the
+// service's "verify upstream before retrying" answer rather than "nothing was modified".
+type unconfirmedBudgetMutateError struct{ err error }
+
+func (e *unconfirmedBudgetMutateError) Error() string     { return e.err.Error() }
+func (e *unconfirmedBudgetMutateError) Unwrap() error     { return e.err }
+func (e *unconfirmedBudgetMutateError) Unconfirmed() bool { return true }

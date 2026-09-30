@@ -22,6 +22,11 @@ import (
 // guard, and a platform whose real ceiling is lower will still refuse below this one.
 const maxCampaignBudget = 1_000_000_000.0
 
+// microsPerCurrencyUnit is the scale every supported ad platform bills in. It is here for the
+// same reason maxCampaignBudget is: the smallest settable amount is part of the API contract
+// (answered 400, and declared as the design's Minimum), not a platform conversion detail.
+const microsPerCurrencyUnit = 1_000_000.0
+
 // UpdateCampaignBudget changes how much a campaign may spend ON THE AD PLATFORM, then persists
 // the new amount. The platform call happens FIRST — the row is updated only after the platform
 // confirms — so this service never reports a budget the platform does not have.
@@ -68,6 +73,16 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 	}
 	if budget > maxCampaignBudget {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "budget exceeds the maximum this service will set"}
+	}
+	// A positive amount below half a micro rounds to zero micros, which the adapter refuses
+	// with a bare error the switch below can only classify as 503 — an "unconfirmed upstream"
+	// answer to a request that was never going to succeed, inviting a retry that cannot. The
+	// refusal belongs HERE, ahead of the load, the claim and the live settings read, for the
+	// same reason every other validation does: a doomed request must not take the write lock.
+	// The comparison is against the rounded value, not a literal floor, so it stays in step
+	// with the adapter's own math.Round rather than drifting from it.
+	if math.Round(budget*microsPerCurrencyUnit) < 1 {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "budget is too small to set; the smallest amount an ad platform accepts is 0.000001 of the account's currency"}
 	}
 	budgetType := model.BudgetType(p.BudgetType)
 	if budgetType != model.BudgetDaily && budgetType != model.BudgetLifetime {

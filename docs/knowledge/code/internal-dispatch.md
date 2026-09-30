@@ -762,6 +762,20 @@ about what a valid budget is — and a single `campaignBudgets:mutate` is sent w
 same amount converges on identical state, which is what makes the service's unconfirmed arm able
 to call a retry safe.
 
+**The mutate's error is CLASSIFIED; the settings read's is not.** Google Ads carries "this may
+have applied" in the error's SHAPE — transport failure, 5xx, redirect — rather than in an
+`Unconfirmed()` method, so an unwrapped mutate error would reach the service as a definite
+failure and be answered "the campaign was not modified": an affirmative false claim about a
+money-moving write, with the claim lock released inline instead of held through the cooldown.
+`googleads.IsOutcomeUnconfirmed` therefore gates a wrap in `unconfirmedBudgetWriteError`, the
+same shape every other mutating Google Ads path uses. The wrap is deliberately scoped to the
+mutate alone: the settings read changes nothing, so its failure is definite even when its status
+is a 5xx, and marking it ambiguous would send an operator to verify a write that was never
+built. `unconfirmedBudgetWriteError` is a sibling of `unconfirmedToggleError` rather than a
+reuse of it — both satisfy the same behavioural interface, but that type's message says "status
+change", and a budget write logged as a status change misdirects whoever reads it during exactly
+the incident it exists for.
+
 ## Metrics read (optional capability)
 
 `MetricsReader` is a second OPTIONAL dispatcher interface, alongside `StatusToggler` —

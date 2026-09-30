@@ -6907,8 +6907,8 @@ func ValidateUpdateCampaignBudgetRequestBody(body *UpdateCampaignBudgetRequestBo
 		err = goa.MergeErrors(err, goa.MissingFieldError("budget_type", "body"))
 	}
 	if body.Budget != nil {
-		if *body.Budget < 0 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.budget", *body.Budget, 0, true))
+		if *body.Budget < 1e-06 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.budget", *body.Budget, 1e-06, true))
 		}
 	}
 	if body.Budget != nil {

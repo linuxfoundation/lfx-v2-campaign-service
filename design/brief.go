@@ -1516,14 +1516,18 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			briefIDAttr()
 			campaignIDAttr()
 			ifMatchAttr()
-			// Minimum(0) is the DESIGN-level bound only; zero itself is refused by the
-			// service, which is where the real check lives (it must also reject NaN, Inf
-			// and amounts that round to zero micros, none of which a Goa range expresses).
-			// Zero is not a budget — it is a request to stop spending, and pausing is what
-			// expresses that. The maximum matches the platform adapter's own cap, so a
-			// figure this service would refuse to create with cannot be reached by editing.
+			// Minimum is ONE MICRO, not zero. Goa's Minimum is inclusive, so Minimum(0)
+			// would publish an OpenAPI contract admitting a value — zero — that the service
+			// refuses unconditionally, leaving a generated client to discover the real
+			// floor only from a 400. One micro is the true floor: every supported platform
+			// bills in micros, and an amount below half of one rounds to zero there. Zero
+			// is not a budget — it is a request to stop spending, and pausing is what
+			// expresses that. NaN and Inf remain the only runtime rejections a Goa range
+			// cannot express, and the service checks them first. The maximum matches the
+			// platform adapter's own cap, so a figure this service would refuse to create
+			// with cannot be reached by editing.
 			Attribute("budget", Float64, "New budget amount, in the AD ACCOUNT's own currency (NOT USD). Must be strictly positive.", func() {
-				Minimum(0)
+				Minimum(0.000001)
 				Maximum(1000000000)
 				Example(2500.00)
 			})

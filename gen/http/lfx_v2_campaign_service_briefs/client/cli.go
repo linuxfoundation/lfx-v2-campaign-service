@@ -833,8 +833,8 @@ func BuildUpdateCampaignBudgetPayload(lfxV2CampaignServiceBriefsUpdateCampaignBu
 		if err != nil {
 			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"budget\": 2500,\n      \"budget_type\": \"daily\"\n   }'")
 		}
-		if body.Budget < 0 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.budget", body.Budget, 0, true))
+		if body.Budget < 1e-06 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.budget", body.Budget, 1e-06, true))
 		}
 		if body.Budget > 1e+09 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.budget", body.Budget, 1e+09, false))

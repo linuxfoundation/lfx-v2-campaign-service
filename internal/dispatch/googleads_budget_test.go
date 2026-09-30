@@ -341,3 +341,145 @@ func TestGoogleAds_WriteBudget_NonPositiveAmountIsRefused(t *testing.T) {
 		assertNoMutate(t, requests())
 	}
 }
+
+// budgetDispatcherWithMutate is budgetDispatcher with the mutate arm under the test's control,
+// so the classification of a FAILING or unusable mutate can be exercised. The settings query
+// still answers normally: these tests are about what happens after every guard has passed.
+func budgetDispatcherWithMutate(t *testing.T, searchJSON string, mutateStatus int, mutateBody string) (*GoogleAdsDispatcher, func() []budgetRequest) {
+	t.Helper()
+	var (
+		mu   sync.Mutex
+		seen []budgetRequest
+	)
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		seen = append(seen, budgetRequest{Method: r.Method, Path: r.URL.Path, Body: string(body)})
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "campaignBudgets:mutate") {
+			w.WriteHeader(mutateStatus)
+			_, _ = io.WriteString(w, mutateBody)
+			return
+		}
+		_, _ = io.WriteString(w, searchJSON)
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	return d, func() []budgetRequest {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]budgetRequest, len(seen))
+		copy(out, seen)
+		return out
+	}
+}
+
+// isUnconfirmedWrite reports whether err carries the behavioral marker the SERVICE detects with
+// errors.As. Written against the interface rather than against a concrete type on purpose: the
+// interface is the actual contract between these two packages, and a test asserting on the
+// struct would keep passing if the method that makes it meaningful were dropped.
+func isUnconfirmedWrite(err error) bool {
+	var u interface{ Unconfirmed() bool }
+	return errors.As(err, &u) && u.Unconfirmed()
+}
+
+// TestGoogleAds_WriteBudget_AmbiguousMutateIsUnconfirmed pins the one classification the whole
+// 503 arm of the service depends on. A 5xx (equally: a timeout, a dropped connection) on
+// campaignBudgets:mutate may leave the new amount APPLIED, so the error must reach the service
+// as unconfirmed. If it does not, the service answers "the campaign was not modified" — an
+// affirmative false claim about a money-moving write — and releases the claim lock inline
+// instead of holding it through the cooldown.
+func TestGoogleAds_WriteBudget_AmbiguousMutateIsUnconfirmed(t *testing.T) {
+	settings := budgetSearchJSON(`{"id":"555","amountMicros":"10000000","period":"DAILY","explicitlyShared":false}`)
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"5xx from the mutate", http.StatusServiceUnavailable, `{"error":{"message":"backend error"}}`},
+		{"2xx carrying no result", http.StatusOK, `{"results":[]}`},
+		{"2xx naming a different budget", http.StatusOK, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/999"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, _ := budgetDispatcherWithMutate(t, settings, tc.status, tc.body)
+
+			err := d.WriteBudget(context.Background(), "proj", model.ProviderGoogleAds, budgetCampaign(),
+				model.BudgetChange{Amount: 25.50, Type: model.BudgetDaily})
+			if err == nil {
+				t.Fatal("WriteBudget returned nil, want an error: nil is the caller's signal that the platform CONFIRMED the change, and it persists the new amount on that basis")
+			}
+			if !isUnconfirmedWrite(err) {
+				t.Fatalf("error does not report Unconfirmed(): %v — the service will answer 'the campaign was not modified' about a write that may have applied", err)
+			}
+		})
+	}
+}
+
+// TestGoogleAds_WriteBudget_DefiniteMutateFailureIsNotUnconfirmed is the other half of the
+// classification, and it matters as much: marking a definite 4xx unconfirmed would hold the
+// claim lock through a cooldown and tell the caller to go verify a change Google explicitly
+// rejected.
+func TestGoogleAds_WriteBudget_DefiniteMutateFailureIsNotUnconfirmed(t *testing.T) {
+	d, _ := budgetDispatcherWithMutate(t,
+		budgetSearchJSON(`{"id":"555","amountMicros":"10000000","period":"DAILY","explicitlyShared":false}`),
+		http.StatusBadRequest, `{"error":{"message":"invalid budget"}}`)
+
+	err := d.WriteBudget(context.Background(), "proj", model.ProviderGoogleAds, budgetCampaign(),
+		model.BudgetChange{Amount: 25.50, Type: model.BudgetDaily})
+	if err == nil {
+		t.Fatal("WriteBudget returned nil, want an error")
+	}
+	if isUnconfirmedWrite(err) {
+		t.Fatalf("a 4xx from the mutate was classified unconfirmed: %v — Google refused it outright, so nothing changed and the caller should not be sent to verify", err)
+	}
+}
+
+// TestGoogleAds_WriteBudget_FailedSettingsReadIsNotUnconfirmed guards the boundary the fix
+// deliberately drew: the READ changes nothing, so its failure — even an ambiguous 5xx — is
+// definite. Wrapping it would report "the budget may have been applied" about a request that
+// never reached campaignBudgets:mutate at all.
+func TestGoogleAds_WriteBudget_FailedSettingsReadIsNotUnconfirmed(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		seen []budgetRequest
+	)
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		seen = append(seen, budgetRequest{Method: r.Method, Path: r.URL.Path, Body: string(body)})
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"message":"backend error"}}`)
+	}))
+	t.Cleanup(apiSrv.Close)
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+
+	err := d.WriteBudget(context.Background(), "proj", model.ProviderGoogleAds, budgetCampaign(),
+		model.BudgetChange{Amount: 25.50, Type: model.BudgetDaily})
+	if err == nil {
+		t.Fatal("WriteBudget returned nil, want an error")
+	}
+	if isUnconfirmedWrite(err) {
+		t.Fatalf("a failed settings READ was classified unconfirmed: %v — no mutate was built, so nothing can have been applied", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	assertNoMutate(t, seen)
+}

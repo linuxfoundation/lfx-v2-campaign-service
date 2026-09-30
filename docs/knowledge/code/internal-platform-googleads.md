@@ -787,6 +787,15 @@ one function). The mutate is sent with `idempotent=true`: re-applying the same a
 on identical state, which is what lets the retry layer retry it and what lets the service tell a
 caller an unconfirmed outcome is safe to re-send once verified.
 
+**A 2xx is not by itself a confirmed write.** The response is decoded through the same
+`firstResourceName` the create path uses, and the acknowledged resource id must equal the budget
+the request addressed; a success carrying no result, a malformed resource name, or one naming a
+different budget returns `unconfirmedBudgetMutateError`, which reports `Unconfirmed()` and so
+flows through `IsOutcomeUnconfirmed` like any ambiguous transport failure. The classification is
+ambiguous rather than definite on purpose: the request reached Google and was accepted, so
+"nothing was modified" is precisely the claim that cannot be made — and the caller's contract is
+that a nil return means the amount was APPLIED, because it persists the new figure on that basis.
+
 ## Metrics reads (GA-5)
 
 `GetCampaignMetrics` (in `metrics.go`) reads live impressions, clicks, cost,

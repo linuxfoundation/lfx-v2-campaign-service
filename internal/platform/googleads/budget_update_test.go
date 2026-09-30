@@ -197,3 +197,38 @@ func TestUpdateCampaignBudget_RetriesThrottle(t *testing.T) {
 		t.Errorf("attempts = %d, want >1 (the 429 must be retried; idempotent=false would abort)", total)
 	}
 }
+
+// TestUpdateCampaignBudget_UnusableAcknowledgementIsUnconfirmed pins that a 2xx is not by
+// itself a confirmed write. The caller's contract is that nil means the amount was APPLIED —
+// it persists the new figure on that basis — so an accepted request that names no budget, or
+// names a different one, must come back marked ambiguous rather than either silently fine or
+// definitely failed. Google accepted the request, so "nothing was modified" is exactly the
+// claim that cannot be made.
+func TestUpdateCampaignBudget_UnusableAcknowledgementIsUnconfirmed(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"no results", `{"results":[]}`},
+		{"malformed resource name", `{"results":[{"resourceName":"noslash"}]}`},
+		{"a different budget", `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/999"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+			}))
+			defer tokenSrv.Close()
+			apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer apiSrv.Close()
+
+			c := NewClient(testCreds(), testAccount(),
+				WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+			err := c.UpdateCampaignBudget(context.Background(), "555", 1_000_000, budgetPeriodDaily)
+			if err == nil {
+				t.Fatal("a 2xx that does not acknowledge the addressed budget must not be reported as a confirmed write")
+			}
+			if !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("error is not classified unconfirmed: %v — the request was accepted, so the change may have applied", err)
+			}
+		})
+	}
+}

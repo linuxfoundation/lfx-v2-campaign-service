@@ -14094,7 +14094,7 @@ definitions:
                 description: New budget amount, in the AD ACCOUNT's own currency (NOT USD). Must be strictly positive.
                 example: 2500
                 format: double
-                minimum: 0
+                minimum: 1e-06
                 maximum: 1e+09
             budget_type:
                 type: string

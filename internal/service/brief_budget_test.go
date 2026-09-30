@@ -172,6 +172,10 @@ func TestUpdateCampaignBudget_RejectsBadRequests(t *testing.T) {
 		{"zero", 0, "daily"},
 		{"negative", -50, "daily"},
 		{"over the maximum", maxCampaignBudget + 1, "daily"},
+		// Positive, so it clears `budget <= 0`, but below half a micro — it rounds to zero
+		// micros at the platform. Refused HERE or it takes the write lock and a live platform
+		// read only to come back 503, which invites a retry that can never succeed.
+		{"rounds to zero micros", 0.0000001, "daily"},
 		{"empty budget_type", 100, ""},
 		{"unknown budget_type", 100, "monthly"},
 		{"uppercase budget_type", 100, "DAILY"},
@@ -205,6 +209,21 @@ func TestUpdateCampaignBudget_MaximumIsInclusive(t *testing.T) {
 	s, _ := budgetService(t, budgetCampaign(), d)
 	if _, err := s.UpdateCampaignBudget(context.Background(), budgetPayload(maxCampaignBudget, "daily", "3")); err != nil {
 		t.Fatalf("the maximum itself must be accepted: %v", err)
+	}
+}
+
+// TestUpdateCampaignBudget_OneMicroIsAccepted pins the OTHER end of the range, and it is the
+// end the design contract now publishes as its Minimum. One micro is the smallest amount that
+// survives the platform's math.Round, so refusing it here would make the OpenAPI lower bound a
+// value the service rejects — the same contract-looser-than-runtime defect in reverse.
+func TestUpdateCampaignBudget_OneMicroIsAccepted(t *testing.T) {
+	d := &budgetWriterDispatcher{}
+	s, _ := budgetService(t, budgetCampaign(), d)
+	if _, err := s.UpdateCampaignBudget(context.Background(), budgetPayload(0.000001, "daily", "3")); err != nil {
+		t.Fatalf("one micro is the declared minimum and must be accepted: %v", err)
+	}
+	if d.calls != 1 {
+		t.Errorf("WriteBudget calls = %d, want 1", d.calls)
 	}
 }
 
