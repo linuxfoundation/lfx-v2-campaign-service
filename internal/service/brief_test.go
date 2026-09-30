@@ -1105,11 +1105,21 @@ func TestBriefService_GetJob_ValidResultsAndFailedErrorOnly(t *testing.T) {
 
 // TestBriefService_GetJob_HubspotURL guards the last hop of the hubspotUrl seam: a stored
 // per-platform result's hubspot_url decodes into PlatformResult.HubspotURL as a non-nil
-// pointer, and an absent/empty one leaves it nil rather than a pointer to "".
+// pointer, and an absent/empty one leaves it nil rather than a pointer to "". The Result blob
+// is built by marshalling the real platformResult (orchestrator.go), not a raw string literal,
+// so a rename of its hubspot_url tag breaks this test rather than leaving it green — the same
+// tag GetJob's anonymous decode struct has to keep matching by hand.
 func TestBriefService_GetJob_HubspotURL(t *testing.T) {
+	resultJSON, err := json.Marshal([]platformResult{
+		{Platform: "hubspot", OK: true, CampaignID: "999", HubspotURL: "https://app.hubspot.com/email/8112310/edit/999/settings"},
+		{Platform: "google-ads", OK: true, CampaignID: "pc-1"},
+	})
+	if err != nil {
+		t.Fatalf("marshal platformResult fixture: %v", err)
+	}
 	s := getJobTestService(&model.CampaignJob{
 		ID: "j1", BriefID: "b1", Status: model.JobSucceeded,
-		Result: []byte(`[{"platform":"hubspot","ok":true,"campaign_id":"999","hubspot_url":"https://app.hubspot.com/email/8112310/edit/999/settings"},{"platform":"google-ads","ok":true,"campaign_id":"pc-1"}]`),
+		Result: resultJSON,
 	})
 	resp, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
 	if err != nil {
