@@ -1478,6 +1478,79 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("update-campaign-budget", func() {
+		Description("Change how much a campaign may spend, on its ad platform, then persist the new amount. " +
+			"A MUTATION on a live paid campaign, dispatched to the platform first: the row is updated only " +
+			"after the platform confirms, so a failure never leaves this service reporting a budget the " +
+			"platform does not have. Unlike update-campaign, which writes the DB row alone. " +
+			"AMOUNT ONLY — never the pacing model. `budget_type` must be the pacing the campaign ALREADY " +
+			"has upstream; a request naming the other one is refused (409) rather than translated. " +
+			"Switching a live campaign between daily pacing and a whole-flight cap reinterprets everything " +
+			"it has already spent against, and the platforms do not even name the same two ideas (Google " +
+			"has no LIFETIME period; its counterpart, CUSTOM_PERIOD, is a narrower thing). Change the " +
+			"pacing in the ad platform, then set the amount here. " +
+			"The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor " +
+			"converts it. " +
+			"Google Ads only today: a campaign on any other platform is refused with 400. Budget writing is " +
+			"added per platform, because each platform's budget model is its own deliberate decision. " +
+			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: " +
+			"the campaign is unprovisioned (no platform campaign id); the campaign belongs to a different " +
+			"ad account than the project's connection now resolves to, or does not record which ad account " +
+			"it was created under; the campaign's budget is SHARED across campaigns, where changing the " +
+			"amount would change the spend of campaigns this request never named — including campaigns this " +
+			"service does not own and cannot see (give the campaign its own budget in the ad platform, or " +
+			"make the change there where its full effect is visible); or the budget could not be addressed " +
+			"at all — the platform did not report which budget resource is attached, did not report whether " +
+			"it is shared, did not report its pacing, or reports a pacing this service has no mapping for. " +
+			"An unreported fact is refused rather than assumed: 'we could not establish that this budget is " +
+			"private' and 'this budget is private' are opposite facts, and only one of them justifies a " +
+			"write that could move a stranger's spend. None of the 409s is retryable — each needs a change " +
+			"in the ad platform or a re-dispatch. " +
+			"**400** for a request fault: a non-positive, non-finite or out-of-range amount, an unknown " +
+			"budget type, or a platform with no budget-write capability wired. " +
+			"**503** when the platform could not be reached or did not confirm; the row is unchanged, and " +
+			"re-applying the same amount converges on the same state, so a retry is safe.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			ifMatchAttr()
+			// Minimum(0) is the DESIGN-level bound only; zero itself is refused by the
+			// service, which is where the real check lives (it must also reject NaN, Inf
+			// and amounts that round to zero micros, none of which a Goa range expresses).
+			// Zero is not a budget — it is a request to stop spending, and pausing is what
+			// expresses that. The maximum matches the platform adapter's own cap, so a
+			// figure this service would refuse to create with cannot be reached by editing.
+			Attribute("budget", Float64, "New budget amount, in the AD ACCOUNT's own currency (NOT USD). Must be strictly positive.", func() {
+				Minimum(0)
+				Maximum(1000000000)
+				Example(2500.00)
+			})
+			// Required, and deliberately not defaulted: this endpoint refuses a pacing model
+			// that does not match the campaign's current one, so a defaulted 'daily' would
+			// turn a caller's omission into a 409 about a pacing they never named.
+			Attribute("budget_type", String, "The pacing the amount is expressed in. MUST match the campaign's current upstream pacing — this endpoint changes the amount, never the pacing.", func() {
+				Enum("daily", "lifetime")
+				Example("daily")
+			})
+			Required("project_id", "brief_id", "campaign_id", "budget", "budget_type")
+		})
+		Result(Campaign)
+		commonBriefErrors()
+		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
+		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
+		HTTP(func() {
+			PATCH("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/budget")
+			Header("bearer_token:Authorization")
+			Header("if_match:If-Match")
+			Response(StatusOK, func() { Header("etag:ETag") })
+			briefErrorResponses()
+			Response("PreconditionFailed", StatusPreconditionFailed)
+			Response("PreconditionRequired", StatusPreconditionRequired)
+		})
+	})
+
 	Method("apply-keyword-actions", func() {
 		Description("Pause or remove Google Ads keywords on one campaign. " +
 			"A MUTATION on a live paid campaign: pausing or removing a keyword changes what serves, so it " +

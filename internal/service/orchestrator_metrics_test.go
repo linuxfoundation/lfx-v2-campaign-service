@@ -334,6 +334,14 @@ func (d upstreamCapableDispatcher) ListAccountCampaignMetrics(context.Context, s
 	return []model.AccountCampaignMetrics{}, nil
 }
 
+// WriteBudget implements BudgetWriter (an optional dispatcher capability) so this same fake
+// drives the budget-write upstream call the orchestrator instruments. It is a mutation that
+// changes how much money is spent, so its latency and failure count are exactly what an
+// operator needs when budgets stop moving.
+func (d upstreamCapableDispatcher) WriteBudget(context.Context, string, model.Provider, *model.Campaign, model.BudgetChange) error {
+	return d.err
+}
+
 func (d upstreamCapableDispatcher) VerifyAccountOrg(context.Context, string, model.Provider) error {
 	return d.err
 }
@@ -463,6 +471,13 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadAccountCampaignMetrics(ctx, "p1", platform, "acct-1", 30)
 				return err
+			},
+		},
+		{
+			name: "write budget",
+			op:   opWriteBudget,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				return o.WriteCampaignBudget(ctx, "p1", platform, campaign, model.BudgetChange{Amount: 100, Type: model.BudgetDaily})
 			},
 		},
 		{

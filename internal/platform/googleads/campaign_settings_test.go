@@ -112,6 +112,12 @@ func TestGetCampaignSettings_ReadsUpstreamBudget(t *testing.T) {
 	// built from the request-side vocabulary fails outright against a real account.
 	q := query()
 	for _, want := range []string{
+		// campaign_budget.id is selected for the budget-WRITE path, which has no other
+		// authoritative way to learn which budget resource the campaign is attached to.
+		// Pinned here because dropping it from the SELECT would not fail any readback
+		// assertion — the readback does not report it — and would instead surface as
+		// every budget write refusing with "could not be addressed".
+		"campaign_budget.id",
 		"campaign_budget.amount_micros",
 		"campaign_budget.total_amount_micros",
 		"campaign_budget.period",

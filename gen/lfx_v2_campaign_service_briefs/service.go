@@ -112,6 +112,43 @@ type Service interface {
 	// outright (409). Read the pause's effect from the ad platform, not from this
 	// row.
 	ToggleCampaignStatus(context.Context, *ToggleCampaignStatusPayload) (res *Campaign, err error)
+	// Change how much a campaign may spend, on its ad platform, then persist the
+	// new amount. A MUTATION on a live paid campaign, dispatched to the platform
+	// first: the row is updated only after the platform confirms, so a failure
+	// never leaves this service reporting a budget the platform does not have.
+	// Unlike update-campaign, which writes the DB row alone. AMOUNT ONLY — never
+	// the pacing model. `budget_type` must be the pacing the campaign ALREADY has
+	// upstream; a request naming the other one is refused (409) rather than
+	// translated. Switching a live campaign between daily pacing and a
+	// whole-flight cap reinterprets everything it has already spent against, and
+	// the platforms do not even name the same two ideas (Google has no LIFETIME
+	// period; its counterpart, CUSTOM_PERIOD, is a narrower thing). Change the
+	// pacing in the ad platform, then set the amount here. The amount is in the AD
+	// ACCOUNT's own currency, not USD, and this service neither knows nor converts
+	// it. Google Ads only today: a campaign on any other platform is refused with
+	// 400. Budget writing is added per platform, because each platform's budget
+	// model is its own deliberate decision. **409** when the change is refused
+	// BEFORE the platform is written, so nothing has changed: the campaign is
+	// unprovisioned (no platform campaign id); the campaign belongs to a different
+	// ad account than the project's connection now resolves to, or does not record
+	// which ad account it was created under; the campaign's budget is SHARED
+	// across campaigns, where changing the amount would change the spend of
+	// campaigns this request never named — including campaigns this service does
+	// not own and cannot see (give the campaign its own budget in the ad platform,
+	// or make the change there where its full effect is visible); or the budget
+	// could not be addressed at all — the platform did not report which budget
+	// resource is attached, did not report whether it is shared, did not report
+	// its pacing, or reports a pacing this service has no mapping for. An
+	// unreported fact is refused rather than assumed: 'we could not establish that
+	// this budget is private' and 'this budget is private' are opposite facts, and
+	// only one of them justifies a write that could move a stranger's spend. None
+	// of the 409s is retryable — each needs a change in the ad platform or a
+	// re-dispatch. **400** for a request fault: a non-positive, non-finite or
+	// out-of-range amount, an unknown budget type, or a platform with no
+	// budget-write capability wired. **503** when the platform could not be
+	// reached or did not confirm; the row is unchanged, and re-applying the same
+	// amount converges on the same state, so a retry is safe.
+	UpdateCampaignBudget(context.Context, *UpdateCampaignBudgetPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads keywords on one campaign. A MUTATION on a live
 	// paid campaign: pausing or removing a keyword changes what serves, so it is
 	// validated exactly like a create. The batch's syntax, the campaign's
@@ -215,7 +252,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [28]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "apply-keyword-actions", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [29]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "apply-keyword-actions", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AdoptCampaignPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service adopt-campaign method.
@@ -1052,6 +1089,27 @@ type UpdateBriefPayload struct {
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
 	Brief   *BriefInput
+}
+
+// UpdateCampaignBudgetPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service update-campaign-budget method.
+type UpdateCampaignBudgetPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	// New budget amount, in the AD ACCOUNT's own currency (NOT USD). Must be
+	// strictly positive.
+	Budget float64
+	// The pacing the amount is expressed in. MUST match the campaign's current
+	// upstream pacing — this endpoint changes the amount, never the pacing.
+	BudgetType string
 }
 
 // UpdateCampaignPayload is the payload type of the

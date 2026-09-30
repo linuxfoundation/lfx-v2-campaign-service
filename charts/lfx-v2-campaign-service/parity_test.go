@@ -408,6 +408,12 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// future narrowing of the briefs match/rule must fail here loudly rather than leave
 		// a spend-affecting mutation routed-but-unauthorized.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/keyword-actions", true},
+		// The campaign budget write (LFXV2-2665) is the same shape again, and it is the
+		// second spend-affecting mutation in this set: it changes how much a live campaign
+		// may spend. Pinned for the same reason as keyword-actions — a narrowing of the
+		// briefs match/rule must fail here loudly rather than leave a money-moving endpoint
+		// routed-but-unauthorized, or unreachable.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/budget", true},
 		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
 		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
 		// rule — no separate route/rule entry. These rows pin that coverage so a future

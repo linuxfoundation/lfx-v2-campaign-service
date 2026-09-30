@@ -719,6 +719,49 @@ is to report a comparison, so a confidently wrong report about another account's
 the precise outcome it exists to prevent, whereas the toggle and metrics paths weigh that risk
 against serving legacy rows at all.
 
+## Budget write (optional capability, LFXV2-2665)
+
+`BudgetWriter` — `WriteBudget(ctx, projectID, platform, campaign *model.Campaign, budget
+model.BudgetChange) error` — changes an existing campaign's budget ON THE AD PLATFORM.
+Discovered by the same type assertion as `StatusToggler` and `SettingsReader`; a dispatcher
+without it yields `ErrBudgetWriteUnsupported` -> 400. **Google Ads is the only implementation
+today.** It is the settings readback's mirror: the readback makes a budget divergence legible,
+and this is the only capability that can act on it.
+
+It MUTATES, which puts it with `StatusToggler` and `KeywordActioner` rather than with the
+readers, and it is the only one of the three that changes how much money is spent. It returns
+`nil` ONLY when the platform confirmed the change — the caller persists the new amount on `nil`
+and on nothing else.
+
+**Google's budget is a SEPARATE RESOURCE from the campaign** (`campaign_budget`), and three
+facts live only there: which budget resource is attached (`campaign_budget.id`),
+`explicitly_shared`, and the period. `GoogleAdsDispatcher.WriteBudget` therefore READS the
+campaign's settings before it writes anything, and every refusal below happens BEFORE any
+mutate is issued:
+
+1. **Shared budget.** `explicitly_shared` is the safety fact. A shared budget is attached to
+   more than one campaign, so writing it through this campaign moves the spend of every other
+   campaign attached to it — including campaigns this service does not own and cannot see.
+   Refused with `ErrBudgetShared`. **An UNREAD flag is refused too** (`ErrBudgetUnwritable`),
+   never assumed unshared: the assumption is only ever wrong in the direction that spends other
+   people's money. The create path pins `ExplicitlyShared=false`, so only ADOPTED campaigns can
+   reach this refusal at all.
+2. **No addressable budget.** The platform reported no `campaign_budget.id`, so there is no
+   resource to write. `ErrBudgetUnwritable`.
+3. **Pacing.** The upstream period is absent, is a value this service has no mapping for, or is
+   not the pacing this request named — all `ErrBudgetUnwritable`. **A mismatch is REFUSED, never
+   translated**: `amount_micros` (DAILY) and `total_amount_micros` (CUSTOM_PERIOD) are mutually
+   exclusive fields on the budget resource, so honouring a `budget_type` the campaign does not
+   currently use would silently switch its whole spend model behind a request that only named a
+   number. This endpoint changes an amount; the pacing is changed in the ad platform.
+
+Only then does the amount convert, through `googleads.ValidateBudgetMicros` — the SAME function
+the create path uses, extracted rather than copied, so the two can never drift into disagreeing
+about what a valid budget is — and a single `campaignBudgets:mutate` is sent with
+`idempotent=true` and an update mask naming exactly one of the two amount fields. Re-applying the
+same amount converges on identical state, which is what makes the service's unconfirmed arm able
+to call a retry safe.
+
 ## Metrics read (optional capability)
 
 `MetricsReader` is a second OPTIONAL dispatcher interface, alongside `StatusToggler` —
@@ -2211,7 +2254,7 @@ after adoption could already have bound a campaign. `googleads.CampaignKindSearc
 `internal/service/orchestrator.go` and discovered by the same type assertion as the others
 (`StatusToggler`, `MetricsReader`, `AccountLister`, `CampaignAdopter`, `SettingsReader`,
 `AccountMetricsReader`, `EmailSearcher`, `KeywordInsightsReader`,
-`KeywordActioner`). **LinkedIn is the
+`KeywordActioner`, `BudgetWriter`). **LinkedIn is the
 only implementation today** — it is the only platform with an upstream signal to cross-check
 a connection's configured account/org pairing against.
 

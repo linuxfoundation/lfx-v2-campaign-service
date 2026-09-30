@@ -125,6 +125,42 @@ var (
 	// and the capability is added per platform as each one's readback is wired.
 	ErrSettingsReadbackUnsupported = errors.New("settings readback is not supported for this platform")
 
+	// ErrBudgetWriteUnsupported indicates the campaign's platform has no budget-write
+	// capability wired (no dispatcher, or the dispatcher is not a BudgetWriter). The
+	// platform is never contacted. Maps to 400, and lives here for the same reason as
+	// ErrToggleUnsupported: a platform dispatcher can return it directly without
+	// importing the orchestration layer.
+	//
+	// Google Ads is the only platform that implements the capability today, the same
+	// way it was the only SettingsReader when that capability landed. Budget writing is
+	// added per platform, and each addition is a separate deliberate decision about that
+	// platform's budget model — not a gap to be closed mechanically.
+	ErrBudgetWriteUnsupported = errors.New("budget writes are not supported for this platform")
+
+	// ErrBudgetShared indicates the campaign's upstream budget is SHARED across more than
+	// one campaign (Google Ads: campaign_budget.explicitly_shared is true), so writing it
+	// would change the spend of campaigns this request never named — including campaigns
+	// this service does not own and cannot see.
+	//
+	// This is refused rather than written, and refused BEFORE the mutate, so nothing has
+	// changed when the caller sees it. Maps to 409: it is a permanent property of how that
+	// budget was set up, so retrying cannot help. The remedy is a human one and belongs in
+	// the ad platform — give the campaign its own budget, or accept the shared change there
+	// with full sight of what else it moves.
+	//
+	// Campaigns this service CREATES are never in this state: the create path sets
+	// ExplicitlyShared=false (internal/platform/googleads/campaign.go), so each gets a
+	// dedicated budget. An ADOPTED campaign (see CampaignAdopter) carries whatever budget
+	// it was already attached to, which is the case this guard exists for.
+	ErrBudgetShared = errors.New("the campaign's budget is shared across campaigns and cannot be written through this campaign")
+
+	// ErrBudgetUnwritable indicates the campaign's upstream budget cannot be addressed for
+	// a write at all: the readback could not determine its period, or the row reports a
+	// budget shape this service has no safe mapping for. Distinct from ErrBudgetShared —
+	// that one is addressable and deliberately refused; this one could not be addressed.
+	// Maps to 409 for the same reason: no retry improves it.
+	ErrBudgetUnwritable = errors.New("the campaign's budget could not be addressed for a write")
+
 	// ErrMetricsWindowUnsupported indicates the requested window is one of the seven
 	// closed model.MetricsWindow values but this platform's MetricsReader does not
 	// support it (e.g. X Ads caps windows at 7 days and rejects last_30_days). This is

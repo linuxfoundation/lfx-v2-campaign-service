@@ -760,6 +760,33 @@ not a counter: an empty one is a field that could not be read, and answering `0`
 a claim about the campaign rather than about the read. The malformed value is never echoed
 into the error, only the field name.
 
+## Campaign budget update (LFXV2-2665)
+
+`UpdateCampaignBudget` (in `budget_update.go`) sets a budget resource's amount with one
+`campaignBudgets:mutate`. It is the write side of the settings readback, and it addresses the
+BUDGET, not the campaign: Google's `campaign_budget` is a separate resource, so the call takes a
+`budgetID` rather than a campaign id — which is why `settingsQueryFields` now selects
+`campaign_budget.id` and `CampaignSettings` carries `BudgetID`. Without that id there is nothing
+to write, and the dispatch layer refuses rather than guessing.
+
+`campaignBudgetUpdate` carries BOTH amount fields as pointers with `omitempty`, and the period
+switch selects exactly one: `amount_micros` for DAILY, `total_amount_micros` for
+CUSTOM_PERIOD. **The two are mutually exclusive** — `campaign_settings.go` already refuses a
+READ row carrying both — so the update mask names exactly the one field being set and the other
+is absent from the body rather than sent as zero. Nothing else is in the payload: no `create`,
+no `period`, no `delivery_method`, no `explicitly_shared`, so the mutate cannot change the
+pacing model or the sharing of a budget it was only asked to re-price.
+
+Input is guarded before the request is built — accounts validated, a non-empty numeric budget id
+(checked against `customerIDRE`, which also rejects a path-traversal or query-string payload in
+the id), and strictly positive micros — and each guard returns without issuing an API call. The
+amount arrives already converted by **`ValidateBudgetMicros`**, extracted from the create path
+rather than duplicated so the create and the update can never disagree about what a valid budget
+is (`maxBudget`, `microsPerUnit`, and the refusal of NaN/Inf/non-positive values all live in the
+one function). The mutate is sent with `idempotent=true`: re-applying the same amount converges
+on identical state, which is what lets the retry layer retry it and what lets the service tell a
+caller an unconfirmed outcome is safe to re-send once verified.
+
 ## Metrics reads (GA-5)
 
 `GetCampaignMetrics` (in `metrics.go`) reads live impressions, clicks, cost,
