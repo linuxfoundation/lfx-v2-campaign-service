@@ -74,9 +74,8 @@ untouched.
 
 ## Review
 
-Run `/lfx-skills:lfx-local-review` after each signed commit (Claude fallback trio
-if Pi is unavailable); fix findings as `fix(<scope>):` commits and rerun the full
-trio. No push / PR without explicit authorization.
+Follow the `## Pre-PR review` block in `CLAUDE.md`. No push / PR without explicit
+authorization.
 
 ## Verification
 

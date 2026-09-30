@@ -48,52 +48,48 @@ The current active speckit feature spec/plan/tasks live under
 See `README.md` for the `make` targets used to build, test, lint, and run
 the service.
 
-## Local work cycle — post-commit and pre-PR review
+For the live schema, the migrations under
+`internal/infrastructure/postgres/migrations/` are the sole authority;
+`docs/architecture.md`, `docs/channel-connections-schema.md` and
+`docs/build-summary.md` describe design intent and do not override the
+migrations where they disagree. Not a review finding (2026-09-29):
+pre-existing drift between those docs and the code, or the unused
+`GO_VERSION` pin in the `Makefile`, is known and deliberate; see
+`docs/reviews/knowledge-base/known-false-positives.md` § 9. What the
+formatting and license-header checks cover is defined by `GO_FILES` in the
+`Makefile` and `exclude_pattern` in
+`.github/workflows/license-header-check.yml`; `FILTER_REGEX_EXCLUDE` in
+`.mega-linter.yml` scopes MegaLinter's file-based linters only — project-mode
+scanners such as gitleaks and secretlint ignore it, and each one's coverage is
+set by its own configuration — gitleaks by `.gitleaks.toml` allowlists and
+`.gitleaksignore`, secretlint by its `.gitignore` fallback — so neither the
+filter nor this sentence promises full coverage; see
+`docs/knowledge/architecture/megalinter-secrets.md`. Not a
+review finding (2026-09-29): a license-header, `gofmt -s` or MegaLinter
+file-linter finding in a path those settings exclude; see
+`docs/reviews/knowledge-base/known-false-positives.md` § 10.
 
-Run, from this repo, **after every normal signed commit** while working toward a
-pull request:
+## Pre-PR review
 
-```text
-/lfx-skills:lfx-local-review
-```
+> **IMPORTANT — follow this exactly.** When the implementation is complete
+> and committed and you are about to open a PR:
+>
+> 1. **Review once.** Load `/lfx-skills:lfx-pre-pr-review` with the Skill
+>    tool and follow it: it tells you how to launch the reviewers. You run
+>    **one** review round of the whole branch and land **all accepted
+>    findings in exactly one fix commit** (none if there is nothing to fix).
+>    Do not work from memory: **load the skill before launching the
+>    reviewers**.
+> 2. **Preflight.** Run the `Preflight` value below and make it pass. It is
+>    deterministic checks, not a review: fix what it reports in its own
+>    commit(s), as many as it takes, and rerun it — never the reviewers.
+> 3. **Open the PR.** From then on there are **no local reviews of any
+>    kind** — iterate only on the PR's bot and human feedback, still running
+>    tests and checks. Where a `PR driver` is named below, load that skill and
+>    follow it for that iteration instead of `/lfx-skills:lfx-pr-resolve`.
 
-It reviews the **newest commit** — by default the range `HEAD^..HEAD`, the diff
-that commit introduces against its first parent — so you can keep editing while it
-runs. A caller that needs a wider range may supply a direct base parameter; the
-review never derives one, never fetches, and never consults a remote.
+- KB review skill: `/campaign-service-learnings-reviewer`
+- Preflight: `make check-fmt && make lint && make build && make test && go run ./cmd/okfvalidate ./docs/knowledge`
 
-Three reviewers run in parallel and each returns an ordinary Markdown review: a
-general reviewer, plus this repo's own two brains —
-`.claude/skills/campaign-service-code-reviewer` (audits the change against this
-repo's written rules and quotes each one) and
-`.claude/skills/campaign-service-learnings-reviewer` (matches it against
-`docs/reviews/knowledge-base/`, the patterns extracted from past review comments
-on this repo). The generic `local-code-review` and `local-learnings-review` names in
-`.claude/skills/` are symlinks to those two directories, and `.agents/skills/`
-exposes the same two physical directories — keep exactly one copy of each brain.
-
-When the host reports that Pi is unavailable it runs the trio as Claude subagents
-instead, following `.claude/skills/local-review-fallback` — this repo's launch
-table for exactly those three reviewers, aliased at
-`.agents/skills/local-review-fallback`. It carries no review criteria of its own.
-
-Read the reports in full. **This session — not the reviewers — fixes what they
-find.** Reviewer children never edit source, commit, push, or touch GitHub beyond
-read-only inspection. Land the fixes as normal signed conventional commits with a
-`fix(<scope>): ...` or `fix: ...` prefix, then **rerun the complete trio**.
-
-A review whose first line is `INCOMPLETE — <reason>`, or a role the host reports
-as failed or empty, makes the **whole cycle incomplete**. Successful siblings do
-not rescue it: two clean reports next to one incomplete one is not a pass. Resolve
-the cause and rerun the complete trio under one harness — never just the failed
-role, and never a mix of Pi and Claude evidence in the same cycle.
-
-Before opening a PR: drain the reviews, then run the repo's normal readiness and
-preflight checks.
-
-This cycle **stops at PR-open.** Pushing and opening the PR happen under the
-coordinator's release instruction, not from the review cycle, which never writes a
-label, status, review or approval.
-
-When a review's findings change what the code does, the knowledge-bundle rules
-above still apply to the follow-up commit.
+When a fix commit — the review round's or a preflight one — changes what the
+code does, the knowledge-bundle rules above still apply to it.
