@@ -314,7 +314,9 @@ Constraints:
 - Make every rich_text section scannable, not a wall of text: short paragraphs (2-3 sentences),
   a bolded lead-in phrase (<strong>) at the start of a paragraph making a distinct point, and a
   <ul>/<li> list wherever three or more parallel items are listed (benefits, speakers, topics,
-  agenda highlights) instead of a comma-separated sentence`
+  agenda highlights) instead of a comma-separated sentence
+- One idea per rich_text section -- never run a closed </ul> straight into the next heading with
+  no space or tag between them; start the next idea in its own section instead`
 
 	// Stage-specific guidance, appended to the shared role/constraint block above rather than
 	// replacing it: the JSON schema and the length limits hold for every stage, only the intent
@@ -383,9 +385,11 @@ Structure the sections in this order:
     again
 11. A final button repeating the primary call to action
 
-Numbering is for ordering only; do not print "1."/"2." in the output. Every numbered section
-whose supporting fact is missing is OMITTED, per the placeholder rule above -- a shorter email
-that only says what is known is correct, an invented capacity or deadline is not.`
+Numbering is for ordering only; do not print "1."/"2." in the output. Each numbered item is its
+own rich_text section -- never merge "Why attend" and "What you'll experience" into one section.
+Every numbered section whose supporting fact is missing is OMITTED, per the placeholder rule
+above -- a shorter email that only says what is known is correct, an invented capacity or
+deadline is not.`
 	}
 
 	// The segment guidance narrows which of the stage's (and, if present, the variant's) sections

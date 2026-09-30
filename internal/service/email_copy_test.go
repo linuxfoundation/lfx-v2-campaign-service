@@ -1423,6 +1423,40 @@ func TestComposeEmailCopyPrompt_CarriesTheRegistrationURLAndItsRule(t *testing.T
 	}
 }
 
+// The prompt tells the model not to run a closed list straight into the next heading.
+//
+// LFX-Campaigns-Email-QA-Report B1: production drafts showed a bulleted/emoji list's last line
+// butted directly against the next bold header with zero separation
+// ("...premier cloud native event.Why attend KubeCon + CloudNativeCon:"). This repo's
+// GenerateEmailCopy path passes the model's HTML straight through with no join/markdown step (see
+// parseEmailCopyResponse), so the only lever is the instruction the model is given. The rule must
+// ship on every stage-aware request, and the urgency-fomo variant -- whose numbered structure
+// explicitly asks for adjacent list-heavy sections ("Why attend" then "What you'll experience") --
+// must restate it for its own numbered items, since that is exactly the transition the report
+// reproduced.
+func TestComposeEmailCopyPrompt_WarnsAgainstListRunningIntoNextSection(t *testing.T) {
+	t.Parallel()
+
+	base := emailCopyPromptVars{
+		eventName: "KubeCon + CloudNativeCon North America 2026",
+		location:  "Salt Lake City, Utah",
+		dates:     "November 10-13, 2026",
+		stage:     emailstage.RegistrationPush,
+	}
+
+	sys, _ := composeEmailCopyPrompt(base)
+	if !strings.Contains(sys, "One idea per rich_text section") {
+		t.Errorf("the shared system prompt does not warn against running a list into the next section:\n%s", sys)
+	}
+
+	fomoVars := base
+	fomoVars.variant = urgencyFomoVariant
+	fomoSys, _ := composeEmailCopyPrompt(fomoVars)
+	if !strings.Contains(fomoSys, `never merge "Why attend" and "What you'll experience" into one section`) {
+		t.Errorf("the urgency-fomo variant block does not restate the rule for its own numbered sections:\n%s", fomoSys)
+	}
+}
+
 // With no URL, the line is ABSENT -- not present and empty.
 //
 // The rule reads "if no Registration URL is given", so the two shapes are not equivalent to the
