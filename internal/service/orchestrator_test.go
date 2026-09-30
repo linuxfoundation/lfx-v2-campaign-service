@@ -978,6 +978,125 @@ func TestOrchestrator_IDlessOrphanWithResultIsNotASkipSuccess(t *testing.T) {
 	}
 }
 
+// TestOrchestrator_FastPathReuseCarriesHubspotURL drives dispatchPlatform's fast-path
+// reuse (orchestrator.go:1425, `case lerr == nil && isReusableCampaign(existing):`)
+// through the public Start API, not the hubspotURLFromResult helper directly. A HubSpot
+// campaign already sits in GetCampaignByPlatform's row with a Result blob carrying
+// "hubspotUrl" (the shape internal/dispatch/hubspot.go writes). Deleting the
+// `res.HubspotURL = hubspotURLFromResult(existing.Result)` assignment at that call site
+// would leave TestHubspotURLFromResult, TestHubSpot_ResultBlobCarriesTheClonedEmailAppURL
+// and TestBriefService_GetJob_HubspotURL all green while this test fails.
+func TestOrchestrator_FastPathReuseCarriesHubspotURL(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{existing: map[string]*model.Campaign{
+		"b1|" + string(model.ProviderHubSpot): {
+			ID: "existing-hs1", PlatformCampaignID: "999",
+			Result: []byte(`{"hubspotUrl":"https://app.hubspot.com/email/8112310/edit/999/settings"}`),
+		},
+	}}
+	disp := &countingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderHubSpot: disp,
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderHubSpot}, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobSucceeded {
+		t.Fatalf("status = %s, want succeeded", j.Status)
+	}
+	if !strings.Contains(string(j.Result), "https://app.hubspot.com/email/8112310/edit/999/settings") {
+		t.Errorf("result = %s, want it to carry the reused campaign's hubspot_url", j.Result)
+	}
+}
+
+// TestOrchestrator_ClaimConflictReuseCarriesHubspotURL drives dispatchPlatform's OTHER
+// reuse site (orchestrator.go:1470, inside `if !claimed { if isReusableCampaign(existing)`)
+// in isolation from the fast path above. That requires GetCampaignByPlatform (checked
+// first, at line 1416) to miss while ClaimCampaignDispatch (checked second) finds the row —
+// exactly the race the comment above line 1461 describes: another worker completed the
+// pair between this worker's lookup and its claim attempt. byPlatformErr set to
+// domain.ErrNotFound simulates the stale/missed lookup; the row seeded in `existing` is
+// what the subsequent claim conflicts against. Deleting the
+// `res.HubspotURL = hubspotURLFromResult(existing.Result)` assignment at THIS call site
+// (distinct from line 1425's) would leave every other hubspotUrl-seam test green while
+// this test fails.
+func TestOrchestrator_ClaimConflictReuseCarriesHubspotURL(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{
+		byPlatformErr: domain.ErrNotFound,
+		existing: map[string]*model.Campaign{
+			"b1|" + string(model.ProviderHubSpot): {
+				ID: "existing-hs2", PlatformCampaignID: "999",
+				Result: []byte(`{"hubspotUrl":"https://app.hubspot.com/email/8112310/edit/999/settings"}`),
+			},
+		},
+	}
+	disp := &countingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderHubSpot: disp,
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderHubSpot}, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobSucceeded {
+		t.Fatalf("status = %s, want succeeded", j.Status)
+	}
+	if !strings.Contains(string(j.Result), "https://app.hubspot.com/email/8112310/edit/999/settings") {
+		t.Errorf("result = %s, want it to carry the claim-conflict row's hubspot_url", j.Result)
+	}
+	disp.mu.Lock()
+	calls := disp.calls
+	disp.mu.Unlock()
+	if calls != 0 {
+		t.Errorf("Dispatch called %d times, want 0 (the claim conflict must reuse, not dispatch)", calls)
+	}
+}
+
+// freshHubspotCreateDispatcher simulates a HubSpot dispatch that actually runs (no
+// existing row to reuse) and succeeds, returning a campaign whose Result carries
+// "hubspotUrl" — the shape internal/dispatch/hubspot.go's campaignFromHubSpot writes.
+type freshHubspotCreateDispatcher struct{}
+
+func (freshHubspotCreateDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return &model.Campaign{
+		PlatformCampaignID: "pc-" + string(p),
+		Status:             "created",
+		CampaignName:       "n",
+		Result:             json.RawMessage(`{"hubspotUrl":"https://app.hubspot.com/email/8112310/edit/999/settings"}`),
+	}, nil
+}
+
+// TestOrchestrator_FreshDispatchCarriesHubspotURL drives dispatchPlatform's THIRD
+// hubspotURLFromResult call site (orchestrator.go:1792, at the end of a successful FRESH
+// dispatch — no existing row to reuse) in isolation from the two reuse sites above.
+// Deleting the `res.HubspotURL = hubspotURLFromResult(campaign.Result)` assignment there
+// would leave every reuse-path and read-path hubspotUrl test green while this test fails.
+func TestOrchestrator_FreshDispatchCarriesHubspotURL(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderHubSpot: freshHubspotCreateDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderHubSpot}, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobSucceeded {
+		t.Fatalf("status = %s, want succeeded", j.Status)
+	}
+	if !strings.Contains(string(j.Result), "https://app.hubspot.com/email/8112310/edit/999/settings") {
+		t.Errorf("result = %s, want it to carry the freshly-dispatched campaign's hubspot_url", j.Result)
+	}
+}
+
 // TestOrchestrator_ClaimErrorIsFailure verifies that a failure to claim the
 // dispatch slot is recorded as a platform failure and the dispatcher is never
 // called (so no create can duplicate).
@@ -3047,12 +3166,14 @@ func TestOrchestrator_ReadCampaignSettings_BoundsTheCall(t *testing.T) {
 	}
 }
 
-// TestHubspotURLFromResult guards the read side of the hubspotUrl seam: internal/dispatch's
-// campaignFromHubSpot writes the cloned email's AppURL into the persisted Result blob under the
-// JSON key "hubspotUrl" (hubspot.Email.AppURL is tagged json:"-" and would not otherwise
-// serialize), and hubspotURLFromResult here reads that same key back out. The matching case
-// below marshals a struct shaped like dispatch's own — not a literal `{"hubspotUrl":"..."}`
-// string — so a rename of either side's JSON tag breaks this test rather than leaving it green.
+// TestHubspotURLFromResult guards only the READ side of the hubspotUrl seam: it pins
+// hubspotURLFromResult's own "hubspotUrl" tag by marshalling a test-local struct that carries
+// that same literal tag, so a rename of hubspotURLFromResult's tag alone breaks this test. It
+// does NOT catch a rename on the WRITE side — internal/dispatch's campaignFromHubSpot, which
+// writes the cloned email's AppURL into the persisted Result blob under this key (hubspot.Email.
+// AppURL is tagged json:"-" and would not otherwise serialize) — because dispatchShapedResult
+// below is this test's own struct, not dispatch's. That side is pinned separately by
+// TestHubSpot_ResultBlobCarriesTheClonedEmailAppURL in internal/dispatch/hubspot_test.go.
 func TestHubspotURLFromResult(t *testing.T) {
 	type dispatchShapedResult struct {
 		PortalID   string `json:"portalId"`

@@ -433,8 +433,8 @@ func addButtonSection(widgets map[string]any, sections *[]map[string]any, text, 
 	widgets[key] = map[string]any{
 		"type": "module",
 		"body": map[string]any{
-			"path":             "@hubspot/button",
-			"module_id":        moduleIDButton,
+			"path":      "@hubspot/button",
+			"module_id": moduleIDButton,
 			// #2563eb (Tailwind blue-600, matching the frontend preview's CTA) contrasts
 			// white text at ~5.17:1, clearing the WCAG AA 4.5:1 text threshold. The prior
 			// #0094ff only reached ~3.14:1 and failed it.
