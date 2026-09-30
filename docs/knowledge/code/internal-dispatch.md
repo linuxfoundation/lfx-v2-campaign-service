@@ -1873,8 +1873,7 @@ The refusal names NEITHER the requested nor the configured id. Promotable-user i
 persisted error text is a defect this branch already fixed once, and naming the connection's
 own identity back to a caller who guessed wrong would confirm the guess.
 
-The check is GATED on authoring actually happening, and the gate is a copy of the client's own
-condition — `TweetID == "" && TrimSpace(TweetText) != ""` — rather than an approximation of it.
+The check is GATED on authoring actually happening.
 `as_user_id` authorizes ONE act, publishing a tweet under a handle, and an explicit `tweetId`
 wins over `tweetText`: no tweet is authored, no promotable user is resolved, and the value is
 never read. Run unconditionally, the check refused a promote-an-existing-tweet request over a
@@ -1882,13 +1881,30 @@ field nothing would have used, and contradicted `docs/api-catalog.md`'s own "onl
 with `tweetText`". It is also the treatment the client already gives an unused `tweetText` — a
 malformed but ignored field must not fail an otherwise-valid campaign.
 
-Copying the condition rather than restating it is the point: the two have to stay identical, or
-one side authorizes text the other does not publish, or publishes text the other never
-authorized. The scope of an authorization check is part of the check, and a gate is the one kind
-of edit that can narrow it to nothing while every existing test still passes — which is why the
-ignored case has a test asserting the OUTCOME (the supplied tweet is promoted, the authoring
-endpoint and the promotable-users read are never touched) rather than merely the absence of an
-error.
+A gate on an authorization check has to agree with the guarded condition on EVERY input, not on
+the inputs a test happens to pass, and the first attempt did not — which is the part worth
+keeping. It read `cfg.TweetID == ""` to mirror the client, but the client TRIMS before its own
+emptiness test (`in.TweetID = strings.TrimSpace(in.TweetID)`). A `tweetId` of `"   "` was
+therefore non-empty at the gate and empty at the client: the check was skipped and the client
+authored `tweetText` anyway, auto-resolving a promotable user while the connection's declared
+identity was neither inherited nor enforced. Whitespace is the cheapest input an attacker
+controls on a caller-supplied field.
+
+The fix is to NORMALIZE ONCE — dispatch trims `tweetId` and passes that same value into
+`CampaignInput`, so the client's own trim is idempotent and the two cannot disagree about
+emptiness. Restating `TrimSpace` at the gate would have fixed this input and moved the next
+drift one edit further out; sharing the value removes the disagreement instead. The general
+rule this instance teaches: when a gate is described as "mirroring" a condition in another
+package, the mirror is only as good as the normalization on both sides, and the safe form is to
+compute the value once and hand it over.
+
+The scope of an authorization check is part of the check, and a gate is the one kind of edit
+that can narrow it to nothing while every existing test still passes. So both directions are
+pinned by outcome, not by the absence of an error: the ignored case asserts the supplied tweet
+is promoted and the authoring endpoint and promotable-users read are never touched, and the
+whitespace case asserts both a pre-create refusal with zero upstream requests AND that a
+whitespace `tweetId` with no `asUserId` still INHERITS the declared identity — the half a fix
+aimed only at the refusal would have left broken.
 
 ## Forced-primary mode: the system account as the account of record
 

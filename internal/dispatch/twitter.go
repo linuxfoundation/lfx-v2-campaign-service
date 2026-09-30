@@ -182,20 +182,33 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// client already refuses to guess when several candidates exist and the caller pinned
 	// nothing. Seeding as_user_id on the shared connection is what closes it for real.
 	//
-	// The check is GATED on authoring actually happening, and the gate mirrors the
-	// client's own condition (`TweetID == "" && TrimSpace(TweetText) != ""`,
-	// internal/platform/twitter/client.go) rather than approximating it. as_user_id
-	// authorizes ONE act — publishing a tweet under a handle — and an explicit tweetId
-	// wins over tweetText, so on that path no tweet is authored, no promotable user is
-	// resolved, and this value is never read. Run unconditionally, it refused a
-	// promote-an-existing-tweet request over a field nothing would have used, which is
-	// also what docs/api-catalog.md promises ("only meaningful with tweetText"). It is
-	// the same treatment the client already gives an unused TweetText: a malformed but
-	// ignored field must not fail an otherwise-valid campaign. The two conditions have
-	// to stay identical — if they drift, one side authorizes text the other does not
-	// publish, or publishes text the other never authorized.
+	// The check is GATED on authoring actually happening. as_user_id authorizes ONE act —
+	// publishing a tweet under a handle — and an explicit tweetId wins over tweetText, so
+	// on that path no tweet is authored, no promotable user is resolved, and this value is
+	// never read. Run unconditionally, it refused a promote-an-existing-tweet request over
+	// a field nothing would have used, which is also what docs/api-catalog.md promises
+	// ("only meaningful with tweetText"). It is the same treatment the client already gives
+	// an unused TweetText: a malformed but ignored field must not fail an otherwise-valid
+	// campaign.
+	//
+	// The gate decides WHETHER AN AUTHORIZATION CHECK RUNS, so it has to agree with the
+	// client's authoring condition on every input, not merely on the inputs a test happens
+	// to pass. The way it first failed to is worth keeping: it read `cfg.TweetID == ""`
+	// against a client that TRIMS (`in.TweetID = strings.TrimSpace(in.TweetID)`, client.go,
+	// before the emptiness test the gate was copied from), so a tweetId of "  " was
+	// non-empty HERE and empty THERE — the gate skipped the check and the client authored
+	// anyway, auto-resolving a promotable user while the connection's declared identity was
+	// neither inherited nor enforced. A whitespace string is the cheapest possible input to
+	// a field an attacker controls.
+	//
+	// Both sides now read the SAME normalized value: tweetID is trimmed once here and is
+	// what goes into CampaignInput, so the client's own trim is idempotent and the two
+	// conditions cannot disagree about emptiness. Normalizing once and passing it on is the
+	// fix; restating TrimSpace at the gate would only have moved the next drift one edit
+	// further out.
+	tweetID := strings.TrimSpace(cfg.TweetID)
 	var asUserID string
-	if cfg.TweetID == "" && strings.TrimSpace(cfg.TweetText) != "" {
+	if tweetID == "" && strings.TrimSpace(cfg.TweetText) != "" {
 		asUserID, err = authorizedTwitterAsUserID(brief.ProjectID, res, cfg.AsUserID)
 		if err != nil {
 			return nil, notCreated(err)
@@ -224,7 +237,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		BudgetUsd:       cfg.BudgetAmount, // account-currency amount (client field name is legacy)
 		StartDate:       cfg.StartDate,
 		EndDate:         cfg.EndDate,
-		TweetID:         cfg.TweetID,
+		TweetID:         tweetID, // normalized above; the gate and the client must agree on empty
 		TweetText:       cfg.TweetText,
 		AsUserID:        asUserID,
 	}

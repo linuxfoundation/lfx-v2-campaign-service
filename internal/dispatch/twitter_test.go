@@ -1394,3 +1394,99 @@ func TestTwitter_UnusedAsUserIDIsIgnoredWithNoDeclaredIdentity(t *testing.T) {
 		t.Error("an unused asUserId must not trigger a promotable-user lookup")
 	}
 }
+
+// TestTwitter_WhitespaceTweetIDDoesNotBypassTheIdentityCheck pins the seam that made the
+// authorization gate wrong on its first attempt.
+//
+// The gate was written as `cfg.TweetID == ""` to mirror the client's authoring condition,
+// but the client TRIMS first (`in.TweetID = strings.TrimSpace(in.TweetID)`) before its own
+// emptiness test. So a tweetId of "   " was non-empty at the gate and empty at the client:
+// the check was skipped, and the client then authored tweetText anyway, auto-resolving a
+// promotable user while the connection's declared identity was neither inherited nor
+// enforced. Both sides now read one normalized value.
+//
+// Whitespace is the cheapest input an attacker controls on a caller-supplied field, so this
+// asserts the strict outcome: a pre-create refusal with ZERO upstream requests, not merely
+// that some error came back.
+func TestTwitter_WhitespaceTweetIDDoesNotBypassTheIdentityCheck(t *testing.T) {
+	var hits int32
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	defer api.Close()
+
+	conn := activeTwitterConn(goodTwitterCreds)
+	conn.ProviderConfig = map[string]string{"funding_instrument_id": "fi1", "as_user_id": "222"}
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: conn}, identityEncryptor{},
+		twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+	)
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds,
+		json.RawMessage(`{"twitterConfig":{"budgetAmount":500,"startDate":"2099-03-01","endDate":"2099-03-10","tweetId":"   ","tweetText":"Join us at KubeCon","asUserId":"333"}}`))
+	var nuc interface{ NoUpstreamCreate() bool }
+	if err == nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Fatalf("a whitespace-only tweetId still authors, so the identity check must run: got %T: %v", err, err)
+	}
+	if got := atomic.LoadInt32(&hits); got != 0 {
+		t.Errorf("the refusal reached X %d times; it must happen before any request", got)
+	}
+}
+
+// TestTwitter_WhitespaceTweetIDInheritsTheDeclaredIdentity is the same seam from the other
+// direction, and the one that would still have been silently wrong if only the refusal above
+// were fixed. A caller sending a whitespace tweetId and NO asUserId must INHERIT the
+// connection's declared identity, exactly as an empty tweetId does — under the bypass it
+// reached the client with an empty AsUserID and the client auto-resolved whatever single
+// promotable candidate the account had, which on the shared LF connection need not be the
+// pinned handle.
+func TestTwitter_WhitespaceTweetIDInheritsTheDeclaredIdentity(t *testing.T) {
+	var mu sync.Mutex
+	var tweetParams string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "promotable_users"):
+			// TWO candidates, deliberately. With the pin carried through, the client uses
+			// 222. With it dropped, the client refuses to guess between two and authors
+			// nothing at all — so the assertion below fails either way the identity is
+			// lost, rather than only when it lands on the wrong handle.
+			_, _ = w.Write([]byte(`{"data":[{"user_id":"222"},{"user_id":"999"}]}`))
+		case r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "tweet"):
+			mu.Lock()
+			tweetParams = r.URL.RawQuery
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"data":{"id":123456789,"id_str":"123456789"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	conn := activeTwitterConn(goodTwitterCreds)
+	conn.ProviderConfig = map[string]string{"funding_instrument_id": "fi1", "as_user_id": "222"}
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: conn}, identityEncryptor{},
+		twitter.WithBaseURL(srv.URL), twitter.WithWriteDelay(0),
+	)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds,
+		json.RawMessage(`{"twitterConfig":{"budgetAmount":500,"startDate":"2099-03-01","endDate":"2099-03-10","tweetId":" ","tweetText":"Join us at KubeCon"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	mu.Lock()
+	got := tweetParams
+	mu.Unlock()
+	if !strings.Contains(got, "as_user_id=222") {
+		t.Errorf("the tweet must be authored under the connection's declared identity, got query: %q", got)
+	}
+}

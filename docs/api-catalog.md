@@ -1020,7 +1020,8 @@ this connection's tweets are authored under. It is an authorization control rath
 value: where it is set, a campaign config naming a different `asUserId` is refused pre-create and
 one naming none inherits it; where it is absent, dispatch behaves exactly as before.
 That refusal is scoped to requests that actually AUTHOR a tweet — `tweetId` empty and `tweetText`
-non-empty. An explicit `tweetId` wins, so no tweet is authored, no promotable user is resolved, and
+non-empty, both judged AFTER trimming, so a whitespace-only `tweetId` counts as absent here
+exactly as it does at the client and cannot skip the check by looking present. An explicit `tweetId` wins, so no tweet is authored, no promotable user is resolved, and
 a mismatched `asUserId` is ignored along with the `tweetText` it would have signed, rather than
 failing a request over a field nothing reads (the same treatment an unused, malformed `tweetText`
 gets). Bootstrap holds a seeded `as_user_id` to the same 32-character bound as the HTTP contract —
