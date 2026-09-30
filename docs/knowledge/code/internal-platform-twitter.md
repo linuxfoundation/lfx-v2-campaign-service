@@ -364,7 +364,10 @@ refuse copy X would accept. 280 weighted characters of four-byte runes is 1120
 bytes, so no legitimate brief comes near 8 KiB.
 
 The same asymmetry decides where a URL run ENDS. `tweetURLRe` is
-`(?i)\bhttps?://[^\s<>。、！？，：；]+`: case-insensitive because RFC 3986 §3.1 makes
+`(?i)https?://[^\s<>。、！？，：；]+` — no `\b`, for the reason given under the two
+scanners below; the linkification boundary is applied in code by
+`findTweetURLRuns`, and the credential screen deliberately does not apply it at
+all. Case-insensitive because RFC 3986 §3.1 makes
 the scheme case-insensitive and `HTTPS://…` is a link X wraps to t.co like any
 other, where a case-sensitive match charged it its raw length and invented a
 rejection. The run then goes to whitespace, so a link at the end of a sentence
@@ -990,8 +993,13 @@ interprets an OAuth1 4-tuple (consumer key/secret + access token/secret); Accoun
 comes from AccountID + `funding_instrument_id`. Budget (`budgetAmount`) is in the
 ACCOUNT's currency (no FX). It surfaces a `Reused` reuse/config-drift flag and classifies
 an exhausted mutating 429 as UNCONFIRMED; it validates the destination URL (https/http,
-no embedded userinfo) up front. It maps `tweetText`/`asUserId` straight into
-`CampaignInput` alongside `tweetId` — see "Authoring a promoted tweet" above
+no embedded userinfo) up front. It maps `tweetText` straight into `CampaignInput`;
+`tweetId` is TRIMMED there first, once, so the adapter's authoring gate and the
+client's own emptiness test cannot disagree about it; and `AsUserID` is not the
+caller's value but the one `authorizedTwitterAsUserID` returns — the connection's
+declared identity wins, a caller value must match it, a caller sending none
+inherits it, and the check runs only on the authoring path. See "Authoring a
+promoted tweet" above
 for the client-side precedence and classification rules. A fully authored +
 promoted tweet degrades exactly the same way an explicit-`tweetId` run does:
 the adapter's degrade check is keyed on `PromotedTweetID` being empty
