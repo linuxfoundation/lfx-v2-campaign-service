@@ -1477,3 +1477,118 @@ func TestCreateConnection_UUIDProjectIDRejectedBeforeAnyWrite_AllProviders(t *te
 		})
 	}
 }
+
+// TestTwitterAds_AsUserIDRoundTripsThroughTheService is the seam the design and the dispatch
+// check both presumed and nothing connected: `as_user_id` reached the generated contracts and
+// the storable-key map, so a POST carrying it validated and answered 200 — while the service
+// built ProviderConfig with only funding_instrument_id in it. The column stayed NULL, GET never
+// returned the value, and authorizedTwitterAsUserID read "" for every API-created connection,
+// which is its "connection declares no identity" branch. The authorization control was inert for
+// every project connection while looking, from outside, exactly like one that worked.
+//
+// TestAsUserIDIsAStorableConfigKey (internal/dispatch) already pins the OTHER half of the same
+// near-miss — that ConfigKeys() lists the key at all. Neither test alone catches this: that one
+// passes against a service that never writes the key, and a service test that only asserted the
+// RESULT would pass against one that returned the payload's own value without storing it. So the
+// assertions here are on the STORED row, which is what dispatch resolves, with the result
+// checked beside it.
+func TestTwitterAds_AsUserIDRoundTripsThroughTheService(t *testing.T) {
+	repo := newFakeRepo()
+	s := newTestService(t, repo)
+	ctx := context.Background()
+
+	created, err := s.CreateTwitterAds(ctx, &conn.CreateTwitterAdsPayload{
+		ProjectID: "cncf",
+		Config: &conn.TwitterAdsConnectionConfig{
+			AccountID: strPtr("18ce54d4x5t"), FundingInstrumentID: "lygyi",
+			AsUserID: strPtr("1234567890123456789"),
+		},
+		Credentials: &conn.TwitterAdsCredentials{
+			ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTwitterAds: %v", err)
+	}
+	stored := repo.store[repoKey("cncf", model.ProviderTwitterAds)]
+	if got := stored.ProviderConfig["as_user_id"]; got != "1234567890123456789" {
+		t.Fatalf("stored as_user_id = %q, want the supplied id — this is the value "+
+			"authorizedTwitterAsUserID reads, so an empty one leaves dispatch unpinned", got)
+	}
+	if created.AsUserID == nil || *created.AsUserID != "1234567890123456789" {
+		t.Errorf("create result as_user_id = %v, want the supplied id", created.AsUserID)
+	}
+
+	got, err := s.GetTwitterAds(ctx, &conn.GetTwitterAdsPayload{ProjectID: "cncf"})
+	if err != nil {
+		t.Fatalf("GetTwitterAds: %v", err)
+	}
+	if got.AsUserID == nil || *got.AsUserID != "1234567890123456789" {
+		t.Errorf("get result as_user_id = %v, want the stored id — an operator has no other "+
+			"way to see which identity the connection declares", got.AsUserID)
+	}
+
+	ifMatch := "1"
+	updated, err := s.UpdateTwitterAds(ctx, &conn.UpdateTwitterAdsPayload{
+		ProjectID: "cncf",
+		Config: &conn.TwitterAdsConnectionConfig{
+			AccountID: strPtr("18ce54d4x5t"), FundingInstrumentID: "lygyi",
+			AsUserID: strPtr("9876543210987654321"),
+		},
+		IfMatch: &ifMatch,
+	})
+	if err != nil {
+		t.Fatalf("UpdateTwitterAds: %v", err)
+	}
+	stored = repo.store[repoKey("cncf", model.ProviderTwitterAds)]
+	if got := stored.ProviderConfig["as_user_id"]; got != "9876543210987654321" {
+		t.Errorf("stored as_user_id after update = %q, want the replacement id", got)
+	}
+	if updated.AsUserID == nil || *updated.AsUserID != "9876543210987654321" {
+		t.Errorf("update result as_user_id = %v, want the replacement id", updated.AsUserID)
+	}
+}
+
+// TestUpdateTwitterAds_OmittedAsUserIDClearsIt states the full-replace semantics out loud,
+// because this is the direction that WIDENS what dispatch accepts: a PUT that restates the row
+// without as_user_id returns the connection to "declares no identity", after which a campaign
+// config may name any promotable handle again. That is the same rule account_id and Meta's
+// app_id already carry on these endpoints — X is not inventing a third convention — but an
+// authorization control silently relaxing on an omitted key is worth a test that says so, so a
+// later "preserve when omitted" tweak has to argue with this comment rather than slip past.
+func TestUpdateTwitterAds_OmittedAsUserIDClearsIt(t *testing.T) {
+	repo := newFakeRepo()
+	repo.store[repoKey("cncf", model.ProviderTwitterAds)] = &model.Connection{
+		ProjectID: "cncf", Provider: model.ProviderTwitterAds, Status: model.StatusActive,
+		AccountID: "18ce54d4x5t", Version: 7, EncryptedCredentials: []byte("ciphertext"),
+		ProviderConfig: map[string]string{
+			"funding_instrument_id": "lygyi", "as_user_id": "1234567890123456789",
+		},
+	}
+	s := newTestService(t, repo)
+	ifMatch := "7"
+
+	res, err := s.UpdateTwitterAds(context.Background(), &conn.UpdateTwitterAdsPayload{
+		ProjectID: "cncf",
+		Config: &conn.TwitterAdsConnectionConfig{
+			AccountID: strPtr("18ce54d4x5t"), FundingInstrumentID: "lygyi",
+			// AsUserID is nil EXPLICITLY — the omission is the subject of this test.
+			AsUserID: nil,
+		},
+		IfMatch: &ifMatch,
+	})
+	if err != nil {
+		t.Fatalf("UpdateTwitterAds: %v", err)
+	}
+	stored := repo.store[repoKey("cncf", model.ProviderTwitterAds)]
+	if got := stored.ProviderConfig["as_user_id"]; got != "" {
+		t.Errorf("stored as_user_id = %q, want it cleared: PUT is a full replace here", got)
+	}
+	if res.AsUserID != nil {
+		t.Errorf("result as_user_id = %v, want it absent once cleared", *res.AsUserID)
+	}
+	if got := stored.ProviderConfig["funding_instrument_id"]; got != "lygyi" {
+		t.Errorf("funding_instrument_id = %q, want it preserved — the restated key must "+
+			"survive a PUT that clears its neighbour", got)
+	}
+}

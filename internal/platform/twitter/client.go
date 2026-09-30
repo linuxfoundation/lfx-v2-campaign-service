@@ -976,8 +976,19 @@ func (c *Client) request(ctx context.Context, method, path string) (*apiResponse
 //
 // idempotent is passed through to doRequest's 429 handling and is a PER-ENDPOINT
 // property, not a property of POST: see doRequestAbs. Every caller states it
-// explicitly rather than inheriting a default, because the endpoint that must say
-// false (tweet authoring) is the one whose accidental repeat is irreversible.
+// explicitly rather than inheriting a default.
+//
+// As it stands, EVERY create passes false — campaigns, line_items, promoted_tweets and
+// tweet alike — so the parameter currently distinguishes this helper from `request`
+// above rather than one create from another. It is still a parameter, and still stated
+// at each call site, because the REASONS differ and only one of them is permanent:
+// campaigns and line_items are found-or-created by name, but that lookup runs above
+// this retry loop and a retry from inside it re-POSTs regardless; promoted_tweets is
+// refused on a repeat, but with DUPLICATE_PROMOTABLE_ENTITY, which does not name the
+// holder, so the refusal is not proof of success. Tweet authoring is the one whose
+// accidental repeat is irreversible — X publishes a SECOND tweet — and the one whose
+// false can never be relaxed. Moving any of the others is an argument about that
+// endpoint, which is what the per-call-site comments are for.
 func (c *Client) createRequest(ctx context.Context, path string, params map[string]string, idempotent bool) (*apiResponse, error) {
 	return c.doRequest(ctx, http.MethodPost, path, params, idempotent)
 }
@@ -3894,12 +3905,15 @@ func (c *Client) createNullcastTweet(ctx context.Context, text, asUserID string)
 	if asUserID != "" {
 		params["as_user_id"] = asUserID
 	}
-	// idempotent=FALSE, as it is for the campaign and line-item creates. Only
-	// promoted_tweets is declared retry-safe, because only it converges on the SERVER:
-	// a repeated POST comes back DUPLICATE_PROMOTABLE_ENTITY. Campaign and line-item
-	// creates are found-or-created by name, but that lookup runs above the request
-	// layer's retry loop and a retry from inside it re-POSTs regardless. Tweet
-	// authoring has neither form: no name to find it by and no idempotency key, so X
+	// idempotent=FALSE, as it is for all three of the other creates — none of this
+	// client's create endpoints is declared retry-safe. Campaign and line-item creates
+	// are found-or-created by name, but that lookup runs above the request layer's retry
+	// loop and a retry from inside it re-POSTs regardless. promoted_tweets comes closest
+	// to converging on the SERVER — a repeated POST comes back
+	// DUPLICATE_PROMOTABLE_ENTITY — but that code does not name the line item HOLDING the
+	// tweet, so it is not proof the association this call wanted exists, and its call
+	// site handles the duplicate explicitly rather than letting the loop swallow it.
+	// Tweet authoring has neither form: no name to find it by and no idempotency key, so X
 	// publishes a second tweet rather than refusing the repeat. A 429 can
 	// be reported AT or AFTER the write is accepted, so the request layer's automatic
 	// retry could publish two or three tweets under the LF handle before this function

@@ -1194,7 +1194,7 @@ pacingLabel: string             — underspending | normal | constrained | overs
 ### X/Twitter Ads
 - OAuth 1.0a with HMAC-SHA1 signing (not OAuth 2.0)
 - 1 request/second write rate limit
-- Exponential backoff retry on 429 responses
+- Exponential backoff retry on 429 responses **for reads only**. Retry eligibility is an explicit per-endpoint `idempotent` flag, never inferred from the HTTP method, and every one of the client's four creates (campaigns, line_items, promoted_tweets, tweet) passes `false` — they take the retry-exhausted exit on their FIRST 429. X answers a 429 at OR AFTER committing the write it throttled, so a create's repeat is not free: the find-or-create lookups run above the retry loop, `DUPLICATE_PROMOTABLE_ENTITY` does not name the line item holding the tweet, and tweet authoring has no idempotency key at all, so a retry publishes a SECOND tweet. A create's 429 therefore surfaces as an ambiguous outcome for an operator to verify, not as an automatic re-issue.
 - Only "lf-events" account currently supported
 
 ### HubSpot

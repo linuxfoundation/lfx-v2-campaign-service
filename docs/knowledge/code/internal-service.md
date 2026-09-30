@@ -853,6 +853,30 @@ flag, the guard being satisfied because `""` is not a newly-set id. That is the 
 defect: the id would be landing fresh on a project row, which is exactly the write that outlives
 the flag.
 
+**`ProviderConfig` is assembled BY HAND in each provider's create and update, and that hand
+assembly is where a field goes quietly missing.** The generated contracts, the `Pattern`
+validation, `model.Provider.ConfigKeys()` and the repository's column loop are all generic — a
+new provider-config key reaches storage the moment it joins `ConfigKeys()`, and the repository
+writes whatever the map holds. What is NOT generic is the map literal in
+`Create<Platform>Ads`/`Update<Platform>Ads` and the read-back in `build<Platform>Result`. X's
+`as_user_id` (migration `000034`) shipped with every generic half in place and none of the three
+hand-written ones: a POST carrying it validated against the Pattern, answered 200, and stored
+NULL. GET never returned it, and `authorizedTwitterAsUserID` read `""` for every API-created
+connection — which is its "this connection declares no identity" branch, the pre-feature
+behaviour. The control was inert for every project connection while looking, from outside,
+exactly like one that worked.
+
+That failure mode is specific to an AUTHORIZATION field and worth naming as such. A dropped
+routing value fails loudly on first use, because something downstream needs it; a dropped
+authorization value fails silently and OPEN, because the code that reads it is written to treat
+absence as "no restriction configured". The same shape applies to the update direction: PUT is a
+full replace on these endpoints, so an omitted `as_user_id` CLEARS the declared identity and
+widens what dispatch will accept. That matches `account_id` and Meta's `app_id` rather than
+inventing a third convention, and `TestUpdateTwitterAds_OmittedAsUserIDClearsIt` states it out
+loud for exactly that reason. The round-trip test asserts the STORED row, not the returned
+result: a handler that echoed the payload back without persisting it passes any result-only
+assertion, and the stored row is what dispatch resolves.
+
 `updateConn` reads the current row between `parseIfMatch` and `repo.Update`. Both boundaries are
 chosen: AFTER the precondition parse, so a caller who omitted `If-Match` still gets 428 without
 paying for a read; BEFORE the write, because a rejected update must not reach the database. A read

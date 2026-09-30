@@ -107,6 +107,7 @@ Common columns + provider-specific:
 | Column | Type | Notes |
 |--------|------|-------|
 | `funding_instrument_id` | `TEXT` | Funding instrument for the ad account |
+| `as_user_id` | `TEXT` | Publishing identity: which promotable X handle this connection's nullcast tweets are authored under (migration 000034, nullable). It is an AUTHORIZATION control, not a routing value — where it is set, a campaign config naming a different `asUserId` is refused pre-create and one naming none inherits it; where it is NULL, dispatch behaves exactly as it did before, honouring whatever the campaign named. Nullable with no backfill because the shared LF system row has to be seeded deliberately (`bootstrap-system-account -provider twitter-ads -config as_user_id=…`), and an invented value would pin every project's tweets to one handle. |
 
 `account_id` = account ID (e.g. `8r7gb`). Encrypted credential shape: `{ consumer_key, consumer_secret, access_token, access_token_secret }` (OAuth 1.0a).
 

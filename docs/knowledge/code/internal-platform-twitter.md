@@ -134,7 +134,19 @@ more before `createNullcastTweet` returned. All four therefore pass
 and asks the operator to verify in X Ads Manager — a human check before a second
 publish is the only safe form a retry of that call can take. (This is the same
 convention the googleads client uses for its own POST `:search` / POST `:mutate`
-split.) If the caller's
+split.)
+
+The prose AROUND that rule drifted behind it and has been corrected. `createRequest`'s godoc
+read as though tweet authoring were the sole endpoint passing `false`; `createNullcastTweet`'s
+own comment still said `promoted_tweets` was declared retry-safe, contradicting its call site
+directly; `docs/api-catalog.md` advertised "exponential backoff retry on 429 responses"
+unqualified; and the two transport retry tests reached the loop through
+`createRequest(…, "campaigns", …, true)` with a comment calling that endpoint found-or-created
+by name. The tests were the most expensive of the four, because a test is where a policy claim
+is normally checked rather than merely stated — they now enter the loop through `request`, the
+GET-only helper that is idempotent by construction, which is the only caller shape production
+still has for it. The parameter survives all four creates passing `false` deliberately: what
+differs is the REASON each says it, and only tweet authoring's is permanent. If the caller's
 context expires DURING that backoff sleep, the client returns the 429 as a typed
 `apiError` (with the cancellation cause attached via `Unwrap`) rather than a bare
 `ctx.Err()`: the throttle already happened, and a mutating 429 is ambiguous, so erasing

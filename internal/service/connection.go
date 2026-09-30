@@ -1456,6 +1456,11 @@ func (s *ConnectionService) buildTwitterAdsResult(c *model.Connection) *conn.Twi
 		Etag:           etag(c.Version),
 	}
 	r.FundingInstrumentID = optStr(c.ProviderConfig["funding_instrument_id"])
+	// as_user_id is readable back deliberately: it is a public X user id, not a secret, and an
+	// operator has no other way to see which publishing identity the connection declares. Omitting
+	// it here would also hide the field's own failure — a POST that set it would answer 200 with
+	// the key absent, which reads as "accepted and stored" rather than "not returned".
+	r.AsUserID = optStr(c.ProviderConfig["as_user_id"])
 	return r
 }
 
@@ -1471,6 +1476,13 @@ func (s *ConnectionService) CreateTwitterAds(ctx context.Context, p *conn.Create
 		AccountID: strVal(cfg.AccountID),
 		ProviderConfig: map[string]string{
 			"funding_instrument_id": cfg.FundingInstrumentID,
+			// Optional, and stored the way Meta's app_id is: an omitted key stores "", which
+			// authorizedTwitterAsUserID reads as "this connection declares no identity" and is
+			// the pre-LFXV2-2665 behaviour. It has to be mapped even so — the field is an
+			// AUTHORIZATION control, so a create that accepted it and dropped it would leave the
+			// row unpinned while answering 200, and dispatch would keep honouring whatever
+			// asUserId the campaign config named.
+			"as_user_id": strVal(cfg.AsUserID),
 		},
 		CreatedBy: actorFromCtx(ctx),
 	}
@@ -1498,6 +1510,12 @@ func (s *ConnectionService) UpdateTwitterAds(ctx context.Context, p *conn.Update
 		AccountID: strVal(cfg.AccountID),
 		ProviderConfig: map[string]string{
 			"funding_instrument_id": cfg.FundingInstrumentID,
+			// PUT is a full replace here, so an omitted as_user_id CLEARS a previously declared
+			// identity — the same semantics account_id and Meta's app_id already carry on these
+			// endpoints, and the design type says so explicitly rather than leaving it implied.
+			// Clearing an authorization control by omission is worth naming: it widens what
+			// dispatch accepts, so a caller restating the row must restate this key too.
+			"as_user_id": strVal(cfg.AsUserID),
 		},
 		UpdatedBy: actorFromCtx(ctx),
 	}

@@ -471,7 +471,14 @@ func TestRetryOn429(t *testing.T) {
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
 
-	resp, err := c.createRequest(context.Background(), "campaigns", map[string]string{"name": "x"}, true /* idempotent: found-or-created by name */)
+	// A READ, deliberately. This is a transport test — what it exercises is doRequest's
+	// retry loop, which needs an idempotent caller to enter at all — and `request` is the
+	// only helper that is idempotent by construction. It used to call createRequest on
+	// "campaigns" with idempotent=true and a comment calling that endpoint found-or-created
+	// by name, which no longer describes production: ALL FOUR creates pass false, because
+	// the by-name lookup runs above this loop and a retry from inside it re-POSTs anyway.
+	// A test asserting a policy the code rejects is the more expensive half of that drift.
+	resp, err := c.request(context.Background(), http.MethodGet, "campaigns")
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -524,7 +531,9 @@ func TestRetryOn429ReusesTheConnection(t *testing.T) {
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
 
-	if _, err := c.createRequest(context.Background(), "campaigns", map[string]string{"name": "x"}, true /* idempotent: found-or-created by name */); err != nil {
+	// A read, for the reason given in TestRetryOn429 above: the retry loop is what is under
+	// test, and only an idempotent caller reaches it.
+	if _, err := c.request(context.Background(), http.MethodGet, "campaigns"); err != nil {
 		t.Fatalf("request: %v", err)
 	}
 
