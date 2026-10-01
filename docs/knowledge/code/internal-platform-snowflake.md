@@ -82,6 +82,9 @@ Snowflake driver. No shared Go Snowflake service exists in the platform (the LFX
 UI backend has a TypeScript Snowflake service, not reusable from Go), so the broker
 owns its own connection, consistent with every other platform port owning its client.
 
+The driver's Arrow dependency brings in Apache Thrift. `go.mod` pins Thrift to
+`v0.24.0` to fix the infinite-loop vulnerability GHSA-8wv5-x4w7-5gww.
+
 ## Scope
 
 Read-only event-name resolution. Consumer: the audience-building logic (LFXV2-2774).
