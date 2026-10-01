@@ -1994,11 +1994,14 @@ the check runs on the synchronous create path instead.
 
 What it does, in order:
 
-1. Parses `hubspotConfig` out of the raw create config. A config that does not parse returns `nil`:
-   `Dispatch` parses the same bytes and reports a malformed one as the job's failure, and saying so
-   twice would turn one defect into two.
-2. Returns `nil` with NO HubSpot call unless `abTestEnabled` is true and `sourceEmailId` is
-   non-blank. Every create that does not ask for an A/B test pays nothing for the check.
+1. Parses `hubspotConfig` out of the raw create config. A config that does not parse returns
+   `domain.ErrPreflightNotApplicable`: `Dispatch` parses the same bytes and reports a malformed one
+   as the job's failure, and saying so twice would turn one defect into two.
+2. Returns `domain.ErrPreflightNotApplicable` with NO HubSpot call unless `abTestEnabled` is true
+   and `sourceEmailId` is non-blank. Every create that does not ask for an A/B test pays nothing
+   for the check, and the orchestrator records no upstream call for it (see "Create pre-check" in
+   [internal/service](internal-service.md)). It is a distinct sentinel rather than `nil` because
+   `nil` means "the type was read and is fine", which the orchestrator does record.
 3. Resolves the project's HubSpot client (the same resolution `Dispatch` uses) and reads the source
    email's `type` with `hubspot.Client.GetEmailType`. It is a read: it never clones an email or
    creates a variant.

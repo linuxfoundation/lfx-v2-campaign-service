@@ -3432,6 +3432,60 @@ func TestOrchestrator_PreflightCreate_SkipsWhatItCannotCheck(t *testing.T) {
 	}
 }
 
+// A dispatcher that looked at the request and had nothing to check made no platform call, so it
+// answers ErrPreflightNotApplicable and the orchestrator treats that like the skips above: no
+// error, and NO upstream call recorded. That is what HubSpot answers for every create that does
+// not ask for an A/B test, and recording it would add a near-zero "ok" sample to the upstream
+// latency histogram for each one, burying the quantiles and error rate of the lookups that happen.
+func TestOrchestrator_PreflightCreate_NotApplicableIsSkippedNotRecorded(t *testing.T) {
+	cases := map[string]error{
+		"bare":    ErrPreflightNotApplicable,
+		"wrapped": fmt.Errorf("hubspot: %w", ErrPreflightNotApplicable),
+	}
+	for name, perr := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := &recordingMetrics{}
+			stub := &preflightStub{err: perr}
+			orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+				model.ProviderHubSpot: stub,
+			})
+			orch.SetMetrics(rec)
+
+			if err := orch.PreflightCreate(context.Background(), "proj-1", []model.Provider{model.ProviderHubSpot}, nil); err != nil {
+				t.Fatalf("PreflightCreate = %v, want nil: nothing to check is not a refusal or a failure", err)
+			}
+			if stub.calls != 1 {
+				t.Errorf("the dispatcher was asked %d times, want 1: only the RECORDING is skipped", stub.calls)
+			}
+			if got := rec.upstreamCalls(); len(got) != 0 {
+				t.Errorf("a not-applicable pre-check recorded %d upstream calls, want 0: %+v", len(got), got)
+			}
+		})
+	}
+
+	// The skip must not end the walk: a later platform that does have something to refuse still does.
+	t.Run("does not mask a later platform's refusal", func(t *testing.T) {
+		rec := &recordingMetrics{}
+		skipped := &preflightStub{err: ErrPreflightNotApplicable}
+		refusing := &preflightStub{err: ErrABTestUnsupportedSendType}
+		orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+			model.ProviderHubSpot:   skipped,
+			model.ProviderGoogleAds: refusing,
+		})
+		orch.SetMetrics(rec)
+
+		err := orch.PreflightCreate(context.Background(), "proj-1",
+			[]model.Provider{model.ProviderHubSpot, model.ProviderGoogleAds}, nil)
+		if !errors.Is(err, ErrABTestUnsupportedSendType) {
+			t.Fatalf("PreflightCreate = %v, want the second platform's refusal", err)
+		}
+		got := rec.upstreamCalls()
+		if len(got) != 1 || got[0].platform != model.ProviderGoogleAds {
+			t.Errorf("recorded %+v, want exactly the refusing platform's call", got)
+		}
+	})
+}
+
 // The pre-check runs on the HTTP request goroutine before the 202, against an external API.
 // Left unbounded, a portal that stops answering would hold every create open instead of merely
 // losing the pre-check, so the ceiling must come from the orchestrator rather than the caller.

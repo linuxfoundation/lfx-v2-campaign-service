@@ -412,6 +412,10 @@ type EmailSearcher interface {
 //   - Refuse ONLY with a sentinel this service maps to a client-actionable 4xx (today
 //     ErrABTestUnsupportedSendType). Return nil, or an ordinary error, for everything else --
 //     including "could not tell".
+//   - Return ErrPreflightNotApplicable, not nil, when the request needed no check and NO platform
+//     call was made. nil means "looked, and found nothing wrong" and is recorded as an upstream
+//     call; "had nothing to look at" is skipped without being recorded, so the upstream latency
+//     histogram measures network work rather than local no-ops.
 //   - A pre-check is an optimisation of the failure message, never a gate on availability. If it
 //     cannot reach the platform it must not stop the create; the orchestrator enforces this by
 //     refusing the request ONLY on a sentinel it recognises and logging any other error.
@@ -621,6 +625,9 @@ var (
 	// ErrABTestUnsupportedSendType: the email asks for an A/B test but its source email sends by
 	// recipients' time zones, which HubSpot does not allow together.
 	ErrABTestUnsupportedSendType = domain.ErrABTestUnsupportedSendType
+	// ErrPreflightNotApplicable: a CreatePreflighter had nothing to check and made no platform call.
+	// PreflightCreate skips it silently and records no upstream call for it.
+	ErrPreflightNotApplicable = domain.ErrPreflightNotApplicable
 
 	// ErrAdoptionUnsupported: the platform has no campaign-adoption capability wired.
 	ErrAdoptionUnsupported = domain.ErrAdoptionUnsupported
@@ -2600,7 +2607,9 @@ func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platf
 //
 // A platform with no registered dispatcher, or whose dispatcher has no pre-check, is skipped
 // silently: Start reports an unregistered platform itself, and "no pre-check" is the normal case
-// for every ad platform.
+// for every ad platform. So is a dispatcher that answers ErrPreflightNotApplicable -- it looked
+// and had nothing to check, which for HubSpot is every create that does not ask for an A/B test.
+// That skip also records no upstream call, because none was made.
 func (o *Orchestrator) PreflightCreate(ctx context.Context, projectID string, platforms []model.Provider, config json.RawMessage) error {
 	for _, platform := range platforms {
 		d, ok := o.dispatchers[platform]
@@ -2615,6 +2624,12 @@ func (o *Orchestrator) PreflightCreate(ctx context.Context, projectID string, pl
 		start := time.Now()
 		perr := pre.PreflightCreate(callCtx, projectID, platform, config)
 		cancel()
+		if errors.Is(perr, ErrPreflightNotApplicable) {
+			// Nothing left the process, so there is no upstream call to time or count. Recording
+			// one would add a near-zero "ok" sample for every create that did not ask for an A/B
+			// test and bury the quantiles and error rate of the lookups that really happen.
+			continue
+		}
 		// A refusal is a read that SUCCEEDED and gave an answer we act on -- the platform replied
 		// and said the email sends by time zone -- so it is recorded as a successful upstream call.
 		// Counting it as an error would put a caller choosing an unsupported template on the same
