@@ -209,6 +209,14 @@ func TestUpdateCampaignBudget_UnusableAcknowledgementIsUnconfirmed(t *testing.T)
 		{"no results", `{"results":[]}`},
 		{"malformed resource name", `{"results":[{"resourceName":"noslash"}]}`},
 		{"a different budget", `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/999"}]}`},
+		// THE NEXT TWO CARRY THE RIGHT TRAILING ID and are caught by nothing else. The id is
+		// extracted from the last path segment, so an id-only comparison reads both of these
+		// as the budget that was addressed — and the service then persists a new amount on
+		// the strength of an acknowledgement about another account's resource, or about a
+		// resource that is not a budget at all. The whole resource name has to be validated,
+		// the way the campaign create path has validated it since it was written.
+		{"the right id in a different account", `{"results":[{"resourceName":"customers/9999999999/campaignBudgets/555"}]}`},
+		{"the right id on a different resource kind", `{"results":[{"resourceName":"customers/1234567890/adGroups/555"}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

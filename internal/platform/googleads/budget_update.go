@@ -111,6 +111,22 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, budgetID string, amou
 	if err != nil {
 		return &unconfirmedBudgetMutateError{err: fmt.Errorf("google-ads campaign budget %s amount update returned an unusable response: %w", id, err)}
 	}
+	// THE WHOLE RESOURCE IS VALIDATED, NOT JUST ITS TRAILING ID, and the order matters:
+	// this runs BEFORE the id comparison below. firstResourceName extracts the last path
+	// segment, so an acknowledgement naming customers/OTHER/campaignBudgets/123 or
+	// customers/{ours}/adGroups/123 carries the same trailing id as the budget that was
+	// addressed and would pass an id-only comparison — the service then persists a new
+	// amount on the strength of an acknowledgement about a different account's resource,
+	// or about a resource that is not a budget at all. This is the same guard the campaign
+	// create path has made since it was written (see validateCampaignResource); the budget
+	// mutate is a money-moving write and has more reason to make it, not less.
+	//
+	// Its failure is UNCONFIRMED rather than definite, for the reason stated above: Google
+	// accepted the request, so "nothing was modified" is exactly the claim that cannot be
+	// made about a response this client could not trust.
+	if vErr := c.validateResourceKind("campaignBudgets", rn, true); vErr != nil {
+		return &unconfirmedBudgetMutateError{err: fmt.Errorf("google-ads campaign budget %s amount update was acknowledged with an untrustworthy resource: %w", id, vErr)}
+	}
 	if rid != id {
 		return &unconfirmedBudgetMutateError{err: fmt.Errorf("google-ads campaign budget %s amount update was acknowledged for a different resource %q", id, rn)}
 	}

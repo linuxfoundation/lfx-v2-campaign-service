@@ -66,12 +66,28 @@ func (d *MetaDispatcher) WriteBudget(ctx context.Context, projectID string, plat
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(res.accountID) == "" {
-		return fmt.Errorf("write meta campaign budget: the project's meta connection has no ad account selected, so neither the campaign's ownership nor the currency the amount must be encoded in can be established: %w",
-			errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
+	// NO ACCOUNT SELECTED IS NOT UNKNOWN PROVENANCE, and the distinction is the whole
+	// remedy. The campaign DID record its creating account — the guard above has already
+	// refused the case where it did not — so what is missing is a selection on the
+	// CONNECTION, and the fix is to save an ad account id on it, not to re-dispatch the
+	// campaign. Joining ErrCampaignProvenanceUnknown here would claim the opposite and send
+	// an operator to repair a row that is correct.
+	//
+	// requireMetaAccountID is the one place that wording and that classification live:
+	// ErrConnectionNotUsable decides the status, ErrAccountNotSelected names the remedy —
+	// which the service answers 409 "save an ad account id on the connection" — and
+	// res.systemScoped keeps a failure on the LF SYSTEM row from being reported against the
+	// caller's project. The hand-rolled refusal this replaces had all three wrong.
+	//
+	// The selection is load-bearing here for a reason no other Meta path has: the account's
+	// CURRENCY decides the minor-unit scale the amount is encoded in, so proceeding without
+	// one risks a budget written at 100x.
+	accountID, err := requireMetaAccountID(res, projectID)
+	if err != nil {
+		return fmt.Errorf("write meta campaign budget: %w", err)
 	}
 	client := d.cachedMetaClient(projectID, platform, res, creds)
-	if err := verifyMetaAccountMatch("write meta campaign budget", campaign, res.accountID); err != nil {
+	if err := verifyMetaAccountMatch("write meta campaign budget", campaign, accountID); err != nil {
 		return err
 	}
 
@@ -92,6 +108,38 @@ func (d *MetaDispatcher) WriteBudget(ctx context.Context, projectID string, plat
 	}
 	if current == nil {
 		return fmt.Errorf("%w: meta ad set %s", domain.ErrPlatformCampaignAbsent, adSetID)
+	}
+
+	// That `current` describes the ad set that was ASKED about is the premise every guard
+	// below rests on, and it is already enforced where it belongs: GetAdSetBudget refuses an
+	// answer whose echoed id is not the one requested, so a mismatch never reaches this line.
+	// Stated here because the guards below are only sound given it.
+	//
+	// GUARD 0 — THE AD SET MUST BELONG TO THE CAMPAIGN THIS REQUEST NAMED.
+	//
+	// Every guard above establishes that the ACCOUNT is right; none of them establishes
+	// that the AD SET is. The ad set id is read from this service's own persisted row, and
+	// the write is addressed to it directly, so a stale or corrupted ad_set_id sends the
+	// amount to whatever ad set now holds that id — and inside one account (the shared LF
+	// system account most of all) that is another campaign's ad set, with every account
+	// check passing on the way there. The platform itself reports the owner, so this is a
+	// fact to be checked rather than assumed, and GetAdSetBudget already carries it.
+	//
+	// An UNREPORTED owner is refused too. "We could not establish that this ad set belongs
+	// to the named campaign" and "it does" are opposite facts, and only the second one
+	// justifies a write that moves money; this is the same fail-closed reading the
+	// shared-budget and pacing guards below apply to an unreported field.
+	//
+	// It is ErrCampaignAccountMismatch — the same 409 the account-identity guards raise,
+	// because it is the same invariant one level down: the object about to be written is
+	// not the object the request named. Refused before any mutate, so nothing is ambiguous.
+	if current.CampaignID != campaign.PlatformCampaignID {
+		reported := current.CampaignID
+		if reported == "" {
+			reported = "a campaign meta did not report"
+		}
+		return fmt.Errorf("write meta campaign budget: ad set %s recorded for campaign %s belongs to %s upstream, so writing its budget would change the spend of a campaign this request never named; re-dispatch the campaign to repair the recorded ad set: %w",
+			adSetID, campaign.PlatformCampaignID, reported, domain.ErrCampaignAccountMismatch)
 	}
 
 	// GUARD 1 — THE CURRENT BUDGET MUST BE LEGIBLE. A field the platform reported but this

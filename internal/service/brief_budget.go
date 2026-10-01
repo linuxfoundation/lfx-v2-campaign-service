@@ -370,5 +370,19 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 			"new_budget_type", budgetType, "error", uerr)
 		return nil, mapBriefErr(uerr)
 	}
+	// A SUCCESS LOG, where the twin toggle has none, and the difference is deliberate. Every
+	// other arm of this endpoint logs, so without this line the only operation that left no
+	// trace next to the platform-call warnings was the one that actually moved money: asked
+	// "what is this campaign's budget and when did it change?", an operator could recover the
+	// answer only from the outbox event and the row's own columns. A status toggle is
+	// reconstructable from the campaign's current status; an amount's history is not.
+	//
+	// The ACTOR is deliberately not a field here. It is already persisted on the row as
+	// UpdatedBy, which is the durable, queryable place for it, and a principal identifier is
+	// a different category of data from the resource ids these logs carry.
+	slog.InfoContext(ctx, "campaign budget changed on the ad platform and persisted",
+		"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+		"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+		"budget_type", budgetType, "budget_amount", budget)
 	return campaignResult(updated), nil
 }

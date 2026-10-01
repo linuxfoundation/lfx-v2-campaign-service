@@ -855,6 +855,27 @@ the persisted keys are the Go field names `AccountID`/`AdSetID`). A row recordin
 `ErrCampaignNotProvisioned` — there is nothing addressable to write, and the refusal is
 deterministic, so it is a 409 rather than the default 503.
 
+**The ad set's OWNERSHIP is then checked against the campaign the request named**
+(`ErrCampaignAccountMismatch`), and this is the one invariant the account guards cannot reach.
+Every guard above establishes that the ACCOUNT is right; none establishes that the AD SET is.
+The ad set id comes from this service's own persisted row and the write is addressed to it
+directly, so a stale or corrupted `AdSetID` reaches a real, writable ad set — and inside one
+account, the shared LF system account most of all, that ad set belongs to another campaign, with
+every account check passing on the way there. `GetAdSetBudget` already reports the owner on the
+read this path makes anyway, so the fact is checked rather than assumed. An **unreported** owner
+is refused too, the same fail-closed reading the shared-budget and pacing guards apply: "we could
+not establish that this ad set belongs to the named campaign" and "it does" are opposite facts,
+and only the second justifies moving money.
+
+**A connection with no ad account selected is NOT unknown campaign provenance.** The refusal
+goes through the shared `requireMetaAccountID`, which wraps `ErrAccountNotSelected` under
+`ErrConnectionNotUsable` and passes it through `res.systemScoped`. The campaign DID record its
+creating account — the provenance guard above has already refused the case where it did not — so
+what is missing is a selection on the CONNECTION, and the remedy is saving an ad account id on
+it, not re-dispatching a campaign row that is correct. A hand-rolled refusal joining
+`ErrCampaignProvenanceUnknown` here claims the opposite and skips the system-origin scoping
+every other Meta account check goes through.
+
 **Campaign Budget Optimization is Meta's form of Google's shared budget.** Under CBO the
 campaign holds one amount and distributes it across every ad set beneath it, so writing an
 ad-set budget there either fails or converts the campaign off CBO — and in both cases changes

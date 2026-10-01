@@ -129,6 +129,22 @@ func (d *GoogleAdsDispatcher) WriteBudget(ctx context.Context, projectID string,
 
 	// Converted through the SAME validation the create path uses (one extracted helper), so
 	// an amount this service would refuse to create with cannot be reached by editing.
+	//
+	// NO rejectedBudgetAmountError MAPPING HERE, where the LinkedIn and Meta paths both have
+	// one, and the asymmetry is a fact about the platforms rather than an omission. Those two
+	// enforce floors the service layer cannot know — LinkedIn's $10 daily / $100 lifetime, and
+	// Meta's one minor unit in an account currency only Meta can report — so an amount the
+	// service accepted can still be refused by the adapter, and without the mapping that
+	// refusal falls to the default 503 and invites a retry that can never succeed.
+	//
+	// Google's bounds are the service's OWN bounds. ValidateBudgetMicros fails three ways and
+	// the service layer has already closed all three ahead of the claim: budget > maxBudget is
+	// the same 1e9 ceiling maxCampaignBudget enforces, micros <= 0 is the same comparison the
+	// math.Round(budget*microsPerCurrencyUnit) < 1 check makes against the same rounding, and a
+	// non-finite float cannot survive JSON decoding into the payload. So nothing reaching this
+	// line can fail here, and a mapping would classify a branch no request can take. If Google
+	// ever gains a floor of its own — a per-currency minimum, say — this is where the
+	// LinkedIn/Meta treatment has to be added with it.
 	micros, err := googleads.ValidateBudgetMicros(budget.Amount)
 	if err != nil {
 		return fmt.Errorf("write google ads campaign budget: %w", err)

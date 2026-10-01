@@ -788,8 +788,14 @@ on identical state, which is what lets the retry layer retry it and what lets th
 caller an unconfirmed outcome is safe to re-send once verified.
 
 **A 2xx is not by itself a confirmed write.** The response is decoded through the same
-`firstResourceName` the create path uses, and the acknowledged resource id must equal the budget
-the request addressed; a success carrying no result, a malformed resource name, or one naming a
+`firstResourceName` the create path uses, and then — **before** the id is compared —
+the WHOLE resource name is validated with `validateResourceKind("campaignBudgets", rn, true)`,
+the guard the campaign create path has made since it was written. `firstResourceName` extracts
+only the trailing path segment, so `customers/OTHER/campaignBudgets/555` and
+`customers/{ours}/adGroups/555` both carry the id that was addressed and both pass an id-only
+comparison — the service would then persist a new amount on the strength of an acknowledgement
+about another account's resource, or about a resource that is not a budget at all. A success
+carrying no result, a malformed resource name, an untrustworthy one, or one naming a
 different budget returns `unconfirmedBudgetMutateError`, which reports `Unconfirmed()` and so
 flows through `IsOutcomeUnconfirmed` like any ambiguous transport failure. The classification is
 ambiguous rather than definite on purpose: the request reached Google and was accepted, so

@@ -438,7 +438,13 @@ against. A response echoing a different campaign id is refused.
 `PARTIAL_UPDATE` setting exactly one of the two fields, with the caller's wire string passed
 through untouched and `currencyCode` always `"USD"`. An amount that did not come from
 `ValidateBudgetAmount` is refused at construction, naming the validator, so a caller that
-formatted its own string cannot bypass every minimum. The call returns **no body**, so the 2xx
+formatted its own string cannot bypass every minimum. **The guard RE-RUNS the validator rather
+than checking that the string parses as a number**, and requires the canonical wire form it
+returns to equal the supplied string: a bare `ParseFloat` admits `NaN`, `1e2`, `100` and a
+`"5.00"` daily budget against a published $10 minimum — precisely the amounts the guard exists
+to stop — so it would have documented an intention rather than enforced one. The method is
+EXPORTED, which is what makes "every caller goes through `ValidateBudgetAmount`" a convention
+needing enforcement. The call returns **no body**, so the 2xx
 itself is the confirmation; `IsOutcomeUnconfirmed` still separates a maybe-applied 5xx from a
 definite 4xx.
 

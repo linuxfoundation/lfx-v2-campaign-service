@@ -331,11 +331,71 @@ func TestMeta_WriteBudget_NoAccountSelectedIsRefused(t *testing.T) {
 
 	err := d.WriteBudget(context.Background(), "proj", model.ProviderMetaAds, metaBudgetCampaign(),
 		model.BudgetChange{Amount: 250, Type: model.BudgetDaily})
-	if err == nil || !errors.Is(err, domain.ErrCampaignAccountMismatch) {
-		t.Fatalf("want a refusal wrapping ErrCampaignAccountMismatch, got %v", err)
+	// THIS IS NOT UNKNOWN PROVENANCE, and the sentinels are the whole point of the case. The
+	// campaign DID record its creating account — an earlier guard refuses the case where it
+	// did not — so what is missing is a selection on the CONNECTION. An earlier version of
+	// this path joined ErrCampaignProvenanceUnknown here, which routes the service to
+	// "re-dispatch the campaign" for a campaign row that is perfectly correct, and bypasses
+	// the system-origin scoping every other Meta account check goes through.
+	if err == nil {
+		t.Fatal("an account-less connection must be refused")
 	}
-	if !strings.Contains(err.Error(), "currency") {
-		t.Errorf("the refusal should say why the account is needed: %v", err)
+	if !errors.Is(err, domain.ErrAccountNotSelected) {
+		t.Errorf("want ErrAccountNotSelected, which is what names the remedy, got %v", err)
+	}
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Errorf("want ErrConnectionNotUsable, which is what decides the status, got %v", err)
+	}
+	if errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+		t.Errorf("the campaign's provenance is known; claiming otherwise sends an operator to re-dispatch a correct row: %v", err)
+	}
+	if !strings.Contains(err.Error(), "write meta campaign budget") {
+		t.Errorf("the refusal should name the operation it refused: %v", err)
+	}
+}
+
+// TestMeta_WriteBudget_AdSetBelongingToAnotherCampaignIsRefused pins the guard the account
+// checks cannot make. The ad set id comes from this service's OWN persisted row and the write
+// is addressed to it directly, so a stale or corrupted ad_set_id reaches a real, writable ad
+// set — and inside one account (the shared LF system account most of all) that ad set belongs
+// to another campaign, with every account check passing on the way. The platform reports the
+// owner on the very read this path already makes, so the fact is available to be checked.
+func TestMeta_WriteBudget_AdSetBelongingToAnotherCampaignIsRefused(t *testing.T) {
+	cases := []struct {
+		name     string
+		adSet    string
+		wantText string
+	}{
+		{
+			name:     "the ad set belongs to a different campaign",
+			adSet:    `{"id":"777","status":"PAUSED","campaign_id":"999","daily_budget":"10000"}`,
+			wantText: "belongs to 999 upstream",
+		},
+		{
+			// Fail closed, like every other unreported fact on this path: "we could not
+			// establish that this ad set belongs to the named campaign" and "it does" are
+			// opposite facts, and only the second justifies moving money.
+			name:     "the owner is not reported at all",
+			adSet:    `{"id":"777","status":"PAUSED","daily_budget":"10000"}`,
+			wantText: "a campaign meta did not report",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d, calls := metaBudgetDispatcher(t, tc.adSet, "USD", http.StatusOK)
+
+			err := d.WriteBudget(context.Background(), "proj", model.ProviderMetaAds, metaBudgetCampaign(),
+				model.BudgetChange{Amount: 250, Type: model.BudgetDaily})
+			if err == nil || !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+				t.Fatalf("want ErrCampaignAccountMismatch, got %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantText) {
+				t.Errorf("the refusal must name what it found, want %q in %v", tc.wantText, err)
+			}
+			// The half that matters: an error that still let the write through would be
+			// no guard at all.
+			assertNoMetaWrite(t, calls())
+		})
 	}
 }
 

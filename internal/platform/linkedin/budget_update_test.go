@@ -245,7 +245,23 @@ func TestUpdateCampaignBudget_WritesTheFieldThePacingSelects(t *testing.T) {
 // TestUpdateCampaignBudget_RefusesAnAmountThatDidNotComeFromTheValidator is the construction
 // guard: it catches a caller that formatted its own string and bypassed every minimum.
 func TestUpdateCampaignBudget_RefusesAnAmountThatDidNotComeFromTheValidator(t *testing.T) {
-	for _, amount := range []string{"", "  ", "one hundred", "100.00 USD"} {
+	amounts := []string{
+		// Not numbers at all — the only cases a bare ParseFloat guard ever caught.
+		"", "  ", "one hundred", "100.00 USD",
+		// THE CASES THAT MATTER, and every one of them parses cleanly as a float. This
+		// method is EXPORTED, so "every caller goes through ValidateBudgetAmount" is a
+		// convention, and the guard is what makes it true. Each of these is an amount a
+		// caller could have formatted itself and sent straight to LinkedIn.
+		"NaN", "Inf", "-Inf", // finite-number refusals the validator makes and ParseFloat does not
+		"5.00",  // below the $10 daily minimum
+		"-5.00", // not positive
+		"0.00",  // rounds to a zero budget
+		// Right value, wrong form. The validator's canonical two-decimal string is exactly
+		// what this client sends, so a string whose own round trip does not reproduce it
+		// reached here some other way.
+		"1e2", "100", "100.000", " 100.00",
+	}
+	for _, amount := range amounts {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			t.Errorf("amount %q must be refused before any HTTP call", amount)
 		}))
@@ -253,6 +269,36 @@ func TestUpdateCampaignBudget_RefusesAnAmountThatDidNotComeFromTheValidator(t *t
 		srv.Close()
 		if err == nil || !strings.Contains(err.Error(), "ValidateBudgetAmount") {
 			t.Errorf("amount %q: want a refusal naming the validator, got %v", amount, err)
+		}
+	}
+}
+
+// TestUpdateCampaignBudget_AcceptsTheValidatorsOwnOutput is the other half of the guard above,
+// and it is the half that keeps the guard honest: a refusal test alone passes just as well for
+// a guard that refuses everything. Whatever ValidateBudgetAmount produces must round-trip
+// through the construction guard untouched, on both pacing models — otherwise the only
+// supported way to call this method is the one it rejects.
+func TestUpdateCampaignBudget_AcceptsTheValidatorsOwnOutput(t *testing.T) {
+	for _, tc := range []struct {
+		lifetime bool
+		amount   float64
+	}{
+		{lifetime: false, amount: 10},      // exactly the daily minimum
+		{lifetime: false, amount: 250.555}, // a value the validator rounds on its way to the wire
+		{lifetime: true, amount: 100},      // exactly the lifetime minimum
+		{lifetime: true, amount: 1234.5},
+	} {
+		wire, _, vErr := ValidateBudgetAmount(tc.amount, tc.lifetime)
+		if vErr != nil {
+			t.Fatalf("validator refused %v (lifetime=%v): %v", tc.amount, tc.lifetime, vErr)
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		err := budgetClient(srv.URL).UpdateCampaignBudget(context.Background(), "123456", wire, tc.lifetime)
+		srv.Close()
+		if err != nil {
+			t.Errorf("the validator's own output %q (lifetime=%v) must be accepted, got %v", wire, tc.lifetime, err)
 		}
 	}
 }

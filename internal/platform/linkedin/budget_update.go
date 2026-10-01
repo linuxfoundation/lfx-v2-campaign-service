@@ -246,10 +246,26 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID, amount st
 	if !accountIDRE.MatchString(campaignID) {
 		return fmt.Errorf("linkedin: invalid campaign id %q: must be numeric", campaignID)
 	}
-	// Refuse an amount that did not come from the validator. This is a construction guard,
-	// not a revalidation: it catches a caller that formatted its own string and bypassed
-	// every minimum, which is the one way the shared-validator contract can be broken.
-	if _, err := strconv.ParseFloat(amount, 64); err != nil || amount == "" {
+	// Refuse an amount that did not come from the validator — and prove it by RE-RUNNING the
+	// validator, not merely by checking the string parses as a number.
+	//
+	// A bare ParseFloat admits "NaN", "1e5", and "5.00" on a daily budget whose published
+	// minimum is $10. Those are precisely the amounts this guard exists to stop, so a
+	// ParseFloat guard did not catch the one way the shared-validator contract can be broken;
+	// it only documented an intention to. This method is exported, so "every caller goes
+	// through ValidateBudgetAmount" is a convention, and a convention a guard claims to
+	// enforce had better actually enforce it.
+	//
+	// The CANONICAL STRING MUST MATCH as well as the value being valid. ValidateBudgetAmount
+	// returns the exact wire form it would have produced, and that form is what this client
+	// sends; an amount whose own round trip does not reproduce it (" 10.00", "10", "1e1")
+	// reached here some other way, and the two-decimal form is the one LinkedIn is given.
+	parsed, pErr := strconv.ParseFloat(amount, 64)
+	if pErr != nil || amount == "" {
+		return fmt.Errorf("linkedin: budget amount %q is not a wire-formatted amount; it must come from ValidateBudgetAmount", amount)
+	}
+	wire, _, vErr := ValidateBudgetAmount(parsed, lifetime)
+	if vErr != nil || wire != amount {
 		return fmt.Errorf("linkedin: budget amount %q is not a wire-formatted amount; it must come from ValidateBudgetAmount", amount)
 	}
 	accountID, err := c.resolveAccountID("")

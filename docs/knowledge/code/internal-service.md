@@ -1357,6 +1357,13 @@ exactly one action available — pause it.
 
 **The platform call happens FIRST and the row is written only after it confirms**, exactly as
 `ToggleCampaignStatus` works, so this service never reports a budget the platform never accepted.
+**That invariant is ONE-WAY and the published description says so.** No refusal and no platform
+failure can leave the row holding an amount the platform was never given; the converse is not
+promised, because once the platform has confirmed, `ReplaceCampaign` can still fail. That case
+answers **500** with the platform holding the new amount and the row the old one — it is logged
+as a platform/DB divergence, the platform is authoritative, and re-applying the same amount
+reconciles it. Claiming the symmetric guarantee in the API description would describe a
+rollback this endpoint does not have.
 **What is persisted is the REQUESTED amount, not a readback of the applied one** — the dispatcher
 confirms acceptance and does not re-read, so the two can differ by less than the platform's
 smallest settable unit (LinkedIn settles on two decimals, Meta on the account currency's minor
@@ -1410,6 +1417,14 @@ connection sentinels and `ErrCredentialDecryptionFailed` → 500, `ErrConnection
 above the unconfirmed check, and `ErrNotFound` → 404. The shared-budget and unwritable arms log
 through `safeErrSummary` and return a generic message: each cause names upstream configuration,
 which the caller can act on only in the ad platform.
+
+**The SUCCESS path logs too, where the twin toggle's does not**, and the asymmetry is
+deliberate: every other arm of this endpoint logs, so without it the one operation that actually
+moved money was the only one leaving no trace beside the platform-call warnings. A status is
+reconstructable from the campaign's current state; an amount's history is not. The line carries
+the resource ids, the platform, the budget type and the amount — but **not the actor**, which is
+already persisted on the row as `UpdatedBy`, the durable and queryable place for it, and which is
+a different category of data from the resource ids these logs carry.
 
 **The `ErrBudgetAmountRejected` arm is the one that returns a SPECIFIC message, and it is
 specific by construction rather than by string-handling.** A platform's own floor — LinkedIn's

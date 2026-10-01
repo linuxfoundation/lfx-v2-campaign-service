@@ -114,12 +114,17 @@ type Service interface {
 	ToggleCampaignStatus(context.Context, *ToggleCampaignStatusPayload) (res *Campaign, err error)
 	// Change how much a campaign may spend, on its ad platform, then persist the
 	// new amount. A MUTATION on a live paid campaign, dispatched to the platform
-	// first: the row is updated only after the platform confirms, so a failure
-	// never leaves this service reporting a budget the platform does not have.
-	// Unlike update-campaign, which writes the DB row alone. AMOUNT ONLY — never
-	// the pacing model. `budget_type` must be the pacing the campaign ALREADY has
-	// upstream; a request naming the other one is refused (409) rather than
-	// translated. Switching a live campaign between daily pacing and a
+	// first. The invariant is ONE-WAY: the new amount is never persisted before
+	// the platform confirms it, so no refusal or platform failure can leave the
+	// row reporting an amount the platform was never given. The converse is not
+	// promised, because it cannot be — once the platform has confirmed, the row
+	// write can still fail, and that case answers 500 with the platform holding
+	// the new amount and the row still reporting the old one. It is logged as a
+	// divergence, the platform is authoritative, and re-applying the same amount
+	// reconciles it. Unlike update-campaign, which writes the DB row alone. AMOUNT
+	// ONLY — never the pacing model. `budget_type` must be the pacing the campaign
+	// ALREADY has upstream; a request naming the other one is refused (409) rather
+	// than translated. Switching a live campaign between daily pacing and a
 	// whole-flight cap reinterprets everything it has already spent against, and
 	// the platforms do not even name the same two ideas (Google has no LIFETIME
 	// period; its counterpart, CUSTOM_PERIOD, is a narrower thing). Change the

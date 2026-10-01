@@ -1480,9 +1480,13 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 
 	Method("update-campaign-budget", func() {
 		Description("Change how much a campaign may spend, on its ad platform, then persist the new amount. " +
-			"A MUTATION on a live paid campaign, dispatched to the platform first: the row is updated only " +
-			"after the platform confirms, so a failure never leaves this service reporting a budget the " +
-			"platform does not have. Unlike update-campaign, which writes the DB row alone. " +
+			"A MUTATION on a live paid campaign, dispatched to the platform first. The invariant is ONE-WAY: " +
+			"the new amount is never persisted before the platform confirms it, so no refusal or platform " +
+			"failure can leave the row reporting an amount the platform was never given. The converse is " +
+			"not promised, because it cannot be — once the platform has confirmed, the row write can still " +
+			"fail, and that case answers 500 with the platform holding the new amount and the row still " +
+			"reporting the old one. It is logged as a divergence, the platform is authoritative, and " +
+			"re-applying the same amount reconciles it. Unlike update-campaign, which writes the DB row alone. " +
 			"AMOUNT ONLY — never the pacing model. `budget_type` must be the pacing the campaign ALREADY " +
 			"has upstream; a request naming the other one is refused (409) rather than translated. " +
 			"Switching a live campaign between daily pacing and a whole-flight cap reinterprets everything " +
@@ -1536,6 +1540,17 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// only runtime rejections a Goa range cannot express, and the service checks
 			// them first. The maximum matches the platform adapter's own cap, so a figure
 			// this service would refuse to create with cannot be reached by editing.
+			//
+			// THIS PUBLISHED FLOOR IS MARGINALLY STRICTER THAN THE SERVICE'S OWN CHECK, and
+			// that direction is the safe one. The service refuses an amount whose ROUNDED
+			// micro value is below one — it compares against the adapter's math.Round rather
+			// than a literal, so it cannot drift from it — which admits the half-open sliver
+			// [0.0000005, 0.000001) that rounds UP to one micro. Publishing 0.0000005 as the
+			// contract would state a minimum that is not a whole unit in any platform's
+			// billing and that no caller has a reason to send; publishing one micro states
+			// the real floor and simply closes that sliver to HTTP callers before the handler
+			// sees it. Nothing a generated client can send is accepted here and refused
+			// there — the published contract is never the looser of the two.
 			Attribute("budget", Float64, "New budget amount, in the AD ACCOUNT's own currency (NOT USD). Must be strictly positive.", func() {
 				Minimum(0.000001)
 				Maximum(1000000000)
