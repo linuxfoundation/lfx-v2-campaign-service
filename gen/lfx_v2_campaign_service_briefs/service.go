@@ -40,7 +40,13 @@ type Service interface {
 	// platform; the account-scoped Meta image_hash is resolved later, at campaign
 	// dispatch.
 	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
-	// Create campaigns across the selected platforms (async -> job).
+	// Create campaigns across the selected platforms (async -> job). One request
+	// shape is refused synchronously, before any job exists: an email campaign
+	// that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email
+	// set to send based on recipients' time zones, which HubSpot does not allow
+	// together. It returns 409 with reason=ab_test_unsupported_send_type; the
+	// remedy is to pick a different source email or turn the A/B test off. Every
+	// other dispatch failure still arrives later, as the job's own result.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the

@@ -1241,7 +1241,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("create-campaigns", func() {
-		Description("Create campaigns across the selected platforms (async -> job).")
+		Description("Create campaigns across the selected platforms (async -> job). One request shape is refused synchronously, before any job exists: an email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients' time zones, which HubSpot does not allow together. It returns 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. Every other dispatch failure still arrives later, as the job's own result.")
 		Payload(func() {
 			bearerToken()
 			// Slug-only on CREATE: project_id is stamped into the campaign name and is the

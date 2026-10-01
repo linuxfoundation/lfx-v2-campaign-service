@@ -1067,6 +1067,50 @@ a LinkedIn dispatcher missing from the registry would have passed the baseline, 
 cross-check silently, and answered `OK: true` — the same "broken connection reported healthy"
 outcome the verification exists to prevent, and one invisible in the response.
 
+## Create pre-check: refusing what can never succeed, before the job exists
+
+`CreateCampaigns` (the synchronous half of `POST .../campaigns`) calls `Orchestrator.PreflightCreate`
+after it has validated the platforms and before `Orchestrator.Start`. `CreateCampaigns` is the only
+caller of `Start`, which is why the check sits at this seam. Dispatch runs after the `202`, and the
+orchestrator reports every dispatcher failure as the single fixed job error `platform campaign
+creation failed`, deliberately, since the upstream text can name connections and account ids. A
+curated message must therefore NOT be put in the job result. A request shape that is knowably
+unsatisfiable is only actionable where a typed 4xx can still reach the caller.
+
+`CreatePreflighter` is an OPTIONAL dispatcher capability, discovered by type assertion like the
+others (`StatusToggler`, `MetricsReader`, `AccountLister`, and so on). Only the HubSpot dispatcher
+implements it today; see "A/B test pre-check" in [internal/dispatch](internal-dispatch.md) for what
+it asks. A platform with no registered dispatcher, or whose dispatcher has no pre-check, is skipped
+silently: `Start` reports an unregistered platform itself, and "no pre-check" is the normal case for
+every ad platform.
+
+- **A refusal is a sentinel and nothing else.** The orchestrator returns an error only when a
+  dispatcher's error satisfies `errors.Is(err, ErrABTestUnsupportedSendType)` (an alias of
+  `domain.ErrABTestUnsupportedSendType`).
+- **Everything else fails open**, enforced by the orchestrator rather than trusted to each
+  dispatcher: the platform unreachable, an unreadable credential, a deadline, a response that did not
+  say. It is logged at WARN ("create pre-check could not be completed; continuing without it") and
+  the create proceeds exactly as it did before the check existed. A pre-check that could block a
+  create on its own malfunction would turn an improvement to an error message into an availability
+  dependency on every create, for a condition that dispatch already tolerates.
+- **Bounded.** Each platform's call runs under `preflightCallTimeout` (10 seconds), because it sits
+  on the HTTP request goroutine. Timing out is a fail-open outcome, not a failure.
+- **Instrumented as an upstream read.** The call is recorded under the operation
+  `preflight_create` via `recordUpstream`, and a REFUSAL is recorded as a SUCCESSFUL call: the
+  platform answered and the answer was acted on. Counting it as an error would put a caller who
+  chose an unsupported template on the same upstream-failure rate an operator alerts on for the
+  platform being down. `TestUpstreamCallsAreInstrumented` enforces that every operation passed to
+  `recordUpstream` has a table case, so this op has one, plus a method on its
+  `upstreamCapableDispatcher`.
+
+The refusal reaches the caller through `mapBriefErr` as a `409` `ConflictError` with
+`reason="ab_test_unsupported_send_type"`. The message is fixed static text ("A/B testing is not
+available for emails sent based on recipients' time zones; choose a source email that is not set to
+send by time zone, or turn the A/B test off") and never embeds an id or anything HubSpot returned.
+Clients should key on the reason slug, not the prose. The `mapBriefErr` case sits before the plain
+`ErrConflict` arm because the sentinel is its own error, not a wrapped `ErrConflict`. A refused
+request creates no job row and dispatches nothing.
+
 ## HubSpot email search (LFXV2-3197)
 
 `ListHubspotEmails` serves `GET /projects/{project_id}/connection-hubspot/emails`, returning the

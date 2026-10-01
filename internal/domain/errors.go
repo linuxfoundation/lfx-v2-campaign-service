@@ -213,6 +213,21 @@ var (
 	// would report the wrong missing capability to the caller.
 	ErrCampaignSearchUnsupported = errors.New("campaign search is not supported for this platform")
 
+	// ErrABTestUnsupportedSendType is returned by the create-time pre-check when a campaign asks
+	// for an A/B test but its source email is set to send "based on recipients' time zones".
+	// HubSpot does not allow the two together (its ab-test/create-variation endpoint answers 400
+	// for such an email), and the send mode is inherited from the source email, so the request
+	// as made can never produce an A/B test.
+	//
+	// It is raised SYNCHRONOUSLY, before the create job is accepted. Dispatch runs after a 202,
+	// where every failure is deliberately collapsed to one opaque job error, so a refusal there
+	// could never tell the caller WHICH setting to change. At the create seam it surfaces as a
+	// 409 whose `reason` is "ab_test_unsupported_send_type", which a caller can act on.
+	//
+	// The message is fixed, static text: it is what reaches the caller, so it must never embed a
+	// source email id, a portal id or anything HubSpot returned.
+	ErrABTestUnsupportedSendType = errors.New("A/B testing is not available for emails sent based on recipients' time zones")
+
 	// ErrAccountsUnsupported indicates the platform has no account-listing capability
 	// wired. The platform is never contacted.
 	//

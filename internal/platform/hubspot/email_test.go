@@ -367,6 +367,73 @@ func TestGetEmail_2xxNoIDIsPlainErrorNotUnconfirmed(t *testing.T) {
 	}
 }
 
+// GetEmailType reads ONLY the derived `type` of one email. The pre-check that uses it decides
+// whether an A/B test can be built, so what matters is that a type comes back verbatim, that an
+// absent one is "" rather than an error (the caller fails open), and that it is a plain read.
+func TestGetEmailType_ReturnsTheDerivedType(t *testing.T) {
+	var gotMethod, gotPath string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_, _ = io.WriteString(w, `{"id":"555","name":"Template","type":"LOCALTIME_EMAIL"}`)
+	})
+	got, err := c.GetEmailType(context.Background(), " 555 ")
+	if err != nil {
+		t.Fatalf("GetEmailType: %v", err)
+	}
+	if got != EmailTypeLocalTime {
+		t.Errorf("type = %q, want %q", got, EmailTypeLocalTime)
+	}
+	if gotMethod != http.MethodGet || gotPath != "/marketing/v3/emails/555" {
+		t.Errorf("request = %s %s, want GET /marketing/v3/emails/555 (id trimmed, no /draft suffix)", gotMethod, gotPath)
+	}
+}
+
+func TestGetEmailType_AbsentTypeIsEmptyNotAnError(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"id":"555","name":"Template"}`)
+	})
+	got, err := c.GetEmailType(context.Background(), "555")
+	if err != nil {
+		t.Fatalf("a response with no type must not be an error, got: %v", err)
+	}
+	if got != "" {
+		t.Errorf("type = %q, want empty when HubSpot reports none", got)
+	}
+}
+
+func TestGetEmailType_2xxNoIDIsPlainErrorNotUnconfirmed(t *testing.T) {
+	// A 200 that is not an email (no id) must not be read as "a regular email": that would let the
+	// pre-check pass on a response it never understood.
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"type":"BATCH_EMAIL"}`)
+	})
+	_, err := c.GetEmailType(context.Background(), "555")
+	if err == nil || !strings.Contains(err.Error(), "malformed response") {
+		t.Errorf("a 2xx with no id must be a malformed-response error, got: %v", err)
+	}
+	if IsUnconfirmed(err) {
+		t.Error("a read (GetEmailType) must NOT be UNCONFIRMED -- it cannot leave a mutation in doubt")
+	}
+}
+
+func TestGetEmailType_UndecodableBodyErrors(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `not json`)
+	})
+	if _, err := c.GetEmailType(context.Background(), "555"); err == nil {
+		t.Error("an undecodable body must be an error")
+	}
+}
+
+func TestGetEmailType_RejectsEmptyID(t *testing.T) {
+	c, _ := newTestClient(t, func(http.ResponseWriter, *http.Request) {
+		t.Fatal("must not make a request with an empty id")
+	})
+	if _, err := c.GetEmailType(context.Background(), "   "); err == nil {
+		t.Error("expected an error for an empty id")
+	}
+}
+
 func TestCloneEmail_SendsIDAndCloneName(t *testing.T) {
 	var body map[string]any
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
