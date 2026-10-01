@@ -1511,7 +1511,10 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"write that could move a stranger's spend. None of the 409s is retryable — each needs a change " +
 			"in the ad platform or a re-dispatch. " +
 			"**400** for a request fault: a non-positive, non-finite or out-of-range amount, an unknown " +
-			"budget type, or a platform with no budget-write capability wired. " +
+			"budget type, a platform with no budget-write capability wired, or an amount the " +
+			"campaign's own platform refuses on its published minimums — the service validates " +
+			"only the bounds every platform shares, so a platform's stricter floor is a " +
+			"permanent request fault and the response names what it was. " +
 			"**503** when the platform could not be reached or did not confirm; the row is unchanged, and " +
 			"re-applying the same amount converges on the same state, so a retry is safe.")
 		Payload(func() {

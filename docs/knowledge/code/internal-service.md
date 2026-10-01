@@ -1398,7 +1398,11 @@ into a 409.
 
 **The dispatcher error switch** maps `ErrBudgetWriteUnsupported` → 400 (no dispatcher, or one
 that is not a `BudgetWriter`; no retry adds the capability), `ErrBudgetAmountRejected` → 400,
-`ErrBudgetShared` and
+`ErrServiceDefect` → 500 and `ErrAccountNotSelected` → 409 **both ABOVE the general
+`ErrConnectionNotUsable` arm** (each is always wrapped ALONGSIDE it by the credential resolvers,
+so the general arm swallows either one that is missing — and then names a remedy belonging to
+somebody who has nothing to repair: an operator told to fix credentials that are fine when the
+defect is ours, or when the actual fix is selecting an ad account), `ErrBudgetShared` and
 `ErrBudgetUnwritable` → 409, `ErrPlatformCampaignAbsent` → 404,
 `ErrCampaignProvenanceUnknown` → 409 **above** the `ErrCampaignAccountMismatch` arm (a row that
 names no account cannot be told to reconnect one; the remedy is a re-dispatch), the two system

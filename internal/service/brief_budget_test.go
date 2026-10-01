@@ -359,6 +359,12 @@ func TestUpdateCampaignBudget_DispatcherSentinelsMapToStatuses(t *testing.T) {
 		{"system connection unusable", domain.ErrSystemConnectionNotUsable, isInternal},
 		{"system connection missing", domain.ErrSystemConnectionMissing, isInternal},
 		{"credential decryption failed", domain.ErrCredentialDecryptionFailed, isInternal},
+		// BOTH of the next two are wrapped ALONGSIDE ErrConnectionNotUsable by the real
+		// credential resolvers, which is the whole point of the cases: a bare sentinel would
+		// pass even with the arm missing, because nothing else would claim it. Wrapped the
+		// way production wraps them, the general arm below wins unless each sits above it.
+		{"service defect", fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, domain.ErrServiceDefect), isInternal},
+		{"no ad account selected", fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected), isConflict},
 		{"project connection unusable", domain.ErrConnectionNotUsable, isConflict},
 		{"no connection at all", domain.ErrNotFound, isNotFound},
 		{"definite platform failure", errors.New("google ads returned 400"), isUnavailable},
@@ -518,4 +524,29 @@ func isInternal(err error) bool {
 func isUnavailable(err error) bool {
 	var e *briefs.ConnServiceUnavailableError
 	return errors.As(err, &e)
+}
+
+// TestUpdateCampaignBudget_AccountNotSelectedIsNotReportedAsBadCredentials pins the half the
+// status table cannot see. ErrAccountNotSelected and ErrConnectionNotUsable are BOTH 409, so a
+// status assertion passes even when the generic arm swallows the specific one — and the generic
+// message sends an operator to repair credentials that are perfectly fine. The distinction rides
+// in the message because ConflictError carries only a code and a message.
+func TestUpdateCampaignBudget_AccountNotSelectedIsNotReportedAsBadCredentials(t *testing.T) {
+	d := &budgetWriterDispatcher{err: fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected)}
+	s, camps := budgetService(t, budgetCampaign(), d)
+
+	_, err := s.UpdateCampaignBudget(context.Background(), budgetPayload(100, "daily", "3"))
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want a 409, got %T: %v", err, err)
+	}
+	if !strings.Contains(conflict.Message, "no ad account selected") {
+		t.Errorf("the 409 must name the actual remedy, got %q", conflict.Message)
+	}
+	if strings.Contains(conflict.Message, "credentials") {
+		t.Errorf("the 409 must NOT blame credentials that are fine, got %q", conflict.Message)
+	}
+	if camps.got != nil {
+		t.Error("a refused budget change must not write the row")
+	}
 }

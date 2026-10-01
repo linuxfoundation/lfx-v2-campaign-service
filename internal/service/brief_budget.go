@@ -272,6 +272,29 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 				"project_id", credentialProject, "requested_by_project_id", p.ProjectID,
 				"brief_id", p.BriefID, "campaign_id", p.CampaignID, "platform", existing.Platform)
 			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign budget could not be changed"}
+		case errors.Is(werr, domain.ErrServiceDefect):
+			// ABOVE every connection arm below, and this endpoint is the toggle's twin so it
+			// answers the way the toggle answers: this is OUR defect, and each arm below names
+			// a remedy belonging to someone who has nothing to repair. The sentinel is wrapped
+			// ALONGSIDE ErrConnectionNotUsable during credential resolution, so the general arm
+			// swallows it whenever this one is missing — which is exactly what its own doc
+			// warns about. Refused before the platform was contacted, so nothing is ambiguous
+			// and the row is still correct.
+			slog.ErrorContext(ctx, "campaign budget change blocked by a defect in this service, not in the connection; a caller-fault status here would send an operator to audit a correct configuration",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "reason", unusableConnectionReason(werr))
+			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign budget could not be changed"}
+		case errors.Is(werr, domain.ErrAccountNotSelected):
+			// Above the general arm for the same reason, and on all three budget-writing
+			// platforms this sentinel is ALWAYS wrapped alongside ErrConnectionNotUsable — so
+			// without this arm the generic message tells an operator to repair credentials that
+			// are perfectly fine when the actual remedy is choosing an ad account. The
+			// distinction rides in the message because ConflictError carries only code and
+			// message; the message names no accounts endpoint, matching the toggle.
+			slog.WarnContext(ctx, "campaign budget change blocked: no ad account selected on the project's connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "reason", unusableConnectionReason(werr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — save an ad account id on the connection before changing a campaign budget"}
 		case errors.Is(werr, domain.ErrConnectionNotUsable):
 			// Refused before the platform was contacted, so nothing is ambiguous — this must
 			// sit above the unconfirmed check as well as the default, whose 503 would tell the

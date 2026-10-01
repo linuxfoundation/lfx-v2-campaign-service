@@ -338,3 +338,74 @@ func TestLinkedIn_WriteBudget_ClassifiesTheMutate(t *testing.T) {
 		})
 	}
 }
+
+// TestLinkedIn_WriteBudget_ClassifiesConnectionDefects proves the budget path tags its platform
+// failures the way every other LinkedIn capability tags them. An expired member credential is a
+// PERMANENT fault: untagged it loses to every errors.Is arm in the service's switch and comes
+// back 503 with a retry invitation, where the toggle answers the identical failure 409. The two
+// subtests cover both platform calls, because the guard has to be on each of them.
+func TestLinkedIn_WriteBudget_ClassifiesConnectionDefects(t *testing.T) {
+	cases := []struct {
+		name string
+		// failGet makes the READ 401; otherwise the read succeeds and the MUTATE 401s.
+		failGet bool
+	}{
+		{name: "on the current-budget read", failGet: true},
+		{name: "on the mutate", failGet: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// The refresh the client attempts after a 401 is REFUSED, which is what turns a
+				// recoverable 401 into a settled "this connection must be reconnected".
+				if strings.Contains(r.URL.Path, "accessToken") {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+					return
+				}
+				if r.Method == http.MethodGet && !tc.failGet {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, liDaily("100.00"))
+					return
+				}
+				w.WriteHeader(http.StatusUnauthorized)
+			}))
+			t.Cleanup(srv.Close)
+
+			d := NewLinkedInDispatcher(
+				fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+				linkedin.WithBaseURL(srv.URL),
+			)
+			err := d.WriteBudget(context.Background(), "proj-1", model.ProviderLinkedInAds,
+				liBudgetCampaign(), model.BudgetChange{Amount: 250, Type: model.BudgetDaily})
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			// The originating cause survives on BOTH paths, and asserting only that an error
+			// came back would pass with every tag missing.
+			if !errors.Is(err, linkedin.ErrCredentialsExpired) {
+				t.Errorf("the originating credential failure must be preserved, got %v", err)
+			}
+			var unconfirmed interface{ Unconfirmed() bool }
+			if tc.failGet {
+				// A PURE READ built no mutate, so there is nothing ambiguous to protect and the
+				// defect tag is what keeps this out of the 503 default arm — the half that
+				// matters, and the half that was missing.
+				if !errors.Is(err, domain.ErrConnectionNotUsable) {
+					t.Errorf("a credential defect on the read must be tagged ErrConnectionNotUsable, got %v", err)
+				}
+				if errors.As(err, &unconfirmed) && unconfirmed.Unconfirmed() {
+					t.Errorf("a read that built no mutate must not be reported unconfirmed: %v", err)
+				}
+				return
+			}
+			// On the MUTATE the ambiguous arm wins, and deliberately: a 401 on a
+			// PARTIAL_UPDATE may still have applied, so "nothing was modified" is the one
+			// claim that cannot be made. This is the same ordering the toggle spells out, and
+			// the cause is not lost — the assertion above passes through the wrap.
+			if !errors.As(err, &unconfirmed) || !unconfirmed.Unconfirmed() {
+				t.Errorf("an expiry on the mutate may have applied and must stay unconfirmed, got %v", err)
+			}
+		})
+	}
+}

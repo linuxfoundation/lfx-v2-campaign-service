@@ -801,6 +801,17 @@ fully addresses its budget: there is no budget-id resolution, and **nothing to s
 LinkedIn budget cannot be attached to a second campaign, so the shared-budget refusal that
 dominates the Google path has no analogue here and is deliberately absent rather than forgotten.
 
+**Both of its platform calls are classified through `linkedinExpiry` and `res.systemScoped`**,
+like every other LinkedIn capability. An expired member credential or a rejected application
+credential is PERMANENT: untagged it loses to every `errors.Is` arm in the service switch and is
+answered 503 with a retry invitation, where the toggle answers the identical failure 409.
+`systemScoped` is what keeps a failure on the LF SYSTEM row from being reported against the
+caller's project. The ORDER differs between the two calls and that is the contract: the
+current-budget read built no mutate, so its defect tag is applied directly; the `PARTIAL_UPDATE`
+checks `IsOutcomeUnconfirmed` FIRST, because a 401 there may still have applied and "nothing was
+modified" is then the one claim that cannot be made — the cause is not lost either way, since
+`unconfirmedBudgetWriteError` wraps the tagged error.
+
 `LinkedInDispatcher.WriteBudget` refuses, before any mutate: an unparseable current amount
 (`ErrBudgetUnwritable` — a value that failed to parse reads as "this field is unused", which is
 the answer that selects the wrong field to write); the same pacing guard Google makes, reached

@@ -153,10 +153,12 @@ func (d *MetaDispatcher) WriteBudget(ctx context.Context, projectID string, plat
 		// default and is answered 503 "the campaign was not modified" — inviting a retry of
 		// a request that can never succeed.
 		//
-		// Only the amount is mapped. The other failures this call can return — a failed
-		// account preflight, an unresolvable currency — are upstream and keep the 503 the
-		// default arm gives them, which is why the platform sentinel marks the amount alone.
-		// Either way nothing has been written; this is still a read-side failure.
+		// This call fails three ways and they are three different faults, so they are
+		// classified separately below. The remaining one — a failed account preflight —
+		// establishes nothing about the currency at all and is genuinely upstream, so it
+		// keeps the 503 the default arm gives it. Either way nothing has been written; all
+		// three are read-side failures.
+		//
 		// An ad account whose currency has no known minor-unit scale is a PERMANENT property
 		// of that account: no retry resolves it, and the remedy is in Meta Ads Manager or in
 		// this service's currency map, never in the request. Classified as unwritable for the

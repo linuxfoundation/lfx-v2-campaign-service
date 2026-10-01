@@ -68,10 +68,22 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 
 	current, err := client.GetCampaignBudget(ctx, campaign.PlatformCampaignID)
 	if err != nil {
-		// A PURE READ. Its failure is DEFINITE — no mutate was built — so it is returned
-		// unclassified. Marking it unconfirmed would send an operator to verify a write
-		// that never existed, which is the same mis-scoping the Google slice corrected.
-		return fmt.Errorf("write linkedin campaign budget: read current budget: %w", err)
+		// A PURE READ. Its failure is DEFINITE — no mutate was built — so there is no
+		// unconfirmed branch here. Marking it unconfirmed would send an operator to verify a
+		// write that never existed, which is the same mis-scoping the Google slice corrected.
+		//
+		// It IS still classified as a connection defect, exactly as every other LinkedIn
+		// capability classifies its platform calls. An expired member credential or a
+		// rejected application credential is a PERMANENT fault: untagged it loses to every
+		// arm in the service's switch and is answered 503 with a retry invitation, where the
+		// toggle answers the identical failure 409 (or 500 for a rejected token request).
+		// res.systemScoped is what keeps a failure on the LF SYSTEM row from being reported
+		// against the caller's project.
+		rerr := fmt.Errorf("write linkedin campaign budget: read current budget: %w", err)
+		if linkedinConnectionDefect(err) {
+			return res.systemScoped(linkedinExpiry(rerr))
+		}
+		return rerr
 	}
 	if current == nil {
 		return fmt.Errorf("%w: linkedin campaign %s", domain.ErrPlatformCampaignAbsent, campaign.PlatformCampaignID)
@@ -174,8 +186,16 @@ func (d *LinkedInDispatcher) WriteBudget(ctx context.Context, projectID string, 
 	// inline instead of held through the cooldown.
 	if err := client.UpdateCampaignBudget(ctx, campaign.PlatformCampaignID, wire, lifetime); err != nil {
 		werr := fmt.Errorf("write linkedin campaign budget for campaign %s: %w", campaign.PlatformCampaignID, err)
+		// AMBIGUITY IS CLAIMED FIRST, and the ordering is the same one the toggle spells
+		// out: an expiry that may have applied upstream must stay unconfirmed, and the
+		// sentinel is not lost either way because unconfirmedBudgetWriteError wraps werr.
+		// What reaches the defect arm below is therefore exactly the pre-send or
+		// non-mutating expiry — nothing was applied, so "reconnect" is the honest answer.
 		if linkedin.IsOutcomeUnconfirmed(err) {
 			return &unconfirmedBudgetWriteError{err: werr}
+		}
+		if linkedinConnectionDefect(err) {
+			return res.systemScoped(linkedinExpiry(werr))
 		}
 		return werr
 	}
