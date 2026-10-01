@@ -384,6 +384,36 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
   suppression list in the portal. `MatchesEventSuppression` requires keyword overlap AND a
   suppression word, because either alone also matches the event's own AUDIENCE lists — and
   excluding those would suppress exactly the people the send is for.
+  `LastSentTerms`/`MatchLastSent` are the same shape of decision for the last-sent listing, and
+  they exist because matching the event name as ONE contiguous phrase found nothing: no marketing
+  email is named `"KubeCon + CloudNativeCon North America"`. `NewLastSentTerms` splits the
+  year-stripped name into DISTINCTIVE and GENERIC tokens (`genericEventWords`, curated beside
+  `stopwords` on the same rule — a token belongs there only when it recurs across DIFFERENT events),
+  and keeps the brand apart as a fallback tier. Membership in that set is the WHOLE definition of
+  distinctive, so it has to cover ordinary English words and not just event-format ones: while it
+  held only formats, `"Open Source Summit"` left `{open, source}` admitting alone and returned
+  `"Registration Open"` and `"Source Code Newsletter"` as precedent — and each false hit, being a
+  non-brand match, also DELETED the brand fallback rows that were the honest answer. Brand words
+  stay OUT of it even though they recur, because subtracting `linux` would empty the fallback tier
+  for every Linux Foundation event. `MatchLastSent` reads name AND subject, because
+  either can carry the event, and admits on ONE distinctive token or TWO tokens of any kind. A flat
+  minimum-overlap count was rejected: `"KubeCon NA 2026"` overlaps a KubeCon event on exactly one
+  token and is the precise case this exists to find, so DISTINCTIVENESS rather than count is what
+  separates `kubecon` from `summit`. A generic token still RANKS (`Overlap` counts both tiers); it
+  just cannot admit alone, since `"Summit Recap"` shares `summit` with a dozen unrelated portfolio
+  sends. A brand-only hit is reported AS one (`BrandOnly`) so the caller can demote it, and a brand
+  token that is also an event token is removed from the brand tier — otherwise the fallback claims
+  credit for a hit the event name already explains. `LastSentTerms.IsEmpty` reports that no tier
+  holds a token, which is the one answer callers must check BEFORE sweeping a portal: `event_name`
+  is constrained only by `MinLength(1)`, so a name that year-strips to nothing (`"2026"`) or whose
+  every token is dropped as ≤2 characters (`"NA EU"`) empties the event's own two tiers, and an
+  empty term set matches no row by design. It reads all THREE tiers, so such a name is only
+  "nothing to search on" when `brand_short` is degenerate or absent as well — a usable brand
+  leaves the fallback tier populated and the sweep worth running. `KeywordOverlap` was removed
+  with this rule: its only remaining reference was a log fragment, its godoc described a ranking
+  role `MatchLastSent` had taken over, and a scoring helper that looks usable but is not is how
+  the contiguous-phrase defect shipped in the first place. `SharesKeyword` remains, and is the
+  live boolean form.
 - **`builder_qa.go`** — three pre-send checks, inferred from a list's own `filterBranch` plus the
   NAMES of the lists it references, because the portal carries no machine-readable marker for
   "this is the GDPR list". `NEEDS VERIFY` is the honest and most common verdict, and no caller

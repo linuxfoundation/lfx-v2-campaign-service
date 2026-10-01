@@ -6,7 +6,6 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -644,9 +643,14 @@ func (x *AudienceExplorer) ExistingMasterLists(ctx context.Context, projectID, e
 // LastSent reports the most recent marketing emails for this event family and the
 // lists each one targeted.
 //
-// Only PUBLISHED emails count. A draft's selection is what someone was in the middle
-// of deciding, and presenting it as precedent would recommend an audience nobody ever
-// approved.
+// Only emails that actually WENT OUT count. A draft's selection is what someone was in
+// the middle of deciding, and presenting it as precedent would recommend an audience
+// nobody ever approved.
+//
+// ONE portal walk, not one per search term. The query SearchEmails takes is never sent
+// upstream -- matching is client-side over rows the walk already holds -- so the previous
+// two-term loop re-read identical pages and bought nothing but round trips. The tiered
+// token rule that replaced those terms lives in audience.MatchLastSent.
 func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, brandShort string, limit int) (sent []audience.LastSentEmail, err error) {
 	client, fromSystem, err := x.builder.client(ctx, projectID)
 	if err != nil {
@@ -657,118 +661,453 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 	if limit <= 0 {
 		limit = 3
 	}
-	keywords := audience.EventKeywords(eventName)
+	terms := audience.NewLastSentTerms(eventName, brandShort)
+	now := x.now()
 
-	type ranked struct {
-		email   hubspot.Email
-		overlap int
+	// No terms, no lookup. The design constrains event_name only with MinLength(1), so a
+	// name that year-strips to nothing ("2026"), or whose every token is dropped as ≤2
+	// characters ("NA EU"), empties the event's own two tiers. The gate is IsEmpty across all
+	// three, though, so this short-circuits only when brand_short is degenerate or absent too:
+	// a usable brand still sweeps and can still answer from the brand fallback, which is the
+	// same thing a real event name gets when nothing matches the event. Handing genuinely
+	// empty terms to the walk would match no row, reach the scan bound with nothing accepted
+	// and come back as ErrSearchIncomplete -- a 503 for a request that carries nothing to
+	// search on. With no evidence there is nothing to look up, which is the reasoning
+	// SharesKeyword already applies to an empty keyword set.
+	if terms.IsEmpty() {
+		slog.WarnContext(ctx, "last-sent event name yielded no searchable terms",
+			"project_id", projectID)
+		return []audience.LastSentEmail{}, nil
 	}
+
+	// The predicate is the TOKEN RULE ALONE; the state and future-date gates run in the loop
+	// below. That split matters because walkEmails cannot tell "no row matched this event"
+	// from "rows matched but none of them had gone out" -- a bound reached with zero ACCEPTED
+	// rows is reported as ErrSearchIncomplete. Gating inside the predicate therefore turned a
+	// TRUE absence, an event whose only emails are drafts, into a 503 on any portal past the
+	// scan bound. Accepting the draft here and rejecting it below keeps the walk's
+	// false-absence guard measuring the thing it exists to measure.
+	emails, searchBounded, serr := client.SearchEmailsMatchingBounded(ctx, func(e hubspot.Email) bool {
+		return audience.MatchLastSent(e.Name, e.Subject, terms).Matched
+	})
+	if serr != nil {
+		// EVERY failure propagates, including a plain transport error that the old
+		// per-term loop logged and swallowed. With one walk there is no second term to
+		// fall through to, and "no prior sends" is the single most misleading thing this
+		// endpoint can say: an operator reads an empty panel as "this event has never
+		// been emailed" and builds the next audience from scratch. A recoverable failure
+		// is the honest answer -- the same trade hubspot.ErrSearchIncomplete makes one
+		// layer down, which also reaches the caller through here unwrapped.
+		return nil, serr
+	}
+
 	seen := map[string]struct{}{}
-	found := make([]ranked, 0, 8)
-	// Remembers a scan-bound hit so an all-incomplete sweep cannot return as an empty history.
-	var incomplete error
-	for _, term := range audience.LastSentSearchTerms(eventName, brandShort) {
-		emails, serr := client.SearchEmails(ctx, term)
-		if serr != nil {
-			// A revoked token fails EVERY term alike, so absorbing them all returned 200
-			// with an empty history — telling the operator there were no prior sends when
-			// the truth is the credential no longer works.
-			if hubspot.IsPermissionRejection(serr) {
-				return nil, serr
-			}
-			if errors.Is(serr, hubspot.ErrSearchIncomplete) {
-				// The scan bound was reached having matched nothing, so "no prior
-				// send" would be an absence nobody established. Try the next term —
-				// but REMEMBER it: if no later term finds anything either, returning
-				// an empty list would report that unestablished absence as fact.
-				incomplete = serr
-				continue
-			}
-			slog.WarnContext(ctx, "last-sent email search failed", "project_id", projectID, "error", serr)
+	candidates := make([]ranked, 0, 8)
+	for _, email := range emails {
+		// A single walk cannot repeat an id through a stalled cursor (the client refuses
+		// one), but a portal mutating BETWEEN pages can legitimately surface a row twice.
+		if _, dup := seen[email.ID]; dup {
 			continue
 		}
-		for _, email := range emails {
-			if _, dup := seen[email.ID]; dup {
-				continue
-			}
-			if !isPublished(email.State) {
-				continue
-			}
-			seen[email.ID] = struct{}{}
-			found = append(found, ranked{email: email, overlap: audience.KeywordOverlap(email.Name, keywords)})
+		seen[email.ID] = struct{}{}
+		// Only a send is precedent. Rejected HERE rather than in the predicate so that the
+		// walk still reports having found candidate rows -- see the predicate's comment above.
+		if !isPublished(email.State) || sentInTheFuture(string(email.PublishDate), now) {
+			continue
 		}
-		if len(found) > 0 {
-			// A term matched, so the history is established regardless of what an
-			// earlier term's scan bound did.
-			incomplete = nil
-			// The first term that matched anything wins. The brand fallback exists for
-			// a renamed or first-time event; letting it also contribute rows to a
-			// successful event-name match would mix another event's sends into this
-			// event's precedent.
-			break
+		// Re-classify rather than smuggling the verdict out of the predicate: a filter a
+		// client calls should be pure, and the rule is a map over two strings.
+		m := audience.MatchLastSent(email.Name, email.Subject, terms)
+		candidates = append(candidates, ranked{
+			email:     email,
+			sentAt:    hubspot.ParseEmailTime(string(email.PublishDate)),
+			overlap:   m.Overlap,
+			fallback:  m.Fallback,
+			brandOnly: m.BrandOnly,
+		})
+	}
+
+	// A bounded walk whose candidates were ALL rejected here is a false absence, and the
+	// layer below cannot see it. `ErrSearchIncomplete` fires on a bound reached with nothing
+	// ACCEPTED BY THE PREDICATE -- and the predicate deliberately admits drafts so that the
+	// guard keeps measuring "nothing matched this event" rather than "nothing had gone out".
+	// The cost of that split is this case: 2000 matching drafts past the bound satisfied the
+	// walk, emptied here, and returned `(empty, nil)` -- the operator reads "this event has
+	// never been emailed" while the portal holds 2000 matching rows it never finished reading.
+	//
+	// Only when the walk was INCOMPLETE. A walk that read the portal to the end and whose rows
+	// were all drafts is a TRUE absence: there is genuinely no prior send, and that is the very
+	// case the predicate split exists to report honestly rather than as a 503.
+	if searchBounded && len(candidates) == 0 {
+		return nil, fmt.Errorf("last-sent: the email search stopped at its scan bound and every row it matched was a draft or a scheduled send, so an empty history cannot be distinguished from an unread one: %w", hubspot.ErrSearchIncomplete)
+	}
+
+	// The brand tier and a generic-only hit are both FALLBACK, admissible only when nothing
+	// matched the event DISTINCTIVELY. Gating on brand-only alone left the generic case
+	// counting as an event match, so for an event whose whole name is portfolio-common every
+	// row was a full match and the brand rows were deleted by rows no stronger than they were.
+	//
+	// This replaces the old loop's break-on-first-matching-term, and is strictly stronger than
+	// it: the break only suppressed the brand when an EARLIER term had already matched, whereas
+	// this suppresses brand-only rows whenever an event match exists anywhere in the sweep,
+	// regardless of which page it landed on.
+	// NOT partitioned here, deliberately. The classification is settled, but whether a row is
+	// a real SEND is not: the loop above could only consult the PROJECTED date, and
+	// `sentInTheFuture` treats an ABSENT one as "not future" on purpose. So on a portal that
+	// omits publishDate, a PUBLISHED_OR_SCHEDULED row booked for next month survives as an
+	// event match — and partitioning on it here would DELETE every fallback row permanently,
+	// only for the authoritative re-check below to then drop that same row as future. The
+	// operator is left with nothing: the false empty history this endpoint exists to prevent,
+	// reintroduced through the one gate that cannot yet see the truth.
+	//
+	// Fallback rows therefore ride through the shortlist, so they are still available to be
+	// promoted if the event matches evaporate. `keepStrongestTier` does the partition below,
+	// on the survivors.
+
+	// Most recently SENT first -- the published contract, and previously not what happened.
+	// Ranking was keyword overlap alone, so a wordy old email outranked a recent send, and the
+	// send date was not even read until after the truncation below.
+	//
+	// Keyword overlap is the TIEBREAK, not the key: it measures how well a name matches, which
+	// says nothing about when the email went out. A row whose date the portal did not report
+	// sorts LAST rather than first -- an unknown date must not outrank a known one, and must
+	// never be read as an instant in 1970. Remaining ties keep the walk's newest-edited-first
+	// order, which SliceStable preserves.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return beforeInSendOrder(candidates[i], candidates[j])
+	})
+
+	// A SHORTLIST, not the answer: read the authoritative date for more rows than will be
+	// returned. The sort above can only see the PROJECTED date, so on a portal that ignores
+	// includedProperties every candidate is undated and that order degenerates to the walk's
+	// newest-EDITED-first. Truncating to limit there would choose the survivors by edit date,
+	// and no later sort could bring back a send already cut -- re-sorting reorders what is in
+	// hand, it cannot recover what is not. Widening the date read fixes SELECTION as well as
+	// order, and it is the cheap half of the fan-out: one GET per row against listBriefs'
+	// GetList-per-referenced-list, which stays at the limit survivors.
+	// limit PLUS a fixed headroom, not a multiple of it. `3*limit` capped at 12 collapsed
+	// exactly where the protection matters most: at the design's maximum limit of 10 the
+	// shortlist was 12, leaving two rows of slack, so on an undated portal selection was
+	// once again being made by edit date. A fixed headroom keeps the same slack at every
+	// limit instead of spending it all at the small ones.
+	shortlist := limit + shortlistHeadroom
+	if shortlist > maxSendDateReads {
+		shortlist = maxSendDateReads
+	}
+	// Tiered BEFORE the truncation, so the shortlist's scarce slots are not spent on evidence
+	// a stronger tier already outranks. A busy `brand_short` publishes far more often than any
+	// one event, so date order alone filled all `limit+12` slots with recent portfolio mail and
+	// the event's own older send never reached the authoritative read at all — the operator
+	// got newsletters as "last sent" precedent for their event.
+	//
+	// This is provisional, exactly like the sort above: it runs on the projected date and may
+	// promote a tier that the authoritative read then empties. That is why the partition runs
+	// AGAIN below, on the survivors. Doing it only here would reinstate the defect this
+	// ordering exists to fix; doing it only below lets the shortlist evict the answer before
+	// anything can see it. Both, and for different reasons.
+	candidates = shortlistAcrossTiers(candidates, shortlist)
+
+	shortlisted := make([]sendDateRead, 0, len(candidates))
+	for _, c := range candidates {
+		r := sendDateRead{row: c}
+		sendLists, lerr := client.GetEmailSendLists(ctx, c.email.ID)
+		switch {
+		case lerr != nil:
+			// The email is still worth showing: its name and link are the operator's route
+			// into HubSpot to read the selection by hand. Its projected date also stands --
+			// when an email went out and who it targeted are independent facts, and one
+			// failing does not unknow the other.
+			slog.WarnContext(ctx, "could not read a last-sent email's lists",
+				"project_id", projectID, "email_id", c.email.ID, "error", lerr)
+			r.unread = true
+		default:
+			r.lists = sendLists
+			// The single-email read is the AUTHORITATIVE date; the projected one is an
+			// optimization that makes a date available for selection above.
+			if authoritative := hubspot.ParseEmailTime(sendLists.PublishDate); !authoritative.IsZero() {
+				// The future gate runs AGAIN, here. In the loop it could only see the
+				// projected date, which is blank on a portal that ignores
+				// includedProperties -- so a PUBLISHED_OR_SCHEDULED row booked for next
+				// month passed it, and ranking by date would then put that unapproved send
+				// FIRST in a panel an operator reads as "what we sent last time".
+				if authoritative.After(now) {
+					continue
+				}
+				r.row.sentAt = authoritative
+			}
 		}
+		shortlisted = append(shortlisted, r)
 	}
 
-	// Every term that ran hit its scan bound without matching, so nothing here establishes
-	// that there is no prior send. Saying so is the only honest answer: an empty list would
-	// be read as "this event has never been emailed", which is what the operator uses to
-	// decide whether a precedent exists at all.
-	if len(found) == 0 && incomplete != nil {
-		return nil, incomplete
+	// The bounded guard AGAIN, now that the authoritative read has had its say. The check at
+	// the top of this function runs before the fan-out, so it cannot see a shortlist emptied
+	// HERE — every row dropped as a booked send at the future gate above. A bounded walk that
+	// ends that way is the same false absence for the same reason: the portal was never read
+	// to the end, so "no prior send" is a claim this function has not earned.
+	if searchBounded && len(shortlisted) == 0 {
+		return nil, fmt.Errorf("last-sent: the email search stopped at its scan bound and every row it matched proved not to be a send, so an empty history cannot be distinguished from an unread one: %w", hubspot.ErrSearchIncomplete)
 	}
 
-	// Most keyword overlap first, then most recently updated — SearchEmails already
-	// returns newest-first, and sort.SliceStable preserves that within a tie.
-	sort.SliceStable(found, func(i, j int) bool { return found[i].overlap > found[j].overlap })
-	if len(found) > limit {
-		found = found[:limit]
+	// The fallback partition, run HERE because only now is it known which candidates are real,
+	// non-future sends. Three tiers, strongest first: a distinctive event match, then the
+	// brand, then a generic-only hit.
+	//
+	// Brand ABOVE generic-only, not merged with it. Both are demoted, but they are not equal
+	// evidence: the brand is a deliberate last resort chosen by the operator's own
+	// `brand_short`, while a generic-only hit is an accident of an event name made entirely of
+	// portfolio-common words and may be an unrelated email. Ranking the two together by date
+	// let a newer "Registration Open Now" outrank the brand precedent that was the honest
+	// answer — the same inversion this endpoint's headline defect produced, one tier down.
+	if kept := keepStrongestTier(shortlisted); len(kept) > 0 {
+		shortlisted = kept
 	}
 
-	out := make([]audience.LastSentEmail, 0, len(found))
-	for _, r := range found {
+	// Re-ranked on the authoritative dates the fan-out has now read, THEN truncated. Ordering
+	// and selection are both correct here for any portal, projected dates or not, as long as
+	// the most recent send was inside the shortlist; past maxSendDateReads candidates a portal
+	// that withholds publishDate can still shortlist by edit date. That residue is why the
+	// projection is worth requesting, and why the live check on it is worth doing.
+	sort.SliceStable(shortlisted, func(i, j int) bool {
+		return beforeInSendOrder(shortlisted[i].row, shortlisted[j].row)
+	})
+	if len(shortlisted) > limit {
+		shortlisted = shortlisted[:limit]
+	}
+
+	out := make([]audience.LastSentEmail, 0, len(shortlisted))
+	for _, r := range shortlisted {
 		row := audience.LastSentEmail{
-			EmailID:          r.email.ID,
-			EmailName:        r.email.Name,
-			HubSpotURL:       r.email.AppURL,
+			EmailID:          r.row.email.ID,
+			EmailName:        r.row.email.Name,
+			HubSpotURL:       r.row.email.AppURL,
 			IncludedLists:    []audience.ListBrief{},
 			SuppressionLists: []audience.ListBrief{},
 		}
-		sendLists, lerr := client.GetEmailSendLists(ctx, r.email.ID)
-		if lerr != nil {
-			// The email is still worth showing: its name and link are the operator's
-			// route into HubSpot to read the selection by hand.
-			slog.WarnContext(ctx, "could not read a last-sent email's lists",
-				"project_id", projectID, "email_id", r.email.ID, "error", lerr)
+		if r.unread {
 			// Marked, not silently empty: two empty arrays otherwise say "this send targeted
 			// nobody", which an operator reads as precedent for their own selection.
 			row.ListsUnavailable = true
-			out = append(out, row)
-			continue
+		} else {
+			// listBriefs is the EXPENSIVE half of the fan-out -- one GetList per referenced
+			// list id, plus a legacy lookup on a miss -- so it runs only for the survivors.
+			row.IncludedLists = x.listBriefs(ctx, client, r.lists.Include, r.lists.LegacyInclude)
+			row.SuppressionLists = x.listBriefs(ctx, client, r.lists.Exclude, r.lists.LegacyExclude)
 		}
-		row.SentAt = sendLists.PublishDate
-		row.IncludedLists = x.listBriefs(ctx, client, sendLists.Include, sendLists.LegacyInclude)
-		row.SuppressionLists = x.listBriefs(ctx, client, sendLists.Exclude, sendLists.LegacyExclude)
+		// NORMALISED, not passed through: the design documents sent_at as RFC 3339, and HubSpot
+		// renders marketing-email dates in more than one shape. A value that could not be
+		// parsed is reported as absent rather than as a string no client can read.
+		if !r.row.sentAt.IsZero() {
+			row.SentAt = r.row.sentAt.Format(time.RFC3339)
+		}
 		out = append(out, row)
 	}
 	return out, nil
 }
 
-// isPublished reports whether an email state means it actually went out. HubSpot spells the
-// state in several ways across API versions, so this tolerates variants — but by PREFIX, never
-// by substring.
+// shortlistAcrossTiers picks which candidates get their authoritative send date read.
 //
-// Substring matching inverted the answer on the negative states: "UNPUBLISHED" contains
-// "PUBLISHED", so a withdrawn email counted as a send, and "NOT_SENT" contains "SENT". Those
-// are exactly the states that must not become precedent — an operator reads this list as "what
-// we sent last time" and builds the next audience from it.
-func isPublished(state string) bool {
-	s := strings.ToUpper(strings.TrimSpace(state))
-	for _, prefix := range []string{"PUBLISHED", "SENT", "AUTOMATED"} {
-		if strings.HasPrefix(s, prefix) {
-			return true
+// Strongest tier first, but NEVER to the exclusion of the others. Three failures have to be
+// avoided at once, and each is the fix for the previous one taken too far:
+//
+//   - Take the strongest tier ONLY, and a PROVISIONAL classification decides the answer. The
+//     rows here carry the projected date, and `sentInTheFuture` passes an absent one, so a
+//     scheduled-but-unsent event match still looks like an event match. Dropping the fallback
+//     rows on its word leaves nothing once the authoritative read discards it.
+//   - Take rows in DATE ORDER only, and a busy `brand_short` -- which publishes far more often
+//     than any one event — fills every slot with recent portfolio mail, so the event's own
+//     older send is never read at all.
+//   - Give the strongest tier every slot it ASKS FOR, and a large enough top tier starves the
+//     others outright: an event with a multi-email scheduled campaign produces `shortlist`
+//     provisional event matches that all evaporate at the authoritative gate, and the brand
+//     row that was the honest answer never got a slot to be promoted from.
+//
+// So each weaker tier holds a reserved FLOOR that the tiers above it cannot spend, and the
+// floor is returned to the pool when the tier cannot fill it. The floor is deliberately small:
+// it buys one round-trip's worth of insurance against the strongest tier evaporating, not a
+// fair split — when the event tier is genuine it should still take nearly the whole budget.
+// Within a tier the incoming date order is preserved, which SliceStable established above.
+func shortlistAcrossTiers(rows []ranked, shortlist int) []ranked {
+	if shortlist <= 0 || len(rows) <= shortlist {
+		return rows
+	}
+	tiers := [3][]ranked{}
+	for _, r := range rows {
+		switch {
+		case !r.fallback:
+			tiers[0] = append(tiers[0], r)
+		case r.brandOnly:
+			tiers[1] = append(tiers[1], r)
+		default:
+			tiers[2] = append(tiers[2], r)
 		}
 	}
-	return false
+
+	// What each tier may take: everything not reserved for the weaker tiers below it.
+	budget := [3]int{}
+	remaining := shortlist
+	for i := range tiers {
+		reservedBelow := 0
+		for j := i + 1; j < len(tiers); j++ {
+			if len(tiers[j]) > 0 {
+				reservedBelow += min(fallbackFloor, len(tiers[j]))
+			}
+		}
+		budget[i] = max(0, remaining-reservedBelow)
+		budget[i] = min(budget[i], len(tiers[i]))
+		remaining -= budget[i]
+	}
+
+	out := make([]ranked, 0, shortlist)
+	for i, tier := range tiers {
+		out = append(out, tier[:budget[i]]...)
+	}
+	// Any floor a tier could not fill is spent on whatever is left, strongest first.
+	for i, tier := range tiers {
+		for _, r := range tier[budget[i]:] {
+			if len(out) == shortlist {
+				return out
+			}
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// keepStrongestTier reduces the shortlist to the best evidence tier present: a distinctive
+// event match if any, else the brand fallback, else generic-only hits.
+//
+// Returns nil when there is nothing to choose between — an empty shortlist, or one already
+// uniform — so the caller can leave its slice untouched rather than rebuild it.
+func keepStrongestTier(rows []sendDateRead) []sendDateRead {
+	var event, brand, generic []sendDateRead
+	for _, r := range rows {
+		switch {
+		case !r.row.fallback:
+			event = append(event, r)
+		case r.row.brandOnly:
+			brand = append(brand, r)
+		default:
+			generic = append(generic, r)
+		}
+	}
+	for _, tier := range [][]sendDateRead{event, brand, generic} {
+		if len(tier) > 0 {
+			return tier
+		}
+	}
+	return nil
+}
+
+// ranked is one last-sent candidate with the two things it is ordered by.
+type ranked struct {
+	email    hubspot.Email
+	sentAt   time.Time
+	overlap  int
+	fallback bool
+	// brandOnly separates the two FALLBACK tiers. Both are demoted, but they are not
+	// equal: the brand is a deliberate last resort, while a generic-only hit is an
+	// accident of an event name made of portfolio-common words and may be an unrelated
+	// email entirely. Ranking the two together by date lets a newer unrelated row
+	// outrank the brand precedent that was the honest answer.
+	brandOnly bool
+}
+
+// sendDateRead is a shortlisted candidate after its send-list read, which supplies both the
+// authoritative send date and the selection itself. `unread` records that the read failed,
+// which marks the row rather than emptying it.
+type sendDateRead struct {
+	row    ranked
+	lists  *hubspot.EmailSendLists
+	unread bool
+}
+
+// beforeInSendOrder is the last-sent order: newest send first, an UNKNOWN date last, and
+// keyword overlap only as a tiebreak between sends of the same date.
+//
+// One comparator for both passes, deliberately. The shortlist pass orders by the projected
+// date and the final pass by the authoritative one, and a second spelling of "newest first"
+// is how the two passes drift apart -- which is the class of defect this whole change fixes.
+func beforeInSendOrder(a, b ranked) bool {
+	if a.sentAt.IsZero() != b.sentAt.IsZero() {
+		return !a.sentAt.IsZero()
+	}
+	if !a.sentAt.Equal(b.sentAt) {
+		return a.sentAt.After(b.sentAt)
+	}
+	return a.overlap > b.overlap
+}
+
+// shortlistHeadroom is how many candidates past `limit` have their authoritative send date
+// read, and maxSendDateReads is the absolute ceiling on that read. This is the cheap half of
+// the fan-out (one GET per row), widened past `limit` so that SELECTION does not depend on
+// the projected date arriving; listBriefs, the expensive half, stays at the `limit`
+// survivors. The design caps `limit` at 10, so the worst case is 22 single-email GETs.
+//
+// fallbackFloor is how many slots each weaker tier holds against the tiers above it, so a
+// large provisional top tier cannot starve them outright — see shortlistAcrossTiers. Two,
+// not one: a single reserved row is lost the moment that row is itself unreadable, and the
+// floor exists precisely for the case where the tier above turns out not to be sends.
+// Unfilled floor is returned to the pool, so a genuine event tier still takes nearly the
+// whole budget.
+const (
+	shortlistHeadroom = 12
+	maxSendDateReads  = 22
+	fallbackFloor     = 2
+)
+
+// isPublished reports whether an email state means it actually went out.
+//
+// An explicit ALLOWLIST, never a prefix or substring test. Substring matching inverted the
+// answer on the negative states: "UNPUBLISHED" contains "PUBLISHED", so a withdrawn email
+// counted as a send, and "NOT_SENT" contains "SENT". Prefix matching fixed those and
+// introduced its own: "AUTOMATED" is a prefix of AUTOMATED_DRAFT, AUTOMATED_SENDING and
+// AUTOMATED_AB_VARIANT, so a draft and an in-flight send both counted.
+//
+// The allowlist is drawn from HubSpot's marketing-email state enum and has NOT been
+// confirmed against a live portal. AUTOMATED_SENT in particular could not be substantiated;
+// it is kept because dropping a state on a reading of the docs is the same guess in the other
+// direction, and the live check below settles it.
+//
+// AUTOMATED_AB is admitted and AUTOMATED_AB_VARIANT is not, which is a deliberate split
+// rather than an oversight: the first reads as a live A/B automation, the second as one
+// arm of it that may never have been the one that went out. Neither spelling is confirmed,
+// so the pair stays on the safe side of the rule below -- an unrecognised variant omits a
+// row rather than presenting an audience nobody approved. The live enum check settles this
+// too, and if AUTOMATED_AB_VARIANT turns out to be a real send it belongs in the case list.
+//
+// Those are exactly the states that must not become precedent -- an operator reads this
+// list as "what we sent last time" and builds the next audience from it. An unrecognised
+// state is NOT a send: a new spelling should omit a row a human can still find in HubSpot,
+// rather than present an unapproved audience as precedent.
+func isPublished(state string) bool {
+	switch strings.ToUpper(strings.TrimSpace(state)) {
+	case "PUBLISHED", "PUBLISHED_OR_SCHEDULED", "SENT", "AUTOMATED", "AUTOMATED_SENT",
+		// A/B and form-automation spellings of the SAME live states. Prefix matching admitted
+		// these as a side effect; an allowlist has to name them, and omitting them silently
+		// reported "no prior sends" for any event whose last send was an A/B test.
+		// LOSER_AB is included deliberately: the losing variant still went out, and what it
+		// targeted is exactly the precedent an operator is looking for.
+		"PUBLISHED_AB", "PUBLISHED_OR_SCHEDULED_AB", "LOSER_AB",
+		"AUTOMATED_AB", "AUTOMATED_FOR_FORM":
+		return true
+	default:
+		return false
+	}
+}
+
+// sentInTheFuture reports that an email's date is present and still ahead of now.
+//
+// It is the second half of the state check, for the one allowed state that does not settle
+// the question: PUBLISHED_OR_SCHEDULED covers a send that has gone out AND one merely
+// booked (as does its _AB spelling), and a scheduled send has no audience precedent because
+// nobody has approved it yet -- it is a draft with a date.
+//
+// An ABSENT date never excludes, and the asymmetry is deliberate. Only a date the portal
+// actually reported can disqualify a row; treating a blank as disqualifying would empty
+// this endpoint entirely on a portal that ignores includedProperties.
+func sentInTheFuture(publishDate string, now time.Time) bool {
+	at := hubspot.ParseEmailTime(publishDate)
+	return !at.IsZero() && at.After(now)
 }
 
 // listBriefs resolves referenced list ids to names, v3 ids first and legacy ids

@@ -15,8 +15,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // decodeBody reads a request JSON body into a map.
@@ -195,11 +197,17 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 	// Order is guaranteed CLIENT-SIDE regardless of server order. The request sends
 	// `sort=-updatedAt` (a valid hint) and repeated `includedProperties` to restrict the
 	// returned fields so full email content doesn't blow the response cap at limit=100.
+	// mu guards the handoff: the handler runs on the server's goroutine and every
+	// assertion below reads what it captured, so the two need a real synchronization
+	// edge rather than the request/response round trip that merely looks like one.
+	var mu sync.Mutex
 	var gotSort string
 	var gotProps []string
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		gotSort = r.URL.Query().Get("sort")
 		gotProps = r.URL.Query()["includedProperties"]
+		mu.Unlock()
 		// Intentionally returned oldest-first to prove the client re-orders.
 		// `state` is on each row so the decode is pinned end to end: requesting the property
 		// and mapping it are separate failures, and only asserting the decoded value catches
@@ -214,6 +222,8 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchEmails: %v", err)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if gotSort != "-updatedAt" {
 		t.Errorf("SearchEmails should send sort=-updatedAt, got %q", gotSort)
 	}
@@ -228,6 +238,15 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 	if !slices.Contains(gotProps, "state") {
 		t.Errorf("includedProperties = %v, want it to contain \"state\" — the picker surfaces the "+
 			"lifecycle state, and a property not named here comes back empty", gotProps)
+	}
+	// `publishDate` on the same terms, and for the reason the last-sent listing exists:
+	// `updatedAt` is when an email was last EDITED, so ranking on it made an ancient email
+	// touched last week read as the most recent send. Naming it here is what puts the send
+	// date on the LIST rows, where it can influence which rows are selected at all rather
+	// than only the handful already chosen.
+	if !slices.Contains(gotProps, "publishDate") {
+		t.Errorf("includedProperties = %v, want it to contain \"publishDate\" -- the last-sent "+
+			"listing ranks by when an email went out, which is not when it was edited", gotProps)
 	}
 	if len(got) != 3 || got[0].ID != "2" || got[1].ID != "3" || got[2].ID != "1" {
 		t.Errorf("results must be most-recently-updated first (2,3,1), got %v", []string{got[0].ID, got[1].ID, got[2].ID})
@@ -1112,6 +1131,195 @@ func TestHTMLBlocks_PlacedDistinguishesLayoutFromKeySort(t *testing.T) {
 	})
 }
 
+// ---------------------------------------------------------------------------
+// SearchEmailsMatching: the same walk under a caller-supplied match rule
+// ---------------------------------------------------------------------------
+
+// TestSearchEmailsMatching_AppliesTheCallersPredicate pins that the predicate is handed a
+// COMPLETE row. The rule a caller needs is richer than "substring of name or subject" --
+// it reads the state, the send date and the fields together -- and a row missing any of
+// them silently narrows the rule rather than failing it. AppURL in particular is built by
+// the client, so it must be assigned BEFORE the filter runs.
+func TestSearchEmailsMatching_AppliesTheCallersPredicate(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[
+			{"id":"1","name":"KubeCon Invite","subject":"Join us","state":"PUBLISHED","publishDate":"2026-05-01T10:00:00Z"},
+			{"id":"2","name":"Newsletter","subject":"Monthly","state":"DRAFT","publishDate":""}
+		]}`)
+	})
+
+	var sawURL, sawSubject, sawDate string
+	got, err := c.SearchEmailsMatching(context.Background(), func(e Email) bool {
+		if e.ID == "1" {
+			sawURL, sawSubject, sawDate = e.AppURL, e.Subject, string(e.PublishDate)
+		}
+		return e.State == "PUBLISHED"
+	})
+	if err != nil {
+		t.Fatalf("SearchEmailsMatching: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "1" {
+		t.Fatalf("the predicate selected the wrong rows, got %+v", got)
+	}
+	if sawSubject != "Join us" || sawDate != "2026-05-01T10:00:00Z" {
+		t.Errorf("the predicate saw subject %q and publishDate %q; a rule reading a field the "+
+			"row never carried is narrowed rather than failed", sawSubject, sawDate)
+	}
+	if !strings.Contains(sawURL, "/edit/1/") {
+		t.Errorf("the predicate saw AppURL %q -- it must be built before the filter runs, or a "+
+			"caller cannot filter on the link", sawURL)
+	}
+}
+
+// TestSearchEmailsMatching_BoundWithNoAcceptedRowIsIncomplete pins that this entrypoint
+// inherits SearchEmails' false-absence contract unchanged. A tokenized predicate is
+// STRICTER than a substring, so it reaches the bound with nothing accepted more often -- and
+// an empty slice with no error there claims the portal authoritatively holds no such email.
+// The caller acts on that absence by telling an operator the event has never been emailed.
+func TestSearchEmailsMatching_BoundWithNoAcceptedRowIsIncomplete(t *testing.T) {
+	// atomic, not a plain int: httptest runs each handler on its own goroutine, and the
+	// bound assertion below reads this from the test goroutine. `make test` runs -race, so
+	// an unsynchronised handoff is a detected failure rather than a theoretical one.
+	var pages atomic.Int64
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		n := pages.Add(1)
+		// Always another page, never an accepted row. The cursor must ADVANCE or the walk
+		// ends on the non-advancing-cursor check and the test passes vacuously.
+		_, _ = fmt.Fprintf(w, `{"results":[{"id":"%d","name":"unrelated","subject":"z"}],`+
+			`"paging":{"next":{"after":"CUR%d"}}}`, n, n)
+	})
+
+	got, err := c.SearchEmailsMatching(context.Background(), func(Email) bool { return false })
+	if !errors.Is(err, ErrSearchIncomplete) {
+		t.Fatalf("err = %v, want ErrSearchIncomplete: a bound reached with nothing accepted is "+
+			"an absence nobody established", err)
+	}
+	if got != nil {
+		t.Fatalf("a truncated walk must return no rows alongside its error, got %d", len(got))
+	}
+	if walked := pages.Load(); walked > maxFilteredPages {
+		t.Errorf("walked %d pages; a caller's predicate must not lift the scan bound (%d)", walked, maxFilteredPages)
+	}
+}
+
+// TestSearchEmailsMatching_OneAcceptedRowIsAPartialAnswerNotAFailure is the other side of
+// that contract: with rows in hand the bound is a partial answer rather than a false one,
+// so the caller gets what was found instead of a failure it cannot act on.
+func TestSearchEmailsMatching_OneAcceptedRowIsAPartialAnswerNotAFailure(t *testing.T) {
+	var pages atomic.Int64
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		n := pages.Add(1)
+		name := "unrelated"
+		if n == 1 {
+			name = "KubeCon Invite"
+		}
+		_, _ = fmt.Fprintf(w, `{"results":[{"id":"%d","name":"%s","subject":"z"}],`+
+			`"paging":{"next":{"after":"CUR%d"}}}`, n, name, n)
+	})
+
+	got, err := c.SearchEmailsMatching(context.Background(), func(e Email) bool {
+		return strings.Contains(e.Name, "KubeCon")
+	})
+	if err != nil {
+		t.Fatalf("a bound reached WITH matches is a partial answer, not a failure: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "1" {
+		t.Fatalf("want the one accepted row, got %+v", got)
+	}
+}
+
+// TestSearchEmailsMatching_ANilFilterIsTheUnfilteredScreen pins that the two walks are told
+// apart by whether a filter was supplied at all, not by whether it matches anything. A
+// predicate returning true for every row is still FILTERED and bounded by the scan bound; a
+// nil one is the unfiltered screen and bounded by maxUnfilteredEmails. Conflating them would
+// silently change the cap on the template picker's empty-query path.
+func TestSearchEmailsMatching_ANilFilterIsTheUnfilteredScreen(t *testing.T) {
+	const perPage = 100
+	c, _ := emailPageServer(t, maxUnfilteredEmails/perPage*4, perPage, "Email")
+
+	got, err := c.SearchEmailsMatching(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("SearchEmailsMatching(nil): %v", err)
+	}
+	if len(got) != maxUnfilteredEmails {
+		t.Fatalf("a nil filter must take the unfiltered cap of %d rows, got %d", maxUnfilteredEmails, len(got))
+	}
+	// Sorted as a WHOLE then trimmed, so the rows kept are the newest of what was read.
+	// emailPageServer's updatedAt rises with the id, so the newest is the highest id fetched.
+	if got[0].ID != strconv.Itoa(maxUnfilteredEmails-1) {
+		t.Errorf("first row is id %s, want %d -- the fetched prefix must be sorted before it is trimmed",
+			got[0].ID, maxUnfilteredEmails-1)
+	}
+}
+
+// TestSearchEmails_ProjectsPublishDateAndDecodesIt pins the send date end to end on the
+// LIST rows. Requesting the property and mapping it onto the struct are separate failures:
+// a field not named in includedProperties comes back empty, and a field named but not
+// declared on Email decodes to the same empty string. Either way the last-sent ranking
+// silently falls back to "no date reported" for every row in the portal.
+func TestSearchEmails_ProjectsPublishDateAndDecodesIt(t *testing.T) {
+	// Guarded for the same reason as TestSearchEmails_SortsMostRecentlyUpdatedFirst: the
+	// capture crosses goroutines and an assertion depends on it.
+	var mu sync.Mutex
+	var gotProps []string
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotProps = r.URL.Query()["includedProperties"]
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"results":[
+			{"id":"1","name":"KubeCon Invite","subject":"Join us","state":"PUBLISHED",
+			 "updatedAt":"2026-06-01T00:00:00Z","publishDate":"2026-05-01T10:00:00Z"}
+		]}`)
+	})
+
+	got, err := c.SearchEmails(context.Background(), "kubecon")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Contains(gotProps, "publishDate") {
+		t.Fatalf("includedProperties = %v, want \"publishDate\"", gotProps)
+	}
+	if len(got) != 1 || got[0].PublishDate != "2026-05-01T10:00:00Z" {
+		t.Fatalf("PublishDate = %q, want the projected value -- a requested property that does "+
+			"not map onto the struct is as empty as one never requested", got[0].PublishDate)
+	}
+	// The date is distinct from updatedAt on this row, which is the whole point: an email
+	// edited in June that went out in May is a MAY send.
+	if got[0].UpdatedAt == string(got[0].PublishDate) {
+		t.Error("the fixture must keep the edit and the send date apart, or it cannot tell them apart")
+	}
+}
+
+// TestParseEmailTime_ReadsBothShapesAndRefusesTheRest pins the shared parser. HubSpot
+// renders marketing-email dates as RFC 3339 on some fields and epoch millis on others, and
+// an unparseable value must be UNKNOWN rather than the zero time: read as 1970 it would
+// sort a real send behind nothing at all, and rendered it would be a date no client can
+// read for a send that certainly did not happen then.
+func TestParseEmailTime_ReadsBothShapesAndRefusesTheRest(t *testing.T) {
+	rfc := ParseEmailTime("2026-05-01T10:00:00Z")
+	if rfc.IsZero() || rfc.Year() != 2026 {
+		t.Errorf("RFC 3339 must parse, got %v", rfc)
+	}
+	if ms := ParseEmailTime("1777629600000"); !ms.Equal(rfc) {
+		t.Errorf("epoch millis must parse to the same instant as its RFC 3339 spelling: %v vs %v", ms, rfc)
+	}
+	if frac := ParseEmailTime(" 2026-05-01T10:00:00.250Z "); frac.IsZero() {
+		t.Error("fractional seconds and surrounding whitespace must still parse")
+	}
+	// "0" and "-1" are epoch-shaped and would parse, which is exactly why they are here.
+	// time.UnixMilli(0).IsZero() is FALSE, so admitting 0 -- the ordinary "unset" spelling
+	// for an epoch-millis field -- would rank a dateless row above every honestly-undated
+	// one and render sent_at as 1970-01-01T00:00:00Z, the outcome this parser exists to
+	// prevent. A negative value is the same claim about a pre-1970 send nobody made.
+	for _, bad := range []string{"", "   ", "not-a-date", "2026-05-01", "0", "-1"} {
+		if got := ParseEmailTime(bad); !got.IsZero() {
+			t.Errorf("ParseEmailTime(%q) = %v, want the zero time so the caller can treat it as UNKNOWN", bad, got)
+		}
+	}
+}
+
 // TestCreateABTestVariant_WarnsOnAnUnexpectedState covers the state check, which is otherwise
 // deletable with a green suite.
 //
@@ -1137,5 +1345,52 @@ func TestCreateABTestVariant_WarnsOnAnUnexpectedState(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "unexpected A/B variant state") {
 		t.Errorf("no warning for a variant HubSpot did not create as an A/B variant:\n%s", buf.String())
+	}
+}
+
+// TestEmailTime_DecodesEveryShapeHubSpotSendsForADate pins why publishDate is EmailTime and
+// not a string. walkEmails decodes a whole PAGE in one json.Unmarshal and returns on any
+// error, and SearchEmails shares that walk -- so a single row whose date arrived as a bare
+// number would fail the entire page and take the template picker down with it, not merely
+// leave one date blank. ParseEmailTime already reads epoch millis, which is the shape a
+// plain string field could never receive.
+func TestEmailTime_DecodesEveryShapeHubSpotSendsForADate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"an ISO 8601 string", `{"publishDate":"2026-05-01T10:00:00Z"}`, "2026-05-01T10:00:00Z"},
+		{"epoch milliseconds as a number", `{"publishDate":1777629600000}`, "1777629600000"},
+		{"an explicit null", `{"publishDate":null}`, ""},
+		{"the field absent entirely", `{"id":"x"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got Email
+			if err := json.Unmarshal([]byte(tc.body), &got); err != nil {
+				t.Fatalf("decode: %v; one undecodable date fails the whole PAGE, not one row", err)
+			}
+			if string(got.PublishDate) != tc.want {
+				t.Errorf("PublishDate = %q, want %q", got.PublishDate, tc.want)
+			}
+		})
+	}
+
+	// The raw text is carried through rather than parsed on decode, so ParseEmailTime stays
+	// the single place a date shape is interpreted.
+	var numeric Email
+	if err := json.Unmarshal([]byte(`{"publishDate":1777629600000}`), &numeric); err != nil {
+		t.Fatalf("decode epoch millis: %v", err)
+	}
+	if got := ParseEmailTime(string(numeric.PublishDate)).UTC().Format(time.RFC3339); got != "2026-05-01T10:00:00Z" {
+		t.Errorf("ParseEmailTime = %q; epoch millis decoded but never became a time, so the field "+
+			"the listing orders by read as unknown", got)
+	}
+
+	// A shape that is neither is a REAL error and must say so. Silently blanking it would
+	// hide a wire change behind an endpoint that merely looks empty.
+	var bad Email
+	if err := json.Unmarshal([]byte(`{"publishDate":{"iso":"2026-05-01"}}`), &bad); err == nil {
+		t.Error("an object decoded as a date without complaint; a wire change must not read as a blank")
 	}
 }
