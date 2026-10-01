@@ -1817,13 +1817,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			if ctxErr := ctx.Err(); ctxErr != nil && createOutcomeAmbiguous(err) {
 				steps = append(steps, "Promoted-post authoring is UNCONFIRMED (the request reached Reddit but the outcome is unknown) -- no campaign was created; check Reddit Ads Manager for a post with this headline BEFORE authoring it again to avoid a duplicate, and DELETE it if it exists and is not attached to an ad")
 				return &CampaignResult{
-						Platform:     "reddit-ads",
-						CampaignName: campaignName,
-						AccountID:    c.account.AccountID,
-						RedditURL:    redditAdsManagerURL,
-						Steps:        steps,
-					}, fmt.Errorf("reddit promoted-post authoring UNCONFIRMED (a post for campaign %q may exist): %w",
-						campaignName, err)
+					Platform:     "reddit-ads",
+					CampaignName: campaignName,
+					AccountID:    c.account.AccountID,
+					RedditURL:    redditAdsManagerURL,
+					Steps:        steps,
+				}, fmt.Errorf("reddit promoted-post authoring UNCONFIRMED (a post for campaign %q may exist): %w",
+					campaignName, err)
 			}
 			// A cancellation that is NOT ambiguous landed cleanly before any authoring bytes
 			// went out, so no post exists: abort with a nil result and release the claim.
