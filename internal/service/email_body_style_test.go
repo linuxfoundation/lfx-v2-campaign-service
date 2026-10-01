@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // styled is the expected output for one tag carrying its table style and nothing else.
@@ -280,24 +281,140 @@ func TestEmailBodyAllowedTagsTracksTheStyleTable(t *testing.T) {
 	}
 }
 
+// overflowingBodyHTML is a section the model could write today: short enough that the caller's
+// own maxHTMLRunes check passes it through, long enough that STYLING it overflows, because styling
+// adds 100-150 runes to each of those 200 tags. The length is the model's to choose, which is why
+// the overflow branch is reachable on demand rather than by accident.
+func overflowingBodyHTML(payload string) string {
+	return payload + strings.Repeat("<p>Three days in Amsterdam.</p>", 200)
+}
+
 // Styling inflates its input, so a section that was within the per-section limit can style past
-// it. The overflow must degrade to the unstyled HTML rather than fail: the alternative is that a
-// perfectly good model response becomes a 503 because the SERVICE's own stylesheet did not fit.
-func TestStyledBodyHTMLWithinBoundFallsBackWhenStylingOverflows(t *testing.T) {
-	const in = "<p>hi</p>"
+// it. The overflow degrades to the SANITIZED html -- never to the input, which is the model's own
+// bytes as received. styleEmailBodyHTML is the only sanitizer on the generate-email-copy response
+// path (sanitizeWizardHTML guards the wizard, and never runs here), so a fallback that returned
+// `html` put `onerror`, a <script> and a `javascript:` href into the API response, with the model
+// choosing the length and therefore choosing whether the sanitizer ran at all.
+//
+// The bound is 8000 -- maxHTMLRunes itself -- because that is the bypass as the caller configures
+// it, not a figure chosen to make the branch fire.
+func TestStyledBodyHTMLWithinBoundSanitizesWhatItCannotStyle(t *testing.T) {
+	const bound = 8000
 
-	// A bound the unstyled HTML clears and the styled HTML cannot.
-	got := styledBodyHTMLWithinBound(in, len(in))
+	cases := []struct {
+		name    string
+		payload string
+		absent  []string
+		present string
+	}{
+		{
+			name:    "event handler",
+			payload: `<p onerror="steal()" onclick="steal()">Register today</p>`,
+			absent:  []string{"onerror", "onclick", "steal"},
+			present: "Register today",
+		},
+		{
+			name:    "script between paragraphs",
+			payload: `<p>before</p><script>alert(1)</script><p>after</p>`,
+			absent:  []string{"<script", "alert(1)"},
+			present: "after",
+		},
+		{
+			name:    "javascript url in a style",
+			payload: `<p style="background:url(javascript:alert(1))">Our sponsors</p>`,
+			absent:  []string{"javascript:", "url(", "style="},
+			present: "Our sponsors",
+		},
+		{
+			name:    "javascript href",
+			payload: `<a href="javascript:alert(1)">click here</a>`,
+			absent:  []string{"javascript:", "alert(1)", "href="},
+			present: "click here",
+		},
+	}
 
-	if got != in {
-		t.Fatalf("styledBodyHTMLWithinBound(%q, %d) = %q, want the unstyled input", in, len(in), got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := overflowingBodyHTML(tc.payload)
+
+			// Both halves of the premise, asserted rather than assumed: an input the caller would
+			// already have rejected, or one that still fits once styled, would make the rest of
+			// this test pass without exercising the overflow branch at all. The version of this
+			// test that this one replaces used `<p>hi</p>` with a bound of 9 and asserted that the
+			// fallback returned its input -- which is identical to its own sanitized form, so that
+			// assertion held whether the fallback sanitized or leaked. A payload the two forms
+			// disagree about is the only input that can tell them apart.
+			if n := utf8.RuneCountInString(in); n > bound {
+				t.Fatalf("the input is %d runes, past the %d-rune bound, so the caller rejects it before this function sees it", n, bound)
+			}
+			if n := utf8.RuneCountInString(styleEmailBodyHTML(in)); n <= bound {
+				t.Fatalf("styling the input produced %d runes, inside the %d-rune bound, so this case no longer reaches the overflow branch", n, bound)
+			}
+
+			got, err := styledBodyHTMLWithinBound(in, bound)
+			if err != nil {
+				t.Fatalf("styledBodyHTMLWithinBound(_, %d) returned %v, want the sanitized html", bound, err)
+			}
+			if n := utf8.RuneCountInString(got); n > bound {
+				t.Errorf("result is %d runes, past the %d-rune bound", n, bound)
+			}
+			if got == in {
+				t.Error("result is the input verbatim: the model's own bytes reached the response unsanitized")
+			}
+			for _, leaked := range tc.absent {
+				if strings.Contains(got, leaked) {
+					t.Errorf("payload %q survived the overflow fallback: %q", leaked, got)
+				}
+			}
+			if !strings.Contains(got, tc.present) {
+				t.Errorf("the overflow fallback lost the copy %q: %q", tc.present, got)
+			}
+		})
+	}
+}
+
+// The sanitized fallback is NOT in bounds by construction, which is why this function can fail at
+// all. rewriteHTML escapes text, so `&` becomes `&amp;` -- five runes for one -- and a section of
+// ampersands clears `bound` as written while exceeding it sanitized. There is then no form of that
+// section this service can send, and the answer is the caller's "model response is unusable" 503.
+// Neither of the alternatives is acceptable. The raw input is the leak this function exists to
+// close. An oversized string is worse than it looks: `design/brief.go:813` declares
+// MaxLength(8000) on this attribute, but the generated check for it lives in the Goa CLIENT types
+// only -- `gen/http/lfx_v2_campaign_service_briefs/server/types.go` does not mention 8000 at all --
+// so the service would not reject it here. It would leave unvalidated and fail at whatever consumer
+// does enforce the bound, with nothing left pointing back at the section that caused it.
+func TestStyledBodyHTMLWithinBoundErrorsWhenEscapingOverflows(t *testing.T) {
+	const bound = 100
+	in := "<p>" + strings.Repeat("&", 60) + `<script>alert(1)</script></p>`
+
+	if n := utf8.RuneCountInString(in); n > bound {
+		t.Fatalf("the input is %d runes, past the %d-rune bound, so the caller rejects it before this function sees it", n, bound)
+	}
+
+	got, err := styledBodyHTMLWithinBound(in, bound)
+
+	if err == nil {
+		t.Fatalf("styledBodyHTMLWithinBound(_, %d) = %q, nil; want an error -- the escaped form cannot fit", bound, got)
+	}
+	if got != "" {
+		t.Errorf("returned %q beside the error; the caller must be left nothing it could send", got)
+	}
+	// parseEmailCopyResponse returns this unwrapped, so it has to read like the other rejections
+	// there rather than like an internal failure. It is not what the client sees -- that caller
+	// logs this text and answers with a fixed "the AI platform returned an unreadable response"
+	// 503 -- so this log line is the only record of WHICH section was unusable and why.
+	if !strings.Contains(err.Error(), "model response is unusable") {
+		t.Errorf("error does not read like parseEmailCopyResponse's own rejections: %v", err)
 	}
 }
 
 func TestStyledBodyHTMLWithinBoundStylesWhatFits(t *testing.T) {
 	const in = "<p>hi</p>"
 
-	got := styledBodyHTMLWithinBound(in, 8000)
+	got, err := styledBodyHTMLWithinBound(in, 8000)
+	if err != nil {
+		t.Fatalf("styledBodyHTMLWithinBound(%q, 8000) returned %v", in, err)
+	}
 
 	if want := styled("p", "hi"); got != want {
 		t.Fatalf("styledBodyHTMLWithinBound(%q, 8000) = %q, want %q", in, got, want)
@@ -308,12 +425,21 @@ func TestStyledBodyHTMLWithinBoundStylesWhatFits(t *testing.T) {
 // bound would reject a section of accented or CJK copy that is well within the real limit.
 func TestStyledBodyHTMLWithinBoundCountsRunesNotBytes(t *testing.T) {
 	in := "<p>" + strings.Repeat("é", 40) + "</p>"
-	styledLen := len([]rune(styleEmailBodyHTML(in)))
+	styledLen := utf8.RuneCountInString(styleEmailBodyHTML(in))
 
-	if got := styledBodyHTMLWithinBound(in, styledLen); got == in {
+	got, err := styledBodyHTMLWithinBound(in, styledLen)
+	if err != nil {
+		t.Fatalf("styledBodyHTMLWithinBound(_, %d) returned %v", styledLen, err)
+	}
+	if got == sanitizeEmailBodyHTML(in) {
 		t.Fatalf("styledBodyHTMLWithinBound fell back at a bound of exactly %d runes, so it is counting bytes", styledLen)
 	}
-	if got := styledBodyHTMLWithinBound(in, styledLen-1); got != in {
+
+	got, err = styledBodyHTMLWithinBound(in, styledLen-1)
+	if err != nil {
+		t.Fatalf("styledBodyHTMLWithinBound(_, %d) returned %v", styledLen-1, err)
+	}
+	if want := sanitizeEmailBodyHTML(in); got != want {
 		t.Fatalf("styledBodyHTMLWithinBound(_, %d) did not fall back one rune under the styled length: %q", styledLen-1, got)
 	}
 }

@@ -3,6 +3,11 @@
 
 package service
 
+import (
+	"fmt"
+	"unicode/utf8"
+)
+
 // The email body's palette and type scale, owned by this service rather than by the model.
 //
 // The model is told to write SEMANTIC html -- <h2>, <p>, <ul>, <strong>, <a> -- and nothing else;
@@ -93,7 +98,11 @@ var emailBodyAllowedTags = func() map[string]bool {
 // trying, which is what makes the design fixed rather than advisory, and the usual payloads
 // (`onerror`, `style="...url(javascript:)"`, a <script> between two paragraphs) are removed by the
 // same pass. The tokenizer walk and the dropped-content handling are rewriteHTML's, shared with
-// sanitizeWizardHTML.
+// sanitizeWizardHTML and with sanitizeEmailBodyHTML below.
+//
+// Removed on EVERY response, not on most of them: styledBodyHTMLWithinBound is the only non-test
+// caller, and it never hands `input` back unrewritten, however long the section is. The removal
+// above is a promise about the response, so a caller allowed to skip this pass makes it a lie.
 //
 // Not idempotent-by-accident but idempotent by construction: since model attributes are dropped
 // before ours are added, running this over its own output yields the same bytes
@@ -105,6 +114,25 @@ func styleEmailBodyHTML(input string) string {
 	})
 }
 
+// sanitizeEmailBodyHTML rewrites a model-authored rich_text block to the email body's allow-list
+// and stops there: the same tokenizer, the same allowed tags, the same dropped content and the same
+// href validation as styleEmailBodyHTML, with no `style` attribute anywhere in the output.
+//
+// This is the overflow form for styledBodyHTMLWithinBound, and it exists because the two halves of
+// that pass are not equally optional. Dropping the service's STYLING on a section too long to carry
+// it costs a reader a plain-looking paragraph; dropping the SANITIZING costs them a script. Only
+// the first is a design concession, so only the first is ever made -- see styledBodyHTMLWithinBound
+// for what the alternative shipped.
+//
+// Shorter than its styled sibling by the whole of emailBodyTagStyles, roughly 100-150 runes per
+// tag, which is why trying it is worth anything at all.
+func sanitizeEmailBodyHTML(input string) string {
+	return rewriteHTML(input, htmlRewriteRules{
+		allowed: emailBodyAllowedTags,
+		attrs:   emailBodySanitizeAttrs,
+	})
+}
+
 // emailBodyAttrs writes the href (validated), the link target, and the service's style, in that
 // order, and nothing else.
 //
@@ -112,20 +140,44 @@ func styleEmailBodyHTML(input string) string {
 // plain copy it effectively is: a browser and a mail client both style only anchors that have an
 // href, so an anchor left looking like a link while leading nowhere would be a lie the reader
 // clicks. This mirrors the wizard's button rule -- a button with nowhere to go is rendered as text.
+func emailBodyAttrs(tag string, attrs []htmlAttr) string {
+	if tag == "a" {
+		link := emailBodyLinkAttrs(attrs)
+		if link == "" {
+			return ""
+		}
+		return link + styleAttr(emailBodyTagStyles[tag])
+	}
+	return styleAttr(emailBodyTagStyles[tag])
+}
+
+// emailBodySanitizeAttrs is emailBodyAttrs without the style: the href and the link target, and
+// nothing else, on <a> and on nothing else.
+//
+// Both emitters go through emailBodyLinkAttrs rather than restating the anchor rule, because a
+// difference between them -- in which hrefs validate, or in whether a real link keeps its
+// `rel="noopener noreferrer"` -- would only ever show on sections long enough to overflow the
+// styled bound, which is the one length nobody reviews.
+func emailBodySanitizeAttrs(tag string, attrs []htmlAttr) string {
+	if tag != "a" {
+		return ""
+	}
+	return emailBodyLinkAttrs(attrs)
+}
+
+// emailBodyLinkAttrs returns the validated href plus the link target for one <a>, or "" when no
+// href survives httpURL -- the signal each emitter above turns into "render this anchor as text".
 //
 // `target="_blank" rel="noopener noreferrer"` on a real link because this HTML renders in two
 // places that both need it: a mail client that opens links in place would otherwise replace the
 // message, and the operator's preview renders in a sandboxed iframe where an in-frame navigation
 // would swap the preview for the event site.
-func emailBodyAttrs(tag string, attrs []htmlAttr) string {
-	if tag == "a" {
-		href := hrefAttr(attrs)
-		if href == "" {
-			return ""
-		}
-		return href + ` target="_blank" rel="noopener noreferrer"` + styleAttr(emailBodyTagStyles[tag])
+func emailBodyLinkAttrs(attrs []htmlAttr) string {
+	href := hrefAttr(attrs)
+	if href == "" {
+		return ""
 	}
-	return styleAttr(emailBodyTagStyles[tag])
+	return href + ` target="_blank" rel="noopener noreferrer"`
 }
 
 // styleAttr formats one style declaration, or nothing for a deliberately unstyled tag.
@@ -141,24 +193,38 @@ func styleAttr(style string) string {
 	return ` style="` + style + `"`
 }
 
-// styledBodyHTMLWithinBound styles `html` and returns the result only if it still fits `bound`
-// runes, falling back to the UNSTYLED html otherwise.
+// styledBodyHTMLWithinBound rewrites `html` for the email body and returns the richest form that
+// fits `bound` runes: the styled HTML, or the sanitized-but-unstyled HTML, or an error.
 //
 // Styling inflates its input: every tag gains an inline style of roughly 100-150 bytes, so a
 // section near the per-section limit can style past it. That must never turn a valid model
 // response into an error -- the operator asked for copy, not for a lecture about CSS budgets -- so
-// the overflow case degrades to the semantic HTML, which is what shipped before this file existed
-// and is already known to fit. An unstyled section in an otherwise styled email is a visible
-// imperfection; a 503 is a broken feature.
+// the overflow case degrades to the semantic HTML. An unstyled section in an otherwise styled
+// email is a visible imperfection; a 503 is a broken feature.
 //
-// The caller has already rejected `html` for exceeding `bound`, so the fallback is in bounds by
-// construction.
-func styledBodyHTMLWithinBound(html string, bound int) string {
-	styled := styleEmailBodyHTML(html)
-	if len([]rune(styled)) > bound {
-		return html
+// It degrades to the SANITIZED semantic HTML and never to `html` itself, which is the distinction
+// the first version missed. `html` is the model's bytes as received, and styleEmailBodyHTML is the
+// only sanitizer on the generate-email-copy response path -- sanitizeWizardHTML runs on the wizard,
+// not here -- so returning the input on overflow put `onerror`, a <script> between two paragraphs
+// and a `url(javascript:)` style straight into the API response. Worse, the model writes the
+// section and therefore writes its LENGTH, so it chose whether the sanitizer ran at all: a section
+// padded to within a few hundred runes of `bound` is a reliable bypass, not a rare accident.
+// Sanitizing is unconditional for that reason. The styling is what may be dropped; the allow-list
+// is not.
+//
+// The sanitized form is NOT in bounds by construction, which is why this returns an error rather
+// than a string. rewriteHTML escapes text, so a section of ampersands grows five-fold -- `&` to
+// `&amp;` -- and can clear `bound` as written while exceeding it sanitized. There is then no form
+// of that section this service can safely send, and the caller's existing "model response is
+// unusable" is the honest answer.
+func styledBodyHTMLWithinBound(html string, bound int) (string, error) {
+	if styled := styleEmailBodyHTML(html); utf8.RuneCountInString(styled) <= bound {
+		return styled, nil
 	}
-	return styled
+	if sanitized := sanitizeEmailBodyHTML(html); utf8.RuneCountInString(sanitized) <= bound {
+		return sanitized, nil
+	}
+	return "", fmt.Errorf("email section html exceeds the maximum length of %d characters once sanitized; model response is unusable", bound)
 }
 
 // bodyStyleRule is the prompt half of the contract this file implements: the model is told, in the
