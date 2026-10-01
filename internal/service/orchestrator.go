@@ -181,6 +181,13 @@ const accountsCallTimeout = 20 * time.Second
 // nothing here creates anything upstream for a longer wait to resolve.
 const adoptLookupTimeout = 20 * time.Second
 
+// preflightCallTimeout bounds the SYNCHRONOUS create pre-check, which runs on the HTTP request
+// goroutine before the 202. It is a single platform read plus a credential lookup, so it takes a
+// tighter ceiling than the paginated discovery reads: it sits in front of every create and its
+// whole value is that it costs the caller almost nothing. Timing out is not a failure of the
+// create -- the pre-check fails open.
+const preflightCallTimeout = 10 * time.Second
+
 // jobFinalizeTimeout bounds the terminal job-status write, which runs on a
 // context detached from the dispatch context so a cancelled run still reaches a
 // terminal state instead of being stuck queued/running.
@@ -390,6 +397,31 @@ type EmailSearcher interface {
 	SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error)
 }
 
+// CreatePreflighter is an OPTIONAL dispatcher capability: refuse a create request that can
+// never succeed AS ASKED, before the create job is accepted. Discovered by type assertion like
+// the capabilities above; a dispatcher without it is simply not checked.
+//
+// It exists because dispatch runs after the 202. Every failure there is collapsed to one opaque
+// job error on purpose (the upstream text can name connections and account ids), so a refusal
+// raised inside Dispatch could never tell the caller WHICH setting to change. A request shape
+// that is knowably unsatisfiable has to be refused here, on the synchronous create path, where a
+// typed 4xx reaches the caller.
+//
+// The contract is deliberately narrow:
+//
+//   - Refuse ONLY with a sentinel this service maps to a client-actionable 4xx (today
+//     ErrABTestUnsupportedSendType). Return nil, or an ordinary error, for everything else --
+//     including "could not tell".
+//   - A pre-check is an optimisation of the failure message, never a gate on availability. If it
+//     cannot reach the platform it must not stop the create; the orchestrator enforces this by
+//     refusing the request ONLY on a sentinel it recognises and logging any other error.
+//   - It is a pure read: it never mutates platform or DB state.
+type CreatePreflighter interface {
+	// PreflightCreate inspects the create config for the platform. config is the raw JSON the
+	// caller sent, unparsed, because only the dispatcher knows its own platform's config key.
+	PreflightCreate(ctx context.Context, projectID string, platform model.Provider, config json.RawMessage) error
+}
+
 // CampaignSearcher is implemented by a dispatcher that can look up and create marketing
 // campaigns on its platform.
 //
@@ -586,6 +618,9 @@ var (
 	ErrEmailSearchUnsupported = domain.ErrEmailSearchUnsupported
 	// ErrCampaignSearchUnsupported re-exports the domain sentinel, as the siblings above do.
 	ErrCampaignSearchUnsupported = domain.ErrCampaignSearchUnsupported
+	// ErrABTestUnsupportedSendType: the email asks for an A/B test but its source email sends by
+	// recipients' time zones, which HubSpot does not allow together.
+	ErrABTestUnsupportedSendType = domain.ErrABTestUnsupportedSendType
 
 	// ErrAdoptionUnsupported: the platform has no campaign-adoption capability wired.
 	ErrAdoptionUnsupported = domain.ErrAdoptionUnsupported
@@ -724,6 +759,7 @@ const (
 	opListAccounts               = "list_accounts"
 	opListAccountCampaignMetrics = "list_account_campaign_metrics"
 	opSearchEmails               = "search_emails"
+	opPreflightCreate            = "preflight_create"
 	opSearchCampaign             = "search_campaign"
 	opCreateCampaign             = "create_campaign"
 	opReadKeywords               = "read_keywords"
@@ -2549,6 +2585,56 @@ func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platf
 		return nil, fmt.Errorf("%s email searcher returned a nil result with no error", platform)
 	}
 	return emails, nil
+}
+
+// PreflightCreate runs each selected platform's optional CreatePreflighter before the create job
+// is accepted, and returns a refusal ONLY when a dispatcher reports a sentinel this service knows
+// how to present to the caller (today ErrABTestUnsupportedSendType).
+//
+// FAIL-OPEN, enforced here rather than trusted to each dispatcher: any other error -- the
+// platform unreachable, the credential unreadable, a deadline, a response that did not say --
+// is logged and ignored, and the create proceeds exactly as it did before this check existed. A
+// pre-check that could block a create on its own malfunction would turn an optimisation of an
+// error message into an availability dependency on every create, for a condition (an A/B test
+// that cannot be built) which dispatch already tolerates by design.
+//
+// A platform with no registered dispatcher, or whose dispatcher has no pre-check, is skipped
+// silently: Start reports an unregistered platform itself, and "no pre-check" is the normal case
+// for every ad platform.
+func (o *Orchestrator) PreflightCreate(ctx context.Context, projectID string, platforms []model.Provider, config json.RawMessage) error {
+	for _, platform := range platforms {
+		d, ok := o.dispatchers[platform]
+		if !ok {
+			continue
+		}
+		pre, ok := d.(CreatePreflighter)
+		if !ok {
+			continue
+		}
+		callCtx, cancel := context.WithTimeout(ctx, preflightCallTimeout)
+		start := time.Now()
+		perr := pre.PreflightCreate(callCtx, projectID, platform, config)
+		cancel()
+		// A refusal is a read that SUCCEEDED and gave an answer we act on -- the platform replied
+		// and said the email sends by time zone -- so it is recorded as a successful upstream call.
+		// Counting it as an error would put a caller choosing an unsupported template on the same
+		// upstream-failure rate an operator alerts on for the platform being down.
+		refused := errors.Is(perr, ErrABTestUnsupportedSendType)
+		callErr := perr
+		if refused {
+			callErr = nil
+		}
+		o.recordUpstream(ctx, platform, opPreflightCreate, start, callErr)
+		if perr == nil {
+			continue
+		}
+		if refused {
+			return perr
+		}
+		slog.WarnContext(ctx, "create pre-check could not be completed; continuing without it",
+			"project_id", projectID, "platform", platform, "error", perr)
+	}
+	return nil
 }
 
 // KeywordInsightsReader is an OPTIONAL dispatcher capability: read keyword performance and

@@ -1089,6 +1089,61 @@ func (d *HubSpotDispatcher) SearchEmails(ctx context.Context, projectID string, 
 	return out, nil
 }
 
+// PreflightCreate implements service.CreatePreflighter for the HubSpot email channel: it refuses,
+// before the create job exists, an A/B test that HubSpot will not build.
+//
+// HubSpot does not allow an A/B test on an email set to send "based on recipients' time zones"
+// (type LOCALTIME_EMAIL): ab-test/create-variation answers 400. The send mode is a property of the
+// email and CloneEmail copies it, so the choice is made by whichever TEMPLATE the caller picked as
+// hubspotConfig.sourceEmailId -- which is why it can be checked before anything is cloned.
+//
+// Without this the failure was invisible: createABTestVariantWithHero is best-effort by design
+// (a campaign proceeds as a single email when the variant cannot be made), so a user who ticked
+// "A/B test" got one email and no explanation. And it cannot be reported from Dispatch, which
+// runs after the 202 and surfaces every error as one opaque job error.
+//
+// Only an A/B request pays for the lookup; every other create returns before any HubSpot call.
+// Every outcome other than the one known-bad type returns nil or a non-sentinel error, which the
+// orchestrator logs and ignores (fail-open): a source email whose type cannot be read is not a
+// reason to refuse the create.
+//
+// The type comes from HubSpot's derived `type` field. It is logged on every A/B request, because
+// whether a type-less response is possible has not been observed against a live portal and the
+// log is how that gets confirmed.
+func (d *HubSpotDispatcher) PreflightCreate(ctx context.Context, projectID string, platform model.Provider, config json.RawMessage) error {
+	var cfg hubspotConfig
+	if err := unmarshalPlatformConfig(config, "hubspotConfig", &cfg); err != nil {
+		// Dispatch parses the same config and reports a malformed one as the job's failure; saying
+		// it again here would turn one defect into two.
+		return nil
+	}
+	sourceID := strings.TrimSpace(cfg.SourceEmailID)
+	if !cfg.ABTestEnabled || sourceID == "" {
+		return nil
+	}
+	client, err := d.resolveHubSpotClient(ctx, projectID, platform)
+	if err != nil {
+		return fmt.Errorf("resolve hubspot client for the A/B pre-check: %w", err)
+	}
+	emailType, err := client.GetEmailType(ctx, sourceID)
+	if err != nil {
+		return fmt.Errorf("read the source email type for the A/B pre-check: %w", err)
+	}
+	if emailType == hubspot.EmailTypeLocalTime {
+		slog.InfoContext(ctx, "refusing an A/B test: the source email sends based on recipients' time zones",
+			"project_id", projectID, "source_email_id", sourceID, "source_email_type", emailType)
+		return domain.ErrABTestUnsupportedSendType
+	}
+	if emailType == "" {
+		slog.WarnContext(ctx, "hubspot did not report a type for the source email; the A/B pre-check could not run",
+			"project_id", projectID, "source_email_id", sourceID)
+		return nil
+	}
+	slog.InfoContext(ctx, "A/B pre-check passed",
+		"project_id", projectID, "source_email_id", sourceID, "source_email_type", emailType)
+	return nil
+}
+
 // SearchCampaigns implements service.CampaignSearcher for HubSpot.
 //
 // The result is PORTAL-WIDE despite the projectID argument: that argument selects which

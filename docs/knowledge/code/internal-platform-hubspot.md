@@ -160,6 +160,18 @@ read for every candidate row; each row would come back `ListsUnavailable`, the a
 gate would never run, and an email merely BOOKED for next month would be reported as a past
 send. Defusing the shape on the list rows alone would have left exactly that path open.
 
+**`GetEmailType` and `EmailTypeLocalTime`:** `GetEmailType` reads one email and returns only its
+`type` (`BATCH_EMAIL`, `LOCALTIME_EMAIL`, and so on). The type is HubSpot's DERIVED send mode, and
+`CloneEmail` copies it, so an email cloned from a template inherits the template's mode. That matters
+because HubSpot does not allow an A/B test on an email set to send "based on recipients' time zones"
+(`EmailTypeLocalTime`, `LOCALTIME_EMAIL`): `ab-test/create-variation` answers HTTP 400 for it. The read
+decodes `id` and `type` alone rather than going through `GetEmail`, because `Email` is also the shape
+the dispatcher persists in the campaign `Result` blob and a new field there would change what is
+stored. A response with no `type` returns `""` and a nil error: absence means "cannot tell", and the
+caller (the dispatcher's A/B pre-check, which fails open) decides what to do with it. A 2xx with no
+`id` is a plain malformed-response error, not UNCONFIRMED, because it is a read. That a live portal's
+v3 read returns a top-level `type` has not yet been confirmed from this client's own request.
+
 **`SetSendList` recipients (ILS-only):** a HubSpot email's recipient list goes in
 `contactIlsLists` (ILS list ids). HubSpot's ILS migration removed functional support
 for the legacy `contactLists` recipient field after 2024-10-31 (it's silently

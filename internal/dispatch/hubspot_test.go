@@ -21,6 +21,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
 const goodHubSpotCreds = `{"PrivateAppToken":"pat-123"}`
@@ -124,6 +125,14 @@ type hubspotRec struct {
 	variantTaggedHTML   string
 	variantSubjectSet   string
 	variantBodyHTMLSet  string
+	// sourceEmailType is the `type` the fake reports for the SOURCE email (id "555") on a plain
+	// GET /marketing/v3/emails/555 -- the read PreflightCreate makes. Empty omits the key, the
+	// shape the pre-check must fail open on. sourceEmailStatus, when non-zero, makes that GET
+	// answer with the status and no body instead (a lookup failure). sourceEmailGets counts the
+	// GETs, because "the pre-check made no HubSpot call" is itself a behaviour worth pinning.
+	sourceEmailType   string
+	sourceEmailStatus int
+	sourceEmailGets   int
 }
 
 // richModule is a rich-text drag-and-drop module: a body carrying `html`, plus the scaffolding
@@ -420,6 +429,13 @@ func (r *hubspotRec) SendListBody() map[string]any {
 }
 func (r *hubspotRec) TaggedHTML() string { r.mu.Lock(); defer r.mu.Unlock(); return r.taggedHTML }
 
+// SourceEmailGets is how many times the source-email read (PreflightCreate) reached the fake.
+func (r *hubspotRec) SourceEmailGets() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sourceEmailGets
+}
+
 func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 	t.Helper()
 	rec := &hubspotRec{}
@@ -450,6 +466,22 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 				return
 			}
 			_, _ = io.WriteString(w, `{"id":"998","name":"KubeCon NA 2026 — brief-1 - Variant B","state":"DRAFT_AB_VARIANT"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/marketing/v3/emails/555":
+			// The EXACT path (no /draft suffix): this is the source-email read PreflightCreate
+			// makes, which the generic draft cases below must not be able to answer.
+			rec.mu.Lock()
+			rec.sourceEmailGets++
+			emailType, status := rec.sourceEmailType, rec.sourceEmailStatus
+			rec.mu.Unlock()
+			if status != 0 {
+				w.WriteHeader(status)
+				return
+			}
+			email := map[string]any{"id": "555", "name": "Template"}
+			if emailType != "" {
+				email["type"] = emailType
+			}
+			_ = json.NewEncoder(w).Encode(email)
 		case r.Method == http.MethodGet && r.URL.Path == "/marketing/v3/emails/998/draft":
 			_, _ = w.Write(rec.variantDraftPayload())
 		case r.Method == http.MethodPatch && r.URL.Path == "/marketing/v3/emails/998/draft":
@@ -924,6 +956,144 @@ func TestHubSpot_ABTestVariantFailureDoesNotFailTheDispatch(t *testing.T) {
 	// The clone itself must still have been cloned, audienced, and tagged — a working campaign.
 	if !rec.SawClone() || !rec.SawSendList() {
 		t.Error("the clone and its send list must still succeed despite the variant failure")
+	}
+}
+
+// The dispatcher offers the A/B pre-check as an optional capability; the orchestrator
+// type-asserts for it, so losing the method would silently turn the guard off with no compile
+// error anywhere. Pinned here, where the implementation lives.
+var _ service.CreatePreflighter = (*HubSpotDispatcher)(nil)
+
+func preflightDispatcher(t *testing.T, srvURL string) *HubSpotDispatcher {
+	t.Helper()
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	return NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud, hubspot.WithBaseURL(srvURL))
+}
+
+// TestHubSpot_PreflightCreateRefusesATimeZoneSourceForAnABTest is the guard itself. HubSpot will
+// not build an A/B variant for an email that sends "based on recipients' time zones", and the
+// send mode is copied from the template by the clone -- so the template picked as sourceEmailId
+// decides it. The refusal must be the typed sentinel the service maps to a 409, and it must come
+// BEFORE anything is created.
+func TestHubSpot_PreflightCreateRefusesATimeZoneSourceForAnABTest(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.sourceEmailType = hubspot.EmailTypeLocalTime
+	d := preflightDispatcher(t, srv.URL)
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","abTestEnabled":true,"subjectB":"B"}}`)
+	err := d.PreflightCreate(context.Background(), "proj-1", model.ProviderHubSpot, cfg)
+	if !errors.Is(err, domain.ErrABTestUnsupportedSendType) {
+		t.Fatalf("a LOCALTIME source with an A/B test must be refused with ErrABTestUnsupportedSendType, got: %v", err)
+	}
+	if rec.SourceEmailGets() != 1 {
+		t.Errorf("source email reads = %d, want exactly 1", rec.SourceEmailGets())
+	}
+	if rec.SawClone() || rec.SawCreateVariation() {
+		t.Error("the pre-check is read-only: it must never clone an email or create a variant")
+	}
+}
+
+// Every type other than the one known-bad one must pass: the guard refuses what HubSpot is known
+// to reject and nothing else, so a type it has never heard of is not a reason to block a create.
+func TestHubSpot_PreflightCreateAllowsAnythingButATimeZoneSource(t *testing.T) {
+	for _, emailType := range []string{"BATCH_EMAIL", "AB_EMAIL", "AUTOMATED_EMAIL", "SOME_FUTURE_TYPE"} {
+		t.Run(emailType, func(t *testing.T) {
+			srv, rec := hubspotServer(t)
+			rec.sourceEmailType = emailType
+			d := preflightDispatcher(t, srv.URL)
+
+			cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","abTestEnabled":true}}`)
+			if err := d.PreflightCreate(context.Background(), "proj-1", model.ProviderHubSpot, cfg); err != nil {
+				t.Fatalf("a %s source must pass the A/B pre-check, got: %v", emailType, err)
+			}
+			if rec.SourceEmailGets() != 1 {
+				t.Errorf("source email reads = %d, want exactly 1", rec.SourceEmailGets())
+			}
+		})
+	}
+}
+
+// A response that carries no type has not been observed against a live portal. If it happens,
+// the pre-check cannot say anything either way, and refusing every A/B create on that basis
+// would be worse than the silent single email it replaces -- so it passes.
+func TestHubSpot_PreflightCreateFailsOpenWhenHubSpotReportsNoType(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.sourceEmailType = ""
+	d := preflightDispatcher(t, srv.URL)
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","abTestEnabled":true}}`)
+	if err := d.PreflightCreate(context.Background(), "proj-1", model.ProviderHubSpot, cfg); err != nil {
+		t.Fatalf("a source with no reported type must pass (fail open), got: %v", err)
+	}
+	if rec.SourceEmailGets() != 1 {
+		t.Errorf("source email reads = %d, want exactly 1", rec.SourceEmailGets())
+	}
+}
+
+// A lookup that fails is returned as an ordinary error -- NOT the sentinel -- so the orchestrator
+// can tell "HubSpot says no" from "we could not ask" and fail open on the second.
+func TestHubSpot_PreflightCreateLookupFailureIsNotTheSentinel(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.sourceEmailStatus = http.StatusNotFound
+	d := preflightDispatcher(t, srv.URL)
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","abTestEnabled":true}}`)
+	err := d.PreflightCreate(context.Background(), "proj-1", model.ProviderHubSpot, cfg)
+	if err == nil {
+		t.Fatal("a failed source-email read must be reported to the caller")
+	}
+	if errors.Is(err, domain.ErrABTestUnsupportedSendType) {
+		t.Errorf("a failed lookup must never look like a refusal, got: %v", err)
+	}
+}
+
+// A connection that cannot be used is likewise "could not ask", not "refused": the create itself
+// reports it properly, with the connection-specific answer, once Dispatch runs.
+func TestHubSpot_PreflightCreateUnusableConnectionIsNotTheSentinel(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	rec.sourceEmailType = hubspot.EmailTypeLocalTime
+	conn := activeHubSpotConn(goodHubSpotCreds)
+	conn.Status = model.StatusInactive
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, aud, hubspot.WithBaseURL(srv.URL))
+
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","abTestEnabled":true}}`)
+	err := d.PreflightCreate(context.Background(), "proj-1", model.ProviderHubSpot, cfg)
+	if err == nil || errors.Is(err, domain.ErrABTestUnsupportedSendType) {
+		t.Fatalf("an inactive connection must be a non-sentinel error, got: %v", err)
+	}
+	if rec.SourceEmailGets() != 0 {
+		t.Errorf("no HubSpot call may be made on an unusable connection, got %d", rec.SourceEmailGets())
+	}
+}
+
+// The pre-check exists only for the A/B variant, so a create that does not ask for one must pay
+// nothing for it: no connection resolution and no HubSpot round trip, whatever the template is.
+func TestHubSpot_PreflightCreateMakesNoCallUnlessAnABTestWasRequested(t *testing.T) {
+	cases := map[string]string{
+		"a/b test off":         `{"hubspotConfig":{"sourceEmailId":"555","abTestEnabled":false}}`,
+		"a/b flag absent":      `{"hubspotConfig":{"sourceEmailId":"555"}}`,
+		"a/b on, no source":    `{"hubspotConfig":{"abTestEnabled":true}}`,
+		"a/b on, blank source": `{"hubspotConfig":{"sourceEmailId":"  ","abTestEnabled":true}}`,
+		"no hubspot config":    `{}`,
+		"empty envelope":       ``,
+		"malformed envelope":   `{not json`,
+		"malformed hubspot":    `{"hubspotConfig":"x"}`,
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv, rec := hubspotServer(t)
+			// A time-zone source, so a stray lookup would be a refusal rather than a quiet pass.
+			rec.sourceEmailType = hubspot.EmailTypeLocalTime
+			d := preflightDispatcher(t, srv.URL)
+
+			if err := d.PreflightCreate(context.Background(), "proj-1", model.ProviderHubSpot, json.RawMessage(raw)); err != nil {
+				t.Fatalf("PreflightCreate = %v, want nil: Dispatch owns reporting these", err)
+			}
+			if rec.SourceEmailGets() != 0 {
+				t.Errorf("source email reads = %d, want 0", rec.SourceEmailGets())
+			}
+		})
 	}
 }
 

@@ -3068,7 +3068,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: create-campaigns lfx-v2-campaign-service-briefs
-            description: Create campaigns across the selected platforms (async -> job).
+            description: 'Create campaigns across the selected platforms (async -> job). One request shape is refused synchronously, before any job exists: an email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients'' time zones, which HubSpot does not allow together. It returns 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. Every other dispatch failure still arrives later, as the job''s own result.'
             operationId: lfx-v2-campaign-service-briefs#create-campaigns
             parameters:
                 - name: project_id
@@ -16627,6 +16627,7 @@ components:
                         - audience_build_in_flight
                         - already_exists
                         - audience_provenance_immutable
+                        - ab_test_unsupported_send_type
             example:
                 code: "409"
                 message: A connection for this provider already exists on the project.

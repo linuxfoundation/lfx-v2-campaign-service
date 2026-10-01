@@ -469,6 +469,41 @@ func (c *Client) GetEmail(ctx context.Context, id string) (*Email, error) {
 	return &e, nil
 }
 
+// EmailTypeLocalTime is the `type` HubSpot reports for a marketing email set to send "based on
+// recipients' time zones". HubSpot does not allow an A/B test on such an email, so
+// /marketing/v3/emails/ab-test/create-variation answers HTTP 400 for it. The send mode is a
+// property of the email, and CloneEmail copies it, so a campaign cloned from a time-zone
+// template inherits it.
+const EmailTypeLocalTime = "LOCALTIME_EMAIL"
+
+// GetEmailType fetches one marketing email and returns only its `type` (e.g. "BATCH_EMAIL",
+// "LOCALTIME_EMAIL"). Read-only (idempotent).
+//
+// This decodes the type alone rather than reusing GetEmail: Email is also the shape the
+// dispatcher persists, and adding a field there would change what is stored. The type may come
+// back empty — HubSpot derives it, and a response that omits it is reported as "" rather than
+// as an error, so the caller (the A/B pre-check, which fails open) decides what absence means.
+func (c *Client) GetEmailType(ctx context.Context, id string) (string, error) {
+	if id = strings.TrimSpace(id); id == "" {
+		return "", fmt.Errorf("hubspot: GetEmailType requires a non-empty id")
+	}
+	raw, err := c.doRequest(ctx, http.MethodGet, emailsPath+"/"+url.PathEscape(id), nil, true)
+	if err != nil {
+		return "", err
+	}
+	var e struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return "", fmt.Errorf("hubspot: decode email type: %w", err)
+	}
+	if e.ID == "" {
+		return "", fmt.Errorf("hubspot: GetEmailType(%s) returned a 2xx with no id (malformed response)", id)
+	}
+	return e.Type, nil
+}
+
 // cloneEmailRequest is the POST /marketing/v3/emails/clone body. NOTE: no `language`
 // field — omitting it makes HubSpot preserve the SOURCE draft's locale, which is the
 // faithful-clone behavior this method promises. (A field defaulting to "en" would
