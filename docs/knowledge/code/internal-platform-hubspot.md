@@ -559,6 +559,20 @@ share one folder with `overwrite:true` and source basenames (`hero.png`) collide
 Error paths never render the source URL verbatim: hero URLs are frequently signed, and both
 `url.Parse` and `http.Client.Do` embed the complete input in their error text.
 
+The download advertises `Accept: image/jpeg,image/png,image/gif;q=0.9,*/*;q=0.1`, and a source that
+still answers `image/avif` or `image/webp` gets exactly ONE retry with `lfx_fmt=1` appended to the
+URL (`downloadImage` over the single-fetch `fetchImage`). The standard library decodes neither format,
+so the sniff refuses both, and `UploadImage`'s caller treats any failure as "no hero section" — the
+email ships without a banner while the in-app preview, rendered by a browser that reads AVIF, still
+shows one. The cause is a CDN that ignores `Vary: Accept`: it caches whichever format the first
+visitor got under the plain `.jpg` URL and serves it to everyone, while the origin still holds the
+JPEG. A new cache key reaches the origin, which negotiates on the Accept header. The retry is
+bounded to one attempt, scoped to those two declared types (HTML claiming to be a PNG is refused
+after a single fetch), uses the same guarded client as the first fetch, and on failure reports the
+FIRST response's error — naming the declared type — rather than the retry's. The sniff still decides
+what is re-hosted; no format was added to `allowedImageFormats`. An origin that serves ONLY AVIF/WebP
+is still refused: accepting one would need transcoding and an image-codec dependency.
+
 ## Scope
 
 Auth + request layer + the email/list/event-def operations above, plus marketing-email
