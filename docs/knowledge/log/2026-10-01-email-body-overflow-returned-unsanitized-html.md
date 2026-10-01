@@ -26,12 +26,13 @@ overflow — the one length nobody reviews. Styling remains the half that may be
 dropped; the allow-list is not.
 
 The sanitized form is NOT in bounds by construction, which is why the signature
-is now `(string, error)`. `rewriteHTML` escapes text, so `&` becomes `&amp;` and
-a section of ampersands can clear `bound` as written while exceeding it
-sanitized. There is then no form of that section this service can safely send,
-and `parseEmailCopyResponse` returns the error unwrapped (its sole call site, in `parseEmailCopyResponse`)
-so it reads like the "model response is unusable" rejections its siblings in
-that function return. That phrasing lands in the LOG, not on the wire: the sole
+is now `(string, error)`. `rewriteHTML` escapes text, and `&`, `'` and `"` each
+become five runes, so a section of ampersands -- or ordinary prose with a few
+apostrophes -- can clear `bound` as written while exceeding it sanitized. There
+is then no form of that section this service can safely send. The sole call site
+of `styledBodyHTMLWithinBound`, in `parseEmailCopyResponse`, wraps the error with
+the section's index so it reads like the "model response is unusable" rejections
+its siblings in that function return. That phrasing lands in the LOG, not on the wire: the sole
 caller (`GenerateEmailCopy`) logs it and answers with a fixed
 `ConnServiceUnavailableError` whose message is "the AI platform returned an
 unreadable response", so this text is the only record of which section was

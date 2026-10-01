@@ -306,6 +306,9 @@ func TestStyledBodyHTMLWithinBoundSanitizesWhatItCannotStyle(t *testing.T) {
 		payload string
 		absent  []string
 		present string
+		// alsoPresent is what the sanitizer must EMIT, not merely keep: the attributes it writes
+		// itself. Without a case asserting them, emptying the attribute emitter left this suite green.
+		alsoPresent []string
 	}{
 		{
 			name:    "event handler",
@@ -330,6 +333,13 @@ func TestStyledBodyHTMLWithinBoundSanitizesWhatItCannotStyle(t *testing.T) {
 			payload: `<a href="javascript:alert(1)">click here</a>`,
 			absent:  []string{"javascript:", "alert(1)", "href="},
 			present: "click here",
+		},
+		{
+			name:        "safe link keeps its attributes but not a style",
+			payload:     `<a href="https://events.example/register">Register</a>`,
+			absent:      []string{"style="},
+			present:     "Register",
+			alsoPresent: []string{`href="https://events.example/register"`, `target="_blank"`, `rel="noopener noreferrer"`},
 		},
 	}
 
@@ -369,13 +379,20 @@ func TestStyledBodyHTMLWithinBoundSanitizesWhatItCannotStyle(t *testing.T) {
 			if !strings.Contains(got, tc.present) {
 				t.Errorf("the overflow fallback lost the copy %q: %q", tc.present, got)
 			}
+			for _, want := range tc.alsoPresent {
+				if !strings.Contains(got, want) {
+					t.Errorf("the overflow fallback dropped %s: %q", want, got)
+				}
+			}
 		})
 	}
 }
 
 // The sanitized fallback is NOT in bounds by construction, which is why this function can fail at
-// all. rewriteHTML escapes text, so `&` becomes `&amp;` -- five runes for one -- and a section of
-// ampersands clears `bound` as written while exceeding it sanitized. There is then no form of that
+// all. rewriteHTML escapes text with html.EscapeString, and `&`, `'` and `"` EACH become five runes,
+// so this is not a hostile-input-only failure: a section of ampersands reaches it fastest, but
+// ordinary prose with a few apostrophes clears `bound` as written and exceeds it sanitized (a
+// 69-rune sentence with two apostrophes measures 1.12x escaped). There is then no form of that
 // section this service can send, and the answer is the caller's "model response is unusable" 503.
 // Neither of the alternatives is acceptable. The raw input is the leak this function exists to
 // close. An oversized string is worse than it looks: `design/brief.go:813` declares
@@ -385,26 +402,41 @@ func TestStyledBodyHTMLWithinBoundSanitizesWhatItCannotStyle(t *testing.T) {
 // does enforce the bound, with nothing left pointing back at the section that caused it.
 func TestStyledBodyHTMLWithinBoundErrorsWhenEscapingOverflows(t *testing.T) {
 	const bound = 100
-	in := "<p>" + strings.Repeat("&", 60) + `<script>alert(1)</script></p>`
 
-	if n := utf8.RuneCountInString(in); n > bound {
-		t.Fatalf("the input is %d runes, past the %d-rune bound, so the caller rejects it before this function sees it", n, bound)
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{name: "ampersands and a script", in: "<p>" + strings.Repeat("&", 60) + `<script>alert(1)</script></p>`},
+		{name: "ordinary prose with apostrophes", in: "<p>" + strings.Repeat("We're here. ", 7) + "</p>"},
 	}
 
-	got, err := styledBodyHTMLWithinBound(in, bound)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if n := utf8.RuneCountInString(tc.in); n > bound {
+				t.Fatalf("the input is %d runes, past the %d-rune bound, so the caller rejects it before this function sees it", n, bound)
+			}
+			if n := utf8.RuneCountInString(sanitizeEmailBodyHTML(tc.in)); n <= bound {
+				t.Fatalf("sanitizing the input produced %d runes, inside the %d-rune bound, so this case no longer overflows", n, bound)
+			}
 
-	if err == nil {
-		t.Fatalf("styledBodyHTMLWithinBound(_, %d) = %q, nil; want an error -- the escaped form cannot fit", bound, got)
-	}
-	if got != "" {
-		t.Errorf("returned %q beside the error; the caller must be left nothing it could send", got)
-	}
-	// parseEmailCopyResponse returns this unwrapped, so it has to read like the other rejections
-	// there rather than like an internal failure. It is not what the client sees -- that caller
-	// logs this text and answers with a fixed "the AI platform returned an unreadable response"
-	// 503 -- so this log line is the only record of WHICH section was unusable and why.
-	if !strings.Contains(err.Error(), "model response is unusable") {
-		t.Errorf("error does not read like parseEmailCopyResponse's own rejections: %v", err)
+			got, err := styledBodyHTMLWithinBound(tc.in, bound)
+
+			if err == nil {
+				t.Fatalf("styledBodyHTMLWithinBound(_, %d) = %q, nil; want an error -- the escaped form cannot fit", bound, got)
+			}
+			if got != "" {
+				t.Errorf("returned %q beside the error; the caller must be left nothing it could send", got)
+			}
+			// parseEmailCopyResponse wraps this with the section's index, and the phrasing has to
+			// survive that wrap so it reads like the other rejections there rather than like an
+			// internal failure. It is not what the client sees -- that caller logs this text and
+			// answers with a fixed "the AI platform returned an unreadable response" 503 -- so this
+			// log line is the only record of WHICH section was unusable and why.
+			if !strings.Contains(err.Error(), "model response is unusable") {
+				t.Errorf("error does not read like parseEmailCopyResponse's own rejections: %v", err)
+			}
+		})
 	}
 }
 

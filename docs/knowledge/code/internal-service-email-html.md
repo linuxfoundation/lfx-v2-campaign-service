@@ -1,7 +1,7 @@
 ---
 type: "Code Concept"
 title: "Email HTML Rewriting and Body Styling (internal/service)"
-description: "One tokenizer core rewrites every model-authored HTML block in this package, under two rule sets: the wizard sanitizer keeps formatting and drops the rest, while the email body styler additionally re-dresses the surviving semantic tags in the service's own palette, so the design is fixed in Go rather than written by the model."
+description: "One tokenizer core rewrites every model-authored HTML block in this package, under three rule sets: the wizard sanitizer keeps formatting and drops the rest, the email body styler additionally re-dresses the surviving semantic tags in the service's own palette, and the email body sanitizer applies the same allow-list with no styling for sections too long to style, so the design is fixed in Go rather than written by the model."
 resource: "internal/service"
 ---
 
@@ -11,13 +11,13 @@ resource: "internal/service"
 
 Two fields in this package hold HTML written by a language model and reach sinks that render it:
 a wizard `rich_text` block, and an email-copy `rich_text` section. Both are rewritten before they
-leave the service, by one shared tokenizer under two different rule sets.
+leave the service, by one shared tokenizer under three different rule sets.
 
 | File | What it owns |
 | --- | --- |
 | `html_rewrite.go` | `rewriteHTML` — the tokenizer walk, the dropped-content sets, void-tag and self-closing handling, and `hrefAttr` |
 | `email_wizard_sanitize.go` | The wizard rule set: a formatting allowlist, `href` on `<a>`, nothing else |
-| `email_body_style.go` | The email-body rule set: the same tokenizer, plus this service's palette and type scale |
+| `email_body_style.go` | The email-body rule sets: the same tokenizer, plus this service's palette and type scale (`styleEmailBodyHTML`), and the same allow-list with no `style` attribute (`sanitizeEmailBodyHTML`) |
 
 ## Design Principles
 
@@ -90,6 +90,13 @@ An `<a>` whose `href` does not survive `httpURL` gets **no style and no target**
 the plain copy it effectively is. An anchor left looking like a link while leading nowhere is a lie
 the reader clicks; this mirrors the wizard's rule that a button with nowhere to go renders as text.
 
+### `sanitizeEmailBodyHTML(input)` (`email_body_style.go`)
+
+The email-body allow-list with no styling: the same tags, the same dropped content and the same
+`href` validation as `styleEmailBodyHTML`, but no `style` attribute is written. A surviving `<a>`
+still gets `href`, `target="_blank"` and `rel="noopener noreferrer"`. It exists for
+`styledBodyHTMLWithinBound`, which falls back to it when the styled form will not fit.
+
 ### `styledBodyHTMLWithinBound(html, bound) (string, error)`
 
 Returns the richest form of `html` that fits `bound` runes: the styled HTML, or failing that the
@@ -110,12 +117,15 @@ to within a few hundred runes of `bound` was a reliable bypass. Sanitizing is un
 that reason — the styling is what may be dropped, the allowlist is not.
 
 The sanitized form is **not** in bounds by construction, which is why the signature carries an
-error. `rewriteHTML` escapes text, so a section of ampersands grows five-fold (`&` → `&amp;`) and
-can clear `bound` as written while exceeding it sanitized. No form of that section is safe to send,
-and the error reuses the caller's existing "model response is unusable" phrasing. That phrasing is for
-the log: `parseEmailCopyResponse`'s caller logs the error and answers with a fixed
-`ConnServiceUnavailableError` reading "the AI platform returned an unreadable response", so this text
-is the only record of which section was unusable.
+error. `rewriteHTML` escapes text with `html.EscapeString`, and `&`, `'` and `"` each grow five-fold
+(`&` → `&amp;`, `'` → `&#39;`, `"` → `&#34;`). This is not a hostile-input-only case: a section of
+ampersands reaches it fastest, but ordinary prose does too — a 69-rune sentence with two apostrophes
+measures 1.12× once escaped, so copy within roughly a tenth of `bound` can clear it as written and
+exceed it sanitized. No form of that section is safe to send, and the error reuses the caller's
+existing "model response is unusable" phrasing. That phrasing is for the log:
+`parseEmailCopyResponse` wraps the error with the section's index (`email section N: ...`), logs it
+via its caller, and answers with a fixed `ConnServiceUnavailableError` reading "the AI platform
+returned an unreadable response", so the logged text is the only record of which section was unusable.
 
 ### Where the styler is applied, and why there
 
@@ -184,11 +194,14 @@ pre-extraction implementation; it is the regression test for `rewriteHTML` itsel
   the styled bound at `maxHTMLRunes` itself and comes back sanitized, within bound, with the copy
   intact and none of the payload tokens. The test asserts its own premise (input inside the bound,
   styled form outside it), because an input that failed either would pass without ever reaching the
-  overflow branch — which is how its predecessor, a nine-rune `<p>hi</p>`, pinned the fallback
-  without being able to see that the fallback was the raw input.
-- **TestStyledBodyHTMLWithinBoundErrorsWhenEscapingOverflows**: Ampersands that fit as written and
-  not as `&amp;` yield the error, an empty string, and a message reading like the caller's 503 —
-  not the raw input and not an oversized string.
+  overflow branch. That is how its predecessor, a nine-rune `<p>hi</p>`, went wrong: its sanitized
+  form equals the raw input, so the test held whether the fallback sanitized or leaked. A fifth case
+  asserts what the sanitizer emits — `href`, `target="_blank"`, `rel="noopener noreferrer"` and no
+  `style=` — because emptying the attribute emitter left the other four green.
+- **TestStyledBodyHTMLWithinBoundErrorsWhenEscapingOverflows**: Two inputs that fit as written and
+  not escaped — a run of ampersands, and ordinary prose with apostrophes — yield the error, an empty
+  string, and a message reading like the caller's 503 — not the raw input and not an oversized
+  string.
 - **...StylesWhatFits** / **...CountsRunesNotBytes**: The fallback does not fire when the styled
   form fits, and the bound is measured in runes rather than bytes.
 

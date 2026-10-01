@@ -1015,19 +1015,19 @@ func parseEmailCopyResponse(raw string, allowLegacyShape bool) (*briefs.EmailCop
 	}
 
 	sections := make([]*briefs.EmailCopySection, 0, len(parsed.Sections))
-	for _, s := range parsed.Sections {
+	for i, s := range parsed.Sections {
 		sectionType := strings.TrimSpace(s.Type)
 		switch sectionType {
 		case "rich_text":
 			if utf8.RuneCountInString(s.HTML) > maxHTMLRunes {
-				return nil, fmt.Errorf("email section html exceeds maximum length of %d characters; model response is unusable", maxHTMLRunes)
+				return nil, fmt.Errorf("email section %d html exceeds maximum length of %d characters; model response is unusable", i, maxHTMLRunes)
 			}
 		case "button", "divider":
 			// No length guard: button text is truncated below and divider carries no content.
 		default:
 			// An unrecognized section type is a malformed response, not a partial success --
 			// dropping it silently would let the model emit anything and have it vanish.
-			return nil, fmt.Errorf("email response contains unknown section type %q; model response is unusable", sectionType)
+			return nil, fmt.Errorf("email section %d has unknown type %q; model response is unusable", i, sectionType)
 		}
 
 		section := &briefs.EmailCopySection{Type: sectionType}
@@ -1048,16 +1048,22 @@ func parseEmailCopyResponse(raw string, allowLegacyShape bool) (*briefs.EmailCop
 			// same palette written a second time in TypeScript.
 			//
 			// No truncation: oversized HTML is rejected above, and the error below is the case no
-			// rewrite of this section fits maxHTMLRunes -- escaping `&` as `&amp;` can outgrow a
-			// bound the raw bytes cleared. Returned as-is rather than wrapped, so it reads like
-			// the "model response is unusable" rejections this function already returns above.
+			// rewrite of this section fits maxHTMLRunes -- html.EscapeString turns `&`, `'` and `"`
+			// each into five runes, so even ordinary prose can outgrow a bound the raw bytes
+			// cleared. Wrapped with the section's INDEX, like the two rejections above: this is the
+			// only place the failing section is identified. The error itself carries no position,
+			// and a brief routinely has several rich_text sections, so without `i` an on-call
+			// engineer learns that one of them was unusable and never which -- a claim three
+			// comments in this package made before the index existed. The "model response is
+			// unusable" phrasing is kept so it still reads like its siblings.
+			//
 			// That phrasing is for the LOG, not the wire: the sole caller (GenerateEmailCopy) logs this
 			// error and answers with a fixed ConnServiceUnavailableError whose message is "the AI
 			// platform returned an unreadable response", so the text here is what an on-call
 			// engineer reads, and it is the only place the cause is recorded.
 			html, err := styledBodyHTMLWithinBound(s.HTML, maxHTMLRunes)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("email section %d: %w", i, err)
 			}
 			section.HTML = &html
 		}

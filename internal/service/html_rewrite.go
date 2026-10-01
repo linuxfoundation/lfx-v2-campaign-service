@@ -39,12 +39,14 @@ type htmlRewriteRules struct {
 
 // rewriteHTML tokenizes `input` and rebuilds it under `rules`, dropping everything else.
 //
-// This is the shared core of sanitizeWizardHTML (which keeps formatting and nothing else) and
-// styleEmailBodyHTML (which additionally re-dresses the surviving tags in the service's own inline
-// styles). They differ only in their allow-list and their attribute emitter; the tokenizer walk,
-// the dropped-content set and the self-closing/raw-text handling below are identical, and were
-// extracted here rather than copied so the comments recording what each line is for cannot drift
-// out of sync with the second copy.
+// This is the shared core of THREE rule sets, not two: sanitizeWizardHTML (keeps formatting and
+// nothing else), styleEmailBodyHTML (additionally re-dresses the surviving tags in the service's
+// own inline styles) and sanitizeEmailBodyHTML (the same email-body allow-list with no style
+// attribute at all, used when the styled form will not fit). They differ only in their allow-list
+// and their attribute emitter; the tokenizer walk, the dropped-content set and the
+// self-closing/raw-text handling below are identical, and were extracted here rather than copied so
+// the comments recording what each line is for cannot drift out of sync with a second or third
+// copy.
 //
 // An ALLOW-LIST, not a denylist: tags and attributes not named by the rules are dropped, so a tag
 // nobody anticipated fails closed rather than passing. Element CONTENT is preserved even when the
