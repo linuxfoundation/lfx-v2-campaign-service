@@ -213,10 +213,13 @@ func styleAttr(style string) string {
 // is not.
 //
 // The sanitized form is NOT in bounds by construction, which is why this returns an error rather
-// than a string. rewriteHTML escapes text, so a section of ampersands grows five-fold -- `&` to
-// `&amp;` -- and can clear `bound` as written while exceeding it sanitized. There is then no form
-// of that section this service can safely send, and the caller's existing "model response is
-// unusable" is the honest answer.
+// than a string. rewriteHTML escapes text with html.EscapeString, and `&`, `'` and `"` EACH become
+// five runes -- so this is not a hostile-input-only failure, which the first version of this
+// comment implied by naming ampersands alone. Ordinary English prose inflates: a 69-rune sentence
+// carrying two apostrophes measures 1.12x escaped. A section of ampersands reaches the error
+// fastest, but a well-behaved model writing normal copy within roughly a tenth of `bound` reaches
+// it too. There is then no form of that section this service can safely send, and the caller's
+// existing "model response is unusable" is the honest answer.
 func styledBodyHTMLWithinBound(html string, bound int) (string, error) {
 	if styled := styleEmailBodyHTML(html); utf8.RuneCountInString(styled) <= bound {
 		return styled, nil
