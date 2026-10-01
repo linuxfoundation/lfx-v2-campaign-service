@@ -40,7 +40,13 @@ type Service interface {
 	// platform; the account-scoped Meta image_hash is resolved later, at campaign
 	// dispatch.
 	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
-	// Create campaigns across the selected platforms (async -> job).
+	// Create campaigns across the selected platforms (async -> job). One request
+	// shape is refused synchronously, before any job exists: an email campaign
+	// that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email
+	// set to send based on recipients' time zones, which HubSpot does not allow
+	// together. It returns 409 with reason=ab_test_unsupported_send_type; the
+	// remedy is to pick a different source email or turn the A/B test off. Every
+	// other dispatch failure still arrives later, as the job's own result.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the
@@ -775,6 +781,14 @@ type GenerateEmailCopyPayload struct {
 	// stage's normal copy. Any other value, or absence, produces the normal
 	// stage-based copy.
 	Variant *string
+	// Tailors which content blocks appear for a specific audience segment.
+	// Currently recognised: 'developer' (keeps agenda/session-track detail, drops
+	// sponsorship framing), 'business-decision-maker' (keeps ROI/sponsorship
+	// framing, drops session-level detail), 'alumni' (past attendee -- leads with
+	// what's new since last time), 'prospect' (never attended -- leads with what
+	// the event is and why it matters). Any other value, or absence, produces the
+	// normal stage-based copy with no segment tailoring.
+	Segment *string
 }
 
 // GenerateWizardContentPayload is the payload type of the
@@ -980,6 +994,10 @@ type PlatformResult struct {
 	CampaignID *string
 	// Failure reason (present when not ok)
 	Error *string
+	// Deep link to this campaign's email in the HubSpot editor. Present only for
+	// the email (HubSpot) channel, and only once the portal that created it is
+	// known.
+	HubspotURL *string
 }
 
 // SetWizardSendListPayload is the payload type of the

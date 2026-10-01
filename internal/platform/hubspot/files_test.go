@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -444,6 +445,275 @@ func TestDownloadImage_RefusesHTMLServedAsAnImage(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "decodable image") {
 		t.Fatalf("expected a decode refusal, got %v", err)
+	}
+}
+
+// originRequest is one request a fake image origin saw.
+type originRequest struct{ rawQuery, accept string }
+
+// hitLog is a goroutine-safe record of what a fake image origin was asked for.
+type hitLog struct {
+	mu   sync.Mutex
+	reqs []originRequest
+}
+
+func (h *hitLog) add(r *http.Request) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.reqs = append(h.reqs, originRequest{rawQuery: r.URL.RawQuery, accept: r.Header.Get("Accept")})
+}
+
+func (h *hitLog) all() []originRequest {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]originRequest(nil), h.reqs...)
+}
+
+// modernImageBytes stands in for an AVIF/WebP body. The sniff only needs it to be something the
+// standard library cannot decode, which is exactly what the real AVIF served for the OSS-EU hero was.
+var modernImageBytes = []byte("\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf")
+
+func tinyJPEG(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 1, 1)), nil); err != nil {
+		t.Fatalf("encode fixture jpeg: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// TestDownloadImage_RetriesUnderAFreshCacheKeyWhenTheOriginServesAModernFormat pins the fix for a
+// hero that silently vanished from the HubSpot email while the in-app preview still showed it.
+//
+// A CDN that ignores `Vary: Accept` had cached the plain ".jpg" URL as AVIF and handed it to every
+// client, including this one, while the origin still held the JPEG. The retry is what reaches it.
+func TestDownloadImage_RetriesUnderAFreshCacheKeyWhenTheOriginServesAModernFormat(t *testing.T) {
+	// The third value also pins that the declared type is normalised (case, parameters) before it is
+	// compared, since a real origin is free to send either.
+	for _, declared := range []string{"image/avif", "image/webp", "Image/AVIF; charset=binary"} {
+		t.Run(declared, func(t *testing.T) {
+			jpegBytes := tinyJPEG(t)
+			var hits hitLog
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.add(r)
+				if strings.Contains(r.URL.RawQuery, formatRetryParam) {
+					w.Header().Set("Content-Type", "image/jpeg")
+					_, _ = w.Write(jpegBytes)
+					return
+				}
+				w.Header().Set("Content-Type", declared)
+				_, _ = w.Write(modernImageBytes)
+			}))
+			t.Cleanup(srv.Close)
+
+			c := NewClient(testCreds(), testAccount(),
+				withDownloadClient(&http.Client{Timeout: 5 * time.Second}))
+
+			data, contentType, filename, err := c.downloadImage(context.Background(), srv.URL+"/wp-content/hero.jpg")
+			if err != nil {
+				t.Fatalf("downloadImage: %v", err)
+			}
+			if contentType != "image/jpeg" {
+				t.Errorf("contentType = %q, want image/jpeg", contentType)
+			}
+			if !bytes.Equal(data, jpegBytes) {
+				t.Errorf("returned bytes are not the JPEG the retry fetched")
+			}
+			// The name comes from the ORIGINAL URL, so the cache-busting parameter never reaches it.
+			if !strings.HasPrefix(filename, "hero-") || !strings.HasSuffix(filename, ".jpg") || strings.Contains(filename, "lfx_fmt") {
+				t.Errorf("filename = %q, want hero-<hash>.jpg", filename)
+			}
+
+			reqs := hits.all()
+			if len(reqs) != 2 {
+				t.Fatalf("origin saw %d requests, want exactly 2 (original, then one retry)", len(reqs))
+			}
+			if reqs[0].rawQuery != "" || reqs[1].rawQuery != formatRetryParam {
+				t.Errorf("queries = %q then %q, want empty then %q", reqs[0].rawQuery, reqs[1].rawQuery, formatRetryParam)
+			}
+			for i, r := range reqs {
+				if r.accept != imageAcceptHeader {
+					t.Errorf("request %d Accept = %q, want %q", i, r.accept, imageAcceptHeader)
+				}
+			}
+		})
+	}
+}
+
+// TestUploadImage_RehostsTheJPEGWhenTheFirstResponseIsAVIF is the same scenario end to end: what
+// reaches HubSpot Files must be the JPEG, not the AVIF the plain URL returned.
+func TestUploadImage_RehostsTheJPEGWhenTheFirstResponseIsAVIF(t *testing.T) {
+	jpegBytes := tinyJPEG(t)
+	imgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.RawQuery, formatRetryParam) {
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write(jpegBytes)
+			return
+		}
+		w.Header().Set("Content-Type", "image/avif")
+		_, _ = w.Write(modernImageBytes)
+	}))
+	t.Cleanup(imgSrv.Close)
+
+	var gotFilename string
+	var gotData []byte
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil {
+			t.Fatalf("parse upload content-type: %v", err)
+		}
+		mr := multipart.NewReader(r.Body, params["boundary"])
+		for {
+			part, perr := mr.NextPart()
+			if perr == io.EOF {
+				break
+			}
+			if perr != nil {
+				t.Fatalf("read multipart part: %v", perr)
+			}
+			if part.FormName() == "file" {
+				gotFilename = part.FileName()
+				gotData, _ = io.ReadAll(part)
+			}
+		}
+		_, _ = io.WriteString(w, `{"url":"https://hubspot.example/hubfs/hero.jpg"}`)
+	})
+
+	got, err := c.UploadImage(context.Background(), imgSrv.URL+"/oss-eu-26-social-snackable.jpg")
+	if err != nil {
+		t.Fatalf("UploadImage: %v", err)
+	}
+	if got != "https://hubspot.example/hubfs/hero.jpg" {
+		t.Errorf("UploadImage returned %q", got)
+	}
+	if !bytes.Equal(gotData, jpegBytes) {
+		t.Errorf("HubSpot received %d bytes that are not the JPEG; the AVIF must never be re-hosted", len(gotData))
+	}
+	if !strings.HasSuffix(gotFilename, ".jpg") {
+		t.Errorf("uploaded filename = %q, want a .jpg", gotFilename)
+	}
+}
+
+// TestDownloadImage_RefusesWhenTheRetryAlsoServesAModernFormat pins both the bound (one retry, not
+// a loop) and that the refusal now says what the source actually served. "unknown format" alone
+// cost a full investigation to trace back to AVIF.
+func TestDownloadImage_RefusesWhenTheRetryAlsoServesAModernFormat(t *testing.T) {
+	var hits hitLog
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.add(r)
+		w.Header().Set("Content-Type", "image/avif")
+		_, _ = w.Write(modernImageBytes)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(testCreds(), testAccount(),
+		withDownloadClient(&http.Client{Timeout: 5 * time.Second}))
+
+	_, _, _, err := c.downloadImage(context.Background(), srv.URL+"/hero.jpg")
+	if err == nil {
+		t.Fatal("an AVIF with no decodable alternative was accepted for public re-hosting")
+	}
+	for _, want := range []string{"decodable image", "image/avif"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	if n := len(hits.all()); n != 2 {
+		t.Errorf("origin saw %d requests, want exactly 2: the retry must not loop", n)
+	}
+}
+
+// TestDownloadImage_ReportsTheFirstErrorWhenTheRetryFails pins that a failed retry is not allowed
+// to replace the original diagnosis, and that the extra parameter does not make it leak a signature.
+func TestDownloadImage_ReportsTheFirstErrorWhenTheRetryFails(t *testing.T) {
+	const secret = "SIGNATURE-THAT-MUST-NOT-APPEAR"
+	var hits hitLog
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.add(r)
+		if strings.Contains(r.URL.RawQuery, formatRetryParam) {
+			// A signed URL rejecting the unsigned extra parameter.
+			http.Error(w, "SignatureDoesNotMatch", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "image/webp")
+		_, _ = w.Write(modernImageBytes)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(testCreds(), testAccount(),
+		withDownloadClient(&http.Client{Timeout: 5 * time.Second}))
+
+	_, _, _, err := c.downloadImage(context.Background(), srv.URL+"/hero.webp?X-Amz-Signature="+secret)
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if !strings.Contains(err.Error(), "decodable image") || !strings.Contains(err.Error(), "image/webp") {
+		t.Errorf("want the ORIGINAL refusal naming image/webp, got %v", err)
+	}
+	if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "status") {
+		t.Errorf("the retry's failure replaced the original diagnosis: %v", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("the signed query string leaked into the error: %v", err)
+	}
+	reqs := hits.all()
+	if len(reqs) != 2 {
+		t.Fatalf("origin saw %d requests, want 2", len(reqs))
+	}
+	// The existing query survives byte-for-byte, with the retry parameter appended after it.
+	if want := "X-Amz-Signature=" + secret + "&" + formatRetryParam; reqs[1].rawQuery != want {
+		t.Errorf("retry query = %q, want %q", reqs[1].rawQuery, want)
+	}
+}
+
+// TestDownloadImage_DoesNotRetryAnUndecodablePayloadThatIsNotAModernFormat pins that the retry is
+// scoped to the two types a content-negotiating origin really sends. HTML claiming to be a PNG,
+// or garbage claiming to be a JPEG, is refused after ONE fetch: a second request to an
+// attacker-named URL buys nothing.
+func TestDownloadImage_DoesNotRetryAnUndecodablePayloadThatIsNotAModernFormat(t *testing.T) {
+	for _, declared := range []string{"image/png", "image/jpeg", "image/svg+xml"} {
+		t.Run(declared, func(t *testing.T) {
+			var hits hitLog
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.add(r)
+				w.Header().Set("Content-Type", declared)
+				_, _ = io.WriteString(w, "<html><script>alert(1)</script></html>")
+			}))
+			t.Cleanup(srv.Close)
+
+			c := NewClient(testCreds(), testAccount(),
+				withDownloadClient(&http.Client{Timeout: 5 * time.Second}))
+
+			if _, _, _, err := c.downloadImage(context.Background(), srv.URL+"/payload"); err == nil {
+				t.Fatal("an undecodable payload was accepted for public re-hosting")
+			}
+			if n := len(hits.all()); n != 1 {
+				t.Errorf("origin saw %d requests, want exactly 1 (no retry)", n)
+			}
+		})
+	}
+}
+
+func TestWithFormatRetryParam(t *testing.T) {
+	tests := []struct {
+		name   string
+		in     string
+		want   string
+		wantOK bool
+	}{
+		{"no query", "https://cdn.example/a/hero.jpg", "https://cdn.example/a/hero.jpg?lfx_fmt=1", true},
+		{"existing query kept verbatim", "https://cdn.example/hero.jpg?w=1200&n=a%20b", "https://cdn.example/hero.jpg?w=1200&n=a%20b&lfx_fmt=1", true},
+		{"already carries it", "https://cdn.example/hero.jpg?lfx_fmt=1", "", false},
+		{"already carries it among others", "https://cdn.example/hero.jpg?a=b&lfx_fmt=1", "", false},
+		{"unparsable", "http://[::1", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := withFormatRetryParam(tc.in)
+			if ok != tc.wantOK || got != tc.want {
+				t.Errorf("withFormatRetryParam(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.wantOK)
+			}
+		})
 	}
 }
 

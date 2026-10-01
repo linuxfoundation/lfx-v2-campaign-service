@@ -2489,6 +2489,7 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 			briefID     string
 			stage       *string
 			variant     *string
+			segment     *string
 			bearerToken *string
 			err         error
 
@@ -2506,6 +2507,10 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		if variantRaw != "" {
 			variant = &variantRaw
 		}
+		segmentRaw := qp.Get("segment")
+		if segmentRaw != "" {
+			segment = &segmentRaw
+		}
 		bearerTokenRaw := r.Header.Get("Authorization")
 		if bearerTokenRaw != "" {
 			bearerToken = &bearerTokenRaw
@@ -2513,7 +2518,7 @@ func DecodeGenerateEmailCopyRequest(mux goahttp.Muxer, decoder func(*http.Reques
 		if err != nil {
 			return payload, err
 		}
-		payload = NewGenerateEmailCopyPayload(projectID, briefID, stage, variant, bearerToken)
+		payload = NewGenerateEmailCopyPayload(projectID, briefID, stage, variant, segment, bearerToken)
 		if payload.BearerToken != nil {
 			if strings.Contains(*payload.BearerToken, " ") {
 				// Remove authorization scheme prefix (e.g. "Bearer")
@@ -5174,6 +5179,7 @@ func marshalLfxv2campaignservicebriefsPlatformResultToPlatformResultResponseBody
 		OK:         v.OK,
 		CampaignID: v.CampaignID,
 		Error:      v.Error,
+		HubspotURL: v.HubspotURL,
 	}
 
 	return res

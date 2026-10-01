@@ -1103,6 +1103,53 @@ func TestBriefService_GetJob_ValidResultsAndFailedErrorOnly(t *testing.T) {
 	}
 }
 
+// TestBriefService_GetJob_HubspotURL guards the last hop of the hubspotUrl seam: a stored
+// per-platform result's hubspot_url decodes into PlatformResult.HubspotURL as a non-nil
+// pointer, and an absent/empty one leaves it nil rather than a pointer to "". The Result blob
+// is built by marshalling the real platformResult (orchestrator.go), not a raw string literal,
+// so a rename of its hubspot_url tag breaks this test rather than leaving it green — the same
+// tag GetJob's anonymous decode struct has to keep matching by hand.
+func TestBriefService_GetJob_HubspotURL(t *testing.T) {
+	resultJSON, err := json.Marshal([]platformResult{
+		{Platform: "hubspot", OK: true, CampaignID: "999", HubspotURL: "https://app.hubspot.com/email/8112310/edit/999/settings"},
+		{Platform: "google-ads", OK: true, CampaignID: "pc-1"},
+	})
+	if err != nil {
+		t.Fatalf("marshal platformResult fixture: %v", err)
+	}
+	s := getJobTestService(&model.CampaignJob{
+		ID: "j1", BriefID: "b1", Status: model.JobSucceeded,
+		Result: resultJSON,
+	})
+	resp, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+
+	var hs, ga *briefs.PlatformResult
+	for _, r := range resp.Result {
+		switch r.Platform {
+		case "hubspot":
+			hs = r
+		case "google-ads":
+			ga = r
+		}
+	}
+	if hs == nil {
+		t.Fatal("hubspot result missing")
+	}
+	if hs.HubspotURL == nil || *hs.HubspotURL != "https://app.hubspot.com/email/8112310/edit/999/settings" {
+		t.Errorf("hubspot result HubspotURL = %v, want a pointer to the stored hubspot_url", hs.HubspotURL)
+	}
+
+	if ga == nil {
+		t.Fatal("google-ads result missing")
+	}
+	if ga.HubspotURL != nil {
+		t.Errorf("google-ads result HubspotURL = %q, want nil (no hubspot_url was stored for this platform)", *ga.HubspotURL)
+	}
+}
+
 // TestBriefService_GetJob_SkippedSurfacesNonFailure verifies a skipped platform
 // (ok=false, skipped=true) on a succeeded job is surfaced with an explicit
 // non-failure message rather than an unexplained ok=false that reads as a failure.
@@ -5441,5 +5488,142 @@ func TestDeleteBrief_ATransientArchiveFailureDoesNotScrub(t *testing.T) {
 	}
 	if got.CreatedBy == nil {
 		t.Error("created_by was cleared although the delete FAILED and the brief is still live")
+	}
+}
+
+// TestMapBriefErr_ABTestUnsupportedSendTypeIsAReasonedConflict pins the contract the front end
+// keys on.
+//
+// The BFF shows no upstream text for a rejected create -- it replaces every definite 4xx with
+// one generic sentence -- so the ONLY way it can tell "your A/B test cannot be built on this
+// template" from any other rejection is this 409's `reason`. The slug is therefore the contract
+// and is pinned literally; it must also differ from the plain "already exists" 409 that carries
+// no reason, or the two would be indistinguishable again.
+//
+// The message reaches the caller, so it is asserted free of anything source-specific: the
+// sentinel can be wrapped with a source email id on its way up, and none of it may leak.
+func TestMapBriefErr_ABTestUnsupportedSendTypeIsAReasonedConflict(t *testing.T) {
+	wrapped := fmt.Errorf("source email 555 sends by recipients' time zone: %w", domain.ErrABTestUnsupportedSendType)
+
+	var conflict *briefs.ConflictError
+	if !errors.As(mapBriefErr(wrapped), &conflict) {
+		t.Fatalf("mapBriefErr(%v) is not a *briefs.ConflictError", wrapped)
+	}
+	if conflict.Code != "409" {
+		t.Errorf("code = %q, want 409", conflict.Code)
+	}
+	if conflict.Reason == nil {
+		t.Fatal("no reason on the A/B refusal: the front end has nothing but prose to tell it from any other 409")
+	}
+	if *conflict.Reason != "ab_test_unsupported_send_type" {
+		t.Errorf("reason = %q, want %q -- this slug is the part clients are promised, so renaming it breaks them silently",
+			*conflict.Reason, "ab_test_unsupported_send_type")
+	}
+	if !strings.Contains(conflict.Message, "A/B testing") || !strings.Contains(conflict.Message, "time zone") {
+		t.Errorf("message %q does not say what was refused", conflict.Message)
+	}
+	if strings.Contains(conflict.Message, "555") {
+		t.Errorf("message %q leaks the wrapped source email id", conflict.Message)
+	}
+
+	// The generic conflict has no reason; if it ever gained this one, the two would merge.
+	var generic *briefs.ConflictError
+	if !errors.As(mapBriefErr(domain.ErrConflict), &generic) {
+		t.Fatal("mapBriefErr(ErrConflict) is not a *briefs.ConflictError")
+	}
+	if generic.Reason != nil {
+		t.Errorf("the plain conflict carries reason %q, which would make it indistinguishable from the A/B refusal", *generic.Reason)
+	}
+}
+
+// abPreflightHarness is an approved email brief served by an orchestrator whose HubSpot
+// dispatcher has the create pre-check, so CreateCampaigns can be driven end to end through the
+// synchronous seam the guard lives at.
+func abPreflightHarness(t *testing.T, stub *preflightStub) (*BriefService, *fakeJobRepo) {
+	t.Helper()
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+		ID: "b1", ProjectID: "cncf", EventSlug: "kubecon-eu-2026",
+		DeliveryType: model.DeliveryEmail, Stage: "CFP Launch",
+		Status: model.BriefApproved, Version: 1,
+	}
+	camps := &fakeCampaignRepo{}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderHubSpot: stub})
+	t.Cleanup(func() { _ = orch.Shutdown(context.Background(), time.Second) })
+	return NewBriefService(repo, camps, jobs, orch), jobs
+}
+
+func createHubSpotCampaign(s *BriefService) (*briefs.JobCreateResponse, error) {
+	return s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+		Input: &briefs.CampaignCreateInput{
+			Platforms: []string{"hubspot"},
+			Config:    map[string]any{"hubspotConfig": map[string]any{"sourceEmailId": "555", "abTestEnabled": true}},
+		},
+	})
+}
+
+// TestBriefService_CreateCampaigns_RefusesAnUnsatisfiableABTestBeforeAnyJobExists is the guard at
+// the seam it was placed for. Dispatch runs after the 202 and reports every failure as one opaque
+// job error, so a time-zone template with an A/B test could only ever surface as a silently
+// single email. Refused here, the caller gets a typed 409 and -- the part that matters for a
+// retry -- nothing was created: no job row, no dispatch.
+func TestBriefService_CreateCampaigns_RefusesAnUnsatisfiableABTestBeforeAnyJobExists(t *testing.T) {
+	stub := &preflightStub{err: ErrABTestUnsupportedSendType}
+	s, jobs := abPreflightHarness(t, stub)
+
+	_, err := createHubSpotCampaign(s)
+
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("CreateCampaigns err = %v (%T), want *briefs.ConflictError", err, err)
+	}
+	if conflict.Reason == nil || *conflict.Reason != "ab_test_unsupported_send_type" {
+		t.Errorf("reason = %v, want ab_test_unsupported_send_type", conflict.Reason)
+	}
+	if stub.calls != 1 {
+		t.Errorf("pre-check calls = %d, want 1", stub.calls)
+	}
+
+	jobs.mu.Lock()
+	created := len(jobs.jobs)
+	jobs.mu.Unlock()
+	if created != 0 {
+		t.Errorf("a refused create left %d job row(s); the refusal must happen before anything exists", created)
+	}
+	if n := stub.dispatchCount(); n != 0 {
+		t.Errorf("a refused create dispatched %d time(s), want 0", n)
+	}
+}
+
+// The other half of the contract: a pre-check that merely could not run must not stop the
+// create, and it must have inspected the SAME config the dispatch then receives -- a pre-check
+// reading different input than Dispatch would approve or refuse requests that were never made.
+func TestBriefService_CreateCampaigns_APreCheckThatCannotRunDoesNotBlockTheCreate(t *testing.T) {
+	stub := &preflightStub{err: errors.New("hubspot is unreachable")}
+	s, jobs := abPreflightHarness(t, stub)
+
+	res, err := createHubSpotCampaign(s)
+	if err != nil {
+		t.Fatalf("CreateCampaigns = %v, want the create to proceed when the pre-check could not run", err)
+	}
+	if res == nil || res.JobID == "" {
+		t.Fatalf("CreateCampaigns returned %+v, want an accepted job", res)
+	}
+	if stub.calls != 1 {
+		t.Errorf("pre-check calls = %d, want 1 (the failure must come from a real call, not a skip)", stub.calls)
+	}
+
+	waitForTerminal(t, jobs, res.JobID)
+
+	if n := stub.dispatchCount(); n != 1 {
+		t.Fatalf("dispatches = %d, want 1", n)
+	}
+	if string(stub.gotConfig) != string(stub.dispatchedWith()) {
+		t.Errorf("the pre-check inspected config %s but Dispatch received %s", stub.gotConfig, stub.dispatchedWith())
+	}
+	if !strings.Contains(string(stub.gotConfig), `"abTestEnabled":true`) {
+		t.Errorf("pre-check config %s does not carry the caller's A/B flag", stub.gotConfig)
 	}
 }

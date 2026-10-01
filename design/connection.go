@@ -189,9 +189,13 @@ var NotFoundError = Type("not-found-error", func() {
 // the remedy is a REBUILD — the opposite of `stale_approval`'s refresh-and-retry and of
 // `audience_build_in_flight`'s wait-and-poll. Leaving it unset would have made a client
 // parse prose for exactly the distinction this field exists to carry. The briefs group also distinguishes many conflicts, but does so in message
-// prose only and sets no reason yet; that is a gap to close, not the intended end state.
-// Until it is closed a client must treat an absent reason as "unspecified conflict" and
-// fall back to the message, which is what the message already says. Making the field
+// prose only and sets a reason on exactly one of them so far -- create-campaigns' refusal of
+// an A/B test on an email set to send by recipients' time zones
+// (`ab_test_unsupported_send_type`), which needed a discriminator because the caller's front
+// end must show that one refusal as an actionable message while it deliberately shows no
+// upstream text for any other rejection. The rest are a gap to close, not the intended end
+// state. Until it is closed a client must treat an absent reason as "unspecified conflict"
+// and fall back to the message, which is what the message already says. Making the field
 // Required now would force a slug onto every 409 in one change and invent a taxonomy
 // nobody has agreed to maintain.
 //
@@ -212,7 +216,7 @@ var NotFoundError = Type("not-found-error", func() {
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
 	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
-		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable")
+		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type")
 		Example("already_exists")
 	})
 })

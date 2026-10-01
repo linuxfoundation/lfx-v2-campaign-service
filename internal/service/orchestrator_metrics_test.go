@@ -342,6 +342,12 @@ func (d upstreamCapableDispatcher) VerifyAccountOrg(context.Context, string, mod
 	return d.err
 }
 
+// PreflightCreate implements CreatePreflighter so the create pre-check's upstream call is
+// driven by the same table as every other instrumented path.
+func (d upstreamCapableDispatcher) PreflightCreate(context.Context, string, model.Provider, json.RawMessage) error {
+	return d.err
+}
+
 // TestUpstreamCallsAreInstrumented drives each instrumented capability path and
 // asserts the upstream call was actually recorded with the right bounded operation
 // token and outcome.
@@ -366,6 +372,10 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 		name string
 		op   string
 		call func(context.Context, *Orchestrator) error
+		// absorbsPlatformError marks the one path that FAILS OPEN by design: the create
+		// pre-check logs a platform error and lets the create proceed, so the error arm
+		// cannot require the error to surface -- only that the call was recorded as failed.
+		absorbsPlatformError bool
 	}{
 		{
 			name: "toggle status",
@@ -480,6 +490,18 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 				return o.VerifyAccountOrg(ctx, "p1", platform)
 			},
 		},
+		{
+			// Fail-open: an ordinary platform error is logged and swallowed so the pre-check can
+			// never turn into an availability dependency on the create. Only the recorded outcome
+			// is asserted in the error arm; a refusal (the sentinel) has its own test because it
+			// is recorded as a SUCCESSFUL read.
+			name: "preflight create",
+			op:   opPreflightCreate,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				return o.PreflightCreate(ctx, "p1", []model.Provider{platform}, nil)
+			},
+			absorbsPlatformError: true,
+		},
 	}
 
 	// Completeness gate: every operation token recordUpstream is called with in the
@@ -518,7 +540,7 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 				orch.SetMetrics(rec)
 
 				err := tc.call(context.Background(), orch)
-				if arm.platformErr != nil && err == nil {
+				if arm.platformErr != nil && err == nil && !tc.absorbsPlatformError {
 					t.Fatalf("%s: expected the platform error to surface", tc.name)
 				}
 				// The success arm must actually SUCCEED. Without this, a fake that violates a
