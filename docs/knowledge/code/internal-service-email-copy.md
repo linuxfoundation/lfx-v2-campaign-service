@@ -72,16 +72,16 @@ That asymmetry is why `GenerateEmailCopy`'s required-field check trims before co
 ### The prompt bound is checked twice, in runes, against TWO different limits
 
 `maxPromptSize` is 2400 **runes** and bounds the four caller-supplied fields BEFORE
-`composeEmailCopyPrompt`; `maxComposedPromptSize` is 14600 and bounds the composed prompt after.
+`composeEmailCopyPrompt`; `maxComposedPromptSize` is 20400 and bounds the composed prompt after.
 They are separate constants because they measure different things — the caller's input versus that
 input plus the stage template and the reference-email style block (`maxReferenceBlockRunes`, see
 below) — and getting the second number wrong fails in TWO opposite directions, both of which this
 file has actually shipped:
 
-- **Too low rejects valid input.** At 6500 the Post-Event stage (now floors at 11988 runes COMPOSED
-  once the reference-email style block, the urgency-fomo variant block AND the alumni segment
-  block are included, at zero caller input) left only **-5488** runes for caller fields
-  (6500 - 11988), so essentially any input was refused — event details that
+- **Too low rejects valid input.** At 6500 the Post-Event stage (now floors at 17352 runes COMPOSED
+  once the reference-email style block, the event-facts block, the community-story variant block
+  AND the alumni segment block are included, at zero caller input) left only **-10852** runes for
+  caller fields (6500 - 17352), so essentially any input was refused — event details that
   passed the pre-check were then refused by the composed one, two bounds contradicting each other,
   with the caller told their input was too large immediately after the first accepted it.
 - **Too high never fires.** 8000 was set against a believed ceiling of 7700 and the real ceiling
@@ -97,10 +97,10 @@ None can.
 The first property wins, because a caller must never be told their input is too large by the second
 of two checks after the first accepted it. The composed bound is then sized for the case that
 remains: **a stage template growing past the budget in a future edit**. That is a real failure mode
-— the templates are large (Post-Event composes to an 11988-rune floor from a 3637-rune ContentPrompt plus the reference-email style block plus, when requested, the urgency-fomo variant block plus, when requested, a segment block) and hand-edited.
+— the templates are large (Post-Event composes to a 17352-rune floor from a 3637-rune ContentPrompt plus the reference-email style block plus the event-facts block plus, when requested, the community-story variant block plus, when requested, a segment block) and hand-edited.
 
-With the input bound at 2400 the worst valid composition is 14388 (Post-Event + urgency-fomo +
-the alumni segment floors at 11988), so 14600 clears it with 212 runes of headroom. Post-Event WITHHOLDS the registration URL — its call to
+With the input bound at 2400 the worst valid composition is 19752 (Post-Event + community-story +
+the alumni segment floors at 17352), so 20400 clears it with 648 runes of headroom. Post-Event WITHHOLDS the registration URL — its call to
 action is "Share Feedback", not a registration ask — so the 19-rune URL line is not part of its
 composition; it still leads on ContentPrompt length, so which stage is worst did not change. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
 way, by injecting an oversized stage into `emailstage.Templates` rather than a long event name.
@@ -159,11 +159,16 @@ Runes, not bytes, because the limit is stated to the caller and logged as a char
 every other bound in this file counts runes. `len()` gave an event named in Japanese a third of
 the advertised budget and an event named in English all of it — a limit that means something
 different depending on the alphabet. Measured, not estimated, and re-measured whenever the
-shared prompt or any template changes: Post-Event is the largest stage at an 11988-rune COMPOSED floor with the urgency-fomo variant AND the alumni segment requested (its ContentPrompt alone is 3637, plus the reference-email style block, plus the variant block, plus the segment block),
-and with the maximum 2400 runes of caller input it composes to 14388 against the 14600 bound.
+shared prompt or any template changes: Post-Event is the largest stage at a 17352-rune COMPOSED floor with the community-story variant AND the alumni segment requested (its ContentPrompt alone is 3637, plus the reference-email style block, plus the event-facts block, plus the variant block, plus the segment block),
+and with the maximum 2400 runes of caller input it composes to 19752 against the 20400 bound,
+leaving 648 runes of headroom.
 
 Every figure in this section has been wrong at least once from a measurement taken before a
-template grew — seven times, most recently (LFX-Campaigns-Email-QA-Report B1) when a
+template grew — eight times, most recently when the richer-content work added the event-facts
+block (+3600, the dominant term and producer-bounded like the reference block), the community-story
+variant (+305 over urgency-fomo, since only one variant is ever appended — a second variant moves
+WHICH one is worst, not the sum), and 1758 net runes of shared stage-aware rules including
+`bodyStyleRule` (624). Before that (LFX-Campaigns-Email-QA-Report B1) a
 section-boundary rule was added to the shared stage-aware system prompt and the urgency-fomo
 variant block, telling the model never to run a closed list straight into the next heading with no
 tag or whitespace between them. That grew the worst composition by 299 runes, leaving 212 runes of
@@ -281,6 +286,8 @@ nothing greps for it.
 - **TestAbsentStageIgnoresTheSegment**: A brief WITH a `segment` still composes the frozen pre-stage prompt byte for byte, same LFXV2-1940 restriction as `registrationURL` and `variant`.
 - **TestComposeEmailCopyPrompt_VariantAndSegmentComposeAdditively**: `variant` restyles the whole draft, `segment` narrows which blocks are relevant to an audience; both blocks appear together rather than one replacing the other.
 - **TestComposeEmailCopyPrompt_WarnsAgainstListRunningIntoNextSection**: Both halves of the list-boundary rule, which fail independently: the shared system prompt states the one-idea-per-`rich_text`-section rule and forbids a closed `</ul>` running straight into the next heading, and the urgency-fomo block restates it naming the two adjacent list-heavy sections whose run-on the QA report reproduced.
+- **TestEventFactsBlockHonoursItsBound**: MEASURES the worst-case event-facts block against `maxEventFactsBlockRunes` instead of asserting a number, and fails if the block-level backstop ever starts cutting — which would silently truncate the description mid-sentence, since it is written last. Checks every label is present, so a field that stopped being measured cannot make the sum look safe.
+- **TestParseEmailCopyResponse_StylesTheBodyHTML**: Holds that the styler is WIRED into the response path, not merely correct. `styleEmailBodyHTML` has its own tests; nothing else in the package would notice if the call were removed, because a section's HTML is a string either way.
 
 Each test is mutation-verified by reverting the corresponding logic and confirming the test fails with a meaningful diagnostic.
 
