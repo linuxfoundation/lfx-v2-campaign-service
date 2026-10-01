@@ -1025,10 +1025,12 @@ func (d *HubSpotDispatcher) SearchEmails(ctx context.Context, projectID string, 
 // "A/B test" got one email and no explanation. And it cannot be reported from Dispatch, which
 // runs after the 202 and surfaces every error as one opaque job error.
 //
-// Only an A/B request pays for the lookup; every other create returns before any HubSpot call.
-// Every outcome other than the one known-bad type returns nil or a non-sentinel error, which the
-// orchestrator logs and ignores (fail-open): a source email whose type cannot be read is not a
-// reason to refuse the create.
+// Only an A/B request pays for the lookup; every other create returns
+// domain.ErrPreflightNotApplicable before any HubSpot call, which tells the orchestrator that
+// nothing was asked of HubSpot so it records no upstream call for it. Every other outcome besides
+// the one known-bad type returns nil (HubSpot was asked and gave nothing to refuse, including a
+// response with no type) or a non-sentinel error, which the orchestrator logs and ignores
+// (fail-open): a source email whose type cannot be read is not a reason to refuse the create.
 //
 // The type comes from HubSpot's derived `type` field. It is logged on every A/B request, because
 // whether a type-less response is possible has not been observed against a live portal and the
@@ -1037,12 +1039,13 @@ func (d *HubSpotDispatcher) PreflightCreate(ctx context.Context, projectID strin
 	var cfg hubspotConfig
 	if err := unmarshalPlatformConfig(config, "hubspotConfig", &cfg); err != nil {
 		// Dispatch parses the same config and reports a malformed one as the job's failure; saying
-		// it again here would turn one defect into two.
-		return nil
+		// it again here would turn one defect into two. Not applicable rather than nil: no check
+		// was made, so it must not be counted as one that passed.
+		return domain.ErrPreflightNotApplicable
 	}
 	sourceID := strings.TrimSpace(cfg.SourceEmailID)
 	if !cfg.ABTestEnabled || sourceID == "" {
-		return nil
+		return domain.ErrPreflightNotApplicable
 	}
 	client, err := d.resolveHubSpotClient(ctx, projectID, platform)
 	if err != nil {

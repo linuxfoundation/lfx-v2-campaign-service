@@ -1087,6 +1087,14 @@ every ad platform.
 - **A refusal is a sentinel and nothing else.** The orchestrator returns an error only when a
   dispatcher's error satisfies `errors.Is(err, ErrABTestUnsupportedSendType)` (an alias of
   `domain.ErrABTestUnsupportedSendType`).
+- **"Nothing to check" is a second sentinel, and it is not recorded.** A dispatcher that looked at
+  the request and had nothing to check, so made no platform call, returns
+  `ErrPreflightNotApplicable` (an alias of `domain.ErrPreflightNotApplicable`). The orchestrator
+  skips it silently: no error, no WARN, and no `recordUpstream`. HubSpot returns it for every
+  create that does not ask for an A/B test; recording those would put a near-zero "ok" sample on
+  the `preflight_create` histogram for each one and bury the latency and error rate of the lookups
+  that really reach HubSpot. `nil` means a check was made and passed, and
+  THAT is recorded.
 - **Everything else fails open**, enforced by the orchestrator rather than trusted to each
   dispatcher: the platform unreachable, an unreadable credential, a deadline, a response that did not
   say. It is logged at WARN ("create pre-check could not be completed; continuing without it") and
@@ -1095,8 +1103,9 @@ every ad platform.
   dependency on every create, for a condition that dispatch already tolerates.
 - **Bounded.** Each platform's call runs under `preflightCallTimeout` (10 seconds), because it sits
   on the HTTP request goroutine. Timing out is a fail-open outcome, not a failure.
-- **Instrumented as an upstream read.** The call is recorded under the operation
-  `preflight_create` via `recordUpstream`, and a REFUSAL is recorded as a SUCCESSFUL call: the
+- **Instrumented as an upstream read.** A call that was made is recorded under the operation
+  `preflight_create` via `recordUpstream` (one that was skipped as not applicable is not), and a
+  REFUSAL is recorded as a SUCCESSFUL call: the
   platform answered and the answer was acted on. Counting it as an error would put a caller who
   chose an unsupported template on the same upstream-failure rate an operator alerts on for the
   platform being down. `TestUpstreamCallsAreInstrumented` enforces that every operation passed to

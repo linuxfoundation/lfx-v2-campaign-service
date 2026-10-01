@@ -228,6 +228,17 @@ var (
 	// source email id, a portal id or anything HubSpot returned.
 	ErrABTestUnsupportedSendType = errors.New("A/B testing is not available for emails sent based on recipients' time zones")
 
+	// ErrPreflightNotApplicable is returned by a CreatePreflighter that looked at the request and
+	// had nothing to check, so it made NO platform call. It is neither a refusal nor a failure:
+	// the orchestrator skips the platform without logging it and without recording an upstream
+	// call. Recording it would put a near-zero "ok" sample on the upstream latency histogram for
+	// every create that did not ask for what the check guards, pulling every quantile toward zero
+	// and diluting the error rate of the lookups that do reach the platform. A check that DID look
+	// and found nothing wrong returns nil instead, and that one is recorded.
+	//
+	// Internal to the create pre-check: it is never mapped to a status and never reaches a caller.
+	ErrPreflightNotApplicable = errors.New("create pre-check has nothing to check for this request")
+
 	// ErrAccountsUnsupported indicates the platform has no account-listing capability
 	// wired. The platform is never contacted.
 	//

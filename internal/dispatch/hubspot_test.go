@@ -1069,6 +1069,8 @@ func TestHubSpot_PreflightCreateUnusableConnectionIsNotTheSentinel(t *testing.T)
 
 // The pre-check exists only for the A/B variant, so a create that does not ask for one must pay
 // nothing for it: no connection resolution and no HubSpot round trip, whatever the template is.
+// It also says so: ErrPreflightNotApplicable, not nil, because nil would read as "checked and
+// fine" and the orchestrator would record an upstream call that never happened.
 func TestHubSpot_PreflightCreateMakesNoCallUnlessAnABTestWasRequested(t *testing.T) {
 	cases := map[string]string{
 		"a/b test off":         `{"hubspotConfig":{"sourceEmailId":"555","abTestEnabled":false}}`,
@@ -1087,8 +1089,9 @@ func TestHubSpot_PreflightCreateMakesNoCallUnlessAnABTestWasRequested(t *testing
 			rec.sourceEmailType = hubspot.EmailTypeLocalTime
 			d := preflightDispatcher(t, srv.URL)
 
-			if err := d.PreflightCreate(context.Background(), "proj-1", model.ProviderHubSpot, json.RawMessage(raw)); err != nil {
-				t.Fatalf("PreflightCreate = %v, want nil: Dispatch owns reporting these", err)
+			err := d.PreflightCreate(context.Background(), "proj-1", model.ProviderHubSpot, json.RawMessage(raw))
+			if !errors.Is(err, domain.ErrPreflightNotApplicable) {
+				t.Fatalf("PreflightCreate = %v, want ErrPreflightNotApplicable: nothing was asked of HubSpot (Dispatch owns reporting a malformed config)", err)
 			}
 			if rec.SourceEmailGets() != 0 {
 				t.Errorf("source email reads = %d, want 0", rec.SourceEmailGets())
