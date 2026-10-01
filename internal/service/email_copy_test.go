@@ -477,8 +477,12 @@ func TestGenerateEmailCopy_HappyPath(t *testing.T) {
 	if result.Preheader != "Save your spot" {
 		t.Errorf("Preheader = %q, want %q", result.Preheader, "Save your spot")
 	}
-	if html := richTextHTML(result); html != "<p>Register now</p>" {
-		t.Errorf("Body = %q, want %q", html, "<p>Register now</p>")
+	// The model answered a bare `<p>Register now</p>`; what comes back carries this service's own
+	// paragraph style, because every rich_text section is dressed on the way out
+	// (email_body_style.go). The `styled` helper builds the expected form from the same table the
+	// renderer reads, so this stays a plumbing assertion and does not freeze the design.
+	if html, want := richTextHTML(result), styled("p", "Register now"); html != want {
+		t.Errorf("Body = %q, want %q", html, want)
 	}
 	if cta := buttonText(result); cta != "Register" {
 		t.Errorf("Cta = %q, want %q", cta, "Register")
@@ -1018,6 +1022,12 @@ func TestGenerateEmailCopy_NilStageIsNotAnError(t *testing.T) {
 func TestGenerateEmailCopy_ComposedBoundIsReachable(t *testing.T) {
 	// A stage whose template alone blows the composed budget. Restored after the test so the
 	// package's own templates are untouched for everything else.
+	//
+	// The ContentPrompt is sized FROM the bound rather than to a literal. It was 12000 runes, which
+	// overflowed a 14600 bound and silently stopped overflowing a 20400 one -- the LLM server then
+	// got called, and this test failed on the t.Error inside the handler rather than on the claim it
+	// makes. maxComposedPromptSize+1 runes of template cannot fit under maxComposedPromptSize for
+	// any value of either, so this is the last time raising the bound breaks this test.
 	const oversized = "Oversized Test Stage"
 	original, existed := emailstage.Templates[oversized]
 	emailstage.Templates[oversized] = emailstage.Template{
@@ -1025,7 +1035,7 @@ func TestGenerateEmailCopy_ComposedBoundIsReachable(t *testing.T) {
 		Purpose:       "exercise the composed bound",
 		Tone:          "neutral",
 		UrgencyLevel:  1,
-		ContentPrompt: repeatStr("y", 12000),
+		ContentPrompt: repeatStr("y", maxComposedPromptSize+1),
 	}
 	t.Cleanup(func() {
 		if existed {
@@ -1679,16 +1689,23 @@ func worstStageFloorNamed() (int, string) {
 	// worst case this bound must clear, and it reaches every stage (never withheld, unlike the
 	// registration URL). See maxReferenceBlockRunes.
 	maxRef := strings.Repeat("x", maxReferenceBlockRunes)
-	// Composed WITH the urgency-fomo variant, and WITH each recognised segment, too: both are
+	// eventFacts is filled to its full maxEventFactsBlockRunes cap for the same reason: the block is
+	// truncated to that bound by eventFactsBlock before the prompt ever sees it, so a maximally-sized
+	// block is the worst case this bound must clear, and like the reference block it reaches every
+	// stage. Counting it as caller input instead would understate this floor by the whole block.
+	maxFacts := strings.Repeat("x", maxEventFactsBlockRunes)
+	// Composed WITH each recognised variant, and WITH each recognised segment, too: both are
 	// fixed content additions, same floor-contributor shape as a stage template (see
-	// urgencyFomoVariant and the emailSegment* constants), so the worst case this bound must
-	// clear is whichever variant x segment x stage combination is largest -- not just the plain
-	// stage composition.
+	// urgencyFomoVariant/communityStoryVariant and the emailSegment* constants), so the worst case
+	// this bound must clear is whichever variant x segment x stage combination is largest -- not
+	// just the plain stage composition. Every variant is enumerated, not only the one that looks
+	// largest: which block is biggest is not a property either constant declares, and a sweep that
+	// guesses would silently stop covering the worst case the next time one is edited.
 	segments := []string{"", emailSegmentDeveloper, emailSegmentBusinessDecisionMaker, emailSegmentAlumni, emailSegmentProspect}
-	for _, variant := range []string{"", urgencyFomoVariant} {
+	for _, variant := range []string{"", urgencyFomoVariant, communityStoryVariant} {
 		for _, segment := range segments {
 			for _, name := range emailstage.Names() {
-				sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name, variant: variant, segment: segment, registrationURL: "x", referenceBlock: maxRef})
+				sys, user := composeEmailCopyPrompt(emailCopyPromptVars{stage: name, variant: variant, segment: segment, registrationURL: "x", eventFacts: maxFacts, referenceBlock: maxRef})
 				floor := utf8.RuneCountInString(sys) + utf8.RuneCountInString(user)
 				// Subtract the sentinel ONLY from a stage that actually formatted it. A withholding stage
 				// (emailstage.LinksToRegistration=false) never receives the URL, so "x" contributes
@@ -1880,5 +1897,104 @@ func TestParseEmailCopyResponse_EmptyResponseIsNotReportedAsAShapeMismatch(t *te
 	_, err := parseEmailCopyResponse(`{"subject":"s","preheader":"p"}`, false)
 	if err != nil && strings.Contains(err.Error(), "legacy body/cta shape") {
 		t.Fatalf("an empty response was reported as a shape mismatch: %v", err)
+	}
+}
+
+// TestEventFactsBlockHonoursItsBound MEASURES the worst case instead of asserting a number, which
+// is the claim eventFactsBlock's doc comment makes: every value is bounded before it is written,
+// so the block-level truncateRunes at the end is a backstop the per-field bounds already make
+// unreachable.
+//
+// Measuring is the point. If a future field is added with no per-field bound, or an existing bound
+// is raised, the sum crosses maxEventFactsBlockRunes and the backstop starts CUTTING -- silently,
+// and from the end, which is where the description lives. The email would simply lose its last
+// fact mid-sentence with nothing logged. This test turns that into a failure that names the
+// measured sum and the bound, so the fix is to re-derive the bound rather than to discover the
+// truncation in a sent email.
+func TestEventFactsBlockHonoursItsBound(t *testing.T) {
+	// A 250-rune absolute URL: factURL keeps a URL at exactly maxFactURLRunes and drops a longer
+	// one, so this is the largest value each URL line can contribute.
+	const urlPrefix = "https://events.example/"
+	maxURL := urlPrefix + strings.Repeat("u", maxFactURLRunes-len(urlPrefix))
+	if got := factURL(maxURL); got != maxURL {
+		t.Fatalf("factURL dropped a %d-rune URL, so this test is not measuring the worst case", len([]rune(maxURL)))
+	}
+
+	// Every list is filled past maxFactListEntries as well as past maxFactTextRunes, so the
+	// measurement covers both caps at once.
+	longList := make([]string, maxFactListEntries*2)
+	for i := range longList {
+		longList[i] = strings.Repeat("n", maxFactTextRunes)
+	}
+	sponsors := make([]emailCopySponsor, len(longList))
+	for i := range sponsors {
+		sponsors[i] = emailCopySponsor{Name: longList[i]}
+	}
+
+	details := emailCopyEventDetails{
+		Description:    strings.Repeat("d", maxFactDescriptionRunes*3),
+		Audience:       strings.Repeat("a", maxFactTextRunes*3),
+		FormatNotes:    strings.Repeat("f", maxFactTextRunes*3),
+		Themes:         longList,
+		Speakers:       longList,
+		Sponsors:       sponsors,
+		AgendaURL:      maxURL,
+		CFPURL:         maxURL,
+		VenueURL:       maxURL,
+		SponsorshipURL: maxURL,
+	}
+
+	block := details.eventFactsBlock()
+	measured := len([]rune(block))
+
+	if measured > maxEventFactsBlockRunes {
+		t.Fatalf("eventFactsBlock returned %d runes, over its own bound of %d", measured, maxEventFactsBlockRunes)
+	}
+	// The real assertion: the backstop did not fire. A block at exactly the bound was CUT, which
+	// means the per-field bounds no longer sum under it.
+	if measured == maxEventFactsBlockRunes {
+		t.Fatalf("the per-field bounds now sum to at least maxEventFactsBlockRunes (%d), so the "+
+			"block-level backstop is truncating the description instead of merely backing it up; "+
+			"re-derive maxEventFactsBlockRunes from the per-field bounds", maxEventFactsBlockRunes)
+	}
+	t.Logf("worst-case facts block: %d runes against a bound of %d (headroom %d)",
+		measured, maxEventFactsBlockRunes, maxEventFactsBlockRunes-measured)
+
+	// Every label must be present: a measurement that silently stopped exercising a field would
+	// under-report the sum, which is the one way this test could pass while being wrong.
+	for _, label := range []string{
+		"Agenda URL", "Call for Proposals URL", "Venue URL", "Sponsorship URL",
+		"Audience", "Format", "Topics", "Speakers", "Sponsors", "About this event",
+	} {
+		if !strings.Contains(block, label+": ") {
+			t.Errorf("the worst-case block has no %q line, so that field was not measured", label)
+		}
+	}
+}
+
+// TestParseEmailCopyResponse_StylesTheBodyHTML pins the one place the service's design is applied.
+//
+// styleEmailBodyHTML has its own tests; what this one holds is that it is actually WIRED into the
+// response path. The styler could be perfect and the emails still plain, because nothing else in
+// this package would notice -- the section HTML is a string either way.
+func TestParseEmailCopyResponse_StylesTheBodyHTML(t *testing.T) {
+	raw := `{"subject":"s","preheader":"p","sections":[` +
+		`{"type":"rich_text","html":"<p style=\"color:red\">Join us</p>"},` +
+		`{"type":"button","text":"Register"}]}`
+
+	copyResult, err := parseEmailCopyResponse(raw, false)
+	if err != nil {
+		t.Fatalf("parseEmailCopyResponse: %v", err)
+	}
+	if len(copyResult.Sections) == 0 || copyResult.Sections[0].HTML == nil {
+		t.Fatal("no rich_text section came back")
+	}
+
+	got := *copyResult.Sections[0].HTML
+	if want := styleEmailBodyHTML(`<p style="color:red">Join us</p>`); got != want {
+		t.Fatalf("section html = %q, want the styled form %q", got, want)
+	}
+	if strings.Contains(got, "red") {
+		t.Errorf("the model's own styling survived into the response: %q", got)
 	}
 }
