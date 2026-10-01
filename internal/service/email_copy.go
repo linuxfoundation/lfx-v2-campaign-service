@@ -1033,11 +1033,13 @@ func parseEmailCopyResponse(raw string, allowLegacyShape bool) (*briefs.EmailCop
 		section := &briefs.EmailCopySection{Type: sectionType}
 		if sectionType == "rich_text" {
 			// The ONE place model-authored body HTML becomes a response, so the one place the
-			// service's design is applied. styledBodyHTMLWithinBound drops every attribute the
-			// model wrote and re-dresses the surviving semantic tags in this service's palette and
-			// type scale (email_body_style.go); it falls back to the unstyled HTML if styling
-			// would push the section past maxHTMLRunes, so styling can never turn a valid model
-			// response into a 503.
+			// service's design is applied -- and the one place it is SANITIZED, which matters more:
+			// sanitizeWizardHTML guards the wizard, never this path. styledBodyHTMLWithinBound
+			// drops every attribute the model wrote and re-dresses the surviving semantic tags in
+			// this service's palette and type scale (email_body_style.go); if styling would push
+			// the section past maxHTMLRunes it falls back to the sanitized-but-unstyled HTML, so
+			// styling can never turn a valid model response into a 503 and overflow can never
+			// return the model's own bytes.
 			//
 			// At generation, not at render: the BFF flattens these sections into the single body
 			// string that BOTH the operator's preview and the HubSpot draft are built from, so
@@ -1045,8 +1047,18 @@ func parseEmailCopyResponse(raw string, allowLegacyShape bool) (*briefs.EmailCop
 			// addBodySection instead would leave the preview permanently unstyled, or require the
 			// same palette written a second time in TypeScript.
 			//
-			// No truncation: oversized HTML is rejected above.
-			html := styledBodyHTMLWithinBound(s.HTML, maxHTMLRunes)
+			// No truncation: oversized HTML is rejected above, and the error below is the case no
+			// rewrite of this section fits maxHTMLRunes -- escaping `&` as `&amp;` can outgrow a
+			// bound the raw bytes cleared. Returned as-is rather than wrapped, so it reads like
+			// the "model response is unusable" rejections this function already returns above.
+			// That phrasing is for the LOG, not the wire: the sole caller (GenerateEmailCopy) logs this
+			// error and answers with a fixed ConnServiceUnavailableError whose message is "the AI
+			// platform returned an unreadable response", so the text here is what an on-call
+			// engineer reads, and it is the only place the cause is recorded.
+			html, err := styledBodyHTMLWithinBound(s.HTML, maxHTMLRunes)
+			if err != nil {
+				return nil, err
+			}
 			section.HTML = &html
 		}
 		if sectionType == "button" {

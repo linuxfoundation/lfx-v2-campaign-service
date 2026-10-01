@@ -90,15 +90,32 @@ An `<a>` whose `href` does not survive `httpURL` gets **no style and no target**
 the plain copy it effectively is. An anchor left looking like a link while leading nowhere is a lie
 the reader clicks; this mirrors the wizard's rule that a button with nowhere to go renders as text.
 
-### `styledBodyHTMLWithinBound(html, bound)`
+### `styledBodyHTMLWithinBound(html, bound) (string, error)`
 
-Styles `html`, and returns the **unstyled** input if the result would exceed `bound` runes.
+Returns the richest form of `html` that fits `bound` runes: the styled HTML, or failing that the
+**sanitized-but-unstyled** HTML (`sanitizeEmailBodyHTML` — the same allowlist, the same dropped
+content and the same `href` validation, with no `style` attribute), or an error.
 
 Styling inflates its input by roughly 100-150 bytes per tag, so a section near the per-section
 limit can style past it. That must never turn a valid model response into an error — the operator
 asked for copy, not for a lecture about CSS budgets. An unstyled section in an otherwise styled
-email is a visible imperfection; a 503 is a broken feature. The caller has already rejected `html`
-for exceeding `bound`, so the fallback is in bounds by construction.
+email is a visible imperfection; a 503 is a broken feature.
+
+The fallback is the sanitized form and **never `html` itself**. `html` is the model's bytes as
+received, and `styleEmailBodyHTML` is the only sanitizer on the generate-email-copy response path —
+`sanitizeWizardHTML` guards the wizard and never runs here — so returning the input on overflow put
+`onerror`, a `<script>` and a `url(javascript:)` style into the API response. The model writes the
+section and therefore writes its length, so it also chose whether the sanitizer ran at all: padding
+to within a few hundred runes of `bound` was a reliable bypass. Sanitizing is unconditional for
+that reason — the styling is what may be dropped, the allowlist is not.
+
+The sanitized form is **not** in bounds by construction, which is why the signature carries an
+error. `rewriteHTML` escapes text, so a section of ampersands grows five-fold (`&` → `&amp;`) and
+can clear `bound` as written while exceeding it sanitized. No form of that section is safe to send,
+and the error reuses the caller's existing "model response is unusable" phrasing. That phrasing is for
+the log: `parseEmailCopyResponse`'s caller logs the error and answers with a fixed
+`ConnServiceUnavailableError` reading "the AI platform returned an unreadable response", so this text
+is the only record of which section was unusable.
 
 ### Where the styler is applied, and why there
 
@@ -123,6 +140,9 @@ stage-aware prompt path only; LFXV2-1940 freezes the no-stage prompt byte for by
 `rewriteHTML` never returns an error and never panics on malformed input: the tokenizer's
 `ErrorToken` terminates the walk and whatever was emitted so far is returned. Unparseable markup
 therefore degrades to less output, never to a failed request.
+
+`styledBodyHTMLWithinBound` is the one function here that can fail, and only for LENGTH: a section
+whose sanitized form exceeds `bound` because escaping expanded it. Rewriting itself never fails.
 
 ## Testing
 
@@ -159,9 +179,18 @@ pre-extraction implementation; it is the regression test for `rewriteHTML` itsel
   nothing.
 - **TestEmailBodyAllowedTagsTracksTheStyleTable**: The derived allowlist and the style table have
   the same keys.
-- **TestStyledBodyHTMLWithinBoundFallsBackWhenStylingOverflows** /
-  **...StylesWhatFits** / **...CountsRunesNotBytes**: The fallback fires on overflow, does not fire
-  otherwise, and measures runes rather than bytes.
+- **TestStyledBodyHTMLWithinBoundSanitizesWhatItCannotStyle**: A long section carrying a real
+  payload — `onerror`, a `<script>`, a `url(javascript:)` style, a `javascript:` href — overflows
+  the styled bound at `maxHTMLRunes` itself and comes back sanitized, within bound, with the copy
+  intact and none of the payload tokens. The test asserts its own premise (input inside the bound,
+  styled form outside it), because an input that failed either would pass without ever reaching the
+  overflow branch — which is how its predecessor, a nine-rune `<p>hi</p>`, pinned the fallback
+  without being able to see that the fallback was the raw input.
+- **TestStyledBodyHTMLWithinBoundErrorsWhenEscapingOverflows**: Ampersands that fit as written and
+  not as `&amp;` yield the error, an empty string, and a message reading like the caller's 503 —
+  not the raw input and not an oversized string.
+- **...StylesWhatFits** / **...CountsRunesNotBytes**: The fallback does not fire when the styled
+  form fits, and the bound is measured in runes rather than bytes.
 
 ## Architectural Notes
 
