@@ -122,9 +122,14 @@ type CampaignInput struct {
 	//
 	// Campaign level rather than ad group, deliberately — an exclusion expresses
 	// intent for the whole campaign and must keep applying to an ad group a human
-	// adds later in the UI. SEARCH only: Demand Gen has no keyword criteria at all,
-	// and this field is ignored on that path rather than refused, the same way
-	// Keywords already is.
+	// adds later in the UI. SEARCH only, and REFUSED on Demand Gen rather than
+	// ignored — see the guard in preflightCampaignKind. It is deliberately NOT
+	// modelled on Keywords, which IS ignored there: that silence is defensible
+	// because Demand Gen creates no ad and no keyword criteria at all, so a positive
+	// keyword has nothing it could have attached to and the caller is told as much in
+	// the closing step. An exclusion is the opposite case — its whole job is to stop
+	// spend, so dropping it quietly leaves the operator believing the campaign is
+	// protected while it pays for exactly the queries they named.
 	NegativeKeywords []Keyword
 	// CPCBid is the ad group's manual CPC bid in whole units of the ad ACCOUNT's
 	// currency — the same no-FX-conversion caveat Budget carries applies here.
@@ -972,6 +977,19 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// committed — the negatives at a campaignCriteria:mutate two steps later, the bid
 	// at the adGroups:mutate after that, and a malformed date at the campaign create
 	// itself, which is already one paid resource too late.
+	// REFUSED on Demand Gen rather than dropped, for the same reason the CPC bid below
+	// is. createCampaignNegativeKeywords is called only from CreateCampaign's cascade;
+	// CreateDemandGenCampaign never reads pf.negativeKeywords, so accepting the list
+	// there would validate every term and then discard the lot — and the operator would
+	// read "campaign created" and believe the exclusions are live while the campaign
+	// keeps paying for exactly the queries they named. A silent drop is worse here than
+	// anywhere else in this preflight precisely because the field's whole purpose is to
+	// STOP spend. Every other Search-only input in this block already refuses
+	// (proximity, the five criteria kinds, extension assets, the ad-group list, the
+	// bid); this was the one that neither refused nor applied.
+	if len(in.NegativeKeywords) > 0 && kind == campaignKindDemandGen {
+		return nil, fmt.Errorf("google-ads: campaign-level negative keywords are not supported on %s (this client attaches them only on the Search cascade); omit NegativeKeywords, or create a Search campaign to exclude queries", kind)
+	}
 	negativeKeywords, err := validateNegativeKeywords(in.NegativeKeywords)
 	if err != nil {
 		return nil, err

@@ -592,3 +592,103 @@ func TestCreateCampaign_ShortTargetingMutateResponseIsUnconfirmed(t *testing.T) 
 		t.Errorf("no ids may be persisted from an unconfirmed mutate, got %+v", res)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Sweep fixes (LFXV2-2665): canonical language ids, duplicate ad schedules
+// ---------------------------------------------------------------------------
+
+// The geo twin of this check was caught in review; this is the same defect on the
+// language side. Digits-only is not the id test — "0" names nothing, "01000" is a
+// non-canonical spelling that would send TWO criteria for English, and a 21-digit
+// run overflows the int64 Google exposes these ids as. All three are decidable
+// locally, and all three would otherwise be refused only at the
+// campaignCriteria:mutate that runs AFTER the budget and campaign are committed.
+func TestResolveLanguageList_RejectsNonCanonicalNumericIDs(t *testing.T) {
+	for _, entry := range []string{"0", "000", "01000", "0000000000000000000", "9999999999999999999999"} {
+		if _, err := resolveLanguageList([]string{entry}); err == nil {
+			t.Errorf("language %q is not a canonical positive id and must be rejected", entry)
+		}
+	}
+}
+
+// The over-refusal guard for the tightening above. A canonical numeric id is the
+// escape hatch for every language the curated map does not carry, and refusing one
+// Google would have accepted is the failure mode this whole family must not have.
+func TestResolveLanguageList_StillAcceptsCanonicalNumericIDs(t *testing.T) {
+	for _, entry := range []string{"1000", "1088", "9223372036854775807"} {
+		got, err := resolveLanguageList([]string{entry})
+		if err != nil {
+			t.Fatalf("canonical language id %q must be accepted, got %v", entry, err)
+		}
+		if len(got) != 1 || got[0] != entry {
+			t.Errorf("language %q must pass through byte-identical, got %v", entry, got)
+		}
+	}
+}
+
+// Two identical intervals are one criterion written twice. Google refuses the
+// second as an overlapping ad schedule AFTER the campaign exists, so the repeat is
+// collapsed here — the way languages, age ranges and genders already collapse.
+func TestValidateAdSchedules_CollapsesExactDuplicates(t *testing.T) {
+	got, mods, err := validateAdSchedules([]AdSchedule{
+		{DayOfWeek: "MONDAY", StartHour: 9, StartMinute: 30, EndHour: 17, EndMinute: 0},
+		{DayOfWeek: "monday", StartHour: 9, StartMinute: 30, EndHour: 17, EndMinute: 0},
+	})
+	if err != nil {
+		t.Fatalf("an exact repeat must collapse, not fail: %v", err)
+	}
+	if len(got) != 1 || len(mods) != 1 {
+		t.Fatalf("got %d schedules and %d modifiers, want 1 of each", len(got), len(mods))
+	}
+}
+
+// The same interval carrying two DIFFERENT bid modifiers is a disagreement, not a
+// repeat: one of the two values would be the one silently dropped. Refused, which
+// is the rule devices already apply and for the same reason.
+func TestValidateAdSchedules_RefusesSameIntervalWithDifferentBidModifier(t *testing.T) {
+	_, _, err := validateAdSchedules([]AdSchedule{
+		{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17, BidModifier: floatPtr(1.2)},
+		{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17, BidModifier: floatPtr(1.5)},
+	})
+	if err == nil {
+		t.Fatal("a repeated interval with a conflicting bid modifier must be refused")
+	}
+	// An unset modifier and an explicit one are also a disagreement — the pointer
+	// polarity is load-bearing everywhere else in this file, so it must be here too.
+	if _, _, err := validateAdSchedules([]AdSchedule{
+		{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17},
+		{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17, BidModifier: floatPtr(1.5)},
+	}); err == nil {
+		t.Fatal("unset vs explicit on the same interval must be refused")
+	}
+	// Two equal modifiers written as separate pointers ARE the same thing, and must
+	// collapse rather than trip the conflict check.
+	got, _, err := validateAdSchedules([]AdSchedule{
+		{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17, BidModifier: floatPtr(1.2)},
+		{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17, BidModifier: floatPtr(1.2)},
+	})
+	if err != nil {
+		t.Fatalf("equal modifiers on a repeated interval must collapse: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("got %d schedules, want 1", len(got))
+	}
+}
+
+// The over-refusal guard for the dedupe. Two DIFFERENT windows on the same day are
+// two legitimate criteria — a morning and an evening slot is the most ordinary
+// split there is — and a dedupe keyed too coarsely (on the day alone) would drop
+// one of them.
+func TestValidateAdSchedules_DistinctWindowsOnOneDayBothSurvive(t *testing.T) {
+	got, _, err := validateAdSchedules([]AdSchedule{
+		{DayOfWeek: "MONDAY", StartHour: 6, EndHour: 9},
+		{DayOfWeek: "MONDAY", StartHour: 17, EndHour: 21},
+		{DayOfWeek: "MONDAY", StartHour: 9, StartMinute: 0, EndHour: 9, EndMinute: 30},
+	})
+	if err != nil {
+		t.Fatalf("distinct windows on one day must all be accepted: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d schedules, want 3", len(got))
+	}
+}

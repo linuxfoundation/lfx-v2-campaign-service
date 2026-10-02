@@ -619,6 +619,11 @@ func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenBeforeAnyCreate(t *testi
 		{"sitelinks", `"sitelinks":[{"text":"Register","finalUrl":"https://events.example/kc/register"}]`},
 		{"callouts", `"callouts":["Free workshops"]`},
 		{"ad groups", `"adGroups":[{"name":"Training"}]`},
+		// Validated on BOTH channels but attached only by CreateCampaign's cascade:
+		// CreateDemandGenCampaign never reads pf.negativeKeywords, so anything other than
+		// a refusal means every term was checked and then dropped, leaving the campaign
+		// paying for exactly the queries the caller excluded.
+		{"negative keywords", `"negativeKeywords":[{"text":"free","matchType":"PHRASE"}]`},
 		// demandGenAdGroupCreate has no cpcBidMicros field and demandgen.go never
 		// reads the validated bid, so anything other than a refusal here means the
 		// caller's bid was accepted and silently discarded.
@@ -733,6 +738,7 @@ func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenAdoptionToo(t *testing.T
 		{"sitelinks", `"sitelinks":[{"text":"Register","finalUrl":"https://events.example/kc/register"}]`},
 		{"callouts", `"callouts":["Free workshops"]`},
 		{"ad groups", `"adGroups":[{"name":"Training"}]`},
+		{"negative keywords", `"negativeKeywords":[{"text":"free","matchType":"PHRASE"}]`},
 		{"cpc bid", `"cpcBid":2.5`},
 	}
 	for _, tc := range cases {
@@ -860,4 +866,126 @@ func TestGoogleAds_BadTargetingConfigIsPreCreate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---- googleAdsToggleTargets / googleAdsCampaignAdGroupIDs -------------------
+
+// The direct replacement for the deleted TestGoogleAdsChildIDs. Both helpers read
+// the SAME persisted blob, and the field they read went one-to-many — so the blob
+// shapes that matter are the malformed ones and the LEGACY one, which no row
+// written today produces and which therefore cannot be covered by a cascade test.
+// A silent nil here does not fail a toggle loudly; it toggles a subset.
+func TestGoogleAdsToggleTargets_BlobShapes(t *testing.T) {
+	campaignWith := func(result string) *model.Campaign {
+		if result == "" {
+			return &model.Campaign{}
+		}
+		return &model.Campaign{Result: json.RawMessage(result)}
+	}
+
+	t.Run("nil campaign", func(t *testing.T) {
+		targets, kw, incomplete := googleAdsToggleTargets(nil)
+		if targets != nil || kw || incomplete != nil {
+			t.Errorf("got (%v, %v, %v), want (nil, false, nil)", targets, kw, incomplete)
+		}
+		if ids := googleAdsCampaignAdGroupIDs(nil); ids != nil {
+			t.Errorf("googleAdsCampaignAdGroupIDs(nil) = %v, want nil", ids)
+		}
+	})
+
+	t.Run("empty and unparseable results yield nothing", func(t *testing.T) {
+		for _, result := range []string{"", `not json`, `{}`} {
+			targets, _, incomplete := googleAdsToggleTargets(campaignWith(result))
+			if targets != nil || incomplete != nil {
+				t.Errorf("result %q: got (%v, %v), want (nil, nil)", result, targets, incomplete)
+			}
+			if ids := googleAdsCampaignAdGroupIDs(campaignWith(result)); len(ids) != 0 {
+				t.Errorf("result %q: got ids %v, want none", result, ids)
+			}
+		}
+	})
+
+	// A row written before AdGroups existed is single-group by construction, so the
+	// scalar pair IS the whole campaign. Dropping it would leave such a campaign
+	// un-toggleable with no error to say so.
+	t.Run("legacy scalar-only row", func(t *testing.T) {
+		c := campaignWith(`{"adGroupId":"333","adId":"444","keywordCriteriaIds":["9"]}`)
+		targets, kw, incomplete := googleAdsToggleTargets(c)
+		if len(targets) != 1 || targets[0].AdGroupID != "333" ||
+			len(targets[0].AdIDs) != 1 || targets[0].AdIDs[0] != "444" {
+			t.Fatalf("targets = %+v, want the scalar pair as one target", targets)
+		}
+		if !kw || incomplete != nil {
+			t.Errorf("got (keywords=%v, incomplete=%v), want (true, nil)", kw, incomplete)
+		}
+		if ids := googleAdsCampaignAdGroupIDs(c); !ids["333"] || len(ids) != 1 {
+			t.Errorf("ids = %v, want just the scalar ad group", ids)
+		}
+	})
+
+	// A legacy row missing half the pair cannot be toggled at all — but it is not
+	// "incomplete" in the reportable sense, because there is no per-group entry to name.
+	t.Run("legacy row with half a pair", func(t *testing.T) {
+		targets, kw, incomplete := googleAdsToggleTargets(campaignWith(`{"adGroupId":"333"}`))
+		if targets != nil || incomplete != nil {
+			t.Errorf("got (%v, %v), want (nil, nil)", targets, incomplete)
+		}
+		if kw {
+			t.Error("no keywordCriteriaIds in the blob, so keywordsProvisioned must be false")
+		}
+	})
+
+	// The multi-group shape, with the scalar pair present as the copy of the first
+	// entry it always is: it must not reintroduce group 1 a second time.
+	t.Run("multi group with the scalar copy", func(t *testing.T) {
+		c := campaignWith(`{"adGroupId":"333","adId":"444","adGroups":[
+			{"name":"Training","id":"333","adIds":["444","445"],"keywordCriteriaIds":["9"]},
+			{"name":"Conference","id":"334","adIds":["446"]}
+		]}`)
+		targets, kw, incomplete := googleAdsToggleTargets(c)
+		if len(targets) != 2 {
+			t.Fatalf("targets = %+v, want one per group with no duplicate for the scalar", targets)
+		}
+		if targets[0].AdGroupID != "333" || len(targets[0].AdIDs) != 2 || targets[1].AdGroupID != "334" {
+			t.Errorf("targets = %+v, want each group with its OWN ads in creation order", targets)
+		}
+		// Campaign-wide: the second group has no keywords and must not drag the gate down.
+		if !kw || incomplete != nil {
+			t.Errorf("got (keywords=%v, incomplete=%v), want (true, nil)", kw, incomplete)
+		}
+		ids := googleAdsCampaignAdGroupIDs(c)
+		if len(ids) != 2 || !ids["333"] || !ids["334"] {
+			t.Errorf("ids = %v, want exactly 333 and 334", ids)
+		}
+	})
+
+	// A group whose create did not finish leaves a trace with no id or no ad. It is
+	// reported by a name the operator can find in the UI, never silently skipped, and
+	// the groups that DID finish still toggle.
+	t.Run("incomplete groups are reported, not dropped", func(t *testing.T) {
+		targets, _, incomplete := googleAdsToggleTargets(campaignWith(`{"adGroups":[
+			{"name":"Training","id":"333","adIds":["444"]},
+			{"name":"Conference"},
+			{"id":"335","adIds":["  "]},
+			{"name":"Workshops","id":"336"}
+		]}`))
+		if len(targets) != 1 || targets[0].AdGroupID != "333" {
+			t.Fatalf("targets = %+v, want only the finished group", targets)
+		}
+		want := []string{"Conference", "#3", "Workshops"}
+		if fmt.Sprint(incomplete) != fmt.Sprint(want) {
+			t.Errorf("incomplete = %v, want %v (position stands in for a missing name)", incomplete, want)
+		}
+	})
+
+	// Whitespace is trimmed rather than interpolated into a resource name. An ad id of
+	// " " would otherwise produce "customers/X/adGroupAds/333~ ".
+	t.Run("whitespace ids are trimmed", func(t *testing.T) {
+		targets, _, _ := googleAdsToggleTargets(campaignWith(
+			`{"adGroups":[{"name":"Training","id":" 333 ","adIds":[" 444 ","  "]}]}`))
+		if len(targets) != 1 || targets[0].AdGroupID != "333" ||
+			len(targets[0].AdIDs) != 1 || targets[0].AdIDs[0] != "444" {
+			t.Errorf("targets = %+v, want trimmed ids with the blank ad dropped", targets)
+		}
+	})
 }

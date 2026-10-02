@@ -291,7 +291,9 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 // resolveLanguageList resolves ISO 639-1 codes and raw numeric language constant
 // ids to constant ids, deduping by the RESOLVED id so "EN" and "1000" collapse.
 // Entries are told apart by SHAPE, as on the geo side: an ISO 639-1 code is
-// letters, a constant id is all digits, so no input is ambiguous.
+// letters, a constant id is all digits, so no input is ambiguous — and, also as
+// on the geo side, a numeric entry must be the CANONICAL spelling of its id, so
+// that the dedupe cannot be defeated by a leading zero.
 func resolveLanguageList(languages []string) ([]string, error) {
 	if len(languages) == 0 {
 		return nil, nil
@@ -309,8 +311,16 @@ func resolveLanguageList(languages []string) ([]string, error) {
 		var id string
 		switch {
 		case numericID(entry):
-			if strings.Trim(entry, "0") == "" {
-				return nil, fmt.Errorf("google-ads: language %q is not a valid language constant id", entry)
+			// Digits-only is not the id test — the same three locally-decidable faults
+			// resolveGeoEntry refuses apply here: "0" names nothing, "01000" is a
+			// non-canonical spelling of 1000 that would send TWO criteria for English,
+			// and a 21-digit run overflows the int64 Google exposes these ids as.
+			// canonicalCampaignID is reused for the same reason it is there — it is this
+			// package's answer for this class of value, and collapsing every spelling to
+			// one is what makes the dedupe below correct. Existence is still Google's to
+			// decide: a well-formed id naming no language is refused upstream.
+			if canonicalCampaignID(entry) == "" {
+				return nil, fmt.Errorf("google-ads: language %q is not the canonical base-10 spelling of a positive language constant id", entry)
 			}
 			id = entry
 		default:
@@ -354,6 +364,13 @@ func validateAdSchedules(schedules []AdSchedule) ([]adScheduleInfo, []*float64, 
 	}
 	out := make([]adScheduleInfo, 0, len(schedules))
 	mods := make([]*float64, 0, len(schedules))
+	// Exact duplicates ARE decidable, unlike the overlap question above: the same day
+	// and the same half-open window is one criterion written twice, and Google refuses
+	// the second as an overlapping ad schedule AFTER the campaign exists. Handled the
+	// way the rest of this file handles repeats — collapse when the two say the same
+	// thing, refuse when they disagree about the bid, which is the device rule and for
+	// the device reason: one of the two values would be the one silently dropped.
+	seen := make(map[string]int, len(schedules))
 	for i, s := range schedules {
 		day := strings.ToUpper(strings.TrimSpace(s.DayOfWeek))
 		if _, ok := adScheduleDays[day]; !ok {
@@ -389,16 +406,40 @@ func validateAdSchedules(schedules []AdSchedule) ([]adScheduleInfo, []*float64, 
 				return nil, nil, err
 			}
 		}
-		out = append(out, adScheduleInfo{
+		info := adScheduleInfo{
 			DayOfWeek:   day,
 			StartHour:   s.StartHour,
 			StartMinute: startMinute,
 			EndHour:     s.EndHour,
 			EndMinute:   endMinute,
-		})
+		}
+		key := fmt.Sprintf("%s|%d:%s|%d:%s", day, s.StartHour, startMinute, s.EndHour, endMinute)
+		if prev, dup := seen[key]; dup {
+			if !sameBidModifier(mods[prev], s.BidModifier) {
+				return nil, nil, fmt.Errorf("google-ads: ad schedule %d repeats %s %02d:%02d-%02d:%02d with a different bid modifier — Google accepts one criterion per interval, and the second value would be the one silently dropped", i, day, s.StartHour, s.StartMinute, s.EndHour, s.EndMinute)
+			}
+			continue
+		}
+		seen[key] = len(out)
+		out = append(out, info)
 		mods = append(mods, s.BidModifier)
 	}
 	return out, mods, nil
+}
+
+// sameBidModifier compares two optional bid modifiers by VALUE, so that a repeated
+// interval carrying the same adjustment written as a separate pointer still
+// collapses. NaN cannot reach here — validateBidModifier refuses it before the
+// duplicate check — so ordinary float equality is total over the values that do.
+func sameBidModifier(a, b *float64) bool {
+	switch {
+	case a == nil && b == nil:
+		return true
+	case a == nil || b == nil:
+		return false
+	default:
+		return *a == *b
+	}
 }
 
 // validateDeviceBidModifiers bounds the device list, refusing a duplicate device:

@@ -693,6 +693,45 @@ func TestPreflight_CPCBidIsRefusedOnDemandGen(t *testing.T) {
 	}
 }
 
+// Campaign-level negative keywords are refused on Demand Gen for the same reason
+// the CPC bid above is: createCampaignNegativeKeywords is reached only from
+// CreateCampaign's cascade, and CreateDemandGenCampaign never reads
+// pf.negativeKeywords — so accepting the list there would validate every term and
+// then discard the lot, while the operator reads "campaign created" and believes
+// the exclusions are live. Deliberately NOT modelled on Keywords, which IS ignored
+// on that channel: a positive keyword has nothing to attach to there, whereas an
+// exclusion exists to stop spend.
+func TestPreflight_NegativeKeywordsAreRefusedOnDemandGen(t *testing.T) {
+	in := CampaignInput{
+		Project:          "tlf",
+		EventName:        "KubeCon EU 2026",
+		Budget:           500,
+		RegistrationURL:  "https://events.linuxfoundation.org/kubecon-eu-2026/",
+		NegativeKeywords: []Keyword{{Text: "jobs", MatchType: MatchTypeBroad}},
+	}
+	c := &Client{account: AccountConfig{CustomerID: "1234567890"}}
+
+	if _, err := c.preflightCampaignKind(campaignKindDemandGen, in); err == nil {
+		t.Error("negative keywords on Demand Gen must be refused — that cascade never attaches them")
+	}
+	// The same list is valid for Search, so the refusal is the kind's doing and not a
+	// newly-rejected keyword value.
+	pf, err := c.preflightCampaignKind(campaignKindSearch, in)
+	if err != nil {
+		t.Fatalf("the same negative keywords must still be accepted for Search: %v", err)
+	}
+	if len(pf.negativeKeywords) != 1 || pf.negativeKeywords[0].Text != "jobs" {
+		t.Errorf("negativeKeywords = %+v, want the one validated exclusion", pf.negativeKeywords)
+	}
+	// An ABSENT list stays valid on Demand Gen: the refusal keys on a supplied list,
+	// not on the channel, so it cannot refuse the shape every existing Demand Gen
+	// caller sends.
+	in.NegativeKeywords = nil
+	if _, err := c.preflightCampaignKind(campaignKindDemandGen, in); err != nil {
+		t.Errorf("Demand Gen with no negative keywords must still validate, got %v", err)
+	}
+}
+
 // maxCPCBid is sized for the weakest currency an ad account can be opened in, not for
 // USD, because validateCPCBid is handed a bid in the ACCOUNT's currency and never
 // converts. An ordinary bid in a low-unit currency must not be refused — that is the

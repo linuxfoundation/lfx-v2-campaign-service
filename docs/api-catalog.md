@@ -687,10 +687,14 @@ negativeKeywords?:              — OPTIONAL Search keyword EXCLUSIONS, attached
                                   in both. An empty text or unsupported matchType fails the job BEFORE
                                   any Google Ads request is made.
 
-                                  SEARCH only: Demand Gen has no keyword criteria, and this field is
-                                  IGNORED on that channel rather than refused — the same way `keywords`
-                                  already is. Omitted/empty, no exclusions are attached and the campaign
-                                  is eligible for every query its positive keywords match.
+                                  SEARCH ONLY, and REFUSED rather than ignored when `campaignType` is
+                                  `demand-gen` — unlike `keywords`, which IS ignored there. The
+                                  difference is deliberate: Demand Gen creates no ad and no keyword
+                                  criteria, so a positive keyword has nothing to attach to, but an
+                                  exclusion exists to STOP spend and dropping it quietly would leave the
+                                  campaign paying for exactly the queries you named. Omitted/empty, no
+                                  exclusions are attached and the campaign is eligible for every query
+                                  its positive keywords match.
 cpcBid?: number                 — OPTIONAL manual CPC bid for the ad group, in whole units of the ad
                                   ACCOUNT's currency (the same no-FX-conversion caveat `budget`
                                   carries). Accepted range 0.01..100000.0 inclusive; NaN/Inf or a

@@ -1063,6 +1063,18 @@ create is the reason a cap here is sized for real inputs, not for tidiness.
 Dedupe is **per list** — a term may legitimately be both a positive and a
 negative keyword, so a cross-list collision is not refused.
 
+SEARCH only, and **refused** on Demand Gen rather than ignored.
+`createCampaignNegativeKeywords` is reached only from `CreateCampaign`'s
+cascade; `CreateDemandGenCampaign` never reads `pf.negativeKeywords`, so
+accepting the list there would validate every term and discard the lot while
+the operator reads "campaign created" and believes the exclusions are live.
+This deliberately does NOT follow `Keywords`, which IS ignored on that channel:
+Demand Gen creates no ad and no keyword criteria, so a positive keyword has
+nothing to attach to and the closing step says so, whereas an exclusion exists
+to STOP spend and a silent drop keeps the campaign paying for exactly the
+queries the caller named. The refusal keys on a *supplied* list, so a Demand Gen
+caller who omits the field is unaffected.
+
 All three are validated inside `preflightCampaignKind`, BEFORE the first budget
 `:mutate`, so a bad local input can never orphan a paid resource; the same
 validation runs in `ValidateCampaignInput`, so the adoption path cannot accept
@@ -1157,14 +1169,30 @@ gives: a shared mutate would make either list's failure discard the other, and
 each call's failure sentence would then be false for the other's contents.
 
 `Languages` resolve ISO 639-1 codes or raw numeric constant ids by the same
-shape test the geo list uses, deduped by resolved id. `AdSchedules` carry
+shape test the geo list uses, deduped by resolved id — and, exactly as on the
+geo side, a numeric entry must be the CANONICAL spelling of its id.
+`resolveLanguageList` puts it through the same reused `canonicalCampaignID`,
+refusing the same three locally-decidable faults: `"0"` names nothing,
+`"01000"` is a non-canonical spelling of `1000` that would send TWO criteria
+for English, and a 21-digit run overflows the int64. Collapsing every spelling
+to one is also what makes the dedupe below it correct — a leading zero would
+otherwise defeat it. `AdSchedules` carry
 Google's enum-valued minutes (`ZERO`/`FIFTEEN`/`THIRTY`/`FORTY_FIVE`), an end
 hour that reaches 24 only at minute 0, and an end strictly after the start.
 There is deliberately no overlap check between intervals: Google rejects a true
 overlap itself, and a test here would have to decide whether 09:00-12:00 and
 12:00-17:00 touch — they do not — with a wrong answer refusing an ordinary
-split-day schedule. `DeviceBidModifiers` refuse a repeated device, which Google
-rejects as a criterion conflict only after the campaign exists.
+split-day schedule. An EXACT repeat is a different question and is handled:
+the same day with the same half-open window is one criterion written twice, and
+Google refuses the second as an overlapping ad schedule after the campaign
+exists. It is collapsed when the two entries agree and REFUSED when they
+disagree about the bid modifier — the device rule, for the device reason: one
+of the two values would be the one silently dropped. `sameBidModifier` compares
+by value so a repeat carrying the same adjustment through a separate pointer
+still collapses; NaN cannot reach it, because `validateBidModifier` runs
+earlier in the same loop iteration. `DeviceBidModifiers` refuse a repeated
+device, which Google rejects as a criterion conflict only after the campaign
+exists.
 `ExcludedAgeRanges`/`ExcludedGenders` are exclusions by construction, because
 Google targets demographics by excluding the buckets you do not want.
 
