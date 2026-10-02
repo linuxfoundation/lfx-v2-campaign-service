@@ -550,6 +550,19 @@ func (s *AudienceExploreService) recordComposedAudience(
 			return created, nil
 		}
 		lastErr = cerr
+		// A DEFINITE refusal is not retried. The retry exists to ride out a connection blip, and
+		// these two sentinels are the repository's settled answer: the brief was archived between
+		// the compose and the record (ErrNotFound), or another build for the same brief and
+		// platform already holds the slot (ErrAudienceBuildInFlight). Retrying buys a wasted
+		// round trip and 150ms of the caller's deadline.
+		//
+		// It also mislabels the outcome. The partial this error becomes tells the operator the
+		// lists exist and to attach them by hand rather than retry -- true of an archived brief,
+		// and wrong for an in-flight build, which is the one case where a LATER retry by the
+		// operator would succeed. Breaking out keeps the message attached to the right cause.
+		if errors.Is(cerr, domain.ErrNotFound) || errors.Is(cerr, domain.ErrAudienceBuildInFlight) {
+			break
+		}
 	}
 	return nil, lastErr
 }

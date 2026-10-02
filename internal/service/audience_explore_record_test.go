@@ -307,6 +307,45 @@ func TestComposeAudienceMasterRefusesBeforeCreatingAnyList(t *testing.T) {
 	}
 }
 
+// TestComposeAudienceMasterDoesNotRetryADefiniteRefusal is the counterpart to the retry test
+// below: a transient blip earns one bounded retry, a SETTLED answer earns none.
+//
+// `ErrNotFound` means the brief was archived between the compose and the record.
+// `ErrAudienceBuildInFlight` means another build for the same brief and platform holds the slot.
+// Neither changes in 150ms, so retrying spends the caller's deadline for nothing -- and the
+// partial it produces tells the operator to attach by hand rather than retry, which is wrong for
+// an in-flight build, the one case where a later retry WOULD succeed.
+func TestComposeAudienceMasterDoesNotRetryADefiniteRefusal(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"the brief was archived mid-request", domain.ErrNotFound},
+		{"another build holds the slot", domain.ErrAudienceBuildInFlight},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			explorer := &fakeExplorer{outcome: composedOutcome()}
+			repo := newCountingAudienceRepo()
+			repo.createE = tc.err
+			briefs := newFakeBriefRepo()
+			seedBrief(t, briefs, "proj-1", "brief-1")
+
+			svc := NewAudienceExploreService(explorer)
+			svc.SetAudienceRepo(repo)
+			svc.SetBriefRepo(briefs)
+
+			_, err := svc.ComposeAudienceMaster(context.Background(), composePayload("brief-1"))
+			require.Error(t, err)
+
+			assert.Equal(t, 1, repo.calls,
+				"a settled refusal must not be retried; it costs a round trip and 150ms of the caller's deadline")
+			assert.Equal(t, 1, explorer.composeCalls, "and the list creates are never repeated")
+		})
+	}
+}
+
 // When the lists exist and only the attachment failed, the caller gets the fifth
 // partial shape -- the one carrying a CONFIRMED master. It is a partial rather than a
 // 500 because a 500 invites the retry that mints a second master list; the UI
