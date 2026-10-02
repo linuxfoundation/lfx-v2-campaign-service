@@ -2181,6 +2181,9 @@ func unmarshalAudienceQaChecksResponseBodyToLfxv2campaignserviceaudiencebuilderA
 	res.SignalMapping = unmarshalAudienceQaCheckResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceQaCheck(v.SignalMapping)
 	res.Suppression = unmarshalAudienceQaSuppressionCheckResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceQaSuppressionCheck(v.Suppression)
 	res.ExclusionCompleteness = unmarshalAudienceQaExclusionCheckResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceQaExclusionCheck(v.ExclusionCompleteness)
+	if v.CurrentRegistrants != nil {
+		res.CurrentRegistrants = unmarshalAudienceQaCheckResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceQaCheck(v.CurrentRegistrants)
+	}
 
 	return res
 }

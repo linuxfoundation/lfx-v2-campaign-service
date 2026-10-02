@@ -10493,6 +10493,8 @@ definitions:
         title: AudienceQaChecks
         type: object
         properties:
+            current_registrants:
+                $ref: '#/definitions/AudienceQaCheck'
             exclusion_completeness:
                 $ref: '#/definitions/AudienceQaExclusionCheck'
             signal_mapping:
@@ -10500,6 +10502,21 @@ definitions:
             suppression:
                 $ref: '#/definitions/AudienceQaSuppressionCheck'
         example:
+            current_registrants:
+                findings:
+                    - fix: Deleniti magnam nemo cum delectus.
+                      message: Omnis magnam dolor et.
+                      severity: MEDIUM
+                    - fix: Deleniti magnam nemo cum delectus.
+                      message: Omnis magnam dolor et.
+                      severity: MEDIUM
+                    - fix: Deleniti magnam nemo cum delectus.
+                      message: Omnis magnam dolor et.
+                      severity: MEDIUM
+                    - fix: Deleniti magnam nemo cum delectus.
+                      message: Omnis magnam dolor et.
+                      severity: MEDIUM
+                verdict: NEEDS VERIFY
             exclusion_completeness:
                 exclusion_count: 2330582599606502307
                 findings:
@@ -10630,10 +10647,10 @@ definitions:
                     $ref: '#/definitions/AudienceQaCandidate'
                 description: Matches to choose between; set only when needs_disambiguation is true
                 example:
-                    - list_id: Non consequuntur qui qui impedit assumenda voluptas.
+                    - list_id: Qui impedit assumenda voluptas.
                       name: Consequuntur provident nostrum vel ut.
                       size: 4274611004106560413
-                    - list_id: Non consequuntur qui qui impedit assumenda voluptas.
+                    - list_id: Qui impedit assumenda voluptas.
                       name: Consequuntur provident nostrum vel ut.
                       size: 4274611004106560413
             checks:
@@ -10682,19 +10699,34 @@ definitions:
                     - FAIL
         example:
             candidates:
-                - list_id: Non consequuntur qui qui impedit assumenda voluptas.
+                - list_id: Qui impedit assumenda voluptas.
                   name: Consequuntur provident nostrum vel ut.
                   size: 4274611004106560413
-                - list_id: Non consequuntur qui qui impedit assumenda voluptas.
+                - list_id: Qui impedit assumenda voluptas.
                   name: Consequuntur provident nostrum vel ut.
                   size: 4274611004106560413
-                - list_id: Non consequuntur qui qui impedit assumenda voluptas.
+                - list_id: Qui impedit assumenda voluptas.
                   name: Consequuntur provident nostrum vel ut.
                   size: 4274611004106560413
-                - list_id: Non consequuntur qui qui impedit assumenda voluptas.
+                - list_id: Qui impedit assumenda voluptas.
                   name: Consequuntur provident nostrum vel ut.
                   size: 4274611004106560413
             checks:
+                current_registrants:
+                    findings:
+                        - fix: Deleniti magnam nemo cum delectus.
+                          message: Omnis magnam dolor et.
+                          severity: MEDIUM
+                        - fix: Deleniti magnam nemo cum delectus.
+                          message: Omnis magnam dolor et.
+                          severity: MEDIUM
+                        - fix: Deleniti magnam nemo cum delectus.
+                          message: Omnis magnam dolor et.
+                          severity: MEDIUM
+                        - fix: Deleniti magnam nemo cum delectus.
+                          message: Omnis magnam dolor et.
+                          severity: MEDIUM
+                    verdict: NEEDS VERIFY
                 exclusion_completeness:
                     exclusion_count: 2330582599606502307
                     findings:
@@ -10934,7 +10966,7 @@ definitions:
         properties:
             copy:
                 description: Ad copy
-                example: Officiis eligendi ut esse fugiat vel ut.
+                example: Qui sunt ab corrupti veniam eos.
             delivery_type:
                 type: string
                 description: Delivery surface this brief was authored for.
@@ -10944,32 +10976,32 @@ definitions:
                     - email
             event_details:
                 description: Extracted event/course details
-                example: Enim inventore dicta corrupti.
+                example: Officiis eligendi ut esse fugiat vel ut.
             event_slug:
                 type: string
                 description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
-                example: Asperiores natus.
+                example: Aut molestiae aperiam est.
             id:
                 type: string
                 description: Brief UUID
-                example: Fugit nam minima doloribus quas.
+                example: Unde possimus culpa asperiores natus.
             keywords:
                 description: Keyword list
-                example: Qui sunt ab corrupti veniam eos.
+                example: Est cupiditate aut voluptas repudiandae.
             platforms:
                 type: array
                 items:
                     type: string
-                    example: Impedit aut molestiae aperiam.
+                    example: Quas maxime aliquam dolores voluptas.
                 description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                 example:
-                    - Ab suscipit error tempora facilis explicabo.
-                    - Quas maxime aliquam dolores voluptas.
-                    - Natus ipsa qui id nesciunt porro quis.
+                    - Ipsa qui id.
+                    - Porro quis.
+                    - Enim inventore dicta corrupti.
             program_type:
                 type: string
                 description: Funnel context
-                example: education
+                example: membership
                 enum:
                     - events
                     - education
@@ -10977,7 +11009,7 @@ definitions:
             project_id:
                 type: string
                 description: Owning project
-                example: Qui aliquid unde.
+                example: Exercitationem vel.
             stage:
                 type: string
                 description: Stage within an email series. Empty for paid, which has no series.
@@ -11000,33 +11032,34 @@ definitions:
                     - archived
             targeting:
                 description: Targeting recommendation
-                example: Est cupiditate aut voluptas repudiandae.
+                example: Qui porro nulla nihil ratione in.
             url:
                 type: string
                 description: Event/course page URL
-                example: Exercitationem vel.
+                example: Ab suscipit error tempora facilis explicabo.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 6596813229849728371
+                example: 572991472850695977
                 format: int64
         example:
-            copy: Qui dolorum voluptatem id deleniti.
+            copy: Nemo aut labore similique consectetur et.
             delivery_type: email
-            event_details: At eum consequatur.
-            event_slug: Voluptatibus facilis quibusdam corrupti natus.
-            id: Nulla nihil ratione.
-            keywords: Accusamus aut.
+            event_details: Nihil deserunt.
+            event_slug: Nostrum mollitia et.
+            id: Perspiciatis voluptatibus facilis quibusdam.
+            keywords: Qui in et.
             platforms:
-                - Mollitia et.
-                - Iure incidunt tempore.
-            program_type: membership
-            project_id: Libero accusantium.
+                - Eum consequatur nam qui.
+                - Voluptatem id deleniti eaque accusamus aut.
+                - Quibusdam corporis et et.
+            program_type: events
+            project_id: Natus velit a.
             stage: Registration Push
-            status: archived
-            targeting: Quibusdam corporis et et.
-            url: A voluptatem.
-            version: 1040785066664545175
+            status: draft
+            targeting: Iusto nostrum autem veritatis a.
+            url: Iure incidunt tempore.
+            version: 6458430196530895706
         required:
             - id
             - project_id
@@ -11042,7 +11075,7 @@ definitions:
         properties:
             copy:
                 description: Ad copy
-                example: Laudantium nihil qui.
+                example: Placeat eligendi illo.
             delivery_type:
                 type: string
                 description: Delivery surface this brief was authored for.
@@ -11052,26 +11085,25 @@ definitions:
                     - email
             event_details:
                 description: Extracted event/course details
-                example: Rerum sit.
+                example: Quaerat quidem.
             event_slug:
                 type: string
                 description: Event/course slug. Unique with delivery_type and stage, not alone.
-                example: cj
+                example: np
                 minLength: 1
             keywords:
                 description: Keyword list
-                example: Ex sint provident quaerat quidem.
+                example: Eum expedita.
             platforms:
                 type: array
                 items:
                     type: string
-                    example: In et quo iusto nostrum autem.
+                    example: Similique vero.
                 description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                 example:
-                    - Qui doloribus non.
-                    - Aut laudantium consequuntur.
-                    - In ex ipsum.
-                    - Vero amet suscipit non porro.
+                    - Non porro ab rerum.
+                    - Ipsa laudantium nihil.
+                    - Minima ex sint.
             program_type:
                 type: string
                 description: Funnel context
@@ -11094,24 +11126,25 @@ definitions:
                     - Post-Event
             targeting:
                 description: Targeting recommendation
-                example: Placeat eligendi illo.
+                example: Eveniet omnis.
             url:
                 type: string
                 description: Event/course page URL
-                example: Similique consectetur et illo.
+                example: Doloremque in ex.
         example:
-            copy: At nemo officia doloribus.
+            copy: Autem saepe veritatis est maxime.
             delivery_type: email
-            event_details: Perspiciatis nulla labore sunt tempore iusto omnis.
-            event_slug: t8a
-            keywords: Autem saepe veritatis est maxime.
+            event_details: At nemo officia doloribus.
+            event_slug: uco
+            keywords: In voluptatem consequatur repellat magnam.
             platforms:
-                - Et sunt animi et harum rem.
-                - Cumque vel beatae minus nulla.
+                - Rem alias cumque.
+                - Beatae minus nulla.
+                - Perspiciatis nulla labore sunt tempore iusto omnis.
             program_type: membership
             stage: Registration Push
-            targeting: In voluptatem consequatur repellat magnam.
-            url: Ut quo incidunt.
+            targeting: Odit necessitatibus ad consequatur error.
+            url: Sunt animi.
         required:
             - program_type
             - event_slug
@@ -12141,11 +12174,11 @@ definitions:
             description:
                 type: string
                 description: Event description
-                example: Odit necessitatibus ad consequatur error.
+                example: Earum vel ut quo quas placeat cumque.
             end_date:
                 type: string
                 description: Event end date, same caveat as start_date
-                example: Libero perferendis vero porro odio natus aut.
+                example: Ducimus hic.
             event_name:
                 type: string
                 description: Event name
@@ -12153,7 +12186,7 @@ definitions:
             extracted_from:
                 type: string
                 description: Which strategy produced this record — the whole record came from exactly one of them
-                example: fallback
+                example: opengraph
                 enum:
                     - jsonld
                     - opengraph
@@ -12161,27 +12194,27 @@ definitions:
             image:
                 type: string
                 description: Event image URL
-                example: Ducimus hic.
+                example: Odit et ut odio sit.
             location:
                 type: string
                 description: Event location as written on the page — free text, not a resolved place
-                example: Earum vel ut quo quas placeat cumque.
+                example: Consequatur autem soluta ipsam.
             start_date:
                 type: string
                 description: Event start date exactly as the page states it; NOT normalised to RFC 3339, because the source rarely is
-                example: Consequatur autem soluta ipsam.
+                example: Libero perferendis vero porro odio natus aut.
             url:
                 type: string
                 description: 'The event''s own landing page, as the page declares it (JSON-LD url / og:url), falling back to the URL that was fetched when it declares none. NOT necessarily the fetched URL: a caller commonly pastes a link carrying tracking parameters, and the page''s declared canonical is the better destination for an ad'
-                example: Odit et ut odio sit.
+                example: Fuga itaque placeat recusandae ut.
         example:
-            description: Itaque placeat recusandae ut est voluptatem aperiam.
-            end_date: Veniam ex et qui suscipit at placeat.
+            description: Aperiam sunt atque et.
+            end_date: Et qui suscipit at placeat consequatur.
             event_name: KubeCon + CloudNativeCon Europe 2026
             extracted_from: jsonld
-            image: Culpa illo ipsum sed saepe voluptatem.
-            location: Atque et et.
-            start_date: Perferendis et.
+            image: Illo ipsum sed saepe voluptatem.
+            location: Praesentium perferendis.
+            start_date: Quos veniam.
             url: Voluptatem corrupti qui quaerat maiores neque.
         required:
             - extracted_from
@@ -13536,6 +13569,11 @@ definitions:
         title: LfxV2CampaignServiceAudienceBuilderRunAudienceQaRequestBody
         type: object
         properties:
+            event_name:
+                type: string
+                description: This edition's event name, so an included registration list for THIS event can be told from another event's
+                example: o
+                minLength: 1
             list_ref:
                 type: string
                 description: List id or name to audit
@@ -13550,9 +13588,10 @@ definitions:
                 description: The send targets the EU, so a GDPR suppression is expected
                 example: false
         example:
-            list_ref: o
-            targets_ca: true
-            targets_eu: true
+            event_name: v02
+            list_ref: kq5
+            targets_ca: false
+            targets_eu: false
         required:
             - list_ref
     LfxV2CampaignServiceAudienceBuilderSearchAudienceListsResponseBody:

@@ -1046,6 +1046,7 @@ paths:
                         schema:
                             $ref: '#/components/schemas/RunAudienceQaRequestBody'
                         example:
+                            event_name: bc
                             list_ref: "y"
                             targets_ca: true
                             targets_eu: true
@@ -1058,16 +1059,31 @@ paths:
                                 $ref: '#/components/schemas/AudienceQaResult'
                             example:
                                 candidates:
-                                    - list_id: Non consequuntur qui qui impedit assumenda voluptas.
+                                    - list_id: Qui impedit assumenda voluptas.
                                       name: Consequuntur provident nostrum vel ut.
                                       size: 4274611004106560413
-                                    - list_id: Non consequuntur qui qui impedit assumenda voluptas.
+                                    - list_id: Qui impedit assumenda voluptas.
                                       name: Consequuntur provident nostrum vel ut.
                                       size: 4274611004106560413
-                                    - list_id: Non consequuntur qui qui impedit assumenda voluptas.
+                                    - list_id: Qui impedit assumenda voluptas.
                                       name: Consequuntur provident nostrum vel ut.
                                       size: 4274611004106560413
                                 checks:
+                                    current_registrants:
+                                        findings:
+                                            - fix: Deleniti magnam nemo cum delectus.
+                                              message: Omnis magnam dolor et.
+                                              severity: MEDIUM
+                                            - fix: Deleniti magnam nemo cum delectus.
+                                              message: Omnis magnam dolor et.
+                                              severity: MEDIUM
+                                            - fix: Deleniti magnam nemo cum delectus.
+                                              message: Omnis magnam dolor et.
+                                              severity: MEDIUM
+                                            - fix: Deleniti magnam nemo cum delectus.
+                                              message: Omnis magnam dolor et.
+                                              severity: MEDIUM
+                                        verdict: NEEDS VERIFY
                                     exclusion_completeness:
                                         exclusion_count: 2330582599606502307
                                         findings:
@@ -14303,6 +14319,8 @@ components:
         AudienceQaChecks:
             type: object
             properties:
+                current_registrants:
+                    $ref: '#/components/schemas/AudienceQaCheck'
                 exclusion_completeness:
                     $ref: '#/components/schemas/AudienceQaExclusionCheck'
                 signal_mapping:
@@ -14310,6 +14328,21 @@ components:
                 suppression:
                     $ref: '#/components/schemas/AudienceQaSuppressionCheck'
             example:
+                current_registrants:
+                    findings:
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
+                          severity: HIGH
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
+                          severity: HIGH
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
+                          severity: HIGH
+                        - fix: Explicabo cupiditate rerum.
+                          message: Voluptas et accusamus quia et officiis ipsum.
+                          severity: HIGH
+                    verdict: FAIL
                 exclusion_completeness:
                     exclusion_count: 1582559252019194505
                     findings:
@@ -14437,13 +14470,13 @@ components:
                         $ref: '#/components/schemas/AudienceQaCandidate'
                     description: Matches to choose between; set only when needs_disambiguation is true
                     example:
-                        - list_id: Ut temporibus aliquam animi unde.
+                        - list_id: Aliquam animi unde.
                           name: Ut est nobis aspernatur.
                           size: 5092102736891991435
-                        - list_id: Ut temporibus aliquam animi unde.
+                        - list_id: Aliquam animi unde.
                           name: Ut est nobis aspernatur.
                           size: 5092102736891991435
-                        - list_id: Ut temporibus aliquam animi unde.
+                        - list_id: Aliquam animi unde.
                           name: Ut est nobis aspernatur.
                           size: 5092102736891991435
                 checks:
@@ -14492,16 +14525,31 @@ components:
                         - FAIL
             example:
                 candidates:
-                    - list_id: Ut temporibus aliquam animi unde.
+                    - list_id: Aliquam animi unde.
                       name: Ut est nobis aspernatur.
                       size: 5092102736891991435
-                    - list_id: Ut temporibus aliquam animi unde.
+                    - list_id: Aliquam animi unde.
                       name: Ut est nobis aspernatur.
                       size: 5092102736891991435
-                    - list_id: Ut temporibus aliquam animi unde.
+                    - list_id: Aliquam animi unde.
                       name: Ut est nobis aspernatur.
                       size: 5092102736891991435
                 checks:
+                    current_registrants:
+                        findings:
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
+                              severity: HIGH
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
+                              severity: HIGH
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
+                              severity: HIGH
+                            - fix: Explicabo cupiditate rerum.
+                              message: Voluptas et accusamus quia et officiis ipsum.
+                              severity: HIGH
+                        verdict: FAIL
                     exclusion_completeness:
                         exclusion_count: 1582559252019194505
                         findings:
@@ -14844,7 +14892,7 @@ components:
             properties:
                 copy:
                     description: Ad copy
-                    example: Sit omnis cumque minima.
+                    example: Aut aut quaerat voluptas sunt et officia.
                 delivery_type:
                     type: string
                     description: Delivery surface this brief was authored for.
@@ -14854,33 +14902,31 @@ components:
                         - email
                 event_details:
                     description: Extracted event/course details
-                    example: Aut aut quaerat voluptas sunt et officia.
+                    example: Qui vero quis.
                 event_slug:
                     type: string
                     description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
-                    example: Sint ullam.
+                    example: Placeat neque.
                 id:
                     type: string
                     description: Brief UUID
-                    example: Qui aut ut.
+                    example: Tempora aliquam.
                 keywords:
                     description: Keyword list
-                    example: Magni minima est.
+                    example: Sit omnis cumque minima.
                 platforms:
                     type: array
                     items:
                         type: string
-                        example: Iure qui velit aut.
+                        example: Illum beatae unde eveniet.
                     description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                     example:
-                        - Beatae unde eveniet amet.
                         - Quia dolores ullam natus aut.
                         - Recusandae asperiores animi ut.
-                        - Qui vero quis.
                 program_type:
                     type: string
                     description: Funnel context
-                    example: education
+                    example: membership
                     enum:
                         - events
                         - education
@@ -14888,7 +14934,7 @@ components:
                 project_id:
                     type: string
                     description: Owning project
-                    example: Quidem similique iste.
+                    example: Ullam optio sed voluptatem.
                 stage:
                     type: string
                     description: Stage within an email series. Empty for paid, which has no series.
@@ -14904,42 +14950,41 @@ components:
                 status:
                     type: string
                     description: Lifecycle status
-                    example: draft
+                    example: approved
                     enum:
                         - draft
                         - approved
                         - archived
                 targeting:
                     description: Targeting recommendation
-                    example: Aliquid doloremque dolorum doloremque repudiandae aliquid possimus.
+                    example: Magni minima est.
                 url:
                     type: string
                     description: Event/course page URL
-                    example: Sed voluptatem id ratione placeat neque aut.
+                    example: Sapiente iure qui velit aut.
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 5658518225960843574
+                    example: 6941649450712354081
                     format: int64
             example:
-                copy: Autem est.
+                copy: Est accusantium ea hic sint ratione.
                 delivery_type: email
-                event_details: Labore sit laudantium.
-                event_slug: Sit modi maxime deserunt velit rerum quas.
-                id: Unde tempora molestiae.
-                keywords: Eius sint nihil necessitatibus dolor quam non.
+                event_details: Facere sit consequatur aliquam.
+                event_slug: Praesentium dignissimos iure veniam.
+                id: Dolorum doloremque repudiandae aliquid possimus incidunt.
+                keywords: Ullam non et accusantium neque deleniti et.
                 platforms:
-                    - Rerum sunt numquam consectetur consequatur omnis aperiam.
-                    - Sit consequatur aliquam.
-                    - Est accusantium ea hic sint ratione.
-                    - Ullam non et accusantium neque deleniti et.
+                    - Rerum quas.
+                    - Nulla voluptas sunt sunt et.
+                    - Dignissimos rerum sunt numquam consectetur consequatur omnis.
                 program_type: education
-                project_id: Facilis nihil repudiandae praesentium dignissimos iure veniam.
+                project_id: Dolore unde tempora molestiae omnis facilis.
                 stage: Registration Push
-                status: draft
-                targeting: Quod sequi ipsam.
-                url: Nulla voluptas sunt sunt et.
-                version: 69102074151405186
+                status: archived
+                targeting: Labore sit laudantium.
+                url: Quis sit modi maxime.
+                version: 7123682609441583532
             required:
                 - id
                 - project_id
@@ -14954,7 +14999,7 @@ components:
             properties:
                 copy:
                     description: Ad copy
-                    example: Quo voluptatem et eos.
+                    example: Fugiat eos eaque voluptate omnis dicta.
                 delivery_type:
                     type: string
                     description: Delivery surface this brief was authored for.
@@ -14964,31 +15009,32 @@ components:
                         - email
                 event_details:
                     description: Extracted event/course details
-                    example: Voluptate omnis dicta deserunt eligendi.
+                    example: Voluptate commodi sint iusto corporis non libero.
                 event_slug:
                     type: string
                     description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
-                    example: Nisi illum facere earum voluptatibus soluta.
+                    example: Non dolorem quod sequi ipsam officiis dolor.
                 id:
                     type: string
                     description: Brief UUID
-                    example: Qui accusamus consequatur voluptatibus eum rerum facilis.
+                    example: Tempora eius.
                 keywords:
                     description: Keyword list
-                    example: Voluptatem asperiores molestiae quasi perferendis modi totam.
+                    example: Eligendi aperiam quo voluptatem et.
                 platforms:
                     type: array
                     items:
                         type: string
-                        example: Et rerum eum rerum quod cupiditate.
+                        example: Incidunt est itaque nihil alias vel saepe.
                     description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                     example:
-                        - Commodi sint iusto corporis.
-                        - Libero omnis fugiat eos.
+                        - Nisi illum facere earum voluptatibus soluta.
+                        - Quidem eius quam nisi occaecati nemo.
+                        - Et rerum eum rerum quod cupiditate.
                 program_type:
                     type: string
                     description: Funnel context
-                    example: education
+                    example: membership
                     enum:
                         - events
                         - education
@@ -14996,7 +15042,7 @@ components:
                 project_id:
                     type: string
                     description: Owning project
-                    example: Incidunt est itaque nihil alias vel saepe.
+                    example: Nihil necessitatibus.
                 stage:
                     type: string
                     description: Stage within an email series. Empty for paid, which has no series.
@@ -15012,42 +15058,42 @@ components:
                 status:
                     type: string
                     description: Lifecycle status
-                    example: draft
+                    example: approved
                     enum:
                         - draft
                         - approved
                         - archived
                 targeting:
                     description: Targeting recommendation
-                    example: Est et facere iste qui.
+                    example: At voluptatem asperiores molestiae quasi perferendis.
                 url:
                     type: string
                     description: Event/course page URL
-                    example: Quidem eius quam nisi occaecati nemo.
+                    example: Qui accusamus consequatur voluptatibus eum rerum facilis.
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 5320874598594653752
+                    example: 2104081579290127188
                     format: int64
             example:
-                copy: Accusamus quod.
+                copy: Nam animi aliquid autem est ipsum.
                 delivery_type: email
-                event_details: Consequuntur ut inventore quia quisquam.
-                event_slug: Placeat deserunt vitae voluptatum beatae.
-                id: Dolores similique cupiditate.
-                keywords: Sunt voluptatum eaque culpa aliquid itaque.
+                event_details: A at nihil vero praesentium.
+                event_slug: Cupiditate assumenda.
+                id: Est et facere iste qui.
+                keywords: Consequuntur ut inventore quia quisquam.
                 platforms:
+                    - Vitae voluptatum beatae ut ut.
+                    - Voluptatum et enim repellat autem voluptatem.
                     - Voluptatem libero autem ut ipsam.
                     - Quis eligendi aut quas eligendi nihil non.
-                    - A at nihil vero praesentium.
-                    - Nam animi aliquid autem est ipsum.
-                program_type: events
-                project_id: Ipsum et et eligendi.
+                program_type: membership
+                project_id: Eaque veniam.
                 stage: Registration Push
-                status: archived
-                targeting: Ipsa architecto veniam necessitatibus aut nemo.
-                url: Ut dolore voluptatum et enim repellat autem.
-                version: 7391957737328842957
+                status: draft
+                targeting: Accusamus quod.
+                url: Et et eligendi tenetur repellendus.
+                version: 7111922736770391802
             required:
                 - id
                 - project_id
@@ -15062,7 +15108,7 @@ components:
             properties:
                 copy:
                     description: Ad copy
-                    example: Labore rerum in est cum ea.
+                    example: Fugiat omnis facere quaerat ad praesentium nisi.
                 delivery_type:
                     type: string
                     description: Delivery surface this brief was authored for.
@@ -15072,29 +15118,28 @@ components:
                         - email
                 event_details:
                     description: Extracted event/course details
-                    example: Est voluptas repellendus at esse culpa cupiditate.
+                    example: Laboriosam quis ut at.
                 event_slug:
                     type: string
                     description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
-                    example: Eius assumenda nesciunt.
+                    example: In necessitatibus adipisci.
                 id:
                     type: string
                     description: Brief UUID
-                    example: At voluptas.
+                    example: Eaque culpa aliquid itaque eligendi ipsa.
                 keywords:
                     description: Keyword list
-                    example: Provident facilis.
+                    example: Ex a assumenda dolore recusandae nostrum.
                 platforms:
                     type: array
                     items:
                         type: string
-                        example: Ad rerum alias quasi rem officia.
+                        example: Voluptas consequatur cupiditate.
                     description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                     example:
-                        - Sint nemo.
-                        - Laboriosam quis ut at.
-                        - Fugiat omnis facere quaerat ad praesentium nisi.
-                        - Ex a assumenda dolore recusandae nostrum.
+                        - Assumenda nesciunt vero dolorum ut.
+                        - Ad rerum alias quasi rem officia.
+                        - Culpa sint nemo.
                 program_type:
                     type: string
                     description: Funnel context
@@ -15106,7 +15151,7 @@ components:
                 project_id:
                     type: string
                     description: Owning project
-                    example: Reiciendis hic et voluptas consequatur.
+                    example: Veniam necessitatibus.
                 stage:
                     type: string
                     description: Stage within an email series. Empty for paid, which has no series.
@@ -15122,42 +15167,42 @@ components:
                 status:
                     type: string
                     description: Lifecycle status
-                    example: draft
+                    example: approved
                     enum:
                         - draft
                         - approved
                         - archived
                 targeting:
                     description: Targeting recommendation
-                    example: Voluptatibus unde dolorem.
+                    example: Est voluptas repellendus at esse culpa cupiditate.
                 url:
                     type: string
                     description: Event/course page URL
-                    example: Dolorum ut.
+                    example: Voluptas doloribus reiciendis hic.
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 3247686950971901052
+                    example: 6552008132731962877
                     format: int64
             example:
-                copy: Quo amet pariatur quis.
+                copy: Provident dolorem.
                 delivery_type: email
-                event_details: Velit autem cumque molestias minima.
-                event_slug: Qui quaerat placeat architecto.
-                id: Est sed.
-                keywords: Et voluptate delectus omnis voluptatem.
+                event_details: Quo maiores laborum quo ut officiis.
+                event_slug: Dolorem harum laboriosam perspiciatis est sed.
+                id: In est.
+                keywords: Velit autem cumque molestias minima.
                 platforms:
-                    - Veritatis quis ut totam ut consequatur doloremque.
-                    - Rerum vel ut ipsa.
-                    - Quo maiores laborum quo ut officiis.
-                    - Provident dolorem.
+                    - Qui quaerat placeat architecto.
+                    - Cum modi corrupti voluptas dolor.
+                    - Deleniti veritatis quis ut totam ut.
+                    - Doloremque eum rerum vel ut ipsa.
                 program_type: membership
-                project_id: Suscipit enim illum officiis.
+                project_id: Ea accusamus provident facilis esse.
                 stage: Registration Push
-                status: draft
-                targeting: Optio sunt distinctio rerum atque saepe ipsum.
-                url: Cum modi corrupti voluptas dolor.
-                version: 8576965917191822213
+                status: approved
+                targeting: Quo amet pariatur quis.
+                url: Suscipit enim illum officiis.
+                version: 1796519518932065035
             required:
                 - id
                 - project_id
@@ -15172,7 +15217,7 @@ components:
             properties:
                 copy:
                     description: Ad copy
-                    example: Maxime laborum laboriosam dicta.
+                    example: Est molestias.
                 delivery_type:
                     type: string
                     description: Delivery surface this brief was authored for.
@@ -15182,136 +15227,29 @@ components:
                         - email
                 event_details:
                     description: Extracted event/course details
+                    example: Aperiam quas.
+                event_slug:
+                    type: string
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
+                    example: Temporibus iste qui explicabo provident pariatur est.
+                id:
+                    type: string
+                    description: Brief UUID
+                    example: Delectus omnis voluptatem molestiae optio sunt distinctio.
+                keywords:
+                    description: Keyword list
                     example: Hic exercitationem quaerat consectetur non et non.
-                event_slug:
-                    type: string
-                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
-                    example: Id praesentium recusandae aut at quidem.
-                id:
-                    type: string
-                    description: Brief UUID
-                    example: Aut omnis temporibus iste qui explicabo.
-                keywords:
-                    description: Keyword list
-                    example: Explicabo autem et in consequatur.
                 platforms:
                     type: array
                     items:
                         type: string
-                        example: Et laudantium.
+                        example: Molestias voluptatem consectetur minima.
                     description: Suggested default platforms (a planning hint; binding selection is on the campaign)
                     example:
-                        - Occaecati aut sequi accusantium rerum quod maxime.
+                        - Ea sapiente occaecati.
+                        - Sequi accusantium.
+                        - Quod maxime.
                         - Provident minus inventore dolorem sit sequi error.
-                        - Aperiam quas.
-                        - Est molestias.
-                program_type:
-                    type: string
-                    description: Funnel context
-                    example: events
-                    enum:
-                        - events
-                        - education
-                        - membership
-                project_id:
-                    type: string
-                    description: Owning project
-                    example: Pariatur est.
-                stage:
-                    type: string
-                    description: Stage within an email series. Empty for paid, which has no series.
-                    example: Registration Push
-                    enum:
-                        - ""
-                        - CFP Launch
-                        - Schedule Announcement
-                        - Registration Push
-                        - Discount Offer
-                        - Final Countdown
-                        - Post-Event
-                status:
-                    type: string
-                    description: Lifecycle status
-                    example: draft
-                    enum:
-                        - draft
-                        - approved
-                        - archived
-                targeting:
-                    description: Targeting recommendation
-                    example: Repellat nostrum cumque voluptatem voluptatem.
-                url:
-                    type: string
-                    description: Event/course page URL
-                    example: Voluptatem consectetur.
-                version:
-                    type: integer
-                    description: Optimistic-concurrency version
-                    example: 437918830001557848
-                    format: int64
-            example:
-                copy: Cumque voluptas id eos quod ipsam amet.
-                delivery_type: email
-                event_details: Ut et est laudantium.
-                event_slug: Sit sed aperiam soluta omnis voluptate quos.
-                id: Vitae et id dolores.
-                keywords: A culpa voluptatem velit blanditiis.
-                platforms:
-                    - Rem sit ut qui molestiae.
-                    - Asperiores vel voluptas debitis.
-                    - Nisi error.
-                program_type: events
-                project_id: Autem ea sequi adipisci ad facere aut.
-                stage: Registration Push
-                status: approved
-                targeting: Quia sint voluptates assumenda praesentium.
-                url: Quisquam voluptatibus quia quaerat quia eligendi.
-                version: 6750495466819958675
-            required:
-                - id
-                - project_id
-                - program_type
-                - event_slug
-                - delivery_type
-                - stage
-                - status
-                - version
-        Brief6:
-            type: object
-            properties:
-                copy:
-                    description: Ad copy
-                    example: Esse praesentium qui.
-                delivery_type:
-                    type: string
-                    description: Delivery surface this brief was authored for.
-                    example: email
-                    enum:
-                        - paid-marketing
-                        - email
-                event_details:
-                    description: Extracted event/course details
-                    example: Eos suscipit fugiat in deserunt.
-                event_slug:
-                    type: string
-                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
-                    example: Nihil sit sit aut pariatur dolorum eveniet.
-                id:
-                    type: string
-                    description: Brief UUID
-                    example: Odit earum iste.
-                keywords:
-                    description: Keyword list
-                    example: Natus recusandae dolore suscipit.
-                platforms:
-                    type: array
-                    items:
-                        type: string
-                        example: Unde recusandae ratione quae velit sunt placeat.
-                    description: Suggested default platforms (a planning hint; binding selection is on the campaign)
-                    example:
-                        - Ut dolores aut.
-                        - In natus.
                 program_type:
                     type: string
                     description: Funnel context
@@ -15323,7 +15261,7 @@ components:
                 project_id:
                     type: string
                     description: Owning project
-                    example: Incidunt aspernatur ut quod mollitia consequatur distinctio.
+                    example: Atque saepe ipsum aut doloribus voluptatibus.
                 stage:
                     type: string
                     description: Stage within an email series. Empty for paid, which has no series.
@@ -15346,34 +15284,143 @@ components:
                         - archived
                 targeting:
                     description: Targeting recommendation
-                    example: Et esse.
+                    example: Maxime laborum laboriosam dicta.
                 url:
                     type: string
                     description: Event/course page URL
-                    example: In voluptas optio similique.
+                    example: Qui id praesentium recusandae aut at.
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 8731351481897337635
+                    example: 6165389035355372169
                     format: int64
             example:
-                copy: Quibusdam magnam quas doloremque ullam voluptatem.
+                copy: Nisi error.
                 delivery_type: email
-                event_details: Qui minus.
-                event_slug: Autem blanditiis et est illo minima.
-                id: Et non sunt quod.
-                keywords: Reiciendis eius autem sit.
+                event_details: Asperiores vel voluptas debitis.
+                event_slug: Laborum autem ea sequi adipisci.
+                id: Et in consequatur tenetur repellat nostrum cumque.
+                keywords: Ut et est laudantium.
                 platforms:
-                    - Beatae est doloribus ut non.
-                    - Velit voluptas atque.
-                    - Temporibus quibusdam aut necessitatibus necessitatibus commodi.
-                program_type: education
-                project_id: Molestias et.
+                    - Aperiam soluta omnis voluptate.
+                    - Est quisquam voluptatibus quia.
+                    - Quia eligendi eum vero rem sit.
+                    - Qui molestiae.
+                program_type: events
+                project_id: Voluptatem quam dolorum nobis vitae et.
                 stage: Registration Push
-                status: archived
-                targeting: Laboriosam sit iste possimus aut.
-                url: Repellendus quia qui dolores deserunt eaque.
-                version: 2019212861803592973
+                status: draft
+                targeting: Cumque voluptas id eos quod ipsam amet.
+                url: Facere aut ea magnam.
+                version: 794891996012327693
+            required:
+                - id
+                - project_id
+                - program_type
+                - event_slug
+                - delivery_type
+                - stage
+                - status
+                - version
+        Brief6:
+            type: object
+            properties:
+                copy:
+                    description: Ad copy
+                    example: Deserunt amet esse praesentium qui ut natus.
+                delivery_type:
+                    type: string
+                    description: Delivery surface this brief was authored for.
+                    example: email
+                    enum:
+                        - paid-marketing
+                        - email
+                event_details:
+                    description: Extracted event/course details
+                    example: In in natus eius eos suscipit fugiat.
+                event_slug:
+                    type: string
+                    description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
+                    example: Maxime consequatur.
+                id:
+                    type: string
+                    description: Brief UUID
+                    example: Voluptatem velit.
+                keywords:
+                    description: Keyword list
+                    example: Dolore suscipit ratione.
+                platforms:
+                    type: array
+                    items:
+                        type: string
+                        example: Incidunt aspernatur ut quod mollitia consequatur distinctio.
+                    description: Suggested default platforms (a planning hint; binding selection is on the campaign)
+                    example:
+                        - Nihil sit sit aut pariatur dolorum eveniet.
+                        - In voluptas optio similique.
+                        - Unde recusandae ratione quae velit sunt placeat.
+                        - Soluta ut dolores.
+                program_type:
+                    type: string
+                    description: Funnel context
+                    example: events
+                    enum:
+                        - events
+                        - education
+                        - membership
+                project_id:
+                    type: string
+                    description: Owning project
+                    example: Laboriosam quia sint voluptates.
+                stage:
+                    type: string
+                    description: Stage within an email series. Empty for paid, which has no series.
+                    example: Registration Push
+                    enum:
+                        - ""
+                        - CFP Launch
+                        - Schedule Announcement
+                        - Registration Push
+                        - Discount Offer
+                        - Final Countdown
+                        - Post-Event
+                status:
+                    type: string
+                    description: Lifecycle status
+                    example: draft
+                    enum:
+                        - draft
+                        - approved
+                        - archived
+                targeting:
+                    description: Targeting recommendation
+                    example: Esse earum consectetur nobis et non sunt.
+                url:
+                    type: string
+                    description: Event/course page URL
+                    example: Odit earum iste.
+                version:
+                    type: integer
+                    description: Optimistic-concurrency version
+                    example: 8147670145303157683
+                    format: int64
+            example:
+                copy: Reiciendis eius autem sit.
+                delivery_type: email
+                event_details: Magnam quas doloremque ullam voluptatem.
+                event_slug: Eaque fuga id beatae est.
+                id: Et nam esse autem blanditiis.
+                keywords: Laboriosam sit iste possimus aut.
+                platforms:
+                    - Voluptas atque reprehenderit temporibus quibusdam.
+                    - Necessitatibus necessitatibus commodi nam qui minus nihil.
+                program_type: events
+                project_id: Est illo minima odio repellendus quia qui.
+                stage: Registration Push
+                status: draft
+                targeting: Rerum ipsam repellat aliquid quae unde.
+                url: Ut non.
+                version: 8177250095158377079
             required:
                 - id
                 - project_id
@@ -15919,45 +15966,45 @@ components:
                 brief_id:
                     type: string
                     description: Parent brief
-                    example: Pariatur atque aspernatur veniam et.
+                    example: Numquam molestiae minima sit exercitationem reprehenderit.
                 campaign_name:
                     type: string
                     description: Campaign name
-                    example: Officia quae quia.
+                    example: Hic magnam fuga commodi est laborum id.
                 id:
                     type: string
                     description: Campaign UUID
-                    example: Quae unde.
+                    example: Repellat libero natus rem.
                 platform:
                     type: string
                     description: Channel
-                    example: Molestiae minima sit exercitationem.
+                    example: Enim eos.
                 platform_campaign_id:
                     type: string
                     description: ID returned by the ad platform
-                    example: Sint enim eos.
+                    example: Officia quae quia.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Culpa facere quae quae repellat libero natus.
+                    example: Atque aspernatur veniam.
                 status:
                     type: string
                     description: Campaign status
-                    example: Hic magnam fuga commodi est laborum id.
+                    example: Quam iusto explicabo perferendis necessitatibus.
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 8942277316824428198
+                    example: 3352999492125979176
                     format: int64
             example:
-                brief_id: Officiis enim velit voluptatibus consequatur assumenda et.
-                campaign_name: Culpa et error aut veniam eaque aut.
-                id: Iusto explicabo perferendis necessitatibus dolor quam pariatur.
-                platform: Nihil itaque omnis est.
-                platform_campaign_id: Autem odit ullam velit mollitia praesentium.
-                project_id: Rerum repudiandae.
-                status: Quia voluptates nihil commodi ut minus.
-                version: 3674253932300762181
+                brief_id: Omnis est vel autem.
+                campaign_name: Quia voluptates nihil commodi ut minus.
+                id: Pariatur perspiciatis rerum repudiandae sapiente officiis enim.
+                platform: Ullam velit mollitia praesentium.
+                platform_campaign_id: Culpa et error aut veniam eaque aut.
+                project_id: Voluptatibus consequatur assumenda et explicabo nihil.
+                status: Et beatae.
+                version: 2842525940565336239
             required:
                 - id
                 - project_id
@@ -15972,45 +16019,45 @@ components:
                 brief_id:
                     type: string
                     description: Parent brief
-                    example: Sint fugit aliquam.
+                    example: Omnis earum error repudiandae enim ex quis.
                 campaign_name:
                     type: string
                     description: Campaign name
-                    example: Temporibus deserunt dicta libero reprehenderit aliquid corporis.
+                    example: Officiis dolorum numquam reprehenderit.
                 id:
                     type: string
                     description: Campaign UUID
-                    example: Beatae laboriosam est.
+                    example: Rerum fuga quis voluptatem et.
                 platform:
                     type: string
                     description: Channel
-                    example: Omnis qui omnis earum.
+                    example: Molestiae aut voluptas temporibus deserunt dicta.
                 platform_campaign_id:
                     type: string
                     description: ID returned by the ad platform
-                    example: Repudiandae enim ex quis et molestiae aut.
+                    example: Reprehenderit aliquid corporis nesciunt dolorum atque.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Fuga quis voluptatem et sint quisquam.
+                    example: Quisquam sed sint fugit aliquam magnam omnis.
                 status:
                     type: string
                     description: Campaign status
-                    example: Dolorum atque.
+                    example: Enim sed illo reprehenderit amet.
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 1375992239756986322
+                    example: 6804672325094663106
                     format: int64
             example:
-                brief_id: Dignissimos magni inventore fugit aliquam assumenda ea.
-                campaign_name: Cum dolorum repudiandae facilis incidunt et quia.
-                id: Dolorum numquam reprehenderit provident enim sed.
-                platform: Sequi ipsam non veniam et deleniti.
-                platform_campaign_id: Quis omnis laboriosam quae quia minus.
-                project_id: Reprehenderit amet dolores.
-                status: Temporibus iusto quis.
-                version: 8653187634835929502
+                brief_id: Quis omnis laboriosam quae quia minus.
+                campaign_name: Sed aut similique quibusdam.
+                id: Dignissimos magni inventore fugit aliquam assumenda ea.
+                platform: Cum dolorum repudiandae facilis incidunt et quia.
+                platform_campaign_id: Temporibus iusto quis.
+                project_id: Sequi ipsam non veniam et deleniti.
+                status: Quae temporibus repellendus doloremque veniam consectetur.
+                version: 4254190642868726044
             required:
                 - id
                 - project_id
@@ -16025,45 +16072,45 @@ components:
                 brief_id:
                     type: string
                     description: Parent brief
-                    example: Cupiditate voluptatum nobis consequuntur accusantium ducimus velit.
+                    example: Sed nisi quis error.
                 campaign_name:
                     type: string
                     description: Campaign name
-                    example: In quibusdam quos suscipit ut deleniti.
+                    example: Modi voluptatibus aut.
                 id:
                     type: string
                     description: Campaign UUID
-                    example: Aut similique quibusdam qui.
+                    example: Nobis consequuntur accusantium.
                 platform:
                     type: string
                     description: Channel
-                    example: Ducimus quia sint voluptate sed.
+                    example: Qui laudantium commodi harum in quibusdam.
                 platform_campaign_id:
                     type: string
                     description: ID returned by the ad platform
-                    example: Quis error dolorum qui laudantium commodi.
+                    example: Suscipit ut deleniti aut.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Temporibus repellendus doloremque veniam.
+                    example: Velit est ducimus quia sint.
                 status:
                     type: string
                     description: Campaign status
-                    example: Quod modi voluptatibus aut.
+                    example: Cum nostrum omnis possimus et.
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 5295227121639898768
+                    example: 5663418408259120763
                     format: int64
             example:
-                brief_id: Illum molestiae non enim.
-                campaign_name: Ratione sunt quos culpa eaque doloribus enim.
-                id: Nostrum omnis possimus et voluptatem.
-                platform: Possimus sit possimus fuga quam at.
-                platform_campaign_id: Vel dignissimos itaque repudiandae magnam sit.
-                project_id: Nostrum labore.
-                status: Suscipit illo.
-                version: 7060358277785392174
+                brief_id: Possimus sit possimus fuga quam at.
+                campaign_name: Suscipit illo.
+                id: Nostrum labore.
+                platform: Vel dignissimos itaque repudiandae magnam sit.
+                platform_campaign_id: Ratione sunt quos culpa eaque doloribus enim.
+                project_id: Illum molestiae non enim.
+                status: Fuga ex est cupiditate.
+                version: 4162328580390209226
             required:
                 - id
                 - project_id
@@ -16078,40 +16125,40 @@ components:
                 brief_id:
                     type: string
                     description: Parent brief
-                    example: Veniam earum iusto ullam nesciunt quos.
+                    example: Illum aut.
                 campaign_name:
                     type: string
                     description: Campaign name
-                    example: Tenetur repudiandae qui sit molestiae saepe eius.
+                    example: Distinctio aut repellendus distinctio.
                 id:
                     type: string
                     description: Campaign UUID
-                    example: Cupiditate est nobis.
+                    example: Nam qui nihil sunt veniam earum.
                 platform:
                     type: string
                     description: Channel
-                    example: Exercitationem incidunt illum aut hic.
+                    example: Provident omnis ducimus impedit tenetur repudiandae qui.
                 platform_campaign_id:
                     type: string
                     description: ID returned by the ad platform
-                    example: Omnis ducimus.
+                    example: Molestiae saepe eius.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Mollitia nam qui nihil.
+                    example: Ullam nesciunt quos corporis exercitationem.
                 status:
                     type: string
                     description: Campaign status
-                    example: Distinctio aut repellendus distinctio.
+                    example: Consequatur autem.
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 881891159573967036
+                    example: 3033765241799172769
                     format: int64
             example:
                 brief_id: Corporis quis autem ipsam laborum.
                 campaign_name: Rerum officia.
-                id: Autem aspernatur velit natus at laborum.
+                id: Natus at laborum.
                 platform: Esse totam quo totam et quis tempore.
                 platform_campaign_id: Voluptatum est nostrum facilis necessitatibus magnam.
                 project_id: Praesentium consequuntur ut molestiae.
@@ -20272,6 +20319,11 @@ components:
         RunAudienceQaRequestBody:
             type: object
             properties:
+                event_name:
+                    type: string
+                    description: This edition's event name, so an included registration list for THIS event can be told from another event's
+                    example: dp0
+                    minLength: 1
                 list_ref:
                     type: string
                     description: List id or name to audit
@@ -20286,8 +20338,9 @@ components:
                     description: The send targets the EU, so a GDPR suppression is expected
                     example: true
             example:
-                list_ref: dp0
-                targets_ca: true
+                event_name: fux
+                list_ref: "41"
+                targets_ca: false
                 targets_eu: false
             required:
                 - list_ref
@@ -20548,7 +20601,7 @@ components:
                         - active
                         - paused
             example:
-                status: active
+                status: paused
             required:
                 - status
         TwitterAdsConnection:

@@ -46,6 +46,9 @@ type RunAudienceQaRequestBody struct {
 	TargetsEu *bool `form:"targets_eu,omitempty" json:"targets_eu,omitempty" xml:"targets_eu,omitempty"`
 	// The send targets Canada, so a CASL opt-out suppression is expected
 	TargetsCa *bool `form:"targets_ca,omitempty" json:"targets_ca,omitempty" xml:"targets_ca,omitempty"`
+	// This edition's event name, so an included registration list for THIS event
+	// can be told from another event's
+	EventName *string `form:"event_name,omitempty" json:"event_name,omitempty" xml:"event_name,omitempty"`
 }
 
 // GetAudienceBuilderCapabilitiesResponseBody is the type of the
@@ -1015,6 +1018,8 @@ type AudienceQaChecksResponseBody struct {
 	Suppression *AudienceQaSuppressionCheckResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
 	// Are the exclusions present and well-formed?
 	ExclusionCompleteness *AudienceQaExclusionCheckResponseBody `form:"exclusion_completeness,omitempty" json:"exclusion_completeness,omitempty" xml:"exclusion_completeness,omitempty"`
+	// Is this edition's own registration list suppressed rather than included?
+	CurrentRegistrants *AudienceQaCheckResponseBody `form:"current_registrants,omitempty" json:"current_registrants,omitempty" xml:"current_registrants,omitempty"`
 }
 
 // AudienceQaCheckResponseBody is used to define fields on response body types.
@@ -1105,6 +1110,7 @@ func NewRunAudienceQaRequestBody(p *lfxv2campaignserviceaudiencebuilder.RunAudie
 		ListRef:   p.ListRef,
 		TargetsEu: p.TargetsEu,
 		TargetsCa: p.TargetsCa,
+		EventName: p.EventName,
 	}
 	return body
 }
@@ -3316,6 +3322,11 @@ func ValidateAudienceQaChecksResponseBody(body *AudienceQaChecksResponseBody) (e
 	}
 	if body.ExclusionCompleteness != nil {
 		if err2 := ValidateAudienceQaExclusionCheckResponseBody(body.ExclusionCompleteness); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.CurrentRegistrants != nil {
+		if err2 := ValidateAudienceQaCheckResponseBody(body.CurrentRegistrants); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}

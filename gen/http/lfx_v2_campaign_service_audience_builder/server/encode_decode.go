@@ -1766,6 +1766,9 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceQaChecksToAudienceQaCheck
 	if v.ExclusionCompleteness != nil {
 		res.ExclusionCompleteness = marshalLfxv2campaignserviceaudiencebuilderAudienceQaExclusionCheckToAudienceQaExclusionCheckResponseBody(v.ExclusionCompleteness)
 	}
+	if v.CurrentRegistrants != nil {
+		res.CurrentRegistrants = marshalLfxv2campaignserviceaudiencebuilderAudienceQaCheckToAudienceQaCheckResponseBody(v.CurrentRegistrants)
+	}
 
 	return res
 }

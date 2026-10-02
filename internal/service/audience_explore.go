@@ -53,7 +53,7 @@ type AudienceExplorer interface {
 	// *audience.ComposePartialError, which this layer must surface rather than
 	// flatten — see composeErr.
 	ComposeMaster(ctx context.Context, projectID string, in audience.ComposeInput) (*audience.ComposeOutcome, error)
-	RunQA(ctx context.Context, projectID, listRef string, targetsEU, targetsCA bool) (*audience.QaOutcome, error)
+	RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool) (*audience.QaOutcome, error)
 }
 
 // AudienceExploreService implements the generated audience-builder service.
@@ -337,7 +337,7 @@ func (s *AudienceExploreService) RunAudienceQa(ctx context.Context, p *explore.R
 	if err != nil {
 		return nil, err
 	}
-	outcome, qerr := explorer.RunQA(ctx, p.ProjectID, p.ListRef, derefBool(p.TargetsEu), derefBool(p.TargetsCa))
+	outcome, qerr := explorer.RunQA(ctx, p.ProjectID, p.ListRef, derefStr(p.EventName), derefBool(p.TargetsEu), derefBool(p.TargetsCa))
 	if qerr != nil {
 		return nil, audienceExploreErr(ctx, "run audience QA", p.ProjectID, qerr)
 	}
@@ -376,6 +376,10 @@ func (s *AudienceExploreService) RunAudienceQa(ctx context.Context, p *explore.R
 				Findings:       findingResults(outcome.Checks.ExclusionCompleteness.Findings),
 				ExclusionCount: int64(outcome.Checks.ExclusionCompleteness.ExclusionCount),
 			},
+			// OMITTED, not zero-valued, when check 4 did not run. An
+			// `AudienceQaCheck{Verdict: ""}` on the wire is a check the client must then
+			// decide how to render; absent says plainly that it was not performed.
+			CurrentRegistrants: currentRegistrantsResult(outcome.Checks.CurrentRegistrants),
 		},
 		Findings: findingResults(outcome.Findings),
 		Overall:  &overall,
@@ -527,6 +531,18 @@ func composePartialMessage(partial *audience.ComposePartialError) string {
 		return "the combined suppression list was created but the master list was not — " +
 			"reconcile the suppression list in HubSpot before composing again; do not simply retry"
 	}
+}
+
+// currentRegistrantsResult is check 4 on the wire, or nil when it did not run.
+//
+// An empty verdict means no event name reached the audit, so there is nothing to report. A
+// zero-valued check would arrive as a verdict the client has to interpret, and the one
+// interpretation that must never be reached is "passed".
+func currentRegistrantsResult(c audience.Check) *explore.AudienceQaCheck {
+	if c.Verdict == "" {
+		return nil
+	}
+	return qaCheckResult(c)
 }
 
 // ─── Result mapping ───

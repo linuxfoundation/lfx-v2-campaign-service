@@ -251,6 +251,8 @@ type AudienceQaChecks struct {
 	Suppression *AudienceQaSuppressionCheck
 	// Are the exclusions present and well-formed?
 	ExclusionCompleteness *AudienceQaExclusionCheck
+	// Is this edition's own registration list suppressed rather than included?
+	CurrentRegistrants *AudienceQaCheck
 }
 
 type AudienceQaExclusionCheck struct {
@@ -447,6 +449,9 @@ type RunAudienceQaPayload struct {
 	TargetsEu *bool
 	// The send targets Canada, so a CASL opt-out suppression is expected
 	TargetsCa *bool
+	// This edition's event name, so an included registration list for THIS event
+	// can be told from another event's
+	EventName *string
 }
 
 // SearchAudienceListsPayload is the payload type of the

@@ -162,6 +162,10 @@ type QaChecks struct {
 	SignalMapping         Check
 	Suppression           SuppressionCheck
 	ExclusionCompleteness ExclusionCheck
+	// CurrentRegistrants is check 4, and is only populated when the caller supplied an event
+	// name. Its zero value is an empty verdict, which CombineVerdicts ignores -- so an audit
+	// that could not run neither passes nor fails the overall result.
+	CurrentRegistrants Check
 }
 
 // QaOutcome is a QA run, or the disambiguation that prevented one.

@@ -4,6 +4,7 @@
 package audience
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -332,6 +333,101 @@ func CheckSuppression(exclusionNames []string, targetsEU, targetsCA bool) Suppre
 		AppliedGDPR:   gdpr,
 		AppliedOptOut: optOut,
 	}
+}
+
+// eventYearFromName is the four-digit year an event name declares, or "" when it declares
+// none. The LAST match: "AGNTCon 2026" has one, and a name that mentions two takes the
+// later, which is the edition being sent.
+func eventYearFromName(eventName string) string {
+	matches := yearRE.FindAllString(eventName, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(matches[len(matches)-1])
+}
+
+// CheckCurrentRegistrants asks whether THIS edition's own registration list is being
+// included rather than suppressed.
+//
+// The whole point of a registration-push send is reaching people who have NOT registered.
+// An event's own registration list belongs in the suppressions; included, every invitation
+// goes to someone who already holds a ticket. Verified on AGNTCon + MCPCon North America
+// (2026-09-30): the edition's registration list, 1,346 contacts, was offered as an INCLUDE,
+// ticking it raised nothing, and QA passed -- the three existing checks all look at consent
+// suppression or filter shape, and none of them reads the audience's own INTENT.
+//
+// Keyed on the registration SIGNAL plus the event's own name, not on the name alone. A
+// portfolio contains many registration lists and including a PAST edition's is the correct
+// and common case -- that is the strongest evidence available for a first-edition send. Only
+// THIS edition's is wrong, so a check that fired on any registration list would be wrong far
+// more often than right, and would be switched off.
+//
+// `eventName` empty is NEEDS VERIFY, never a pass. The caller may legitimately not know the
+// event (QA can be run on a bare list id), and an audit that silently skipped would be
+// indistinguishable from one that looked and found nothing.
+func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
+	if strings.TrimSpace(eventName) == "" {
+		return Check{
+			Verdict: VerdictNeedsVerify,
+			Findings: []Finding{{
+				Severity: SeverityMedium,
+				Message:  "Could not check whether this event's own registrants are suppressed: no event name was supplied with the audit.",
+				Fix:      "Re-run the audit from the campaign's audience tab, which supplies the event name, or confirm by hand that this edition's registration list is excluded rather than included.",
+			}},
+		}
+	}
+
+	// The event's tokens AND its year, both required.
+	//
+	// `NewLastSentTerms` STRIPS the year on purpose -- it exists to find PAST editions -- so
+	// matching on its terms alone fired on exactly the lists that are correct to include. A
+	// past edition's registrants are the strongest evidence a first-edition send has, and a
+	// sibling region ("AGNTCon Japan 2026") is a different event entirely. Measured before
+	// fixing: terms-only flagged both as FAIL.
+	//
+	// The year is what separates THIS edition from its own history, and the tokens are what
+	// separate it from a sibling. Requiring both is the only pair that leaves all three
+	// correct cases passing.
+	terms := NewLastSentTerms(eventName, "")
+	year := eventYearFromName(eventName)
+	if year == "" {
+		// A name with no year cannot be told from its own past editions, and guessing the
+		// current year would flag a list the operator may have chosen deliberately.
+		return Check{
+			Verdict: VerdictNeedsVerify,
+			Findings: []Finding{{
+				Severity: SeverityMedium,
+				Message:  fmt.Sprintf("Could not check whether this event's own registrants are suppressed: %q carries no year, so this edition cannot be told from an earlier one.", eventName),
+				Fix:      "Confirm by hand that this edition's registration list is excluded rather than included.",
+			}},
+		}
+	}
+	findings := make([]Finding, 0, 1)
+	for _, name := range includedNames {
+		if !containsAny(name, registrationHints) {
+			continue
+		}
+		if !strings.Contains(name, year) {
+			continue
+		}
+		// EVERY token, not merely a match. `MatchLastSent` admits on the distinctive tier
+		// alone, which a sibling region shares: measured on "AGNTCon + MCPCon North America
+		// 2026", the NA registration list scores overlap=4 (agntcon, mcpcon, north, america)
+		// while "AGNTCon + MCPCon Japan 2026" scores 2 -- it carries the event tokens and the
+		// year but not the region. The GENERIC tier is what names the edition, so requiring
+		// the full set is what separates this edition from its siblings.
+		if MatchLastSent(name, "", terms).Overlap < len(terms.Event)+len(terms.Generic) {
+			continue
+		}
+		findings = append(findings, Finding{
+			Severity: SeverityCritical,
+			Message:  fmt.Sprintf("%q looks like this event's own registration list and it is INCLUDED, so this send would invite people who have already registered.", name),
+			Fix:      "Move this list into the exclusions. A registration-push send reaches people who have not registered; this edition's registrants belong in the combined suppression.",
+		})
+		break
+	}
+
+	return Check{Verdict: VerdictFromFindings(findings), Findings: findings}
 }
 
 // ExclusionCheck adds how many exclusion segments were found.

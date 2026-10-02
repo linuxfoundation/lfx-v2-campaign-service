@@ -321,3 +321,141 @@ func TestPickNameMatchesStillResolvesASingleExactMatch(t *testing.T) {
 		t.Errorf("a single exact match must not be ambiguous; got %d candidates", len(ambiguous))
 	}
 }
+
+// TestCheckCurrentRegistrants pins the A-02 gap: an event's own registration list offered as
+// an INCLUDE, with all three existing checks passing.
+//
+// Verified on AGNTCon + MCPCon North America (2026-09-30): the edition's registration list,
+// 1,346 contacts, was offered as an include, ticking it raised nothing, and QA passed. The
+// other three checks read consent suppression and filter shape; none reads the audience's
+// own intent.
+//
+// The table is the whole point. Two earlier versions of this predicate flagged lists that are
+// CORRECT to include, and a check that cries wolf on the common case gets switched off:
+//   - event tokens alone  -> flagged a PAST edition (the strongest evidence a first edition
+//     has) and a SIBLING region (a different event).
+//   - tokens + year       -> still flagged the sibling, which shares both.
+//   - tokens + year + the FULL token set -> only this edition. The generic tier carries the
+//     region, so requiring every token is what separates NA from Japan.
+func TestCheckCurrentRegistrants(t *testing.T) {
+	const eventName = "AGNTCon + MCPCon North America 2026"
+
+	cases := []struct {
+		name     string
+		listName string
+		wantFail bool
+		why      string
+	}{
+		{
+			name:     "this edition's own registration list",
+			listName: "26Q2 AGNTCon + MCPCon North America 2026 Event Registration",
+			wantFail: true,
+			why:      "every invitation would go to someone who already registered",
+		},
+		{
+			name:     "this edition's attendees, named differently",
+			listName: "AGNTCon + MCPCon North America 2026 - Attendees",
+			wantFail: true,
+			why:      "attendee and registrant are the same population for a pre-event send",
+		},
+		{
+			name:     "a PAST edition's registrants",
+			listName: "25Q2 AGNTCon North America 2025 Event Registration",
+			wantFail: false,
+			why:      "the strongest evidence a first-edition send has; flagging it would be wrong far more often than right",
+		},
+		{
+			// The case that binds the YEAR requirement specifically. This past edition carries
+			// the IDENTICAL token set -- overlap=4, the same as the current edition -- so the
+			// full-token-set rule alone would flag it. The 2025 case below drops a token
+			// ("mcpcon") and so is caught by that rule instead, which is why it does not
+			// exercise the year at all.
+			name:     "a past edition with the identical token set",
+			listName: "24Q2 AGNTCon + MCPCon North America 2024 Event Registration",
+			wantFail: false,
+			why:      "only the year separates this from the current edition",
+		},
+		{
+			name:     "a sibling region's registrants",
+			listName: "26Q1 AGNTCon + MCPCon Japan 2026 Event Registration",
+			wantFail: false,
+			why:      "same series and same year, different event",
+		},
+		{
+			name:     "an unrelated event's registrants",
+			listName: "26Q2 PyTorch Conference 2026 Event Registration",
+			wantFail: false,
+			why:      "a portfolio holds many registration lists",
+		},
+		{
+			name:     "this event's web visitors",
+			listName: "26Q2 - AGNTCon North America Web Visitors",
+			wantFail: false,
+			why:      "not a registration list at all",
+		},
+		{
+			name:     "this event's speakers",
+			listName: "26Q2 AGNTCon + MCPCon North America 2026 Speakers",
+			wantFail: false,
+			why:      "a speaker has not necessarily registered",
+		},
+		{
+			name:     "a portfolio suppression list",
+			listName: "LF Global Opt-Outs",
+			wantFail: false,
+			why:      "carries no registration signal and no event tokens",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := CheckCurrentRegistrants(eventName, []string{tc.listName})
+
+			if tc.wantFail {
+				if got.Verdict != VerdictFail {
+					t.Fatalf("verdict = %q, want FAIL: %s", got.Verdict, tc.why)
+				}
+				if len(got.Findings) != 1 {
+					t.Fatalf("findings = %d, want 1", len(got.Findings))
+				}
+				if got.Findings[0].Severity != SeverityCritical {
+					t.Errorf("severity = %q, want CRITICAL; a send to people who already hold a ticket is not advisory", got.Findings[0].Severity)
+				}
+				if !strings.Contains(got.Findings[0].Message, tc.listName) {
+					t.Errorf("message does not name the offending list, so the operator cannot act on it: %q", got.Findings[0].Message)
+				}
+				return
+			}
+			if got.Verdict != VerdictPass {
+				t.Fatalf("verdict = %q, want PASS: %s", got.Verdict, tc.why)
+			}
+		})
+	}
+}
+
+// TestCheckCurrentRegistrants_WithoutAnEventNameIsNotAPass pins the discriminated absence.
+//
+// QA can be run on a bare list id, where the event is genuinely unknown. An audit that
+// silently returned PASS there would be indistinguishable from one that looked and found
+// nothing -- and the thing it failed to look for is a send to people who already registered.
+func TestCheckCurrentRegistrants_WithoutAnEventNameIsNotAPass(t *testing.T) {
+	got := CheckCurrentRegistrants("", []string{"26Q2 AGNTCon + MCPCon North America 2026 Event Registration"})
+
+	if got.Verdict != VerdictNeedsVerify {
+		t.Fatalf("verdict = %q, want NEEDS VERIFY", got.Verdict)
+	}
+	if len(got.Findings) == 0 {
+		t.Fatal("a NEEDS VERIFY with no finding tells the operator nothing to do")
+	}
+}
+
+// TestCheckCurrentRegistrants_AnEventNameWithNoYearIsNotAPass is the same reasoning one step
+// in: with no year in the event name, this edition cannot be told from an earlier one, and
+// substituting the current year would flag a list the operator may have chosen on purpose.
+func TestCheckCurrentRegistrants_AnEventNameWithNoYearIsNotAPass(t *testing.T) {
+	got := CheckCurrentRegistrants("AGNTCon + MCPCon North America", []string{"26Q2 AGNTCon + MCPCon North America 2026 Event Registration"})
+
+	if got.Verdict != VerdictNeedsVerify {
+		t.Fatalf("verdict = %q, want NEEDS VERIFY", got.Verdict)
+	}
+}

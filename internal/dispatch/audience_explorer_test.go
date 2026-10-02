@@ -481,7 +481,7 @@ func TestRunQA_ByName_FetchesRealFiltersRatherThanCachedSearchHit(t *testing.T) 
 	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
 	x := NewAudienceExplorer(builder, nil, nil, nil)
 
-	outcome, err := x.RunQA(context.Background(), "proj-1", "KubeCon NA 2026 - master", false, false)
+	outcome, err := x.RunQA(context.Background(), "proj-1", "KubeCon NA 2026 - master", "", false, false)
 	require.NoError(t, err)
 	require.False(t, outcome.NeedsDisambiguation)
 
