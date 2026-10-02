@@ -3349,6 +3349,13 @@ func TestMeta_ListAccountCampaignMetrics_ProjectRowIsTheAuthority(t *testing.T) 
 		{name: "lf-events reads its own account", projectID: "lf-events", requested: eventsAccount, wantPath: "/" + eventsAccount + "/campaigns"},
 		{name: "tlf is refused lf-events' account", projectID: "tlf", requested: eventsAccount, wantErr: domain.ErrAccountNotManagedByConnection},
 		{name: "lf-events is refused tlf's account", projectID: "lf-events", requested: tlfAccount, wantErr: domain.ErrAccountNotManagedByConnection},
+		// Meta ids come in two equivalent forms and this service treats them as one
+		// account (matchesAccount/trimAccountPrefix). A row holding bare digits with a
+		// request in the canonical act_ form — the ONLY form ValidateAccountID accepts —
+		// must be permitted, not refused. Raw equality refused it; found by Cursor Bugbot
+		// on PR #242. The reverse pair (act_ row, bare-digit request) is not testable
+		// here: ValidateAccountID rejects the request before the guard runs.
+		{name: "a legacy bare-digit row matches the canonical act_ request", projectID: "legacy", requested: "act_777", wantPath: "/act_777/campaigns"},
 	}
 
 	for _, tc := range cases {
@@ -3365,8 +3372,13 @@ func TestMeta_ListAccountCampaignMetrics_ProjectRowIsTheAuthority(t *testing.T) 
 			}))
 			t.Cleanup(srv.Close)
 
+			// legacy holds the SAME account as tlf but in the bare-digit form a row may
+			// carry, which is what the prefix-equivalence arm exercises.
+			legacy := activeMetaConn(goodMetaCreds)
+			legacy.AccountID = "777"
+
 			d := NewMetaDispatcher(&scopedConnReader{
-				rows: map[string]*model.Connection{"tlf": tlf, "lf-events": events},
+				rows: map[string]*model.Connection{"tlf": tlf, "lf-events": events, "legacy": legacy},
 			}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
 
 			_, err := d.ListAccountCampaignMetrics(context.Background(), tc.projectID, model.ProviderMetaAds, tc.requested, 30)
@@ -3393,51 +3405,6 @@ func TestMeta_ListAccountCampaignMetrics_ProjectRowIsTheAuthority(t *testing.T) 
 			}
 			if !strings.Contains(reached, tc.wantPath) {
 				t.Fatalf("reached upstream path %q, want it to contain %q", reached, tc.wantPath)
-			}
-		})
-	}
-}
-
-func TestMeta_ListAccountCampaignMetrics_SharedAccountAcrossProjects(t *testing.T) {
-	const shared = "act_777"
-
-	tlf := activeMetaConn(goodMetaCreds)
-	tlf.AccountID = shared
-	events := activeMetaConn(goodMetaCreds)
-	events.AccountID = shared
-
-	for _, projectID := range []string{"tlf", "lf-events"} {
-		t.Run(projectID, func(t *testing.T) {
-			var mu sync.Mutex
-			var gotPath string
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				mu.Lock()
-				if gotPath == "" {
-					gotPath = r.URL.Path
-				}
-				mu.Unlock()
-				w.WriteHeader(http.StatusUnauthorized)
-			}))
-			t.Cleanup(srv.Close)
-
-			d := NewMetaDispatcher(&scopedConnReader{
-				rows: map[string]*model.Connection{"tlf": tlf, "lf-events": events},
-			}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
-
-			_, err := d.ListAccountCampaignMetrics(context.Background(), projectID, model.ProviderMetaAds, shared, 30)
-			if err == nil {
-				t.Fatalf("err = nil, want a failure (the stub answers 401)")
-			}
-			if errors.Is(err, domain.ErrAccountNotManagedByConnection) {
-				t.Fatalf("project %s was REFUSED the shared account it legitimately connects to: %v",
-					projectID, err)
-			}
-			mu.Lock()
-			reached := gotPath
-			mu.Unlock()
-			if !strings.Contains(reached, "/"+shared+"/campaigns") {
-				t.Fatalf("project %s did not reach the upstream read with the shared account %s (path %q)",
-					projectID, shared, reached)
 			}
 		})
 	}

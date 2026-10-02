@@ -1052,13 +1052,17 @@ var (
 	// ErrAccountNotManagedByConnection indicates a caller-supplied account id is well-formed
 	// but names an account the project's OWN resolved connection does not manage. Maps to 400.
 	//
-	// Every account-scoped monitor read can answer with this: a connection is bound to
-	// exactly one ad account (`account_id TEXT NOT NULL` on every provider table, one LIVE
-	// row per project via a `(project_id)` unique index partial to `WHERE status <>
-	// 'deleted'`), so a request for any other account id is a
-	// request mismatch, not a connection defect. Reddit's resolveMonitorClient was the
-	// first and, until the LinkedIn/Meta guards, the only producer — the property it
-	// relied on was always the shared schema's rather than a Reddit quirk.
+	// Produced by the Reddit, LinkedIn and Meta account-monitor reads. Google Ads does
+	// NOT emit it — its guard is deliberately deferred — so this is not yet every
+	// account-scoped read, and a caller must not treat the sentinel's absence as proof a
+	// request was in scope.
+	//
+	// The property it rests on is schema-wide rather than per-platform: a connection is
+	// bound to exactly one ad account (`account_id TEXT NOT NULL` on every provider table,
+	// one LIVE row per project via a `(project_id)` unique index partial to `WHERE status
+	// <> 'deleted'`), so a request for any other account id is a request mismatch, not a
+	// connection defect. Reddit's resolveMonitorClient checked it first; that it applied
+	// beyond Reddit was always the schema's doing, not a Reddit quirk.
 	// Before round-18 review this rode on
 	// ErrConnectionNotUsable, whose message tells the operator to check that the STORED
 	// credential is active and valid — which it is; the wrong thing here is the REQUEST, not

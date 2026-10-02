@@ -625,13 +625,40 @@ func requireMetaManagedAccount(res *resolved, projectID, accountID string) (stri
 		return "", err
 	}
 	want := strings.TrimSpace(accountID)
-	if want != stored {
+	// Compared through matchesAccount, not by raw equality: Meta ids come in two
+	// equivalent forms and this service already treats them as one account. The
+	// canonical form is "act_<digits>" — what design/connection.go's Pattern enforces on
+	// a connection write and what ValidateAccountID demands of a request — but
+	// trimAccountPrefix exists because a stored row and a persisted result blob "compare
+	// equal regardless of which form each stored", so a row holding bare digits is a
+	// shape this service reads elsewhere rather than a shape it refuses.
+	//
+	// Raw equality here refused exactly that row: stored "777" with the only request
+	// form the validator accepts, "act_777", answered 400 for an account the connection
+	// genuinely manages — and the message blamed the request, sending the operator to
+	// fix a correct value. Found by Cursor Bugbot on PR #242 and reproduced before
+	// fixing: of the three (stored, requested) pairs, only ("777", "act_777") was
+	// wrongly refused, and ("act_777", "777") never reaches here at all because
+	// ValidateAccountID rejects a bare-digit request first.
+	//
+	// matchesAccount's empty-created short-circuit cannot fire: requireMetaAccountID
+	// above has already refused an empty stored id, and ValidateAccountID has refused an
+	// empty request, so both operands are non-empty by this point.
+	if !matchesAccount(stored, want) {
 		// ErrAccountNotManagedByConnection, not ErrConnectionNotUsable: the stored
 		// connection is usable, the REQUEST named a different account.
 		return "", fmt.Errorf("%w: meta connection for project %s resolves to account %s, not the requested account %s",
 			domain.ErrAccountNotManagedByConnection, projectID, stored, want)
 	}
-	return stored, nil
+	// The REQUEST's form is returned, not the stored one, and that is load-bearing rather
+	// than arbitrary. The two are now equivalent-but-not-identical (that is the point of
+	// comparing through matchesAccount), and only the request's form is guaranteed
+	// canonical: ValidateAccountID has already required `act_<digits>` of it, while a
+	// stored row may hold bare digits. Returning `stored` for a legacy row therefore
+	// traded one 400 for another — meta.Client refuses "777" with `must be act_<digits>`
+	// — which is exactly what the prefix-equivalence test arm caught after the
+	// matchesAccount fix alone.
+	return want, nil
 }
 
 // Dispatch implements service.PlatformDispatcher for Meta.
@@ -1281,9 +1308,13 @@ func (d *MetaDispatcher) ListAccounts(ctx context.Context, projectID string, pla
 
 // ListAccountCampaignMetrics implements service.AccountMetricsReader for Meta, backing the
 // account-monitor endpoint. It resolves the same credentials-only, account-agnostic client
-// ListAccounts uses (a monitor read names its OWN target accountID, distinct from whatever
-// account the project's connection currently points at), then reads every campaign visible
-// on that account via meta.Client.ListAccountCampaigns.
+// ListAccounts uses — the client is account-agnostic because the target accountID travels
+// with the call rather than with the client config. It is NOT free to name a different
+// account than the connection holds, however: requireMetaManagedAccount refuses that before
+// any request is issued. The client's agnosticism and the request's scope are separate
+// things, and an earlier version of this comment conflated them, describing the
+// cross-account read this guard exists to prevent. It then reads every campaign visible on
+// that account via meta.Client.ListAccountCampaigns.
 //
 // Trust boundary (round-16 review, fixed): resolveOwnedMetaDiscovery refuses the LF
 // system fallback entirely, so a project with no Meta connection of its own gets a 404 instead

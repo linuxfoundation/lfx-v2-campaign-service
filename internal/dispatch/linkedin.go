@@ -740,6 +740,12 @@ func requireLinkedInManagedAccount(res *resolved, projectID, accountID string) (
 		return "", fmt.Errorf("%w: linkedin connection for project %s resolves to account %s, not the requested account %s",
 			domain.ErrAccountNotManagedByConnection, projectID, stored, want)
 	}
+	// Plain trimmed equality is correct here, unlike Meta's, which must compare through
+	// matchesAccount: a LinkedIn account id has ONE form. accountIDRE is `^[0-9]+$` with
+	// no optional prefix, so a stored row and a request cannot be equivalent-but-unequal
+	// the way "777" and "act_777" are, and there is no equivalence class to normalise.
+	// Returning the stored value is likewise safe because both forms are identical once
+	// trimmed. Do not add prefix handling here by symmetry with meta.go.
 	return stored, nil
 }
 
