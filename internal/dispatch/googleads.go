@@ -55,6 +55,83 @@ type googleAdsKeywordConfig struct {
 	MatchType string `json:"matchType"`
 }
 
+// The wire shapes for the targeting, extension and ad-group inputs the Search path
+// gained with LFXV2-2665. Each maps 1:1 to its googleads counterpart and is kept as
+// its own JSON-tagged type for the same reason googleAdsKeywordConfig is: the wire
+// vocabulary and the platform client's Go type are named independently, so one can
+// change without silently changing the other. Every field is validated by the client
+// before anything is sent — nothing here re-implements a check.
+
+// googleAdsProximityConfig is one radius target: a point and how far around it to
+// serve. RadiusUnit has deliberately no default (see googleads.ProximityTarget).
+type googleAdsProximityConfig struct {
+	Latitude   float64 `json:"latitude"`
+	Longitude  float64 `json:"longitude"`
+	Radius     float64 `json:"radius"`
+	RadiusUnit string  `json:"radiusUnit"` // "MILES" or "KILOMETERS"
+}
+
+// googleAdsAdScheduleConfig is one day-of-week serving interval.
+//
+// BidModifier is a POINTER on the wire as well as in the client, and for the same
+// reason: 0 is the -100% opt-out, so it cannot double as "unset". An absent
+// "bidModifier" restricts WHEN the campaign serves without changing what it bids.
+type googleAdsAdScheduleConfig struct {
+	DayOfWeek   string   `json:"dayOfWeek"`
+	StartHour   int      `json:"startHour"`
+	StartMinute int      `json:"startMinute"`
+	EndHour     int      `json:"endHour"`
+	EndMinute   int      `json:"endMinute"`
+	BidModifier *float64 `json:"bidModifier"`
+}
+
+// googleAdsDeviceBidModifierConfig adjusts the bid for one device, or excludes that
+// device outright with a modifier of 0.
+type googleAdsDeviceBidModifierConfig struct {
+	Device      string  `json:"device"`
+	BidModifier float64 `json:"bidModifier"`
+}
+
+// googleAdsSitelinkConfig is one sitelink extension. The two description lines are
+// all-or-nothing: Google rejects an asset carrying only one.
+type googleAdsSitelinkConfig struct {
+	Text         string `json:"text"`
+	Description1 string `json:"description1"`
+	Description2 string `json:"description2"`
+	FinalURL     string `json:"finalUrl"`
+}
+
+// googleAdsStructuredSnippetConfig is one structured-snippet extension. Header must be
+// one of Google's predefined headers FOR THE CAMPAIGN'S LANGUAGE, so the client checks
+// its shape rather than its membership in an English list.
+type googleAdsStructuredSnippetConfig struct {
+	Header string   `json:"header"`
+	Values []string `json:"values"`
+}
+
+// googleAdsAdConfig is one responsive search ad inside an ad group. Both lists are
+// optional in exactly the way the campaign-level headlines/descriptions are — the
+// client pads missing slots to Google's minimums.
+type googleAdsAdConfig struct {
+	Headlines    []string `json:"headlines"`
+	Descriptions []string `json:"descriptions"`
+}
+
+// googleAdsAdGroupConfig is one ad group: a theme, the keywords that express it, and
+// the ads written for it.
+//
+// Every field except Name falls back to the campaign-level equivalent when it is
+// empty, and that fallback is PER FIELD — a group may override only its bid. cpcBid 0
+// means "inherit", not "no bid"; a campaign-level 0 is what means that, and it is
+// inherited as such.
+type googleAdsAdGroupConfig struct {
+	Name             string                   `json:"name"`
+	CPCBid           float64                  `json:"cpcBid"`
+	Keywords         []googleAdsKeywordConfig `json:"keywords"`
+	AudienceSegments []string                 `json:"audienceSegments"`
+	Ads              []googleAdsAdConfig      `json:"ads"`
+}
+
 const (
 	// The accepted `channel` values. Lower-case and hyphenated to match the campaignTypes
 	// vocabulary the UI already uses ("search" / "demand-gen"), so callers do not have to
@@ -145,7 +222,65 @@ type googleAdsConfig struct {
 	// caller predating this field omits it, and failing their creates outright would
 	// break dispatches that work today. An untargeted create is instead made VISIBLE —
 	// see the warning log in Dispatch — rather than silently accepted or refused.
+	// GeoTargets also accepts RAW Google geo target constant ids (the numeric strings
+	// Google's geo target constant table publishes), which is how a caller targets a
+	// city, region or postal code — a metro-level event campaign cannot be expressed in
+	// country codes. The two spellings mix freely in one list.
 	GeoTargets []string `json:"geoTargets"`
+	// ExcludedGeoTargets are locations the campaign must NEVER serve in, in exactly the
+	// vocabulary GeoTargets uses (country codes and/or raw constant ids). Applies to
+	// BOTH channels.
+	//
+	// Left empty, nothing is excluded. A location listed in both lists is REFUSED rather
+	// than resolved: Google lets the exclusion win, so the campaign would silently not
+	// serve where the caller plainly asked it to.
+	ExcludedGeoTargets []string `json:"excludedGeoTargets"`
+	// ProximityTargets are radius targets — serve within N miles/kilometres of a point.
+	// Search only: refused on "demand-gen", which attaches location criteria at the ad
+	// group level where this client has not verified proximity.
+	//
+	// Left empty, no radius criteria are created and the lists above stand alone.
+	ProximityTargets []googleAdsProximityConfig `json:"proximityTargets"`
+	// Languages are the languages the campaign serves in, as ISO 639-1 codes (EN, DE,
+	// JA) or raw numeric language constant ids. Search only, like every field below it
+	// up to Sitelinks: all four are campaign-level criteria the client refuses on
+	// "demand-gen" rather than silently dropping.
+	//
+	// Left empty the campaign serves in EVERY language, which is Google's default and
+	// rarely what an event campaign wants.
+	Languages []string `json:"languages"`
+	// AdSchedules restrict WHEN the campaign serves, one interval per day of week, each
+	// optionally carrying its own bid modifier. Left empty the campaign runs around the
+	// clock.
+	AdSchedules []googleAdsAdScheduleConfig `json:"adSchedules"`
+	// DeviceBidModifiers adjust the bid per device ("MOBILE", "DESKTOP", "TABLET"), or
+	// exclude a device outright with a modifier of 0. Left empty, every device bids the
+	// campaign's own bid.
+	DeviceBidModifiers []googleAdsDeviceBidModifierConfig `json:"deviceBidModifiers"`
+	// ExcludedAgeRanges and ExcludedGenders are demographic EXCLUSIONS ("18-24",
+	// "MALE", …). Exclusion-only is Google's own shape at campaign level, not a
+	// narrowing this adapter chose: there is no "target only these" form here. Left
+	// empty, no demographic is excluded.
+	ExcludedAgeRanges []string `json:"excludedAgeRanges"`
+	ExcludedGenders   []string `json:"excludedGenders"`
+	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions. All
+	// Search only (refused on "demand-gen", which has no text ad to extend), and all
+	// created as account-level assets that are then linked to the campaign.
+	//
+	// Left empty the ad serves as a bare headline+description, which costs more per
+	// click than the same bid with extensions attached — but it is the behaviour of
+	// every caller predating these fields, so absence is accepted, not refused.
+	Sitelinks          []googleAdsSitelinkConfig          `json:"sitelinks"`
+	Callouts           []string                           `json:"callouts"`
+	StructuredSnippets []googleAdsStructuredSnippetConfig `json:"structuredSnippets"`
+	// AdGroups splits the campaign into one ad group per theme, each with its own
+	// keywords and up to three responsive search ads. Search only.
+	//
+	// Left empty the client creates exactly the single ad group with the single ad it
+	// created before this field existed, from the campaign-level Headlines/Descriptions/
+	// Keywords/AudienceSegments/CPCBid — so this field is purely additive and changes
+	// nothing for a caller that omits it.
+	AdGroups []googleAdsAdGroupConfig `json:"adGroups"`
 	// AdoptExisting opts THIS dispatch in to adopting a campaign that already carries the
 	// composed name instead of creating one. It defaults to FALSE, and the default is the
 	// safety property, not a convenience: ComposeName is deterministic in
@@ -250,6 +385,23 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		CPCBid:           cfg.CPCBid,
 		StartDate:        cfg.StartDate,
 		EndDate:          cfg.EndDate,
+		// The LFXV2-2665 targeting/extension/ad-group inputs. Every one of these is
+		// passed through verbatim: the channel rules (proximity, languages, schedules,
+		// devices, demographics, extensions and ad groups are Search-only) are enforced
+		// by the client's preflight, BEFORE its first mutate, so they are refused in one
+		// place for both the create path and the ValidateCampaignInput call below rather
+		// than re-stated here where the two could drift.
+		ExcludedGeoTargets: cfg.ExcludedGeoTargets,
+		ProximityTargets:   googleAdsProximityTargets(cfg.ProximityTargets),
+		Languages:          cfg.Languages,
+		AdSchedules:        googleAdsAdSchedules(cfg.AdSchedules),
+		DeviceBidModifiers: googleAdsDeviceBidModifiers(cfg.DeviceBidModifiers),
+		ExcludedAgeRanges:  cfg.ExcludedAgeRanges,
+		ExcludedGenders:    cfg.ExcludedGenders,
+		Sitelinks:          googleAdsSitelinks(cfg.Sitelinks),
+		Callouts:           cfg.Callouts,
+		StructuredSnippets: googleAdsStructuredSnippets(cfg.StructuredSnippets),
+		AdGroups:           googleAdsAdGroups(cfg.AdGroups),
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
 		// with the same suffix is rejected by whichever family it reaches first —
@@ -412,6 +564,119 @@ func googleAdsKeywords(in []googleAdsKeywordConfig) []googleads.Keyword {
 	out := make([]googleads.Keyword, len(in))
 	for i, kw := range in {
 		out[i] = googleads.Keyword{Text: kw.Text, MatchType: kw.MatchType}
+	}
+	return out
+}
+
+// The LFXV2-2665 wire→client mappers. Each follows googleAdsKeywords exactly: a nil
+// return for an empty input, so an omitted field stays nil end-to-end instead of
+// becoming an empty-but-non-nil slice, and a straight field copy with no validation —
+// every value is checked by the client's preflight before anything is sent.
+
+func googleAdsProximityTargets(in []googleAdsProximityConfig) []googleads.ProximityTarget {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.ProximityTarget, len(in))
+	for i, p := range in {
+		out[i] = googleads.ProximityTarget{
+			Latitude:   p.Latitude,
+			Longitude:  p.Longitude,
+			Radius:     p.Radius,
+			RadiusUnit: p.RadiusUnit,
+		}
+	}
+	return out
+}
+
+// googleAdsAdSchedules carries BidModifier across as the pointer it is on both sides.
+// Copying the value would make an absent modifier indistinguishable from an explicit
+// 0, which is the -100% opt-out — the interval would stop serving entirely.
+func googleAdsAdSchedules(in []googleAdsAdScheduleConfig) []googleads.AdSchedule {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.AdSchedule, len(in))
+	for i, s := range in {
+		out[i] = googleads.AdSchedule{
+			DayOfWeek:   s.DayOfWeek,
+			StartHour:   s.StartHour,
+			StartMinute: s.StartMinute,
+			EndHour:     s.EndHour,
+			EndMinute:   s.EndMinute,
+			BidModifier: s.BidModifier,
+		}
+	}
+	return out
+}
+
+func googleAdsDeviceBidModifiers(in []googleAdsDeviceBidModifierConfig) []googleads.DeviceBidModifier {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.DeviceBidModifier, len(in))
+	for i, d := range in {
+		out[i] = googleads.DeviceBidModifier{Device: d.Device, BidModifier: d.BidModifier}
+	}
+	return out
+}
+
+func googleAdsSitelinks(in []googleAdsSitelinkConfig) []googleads.Sitelink {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.Sitelink, len(in))
+	for i, s := range in {
+		out[i] = googleads.Sitelink{
+			Text:         s.Text,
+			Description1: s.Description1,
+			Description2: s.Description2,
+			FinalURL:     s.FinalURL,
+		}
+	}
+	return out
+}
+
+func googleAdsStructuredSnippets(in []googleAdsStructuredSnippetConfig) []googleads.StructuredSnippet {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.StructuredSnippet, len(in))
+	for i, s := range in {
+		out[i] = googleads.StructuredSnippet{Header: s.Header, Values: s.Values}
+	}
+	return out
+}
+
+// googleAdsAdGroups maps the per-theme ad group list, reusing googleAdsKeywords for
+// each group's keywords so a group's keyword vocabulary cannot drift from the
+// campaign-level one. An empty per-group list stays nil, which is what the client
+// reads as "inherit the campaign-level value" — distinct from an empty-but-present
+// list, which would mean the group overrides with nothing.
+func googleAdsAdGroups(in []googleAdsAdGroupConfig) []googleads.AdGroupSpec {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.AdGroupSpec, len(in))
+	for i, g := range in {
+		out[i] = googleads.AdGroupSpec{
+			Name:             g.Name,
+			CPCBid:           g.CPCBid,
+			Keywords:         googleAdsKeywords(g.Keywords),
+			AudienceSegments: g.AudienceSegments,
+			Ads:              googleAdsAds(g.Ads),
+		}
+	}
+	return out
+}
+
+func googleAdsAds(in []googleAdsAdConfig) []googleads.AdSpec {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.AdSpec, len(in))
+	for i, a := range in {
+		out[i] = googleads.AdSpec{Headlines: a.Headlines, Descriptions: a.Descriptions}
 	}
 	return out
 }
