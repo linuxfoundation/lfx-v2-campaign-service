@@ -213,6 +213,14 @@ type CampaignInput struct {
 	// shape at campaign level, not a narrowing — see campaign_criteria.go.
 	ExcludedAgeRanges []string
 	ExcludedGenders   []string
+	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions.
+	// All optional, all SEARCH ONLY (refused at preflight on Demand Gen), and all
+	// created as account-level assets that are then linked to the campaign — see
+	// assets.go. Left empty the ad serves as a bare headline+description, which
+	// costs more per click than the same bid with extensions attached.
+	Sitelinks          []Sitelink
+	Callouts           []string
+	StructuredSnippets []StructuredSnippet
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
@@ -290,8 +298,19 @@ type CampaignResult struct {
 	// Always campaignCriterion ids: these exist on the Search path only, since
 	// validateCriteriaPlan refuses them on Demand Gen.
 	TargetingCriterionIDs []string `json:"targetingCriterionIds,omitempty"`
-	GoogleAdsURL          string   `json:"googleAdsUrl"`
-	Steps                 []string `json:"steps"`
+	// ExtensionAssetIDs are the sitelink/callout/structured-snippet ASSETS created
+	// for this campaign, in that order; ExtensionLinkIDs are the asset ids Google
+	// confirmed LINKED to the campaign.
+	//
+	// They are reported separately because the two can legitimately differ: assets
+	// are created account-wide by one mutate and linked by a second, so a failure
+	// between them leaves created-but-unlinked assets, and a caller reconciling the
+	// campaign needs to know they exist. ExtensionAssetIDs non-empty with
+	// ExtensionLinkIDs empty is exactly that case, and the returned error says so.
+	ExtensionAssetIDs []string `json:"extensionAssetIds,omitempty"`
+	ExtensionLinkIDs  []string `json:"extensionLinkIds,omitempty"`
+	GoogleAdsURL      string   `json:"googleAdsUrl"`
+	Steps             []string `json:"steps"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
@@ -647,6 +666,11 @@ type campaignPreflight struct {
 	// out-of-range bid modifier must fail before anything is paid for. See
 	// validateCriteriaPlan.
 	criteria criteriaPlan
+	// assets are the validated ad extensions — sitelinks, callouts and structured
+	// snippets — resolved here for the same reason the criteria are: an over-long
+	// callout or a sitelink with no destination must fail before anything is paid
+	// for. See validateAssetPlan.
+	assets assetPlan
 	// negativeKeywords are the validated campaign-level exclusions, and cpcBidMicros
 	// the validated ad-group bid already converted to micros (0 = unset). Both are
 	// computed here, with everything else, so a bad exclusion or an out-of-range bid
@@ -869,6 +893,10 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	assets, err := validateAssetPlan(kind, in)
+	if err != nil {
+		return nil, err
+	}
 	// The three remaining inputs join the same pre-mutate block for the same
 	// orphan-avoidance reason: each is purely local, and each would otherwise be
 	// rejected by Google only at a mutate that runs after the budget and campaign have
@@ -900,6 +928,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		audienceSegments: audienceSegments,
 		geo:              geo,
 		criteria:         criteria,
+		assets:           assets,
 		negativeKeywords: negativeKeywords,
 		cpcBidMicros:     cpcBidMicros,
 		startDateTime:    startDateTime,
@@ -1120,6 +1149,23 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		res.TargetingCriterionIDs = critIDs
 		steps = append(steps, fmt.Sprintf("Campaign targeting applied: %d criteria (%s)", len(critIDs), criteriaStep(pf.criteria)))
+		res.Steps = steps
+	}
+
+	// Ad extensions are the last campaign-level step before the ad group. They go
+	// AFTER the criteria rather than before because they are the only step here
+	// that takes two mutates and can leave something behind (unlinked assets) —
+	// the less that is already built when that happens, the cheaper the
+	// reconciliation. Same partial-result contract: the campaign exists either way,
+	// and the asset ids are reported even when the linking half fails.
+	if !pf.assets.empty() {
+		assetIDs, linkIDs, assetErr := c.createCampaignAssets(ctx, campaignResource, campaignID, pf.assets)
+		res.ExtensionAssetIDs = assetIDs
+		if assetErr != nil {
+			return res, assetErr
+		}
+		res.ExtensionLinkIDs = linkIDs
+		steps = append(steps, fmt.Sprintf("Ad extensions applied: %d assets (%s)", len(linkIDs), assetStep(pf.assets)))
 		res.Steps = steps
 	}
 
