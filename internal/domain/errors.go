@@ -1053,8 +1053,9 @@ var (
 	// but names an account the project's OWN resolved connection does not manage. Maps to 400.
 	//
 	// Every account-scoped monitor read can answer with this: a connection is bound to
-	// exactly one ad account (`account_id TEXT NOT NULL` under `UNIQUE (project_id)`, a
-	// column shared by every provider table), so a request for any other account id is a
+	// exactly one ad account (`account_id TEXT NOT NULL` on every provider table, one LIVE
+	// row per project via a `(project_id)` unique index partial to `WHERE status <>
+	// 'deleted'`), so a request for any other account id is a
 	// request mismatch, not a connection defect. Reddit's resolveMonitorClient was the
 	// first and, until the LinkedIn/Meta guards, the only producer — the property it
 	// relied on was always the shared schema's rather than a Reddit quirk.

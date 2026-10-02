@@ -584,24 +584,40 @@ func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID s
 // it HERE, before an empty AccountConfig.AccountID can reach the Meta client and fail
 // opaquely with a malformed "//campaigns" request instead of a reason naming the fix.
 // ToggleStatus and ReadMetrics do not call this — see resolveMetaCredentials for why.
+func requireMetaAccountID(res *resolved, projectID string) (string, error) {
+	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" {
+		return "", res.systemScoped(fmt.Errorf("%w: %w: meta connection for project %s has no account id selected",
+			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID))
+	}
+	return accountID, nil
+}
+
 // requireMetaManagedAccount proves the caller-supplied accountID is the one THIS project's
 // own connection is bound to. It layers the mismatch check onto requireMetaAccountID rather
 // than repeating its empty-account handling, so the two paths cannot drift.
 //
-// A connection stores exactly one account (`account_id TEXT NOT NULL` under
-// `UNIQUE (project_id)` — a column shared by every provider table, see
-// docs/channel-connections-schema.md), so a request naming any OTHER account is a request
-// mismatch and must not be served. Mirrors reddit.go's resolveMonitorClient.
+// A connection stores exactly one account: `account_id TEXT NOT NULL` on every provider
+// table, with one LIVE row per project — a unique index on `(project_id)` partial to
+// `WHERE status <> 'deleted'` (migration 000001, the sole authority). So a request naming
+// any OTHER account is a request mismatch and must not be served. Mirrors reddit.go's resolveMonitorClient.
 //
 // Refusing the LF system fallback is NOT a substitute: that is about whose CREDENTIAL is
 // used, this is about which ACCOUNT the request named. A project with its own active
 // connection passes the fallback check and can still name another project's account.
 //
-// Latent rather than live today — only one Meta ad account is configured, so there is no
-// second account to cross into — but Meta uses the separate-account-per-foundation model
-// (docs/channel-connections-schema.md, "Current Account Inventory"), so connecting a second
-// account would make it reachable with no code change. That is the reason to carry the guard
-// now rather than when it starts mattering.
+// DEFENSIVE, not a live exposure. Meta is one shared ad account across foundations today,
+// so there is no second account for a project to cross into and no caller this refuses that
+// would otherwise have succeeded: a project's stored account_id IS the shared account, so a
+// legitimate request matches it. (docs/architecture.md's "Account Tenancy" table lists Meta
+// as per-foundation; that is stale against how the accounts are actually run, and is being
+// corrected separately — do not use it as the authority here.)
+//
+// It is carried anyway because the check costs one comparison and is the only thing standing
+// between a shared-account read and a per-project one if Meta ever moves to an account per
+// foundation. If that never happens, this guard never fires. What it must NOT become is a
+// refusal of a legitimate shared-account read — which is why the permitted path is pinned by
+// a test arm that asserts the request reaches Meta with the stored account.
 func requireMetaManagedAccount(res *resolved, projectID, accountID string) (string, error) {
 	stored, err := requireMetaAccountID(res, projectID)
 	if err != nil {
@@ -615,15 +631,6 @@ func requireMetaManagedAccount(res *resolved, projectID, accountID string) (stri
 			domain.ErrAccountNotManagedByConnection, projectID, stored, want)
 	}
 	return stored, nil
-}
-
-func requireMetaAccountID(res *resolved, projectID string) (string, error) {
-	accountID := strings.TrimSpace(res.accountID)
-	if accountID == "" {
-		return "", res.systemScoped(fmt.Errorf("%w: %w: meta connection for project %s has no account id selected",
-			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID))
-	}
-	return accountID, nil
 }
 
 // Dispatch implements service.PlatformDispatcher for Meta.

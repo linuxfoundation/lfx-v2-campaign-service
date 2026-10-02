@@ -688,21 +688,14 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 	return accounts, nil
 }
 
-// ListAccountCampaignMetrics reads every ACTIVE/PAUSED campaign on accountID plus an
-// account-wide Ad Analytics pivot=CAMPAIGN read over the trailing `days` days, ported from
-// lfx-self-serve's linkedin-ads.service.ts (getLinkedInAnalytics). accountID is the bare
-// numeric LinkedIn ad account id (the same form ListAccounts returns and
-// AccountConfig.AccountID persists) — NOT a URN.
-//
-// It satisfies the service-side AccountMetricsReader interface, which Orchestrator
-// type-asserts on the dispatcher for the requested platform.
-//
 // requireLinkedInManagedAccount proves the caller-supplied accountID is the one THIS
 // project's own connection is bound to, and returns it trimmed.
 //
-// A connection stores exactly one account (`account_id TEXT NOT NULL` under
-// `UNIQUE (project_id)` — a column shared by every provider table, see
-// docs/channel-connections-schema.md), so a request naming any OTHER account is a
+// A connection stores exactly one account: `account_id TEXT NOT NULL` on every
+// provider table, with one LIVE row per project — a unique index on `(project_id)`
+// partial to `WHERE status <> 'deleted'` (migration 000001, the sole authority;
+// docs/channel-connections-schema.md renders it as a flat UNIQUE and is stale on
+// that detail). So a request naming any OTHER account is a
 // request mismatch and must not be served. Mirrors reddit.go's resolveMonitorClient,
 // which has made this check since round-18 review; the property it relies on is the
 // shared schema's, not a Reddit quirk.
@@ -712,8 +705,14 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 // CREDENTIAL is used; this is about WHICH ACCOUNT the request named. A project with its
 // own active connection passes the fallback check and can still name a sibling project's
 // account — and one LinkedIn token reaches several ad accounts (that is exactly what
-// ListAccounts enumerates), so the token is not the boundary either. Today tlf and
-// lf-events hold two different LinkedIn accounts under two different projects.
+// ListAccounts enumerates), so the token is not the boundary either.
+//
+// LinkedIn is the platform where this is LIVE rather than defensive: it genuinely runs
+// several ad accounts across foundations (tlf and lf-events are two of them), so a project
+// naming another project's account is a real, reachable request and this is what refuses
+// it. The other ad platforms share one account today, where the same check is defensive —
+// see requireMetaManagedAccount. Do not take per-platform tenancy from
+// docs/architecture.md's "Account Tenancy" table; it is stale for the shared platforms.
 //
 // The empty case is kept DISTINCT from the mismatch rather than folded into it. An empty
 // stored account means the operator has not finished setting the connection up, whose
@@ -743,6 +742,15 @@ func requireLinkedInManagedAccount(res *resolved, projectID, accountID string) (
 	return stored, nil
 }
 
+// ListAccountCampaignMetrics reads every ACTIVE/PAUSED campaign on accountID plus an
+// account-wide Ad Analytics pivot=CAMPAIGN read over the trailing `days` days, ported from
+// lfx-self-serve's linkedin-ads.service.ts (getLinkedInAnalytics). accountID is the bare
+// numeric LinkedIn ad account id (the same form ListAccounts returns and
+// AccountConfig.AccountID persists) — NOT a URN.
+//
+// It satisfies the service-side AccountMetricsReader interface, which Orchestrator
+// type-asserts on the dispatcher for the requested platform.
+//
 // Trust boundary (round-16 review, fixed): resolveLinkedInOwnedDiscoveryCredentials refuses the
 // LF system fallback entirely, so a project with no LinkedIn connection of its own gets a 404
 // instead of a read served from a credential that could reach another project's data. See that

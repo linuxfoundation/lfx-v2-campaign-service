@@ -785,8 +785,9 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
   rationale as `ErrAccountIDMalformed` above, for a non-HTTP caller that bypasses Goa. See
   `domain.ErrMonitorDaysInvalid`'s doc comment.
 - `ErrAccountNotManagedByConnection` → **400** — a caller-supplied account id is well-formed but
-  names an account the project's own resolved connection does not manage (Reddit only, since a
-  Reddit connection is bound to exactly one ad account). Checked before `ErrConnectionNotUsable`
+  names an account the project's own resolved connection does not manage (answerable by the
+  Reddit, LinkedIn and Meta monitor reads, since a connection is bound to exactly one ad
+  account; Reddit checked it first, and Google Ads is the remaining deliberate gap). Checked before `ErrConnectionNotUsable`
   below: the stored connection is fine here, the REQUEST named the wrong account, so
   `ErrConnectionNotUsable`'s "check that the stored credential is active and valid" message
   would point at the wrong remedy (round-18 review). See `domain.ErrAccountNotManagedByConnection`'s

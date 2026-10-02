@@ -5,9 +5,11 @@ to the upstream read without checking it against the account the project's own c
 bound to. Reddit had checked this since round-18 review; LinkedIn, Meta and Google Ads did
 not. LinkedIn and Meta now do.
 
-A connection is singleton per project and stores exactly one account (`account_id TEXT NOT
-NULL` under `UNIQUE (project_id)`, a column shared by every provider table), so a request
-naming any other account is a request mismatch and answers
+A connection is singleton per project and stores exactly one account: `account_id TEXT NOT
+NULL` on every provider table, with one LIVE row per project — a unique index on
+`(project_id)` partial to `WHERE status <> 'deleted'` (migration 000001 is the sole
+authority; the schema doc renders it as a flat UNIQUE and is stale on that detail). So a
+request naming any other account is a request mismatch and answers
 `domain.ErrAccountNotManagedByConnection` (400 at `internal/service/connection.go`) before
 any upstream call is issued. The sentinel and its 400 mapping already existed for Reddit;
 only the two guards and their tests are new.
@@ -21,12 +23,17 @@ comes from the connection row the project owns, and `resolveOwned` already refus
 fallback, so the value is genuinely per-project and the comparison is not a no-op. The fallback
 check is about whose CREDENTIAL is used; this is about which ACCOUNT the request named.
 
-**Severity split.** LinkedIn is the live case — `tlf` and `lf-events` hold two different
-LinkedIn accounts under two different projects, and one LinkedIn token reaches several ad
-accounts (that is what `ListAccounts` enumerates), so the token is not the boundary. Meta is
-latent: it uses the separate-account-per-foundation model but has one account configured
-today, so connecting a second would make it reachable with no code change. Google Ads is one
-shared customer id across every foundation, so there is no second account to cross into; its
+**Severity split.** LinkedIn is the live case: it genuinely runs several ad accounts across
+foundations (`tlf` and `lf-events` are two of them), and one LinkedIn token reaches several
+of them — that is what `ListAccounts` enumerates — so the token is not the boundary and a
+project naming another project's account is a real, reachable request. Meta's guard is
+DEFENSIVE rather than a live exposure: Meta is one shared ad account across foundations
+today, so a project's stored `account_id` IS the shared account and a legitimate request
+matches it. It refuses nothing that would otherwise have succeeded, and it is the only thing
+standing between a shared-account read and a per-project one if Meta ever splits.
+`docs/architecture.md`'s "Account Tenancy" table lists Meta/Reddit/X as per-foundation; that
+is stale against how the accounts are actually run and is not the authority here. Google Ads
+is likewise one shared customer id across every foundation; its
 guard is deliberately deferred because `internal/dispatch/googleads.go` is in an open,
 approved PR and landing this there would hand that PR a conflict for a latent issue.
 

@@ -41,8 +41,9 @@ reaches), not project-scoped ones.
   review). Google Ads builds an account-agnostic client the same way
   discovery does; Reddit, LinkedIn and Meta additionally scope the requested
   `account_id` to their own resolved connection's single account. A
-  connection is bound to exactly one ad account (`account_id TEXT NOT NULL`
-  under `UNIQUE (project_id)` — a column shared by every provider table), so
+  connection is bound to exactly one ad account (`account_id TEXT NOT NULL` on
+  every provider table, one LIVE row per project via a `(project_id)` unique
+  index partial to `WHERE status <> 'deleted'`), so
   a request naming any other account is a request mismatch and answers
   `domain.ErrAccountNotManagedByConnection` (400) before any upstream call.
   Reddit checked this first (round-18 review); LinkedIn and Meta followed,
@@ -56,9 +57,17 @@ reaches), not project-scoped ones.
   ACCOUNT the request named. A project with its own active connection passes
   the fallback check and can still name a sibling project's account — and one
   LinkedIn token reaches several ad accounts (that is what `ListAccounts`
-  enumerates), so the token is not the boundary either. LinkedIn is the live
-  case: `tlf` and `lf-events` hold two different LinkedIn accounts under two
-  different projects.
+  enumerates), so the token is not the boundary either.
+
+  LinkedIn is the one platform where this is LIVE rather than defensive: it
+  genuinely runs several ad accounts across foundations (`tlf` and `lf-events`
+  are two of them), so a project naming another project's account is a real,
+  reachable request. The other ad platforms share a single account today, so
+  their stored `account_id` IS the shared account and a legitimate request
+  matches it — the guard is carried there against a future split, and never
+  fires meanwhile. `docs/architecture.md`'s "Account Tenancy" table still
+  lists Meta/Reddit/X as per-foundation; that is stale against how the
+  accounts are actually run and is not the authority for this.
 
   LinkedIn keeps the empty stored account DISTINCT from a mismatch
   (`ErrAccountNotSelected` vs `ErrAccountNotManagedByConnection`) because its

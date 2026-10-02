@@ -1451,22 +1451,35 @@ func TestLinkedIn_ListAccountCampaignMetrics_RefusesSystemFallback(t *testing.T)
 }
 
 // TestLinkedIn_ListAccountCampaignMetrics_AccountScope pins the account-scope guard as a
-// TABLE over all three states the request can be in, not just the mismatch that motivated
-// it. The happy path is in the table deliberately: a guard that refuses a legitimate read is
-// the same defect as one that permits an illegitimate one, and only the pair proves the
-// comparison rather than a blanket refusal.
+// TABLE over every state the request can be in, not just the mismatch that motivated it.
 //
-// The requested-account values are what distinguishes the cases; the stored account is
-// always the fixture's 123456789 except where the case overrides it.
+// The permitted arms assert POSITIVELY on the error they must produce rather than merely
+// asserting the guard's sentinel is absent, which any error satisfies — including the fake
+// credential's 401.
+//
+// What the permitted arms DO and DO NOT prove, stated precisely because the first version of
+// this comment overclaimed it: they pin that the guard does not refuse a legitimate read, so
+// a guard that blanket-refuses fails them. They do NOT detect a guard that is absent
+// altogether — "the read proceeds" is equally true with no guard at all. Only the refusal
+// arms below are sensitive to that, and under mutation (guard call deleted) exactly those
+// fail while these pass. That asymmetry is inherent to a permitted path, not a gap to fix
+// with another arm.
+//
+// Whitespace is exercised on the STORED account, not the requested one. The requested value
+// cannot carry whitespace: ValidateAccountID runs first and accountIDRE is `^[0-9]+$`,
+// anchored with no trim, so a padded request is refused as ErrAccountIDMalformed before any
+// credential resolves and never reaches the guard at all. The stored value comes from the
+// database and is not shape-validated, so its trim is the one that can actually matter.
 func TestLinkedIn_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 	cases := []struct {
 		name      string
-		stored    string // "" means "leave the fixture's value"
+		stored    *string // nil keeps the fixture's 123456789
 		requested string
+		// wantErr is the sentinel the guard must answer with. When permitted is true the
+		// guard must NOT fire and wantErr is the error the read legitimately fails with
+		// afterwards — the fake credential's unusable-connection 401.
 		wantErr   error
-		// wantNoErrSentinel asserts the guard did NOT fire. The call still fails on the
-		// fake credential's 401, so the assertion is about WHICH error, not about success.
-		wantNoErrSentinel bool
+		permitted bool
 	}{
 		{
 			name:      "a different account is refused as a request mismatch",
@@ -1475,27 +1488,35 @@ func TestLinkedIn_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 		},
 		{
 			name:      "an unselected stored account is an account_not_selected setup state",
-			stored:    "   ",
+			stored:    strPtrLI("   "),
 			requested: "999999999",
 			wantErr:   domain.ErrAccountNotSelected,
 		},
 		{
-			name:              "the connection's own account is permitted",
-			requested:         "123456789",
-			wantNoErrSentinel: true,
+			name:      "a padded request never reaches the guard — the validator refuses it first",
+			requested: "  123456789  ",
+			wantErr:   domain.ErrAccountIDMalformed,
 		},
 		{
-			name:              "surrounding whitespace does not make a matching account a mismatch",
-			requested:         "  123456789  ",
-			wantNoErrSentinel: true,
+			name:      "the connection's own account is permitted through to the upstream read",
+			requested: "123456789",
+			wantErr:   domain.ErrConnectionNotUsable,
+			permitted: true,
+		},
+		{
+			name:      "whitespace around the STORED account does not make a matching request a mismatch",
+			stored:    strPtrLI("  123456789  "),
+			requested: "123456789",
+			wantErr:   domain.ErrConnectionNotUsable,
+			permitted: true,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			conn := activeLinkedInConn(goodLinkedInCreds)
-			if tc.stored != "" {
-				conn.AccountID = tc.stored
+			if tc.stored != nil {
+				conn.AccountID = *tc.stored
 			}
 			d := NewLinkedInDispatcher(&scopedConnReader{
 				rows: map[string]*model.Connection{"cncf": conn},
@@ -1503,16 +1524,16 @@ func TestLinkedIn_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 
 			_, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderLinkedInAds, tc.requested, 30)
 
-			if tc.wantNoErrSentinel {
-				if errors.Is(err, domain.ErrAccountNotManagedByConnection) {
-					t.Fatalf("the guard refused the connection's OWN account (requested %q): %v", tc.requested, err)
-				}
-				return
-			}
 			if !errors.Is(err, tc.wantErr) {
-				t.Fatalf("err = %v, want %v — the read must not reach LinkedIn with an account "+
-					"this project's connection does not manage", err, tc.wantErr)
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.permitted && errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+				t.Fatalf("the guard refused the connection's OWN account (requested %q): %v", tc.requested, err)
 			}
 		})
 	}
 }
+
+// strPtrLI is a local helper: the table needs to distinguish "leave the fixture's account id"
+// from "set it to an empty or whitespace value", which a bare string cannot express.
+func strPtrLI(s string) *string { return &s }
