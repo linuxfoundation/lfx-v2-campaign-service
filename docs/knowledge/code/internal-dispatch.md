@@ -701,6 +701,29 @@ create and the adoption path, so the recorded flight-window side is populated wh
 caller supplied a date and is nil only for rows predating the fields and callers that omit
 them.
 
+The LFXV2-2665 targeting, extension and ad-group fields — `excludedGeoTargets`,
+`proximityTargets`, `languages`, `adSchedules`, `deviceBidModifiers`, `excludedAgeRanges`,
+`excludedGenders`, `sitelinks`, `callouts`, `structuredSnippets` and `adGroups`, plus
+`geoTargets` now also carrying raw geo target constant ids (see
+[internal/platform/googleads](internal-platform-googleads.md) § Search campaign
+completeness) — follow the same rule and the same hands-off posture: each gets its own
+JSON-tagged wire type for the reason `googleAdsKeywordConfig` has one, and a mapper that
+copies fields and validates nothing.
+
+Two details of those mappers are load-bearing. Each returns **nil** for an empty input, as
+`googleAdsKeywords` does, so an omitted field stays nil end-to-end rather than becoming an
+empty-but-non-nil slice — and for the per-ad-group fields nil is specifically what the client
+reads as "inherit the campaign-level value", so the distinction is not cosmetic. And
+`adSchedules[].bidModifier` is a POINTER on the wire type as well as in the client, because an
+explicit `0` is Google's -100% opt-out: a value-typed hop would make an absent modifier
+indistinguishable from an instruction to stop serving in that interval.
+
+The Search-only channel rules — proximity, languages, schedules, devices, demographics,
+extensions and ad groups are all refused on Demand Gen — are deliberately **not** restated
+here. The client refuses them inside its own preflight, before its first mutate, and `Dispatch`
+calls `ValidateCampaignInput` unconditionally (including on the adoption path), so both paths
+already refuse in one place. A second copy in the adapter could only drift from it.
+
 **`status` is reported but deliberately NOT compared.** The row's `Status` is this service's
 lifecycle vocabulary and Google's is `ENABLED`/`PAUSED`/`REMOVED` — different axes (see
 `model.PlatformCampaignRef`). Comparing them would report a permanent, meaningless

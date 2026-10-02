@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067); and Search serving readiness — an optional manual CPC bid on the ad group (0 means unset, no default invented), an optional campaign flight window rendered into the v23 startDateTime/endDateTime request fields on both channels, and optional campaign-level negative keywords batched into one atomic campaignCriteria:mutate with negative:true, all three validated before the first paid mutate and each a no-op when absent."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067); and Search serving readiness — an optional manual CPC bid on the ad group (0 means unset, no default invented), an optional campaign flight window rendered into the v23 startDateTime/endDateTime request fields on both channels, and optional campaign-level negative keywords batched into one atomic campaignCriteria:mutate with negative:true, all three validated before the first paid mutate and each a no-op when absent; and Search campaign completeness — geo exclusions on both channels, raw geo target constant ids alongside country codes so a caller can target a city, region or postal code, Search-only proximity radius targeting, campaign-level language/ad-schedule/device/demographic criteria whose bid modifier is pointer-typed so an explicit 0 stays Google's -100% opt-out, sitelink/callout/structured-snippet extension assets linked by the resource name the create returned, and multiple themed ad groups each carrying multiple responsive search ads that inherit the campaign-level fields PER FIELD, every one of them optional, refused on Demand Gen where it is a Search capability, and validated before the first paid mutate (LFXV2-2665)."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -1012,6 +1012,139 @@ the campaign exists and so follows the usual partial-result contract: an error
 comes back ALONGSIDE the non-nil `*CampaignResult`, never as `(nil, err)`.
 `CampaignResult.NegativeKeywordCriteriaIDs` records the criterion ids created,
 with the same three-way presence convention `GeoCriterionIDs` documents.
+
+## Search campaign completeness: geo depth, criteria, extensions, ad groups
+
+Four further slices, each optional and each a no-op when absent, that take the
+Search create from "a campaign a human can un-pause" to one that expresses what a
+real event campaign is bought for. Everything here is validated inside
+`preflightCampaignKind` — before the first budget `:mutate` — and therefore also
+by `ValidateCampaignInput`, so the adoption path refuses exactly what the create
+path refuses.
+
+**Geo depth (`geo.go`).** Three additions to the country-code targeting above.
+
+`GeoTargets` now also accepts a RAW numeric geo target constant id, which is the
+only way to address a city, region, metro or postal code: the curated country map
+cannot express them, and curating them here would mean shipping ~100k rows Google
+revises. `resolveGeoList` tells the two spellings apart by SHAPE — two letters
+versus all digits — so they cannot collide and no caller has to declare which
+kind an entry is. A numeric id is checked only for shape: verifying it would mean
+a lookup, and `ValidateCampaignInput`'s contract forbids sending a request, so a
+well-formed id naming nothing is refused by Google AFTER the campaign exists.
+That is the honest cost of reaching past the curated map, and it is why the
+country path — which this client CAN check locally — still fails before any
+mutate.
+
+`ExcludedGeoTargets` is the exclusion list, going through the same
+`resolveGeoList` with a different noun so a rejection names the list the operator
+has to fix; `validateExcludedGeoTargets` exists as its own entry point for the
+same reason `validateNegativeKeywords` does. A location appearing in BOTH lists
+is refused: Google resolves that contradiction by letting the exclusion win, so
+the campaign would silently not serve where the caller plainly asked it to.
+Exclusions work on BOTH channels — an excluded location is the same criterion at
+either level — which is why the `maxGeoTargets` cap bounds each list separately.
+
+`ProximityTargets` is radius targeting, the one location shape that is not a place
+in Google's table and hence a struct rather than another entry in a geo list.
+Decimal degrees in, microdegrees out (`microDegreesPerDegree`, the same shape
+`microsPerUnit` has for currency). `RadiusUnit` is required with no default,
+because a radius of 50 is two very different campaigns depending on the unit and
+guessing would silently buy ~2.5x or 0.4x the intended area. It is REFUSED on
+Demand Gen rather than dropped: that channel attaches location criteria on the ad
+group, where proximity has not been verified against a real account, and the two
+honest options were to refuse locally where refusing is free or to find out after
+a paid campaign exists. Lift it the moment someone confirms the behaviour live.
+
+`maxGeoTargets` rose from 30 to 60 with this slice. The old value carried the note
+that the map's 30 entries made it unreachable without duplicates — which stopped
+being true the moment raw ids were accepted, since a metro-level campaign targets
+far more than 30 places. The 2026-08-13 incident is the standing precedent: a cap
+the product's own callers exceed by default refuses creates Google would have
+accepted.
+
+**Language, schedule, device and demographic criteria
+(`campaign_criteria.go`).** Four more campaign-level criterion kinds, all built by
+`validateCriteriaPlan` and posted in ONE `campaignCriteria:mutate` separate from
+the geo and negative-keyword calls — the same reasoning the negatives section
+gives: a shared mutate would make either list's failure discard the other, and
+each call's failure sentence would then be false for the other's contents.
+
+`Languages` resolve ISO 639-1 codes or raw numeric constant ids by the same
+shape test the geo list uses, deduped by resolved id. `AdSchedules` carry
+Google's enum-valued minutes (`ZERO`/`FIFTEEN`/`THIRTY`/`FORTY_FIVE`), an end
+hour that reaches 24 only at minute 0, and an end strictly after the start.
+There is deliberately no overlap check between intervals: Google rejects a true
+overlap itself, and a test here would have to decide whether 09:00-12:00 and
+12:00-17:00 touch — they do not — with a wrong answer refusing an ordinary
+split-day schedule. `DeviceBidModifiers` refuse a repeated device, which Google
+rejects as a criterion conflict only after the campaign exists.
+`ExcludedAgeRanges`/`ExcludedGenders` are exclusions by construction, because
+Google targets demographics by excluding the buckets you do not want.
+
+`AdSchedule.BidModifier` is a `*float64` on BOTH this type and the dispatcher's
+wire type, and the pointer is load-bearing: exactly `0` is Google's -100% opt-out,
+so it cannot double as "unset", and a value-typed hop anywhere along the path
+would turn an absent modifier into an instruction not to serve. `DeviceBidModifier`
+takes a plain `float64` because a device listed without a modifier would say
+nothing at all. `validateBidModifier` mirrors Google's own rule — exactly 0, or
+`0.1`..`10.0`.
+
+All five are refused on Demand Gen, for the reason proximity is: that channel
+attaches targeting on the ad group, and these criteria have not been verified
+there.
+
+**Ad extensions (`assets.go`).** Sitelinks, callouts and structured snippets are
+created as account-level `assets:mutate` operations and then LINKED to the
+campaign by `campaignAssets:mutate` with an `AssetFieldType`. The link operation
+references the resource name the create RETURNED, never one rebuilt from an id —
+a rebuilt name that happened to be wrong would link a different asset and the
+mutate would still succeed. Both calls verify `len(results) == len(ops)` and that
+each returned name parses to this account and this campaign.
+
+Text limits are RUNE counts, not the double-width WEIGHT `ad_copy.go` uses for RSA
+copy: Google applies the same CJK doubling to extension text, so a 25-rune
+Japanese sitelink is refused upstream. That is deliberate under-refusal — counting
+weight locally would refuse mixed-script text Google might accept. And over-long
+extension text is REFUSED rather than truncated, inverting the RSA path's
+behaviour, because generated ad copy may be cut (this service wrote it) while
+extension text was written by a human for a reason.
+
+A sitelink needs both description lines or neither: Google renders one line as if
+it had none, silently discarding copy. A structured snippet needs 3..10 distinct
+values, below which Google will not serve it, and its header is checked for SHAPE
+only — the valid header vocabulary is LANGUAGE-DEPENDENT and Google revises it, so
+a local allow-list would refuse headers Google accepts.
+
+Extensions are SEARCH only and refused on Demand Gen, which uses a different asset
+model entirely.
+
+**Multiple ad groups and multiple RSAs (`adgroup_plan.go`).**
+`CampaignInput.AdGroups` turns the single-group cascade into one group per theme,
+each with up to `maxAdsPerAdGroup` (3) responsive search ads. `validateAdGroupPlans`
+takes the group the campaign-level fields already produced as its `base` and uses
+it as BOTH the no-`AdGroups` answer and the source of every per-group fallback —
+which is what keeps "inherit" meaning exactly what the single-group path would
+have done, rather than a second set of defaults that could drift from it.
+
+Inheritance is PER FIELD, not all-or-nothing: a group that sets only `Keywords`
+keeps the campaign's bid, audiences and ad copy. `CPCBid: 0` inherits too, since 0
+already means "unset" at the campaign level. Each override is validated by the
+same function as its campaign-level counterpart — `validateKeywords`,
+`validateAudienceSegments`, `validateCPCBid` — so a group's vocabulary cannot
+drift from the campaign's.
+
+A group's name is a THEME LABEL appended to the composed campaign name, and
+duplicates are refused CASE-INSENSITIVELY: Google's own duplicate check is, and a
+collision surfaces at the mutate, by which point the earlier groups in the list
+already exist. Duplicate ad COPY across two ads in one group is NOT refused —
+Google accepts it, it is wasteful rather than invalid, and a guard upstream would
+not apply is the expensive kind of wrong.
+
+The groups are created in order, and because every one of them is created after
+the campaign exists, the partial-result contract covers them: a failure at group
+N returns the error alongside the non-nil result, and says which group of how many
+failed with how many were created before it.
 
 ## Scope
 
