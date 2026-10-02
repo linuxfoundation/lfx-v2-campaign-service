@@ -29,6 +29,19 @@ type demandGenCampaignCreate struct {
 	CampaignBudget                 string         `json:"campaignBudget"`
 	ContainsEuPoliticalAdvertising string         `json:"containsEuPoliticalAdvertising"`
 	TargetSpend                    map[string]any `json:"targetSpend"`
+	// Flight window, carried for the same reason as geoTargetTypeSetting below:
+	// start_date_time/end_date_time are CAMPAIGN-level fields in the Google Ads API, not
+	// Search-specific ones, and Google's own Demand Gen create guide lists both as
+	// optional fields on this channel.
+	//
+	// Omitted when nil. A Demand Gen campaign that validated a window and then did not
+	// send it would be worse than one that never had dates: applyCampaignConfig records
+	// the window on the row either way, so the campaigns table would claim an end date the
+	// campaign does not have, and the settings readback reports `unknown` rather than
+	// `diverged` when one side is absent -- blinding the drift detector precisely where it
+	// is needed.
+	StartDateTime *string `json:"startDateTime,omitempty"`
+	EndDateTime   *string `json:"endDateTime,omitempty"`
 	// Carried even though this channel attaches its geo criteria at the AD GROUP level:
 	// geoTargetTypeSetting is a CAMPAIGN-level field in the Google Ads API and governs how
 	// location criteria are interpreted for the whole campaign, ad-group criteria included.
@@ -138,6 +151,10 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		CampaignBudget:                 budgetResource,
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
 		GeoTargetTypeSetting:           geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
+		// Resolved by the SHARED preflight, so an invalid window is refused before the
+		// budget mutate on this channel exactly as it is on Search.
+		StartDateTime: pf.startDateTime,
+		EndDateTime:   pf.endDateTime,
 		// targetSpend, matching the legacy Express implementation's `target_spend: {}` —
 		// which is what serves this channel on app.lfx.dev today.
 		//

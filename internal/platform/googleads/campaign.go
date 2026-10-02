@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -138,6 +139,29 @@ type CampaignInput struct {
 	// controls: Search takes campaign-level criteria, Demand Gen rejects those
 	// and takes ad-group-level ones. See geo.go.
 	GeoTargets []string
+	// StartDate and EndDate are the campaign's flight window as YYYY-MM-DD, the same
+	// wire format every other platform's config uses (dispatch.campaignDateLayout), and
+	// the same one the campaigns table stores.
+	//
+	// Google does NOT take that format, and the conversion is not cosmetic. In v23 the
+	// request fields are `start_date_time`/`end_date_time` carrying
+	// "yyyy-MM-dd HH:mm:ss" — `start_date`/`end_date` were REMOVED, so sending the
+	// shorter name is rejected as an unrecognized field rather than silently ignored.
+	// toGoogleDateTime supplies the time component: 00:00:00 for the start and 23:59:59
+	// for the end, which is what Google's own create samples do and is what makes an end
+	// date INCLUSIVE — "2026-06-20" means through the end of the 20th, not up to its
+	// midnight.
+	//
+	// The instant is interpreted in the AD ACCOUNT's timezone, which this client is not
+	// told. That is why no UTC conversion happens here and the value is passed through as
+	// wall-clock: converting would require guessing the account's zone, and a guess that
+	// is wrong by one zone moves a campaign's start or end by a day.
+	//
+	// Both optional, and independently so: a start with no end runs until paused, which is
+	// the behaviour every campaign has today. Blank means the field is OMITTED from the
+	// payload entirely rather than sent empty — Google rejects an empty string.
+	StartDate string
+	EndDate   string
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
@@ -308,6 +332,41 @@ type campaignCreate struct {
 	NetworkSettings                networkSettings      `json:"networkSettings"`
 	GeoTargetTypeSetting           geoTargetTypeSetting `json:"geoTargetTypeSetting"`
 	ManualCPC                      json.RawMessage      `json:"manualCpc"`
+	// Pointers so an absent flight window is OMITTED rather than sent as "". Google rejects
+	// an empty string on these fields.
+	//
+	// `string` + omitempty would also omit an empty value, including when only one of the
+	// two is set -- that is not the reason. The reason is that the preflight already
+	// represents absence as nil (toGoogleDateTime returns a nil pointer for a blank date),
+	// so a pointer carries that absence through unchanged instead of flattening it to ""
+	// and relying on the tag to re-derive it.
+	StartDateTime *string `json:"startDateTime,omitempty"`
+	EndDateTime   *string `json:"endDateTime,omitempty"`
+}
+
+// googleCampaignDateLayout is the YYYY-MM-DD the CALLER supplies, matching every other
+// platform's config format and the campaigns table's own columns.
+const googleCampaignDateLayout = "2006-01-02"
+
+// toGoogleDateTime renders a YYYY-MM-DD flight-window date as the "yyyy-MM-dd HH:mm:ss"
+// Google's v23 start_date_time/end_date_time require, with the supplied time component.
+//
+// It returns nil for a blank date so the field is omitted, and an error for anything that
+// is not a date -- never a best-effort value. A malformed date that reached Google as
+// something plausible would set a REAL flight window on a real campaign, which is a
+// money-spending difference from the one the operator asked for.
+func toGoogleDateTime(date, clock string) (*string, error) {
+	date = strings.TrimSpace(date)
+	if date == "" {
+		return nil, nil
+	}
+	if _, err := time.Parse(googleCampaignDateLayout, date); err != nil {
+		// YYYY-MM-DD, not googleCampaignDateLayout: the constant is Go's reference layout
+		// ("2006-01-02"), which reads to an operator as a required literal year.
+		return nil, fmt.Errorf("date %q is not YYYY-MM-DD", date)
+	}
+	out := date + " " + clock
+	return &out, nil
 }
 
 // geoTargetTypeSetting decides what a location criterion actually MEANS, and Google's default
@@ -536,6 +595,13 @@ type campaignPreflight struct {
 	// preflight so an unmapped country code fails BEFORE the budget mutate,
 	// rather than after a paid campaign exists — see validateGeoTargets.
 	geoConstantIDs []string
+	// startDateTime and endDateTime are the flight window already rendered into Google's
+	// "yyyy-MM-dd HH:mm:ss", nil when the caller supplied none. Resolved during the
+	// preflight for the same reason as geoConstantIDs: a malformed date must fail BEFORE
+	// the budget mutate commits, not after a paid campaign exists with no way to reach
+	// the window the operator asked for.
+	startDateTime *string
+	endDateTime   *string
 }
 
 // ValidateCampaignInput runs exactly the input validation CreateCampaign runs before it
@@ -664,6 +730,13 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// Same placement, same reason: a malformed or inverted flight window is local input
+	// validation, and refusing it after the budget has committed would orphan a paid
+	// campaign over a typo.
+	startDateTime, endDateTime, err := validateFlightWindow(in.StartDate, in.EndDate)
+	if err != nil {
+		return nil, err
+	}
 
 	return &campaignPreflight{
 		amountMicros:     amountMicros,
@@ -676,7 +749,42 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		keywords:         keywords,
 		audienceSegments: audienceSegments,
 		geoConstantIDs:   geoConstantIDs,
+		startDateTime:    startDateTime,
+		endDateTime:      endDateTime,
 	}, nil
+}
+
+// validateFlightWindow renders the caller's YYYY-MM-DD dates into Google's
+// "yyyy-MM-dd HH:mm:ss" and refuses a window that cannot mean what it says.
+//
+// Only one ordering rule is enforced, and deliberately only one: an end BEFORE the start
+// describes a window with no days in it, which no caller can have meant. A start in the
+// PAST is NOT refused -- Google itself accepts one (the campaign simply becomes eligible
+// immediately) and refusing it here would break the ordinary case of creating a campaign
+// for an event whose promotion was always meant to have begun already.
+//
+// Equal dates are allowed: start 00:00:00 to end 23:59:59 is a one-day campaign, which is
+// a real thing to want on the last day before an event.
+func validateFlightWindow(start, end string) (*string, *string, error) {
+	startDateTime, err := toGoogleDateTime(start, "00:00:00")
+	if err != nil {
+		return nil, nil, fmt.Errorf("campaign start %w", err)
+	}
+	endDateTime, err := toGoogleDateTime(end, "23:59:59")
+	if err != nil {
+		return nil, nil, fmt.Errorf("campaign end %w", err)
+	}
+	// Compared as the caller's dates, not the rendered strings: the rendered pair carries
+	// different time components by design, so an equal-date window would otherwise look
+	// like end > start for a reason that has nothing to do with what was requested.
+	if startDateTime != nil && endDateTime != nil {
+		s, _ := time.Parse(googleCampaignDateLayout, strings.TrimSpace(start))
+		e, _ := time.Parse(googleCampaignDateLayout, strings.TrimSpace(end))
+		if e.Before(s) {
+			return nil, nil, fmt.Errorf("campaign end date %q is before the start date %q", end, start)
+		}
+	}
+	return startDateTime, endDateTime, nil
 }
 
 // CreateCampaign creates a PAUSED Google Ads search campaign as a four-resource
@@ -814,6 +922,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// then restricts by presence rather than silently reverting to the permissive default.
 		GeoTargetTypeSetting: geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
 		ManualCPC:            json.RawMessage(`{}`),
+		// nil unless the caller supplied one, which omits the field. Resolved in the
+		// preflight so a malformed date fails before the budget mutate commits.
+		StartDateTime: pf.startDateTime,
+		EndDateTime:   pf.endDateTime,
 	}
 	campaignReq := mutateRequest{Operations: []mutateOperation{{Create: campaignCreateVal}}}
 	campaignPath := c.customerPath("campaigns:mutate")

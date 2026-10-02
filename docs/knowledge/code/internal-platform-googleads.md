@@ -345,6 +345,24 @@ case. Between the two calls, if the
 caller's context is already done, the campaign `:mutate` is skipped and the created
 budget is returned as a reconcilable partial rather than fired on a dead context.
 
+`CampaignInput.StartDate`/`EndDate` are the campaign's optional flight window, supplied
+as `YYYY-MM-DD` (the format every other platform's config uses) and rendered by
+`toGoogleDateTime` into the `startDateTime`/`endDateTime` the v23 request fields require,
+`"yyyy-MM-dd HH:mm:ss"`. Those REQUEST-side names are the same as the readback's and are
+NOT the pre-v23 `start_date`/`end_date`, which were removed and are rejected as
+unrecognized fields. `00:00:00` on the start and `23:59:59` on the end is what makes the
+end date INCLUSIVE — the campaign serves through the end of that day. The instant is
+interpreted in the AD ACCOUNT's timezone, which this client is never told, so the value is
+passed through as wall-clock and never converted; a guessed zone would move a start or end
+by a day. `validateFlightWindow` runs inside `preflightCampaignKind`, alongside
+`validateGeoTargets` and for the same reason — a malformed or inverted window must be
+refused BEFORE the budget mutate, or a typo orphans a real paid campaign. Only an end
+before the start is refused: a PAST start is accepted, because Google accepts one and
+refusing it would break creating a campaign whose promotion was always meant to have
+begun. BOTH channels carry the window — `start_date_time`/`end_date_time` are
+campaign-level fields, so `demandGenCampaignCreate` takes them too, unlike geo criteria
+which attach at different levels per channel.
+
 Input is validated up front, before any paid `:mutate` call: the budget must be
 finite (NaN/Inf rejected — NaN passes every ordered comparison, so it would
 otherwise slip through and create a zero-unit budget) and must round to a positive

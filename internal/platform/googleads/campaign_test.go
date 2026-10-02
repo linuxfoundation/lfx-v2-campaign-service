@@ -1087,3 +1087,144 @@ func TestCreateCampaign_RestrictsGeoToPresence(t *testing.T) {
 		t.Errorf("Search campaign create does not set PRESENCE — its location criteria would be read as PRESENCE_OR_INTEREST.\nbody=%s", body)
 	}
 }
+
+// TestCreateCampaign_SendsFlightWindowInGooglesFormat pins the conversion from the
+// caller's YYYY-MM-DD to the "yyyy-MM-dd HH:mm:ss" Google's v23 start_date_time /
+// end_date_time require.
+//
+// The FIELD NAMES are asserted, not just the values: `start_date`/`end_date` were REMOVED
+// in v23, and sending those names is rejected as an unrecognized field rather than
+// ignored — so a test that only checked the date text would pass against a payload Google
+// refuses outright.
+//
+// The time components are asserted for the same reason they are set: 00:00:00 on the
+// start and 23:59:59 on the end is what makes the end date INCLUSIVE. Dropping to
+// 00:00:00 on the end would silently shorten every campaign by a day.
+func TestCreateCampaign_SendsFlightWindowInGooglesFormat(t *testing.T) {
+	// Mutex, not a bare capture: httptest runs each handler in its own goroutine, so the
+	// write below and the read in the assertion need a happens-before edge.
+	var mu sync.Mutex
+	var body string
+	c := newCampaignClient(t, okBudget, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		body = string(b)
+		mu.Unlock()
+		okCampaign(w, r)
+	})
+
+	in := sampleInput()
+	in.StartDate = "2026-06-17"
+	in.EndDate = "2026-06-20"
+
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(body, `"startDateTime":"2026-06-17 00:00:00"`) {
+		t.Errorf("start not sent as Google's v23 startDateTime at midnight.\nbody=%s", body)
+	}
+	if !strings.Contains(body, `"endDateTime":"2026-06-20 23:59:59"`) {
+		t.Errorf("end not sent as Google's v23 endDateTime at end-of-day — the final day would not serve.\nbody=%s", body)
+	}
+	// The v22 spellings must not appear at all: Google rejects them, and a payload
+	// carrying both would fail for a reason the dates themselves do not explain.
+	if strings.Contains(body, `"startDate"`) || strings.Contains(body, `"endDate"`) {
+		t.Errorf("payload carries the pre-v23 start_date/end_date spelling, which v23 rejects.\nbody=%s", body)
+	}
+}
+
+// TestCreateCampaign_OmitsAnAbsentFlightWindow pins that no window means NO field, rather
+// than an empty one. Google rejects "" on these fields, so sending them empty would turn
+// every campaign created without dates — which is every campaign created before this
+// existed — into a create failure.
+func TestCreateCampaign_OmitsAnAbsentFlightWindow(t *testing.T) {
+	// Mutex, not a bare capture: httptest runs each handler in its own goroutine, so the
+	// write below and the read in the assertion need a happens-before edge.
+	var mu sync.Mutex
+	var body string
+	c := newCampaignClient(t, okBudget, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		body = string(b)
+		mu.Unlock()
+		okCampaign(w, r)
+	})
+
+	if _, err := c.CreateCampaign(context.Background(), sampleInput()); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Contains(body, "startDateTime") || strings.Contains(body, "endDateTime") {
+		t.Errorf("an absent flight window still emitted a date field; Google rejects an empty one.\nbody=%s", body)
+	}
+}
+
+// TestCreateCampaign_RefusesAnImpossibleFlightWindow covers the two ways a window can be
+// wrong, and asserts the refusal happens BEFORE any mutate — the handler would fail the
+// test if it were reached, which is the property that keeps a typo from orphaning a paid
+// campaign behind a committed budget.
+func TestCreateCampaign_RefusesAnImpossibleFlightWindow(t *testing.T) {
+	for name, tc := range map[string]struct{ start, end, want string }{
+		"end before start":      {"2026-06-20", "2026-06-17", "before the start date"},
+		"unparseable start":     {"17/06/2026", "2026-06-20", "campaign start"},
+		"unparseable end":       {"2026-06-17", "June 20 2026", "campaign end"},
+		"start is not a date":   {"soon", "", "campaign start"},
+		"end alone unparseable": {"", "whenever", "campaign end"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newCampaignClient(t, func(w http.ResponseWriter, r *http.Request) {
+				t.Error("budget mutate was reached — an invalid window must be refused before anything commits")
+				okBudget(w, r)
+			}, func(w http.ResponseWriter, r *http.Request) {
+				t.Error("campaign mutate was reached — an invalid window must be refused before anything commits")
+				okCampaign(w, r)
+			})
+
+			in := sampleInput()
+			in.StartDate, in.EndDate = tc.start, tc.end
+
+			_, err := c.CreateCampaign(context.Background(), in)
+			if err == nil {
+				t.Fatalf("CreateCampaign accepted an impossible window (start=%q end=%q)", tc.start, tc.end)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want it to name %q so the operator knows which end is wrong", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestValidateFlightWindow_AcceptsASingleDayAndAnOpenEnd pins the two shapes that look
+// wrong and are not: a campaign that starts and ends on the same day (the day before an
+// event), and a start with no end (runs until paused — every campaign's behaviour before
+// this field existed).
+func TestValidateFlightWindow_AcceptsASingleDayAndAnOpenEnd(t *testing.T) {
+	t.Run("same day is a one-day campaign", func(t *testing.T) {
+		start, end, err := validateFlightWindow("2026-06-17", "2026-06-17")
+		if err != nil {
+			t.Fatalf("same-day window refused: %v", err)
+		}
+		if start == nil || *start != "2026-06-17 00:00:00" {
+			t.Errorf("start = %v, want midnight on the day", start)
+		}
+		if end == nil || *end != "2026-06-17 23:59:59" {
+			t.Errorf("end = %v, want end-of-day, or the campaign serves for zero seconds", end)
+		}
+	})
+
+	t.Run("a start with no end runs until paused", func(t *testing.T) {
+		start, end, err := validateFlightWindow("2026-06-17", "")
+		if err != nil {
+			t.Fatalf("open-ended window refused: %v", err)
+		}
+		if start == nil {
+			t.Error("start was dropped")
+		}
+		if end != nil {
+			t.Errorf("end = %v, want nil so the field is omitted", *end)
+		}
+	})
+}

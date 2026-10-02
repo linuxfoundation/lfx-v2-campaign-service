@@ -549,8 +549,9 @@ moving a field between compared and upstream-only is a CONTRACT change: the desc
 copied verbatim into the generated clients and into both OpenAPI copies, and a stale one
 keeps telling every consumer the field can only ever read `unknown`. Re-run `make apigen` and
 commit `gen/` plus `cmd/campaign-service/kodata/gen/http/openapi*` with the design edit.
-The count of permanently-unknown fields is a RANGE, not a constant — six on a row whose
-snapshot records a channel, seven on a legacy row without one — precisely because this field's
+The count of permanently-unknown fields is a RANGE, not a constant — four on a row whose
+snapshot records a channel, five on a legacy row without one (it was six/seven before the
+flight dates gained a recorded side and stopped being permanently unknown) — precisely because this field's
 recorded side depends on the snapshot; any prose stating one number is wrong for the other row. Flight dates
 are normalised to the row's `YYYY-MM-DD` before comparison (`googleAdsDateOnly`): Google
 returns `yyyy-MM-dd HH:mm:ss` in the ad account's timezone, so comparing the raw strings
@@ -559,9 +560,13 @@ value that fails it yields an ABSENT upstream side rather than the raw string: a
 `2026-08-01` with the documented time component missing is byte-identical to the recorded
 side's own `YYYY-MM-DD` rendering, so passing it through reported `match` for a value the
 code could not validate. The recorded side of both
-dates is always NULL for Google Ads today — its config carries no dates — so they read
-`unknown` rather than diverged; they are wired through the comparison anyway so a future
-config that populates them starts diverging without anyone having to remember. It also
+dates WAS always NULL for Google Ads — its config carried none — and the comparison was
+wired through anyway so a future config populating them would start diverging without
+anyone having to remember. `googleAdsConfig` now carries `startDate`/`endDate`
+(LFXV2-2023), so that recorded side exists and these compare for real. A nil recorded side
+is still ordinary rather than a defect: both fields are optional, campaigns created before
+they existed have NULL columns, and an adopted campaign was never created from one of this
+service's configs at all. It also
 translates Google's `campaign_budget.period` into `model.BudgetType` via
 `googleAdsBudgetTypeFromPeriod` — `DAILY` -> `daily`, `CUSTOM_PERIOD` -> `lifetime` (Google
 has no `LIFETIME` value), and `UNKNOWN`/anything else -> unmapped, which fails closed to an
