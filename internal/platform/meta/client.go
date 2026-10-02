@@ -3172,13 +3172,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// same reason; this path was the odd one out.
 			steps = append(steps, "Campaign lookup was CUT SHORT by a cancelled/expired caller context; cannot confirm the campaign name is absent — verify in Meta Ads Manager before retrying")
 			return &CampaignResult{
-				Platform:     "meta-ads",
-				CampaignName: campaignName,
-				AccountID:    accountID,
-				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
-				Steps:        steps,
-			}, fmt.Errorf("meta campaign creation aborted during name lookup UNCONFIRMED (caller context done; cannot confirm %q is absent, verify in Meta Ads Manager before retrying): %w",
-				campaignName, errors.Join(errLookupAmbiguous, lookupErr))
+					Platform:     "meta-ads",
+					CampaignName: campaignName,
+					AccountID:    accountID,
+					MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
+					Steps:        steps,
+				}, fmt.Errorf("meta campaign creation aborted during name lookup UNCONFIRMED (caller context done; cannot confirm %q is absent, verify in Meta Ads Manager before retrying): %w",
+					campaignName, errors.Join(errLookupAmbiguous, lookupErr))
 		}
 		// EVERY failed lookup is UNCONFIRMED, including a pre-send dial error and a
 		// definite 4xx. An earlier version gated this on createOutcomeAmbiguous and it
@@ -3199,13 +3199,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// that branch was not a special case, it was the general rule arrived at early.
 		steps = append(steps, "Campaign lookup FAILED, so its outcome is UNCONFIRMED; cannot confirm the campaign name is absent — verify in Meta Ads Manager before retrying")
 		return &CampaignResult{
-			Platform:     "meta-ads",
-			CampaignName: campaignName,
-			AccountID:    accountID,
-			MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
-			Steps:        steps,
-		}, fmt.Errorf("meta campaign lookup UNCONFIRMED (cannot confirm %q is absent; verify in Meta Ads Manager before retrying): %w",
-			campaignName, errors.Join(errLookupAmbiguous, lookupErr))
+				Platform:     "meta-ads",
+				CampaignName: campaignName,
+				AccountID:    accountID,
+				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
+				Steps:        steps,
+			}, fmt.Errorf("meta campaign lookup UNCONFIRMED (cannot confirm %q is absent; verify in Meta Ads Manager before retrying): %w",
+				campaignName, errors.Join(errLookupAmbiguous, lookupErr))
 	}
 
 	var campaignID string
