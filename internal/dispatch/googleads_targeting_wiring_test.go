@@ -619,6 +619,10 @@ func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenBeforeAnyCreate(t *testi
 		{"sitelinks", `"sitelinks":[{"text":"Register","finalUrl":"https://events.example/kc/register"}]`},
 		{"callouts", `"callouts":["Free workshops"]`},
 		{"ad groups", `"adGroups":[{"name":"Training"}]`},
+		// demandGenAdGroupCreate has no cpcBidMicros field and demandgen.go never
+		// reads the validated bid, so anything other than a refusal here means the
+		// caller's bid was accepted and silently discarded.
+		{"cpc bid", `"cpcBid":2.5`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -700,5 +704,108 @@ func TestGoogleAdsAdSchedules_CarriesTheBidModifierPointer(t *testing.T) {
 	}
 	if out[1].BidModifier == nil || *out[1].BidModifier != 0 {
 		t.Errorf("an explicit 0 must survive as 0, got %v", out[1].BidModifier)
+	}
+}
+
+// The Search-only refusals must hold on the ADOPTION path too, which is the half the
+// per-field table above cannot reach: adoption returns before any create runs, so a
+// request that CreateDemandGenCampaign would refuse is never handed to it.
+//
+// This is the asymmetry ValidateCampaignInput exists to prevent, reaching the new
+// fields. The dispatcher used to validate every request as Search because
+// preflightCampaignKind only used the kind to compose a name; now the kind gates
+// refusals, so validating as Search let a Demand Gen request carrying proximity,
+// criteria, extensions, ad groups or a CPC bid validate clean and then be adopted —
+// accepted when a same-name campaign happened to exist, refused when it did not.
+//
+// The server fails on ANY request: the refusal must land before the adoption lookup,
+// not merely before a create, so there is nothing legitimate for it to serve.
+func TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenAdoptionToo(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  string
+	}{
+		{"proximity targets", `"proximityTargets":[{"latitude":37.7749,"longitude":-122.4194,"radius":25,"radiusUnit":"MILES"}]`},
+		{"languages", `"languages":["EN"]`},
+		{"ad schedules", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":9,"startMinute":0,"endHour":17,"endMinute":0}]`},
+		{"device bid modifiers", `"deviceBidModifiers":[{"device":"MOBILE","bidModifier":1.2}]`},
+		{"excluded age ranges", `"excludedAgeRanges":["18-24"]`},
+		{"sitelinks", `"sitelinks":[{"text":"Register","finalUrl":"https://events.example/kc/register"}]`},
+		{"callouts", `"callouts":["Free workshops"]`},
+		{"ad groups", `"adGroups":[{"name":"Training"}]`},
+		{"cpc bid", `"cpcBid":2.5`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+			}))
+			t.Cleanup(tokenSrv.Close)
+			apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// t.Errorf, never t.Fatal: this runs on the server's goroutine.
+				t.Errorf("a Search-only field on demand-gen must be refused before any call to Google, got %s", r.URL.Path)
+				http.Error(w, "unexpected", http.StatusInternalServerError)
+			}))
+			t.Cleanup(apiSrv.Close)
+
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)},
+				identityEncryptor{},
+				googleads.WithTokenURL(tokenSrv.URL),
+				googleads.WithBaseURL(apiSrv.URL),
+			)
+			cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"demand-gen","adoptExisting":true,` + tc.cfg + `}}`)
+
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+			if err == nil {
+				t.Fatalf("a Search-only field must be refused whatever sits in the ad account, got campaign %+v", camp)
+			}
+			if camp != nil {
+				t.Errorf("a pre-send validation failure created nothing, so the result must be nil to release the claim; got %+v", camp)
+			}
+		})
+	}
+}
+
+// The kind-taking entry point is what makes the test above possible, and the kind must
+// genuinely reach the preflight's gates rather than being accepted and ignored. The same
+// input is refused for Demand Gen and accepted for Search, with no upstream call either
+// way — ValidateCampaignInputKind's contract is that it mutates nothing and sends nothing.
+func TestGoogleAdsClient_ValidateCampaignInputKindGatesOnTheKind(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("validation must send nothing, got %s", r.URL.Path)
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	client := googleads.NewClient(
+		googleads.Credentials{ClientID: "cid", ClientSecret: "sec", RefreshToken: "ref", DeveloperToken: "dev"},
+		googleads.AccountConfig{CustomerID: "1234567890"},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+
+	in := googleads.CampaignInput{
+		Project:         "tlf",
+		EventName:       "KubeCon",
+		Budget:          50,
+		RegistrationURL: "https://events.example/kc",
+		Headlines:       []string{"Attend KubeCon", "Register today", "Join the community"},
+		Descriptions:    []string{"Three days of talks and workshops.", "Meet maintainers in person."},
+		Languages:       []string{"EN"},
+	}
+	if err := client.ValidateCampaignInputKind(googleads.CampaignKindDemandGen, in); err == nil {
+		t.Error("languages are Search-only; validating for Demand Gen must refuse them")
+	}
+	if err := client.ValidateCampaignInputKind(googleads.CampaignKindSearch, in); err != nil {
+		t.Errorf("the same input is valid for Search, got %v", err)
+	}
+	// The un-kinded entry point keeps its documented Search behaviour for callers that
+	// have not been updated.
+	if err := client.ValidateCampaignInput(in); err != nil {
+		t.Errorf("ValidateCampaignInput assumes Search, got %v", err)
 	}
 }

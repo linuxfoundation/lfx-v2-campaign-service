@@ -657,3 +657,56 @@ func TestCreateCampaign_NegativeKeyword429IsNotRetried(t *testing.T) {
 		t.Errorf("campaignCriteria:mutate called %d times, want exactly 1 — a retry could double-create the exclusions", got)
 	}
 }
+
+// A CPC bid is refused on Demand Gen rather than validated and dropped.
+// demandGenAdGroupCreate has no cpcBidMicros field and demandgen.go never reads
+// pf.cpcBidMicros, so accepting the bid there would convert it and discard it —
+// the silent-drop defect LFXV2-3283 fixed for geo. Asserted through the REAL
+// preflight, which is the only place both the acceptance and the refusal live.
+func TestPreflight_CPCBidIsRefusedOnDemandGen(t *testing.T) {
+	in := CampaignInput{
+		Project:         "tlf",
+		EventName:       "KubeCon EU 2026",
+		Budget:          500,
+		RegistrationURL: "https://events.linuxfoundation.org/kubecon-eu-2026/",
+		CPCBid:          2.50,
+	}
+	c := &Client{account: AccountConfig{CustomerID: "1234567890"}}
+
+	if _, err := c.preflightCampaignKind(campaignKindDemandGen, in); err == nil {
+		t.Error("a CPC bid on Demand Gen must be refused — that channel has no bid field to carry it")
+	}
+	// The same bid is valid for Search, so the refusal is the kind's doing and not a
+	// newly-rejected bid value.
+	pf, err := c.preflightCampaignKind(campaignKindSearch, in)
+	if err != nil {
+		t.Fatalf("the same bid must still be accepted for Search: %v", err)
+	}
+	if pf.cpcBidMicros != 2_500_000 {
+		t.Errorf("cpcBidMicros = %d, want 2500000", pf.cpcBidMicros)
+	}
+	// An UNSET bid stays valid on Demand Gen: the refusal keys on a supplied bid, not
+	// on the channel, so it cannot refuse the shape every existing Demand Gen caller sends.
+	in.CPCBid = 0
+	if _, err := c.preflightCampaignKind(campaignKindDemandGen, in); err != nil {
+		t.Errorf("Demand Gen with no bid must still validate, got %v", err)
+	}
+}
+
+// maxCPCBid is sized for the weakest currency an ad account can be opened in, not for
+// USD, because validateCPCBid is handed a bid in the ACCOUNT's currency and never
+// converts. An ordinary bid in a low-unit currency must not be refused — that is the
+// over-refusal this guard's own comment calls the worse of the two failures — while
+// the micros-for-units mistake it exists to catch must still be caught.
+func TestValidateCPCBid_CeilingClearsLowUnitCurrencies(t *testing.T) {
+	// ~1500 JPY is roughly $10; ~2000 KRW roughly $1.50. Both are unremarkable bids.
+	for _, bid := range []float64{1_500, 2_000, 50_000} {
+		if _, err := validateCPCBid(bid); err != nil {
+			t.Errorf("validateCPCBid(%v) = %v, want accepted — a real bid in a low-unit currency", bid, err)
+		}
+	}
+	// A caller passing micros (2.50 expressed as 2_500_000) is still refused.
+	if _, err := validateCPCBid(2_500_000); err == nil {
+		t.Error("a micros-shaped bid must still be refused — that is what the ceiling is for")
+	}
+}

@@ -431,20 +431,9 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		d.opts...,
 	)
 
-	// Validate the input FIRST, and note this is not merely tidy ordering. Adoption
-	// returns before CreateCampaign runs its preflight, so without this call the same
-	// request would be rejected when no campaign exists and accepted when one does — a
-	// NaN budget or a malformed registration URL would fail on the first dispatch and
-	// silently succeed on the retry. Whether a request is well-formed cannot depend on
-	// what happens to be sitting in the ad account. Validating unconditionally (rather
-	// than only on the adoption branch) also keeps the two paths' acceptance identical
-	// whichever way cfg.AdoptExisting is set.
-	if err := client.ValidateCampaignInput(in); err != nil {
-		return nil, notCreated(err)
-	}
-	// Resolve the channel BEFORE the name is composed, before adoption looks anything up, and
-	// before any create. Every step below depends on which campaign type this is, and doing it
-	// last meant all of them ran assuming Search:
+	// Resolve the channel BEFORE validation, before the name is composed, before adoption
+	// looks anything up, and before any create. Every step below depends on which campaign
+	// type this is, and doing it last meant all of them ran assuming Search:
 	//   - the name was hardcoded "Search Campaign", so a Demand Gen dispatch with
 	//     adoptExisting:true searched for the SEARCH campaign's name — adopting a Search
 	//     campaign into the demand-gen slot, or missing the real "DemandGen Campaign".
@@ -462,6 +451,25 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		campaignKind = googleads.CampaignKindDemandGen
 	default:
 		return nil, notCreated(fmt.Errorf("google ads: unsupported channel %q (want %q or %q)", cfg.Channel, googleAdsChannelSearch, googleAdsChannelDemandGen))
+	}
+	// Validate the input BEFORE adoption, and note this is not merely tidy ordering.
+	// Adoption returns before CreateCampaign runs its preflight, so without this call the
+	// same request would be rejected when no campaign exists and accepted when one does —
+	// a NaN budget or a malformed registration URL would fail on the first dispatch and
+	// silently succeed on the retry. Whether a request is well-formed cannot depend on
+	// what happens to be sitting in the ad account. Validating unconditionally (rather
+	// than only on the adoption branch) also keeps the two paths' acceptance identical
+	// whichever way cfg.AdoptExisting is set.
+	//
+	// Validate for the RESOLVED kind, which is why the channel switch above now runs
+	// first. The client's preflight gates its Search-only refusals on the kind, so
+	// validating everything as Search let a Demand Gen request carrying proximity,
+	// criteria, extensions, ad groups or a CPC bid pass here and be adopted — reinstating
+	// for those fields the exact accepted-if-it-exists asymmetry this call prevents for
+	// every other field. The switch is pure-local and contacts nothing, so moving it
+	// above this keeps the no-upstream-call guarantee intact.
+	if err := client.ValidateCampaignInputKind(campaignKind, in); err != nil {
+		return nil, notCreated(err)
 	}
 	campaignName := googleads.ComposeName(campaignKind, in)
 	// Adoption is OPT-IN (see googleAdsConfig.AdoptExisting for why the default must be

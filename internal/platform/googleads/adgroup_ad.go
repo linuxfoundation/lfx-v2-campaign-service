@@ -57,8 +57,17 @@ const (
 	// and its floor is currency-dependent, so this is a broker-side guard, and a
 	// deliberately loose one: refusing a bid Google would have accepted is the worse
 	// failure of the two.
+	//
+	// The ceiling is sized for the WEAKEST currency an LF account can be opened in,
+	// not for USD, precisely because this value is never converted. A 1_000.0 ceiling
+	// reads as generous in dollars and refuses ordinary bids in the zero-decimal and
+	// low-unit currencies — ~1_000 JPY is under $7, ~2_000 KRW under $2 — so it would
+	// have refused creates Google accepts, on accounts this service already supports.
+	// 100_000.0 still catches the mistake the guard exists for (micros start at
+	// 1_000_000 for a one-unit bid, an order of magnitude above the ceiling in every
+	// currency) while clearing any real bid in any of them.
 	minCPCBid = 0.01
-	maxCPCBid = 1_000.0
+	maxCPCBid = 100_000.0
 
 	// errCodeDuplicateAdGroupName is Google's AdGroupError code when an ad group
 	// name already exists within the campaign — the ad-group analogue of

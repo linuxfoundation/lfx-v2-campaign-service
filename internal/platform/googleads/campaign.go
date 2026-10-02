@@ -824,7 +824,28 @@ func flightWindowStep(startDateTime, endDateTime string) string {
 // It delegates to the SAME helper CreateCampaign uses rather than repeating the checks,
 // because a second copy would pass review once and drift on the next change to either.
 func (c *Client) ValidateCampaignInput(in CampaignInput) error {
-	_, err := c.preflightCampaign(in)
+	return c.ValidateCampaignInputKind(CampaignKindSearch, in)
+}
+
+// ValidateCampaignInputKind is ValidateCampaignInput for a caller that already knows
+// which channel the request is for. Prefer it: ValidateCampaignInput assumes Search.
+//
+// The kind is load-bearing now in a way it was not when this entry point was written.
+// preflightCampaignKind used to take kind only to compose the name, so validating as
+// Search was harmless for every channel. It now GATES refusals — proximity targeting,
+// the four campaign criteria kinds, the extension assets, the ad-group list and the
+// CPC bid are all Search-only — so a Demand Gen request carrying one of those validates
+// clean as Search and is then refused by CreateDemandGenCampaign. On the create path
+// that is merely a late error; on the ADOPTION path, which returns before any create
+// runs, it is the exact defect this function exists to prevent: the same request
+// accepted when a campaign happens to exist and refused when it does not.
+//
+// Unknown kinds are not rejected here. The dispatch layer refuses an unrecognised
+// channel before it reaches the client at all, and a kind this package does not know
+// gates nothing — it simply gets the un-restricted Search treatment, which is the
+// pre-existing behaviour and cannot refuse something upstream would have accepted.
+func (c *Client) ValidateCampaignInputKind(kind string, in CampaignInput) error {
+	_, err := c.preflightCampaignKind(kind, in)
 	return err
 }
 
@@ -954,6 +975,16 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	negativeKeywords, err := validateNegativeKeywords(in.NegativeKeywords)
 	if err != nil {
 		return nil, err
+	}
+	// The bid is REFUSED on Demand Gen rather than dropped. demandGenAdGroupCreate has
+	// no cpcBidMicros field and demandgen.go never reads this value, so accepting the
+	// bid there would validate it, convert it, and then silently discard it — the same
+	// defect LFXV2-3283 fixed for geo, and the reason every other Search-only input in
+	// this preflight refuses instead of ignoring. The refusal costs nothing upstream:
+	// Demand Gen bids via targetSpend and rejects manualCpc, so no bid supplied here
+	// could ever have reached a Google call that wanted it.
+	if in.CPCBid != 0 && kind == campaignKindDemandGen {
+		return nil, fmt.Errorf("google-ads: a CPC bid is not supported on %s (Demand Gen bids via targetSpend and rejects manualCpc); omit CPCBid, or create a Search campaign for manual bidding", kind)
 	}
 	cpcBidMicros, err := validateCPCBid(in.CPCBid)
 	if err != nil {

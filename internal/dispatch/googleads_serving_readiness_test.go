@@ -233,7 +233,9 @@ func TestGoogleAds_DemandGenConfigFlightWindowReachesCampaignCreate(t *testing.T
 // upstream exists, so the dispatch has nothing to reconcile.
 func TestGoogleAds_BadServingReadinessConfigIsPreCreate(t *testing.T) {
 	for name, cfgJSON := range map[string]string{
-		"bid over the maximum":    `{"googleAdsConfig":{"budget":50,"cpcBid":100000}}`,
+		// Over maxCPCBid (100_000 account-currency units), which is the shape of the
+		// mistake the ceiling exists to catch: micros supplied where units were meant.
+		"bid over the maximum":    `{"googleAdsConfig":{"budget":50,"cpcBid":2500000}}`,
 		"malformed start date":    `{"googleAdsConfig":{"budget":50,"startDate":"2026-8-1"}}`,
 		"end before start":        `{"googleAdsConfig":{"budget":50,"startDate":"2026-08-31","endDate":"2026-08-01"}}`,
 		"bad negative match type": `{"googleAdsConfig":{"budget":50,"negativeKeywords":[{"text":"free","matchType":"FUZZY"}]}}`,

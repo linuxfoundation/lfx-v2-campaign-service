@@ -721,8 +721,19 @@ indistinguishable from an instruction to stop serving in that interval.
 The Search-only channel rules — proximity, languages, schedules, devices, demographics,
 extensions and ad groups are all refused on Demand Gen — are deliberately **not** restated
 here. The client refuses them inside its own preflight, before its first mutate, and `Dispatch`
-calls `ValidateCampaignInput` unconditionally (including on the adoption path), so both paths
-already refuse in one place. A second copy in the adapter could only drift from it.
+validates unconditionally (including on the adoption path), so both paths already refuse in one
+place. A second copy in the adapter could only drift from it.
+
+**Validate for the RESOLVED kind, which is why the channel switch runs first.** `Dispatch` calls
+`ValidateCampaignInputKind(campaignKind, in)`, not the Search-assuming `ValidateCampaignInput`,
+and the channel switch was moved ABOVE that call to make the kind available. The ordering is
+load-bearing: `preflightCampaignKind` once took its kind only to compose a name, so validating
+everything as Search was harmless, but the kind now gates the Search-only refusals. Validating as
+Search let a Demand Gen request carrying proximity, criteria, extensions, ad groups or a CPC bid
+pass, and adoption — which returns before any create — then accepted it, reinstating for exactly
+those fields the accepted-if-a-campaign-happens-to-exist asymmetry the unconditional validate
+exists to prevent. The switch is pure-local and contacts nothing, so moving it first keeps the
+no-upstream-call guarantee intact.
 
 **`status` is reported but deliberately NOT compared.** The row's `Status` is this service's
 lifecycle vocabulary and Google's is `ENABLED`/`PAUSED`/`REMOVED` — different axes (see

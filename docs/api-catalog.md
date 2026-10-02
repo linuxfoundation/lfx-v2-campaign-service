@@ -691,16 +691,20 @@ negativeKeywords?:              — OPTIONAL Search keyword EXCLUSIONS, attached
                                   is eligible for every query its positive keywords match.
 cpcBid?: number                 — OPTIONAL manual CPC bid for the ad group, in whole units of the ad
                                   ACCOUNT's currency (the same no-FX-conversion caveat `budget`
-                                  carries). Accepted range 0.01..1000.0 inclusive; NaN/Inf or a value
-                                  outside it fails the job before any Google Ads request. The range is
-                                  deliberately loose — it exists to catch a micros-vs-units mistake,
-                                  not to mirror a Google limit.
+                                  carries). Accepted range 0.01..100000.0 inclusive; NaN/Inf or a
+                                  value outside it fails the job before any Google Ads request. The
+                                  range is deliberately loose — it exists to catch a micros-vs-units
+                                  mistake, not to mirror a Google limit, and the ceiling is sized for
+                                  the weakest currency an account can be opened in (1000 JPY is under
+                                  $7) rather than for USD, because the value is never converted.
 
                                   0 (or omitted) means UNSET: no bid field is sent and the ad group
                                   inherits whatever Google derives, which is what every campaign
                                   created before this field existed did. An explicit 0 is NOT sent as
                                   a zero bid. SEARCH only — Demand Gen bids via targetSpend and
-                                  rejects manualCpc.
+                                  rejects manualCpc — and a non-zero bid on that channel is REFUSED
+                                  before anything is created, not dropped: Demand Gen's ad group has
+                                  no bid field at all, so accepting it would discard it silently.
 startDate?: string              — OPTIONAL campaign flight window as `YYYY-MM-DD` (spelled as in
 endDate?: string                  `metaConfig`/`redditConfig`). Each is INDEPENDENTLY optional: an
                                   omitted `startDate` leaves Google's default (the campaign starts

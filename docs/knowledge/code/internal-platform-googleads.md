@@ -942,15 +942,35 @@ zero bid), not an absent one. The omission is performed by `omitempty` on
 `minCPCBid` is what stops the two meanings colliding, since an accepted bid
 never rounds below 10000 micros. (`internal/platform/microsoft/targeting.go`'s
 `validateCpcBid` does return such a flag; its payload is not `omitempty`-driven,
-so it has to.) The accepted window is `0.01`..`1000.0`, the same
-window `internal/platform/microsoft/targeting.go` uses, and NaN/Inf are
+so it has to.) The accepted window is `0.01`..`100000.0`, and NaN/Inf are
 rejected explicitly because they pass every ordered comparison. The window is
 not a Google platform limit — Google documents no account-currency minimum to
 fall back to, so unlike the Microsoft client there is no second clause that
 substitutes one. It is deliberately loose: it exists to catch the
 micros-vs-units mistake (a caller passing `2_500_000` meaning 2.50), and
 over-refusal — refusing a bid Google would have accepted — is the worse
-failure. The ad-group step string says what was set or that nothing was, and
+failure.
+
+**The ceiling is sized for the weakest currency, not for USD.** It started at
+`1_000.0`, copied from the Microsoft client's window, and that is the one place
+copying it was wrong: the value is in the ACCOUNT's currency and is never
+converted, so a dollar-shaped ceiling refuses ordinary bids in the zero-decimal
+and low-unit currencies an LF account can be opened in — 1000 JPY is under $7,
+2000 KRW under $2. That is the over-refusal the paragraph above calls the worse
+failure, committed by the guard meant to avoid it. `100_000.0` still catches
+what the guard is for, since a micros-shaped bid starts at `1_000_000` for one
+unit — an order of magnitude above the ceiling in every currency — while
+clearing any real bid in any of them. The Microsoft window is unchanged; the
+two are no longer the same number, and that is deliberate.
+
+**A bid is REFUSED on Demand Gen, not dropped.** `demandGenAdGroupCreate` has no
+`cpcBidMicros` field and `demandgen.go` never reads `pf.cpcBidMicros`, so
+accepting one there would validate it, convert it, and silently discard it —
+the same defect LFXV2-3283 fixed for geo. The refusal keys on a SUPPLIED bid,
+not on the channel, so the unset shape every existing Demand Gen caller sends
+still validates. It costs nothing upstream either: Demand Gen bids via
+`targetSpend` and rejects `manualCpc`, so no bid supplied here could have
+reached a Google call that wanted it. The ad-group step string says what was set or that nothing was, and
 does NOT claim a serving consequence; whether a bid is what makes a given ad
 group eligible has not been verified live.
 
@@ -1019,8 +1039,22 @@ Four further slices, each optional and each a no-op when absent, that take the
 Search create from "a campaign a human can un-pause" to one that expresses what a
 real event campaign is bought for. Everything here is validated inside
 `preflightCampaignKind` — before the first budget `:mutate` — and therefore also
-by `ValidateCampaignInput`, so the adoption path refuses exactly what the create
-path refuses.
+by `ValidateCampaignInputKind`, so the adoption path refuses exactly what the
+create path refuses.
+
+**Validate with the KIND, not `ValidateCampaignInput`.** These slices are what
+made `preflightCampaignKind`'s `kind` parameter load-bearing: it used to feed
+only `ComposeName`, and now it gates every Search-only refusal below — proximity,
+the four criteria kinds, the extension assets, the ad-group list and the CPC bid.
+`ValidateCampaignInput` assumes Search and so validates a Demand Gen request
+against the wrong gates; `ValidateCampaignInputKind` takes the kind and is what
+the dispatcher calls. The distinction only matters on the ADOPTION path, where
+it matters entirely: the create path would still have been refused by
+`CreateDemandGenCampaign`, but adoption returns before any create runs, so
+validating as Search accepted a Demand Gen request carrying Search-only fields
+and snapshotted config that is never applied. An unknown kind is deliberately
+NOT rejected — it gates nothing and falls through to the un-restricted Search
+treatment, which cannot refuse a create Google would have accepted.
 
 **Geo depth (`geo.go`).** Three additions to the country-code targeting above.
 
