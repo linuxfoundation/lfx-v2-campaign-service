@@ -573,6 +573,19 @@ ad GA-3b creates, mirroring the reddit adapter's child-cascade contract:
   GA-3b's duplicate/ambiguous-outcome limitations), there is nothing to pause
   downstream and only the campaign is toggled.
 
+- **The campaign mutate is held to the same short-2xx standard as the children.**
+  `UpdateCampaignStatus` checks its own response with `checkStatusMutateResults`
+  rather than discarding the body: a 2xx that does not acknowledge the one
+  operation is UNCONFIRMED, not a confirmed flip. This matters MOST at the
+  campaign stage, because on PAUSE it runs FIRST and its success is what gates the
+  child cascade — an unacknowledged campaign flip taken as confirmed would send
+  the children on from a state nobody verified. The refusal is wrapped in a
+  dedicated `unconfirmedCampaignStatusError` rather than `partialCascadeError`,
+  whose message asserts the PRECEDING stages succeeded — on PAUSE there are none,
+  and the claim would be false. It satisfies the same `Unconfirmed() bool`
+  behavioural interface `IsOutcomeUnconfirmed` honours, so the claim stays
+  RETAINED and a retry re-applies the same idempotent status.
+
 - **The cascade covers EVERY ad group, not just the first.** `googleAdsToggleTargets`
   recovers the whole `AdGroups` list from the persisted result blob, each group with its
   own ads, and falls back to the scalar `adGroupId`/`adId` pair for rows written before
@@ -1089,9 +1102,22 @@ only way to address a city, region, metro or postal code: the curated country ma
 cannot express them, and curating them here would mean shipping ~100k rows Google
 revises. `resolveGeoList` tells the two spellings apart by SHAPE — two letters
 versus all digits — so they cannot collide and no caller has to declare which
-kind an entry is. A numeric id is checked only for shape: verifying it would mean
-a lookup, and `ValidateCampaignInput`'s contract forbids sending a request, so a
-well-formed id naming nothing is refused by Google AFTER the campaign exists.
+kind an entry is.
+
+A numeric id is not merely digit-shaped, though: `resolveGeoEntry` puts it
+through `canonicalCampaignID` — REUSED, not reimplemented, because it is already
+this package's answer for exactly this class of value (see its use on ad group
+and criterion ids in `ValidateKeywordActions`). That collapses every spelling to
+one and refuses the three faults that are decidable WITHOUT a lookup: `"0"` names
+nothing, `"02840"` is a non-canonical spelling of `2840`, and a 21-digit run
+overflows the int64 Google exposes these ids as. All three are permanent local
+input faults that Google would otherwise reject at `campaignCriteria:mutate` —
+which runs AFTER the budget and campaign are committed — so catching them in the
+preflight is what keeps a typo from stranding a paid campaign.
+
+What is still NOT checked is existence: whether `1014044` names a real place
+needs Google, and `ValidateCampaignInput`'s contract forbids sending a request,
+so a well-formed id naming nothing is refused upstream AFTER the campaign exists.
 That is the honest cost of reaching past the curated map, and it is why the
 country path — which this client CAN check locally — still fails before any
 mutate.

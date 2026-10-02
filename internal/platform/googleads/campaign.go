@@ -1512,8 +1512,31 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 	// which is correct: by then a mutation HAS been sent. That path is reachable without any
 	// user cancellation, since the orchestrator wraps every toggle in a toggleCallTimeout —
 	// pinned by TestUpdateCampaignStatus_CancelDuringBackoffIsUnconfirmed.
-	if _, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), req, true); err != nil {
+	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), req, true)
+	if err != nil {
 		return fmt.Errorf("google-ads campaign %s status update to %s failed: %w", id, status, err)
+	}
+	// A 2xx that does not acknowledge the one operation is UNCONFIRMED, the same standard
+	// the ad group and ad stages hold their own mutates to (checkStatusMutateResults in
+	// adgroup_ad.go). Holding the CAMPAIGN stage to it matters most of the three: on PAUSE
+	// it runs FIRST and its success is what gates the child cascade, so an unacknowledged
+	// campaign flip taken as confirmed would send the children on from a state nobody
+	// verified. Wrapped in a dedicated type rather than partialCascadeError, which asserts
+	// the preceding stages succeeded — on PAUSE there are none, and the claim would be false.
+	if cErr := checkStatusMutateResults(resp, 1, "campaign"); cErr != nil {
+		return &unconfirmedCampaignStatusError{err: fmt.Errorf("google-ads campaign %s status update to %s: %w", id, status, cErr)}
 	}
 	return nil
 }
+
+// unconfirmedCampaignStatusError marks a campaign status mutate Google ACCEPTED but did not
+// acknowledge usably. The flip may well have been applied, so it satisfies the same
+// Unconfirmed() behavioral interface IsOutcomeUnconfirmed honors — exactly as
+// unconfirmedBudgetMutateError and partialCascadeError do — and the dispatcher carries it
+// through as "verify upstream before retrying" rather than "nothing was modified", which
+// keeps the claim RETAINED. A retry re-applies the same idempotent status.
+type unconfirmedCampaignStatusError struct{ err error }
+
+func (e *unconfirmedCampaignStatusError) Error() string     { return e.err.Error() }
+func (e *unconfirmedCampaignStatusError) Unwrap() error     { return e.err }
+func (e *unconfirmedCampaignStatusError) Unconfirmed() bool { return true }

@@ -196,10 +196,22 @@ func resolveGeoList(noun string, geoTargets []string) ([]string, error) {
 // target constant id.
 func resolveGeoEntry(noun, entry string) (string, error) {
 	if numericID(entry) {
-		// "0" is shaped like an id but names nothing, and geoTargetConstants/0 would
-		// be refused only after the campaign exists. Cheap to catch here.
-		if strings.Trim(entry, "0") == "" {
-			return "", fmt.Errorf("google-ads: %s %q is not a valid geo target constant id", noun, entry)
+		// Digits-only is not enough. "0" names nothing, "02840" is a non-canonical
+		// spelling of 2840, and a 21-digit run overflows the int64 Google exposes these
+		// ids as — all three are shaped like an id, all three are PERMANENT local input
+		// faults, and all three would be refused only at the campaignCriteria:mutate,
+		// which runs AFTER the budget and campaign are committed. Catching them here is
+		// what keeps a typo from stranding a paid campaign, which is the whole point of
+		// the preflight.
+		//
+		// canonicalCampaignID is reused rather than reimplemented — it is the package's
+		// answer for exactly this class of value (see its use on ad group and criterion
+		// ids in ValidateKeywordActions) and collapses every spelling to one. This is
+		// NOT the lookup the comment above declines to do: whether 1014044 names a real
+		// place still needs Google, and a well-formed id naming nothing is still refused
+		// upstream. Only the locally-decidable faults move earlier.
+		if canonicalCampaignID(entry) == "" {
+			return "", fmt.Errorf("google-ads: %s %q is not the canonical base-10 spelling of a positive geo target constant id", noun, entry)
 		}
 		return entry, nil
 	}

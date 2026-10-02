@@ -821,6 +821,61 @@ func TestUpdateCampaignStatus_SendsUpdateMask(t *testing.T) {
 	}
 }
 
+// A 2xx that acknowledges no operation is UNCONFIRMED, the same standard the ad group and
+// ad stages hold their mutates to. This stage matters most of the three: on PAUSE it runs
+// FIRST and gates the child cascade, so taking an unacknowledged flip as confirmed would
+// send the children on from a state nobody verified.
+func TestUpdateCampaignStatus_ShortMutateResponseIsUnconfirmed(t *testing.T) {
+	for name, body := range map[string]string{
+		"no results":     `{"results":[]}`,
+		"results absent": `{}`,
+		"malformed body": `not json at all`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+			}))
+			defer tokenSrv.Close()
+			apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body)
+			}))
+			defer apiSrv.Close()
+
+			c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+			err := c.UpdateCampaignStatus(context.Background(), "222", StatusPaused)
+			if err == nil {
+				t.Fatal("a 2xx acknowledging no operation must not be reported as a confirmed flip")
+			}
+			// The claim must be RETAINED: the flip may well have applied, so this has to read
+			// as "verify before retrying", never as "nothing was modified".
+			if !IsOutcomeUnconfirmed(err) {
+				t.Errorf("error must satisfy IsOutcomeUnconfirmed so the claim is retained, got %v", err)
+			}
+			if !strings.Contains(err.Error(), "UNCONFIRMED") {
+				t.Errorf("error text should say UNCONFIRMED for the operator: %v", err)
+			}
+		})
+	}
+}
+
+// The over-refusal guard on the check above: MORE results than operations is Google
+// reporting extra work, not evidence the flip went undone.
+func TestUpdateCampaignStatus_ExtraResultsDoNotFailACorrectFlip(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"},{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds(), testAccount(), WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+	if err := c.UpdateCampaignStatus(context.Background(), "222", StatusEnabled); err != nil {
+		t.Fatalf("extra results must not fail a correct flip: %v", err)
+	}
+}
+
 // TestUpdateCampaignStatus_RejectsBadInput guards the input contract BEFORE any request. The
 // campaign id interpolates into a resourceName, so a non-numeric id could alter the resource
 // path — reject it rather than send it.

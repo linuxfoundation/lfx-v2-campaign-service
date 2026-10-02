@@ -252,8 +252,9 @@ type googleAdsConfig struct {
 	ProximityTargets []googleAdsProximityConfig `json:"proximityTargets"`
 	// Languages are the languages the campaign serves in, as ISO 639-1 codes (EN, DE,
 	// JA) or raw numeric language constant ids. Search only, like every field below it
-	// up to Sitelinks: all four are campaign-level criteria the client refuses on
-	// "demand-gen" rather than silently dropping.
+	// up to Sitelinks: all FIVE slices — Languages, AdSchedules, DeviceBidModifiers,
+	// ExcludedAgeRanges and ExcludedGenders — are campaign-level criteria one guard
+	// refuses together on "demand-gen" rather than silently dropping.
 	//
 	// Left empty the campaign serves in EVERY language, which is Google's default and
 	// rarely what an event campaign wants.
@@ -262,9 +263,15 @@ type googleAdsConfig struct {
 	// optionally carrying its own bid modifier. Left empty the campaign runs around the
 	// clock.
 	AdSchedules []googleAdsAdScheduleConfig `json:"adSchedules"`
-	// DeviceBidModifiers adjust the bid per device ("MOBILE", "DESKTOP", "TABLET"), or
-	// exclude a device outright with a modifier of 0. Left empty, every device bids the
-	// campaign's own bid.
+	// DeviceBidModifiers adjust the bid per device ("MOBILE", "DESKTOP", "TABLET",
+	// "CONNECTED_TV"), or exclude a device outright with a modifier of 0. Left empty,
+	// every device bids the campaign's own bid.
+	//
+	// bidModifier is REQUIRED on every entry — it is a *float64 so that an OMITTED one
+	// is refused rather than decoded as 0, which is the -100% opt-out and would switch
+	// the device off while reporting a successful create. This is the opposite polarity
+	// from adSchedules, where an absent modifier legitimately means "listed but
+	// unadjusted"; a device entry with no modifier would say nothing at all.
 	DeviceBidModifiers []googleAdsDeviceBidModifierConfig `json:"deviceBidModifiers"`
 	// ExcludedAgeRanges and ExcludedGenders are demographic EXCLUSIONS ("18-24",
 	// "MALE", …). Exclusion-only is Google's own shape at campaign level, not a

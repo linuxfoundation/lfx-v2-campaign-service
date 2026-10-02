@@ -554,7 +554,9 @@ USD — the service does no FX conversion (mirroring `metaConfig`).
 
 Every field below is OPTIONAL except `budget`, and every one of them is additive: a config
 that names none of them produces exactly the single-ad-group, single-ad campaign this
-service created before they existed. Each is validated BEFORE the first budget mutate, so a
+service created before they existed. Additive does NOT mean channel-independent — the
+entries below marked SEARCH ONLY are REFUSED, not ignored, when `campaignType` is
+`demand-gen`. Each is validated BEFORE the first budget mutate, so a
 refused value cannot strand a paid campaign — and the same validation runs on the
 `adoptExisting` path, so a config is refused identically whether it creates or adopts.
 
@@ -734,6 +736,14 @@ languages?: string[]            — OPTIONAL languages the campaign targets (LFX
                                   Omitted/empty, NO language criteria are created and the campaign is
                                   eligible in every language, which is what every campaign created
                                   before this field existed did.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen — as are
+                                  `adSchedules`, `deviceBidModifiers`, `excludedAgeRanges` and
+                                  `excludedGenders`, which the same guard refuses together. Demand Gen
+                                  attaches this targeting at the AD GROUP level, where this client has
+                                  not verified it against a real account; accepting the field and
+                                  dropping it would create a campaign with none of the targeting the
+                                  caller asked for.
 adSchedules?:                   — OPTIONAL dayparting (LFXV2-2665): the intervals in the ad ACCOUNT's
   {dayOfWeek, startHour,          timezone during which the campaign may serve. `dayOfWeek` is
    startMinute, endHour,          MONDAY..SUNDAY (case-insensitive). `startHour` is 0..23 and `endHour`
@@ -756,6 +766,9 @@ adSchedules?:                   — OPTIONAL dayparting (LFXV2-2665): the interv
                                   eligible around the clock. Supplying ANY interval restricts the
                                   campaign to the intervals listed — Google treats the set as
                                   exhaustive, so a single Monday interval means a Monday-only campaign.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen; see
+                                  `languages` for why.
 deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2665). `device` is one of
   {device, bidModifier}[]         MOBILE, DESKTOP, TABLET, CONNECTED_TV (case-insensitive); at most 4
                                   entries and a device may appear only ONCE — two criteria for the same
@@ -770,6 +783,9 @@ deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2
 
                                   Omitted/empty, no device criteria are created and the campaign bids
                                   equally on every device.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen; see
+                                  `languages` for why.
 excludedAgeRanges?: string[]    — OPTIONAL demographic EXCLUSIONS (LFXV2-2665), attached as negative
 excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34, 35-44, 45-54, 55-64,
                                   65+ or UNDETERMINED (Google's own AGE_RANGE_* enum names are accepted
@@ -784,6 +800,9 @@ excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34
 
                                   Omitted/empty, no demographic criteria are created and the campaign
                                   is eligible for every bucket.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen; see
+                                  `languages` for why.
 sitelinks?:                     — OPTIONAL sitelink extensions (LFXV2-2665): extra links shown under the
   {text, description1?,           ad. `text` ≤25 runes, required and unique within the list.
    description2?, finalUrl}       `description1`/`description2` are ≤35 runes each and ALL-OR-NOTHING —
