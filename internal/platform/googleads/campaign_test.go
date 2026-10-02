@@ -1101,10 +1101,15 @@ func TestCreateCampaign_RestrictsGeoToPresence(t *testing.T) {
 // start and 23:59:59 on the end is what makes the end date INCLUSIVE. Dropping to
 // 00:00:00 on the end would silently shorten every campaign by a day.
 func TestCreateCampaign_SendsFlightWindowInGooglesFormat(t *testing.T) {
+	// Mutex, not a bare capture: httptest runs each handler in its own goroutine, so the
+	// write below and the read in the assertion need a happens-before edge.
+	var mu sync.Mutex
 	var body string
 	c := newCampaignClient(t, okBudget, func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
 		body = string(b)
+		mu.Unlock()
 		okCampaign(w, r)
 	})
 
@@ -1115,6 +1120,8 @@ func TestCreateCampaign_SendsFlightWindowInGooglesFormat(t *testing.T) {
 	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if !strings.Contains(body, `"startDateTime":"2026-06-17 00:00:00"`) {
 		t.Errorf("start not sent as Google's v23 startDateTime at midnight.\nbody=%s", body)
 	}
@@ -1133,16 +1140,23 @@ func TestCreateCampaign_SendsFlightWindowInGooglesFormat(t *testing.T) {
 // every campaign created without dates — which is every campaign created before this
 // existed — into a create failure.
 func TestCreateCampaign_OmitsAnAbsentFlightWindow(t *testing.T) {
+	// Mutex, not a bare capture: httptest runs each handler in its own goroutine, so the
+	// write below and the read in the assertion need a happens-before edge.
+	var mu sync.Mutex
 	var body string
 	c := newCampaignClient(t, okBudget, func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
 		body = string(b)
+		mu.Unlock()
 		okCampaign(w, r)
 	})
 
 	if _, err := c.CreateCampaign(context.Background(), sampleInput()); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if strings.Contains(body, "startDateTime") || strings.Contains(body, "endDateTime") {
 		t.Errorf("an absent flight window still emitted a date field; Google rejects an empty one.\nbody=%s", body)
 	}

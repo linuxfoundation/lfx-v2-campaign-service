@@ -44,3 +44,13 @@ reason: a malformed or inverted window must be refused BEFORE the budget mutate 
 or a typo orphans a real paid campaign. Only one ordering rule is enforced — an end before
 the start. A start in the past is accepted, because Google accepts one and refusing it
 would break creating a campaign whose promotion was always meant to have begun.
+
+**Note** — the window is carried on BOTH channels, and the pre-PR review caught that the
+first cut wired only Search. That half-wiring was worse than no feature on Demand Gen:
+`applyCampaignConfig` records the window for both channels, so the row would have claimed
+an end date the campaign did not have — and because `CompareSettingsField` reports
+`unknown` (not `diverged`) when either side is absent, the drift detector this change
+re-enabled would have gone quiet exactly where it was needed. Demand Gen builds its own
+payload (`demandGenCampaignCreate`) deliberately, since the two channels disagree on
+required fields, which is how the field was missed. Google's Demand Gen create guide lists
+both dates as optional fields on that channel.
