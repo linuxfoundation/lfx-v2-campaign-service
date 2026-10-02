@@ -36,6 +36,13 @@ tier carries the region, so requiring every token is what separates NA from Japa
 the NA list scores overlap=4 while Japan scores 2. And the year is not redundant to that — a
 2024 edition carries the identical token set and scores 4 as well.
 
+**One case no token rule can decide.** An event name made entirely of portfolio-common words
+("Open Source Summit") has an EMPTY distinctive tier, and then the edition's own list and a
+sibling region's score identically — measured, both overlap=3 against the same three generic
+tokens, because the event name carries no region of its own to be missing from the sibling.
+Flagging would hit a list that is correct to include; passing would miss the defect the check
+exists for. Reported as NEEDS VERIFY rather than guessed.
+
 **Absence is NEEDS VERIFY, never PASS.** QA can be run on a bare list id, where the event is
 genuinely unknown, and an event name with no year cannot be told from its own history. Both
 return NEEDS VERIFY with a finding naming what a human has to confirm. A silent pass there
@@ -47,7 +54,7 @@ client cannot read an empty verdict as a pass.
 
 ## Tests
 
-Eleven cases in `builder_qa_test.go`. Each of the three conditions is mutation-verified against
+Twelve cases in `builder_qa_test.go`. Each of the four conditions is mutation-verified against
 its own case: reverting to `.Matched` fails the sibling-region case, dropping the year check
-fails the identical-token-set case, and returning PASS for an absent event name fails the
-no-event-name case.
+fails the identical-token-set case, removing the all-generic guard fails the all-generic case,
+and returning PASS for an absent event name fails the no-event-name case.
