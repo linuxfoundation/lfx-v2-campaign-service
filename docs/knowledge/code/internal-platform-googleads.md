@@ -540,9 +540,23 @@ caller-supplied value for either wins. Every other query param the URL
 already carries is preserved untouched. An empty/non-http(s)/no-host registration URL is rejected
 before any mutate runs, so a bad input never orphans an ad group with no ad.
 
-`Client.UpdateAdGroupAndAdStatus` sends the ad group status update then the ad
-status update, stopping on the first failure without attempting the second —
-the caller owns the all-or-nothing cascade semantics, not this method.
+`Client.UpdateAdGroupsAndAdsStatus` takes a list of `AdGroupStatusTarget`
+(one ad group with that group's OWN ad ids — nested, because an adGroupAd
+resource name is the composite `{adGroupId}~{adId}`, so an ad only addresses
+correctly alongside the group it belongs to) and sends every ad group in ONE
+`adGroups:mutate`, then every ad in ONE `adGroupAds:mutate`: two calls whatever
+the group count, stopping on the first failure without attempting the second —
+the caller owns the all-or-nothing cascade semantics, not this method. Duplicate
+groups and duplicate `{group}~{ad}` composites are collapsed rather than refused,
+because the scalar `AdGroupID`/`AdID` pair in a stored result IS a copy of the
+first `AdGroups` entry and a caller merging the two sources legitimately repeats
+it. Because one operation is sent per resource, a 2xx carrying fewer results than
+operations covers only some of them: `checkStatusMutateResults` reports that as a
+`partialCascadeError` (`stage` `"ad group"` or `"ad"`), which satisfies
+`IsOutcomeUnconfirmed` — the groups it covered really did flip. MORE results than
+operations is accepted without complaint, so Google reporting extra work never
+fails a correct toggle. `Client.UpdateAdGroupAndAdStatus` remains as a thin
+single-pair wrapper over it with no logic of its own, so the two cannot drift.
 
 ## Status toggling (GA-3c)
 
@@ -554,14 +568,26 @@ ad GA-3b creates, mirroring the reddit adapter's child-cascade contract:
   parent stops delivery immediately regardless of whether the child update
   that follows succeeds — if that child update fails or is UNCONFIRMED, the
   error still surfaces to the caller (the campaign is left paused, the child
-  status is unresolved) rather than being swallowed. If either child id is
-  absent (e.g. a campaign shell with no fully-created ad group/ad — see
+  status is unresolved) rather than being swallowed. If no child id is
+  present (e.g. a campaign shell with no fully-created ad group/ad — see
   GA-3b's duplicate/ambiguous-outcome limitations), there is nothing to pause
   downstream and only the campaign is toggled.
 
+- **The cascade covers EVERY ad group, not just the first.** `googleAdsToggleTargets`
+  recovers the whole `AdGroups` list from the persisted result blob, each group with its
+  own ads, and falls back to the scalar `adGroupId`/`adId` pair for rows written before
+  that field existed (single-group by construction). Toggling only the scalar pair — a
+  copy of the first group's — left every later group and ad PAUSED while the campaign
+  reported ENABLED. A group recorded in the blob but not fully created (no id, or no ad)
+  cannot be toggled; it is logged by name as `incomplete_ad_groups` and the toggle still
+  applies to every group that CAN take it, because refusing the whole campaign over one
+  failed group would strand a campaign that is otherwise ready.
+
 - **ACTIVATE is refused** with `domain.ErrCampaignNotProvisioned` (mapped to a 409 without
-  calling Google) unless the ad group/ad are fully provisioned AND GA-4's targeting step
-  persisted at least one keyword criterion (audience criteria alone are observation-only and
+  calling Google) unless at least one ad group/ad is fully provisioned AND GA-4's targeting
+  step persisted at least one keyword criterion in ANY of the campaign's groups — the gate
+  asks whether the campaign can deliver, and it delivers if one group has keywords, so
+  asking only about the first would refuse a campaign that would have served (audience criteria alone are observation-only and
   don't qualify — see "Keyword + audience targeting (GA-4)" below). A campaign without keyword
   targeting cannot deliver, so enabling it would report false success. When the guard passes,
   ACTIVATE cascades children-first (children activated before campaign) so a campaign never

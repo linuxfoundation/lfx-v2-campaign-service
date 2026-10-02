@@ -444,14 +444,31 @@ func (c *Client) createCampaignAssets(ctx context.Context, campaignResource, cam
 		return ids, nil, fmt.Errorf("google-ads ad extension linking UNCONFIRMED (campaign %s; 2xx with a malformed/short mutate response — some extensions may be linked — verify in Google Ads before retrying)", campaignID)
 	}
 
+	// Every component of the returned composite is checked against the operation at the
+	// same index, not just the campaign. Results come back in operation order — the asset
+	// mutate above already depends on that to pair ids with plan.fieldTypes — so index i
+	// names the link operation i asked for, and a 2xx reporting `222~999~SITELINK` for an
+	// operation that linked asset 700 as CALLOUT is not proof that link exists. Checking
+	// only the campaign accepted exactly that, which is the gap this closes.
 	linkIDs := make([]string, 0, len(linkOps))
 	for i, r := range linkResults.Results {
-		returnedCampaignID, assetID := c.campaignAssetID(r.ResourceName)
+		returnedCampaignID, assetID, returnedFieldType := c.campaignAssetID(r.ResourceName)
 		if returnedCampaignID == "" || assetID == "" {
 			return ids, nil, fmt.Errorf("google-ads ad extension linking UNCONFIRMED (campaign %s; malformed/wrong-kind/wrong-account campaignAsset resource name %q at index %d — verify in Google Ads before retrying)", campaignID, r.ResourceName, i)
 		}
 		if returnedCampaignID != campaignID {
 			return ids, nil, fmt.Errorf("google-ads ad extension linking UNCONFIRMED (campaign %s; campaignAsset resource name %q reports a different campaign id %q — verify in Google Ads before retrying)", campaignID, r.ResourceName, returnedCampaignID)
+		}
+		if assetID != ids[i] {
+			return ids, nil, fmt.Errorf("google-ads ad extension linking UNCONFIRMED (campaign %s; campaignAsset resource name %q at index %d reports asset %s but that operation linked asset %s — verify in Google Ads before retrying)", campaignID, r.ResourceName, i, assetID, ids[i])
+		}
+		// Compared case-insensitively on purpose. The value is Google's own enum name
+		// echoed back, so a casing difference would be a change in how the API spells a
+		// field type rather than the wrong link — and failing a real, correct create over
+		// spelling is the over-refusal this guard must not commit. A different field type
+		// is still caught, which is the whole point of the check.
+		if !strings.EqualFold(returnedFieldType, plan.fieldTypes[i]) {
+			return ids, nil, fmt.Errorf("google-ads ad extension linking UNCONFIRMED (campaign %s; campaignAsset resource name %q at index %d reports field type %s but that operation asked for %s — verify in Google Ads before retrying)", campaignID, r.ResourceName, i, returnedFieldType, plan.fieldTypes[i])
 		}
 		linkIDs = append(linkIDs, assetID)
 	}
@@ -483,17 +500,20 @@ func (c *Client) assetID(resourceName string) string {
 // reused here. The field type is a non-numeric enum name, so it is checked for
 // presence rather than parsed; the two ids are checked for the numeric shape
 // every id in this package is checked for.
-func (c *Client) campaignAssetID(resourceName string) (campaignID, assetID string) {
+func (c *Client) campaignAssetID(resourceName string) (campaignID, assetID, fieldType string) {
 	pathParts := strings.Split(resourceName, "/")
 	if len(pathParts) != 4 || pathParts[0] != "customers" || pathParts[2] != "campaignAssets" {
-		return "", ""
+		return "", "", ""
 	}
 	if pathParts[1] != c.account.CustomerID {
-		return "", ""
+		return "", "", ""
 	}
 	parts := strings.Split(pathParts[3], "~")
 	if len(parts) != 3 || !numericID(parts[0]) || !numericID(parts[1]) || strings.TrimSpace(parts[2]) == "" {
-		return "", ""
+		return "", "", ""
 	}
-	return parts[0], parts[1]
+	// The field type is returned so the caller can check the link Google reports is the
+	// link it asked for. It is the only one of the three components that is not numeric,
+	// so it is the only one trimmed rather than shape-checked.
+	return parts[0], parts[1], strings.TrimSpace(parts[2])
 }

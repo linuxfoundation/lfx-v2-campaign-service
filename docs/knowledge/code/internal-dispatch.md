@@ -280,6 +280,15 @@ by a slash and still falls through the truncating branch.
 `campaignFromTwitter` sanitizes a COPY of the config, so the
 text actually sent to X is untouched.
 
+**Google Ads sitelinks are sanitized the same way, and for the same reason.**
+`googleAdsSnapshotConfig` deep-copies the `Sitelinks` slice and reduces each caller-supplied
+`finalUrl` through `sanitizeSnapshotURL` before `applyCampaignConfig` persists it, on both
+the create and the adoption path. `config_snapshot` is stored UNENCRYPTED, and a registration
+URL pasted from a browser brings whatever query that session put in it. The DEEP copy is the
+load-bearing half: the config is passed by value but its slice shares a backing array with
+the caller's, so sanitizing in place would redact the URL the create path is about to send to
+Google and break the sitelink — a worse defect than the one being fixed.
+
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a
 credential-SHAPED parameter because the text is about to be PUBLISHED, and it is a
 denylist that cannot name every credential parameter a registration page might use, and it
@@ -1172,6 +1181,17 @@ project's own account there would make the guard refuse every campaign created w
 POST-cutover stranding `resolveExisting` exists to prevent, arriving on the path that stops
 keywords from serving. All three call sites state which case they are in, because the argument
 that merely type-checks is not the argument that is correct.
+
+**The keyword-action ad-group bound is the campaign's FULL set of ad groups.**
+`googleAdsCampaignAdGroupIDs` reads every `AdGroups` entry's id from the persisted result
+blob, plus the scalar `adGroupId` for legacy rows, and each action's `adGroupId` must be in
+that set — the guard that stops a caller holding a criterion id from any campaign in the
+shared account from acting on it through a campaign they do own. Checking only the scalar id
+refused every action naming group 2 or later: fail-closed, so never unsafe, but it made
+keyword actions unusable on exactly the multi-group campaigns the feature was added for. The
+set is deliberately NOT `googleAdsToggleTargets`' narrower list — a group with keyword
+criteria but no ad is still this campaign's, its keywords are real and serving nothing, and
+pausing or removing them is a legitimate thing to ask for.
 
 ORDERING is load-bearing on all four. The provenance check runs BEFORE each platform's
 narrower provisioning guard — Meta's ad-set check, Reddit's child-id check, X's line-item

@@ -5,6 +5,7 @@ package googleads
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -480,6 +481,216 @@ func TestUpdateAdGroupAndAdStatus(t *testing.T) {
 		}
 		if !strings.HasSuffix(gotPaths[0], "adGroups:mutate") || !strings.HasSuffix(gotPaths[1], "adGroupAds:mutate") {
 			t.Errorf("paths = %v, want [adGroups:mutate, adGroupAds:mutate]", gotPaths)
+		}
+	})
+}
+
+// ---- UpdateAdGroupsAndAdsStatus ----------------------------------------------
+
+// multiTargetServers answers both status mutates, recording the resource names each one
+// named and echoing ONE result per operation. A fixed-size response would read as a short
+// mutate response — which the client correctly treats as UNCONFIRMED — so an op-count-aware
+// fake is what lets these tests assert on the happy path at all.
+func multiTargetServers(t *testing.T) (*Client, func() ([]string, []string, []string)) {
+	t.Helper()
+	var mu sync.Mutex
+	var paths, groups, ads []string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Operations []struct {
+				Update struct {
+					ResourceName string `json:"resourceName"`
+				} `json:"update"`
+			} `json:"operations"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			// t.Errorf, never t.Fatal: this runs on the server's goroutine, where FailNow
+			// is not valid.
+			t.Errorf("decode %s request: %v", r.URL.Path, err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		names := make([]string, 0, len(req.Operations))
+		results := make([]string, 0, len(req.Operations))
+		for _, op := range req.Operations {
+			names = append(names, op.Update.ResourceName)
+			results = append(results, `{"resourceName":"`+op.Update.ResourceName+`"}`)
+		}
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "adGroupAds:mutate") {
+			ads = append(ads, names...)
+		} else {
+			groups = append(groups, names...)
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[`+strings.Join(results, ",")+`]}`)
+	}))
+	t.Cleanup(apiSrv.Close)
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+	return c, func() ([]string, []string, []string) {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), paths...), append([]string(nil), groups...), append([]string(nil), ads...)
+	}
+}
+
+func TestUpdateAdGroupsAndAdsStatus(t *testing.T) {
+	// The batching is the point: however many ad groups a campaign has, the toggle is two
+	// calls. Looping per group would multiply the partial-state surface, and no single
+	// error could then describe a staircase of half-applied groups.
+	t.Run("batches every group and every ad into two mutates", func(t *testing.T) {
+		c, snapshot := multiTargetServers(t)
+		targets := []AdGroupStatusTarget{
+			{AdGroupID: "111", AdIDs: []string{"222"}},
+			{AdGroupID: "112", AdIDs: []string{"223", "224"}},
+		}
+		if err := c.UpdateAdGroupsAndAdsStatus(context.Background(), targets, StatusPaused); err != nil {
+			t.Fatalf("UpdateAdGroupsAndAdsStatus: %v", err)
+		}
+		paths, groups, ads := snapshot()
+		if len(paths) != 2 {
+			t.Fatalf("issued %d calls, want exactly 2 regardless of group count: %v", len(paths), paths)
+		}
+		if !strings.HasSuffix(paths[0], "adGroups:mutate") || !strings.HasSuffix(paths[1], "adGroupAds:mutate") {
+			t.Errorf("paths = %v, want [adGroups:mutate, adGroupAds:mutate]", paths)
+		}
+		wantGroups := "customers/1234567890/adGroups/111,customers/1234567890/adGroups/112"
+		if strings.Join(groups, ",") != wantGroups {
+			t.Errorf("ad groups = %v, want %s", groups, wantGroups)
+		}
+		// Each ad is addressed with its OWN group: an adGroupAd resource name is the
+		// composite "{adGroupId}~{adId}", so pairing a flat ad list with one group id is
+		// exactly how a multi-group campaign toggles group 1's ads over and over.
+		wantAds := "customers/1234567890/adGroupAds/111~222," +
+			"customers/1234567890/adGroupAds/112~223," +
+			"customers/1234567890/adGroupAds/112~224"
+		if strings.Join(ads, ",") != wantAds {
+			t.Errorf("ads = %v, want %s", ads, wantAds)
+		}
+	})
+
+	// Google rejects a mutate carrying two operations against the same resource, and a
+	// caller merging the scalar AdGroupID/AdID pair with the AdGroups list legitimately
+	// repeats the first entry — the scalars ARE a copy of it. Refusing would fail a toggle
+	// that is perfectly well specified, so the duplicate is collapsed instead.
+	t.Run("collapses duplicate groups and ads rather than refusing", func(t *testing.T) {
+		c, snapshot := multiTargetServers(t)
+		targets := []AdGroupStatusTarget{
+			{AdGroupID: "111", AdIDs: []string{"222", "222"}},
+			{AdGroupID: "111", AdIDs: []string{"222"}},
+			{AdGroupID: "112", AdIDs: []string{"222"}},
+		}
+		if err := c.UpdateAdGroupsAndAdsStatus(context.Background(), targets, StatusEnabled); err != nil {
+			t.Fatalf("a repeated group must be collapsed, not refused: %v", err)
+		}
+		_, groups, ads := snapshot()
+		if len(groups) != 2 {
+			t.Errorf("ad group operations = %v, want one per distinct group", groups)
+		}
+		// 111~222 and 112~222 share an ad id but are different resources, so both survive:
+		// the dedup key is the composite, not the ad id alone.
+		if len(ads) != 2 {
+			t.Errorf("ad operations = %v, want one per distinct adGroup~ad composite", ads)
+		}
+	})
+
+	t.Run("refuses an empty target list and invalid ids", func(t *testing.T) {
+		c := NewClient(testCreds(), testAccount(), WithClock(fixedClock()))
+		for name, targets := range map[string][]AdGroupStatusTarget{
+			"no targets":        nil,
+			"empty group id":    {{AdGroupID: "", AdIDs: []string{"222"}}},
+			"non-numeric group": {{AdGroupID: "abc", AdIDs: []string{"222"}}},
+			"no ads":            {{AdGroupID: "111"}},
+			"empty ad id":       {{AdGroupID: "111", AdIDs: []string{""}}},
+			"non-numeric ad":    {{AdGroupID: "111", AdIDs: []string{"abc"}}},
+		} {
+			if err := c.UpdateAdGroupsAndAdsStatus(context.Background(), targets, StatusPaused); err == nil {
+				t.Errorf("%s: expected a refusal", name)
+			}
+		}
+		if err := c.UpdateAdGroupsAndAdsStatus(context.Background(),
+			[]AdGroupStatusTarget{{AdGroupID: "111", AdIDs: []string{"222"}}}, "BOGUS"); err == nil {
+			t.Error("expected a refusal for an unsupported status")
+		}
+	})
+
+	// Batching is what makes a short response meaningful: one operation per ad group means
+	// a 2xx carrying fewer results covers only some of them, and reporting the whole toggle
+	// applied would be a lie about every group past the last result. Unconfirmed, not
+	// failed — the groups it does cover really did flip, so the state is partial one stage
+	// earlier than the classic ad-stage case.
+	t.Run("a short ad group response is UNCONFIRMED at the ad group stage", func(t *testing.T) {
+		tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+		t.Cleanup(tokenSrv.Close)
+		apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			// Two groups were asked for; one result comes back.
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/111"}]}`)
+		}))
+		t.Cleanup(apiSrv.Close)
+		c := NewClient(testCreds(), testAccount(),
+			WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+
+		targets := []AdGroupStatusTarget{
+			{AdGroupID: "111", AdIDs: []string{"222"}},
+			{AdGroupID: "112", AdIDs: []string{"223"}},
+		}
+		err := c.UpdateAdGroupsAndAdsStatus(context.Background(), targets, StatusPaused)
+		if err == nil {
+			t.Fatal("expected a 2xx covering only some of the ad groups to be reported")
+		}
+		if !IsOutcomeUnconfirmed(err) {
+			t.Errorf("err must satisfy IsOutcomeUnconfirmed — some groups DID flip, so this is not 'not modified': %v", err)
+		}
+		var pce *partialCascadeError
+		if !errors.As(err, &pce) {
+			t.Fatalf("err must be a *partialCascadeError, got %T: %v", err, err)
+		}
+		if pce.stage != "ad group" {
+			t.Errorf("partialCascadeError.stage = %q, want \"ad group\"", pce.stage)
+		}
+	})
+
+	// MORE results than operations is Google reporting extra work. This client has never
+	// seen it, and it is not evidence that the work it asked for went undone — failing a
+	// correct toggle over it is exactly the over-refusal this guard must not commit.
+	t.Run("extra results do not fail a correct toggle", func(t *testing.T) {
+		tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+		t.Cleanup(tokenSrv.Close)
+		apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"a"},{"resourceName":"b"},{"resourceName":"c"}]}`)
+		}))
+		t.Cleanup(apiSrv.Close)
+		c := NewClient(testCreds(), testAccount(),
+			WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()))
+
+		targets := []AdGroupStatusTarget{{AdGroupID: "111", AdIDs: []string{"222"}}}
+		if err := c.UpdateAdGroupsAndAdsStatus(context.Background(), targets, StatusPaused); err != nil {
+			t.Errorf("a response with extra results must not fail the toggle: %v", err)
+		}
+	})
+
+	// The single-pair wrapper carries no logic of its own, so the two can never drift —
+	// asserted rather than assumed, because the wrapper is what every single-group campaign
+	// still goes through.
+	t.Run("the single-pair wrapper produces the same two mutates", func(t *testing.T) {
+		c, snapshot := multiTargetServers(t)
+		if err := c.UpdateAdGroupAndAdStatus(context.Background(), "111", "222", StatusPaused); err != nil {
+			t.Fatalf("UpdateAdGroupAndAdStatus: %v", err)
+		}
+		_, groups, ads := snapshot()
+		if len(groups) != 1 || groups[0] != "customers/1234567890/adGroups/111" {
+			t.Errorf("ad groups = %v", groups)
+		}
+		if len(ads) != 1 || ads[0] != "customers/1234567890/adGroupAds/111~222" {
+			t.Errorf("ads = %v", ads)
 		}
 	})
 }

@@ -451,9 +451,9 @@ func TestAssetID_RejectsAnythingButThisAccountsAsset(t *testing.T) {
 // criteria would reject every valid one, which is why this has its own.
 func TestCampaignAssetID_ParsesTheThreePartComposite(t *testing.T) {
 	c := NewClient(testCreds(), testAccount())
-	campaignID, assetID := c.campaignAssetID("customers/1234567890/campaignAssets/222~700~SITELINK")
-	if campaignID != "222" || assetID != "700" {
-		t.Errorf("got (%q, %q), want (222, 700)", campaignID, assetID)
+	campaignID, assetID, fieldType := c.campaignAssetID("customers/1234567890/campaignAssets/222~700~SITELINK")
+	if campaignID != "222" || assetID != "700" || fieldType != "SITELINK" {
+		t.Errorf("got (%q, %q, %q), want (222, 700, SITELINK)", campaignID, assetID, fieldType)
 	}
 	for _, bad := range []string{
 		"customers/1234567890/campaignAssets/222~700",           // the two-part shape
@@ -464,8 +464,8 @@ func TestCampaignAssetID_ParsesTheThreePartComposite(t *testing.T) {
 		"customers/1234567890/campaignCriteria/222~700~SITELINK",
 		"",
 	} {
-		if gotCampaign, gotAsset := c.campaignAssetID(bad); gotCampaign != "" || gotAsset != "" {
-			t.Errorf("campaignAssetID(%q) = (%q, %q), want empty", bad, gotCampaign, gotAsset)
+		if gotCampaign, gotAsset, gotField := c.campaignAssetID(bad); gotCampaign != "" || gotAsset != "" || gotField != "" {
+			t.Errorf("campaignAssetID(%q) = (%q, %q, %q), want empty", bad, gotCampaign, gotAsset, gotField)
 		}
 	}
 }
@@ -479,8 +479,13 @@ func TestCampaignAssetID_ParsesTheThreePartComposite(t *testing.T) {
 // the account/kind mismatch assetID exists to catch.
 func TestCreateCampaign_CreatesAssetsThenLinksThemByReturnedResourceName(t *testing.T) {
 	assetsH, readAssets := capturedAssetMutate(assetName)
+	// The fake echoes the field type the operation at that index actually asked for —
+	// sitelinks, then callouts, then structured snippets, the order createExtensionAssets
+	// plans them in. A fake that stamped SITELINK on all three would be describing links
+	// the client never requested, which the link-result check now (correctly) refuses.
+	linkFieldTypes := []string{assetFieldSitelink, assetFieldCallout, assetFieldStructuredSnippet}
 	linksH, readLinks := capturedAssetMutate(func(i int) string {
-		return "customers/1234567890/campaignAssets/222~" + strconv.Itoa(700+i) + "~SITELINK"
+		return "customers/1234567890/campaignAssets/222~" + strconv.Itoa(700+i) + "~" + linkFieldTypes[i]
 	})
 	c := newAssetClient(t, assetsH, linksH)
 
@@ -713,5 +718,89 @@ func TestCreateCampaign_BadExtensionsFailBeforeAnyMutate(t *testing.T) {
 				t.Error("ValidateCampaignInput must refuse the same input")
 			}
 		})
+	}
+}
+
+// A campaignAsset resource name that reports a field type the operation at that index did
+// not ask for is not proof the link exists. Mutate results come back in operation order —
+// the asset mutate already depends on that to pair ids with plan.fieldTypes — so a 2xx
+// describing `222~700~SITELINK` for the operation that linked asset 700 as a CALLOUT means
+// the response and the request disagree about what was created. Checking only the campaign
+// id accepted exactly that, which is the gap this closes.
+func TestCreateCampaign_RefusesALinkResultReportingADifferentFieldType(t *testing.T) {
+	assetsH, _ := capturedAssetMutate(assetName)
+	linksH, _ := capturedAssetMutate(func(i int) string {
+		// Every link claims SITELINK, including the callout at index 1.
+		return "customers/1234567890/campaignAssets/222~" + strconv.Itoa(700+i) + "~" + assetFieldSitelink
+	})
+	c := newAssetClient(t, assetsH, linksH)
+
+	in := sampleInput()
+	in.Sitelinks = []Sitelink{sampleSitelink()}
+	in.Callouts = []string{"Free to attend"}
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected a link result reporting the wrong field type to be refused")
+	}
+	// Past the campaign create, the partial-result contract holds: the error arrives
+	// ALONGSIDE a result, never instead of it, so the claim is not released for work that
+	// may well exist upstream.
+	if res == nil {
+		t.Fatal("the campaign was already created — the error must carry a non-nil result")
+	}
+	// The create cascade reports an unconfirmed outcome by RETURNING A RESULT with the
+	// error, which is what keeps Dispatch from releasing the claim; the wording is for the
+	// operator. (IsOutcomeUnconfirmed is the toggle path's signal, carried by an error type
+	// — a different mechanism, deliberately.)
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("the error must tell the operator the link may exist: %v", err)
+	}
+	if !strings.Contains(err.Error(), "field type") {
+		t.Errorf("the error must say what disagreed, got: %v", err)
+	}
+}
+
+// The field type is Google's own enum name echoed back, so a casing difference is a change
+// in how the API spells a value, not the wrong link. Failing a real, correct create over
+// spelling is the over-refusal this guard must not commit — and under-refusal is always the
+// safe side here, because a genuinely different field type still fails the comparison.
+func TestCreateCampaign_AcceptsALinkResultWhoseFieldTypeDiffersOnlyInCase(t *testing.T) {
+	assetsH, _ := capturedAssetMutate(assetName)
+	linksH, _ := capturedAssetMutate(func(i int) string {
+		return "customers/1234567890/campaignAssets/222~" + strconv.Itoa(700+i) + "~" + strings.ToLower(assetFieldSitelink)
+	})
+	c := newAssetClient(t, assetsH, linksH)
+
+	in := sampleInput()
+	in.Sitelinks = []Sitelink{sampleSitelink()}
+
+	if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("a field type differing only in case must be accepted: %v", err)
+	}
+}
+
+// The asset component is checked the same way and for the same reason: a result naming an
+// asset the operation at that index did not link describes a link the client never asked
+// for.
+func TestCreateCampaign_RefusesALinkResultReportingADifferentAsset(t *testing.T) {
+	assetsH, _ := capturedAssetMutate(assetName)
+	linksH, _ := capturedAssetMutate(func(_ int) string {
+		return "customers/1234567890/campaignAssets/222~999~" + assetFieldSitelink
+	})
+	c := newAssetClient(t, assetsH, linksH)
+
+	in := sampleInput()
+	in.Sitelinks = []Sitelink{sampleSitelink()}
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected a link result naming another asset to be refused")
+	}
+	if res == nil {
+		t.Fatal("the campaign was already created — the error must carry a non-nil result")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("the error must tell the operator the link may exist: %v", err)
 	}
 }

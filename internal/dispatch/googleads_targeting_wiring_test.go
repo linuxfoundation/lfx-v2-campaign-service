@@ -657,8 +657,8 @@ func TestGoogleAdsMappers_EmptyInputStaysNil(t *testing.T) {
 	if got := googleAdsAdSchedules([]googleAdsAdScheduleConfig{}); got != nil {
 		t.Errorf("googleAdsAdSchedules(empty) = %v, want nil", got)
 	}
-	if got := googleAdsDeviceBidModifiers(nil); got != nil {
-		t.Errorf("googleAdsDeviceBidModifiers(nil) = %v, want nil", got)
+	if got, err := googleAdsDeviceBidModifiers(nil); got != nil || err != nil {
+		t.Errorf("googleAdsDeviceBidModifiers(nil) = (%v, %v), want (nil, nil)", got, err)
 	}
 	if got := googleAdsSitelinks(nil); got != nil {
 		t.Errorf("googleAdsSitelinks(nil) = %v, want nil", got)

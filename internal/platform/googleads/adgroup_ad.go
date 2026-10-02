@@ -532,73 +532,172 @@ func (c *Client) createAdGroupsAndAds(ctx context.Context, campaignResource, cam
 	return nil
 }
 
-// UpdateAdGroupAndAdStatus toggles an ad group and its ad between ENABLED and
-// PAUSED, mirroring UpdateCampaignStatus. Both mutates are sent as idempotent
-// (bounded 429 retries are safe: re-applying the same status converges, same
-// reasoning as UpdateCampaignStatus). Returns after the FIRST failure without
-// attempting the second mutate — the caller (GoogleAdsDispatcher.ToggleStatus, which
-// wires this cascade) orders campaign/ad-group/ad calls per the children-first-on-ACTIVATE /
-// campaign-first-on-PAUSE contract, so a failed ad group update must not mask
-// itself as "ad group ok, ad unknown".
+// AdGroupStatusTarget names one ad group and the ads beneath it for a status
+// toggle. One target per ad group, with that group's OWN ads — the ad ids are
+// nested rather than flat because an adGroupAd resource name is the composite
+// "{adGroupId}~{adId}", so an ad only addresses correctly alongside the group it
+// actually belongs to. A flat ad list paired with a single group id is exactly how
+// a multi-group campaign ends up toggling group 1's ads over and over.
+type AdGroupStatusTarget struct {
+	AdGroupID string
+	AdIDs     []string
+}
+
+// UpdateAdGroupAndAdStatus toggles ONE ad group and ONE ad, and is a thin wrapper
+// over UpdateAdGroupsAndAdsStatus. Kept because a single-group campaign is still the
+// common case and reads better at the call site; it carries no logic of its own, so
+// the two can never drift.
 func (c *Client) UpdateAdGroupAndAdStatus(ctx context.Context, adGroupID, adID, status string) error {
+	return c.UpdateAdGroupsAndAdsStatus(ctx, []AdGroupStatusTarget{{AdGroupID: adGroupID, AdIDs: []string{adID}}}, status)
+}
+
+// UpdateAdGroupsAndAdsStatus toggles EVERY supplied ad group, and every ad beneath
+// each of them, between ENABLED and PAUSED — mirroring UpdateCampaignStatus.
+//
+// All the ad groups go in ONE adGroups:mutate and all the ads in ONE
+// adGroupAds:mutate, in that order. Two calls regardless of how many groups a
+// campaign has, which keeps the failure surface the same shape as the original
+// single-pair cascade: a failure of the first mutate changed NOTHING, and a failure
+// of the second after the first succeeded is a partial cascade. Per-group calls
+// would instead produce a staircase of partial states with no single error able to
+// describe it.
+//
+// Both mutates are sent as idempotent (bounded 429 retries are safe: re-applying the
+// same status converges, same reasoning as UpdateCampaignStatus). It returns after
+// the FIRST failure without attempting the second mutate — the caller
+// (GoogleAdsDispatcher.ToggleStatus, which wires this cascade) orders
+// campaign/ad-group/ad calls per the children-first-on-ACTIVATE /
+// campaign-first-on-PAUSE contract, so a failed ad group update must not mask itself
+// as "ad groups ok, ads unknown".
+func (c *Client) UpdateAdGroupsAndAdsStatus(ctx context.Context, targets []AdGroupStatusTarget, status string) error {
 	if err := c.validateAccountIDs(); err != nil {
 		return err
 	}
 	if status != StatusEnabled && status != StatusPaused {
 		return fmt.Errorf("google-ads: unsupported ad group/ad status %q (want %s or %s)", status, StatusEnabled, StatusPaused)
 	}
-	adGroupID = strings.TrimSpace(adGroupID)
-	adID = strings.TrimSpace(adID)
-	if adGroupID == "" || adID == "" {
-		return fmt.Errorf("google-ads: cannot update ad group/ad status: ad group id and ad id must both be set")
-	}
-	if !numericID(adGroupID) {
-		return fmt.Errorf("google-ads: ad group id %q is not numeric", adGroupID)
-	}
-	if !numericID(adID) {
-		return fmt.Errorf("google-ads: ad id %q is not numeric", adID)
+	if len(targets) == 0 {
+		return fmt.Errorf("google-ads: cannot update ad group/ad status: no ad groups supplied")
 	}
 
-	adGroupReq := mutateRequest{Operations: []mutateOperation{{
-		Update: adGroupStatusUpdate{
-			ResourceName: "customers/" + c.account.CustomerID + "/adGroups/" + adGroupID,
-			Status:       status,
-		},
-		UpdateMask: "status",
-	}}}
-	if _, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), adGroupReq, true); err != nil {
-		return fmt.Errorf("google-ads ad group %s status update to %s failed: %w", adGroupID, status, err)
+	// Deduplicated rather than refused. Google rejects a mutate carrying two
+	// operations against the same resource, and a caller reading ids out of a stored
+	// result blob can legitimately see the first ad group twice — the scalar
+	// AdGroupID/AdID pair is a COPY of the first entry in AdGroups, so any fallback
+	// that merges the two sources repeats it. Refusing would fail a toggle that is
+	// perfectly well specified; collapsing the duplicate applies exactly the status
+	// the caller asked for.
+	seenGroups := make(map[string]bool, len(targets))
+	seenAds := make(map[string]bool)
+	groupOps := make([]mutateOperation, 0, len(targets))
+	adOps := make([]mutateOperation, 0, len(targets))
+	for i, t := range targets {
+		adGroupID := strings.TrimSpace(t.AdGroupID)
+		if adGroupID == "" {
+			return fmt.Errorf("google-ads: cannot update ad group/ad status: ad group id must be set (target %d of %d)", i+1, len(targets))
+		}
+		if !numericID(adGroupID) {
+			return fmt.Errorf("google-ads: ad group id %q is not numeric", adGroupID)
+		}
+		if len(t.AdIDs) == 0 {
+			return fmt.Errorf("google-ads: cannot update ad group/ad status: ad group %s has no ad ids", adGroupID)
+		}
+		if !seenGroups[adGroupID] {
+			seenGroups[adGroupID] = true
+			groupOps = append(groupOps, mutateOperation{
+				Update: adGroupStatusUpdate{
+					ResourceName: "customers/" + c.account.CustomerID + "/adGroups/" + adGroupID,
+					Status:       status,
+				},
+				UpdateMask: "status",
+			})
+		}
+		for _, adID := range t.AdIDs {
+			adID = strings.TrimSpace(adID)
+			if adID == "" {
+				return fmt.Errorf("google-ads: cannot update ad group/ad status: ad group %s has an empty ad id", adGroupID)
+			}
+			if !numericID(adID) {
+				return fmt.Errorf("google-ads: ad id %q is not numeric", adID)
+			}
+			// Keyed on the COMPOSITE: the same ad id under two different ad groups is
+			// two different adGroupAd resources, and only the pair identifies one.
+			composite := adGroupID + "~" + adID
+			if seenAds[composite] {
+				continue
+			}
+			seenAds[composite] = true
+			adOps = append(adOps, mutateOperation{
+				Update: adGroupAdStatusUpdate{
+					ResourceName: "customers/" + c.account.CustomerID + "/adGroupAds/" + composite,
+					Status:       status,
+				},
+				UpdateMask: "status",
+			})
+		}
 	}
 
-	adReq := mutateRequest{Operations: []mutateOperation{{
-		Update: adGroupAdStatusUpdate{
-			ResourceName: "customers/" + c.account.CustomerID + "/adGroupAds/" + adGroupID + "~" + adID,
-			Status:       status,
-		},
-		UpdateMask: "status",
-	}}}
-	if _, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroupAds:mutate"), adReq, true); err != nil {
+	groupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), mutateRequest{Operations: groupOps}, true)
+	if err != nil {
+		return fmt.Errorf("google-ads ad group status update to %s failed (%d ad group(s)): %w", status, len(groupOps), err)
+	}
+	// Result count checked for the same reason the create path checks it, and the
+	// reason is NEW here: one operation per ad group means a short response is a 2xx
+	// that covers only some of them, and reporting the whole toggle applied would be
+	// a lie about every group past the last result. Unconfirmed, not failed — the
+	// operations it does cover did apply.
+	// Wrapped as a partial cascade so IsOutcomeUnconfirmed sees it: a short response
+	// means SOME ad groups flipped, which is precisely "may be applied — verify
+	// before retrying" rather than "nothing changed".
+	if err := checkStatusMutateResults(groupResp, len(groupOps), "ad group"); err != nil {
+		return &partialCascadeError{stage: "ad group", err: err}
+	}
+
+	adResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroupAds:mutate"), mutateRequest{Operations: adOps}, true)
+	if err != nil {
 		// The ad group update already succeeded, and the ad update failed.
 		// This is a partial cascade: the tree is partially applied. Wrap the error
 		// so IsOutcomeUnconfirmed recognizes it as unconfirmed, matching the pattern
 		// used by the reddit and twitter cascade clients.
 		return &partialCascadeError{stage: "ad", err: err}
 	}
+	if err := checkStatusMutateResults(adResp, len(adOps), "ad"); err != nil {
+		// Same reasoning: the ad groups are already flipped, so a short ad response
+		// leaves a partially-applied tree.
+		return &partialCascadeError{stage: "ad", err: err}
+	}
 	return nil
 }
 
-// partialCascadeError marks a cascade that changed the ad group upstream but then
-// failed on the ad entity: the run state is PARTIALLY applied. Its Unconfirmed()
+// checkStatusMutateResults reports a 2xx whose results do not account for every
+// operation as UNCONFIRMED. It deliberately accepts MORE results than operations
+// without complaint: that would be Google reporting extra work, which this client has
+// never seen and which is not evidence that the work it asked for went undone —
+// failing a correct toggle over it is the over-refusal this guard must not commit.
+func checkStatusMutateResults(resp []byte, want int, kind string) error {
+	var mr mutateResponse
+	if err := json.Unmarshal(resp, &mr); err != nil || len(mr.Results) < want {
+		return fmt.Errorf("google-ads %s status update UNCONFIRMED (2xx with a malformed/short mutate response: %d result(s) for %d operation(s) — verify in Google Ads before retrying)", kind, len(mr.Results), want)
+	}
+	return nil
+}
+
+// partialCascadeError marks a status cascade that applied upstream and then came
+// up short at the named stage: the run state is PARTIALLY applied. Its Unconfirmed()
 // reports true so the caller (via IsOutcomeUnconfirmed) treats it as "may be
 // applied — verify before retrying" rather than "not modified"; a retry re-runs
 // the idempotent cascade.
+//
+// stage is "ad" for the classic case (the ad groups flipped, the ads did not) and
+// "ad group" for a multi-group toggle whose own adGroups:mutate covered only some of
+// the groups it was given — equally partial, one stage earlier.
 type partialCascadeError struct {
 	stage string
 	err   error
 }
 
 func (e *partialCascadeError) Error() string {
-	return "google-ads: ad group status changed but the " + e.stage + " update failed (partially applied): " + e.err.Error()
+	return "google-ads: status cascade partially applied — the " + e.stage + " stage failed after the preceding ones succeeded: " + e.err.Error()
 }
 
 func (e *partialCascadeError) Unwrap() error { return e.err }
