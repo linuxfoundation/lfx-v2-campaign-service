@@ -243,13 +243,13 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	//
 	// A failure is returned ALONGSIDE the non-nil res, like every step past the
 	// campaign create: the campaign and ad group exist and are reconcilable either way.
-	if len(pf.geoConstantIDs) > 0 {
-		geoIDs, geoErr := c.createAdGroupGeoTargeting(ctx, adGroupResource, adGroupID, pf.geoConstantIDs)
+	if !pf.geo.empty() {
+		geoIDs, geoErr := c.createAdGroupGeoTargeting(ctx, adGroupResource, adGroupID, pf.geo)
 		if geoErr != nil {
 			return res, geoErr
 		}
 		res.GeoCriterionIDs = geoIDs
-		steps = append(steps, fmt.Sprintf("Geo targeting applied: %d ad-group location criteria (%s)", len(geoIDs), strings.Join(in.GeoTargets, ", ")))
+		steps = append(steps, fmt.Sprintf("Geo targeting applied: %d ad-group location criteria (%s)", len(geoIDs), geoStep(in, pf.geo)))
 		res.Steps = steps
 	}
 

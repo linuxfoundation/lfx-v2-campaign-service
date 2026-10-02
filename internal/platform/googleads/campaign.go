@@ -170,7 +170,32 @@ type CampaignInput struct {
 	// The ATTACH LEVEL differs per channel and is not a detail the caller
 	// controls: Search takes campaign-level criteria, Demand Gen rejects those
 	// and takes ad-group-level ones. See geo.go.
+	//
+	// Entries are ISO alpha-2 country codes OR raw numeric geo target constant ids
+	// from Google's published table, which is how a CITY, region, metro or postal
+	// code is addressed — see resolveGeoList.
 	GeoTargets []string
+	// ExcludedGeoTargets are locations this campaign must NOT serve in, in the same
+	// vocabulary as GeoTargets. Optional.
+	//
+	// Exclusions are not merely the inverse of inclusions: an event campaign
+	// routinely targets a country and carves out the regions a different campaign
+	// already covers, which no inclusion list can express. They are attached in the
+	// SAME atomic mutate as the inclusions — see createCampaignGeoTargeting for why
+	// that is load-bearing rather than an optimisation.
+	//
+	// A location present in both lists is REFUSED at preflight: Google lets the
+	// exclusion win, so the campaign would silently not serve where the caller
+	// plainly asked it to.
+	ExcludedGeoTargets []string
+	// ProximityTargets are radius targets — "within N miles of this point" —
+	// expressed as decimal degrees plus a radius and an explicit unit. Optional.
+	//
+	// SEARCH ONLY: refused at preflight on the Demand Gen path, because that channel
+	// attaches location criteria at the ad group level and this client has not
+	// verified a proximity criterion there. Refusing locally is free; discovering it
+	// after the campaign exists is not. See validateGeoPlan.
+	ProximityTargets []ProximityTarget
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
@@ -584,11 +609,12 @@ type campaignPreflight struct {
 	descriptions     []string
 	keywords         []Keyword
 	audienceSegments []string
-	// geoConstantIDs are the resolved Google geo target constant ids (NOT the
-	// caller's country codes) for CampaignInput.GeoTargets. Resolved during the
-	// preflight so an unmapped country code fails BEFORE the budget mutate,
-	// rather than after a paid campaign exists — see validateGeoTargets.
-	geoConstantIDs []string
+	// geo is the whole resolved location intent — inclusions, exclusions and
+	// proximity — with every country code already mapped to its Google geo target
+	// constant id. Resolved during the preflight so an unmapped country code, a
+	// contradictory include/exclude pair or an out-of-range radius fails BEFORE the
+	// budget mutate, rather than after a paid campaign exists. See validateGeoPlan.
+	geo geoPlan
 	// negativeKeywords are the validated campaign-level exclusions, and cpcBidMicros
 	// the validated ad-group bid already converted to micros (0 = unset). Both are
 	// computed here, with everything else, so a bad exclusion or an out-of-range bid
@@ -803,7 +829,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// inputs above: an unmapped country code is pure local input validation, and refusing
 	// it only after the budget and campaign have committed would orphan a real paid
 	// campaign over a typo like "USA".
-	geoConstantIDs, err := validateGeoTargets(in.GeoTargets)
+	geo, err := validateGeoPlan(kind, in)
 	if err != nil {
 		return nil, err
 	}
@@ -836,7 +862,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		descriptions:     descriptions,
 		keywords:         keywords,
 		audienceSegments: audienceSegments,
-		geoConstantIDs:   geoConstantIDs,
+		geo:              geo,
 		negativeKeywords: negativeKeywords,
 		cpcBidMicros:     cpcBidMicros,
 		startDateTime:    startDateTime,
@@ -876,7 +902,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	finalURL, adGroupName := pf.finalURL, pf.adGroupName
 	headlines, descriptions := pf.headlines, pf.descriptions
 	keywords, audienceSegments := pf.keywords, pf.audienceSegments
-	geoConstantIDs := pf.geoConstantIDs
+	geo := pf.geo
 	negativeKeywords, cpcBidMicros := pf.negativeKeywords, pf.cpcBidMicros
 	startDateTime, endDateTime := pf.startDateTime, pf.endDateTime
 
@@ -1021,13 +1047,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// ad group, so a geo failure surfaces with as little built on top of it as
 	// possible. Like every step past the campaign create, a failure is returned
 	// ALONGSIDE the non-nil res: the campaign exists and is PAUSED either way.
-	if len(geoConstantIDs) > 0 {
-		geoIDs, geoErr := c.createCampaignGeoTargeting(ctx, campaignResource, campaignID, geoConstantIDs)
+	if !geo.empty() {
+		geoIDs, geoErr := c.createCampaignGeoTargeting(ctx, campaignResource, campaignID, geo)
 		if geoErr != nil {
 			return res, geoErr
 		}
 		res.GeoCriterionIDs = geoIDs
-		steps = append(steps, fmt.Sprintf("Geo targeting applied: %d location criteria (%s)", len(geoIDs), strings.Join(in.GeoTargets, ", ")))
+		steps = append(steps, fmt.Sprintf("Geo targeting applied: %d location criteria (%s)", len(geoIDs), geoStep(in, geo)))
 		res.Steps = steps
 	}
 
