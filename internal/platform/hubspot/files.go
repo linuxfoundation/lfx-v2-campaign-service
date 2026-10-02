@@ -60,10 +60,92 @@ func (c *Client) UploadImage(ctx context.Context, imageURL string) (string, erro
 	return c.uploadFileBytes(ctx, data, contentType, filename)
 }
 
-// downloadImage fetches imageURL and validates that it actually served an image,
-// mirroring the prototype's upload_image_to_hubspot: a page returning an HTML error
-// page (wrong URL, expired link) must be rejected before we waste a HubSpot upload
-// on it.
+// imageAcceptHeader is what the download advertises. Go sends no Accept header of its own, which
+// leaves a content-negotiating origin free to answer with a format this service cannot decode. It
+// can only decode (and so only re-host) the three formats named here, so ask for those first. This
+// alone does not fix a CDN that has already cached the wrong format under the plain URL; that is
+// what the retry in downloadImage is for.
+const imageAcceptHeader = "image/jpeg,image/png,image/gif;q=0.9,*/*;q=0.1"
+
+// formatRetryParam is the query parameter appended on the one retry downloadImage makes when an
+// origin hands back a modern format. It exists only to give the request a fresh shared-cache key.
+// The value is fixed rather than random so the retry is reproducible and itself cacheable.
+const formatRetryParam = "lfx_fmt=1"
+
+// downloadImage fetches imageURL, validates that it actually served an image, and returns bytes
+// this service is willing to re-host, mirroring the prototype's upload_image_to_hubspot: a page
+// returning an HTML error page (wrong URL, expired link) must be rejected before we waste a
+// HubSpot upload on it.
+//
+// A source answering with AVIF or WebP gets exactly one retry. The failure this exists for: an
+// origin behind a CDN that ignores `Vary: Accept` caches whichever format the first visitor was
+// served, then hands it to every client regardless of the Accept they send — so the plain
+// "hero.jpg" URL returns AVIF to us while the origin still holds the JPEG. A new cache key (see
+// formatRetryParam) reaches the origin, which negotiates honestly on imageAcceptHeader. The retry
+// is bounded to one attempt and only for those two declared types, so HTML claiming to be a PNG is
+// still refused after a single fetch, and every fetch goes through the same guarded client.
+//
+// Failure reports the FIRST response, not the retry's: the retry is a best-effort guess at a
+// different URL, and its failure (a signed URL rejecting the extra parameter, say) says nothing
+// about why the original was refused.
+func (c *Client) downloadImage(ctx context.Context, imageURL string) (data []byte, contentType, filename string, err error) {
+	body, declaredType, ferr := c.fetchImage(ctx, imageURL)
+	if ferr != nil {
+		return nil, "", "", ferr
+	}
+
+	ext, mime, sniffErr := sniffImageFormat(body)
+	if sniffErr == nil {
+		return body, mime, deriveImageFilename(imageURL, ext, body), nil
+	}
+	if !isModernImageType(declaredType) {
+		return nil, "", "", sniffErr
+	}
+
+	if retryURL, ok := withFormatRetryParam(imageURL); ok {
+		if retryBody, _, rerr := c.fetchImage(ctx, retryURL); rerr == nil {
+			if rext, rmime, rsniffErr := sniffImageFormat(retryBody); rsniffErr == nil {
+				return retryBody, rmime, deriveImageFilename(imageURL, rext, retryBody), nil
+			}
+		}
+	}
+	// declaredType is one of the two constants isModernImageType accepts, so naming it cannot echo
+	// attacker-chosen header text into the error.
+	return nil, "", "", fmt.Errorf("%w (the source served %s; this service re-hosts only jpeg, png and gif)",
+		sniffErr, declaredType)
+}
+
+// isModernImageType reports whether a declared Content-Type is a format that real browsers
+// receive from content-negotiating origins but this service cannot decode.
+func isModernImageType(declaredType string) bool {
+	return declaredType == "image/avif" || declaredType == "image/webp"
+}
+
+// withFormatRetryParam returns imageURL with formatRetryParam appended, or false when the URL is
+// unparsable or already carries it (so a retry URL is never itself retried). The existing query is
+// kept byte-for-byte rather than re-encoded, so a signed URL is changed by exactly one parameter.
+func withFormatRetryParam(imageURL string) (string, bool) {
+	u, err := url.Parse(imageURL)
+	if err != nil {
+		return "", false
+	}
+	for _, kv := range strings.Split(u.RawQuery, "&") {
+		if kv == formatRetryParam {
+			return "", false
+		}
+	}
+	if u.RawQuery == "" {
+		u.RawQuery = formatRetryParam
+	} else {
+		u.RawQuery += "&" + formatRetryParam
+	}
+	return u.String(), true
+}
+
+// fetchImage performs ONE guarded GET of imageURL and validates that it served an image-typed
+// response within the size cap, returning the body and its normalised (lower-case, parameter-free)
+// declared Content-Type. It does not decide whether the BYTES are a format this service re-hosts —
+// that is sniffImageFormat's job, applied by downloadImage.
 //
 // imageURL is CALLER-SUPPLIED (a hero/sponsor image scraped from an operator-named
 // event page), so this fetch is an SSRF sink and goes through c.downloadClient, which
@@ -80,7 +162,7 @@ func (c *Client) UploadImage(ctx context.Context, imageURL string) (string, erro
 // The scheme is checked here rather than left to the dialer because a non-http(s)
 // scheme never reaches a dial at all: file:// and similar are refused by Transport
 // with an error that reads like a network failure, and the guard would never run.
-func (c *Client) downloadImage(ctx context.Context, imageURL string) (data []byte, contentType, filename string, err error) {
+func (c *Client) fetchImage(ctx context.Context, imageURL string) (body []byte, declaredType string, err error) {
 	parsed, perr := url.Parse(imageURL)
 	if perr != nil {
 		// NOT %w: url.Parse returns a *url.Error whose text embeds the COMPLETE input, so
@@ -91,19 +173,20 @@ func (c *Client) downloadImage(ctx context.Context, imageURL string) (data []byt
 		if errors.As(perr, &uerr) && uerr.Err != nil {
 			reason = uerr.Err.Error()
 		}
-		return nil, "", "", fmt.Errorf("hubspot: image URL is not parsable: %s", reason)
+		return nil, "", fmt.Errorf("hubspot: image URL is not parsable: %s", reason)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, "", "", fmt.Errorf("hubspot: image URL scheme %q is not http(s)", parsed.Scheme)
+		return nil, "", fmt.Errorf("hubspot: image URL scheme %q is not http(s)", parsed.Scheme)
 	}
 
 	req, rerr := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
 	if rerr != nil {
 		// Same hazard as the parse above: this error renders the request URL verbatim.
-		return nil, "", "", fmt.Errorf("hubspot: build image download request for %s: %s",
+		return nil, "", fmt.Errorf("hubspot: build image download request for %s: %s",
 			redact.URLUserinfo(imageURL), errors.Unwrap(rerr))
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("Accept", imageAcceptHeader)
 
 	client := c.downloadClient
 	if client == nil {
@@ -124,42 +207,38 @@ func (c *Client) downloadImage(ctx context.Context, imageURL string) (data []byt
 		if errors.As(derr, &uerr) && uerr.Err != nil {
 			cause = uerr.Err
 		}
-		return nil, "", "", fmt.Errorf("hubspot: download image from %s: %w", redact.URLUserinfo(imageURL), cause)
+		return nil, "", fmt.Errorf("hubspot: download image from %s: %w", redact.URLUserinfo(imageURL), cause)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", "", fmt.Errorf("hubspot: download image returned status %d", resp.StatusCode)
+		return nil, "", fmt.Errorf("hubspot: download image returned status %d", resp.StatusCode)
 	}
 
 	ct := resp.Header.Get("Content-Type")
 	if i := strings.IndexByte(ct, ';'); i >= 0 {
 		ct = ct[:i]
 	}
-	ct = strings.TrimSpace(ct)
+	ct = strings.ToLower(strings.TrimSpace(ct))
 	if !strings.HasPrefix(ct, "image/") {
-		return nil, "", "", fmt.Errorf("hubspot: source URL did not return an image (content-type %q)", ct)
+		return nil, "", fmt.Errorf("hubspot: source URL did not return an image (content-type %q)", ct)
 	}
 
-	body, rerr := io.ReadAll(io.LimitReader(resp.Body, maxImageDownloadBytes+1))
+	data, rerr := io.ReadAll(io.LimitReader(resp.Body, maxImageDownloadBytes+1))
 	if rerr != nil {
-		return nil, "", "", fmt.Errorf("hubspot: read downloaded image: %w", rerr)
+		return nil, "", fmt.Errorf("hubspot: read downloaded image: %w", rerr)
 	}
-	if len(body) > maxImageDownloadBytes {
-		return nil, "", "", fmt.Errorf("hubspot: downloaded image exceeds %d bytes", maxImageDownloadBytes)
-	}
-
-	// The DECODED format, not the declared one. The responding server chooses Content-Type, so
-	// the header above establishes intent, not content: an attacker can serve HTML as image/png.
-	// That matters here beyond the usual, because the bytes are re-hosted in the LF portal as a
-	// PUBLIC_INDEXABLE file — so an unvalidated payload becomes publicly served content under an
-	// LF domain. image.DecodeConfig reads only the header, so this is cheap.
-	ext, mime, sniffErr := sniffImageFormat(body)
-	if sniffErr != nil {
-		return nil, "", "", sniffErr
+	if len(data) > maxImageDownloadBytes {
+		return nil, "", fmt.Errorf("hubspot: downloaded image exceeds %d bytes", maxImageDownloadBytes)
 	}
 
-	return body, mime, deriveImageFilename(imageURL, ext, body), nil
+	// The returned type is the DECLARED one and is NOT trusted: the responding server chooses
+	// Content-Type, so it establishes intent, not content — an attacker can serve HTML as
+	// image/png. downloadImage decides what the bytes are by decoding them (sniffImageFormat),
+	// which matters here beyond the usual because the bytes are re-hosted in the LF portal as a
+	// PUBLIC_INDEXABLE file: an unvalidated payload becomes publicly served content under an LF
+	// domain. The declared type is used only to decide whether a retry is worth making.
+	return data, ct, nil
 }
 
 // allowedImageFormats are the formats this service will re-host, keyed by the name
@@ -175,9 +254,11 @@ var allowedImageFormats = map[string]struct{ ext, mime string }{
 	"gif":  {ext: "gif", mime: "image/gif"},
 }
 
-// WebP is absent because the standard library has no decoder for it and this service does not
-// take golang.org/x/image for one. The consequence is a REFUSAL, not a bypass: a WebP hero is
-// rejected with "not one this service re-hosts" rather than silently re-hosted unvalidated.
+// WebP and AVIF are absent because the standard library has no decoder for either and this
+// service takes no image-codec dependency for one. The consequence is a REFUSAL, not a bypass: such
+// a hero is rejected rather than silently re-hosted unvalidated. downloadImage first tries to get a
+// hostable rendition of the same URL (an Accept header, then one retry under a fresh cache key);
+// transcoding would be the only way to accept an origin that serves nothing else.
 
 // sniffImageFormat decodes just the image header and returns the canonical extension and the
 // registered MIME type for the format the BYTES are in.

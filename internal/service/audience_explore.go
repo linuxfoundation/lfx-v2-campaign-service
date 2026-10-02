@@ -9,10 +9,12 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	explore "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audience_builder"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 
@@ -53,8 +55,20 @@ type AudienceExplorer interface {
 	// *audience.ComposePartialError, which this layer must surface rather than
 	// flatten — see composeErr.
 	ComposeMaster(ctx context.Context, projectID string, in audience.ComposeInput) (*audience.ComposeOutcome, error)
+	// AttachExisting reads existing lists back from the portal and returns them as an
+	// outcome to record. It creates nothing in HubSpot.
+	AttachExisting(ctx context.Context, projectID, masterListID string, suppressionIDs []string) (*audience.ComposeOutcome, error)
 	RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool) (*audience.QaOutcome, error)
 }
+
+// How hard a recording compose tries to persist the audience row once the HubSpot lists
+// already exist. Two attempts, briefly spaced: enough to ride out a connection blip, short
+// enough that the caller gets a partial naming the real lists rather than a timeout naming
+// nothing.
+const (
+	composeRecordAttempts   = 2
+	composeRecordRetryDelay = 150 * time.Millisecond
+)
 
 // AudienceExploreService implements the generated audience-builder service.
 type AudienceExploreService struct {
@@ -62,6 +76,12 @@ type AudienceExploreService struct {
 
 	mu       sync.RWMutex
 	explorer AudienceExplorer
+	// audiences and briefs are needed only by the RECORDING half of
+	// ComposeAudienceMaster (a compose carrying a brief_id). They are late-bound like
+	// explorer, and that path returns a typed 503 when either is absent — so a
+	// deployment without a database still serves every exploratory endpoint.
+	audiences domain.AudienceRepository
+	briefs    domain.BriefRepository
 }
 
 var (
@@ -86,6 +106,32 @@ func (s *AudienceExploreService) SetExplorer(explorer AudienceExplorer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.explorer = explorer
+}
+
+// SetAudienceRepo late-binds the audience repository a recording compose writes to.
+// Separate from SetExplorer so the existing single-arg call sites are unaffected,
+// mirroring AudienceService.SetBriefRepo.
+func (s *AudienceExploreService) SetAudienceRepo(repo domain.AudienceRepository) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.audiences = repo
+}
+
+// SetBriefRepo late-binds the brief repository a recording compose checks against
+// before it creates anything.
+func (s *AudienceExploreService) SetBriefRepo(b domain.BriefRepository) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.briefs = b
+}
+
+// recordDeps snapshots the two repositories a recording compose needs, under the same
+// RWMutex the handlers take for explorer, so a cold-start injection cannot race a
+// request that is already deciding whether it can record.
+func (s *AudienceExploreService) recordDeps() (domain.AudienceRepository, domain.BriefRepository) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.audiences, s.briefs
 }
 
 // ExplorerIsSet reports whether the orchestration was injected. Exported only so the
@@ -310,13 +356,41 @@ func (s *AudienceExploreService) ComposeAudienceMaster(ctx context.Context, p *e
 	if p.Compose == nil {
 		return nil, &explore.BadRequestError{Code: "400", Message: "a compose body is required"}
 	}
+	briefID := strings.TrimSpace(derefStr(p.Compose.BriefID))
+
+	// Everything that can refuse a RECORDING compose is checked here, before the
+	// orchestration is entered and therefore before any HubSpot list exists. A compose
+	// that is going to be refused must be refused while the refusal is still free: a
+	// missing repository or an unknown brief discovered after two real list creates is
+	// the worst outcome available, because the lists cannot be rolled back and the
+	// caller must not retry to get an attachment it never received.
+	var repo domain.AudienceRepository
+	if briefID != "" {
+		var briefs domain.BriefRepository
+		repo, briefs = s.recordDeps()
+		if repo == nil || briefs == nil {
+			// 503 rather than composing-without-recording. Silently downgrading to an
+			// unattached compose would hand back a master the operator believes is wired
+			// to the send and is not — the same "quietly building something different"
+			// failure ErrBlankExclusionID exists to prevent, with a worse blast radius.
+			return nil, &explore.ConnServiceUnavailableError{
+				Code:    "503",
+				Message: "this deployment cannot record an audience, so a composed master cannot be attached to a brief",
+			}
+		}
+		if _, berr := briefs.GetBrief(ctx, p.ProjectID, briefID); berr != nil {
+			return nil, composeBriefErr(ctx, p.ProjectID, briefID, berr)
+		}
+	}
+
 	in := audience.ComposeInput{
-		ListIDs:        p.Compose.ListIds,
-		ExcludeListIDs: p.Compose.ExcludeListIds,
-		Name:           derefStr(p.Compose.Name),
-		BrandShort:     derefStr(p.Compose.BrandShort),
-		EventName:      derefStr(p.Compose.EventName),
-		EventDates:     p.Compose.EventDates,
+		ListIDs:            p.Compose.ListIds,
+		ExcludeListIDs:     p.Compose.ExcludeListIds,
+		Name:               derefStr(p.Compose.Name),
+		BrandShort:         derefStr(p.Compose.BrandShort),
+		EventName:          derefStr(p.Compose.EventName),
+		EventDates:         p.Compose.EventDates,
+		RecordUnderBriefID: briefID,
 	}
 	outcome, cerr := explorer.ComposeMaster(ctx, p.ProjectID, in)
 	if cerr != nil {
@@ -329,7 +403,168 @@ func (s *AudienceExploreService) ComposeAudienceMaster(ctx context.Context, p *e
 	if outcome.Suppression != nil {
 		res.Suppression = composedListResult(outcome.Suppression)
 	}
+	if briefID == "" {
+		return res, nil
+	}
+
+	recorded, rerr := s.recordComposedAudience(ctx, repo, p.ProjectID, briefID, outcome,
+		strings.TrimSpace(derefStr(p.Compose.InclusionSummary)))
+	if rerr != nil {
+		// The lists exist and are usable; only the attachment failed. That is a partial,
+		// not a 500: a 500 invites the retry that would create a second master, and the
+		// UI branches on the partial type to suppress exactly that affordance.
+		return nil, composeErr(ctx, p.ProjectID, &audience.ComposePartialError{
+			Master:      &outcome.Master,
+			Suppression: suppressionOrZero(outcome.Suppression),
+			Err:         rerr,
+		})
+	}
+	res.Recorded = true
+	res.Audience = &explore.AudienceComposeRecordedAudience{
+		ID:                   recorded.ID,
+		Status:               string(recorded.Status),
+		Version:              recorded.Version,
+		PlatformMasterListID: recorded.PlatformMasterListID,
+	}
 	return res, nil
+}
+
+// AttachExistingAudience records lists that already exist as the brief's built audience.
+//
+// Nothing is created in HubSpot, so unlike compose there is no partial state: every failure
+// here, including the record itself, is safe to retry.
+func (s *AudienceExploreService) AttachExistingAudience(ctx context.Context, p *explore.AttachExistingAudiencePayload) (*explore.AudienceAttachExistingResult, error) {
+	explorer, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	if p.Attach == nil {
+		return nil, &explore.BadRequestError{Code: "400", Message: "an attach body is required"}
+	}
+	briefID := strings.TrimSpace(p.Attach.BriefID)
+	repo, briefs := s.recordDeps()
+	if repo == nil || briefs == nil {
+		return nil, &explore.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "this deployment cannot record an audience, so existing lists cannot be attached to a brief",
+		}
+	}
+	if _, berr := briefs.GetBrief(ctx, p.ProjectID, briefID); berr != nil {
+		return nil, composeBriefErr(ctx, p.ProjectID, briefID, berr)
+	}
+
+	outcome, aerr := explorer.AttachExisting(ctx, p.ProjectID, p.Attach.MasterListID, p.Attach.SuppressionListIds)
+	if aerr != nil {
+		return nil, composeErr(ctx, p.ProjectID, aerr)
+	}
+	recorded, rerr := s.recordComposedAudience(ctx, repo, p.ProjectID, briefID, outcome,
+		strings.TrimSpace(derefStr(p.Attach.InclusionSummary)))
+	if rerr != nil {
+		slog.ErrorContext(ctx, "attach existing audience: record failed",
+			"project_id", p.ProjectID, "brief_id", briefID, "error", rerr)
+		return nil, &explore.ConnServiceUnavailableError{
+			Code:    "503",
+			Message: "the lists were verified but the audience could not be saved; nothing was created in HubSpot, so it is safe to retry",
+		}
+	}
+	return &explore.AudienceAttachExistingResult{
+		Master:             composedListResult(&outcome.Master),
+		SuppressionListIds: unmarshalStrings(recorded.SuppressionListIDs),
+		Audience: &explore.AudienceComposeRecordedAudience{
+			ID:                   recorded.ID,
+			Status:               string(recorded.Status),
+			Version:              recorded.Version,
+			PlatformMasterListID: recorded.PlatformMasterListID,
+		},
+	}, nil
+}
+
+// composeBriefErr maps the pre-flight brief read of a RECORDING compose.
+//
+// It cannot go through audienceExploreErr, and the reason is the whole point of the
+// function: there, domain.ErrNotFound means "this project has no usable HubSpot
+// connection" — the arm says so outright — because every other caller of that helper is
+// asking HubSpot about a list. Here ErrNotFound means the BRIEF does not exist, and
+// reporting a mistyped brief id as a connection outage sends the operator to reconnect
+// HubSpot over something no reconnection can fix.
+//
+// Any other read failure is a 503 rather than a 500: this runs before anything is
+// created, so retrying is both safe and the correct advice.
+func composeBriefErr(ctx context.Context, projectID, briefID string, err error) error {
+	if errors.Is(err, domain.ErrNotFound) {
+		slog.WarnContext(ctx, "compose audience master: no such brief to attach to",
+			"project_id", projectID, "brief_id", briefID)
+		return &explore.NotFoundError{
+			Code:    "404",
+			Message: "no such brief in this project, so a composed master cannot be attached to it",
+		}
+	}
+	slog.ErrorContext(ctx, "compose audience master: the brief could not be read",
+		"project_id", projectID, "brief_id", briefID, "error", err)
+	return &explore.ConnServiceUnavailableError{
+		Code:    "503",
+		Message: "the brief could not be read, so a composed master cannot be attached to it; please retry",
+	}
+}
+
+// suppressionOrZero flattens the optional suppression for ComposePartialError, whose
+// Suppression field is a value rather than a pointer.
+func suppressionOrZero(s *audience.ComposedList) audience.ComposedList {
+	if s == nil {
+		return audience.ComposedList{}
+	}
+	return *s
+}
+
+// recordComposedAudience writes the composed master as the brief's built audience.
+//
+// One bounded retry, because the expensive and irreversible half (two HubSpot creates)
+// has already succeeded and a transient database blip should not cost the operator a
+// duplicate contact list to reconcile. It is bounded rather than persistent because the
+// caller is holding an HTTP request open, and a partial that names the lists is a far
+// better outcome than a timeout that names nothing.
+func (s *AudienceExploreService) recordComposedAudience(
+	ctx context.Context,
+	repo domain.AudienceRepository,
+	projectID, briefID string,
+	outcome *audience.ComposeOutcome,
+	inclusionSummary string,
+) (*model.CampaignAudience, error) {
+	a := audienceFromCompose(projectID, briefID, outcome, inclusionSummary)
+	a.CreatedBy = marshalActor(actorFromCtx(ctx))
+	if verr := a.Validate(); verr != nil {
+		return nil, verr
+	}
+
+	var lastErr error
+	for attempt := range composeRecordAttempts {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(composeRecordRetryDelay):
+			}
+		}
+		created, cerr := repo.CreateAudience(ctx, a)
+		if cerr == nil {
+			return created, nil
+		}
+		lastErr = cerr
+		// A DEFINITE refusal is not retried. The retry exists to ride out a connection blip, and
+		// these two sentinels are the repository's settled answer: the brief was archived between
+		// the compose and the record (ErrNotFound), or another build for the same brief and
+		// platform already holds the slot (ErrAudienceBuildInFlight). Retrying buys a wasted
+		// round trip and 150ms of the caller's deadline.
+		//
+		// It also mislabels the outcome. The partial this error becomes tells the operator the
+		// lists exist and to attach them by hand rather than retry -- true of an archived brief,
+		// and wrong for an in-flight build, which is the one case where a LATER retry by the
+		// operator would succeed. Breaking out keeps the message attached to the right cause.
+		if errors.Is(cerr, domain.ErrNotFound) || errors.Is(cerr, domain.ErrAudienceBuildInFlight) {
+			break
+		}
+	}
+	return nil, lastErr
 }
 
 func (s *AudienceExploreService) RunAudienceQa(ctx context.Context, p *explore.RunAudienceQaPayload) (*explore.AudienceQaResult, error) {
@@ -504,6 +739,13 @@ func composeErr(ctx context.Context, projectID string, err error) error {
 		if partial.MasterName != "" {
 			out.MasterName = &partial.MasterName
 		}
+		// The record-failed shape is the only one carrying a CONFIRMED master. Sending it
+		// is what lets the UI say "these lists exist, attach one by hand" instead of
+		// "something went wrong" — the difference between a reconcile the operator can
+		// finish and a compose they will repeat.
+		if partial.Master != nil {
+			out.Master = composedListResult(partial.Master)
+		}
 		return out
 	}
 	return audienceExploreErr(ctx, "compose audience master", projectID, err)
@@ -518,6 +760,13 @@ func composeErr(ctx context.Context, projectID string, err error) error {
 func composePartialMessage(partial *audience.ComposePartialError) string {
 	hasSuppression := partial.Suppression.ListID != "" || partial.Suppression.Name != ""
 	switch {
+	case partial.Master != nil:
+		// Checked first: this shape has a confirmed master AND possibly a confirmed
+		// suppression, so every arm below would describe it wrongly as a create that did
+		// not finish. Nothing needs reconciling in HubSpot here — the lists are correct
+		// and complete; only the link to the campaign is missing.
+		return "the master list and its suppression list were created, but attaching them to the campaign failed — " +
+			"attach the master list to the campaign's audience manually; do not compose again, the lists already exist"
 	case partial.SuppressionUnconfirmed:
 		return "the combined suppression list creation is unconfirmed (it may have been created) — " +
 			"search HubSpot for it by name before composing again; do not simply retry"
@@ -577,6 +826,9 @@ func listBriefResults(briefs []audience.ListBrief) []*explore.AudienceListBrief 
 		}
 		if legacy := strings.TrimSpace(b.ResolvedFromLegacyID); legacy != "" {
 			row.ResolvedFromLegacyID = &legacy
+		}
+		if u := strings.TrimSpace(b.HubSpotURL); u != "" {
+			row.HubspotURL = &u
 		}
 		out = append(out, row)
 	}

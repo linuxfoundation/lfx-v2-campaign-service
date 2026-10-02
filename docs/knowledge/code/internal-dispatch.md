@@ -1969,6 +1969,73 @@ divider module decodes into the same body struct with an empty HTML string, so c
 object-bodied modules made the ordinary template — one rich-text block plus a header image —
 report two widgets and decline the write.
 
+### A/B test pre-check (`PreflightCreate`)
+
+`HubSpotDispatcher.PreflightCreate` is the HubSpot implementation of the optional
+`service.CreatePreflighter` capability (see "Create pre-check" in
+[internal/service](internal-service.md) for the orchestrator side). It exists for exactly one
+request shape: `hubspotConfig.abTestEnabled` on a source email that sends "based on recipients'
+time zones".
+
+HubSpot does not allow an A/B test on such an email: `ab-test/create-variation` answers HTTP 400
+for it. The send mode is a property of the email and `CloneEmail` copies it, so the TEMPLATE the
+caller picked as `hubspotConfig.sourceEmailId` decides it. That is why the question can be asked
+before anything is cloned.
+
+Without the pre-check the failure was invisible. The variant stage in `Dispatch`
+(`createABTestVariantWithHero`) is BEST-EFFORT by design, because the primary email is already a
+complete campaign by then, so a non-2xx from HubSpot logs "could not create a HubSpot A/B test
+variant; the campaign proceeds as a single email" and carries on. `doRequest` discards a non-2xx
+body, so the log does not say why either. A user who ticked "A/B test" got one email and no
+explanation. The refusal cannot be raised from `Dispatch` itself: dispatch runs after the `202`,
+and the orchestrator collapses every dispatcher error into the one fixed job error `platform
+campaign creation failed` on purpose (the upstream text can carry connection and account ids). So
+the check runs on the synchronous create path instead.
+
+What it does, in order:
+
+1. Parses `hubspotConfig` out of the raw create config. A config that does not parse returns
+   `domain.ErrPreflightNotApplicable`: `Dispatch` parses the same bytes and reports a malformed one
+   as the job's failure, and saying so twice would turn one defect into two.
+2. Returns `domain.ErrPreflightNotApplicable` with NO HubSpot call unless `abTestEnabled` is true
+   and `sourceEmailId` is non-blank. Every create that does not ask for an A/B test pays nothing
+   for the check, and the orchestrator records no upstream call for it (see "Create pre-check" in
+   [internal/service](internal-service.md)). It is a distinct sentinel rather than `nil` because
+   `nil` means "the type was read and is fine", which the orchestrator does record.
+3. Resolves the project's HubSpot client (the same resolution `Dispatch` uses) and reads the source
+   email's `type` with `hubspot.Client.GetEmailType`. It is a read: it never clones an email or
+   creates a variant.
+4. `LOCALTIME_EMAIL` (`hubspot.EmailTypeLocalTime`) logs at INFO and returns
+   `domain.ErrABTestUnsupportedSendType`. An empty type logs a WARN and returns `nil`. Any other
+   type logs "A/B pre-check passed" and returns `nil`.
+
+Only the one known-bad type is refused, so a type this service has never heard of is not a reason
+to block a create. A failure to RESOLVE the client or to READ the email is returned wrapped and
+non-sentinel ("resolve hubspot client for the A/B pre-check", "read the source email type for the
+A/B pre-check"); the orchestrator logs those and lets the create proceed, so the pre-check never
+becomes an availability dependency on creating an email.
+
+**Not yet confirmed against a live portal:** that the v3 single-email read returns a top-level
+`type`. The values were taken from HubSpot's API enum and from a connector email-details read, not
+from this service's own request. The pre-check is written to fail open if the field is absent, and
+it logs the type it observed on every A/B request, so the first real A/B create on a local stack
+is what confirms the premise.
+
+### `hubspotConfig.HeroImageAlt` and the `hubspotUrl` Result-blob key
+
+`hubspotConfig` (the HubSpot arm of the dispatch config) carries `HeroImageAlt`, forwarded
+unchanged into `hubspot.RebuildEmailContentInput.HeroImageAlt` — see
+[hubspot](internal-platform-hubspot.md) for what the platform package does with it (trims it,
+falls back to a generic "Event banner" when blank).
+
+`campaignFromHubSpot` builds the value persisted as the campaign's `Result` blob from a struct
+that embeds `*hubspot.Email` alongside explicit `PortalID`, `HubspotURL` and `ABTestVariant`
+fields. `HubspotURL: e.AppURL` restates `hubspot.Email.AppURL` — tagged `json:"-"` on the embedded
+type, so it would not otherwise serialize — under the real JSON key `hubspotUrl`. That is the only
+reason the value survives into the persisted blob: `internal/service`'s
+`hubspotURLFromResult` reads that same key back out to populate the polled job result's
+`hubspot_url` field (see [internal/service](internal-service.md)).
+
 ## The system account is a connection row, not a second mechanism
 
 A project that has connected no ad account of its own dispatches through the LF-owned system
@@ -2407,6 +2474,8 @@ after adoption could already have bound a campaign. `googleads.CampaignKindSearc
 (`StatusToggler`, `MetricsReader`, `AccountLister`, `CampaignAdopter`, `SettingsReader`,
 `AccountMetricsReader`, `EmailSearcher`, `KeywordInsightsReader`,
 `KeywordActioner`, `BudgetWriter`). **LinkedIn is the
+`AccountMetricsReader`, `AccountTotalsReader`, `EmailSearcher`, `KeywordInsightsReader`,
+`KeywordActioner`, `CreatePreflighter`). **LinkedIn is the
 only implementation today** — it is the only platform with an upstream signal to cross-check
 a connection's configured account/org pairing against.
 
@@ -3019,6 +3088,15 @@ ordering is what makes a partial failure describable: the suppression list exist
 does not, which is exactly what `ComposePartialError` carries up so the handler can report the
 created list instead of inviting a blind retry that would duplicate it.
 
+When `ComposeInput.RecordUnderBriefID` is set, `ComposeMaster` resolves the portal right after
+`cachedClient` and BEFORE that first create, returning it on `ComposeOutcome.PortalID`. Both halves
+of the ordering are load-bearing: read afterwards, a failed lookup would leave two real lists with
+nothing to attach them to; read from a second credential resolution, the stamped portal would vouch
+for list ids it never saw. The orchestration records nothing itself — it only resolves what the
+service layer cannot obtain anywhere else honestly. With no brief id the path is unchanged, which
+is why the lookup is conditional: it is a live round trip the exploratory caller should not pay
+for.
+
 `LastSent` is ONE portal sweep, ranked by when each email WENT OUT. Every part of that sentence was
 once otherwise, and the endpoint returned no recent sends at all. The event name was searched as a
 single contiguous substring, so `"KubeCon + CloudNativeCon North America"` had to appear verbatim in
@@ -3072,7 +3150,9 @@ The fan-out is TWO phases, and that is what keeps ordering correct on a portal t
 projected date blank. Candidates are ordered by the projected date, trimmed to a shortlist of
 `limit + 12` capped at 22, and the authoritative date is read for each of those; the shortlist is then
 re-sorted on that date by the SAME comparator and trimmed to `limit`, and only the survivors pay the
-expensive `listBriefs` fan-out. Truncating to `limit` before reading any authoritative date — which
+expensive `listBriefs` fan-out (which resolves v3 ids first, then maps each legacy id through
+`ListIDForLegacy` and drops any id or name already listed, so one list selected under both
+selections is one row). Truncating to `limit` before reading any authoritative date — which
 is what this replaced — discarded the newest send on the strength of an edit timestamp, and no later
 sort can bring back a row already cut. The claim is therefore bounded rather than unconditional:
 "most recently sent first" holds for any portal whose most recent send is within the shortlist, and

@@ -72,16 +72,16 @@ That asymmetry is why `GenerateEmailCopy`'s required-field check trims before co
 ### The prompt bound is checked twice, in runes, against TWO different limits
 
 `maxPromptSize` is 2400 **runes** and bounds the four caller-supplied fields BEFORE
-`composeEmailCopyPrompt`; `maxComposedPromptSize` is 14000 and bounds the composed prompt after.
+`composeEmailCopyPrompt`; `maxComposedPromptSize` is 20400 and bounds the composed prompt after.
 They are separate constants because they measure different things — the caller's input versus that
 input plus the stage template and the reference-email style block (`maxReferenceBlockRunes`, see
 below) — and getting the second number wrong fails in TWO opposite directions, both of which this
 file has actually shipped:
 
-- **Too low rejects valid input.** At 6500 the Post-Event stage (now floors at 11055 runes COMPOSED
-  once the reference-email style block AND the urgency-fomo variant block are included, at zero
-  caller input) left only **-4555** runes for caller fields (6500 - 11055), so essentially any
-  input was refused — event details that
+- **Too low rejects valid input.** At 6500 the Post-Event stage (now floors at 17352 runes COMPOSED
+  once the reference-email style block, the event-facts block, the community-story variant block
+  AND the alumni segment block are included, at zero caller input) left only **-10852** runes for
+  caller fields (6500 - 17352), so essentially any input was refused — event details that
   passed the pre-check were then refused by the composed one, two bounds contradicting each other,
   with the caller told their input was too large immediately after the first accepted it.
 - **Too high never fires.** 8000 was set against a believed ceiling of 7700 and the real ceiling
@@ -97,10 +97,10 @@ None can.
 The first property wins, because a caller must never be told their input is too large by the second
 of two checks after the first accepted it. The composed bound is then sized for the case that
 remains: **a stage template growing past the budget in a future edit**. That is a real failure mode
-— the templates are large (Post-Event composes to an 11055-rune floor from a 3637-rune ContentPrompt plus the reference-email style block plus, when requested, the urgency-fomo variant block) and hand-edited.
+— the templates are large (Post-Event composes to a 17352-rune floor from a 3637-rune ContentPrompt plus the reference-email style block plus the event-facts block plus, when requested, the community-story variant block plus, when requested, a segment block) and hand-edited.
 
-With the input bound at 2400 the worst valid composition is 13455 (Post-Event + urgency-fomo floors
-at 11055), so 14000 clears it with 545 runes of headroom. Post-Event WITHHOLDS the registration URL — its call to
+With the input bound at 2400 the worst valid composition is 19752 (Post-Event + community-story +
+the alumni segment floors at 17352), so 20400 clears it with 648 runes of headroom. Post-Event WITHHOLDS the registration URL — its call to
 action is "Share Feedback", not a registration ask — so the 19-rune URL line is not part of its
 composition; it still leads on ContentPrompt length, so which stage is worst did not change. `TestGenerateEmailCopy_ComposedBoundIsReachable` drives it that
 way, by injecting an oversized stage into `emailstage.Templates` rather than a long event name.
@@ -159,13 +159,21 @@ Runes, not bytes, because the limit is stated to the caller and logged as a char
 every other bound in this file counts runes. `len()` gave an event named in Japanese a third of
 the advertised budget and an event named in English all of it — a limit that means something
 different depending on the alphabet. Measured, not estimated, and re-measured whenever the
-shared prompt or any template changes: Post-Event is the largest stage at an 11055-rune COMPOSED floor with the urgency-fomo variant requested (its ContentPrompt alone is 3637, plus the reference-email style block, plus the variant block),
-and with the maximum 2400 runes of caller input it composes to 13455 against the 14000 bound.
+shared prompt or any template changes: Post-Event is the largest stage at a 17352-rune COMPOSED floor with the community-story variant AND the alumni segment requested (its ContentPrompt alone is 3637, plus the reference-email style block, plus the event-facts block, plus the variant block, plus the segment block),
+and with the maximum 2400 runes of caller input it composes to 19752 against the 20400 bound,
+leaving 648 runes of headroom.
 
 Every figure in this section has been wrong at least once from a measurement taken before a
-template grew — four times, most recently when the content rules added to the shared system prompt
-(no sign-off, greeting-comma spacing, name speakers/topics rather than "and more") grew every stage
-by ~453 runes. A prose instruction to re-measure did not survive contact, so
+template grew — eight times, most recently when the richer-content work added the event-facts
+block (+3600, the dominant term and producer-bounded like the reference block), the community-story
+variant (+305 over urgency-fomo, since only one variant is ever appended — a second variant moves
+WHICH one is worst, not the sum), and 1758 net runes of shared stage-aware rules including
+`bodyStyleRule` (624). Before that (LFX-Campaigns-Email-QA-Report B1) a
+section-boundary rule was added to the shared stage-aware system prompt and the urgency-fomo
+variant block, telling the model never to run a closed list straight into the next heading with no
+tag or whitespace between them. That grew the worst composition by 299 runes, leaving 212 runes of
+headroom. A prose
+instruction to re-measure did not survive contact, so
 `TestComposedBoundClearsEveryStageFloor` now COMPUTES every stage floor from the real constants and
 fails if `worst + maxPromptSize` exceeds `maxComposedPromptSize`. Derive these numbers from that
 test rather than carrying them forward.
@@ -260,6 +268,7 @@ nothing greps for it.
 - **TestParseEmailCopyResponse_EmptyResponseIsNotReportedAsAShapeMismatch**: Keeps that gate from swallowing the pre-existing case — a response with neither sections nor body still reaches the required-field rejection rather than being blamed on the shape.
 - **TestResolveEventDates**: Pins the fallback order — the structured `startDate`/`endDate` pair wins, the scraper's combined `dates` string is the fallback, and "Date TBD" is the answer when neither exists.
 - **TestGenerateEmailCopy_StageReachesThePrompt**: Pins that the caller's `stage` actually reaches the composed prompt, rather than being accepted and dropped.
+- **TestGenerateEmailCopy_SegmentReachesThePrompt**: Same seam as the stage test above, for `segment` — pins that `GenerateEmailCopy` actually threads `p.Segment` into `vars.segment` (`email_copy.go:885`) rather than a composer-level test that can only prove the switch works once a segment value already arrives.
 - **TestGenerateEmailCopy_NilStageIsNotAnError**: A caller that names no stage gets generated copy, not a 400 — the stage is optional by contract.
 - **TestCTAFallbacksSurviveTheOmitRule**: Pins that no CTA fallback shares a line with an unsupplied placeholder, since the OMIT rule outranks the stage brief and would delete the fallback along with the condition — the third route found to an empty CTA and its 503.
 - **TestConceptDocSizingArithmetic**: Derives the input bound, composed bound, worst composition and headroom from the real constants and fails when the sizing section states a figure they contradict. Five separate numbers in that one section had gone stale, each caught by a reviewer rather than the repo.
@@ -272,6 +281,15 @@ nothing greps for it.
 - **TestComposeEmailCopyPrompt_AbsentRegistrationURLPrintsNoLine**: With no usable URL the prompt offers no slot at all — a blank one reads as supplied-but-empty, which is the shape that produced the placeholder — while the rule telling the model to write plain text still ships.
 - **TestAbsentStageIgnoresTheRegistrationURL**: A brief WITH a url still composes the frozen pre-stage prompt byte for byte. LFXV2-1940 does not bend for an improvement, and this is the case most plausibly "fixed" by mistake.
 - **TestGenerateEmailCopy_BriefURLBecomesTheCTADestination**: End-to-end wiring. The composer tests take the URL as an argument, so a `registrationURL` never populated in `GenerateEmailCopy` would leave all of them green while the endpoint kept generating dead buttons — and the url lives on the brief's own column, outside the blob every other prompt field is decoded from.
+- **TestComposeEmailCopyPrompt_SegmentAppendsItsBlock**: Each of the four recognised `segment` values appends its own, and only its own, block — no other segment's marker leaks in alongside it.
+- **TestComposeEmailCopyPrompt_UnrecognisedSegmentIsNoOp**: An unrecognised `segment` value produces the exact same system prompt as no segment at all, same leniency as an unrecognised `stage` or `variant`.
+- **TestAbsentStageIgnoresTheSegment**: A brief WITH a `segment` still composes the frozen pre-stage prompt byte for byte, same LFXV2-1940 restriction as `registrationURL` and `variant`.
+- **TestComposeEmailCopyPrompt_VariantAndSegmentComposeAdditively**: `variant` restyles the whole draft, `segment` narrows which blocks are relevant to an audience; both blocks appear together rather than one replacing the other.
+- **TestComposeEmailCopyPrompt_WarnsAgainstListRunningIntoNextSection**: Both halves of the list-boundary rule, which fail independently: the shared system prompt states the one-idea-per-`rich_text`-section rule and forbids a closed `</ul>` running straight into the next heading, and the urgency-fomo block restates it naming the two adjacent list-heavy sections whose run-on the QA report reproduced.
+- **TestEventFactsBlockHonoursItsBound**: MEASURES the worst-case event-facts block against `maxEventFactsBlockRunes` instead of asserting a number, and fails if the block-level backstop ever starts cutting — which would silently truncate the description mid-sentence, since it is written last. Checks every label is present, so a field that stopped being measured cannot make the sum look safe.
+- **TestEventFactsBlock_AScrapedFactCannotForgeAPromptLine**: Every free-text fact is scraped from a third-party event page, and `eventFactsBlock` writes each as `Label: value` joined with newlines — so a value carrying its own newline forged a line the page's author chose, and the system prompt tells the model to copy a `Registration URL:` into a button's href. Covers all five spellings (`\n`, `\r\n`, U+2028) across four fields, because the collapse is at `factText` and a per-field fix would leave the other five.
+- **TestFactText_CollapsesWhitespaceWithoutEatingContent**: The other half of that fix — a whitespace RUN becomes one space rather than vanishing, so a newline inside legitimate prose still reads as a word break.
+- **TestParseEmailCopyResponse_StylesTheBodyHTML**: Holds that the styler is WIRED into the response path, not merely correct. `styleEmailBodyHTML` has its own tests; nothing else in the package would notice if the call were removed, because a section's HTML is a string either way.
 
 Each test is mutation-verified by reverting the corresponding logic and confirming the test fails with a meaningful diagnostic.
 

@@ -8,6 +8,8 @@
 package client
 
 import (
+	"unicode/utf8"
+
 	lfxv2campaignserviceaudiencebuilder "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audience_builder"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -34,6 +36,14 @@ type PreviewAudienceCountRequestBody struct {
 type ComposeAudienceMasterRequestBody struct {
 	// What to compose the master list from
 	Compose *AudienceComposeMasterInputRequestBody `form:"compose" json:"compose" xml:"compose"`
+}
+
+// AttachExistingAudienceRequestBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP request body.
+type AttachExistingAudienceRequestBody struct {
+	// The existing lists to attach
+	Attach *AudienceAttachExistingInputRequestBody `form:"attach" json:"attach" xml:"attach"`
 }
 
 // RunAudienceQaRequestBody is the type of the
@@ -134,6 +144,23 @@ type ComposeAudienceMasterResponseBody struct {
 	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
 	// The inclusion lists the master unions
 	SourceListIds []string `form:"source_list_ids,omitempty" json:"source_list_ids,omitempty" xml:"source_list_ids,omitempty"`
+	// The audience row recorded for brief_id, when one was requested and written
+	Audience *AudienceComposeRecordedAudienceResponseBody `form:"audience,omitempty" json:"audience,omitempty" xml:"audience,omitempty"`
+	// Whether the master was recorded as the brief's audience; false when no
+	// brief_id was supplied
+	Recorded *bool `form:"recorded,omitempty" json:"recorded,omitempty" xml:"recorded,omitempty"`
+}
+
+// AttachExistingAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body.
+type AttachExistingAudienceResponseBody struct {
+	// The existing master list, as read back from the portal
+	Master *AudienceComposedListResponseBody `form:"master,omitempty" json:"master,omitempty" xml:"master,omitempty"`
+	// The suppression list ids recorded beside it
+	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
+	// The audience row recorded for brief_id
+	Audience *AudienceComposeRecordedAudienceResponseBody `form:"audience,omitempty" json:"audience,omitempty" xml:"audience,omitempty"`
 }
 
 // RunAudienceQaResponseBody is the type of the
@@ -708,6 +735,9 @@ type ComposeAudienceMasterComposePartialResponseBody struct {
 	// is unconfirmed (HubSpot may have created it) -- search for this name in
 	// HubSpot before composing again
 	MasterName *string `form:"master_name,omitempty" json:"master_name,omitempty" xml:"master_name,omitempty"`
+	// The master list that WAS created, set only when recording it as the brief's
+	// audience failed
+	Master *AudienceComposedListResponseBody `form:"master,omitempty" json:"master,omitempty" xml:"master,omitempty"`
 }
 
 // ComposeAudienceMasterInternalServerErrorResponseBody is the type of the
@@ -777,6 +807,86 @@ type ComposeAudienceMasterPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-audience-builder" service "compose-audience-master"
 // endpoint HTTP response body for the "Unauthorized" error.
 type ComposeAudienceMasterUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AttachExistingAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the "BadRequest"
+// error.
+type AttachExistingAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AttachExistingAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the "Conflict"
+// error.
+type AttachExistingAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// AttachExistingAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type AttachExistingAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AttachExistingAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the
+// "InternalServerError" error.
+type AttachExistingAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AttachExistingAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the "NotFound"
+// error.
+type AttachExistingAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AttachExistingAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type AttachExistingAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AttachExistingAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint HTTP response body for the
+// "Unauthorized" error.
+type AttachExistingAudienceUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -954,6 +1064,8 @@ type AudienceListBriefResponseBody struct {
 	Missing *bool `form:"missing,omitempty" json:"missing,omitempty" xml:"missing,omitempty"`
 	// Legacy list id this row was translated from
 	ResolvedFromLegacyID *string `form:"resolved_from_legacy_id,omitempty" json:"resolved_from_legacy_id,omitempty" xml:"resolved_from_legacy_id,omitempty"`
+	// Deep link to the list in the HubSpot UI; absent when it no longer resolves
+	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 }
 
 // AudienceMasterListBriefResponseBody is used to define fields on response
@@ -984,6 +1096,12 @@ type AudienceComposeMasterInputRequestBody struct {
 	EventName *string `form:"event_name,omitempty" json:"event_name,omitempty" xml:"event_name,omitempty"`
 	// Event dates; drive the derived name's quarter segment
 	EventDates []string `form:"event_dates,omitempty" json:"event_dates,omitempty" xml:"event_dates,omitempty"`
+	// Record the composed master as this brief's built audience, stamped with the
+	// portal it was composed in
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
+	// Operator-visible provenance for the recorded audience; derived from the
+	// source lists when omitted
+	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
 }
 
 // AudienceComposedListResponseBody is used to define fields on response body
@@ -997,6 +1115,33 @@ type AudienceComposedListResponseBody struct {
 	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 	// Membership size, when HubSpot reported one
 	Size *int64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
+}
+
+// AudienceComposeRecordedAudienceResponseBody is used to define fields on
+// response body types.
+type AudienceComposeRecordedAudienceResponseBody struct {
+	// Audience id
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Audience status; always built for a recorded compose
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Optimistic-concurrency version
+	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
+	// The master list this audience sends to
+	PlatformMasterListID *string `form:"platform_master_list_id,omitempty" json:"platform_master_list_id,omitempty" xml:"platform_master_list_id,omitempty"`
+}
+
+// AudienceAttachExistingInputRequestBody is used to define fields on request
+// body types.
+type AudienceAttachExistingInputRequestBody struct {
+	// The brief to record the audience under
+	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
+	// The existing contact list the send goes to
+	MasterListID string `form:"master_list_id" json:"master_list_id" xml:"master_list_id"`
+	// Existing lists the send suppresses
+	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
+	// Operator-visible provenance for the recorded audience; derived from the
+	// master list when omitted
+	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
 }
 
 // AudienceQaCandidateResponseBody is used to define fields on response body
@@ -1098,6 +1243,17 @@ func NewComposeAudienceMasterRequestBody(p *lfxv2campaignserviceaudiencebuilder.
 	body := &ComposeAudienceMasterRequestBody{}
 	if p.Compose != nil {
 		body.Compose = marshalLfxv2campaignserviceaudiencebuilderAudienceComposeMasterInputToAudienceComposeMasterInputRequestBody(p.Compose)
+	}
+	return body
+}
+
+// NewAttachExistingAudienceRequestBody builds the HTTP request body from the
+// payload of the "attach-existing-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewAttachExistingAudienceRequestBody(p *lfxv2campaignserviceaudiencebuilder.AttachExistingAudiencePayload) *AttachExistingAudienceRequestBody {
+	body := &AttachExistingAudienceRequestBody{}
+	if p.Attach != nil {
+		body.Attach = marshalLfxv2campaignserviceaudiencebuilderAudienceAttachExistingInputToAudienceAttachExistingInputRequestBody(p.Attach)
 	}
 	return body
 }
@@ -1843,7 +1999,9 @@ func NewPreviewAudienceCountUnauthorized(body *PreviewAudienceCountUnauthorizedR
 // "lfx-v2-campaign-service-audience-builder" service "compose-audience-master"
 // endpoint result from a HTTP "Created" response.
 func NewComposeAudienceMasterAudienceComposeMasterResultCreated(body *ComposeAudienceMasterResponseBody) *lfxv2campaignserviceaudiencebuilder.AudienceComposeMasterResult {
-	v := &lfxv2campaignserviceaudiencebuilder.AudienceComposeMasterResult{}
+	v := &lfxv2campaignserviceaudiencebuilder.AudienceComposeMasterResult{
+		Recorded: *body.Recorded,
+	}
 	v.Master = unmarshalAudienceComposedListResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposedList(body.Master)
 	if body.Suppression != nil {
 		v.Suppression = unmarshalAudienceComposedListResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposedList(body.Suppression)
@@ -1851,6 +2009,9 @@ func NewComposeAudienceMasterAudienceComposeMasterResultCreated(body *ComposeAud
 	v.SourceListIds = make([]string, len(body.SourceListIds))
 	for i, val := range body.SourceListIds {
 		v.SourceListIds[i] = val
+	}
+	if body.Audience != nil {
+		v.Audience = unmarshalAudienceComposeRecordedAudienceResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposeRecordedAudience(body.Audience)
 	}
 
 	return v
@@ -1868,6 +2029,9 @@ func NewComposeAudienceMasterComposePartial(body *ComposeAudienceMasterComposePa
 	}
 	if body.Suppression != nil {
 		v.Suppression = unmarshalAudienceComposedListResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposedList(body.Suppression)
+	}
+	if body.Master != nil {
+		v.Master = unmarshalAudienceComposedListResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposedList(body.Master)
 	}
 
 	return v
@@ -1950,6 +2114,107 @@ func NewComposeAudienceMasterPayloadTooLarge(body *ComposeAudienceMasterPayloadT
 // lfx-v2-campaign-service-audience-builder service compose-audience-master
 // endpoint Unauthorized error.
 func NewComposeAudienceMasterUnauthorized(body *ComposeAudienceMasterUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceaudiencebuilder.UnauthorizedError {
+	v := &lfxv2campaignserviceaudiencebuilder.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewAttachExistingAudienceAudienceAttachExistingResultCreated builds a
+// "lfx-v2-campaign-service-audience-builder" service
+// "attach-existing-audience" endpoint result from a HTTP "Created" response.
+func NewAttachExistingAudienceAudienceAttachExistingResultCreated(body *AttachExistingAudienceResponseBody) *lfxv2campaignserviceaudiencebuilder.AudienceAttachExistingResult {
+	v := &lfxv2campaignserviceaudiencebuilder.AudienceAttachExistingResult{}
+	v.Master = unmarshalAudienceComposedListResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposedList(body.Master)
+	v.SuppressionListIds = make([]string, len(body.SuppressionListIds))
+	for i, val := range body.SuppressionListIds {
+		v.SuppressionListIds[i] = val
+	}
+	v.Audience = unmarshalAudienceComposeRecordedAudienceResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposeRecordedAudience(body.Audience)
+
+	return v
+}
+
+// NewAttachExistingAudienceBadRequest builds a
+// lfx-v2-campaign-service-audience-builder service attach-existing-audience
+// endpoint BadRequest error.
+func NewAttachExistingAudienceBadRequest(body *AttachExistingAudienceBadRequestResponseBody) *lfxv2campaignserviceaudiencebuilder.BadRequestError {
+	v := &lfxv2campaignserviceaudiencebuilder.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAttachExistingAudienceConflict builds a
+// lfx-v2-campaign-service-audience-builder service attach-existing-audience
+// endpoint Conflict error.
+func NewAttachExistingAudienceConflict(body *AttachExistingAudienceConflictResponseBody) *lfxv2campaignserviceaudiencebuilder.ConflictError {
+	v := &lfxv2campaignserviceaudiencebuilder.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewAttachExistingAudienceServiceUnavailable builds a
+// lfx-v2-campaign-service-audience-builder service attach-existing-audience
+// endpoint ServiceUnavailable error.
+func NewAttachExistingAudienceServiceUnavailable(body *AttachExistingAudienceServiceUnavailableResponseBody) *lfxv2campaignserviceaudiencebuilder.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceaudiencebuilder.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAttachExistingAudienceInternalServerError builds a
+// lfx-v2-campaign-service-audience-builder service attach-existing-audience
+// endpoint InternalServerError error.
+func NewAttachExistingAudienceInternalServerError(body *AttachExistingAudienceInternalServerErrorResponseBody) *lfxv2campaignserviceaudiencebuilder.InternalServerError {
+	v := &lfxv2campaignserviceaudiencebuilder.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAttachExistingAudienceNotFound builds a
+// lfx-v2-campaign-service-audience-builder service attach-existing-audience
+// endpoint NotFound error.
+func NewAttachExistingAudienceNotFound(body *AttachExistingAudienceNotFoundResponseBody) *lfxv2campaignserviceaudiencebuilder.NotFoundError {
+	v := &lfxv2campaignserviceaudiencebuilder.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAttachExistingAudiencePayloadTooLarge builds a
+// lfx-v2-campaign-service-audience-builder service attach-existing-audience
+// endpoint PayloadTooLarge error.
+func NewAttachExistingAudiencePayloadTooLarge(body *AttachExistingAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceaudiencebuilder.PayloadTooLargeError {
+	v := &lfxv2campaignserviceaudiencebuilder.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAttachExistingAudienceUnauthorized builds a
+// lfx-v2-campaign-service-audience-builder service attach-existing-audience
+// endpoint Unauthorized error.
+func NewAttachExistingAudienceUnauthorized(body *AttachExistingAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceaudiencebuilder.UnauthorizedError {
 	v := &lfxv2campaignserviceaudiencebuilder.UnauthorizedError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -2209,6 +2474,9 @@ func ValidateComposeAudienceMasterResponseBody(body *ComposeAudienceMasterRespon
 	if body.SourceListIds == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("source_list_ids", "body"))
 	}
+	if body.Recorded == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("recorded", "body"))
+	}
 	if body.Master != nil {
 		if err2 := ValidateAudienceComposedListResponseBody(body.Master); err2 != nil {
 			err = goa.MergeErrors(err, err2)
@@ -2216,6 +2484,36 @@ func ValidateComposeAudienceMasterResponseBody(body *ComposeAudienceMasterRespon
 	}
 	if body.Suppression != nil {
 		if err2 := ValidateAudienceComposedListResponseBody(body.Suppression); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Audience != nil {
+		if err2 := ValidateAudienceComposeRecordedAudienceResponseBody(body.Audience); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateAttachExistingAudienceResponseBody runs the validations defined on
+// Attach-Existing-AudienceResponseBody
+func ValidateAttachExistingAudienceResponseBody(body *AttachExistingAudienceResponseBody) (err error) {
+	if body.Master == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("master", "body"))
+	}
+	if body.SuppressionListIds == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("suppression_list_ids", "body"))
+	}
+	if body.Audience == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("audience", "body"))
+	}
+	if body.Master != nil {
+		if err2 := ValidateAudienceComposedListResponseBody(body.Master); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Audience != nil {
+		if err2 := ValidateAudienceComposeRecordedAudienceResponseBody(body.Audience); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -2279,8 +2577,8 @@ func ValidateGetAudienceBuilderCapabilitiesConflictResponseBody(body *GetAudienc
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -2373,8 +2671,8 @@ func ValidateDiscoverAudienceListsConflictResponseBody(body *DiscoverAudienceLis
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -2464,8 +2762,8 @@ func ValidateSearchAudienceListsConflictResponseBody(body *SearchAudienceListsCo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -2555,8 +2853,8 @@ func ValidateGetAudienceSuppressionListsConflictResponseBody(body *GetAudienceSu
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -2648,8 +2946,8 @@ func ValidateGetAudienceLastSentConflictResponseBody(body *GetAudienceLastSentCo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -2741,8 +3039,8 @@ func ValidateGetExistingAudienceMasterListsConflictResponseBody(body *GetExistin
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -2835,8 +3133,8 @@ func ValidatePreviewAudienceCountConflictResponseBody(body *PreviewAudienceCount
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -2918,6 +3216,11 @@ func ValidateComposeAudienceMasterComposePartialResponseBody(body *ComposeAudien
 			err = goa.MergeErrors(err, err2)
 		}
 	}
+	if body.Master != nil {
+		if err2 := ValidateAudienceComposedListResponseBody(body.Master); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
 	return
 }
 
@@ -2956,8 +3259,8 @@ func ValidateComposeAudienceMasterConflictResponseBody(body *ComposeAudienceMast
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -3012,6 +3315,97 @@ func ValidateComposeAudienceMasterUnauthorizedResponseBody(body *ComposeAudience
 	return
 }
 
+// ValidateAttachExistingAudienceBadRequestResponseBody runs the validations
+// defined on attach-existing-audience_BadRequest_response_body
+func ValidateAttachExistingAudienceBadRequestResponseBody(body *AttachExistingAudienceBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAttachExistingAudienceConflictResponseBody runs the validations
+// defined on attach-existing-audience_Conflict_response_body
+func ValidateAttachExistingAudienceConflictResponseBody(body *AttachExistingAudienceConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateAttachExistingAudienceServiceUnavailableResponseBody runs the
+// validations defined on
+// attach-existing-audience_ServiceUnavailable_response_body
+func ValidateAttachExistingAudienceServiceUnavailableResponseBody(body *AttachExistingAudienceServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAttachExistingAudienceInternalServerErrorResponseBody runs the
+// validations defined on
+// attach-existing-audience_InternalServerError_response_body
+func ValidateAttachExistingAudienceInternalServerErrorResponseBody(body *AttachExistingAudienceInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAttachExistingAudienceNotFoundResponseBody runs the validations
+// defined on attach-existing-audience_NotFound_response_body
+func ValidateAttachExistingAudienceNotFoundResponseBody(body *AttachExistingAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAttachExistingAudiencePayloadTooLargeResponseBody runs the
+// validations defined on attach-existing-audience_PayloadTooLarge_response_body
+func ValidateAttachExistingAudiencePayloadTooLargeResponseBody(body *AttachExistingAudiencePayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAttachExistingAudienceUnauthorizedResponseBody runs the validations
+// defined on attach-existing-audience_Unauthorized_response_body
+func ValidateAttachExistingAudienceUnauthorizedResponseBody(body *AttachExistingAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateRunAudienceQaBadRequestResponseBody runs the validations defined on
 // run-audience-qa_BadRequest_response_body
 func ValidateRunAudienceQaBadRequestResponseBody(body *RunAudienceQaBadRequestResponseBody) (err error) {
@@ -3034,8 +3428,8 @@ func ValidateRunAudienceQaConflictResponseBody(body *RunAudienceQaConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -3268,6 +3662,9 @@ func ValidateAudienceComposeMasterInputRequestBody(body *AudienceComposeMasterIn
 	if len(body.ExcludeListIds) > 200 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.exclude_list_ids", body.ExcludeListIds, len(body.ExcludeListIds), 200, false))
 	}
+	if body.BriefID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.brief_id", *body.BriefID, goa.FormatUUID))
+	}
 	return
 }
 
@@ -3282,6 +3679,37 @@ func ValidateAudienceComposedListResponseBody(body *AudienceComposedListResponse
 	}
 	if body.HubspotURL == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("hubspot_url", "body"))
+	}
+	return
+}
+
+// ValidateAudienceComposeRecordedAudienceResponseBody runs the validations
+// defined on audience-compose-recorded-audienceResponseBody
+func ValidateAudienceComposeRecordedAudienceResponseBody(body *AudienceComposeRecordedAudienceResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.Version == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	if body.PlatformMasterListID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_master_list_id", "body"))
+	}
+	return
+}
+
+// ValidateAudienceAttachExistingInputRequestBody runs the validations defined
+// on audience-attach-existing-inputRequestBody
+func ValidateAudienceAttachExistingInputRequestBody(body *AudienceAttachExistingInputRequestBody) (err error) {
+	err = goa.MergeErrors(err, goa.ValidateFormat("body.brief_id", body.BriefID, goa.FormatUUID))
+	if utf8.RuneCountInString(body.MasterListID) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.master_list_id", body.MasterListID, utf8.RuneCountInString(body.MasterListID), 1, true))
+	}
+	if len(body.SuppressionListIds) > 200 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.suppression_list_ids", body.SuppressionListIds, len(body.SuppressionListIds), 200, false))
 	}
 	return
 }

@@ -978,6 +978,125 @@ func TestOrchestrator_IDlessOrphanWithResultIsNotASkipSuccess(t *testing.T) {
 	}
 }
 
+// TestOrchestrator_FastPathReuseCarriesHubspotURL drives dispatchPlatform's fast-path
+// reuse (orchestrator.go:1425, `case lerr == nil && isReusableCampaign(existing):`)
+// through the public Start API, not the hubspotURLFromResult helper directly. A HubSpot
+// campaign already sits in GetCampaignByPlatform's row with a Result blob carrying
+// "hubspotUrl" (the shape internal/dispatch/hubspot.go writes). Deleting the
+// `res.HubspotURL = hubspotURLFromResult(existing.Result)` assignment at that call site
+// would leave TestHubspotURLFromResult, TestHubSpot_ResultBlobCarriesTheClonedEmailAppURL
+// and TestBriefService_GetJob_HubspotURL all green while this test fails.
+func TestOrchestrator_FastPathReuseCarriesHubspotURL(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{existing: map[string]*model.Campaign{
+		"b1|" + string(model.ProviderHubSpot): {
+			ID: "existing-hs1", PlatformCampaignID: "999",
+			Result: []byte(`{"hubspotUrl":"https://app.hubspot.com/email/8112310/edit/999/settings"}`),
+		},
+	}}
+	disp := &countingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderHubSpot: disp,
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderHubSpot}, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobSucceeded {
+		t.Fatalf("status = %s, want succeeded", j.Status)
+	}
+	if !strings.Contains(string(j.Result), "https://app.hubspot.com/email/8112310/edit/999/settings") {
+		t.Errorf("result = %s, want it to carry the reused campaign's hubspot_url", j.Result)
+	}
+}
+
+// TestOrchestrator_ClaimConflictReuseCarriesHubspotURL drives dispatchPlatform's OTHER
+// reuse site (orchestrator.go:1470, inside `if !claimed { if isReusableCampaign(existing)`)
+// in isolation from the fast path above. That requires GetCampaignByPlatform (checked
+// first, at line 1416) to miss while ClaimCampaignDispatch (checked second) finds the row —
+// exactly the race the comment above line 1461 describes: another worker completed the
+// pair between this worker's lookup and its claim attempt. byPlatformErr set to
+// domain.ErrNotFound simulates the stale/missed lookup; the row seeded in `existing` is
+// what the subsequent claim conflicts against. Deleting the
+// `res.HubspotURL = hubspotURLFromResult(existing.Result)` assignment at THIS call site
+// (distinct from line 1425's) would leave every other hubspotUrl-seam test green while
+// this test fails.
+func TestOrchestrator_ClaimConflictReuseCarriesHubspotURL(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{
+		byPlatformErr: domain.ErrNotFound,
+		existing: map[string]*model.Campaign{
+			"b1|" + string(model.ProviderHubSpot): {
+				ID: "existing-hs2", PlatformCampaignID: "999",
+				Result: []byte(`{"hubspotUrl":"https://app.hubspot.com/email/8112310/edit/999/settings"}`),
+			},
+		},
+	}
+	disp := &countingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderHubSpot: disp,
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderHubSpot}, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobSucceeded {
+		t.Fatalf("status = %s, want succeeded", j.Status)
+	}
+	if !strings.Contains(string(j.Result), "https://app.hubspot.com/email/8112310/edit/999/settings") {
+		t.Errorf("result = %s, want it to carry the claim-conflict row's hubspot_url", j.Result)
+	}
+	disp.mu.Lock()
+	calls := disp.calls
+	disp.mu.Unlock()
+	if calls != 0 {
+		t.Errorf("Dispatch called %d times, want 0 (the claim conflict must reuse, not dispatch)", calls)
+	}
+}
+
+// freshHubspotCreateDispatcher simulates a HubSpot dispatch that actually runs (no
+// existing row to reuse) and succeeds, returning a campaign whose Result carries
+// "hubspotUrl" — the shape internal/dispatch/hubspot.go's campaignFromHubSpot writes.
+type freshHubspotCreateDispatcher struct{}
+
+func (freshHubspotCreateDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return &model.Campaign{
+		PlatformCampaignID: "pc-" + string(p),
+		Status:             "created",
+		CampaignName:       "n",
+		Result:             json.RawMessage(`{"hubspotUrl":"https://app.hubspot.com/email/8112310/edit/999/settings"}`),
+	}, nil
+}
+
+// TestOrchestrator_FreshDispatchCarriesHubspotURL drives dispatchPlatform's THIRD
+// hubspotURLFromResult call site (orchestrator.go:1792, at the end of a successful FRESH
+// dispatch — no existing row to reuse) in isolation from the two reuse sites above.
+// Deleting the `res.HubspotURL = hubspotURLFromResult(campaign.Result)` assignment there
+// would leave every reuse-path and read-path hubspotUrl test green while this test fails.
+func TestOrchestrator_FreshDispatchCarriesHubspotURL(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderHubSpot: freshHubspotCreateDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderHubSpot}, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobSucceeded {
+		t.Fatalf("status = %s, want succeeded", j.Status)
+	}
+	if !strings.Contains(string(j.Result), "https://app.hubspot.com/email/8112310/edit/999/settings") {
+		t.Errorf("result = %s, want it to carry the freshly-dispatched campaign's hubspot_url", j.Result)
+	}
+}
+
 // TestOrchestrator_ClaimErrorIsFailure verifies that a failure to claim the
 // dispatch slot is recorded as a platform failure and the dispatcher is never
 // called (so no create can duplicate).
@@ -3089,6 +3208,343 @@ func TestOrchestrator_ProbeConnection_UnwiredIsAServiceDefect(t *testing.T) {
 			}
 			if !errors.Is(err, domain.ErrConnectionProbeUnwired) {
 				t.Errorf("err = %v, want ErrConnectionProbeUnwired; ErrServiceDefect selects the status and the response carries no detail, so the reason token is all an operator reading the log gets", err)
+			}
+		})
+	}
+}
+
+// TestHubspotURLFromResult guards the read side of the hubspotUrl seam: internal/dispatch's
+// campaignFromHubSpot writes the cloned email's AppURL into the persisted Result blob under the
+// JSON key "hubspotUrl" (hubspot.Email.AppURL is tagged json:"-" and would not otherwise
+// serialize), and hubspotURLFromResult here reads that same key back out. The matching case
+// below marshals a struct shaped like dispatch's own — not a literal `{"hubspotUrl":"..."}`
+// string — so a rename of either side's JSON tag breaks this test rather than leaving it green.
+// TestHubspotURLFromResult guards only the READ side of the hubspotUrl seam: it pins
+// hubspotURLFromResult's own "hubspotUrl" tag by marshalling a test-local struct that carries
+// that same literal tag, so a rename of hubspotURLFromResult's tag alone breaks this test. It
+// does NOT catch a rename on the WRITE side — internal/dispatch's campaignFromHubSpot, which
+// writes the cloned email's AppURL into the persisted Result blob under this key (hubspot.Email.
+// AppURL is tagged json:"-" and would not otherwise serialize) — because dispatchShapedResult
+// below is this test's own struct, not dispatch's. That side is pinned separately by
+// TestHubSpot_ResultBlobCarriesTheClonedEmailAppURL in internal/dispatch/hubspot_test.go.
+func TestHubspotURLFromResult(t *testing.T) {
+	type dispatchShapedResult struct {
+		PortalID   string `json:"portalId"`
+		HubspotURL string `json:"hubspotUrl"`
+	}
+	matching, err := json.Marshal(dispatchShapedResult{PortalID: "8112310", HubspotURL: "https://app.hubspot.com/email/8112310/edit/999/settings"})
+	if err != nil {
+		t.Fatalf("marshal dispatch-shaped result: %v", err)
+	}
+
+	otherPlatform, err := json.Marshal(struct {
+		AdSetID string `json:"adSetId"`
+	}{AdSetID: "42"})
+	if err != nil {
+		t.Fatalf("marshal other-platform result: %v", err)
+	}
+
+	cases := map[string]struct {
+		result json.RawMessage
+		want   string
+	}{
+		"hubspot result carries the key":       {matching, "https://app.hubspot.com/email/8112310/edit/999/settings"},
+		"another platform's result has no key": {otherPlatform, ""},
+		"empty result":                         {json.RawMessage(``), ""},
+		"malformed json":                       {json.RawMessage(`{not json`), ""},
+		"absent result (nil)":                  {nil, ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := hubspotURLFromResult(tc.result); got != tc.want {
+				t.Errorf("hubspotURLFromResult(%s) = %q, want %q", tc.result, got, tc.want)
+			}
+		})
+	}
+}
+
+// preflightStub implements CreatePreflighter (and the bare PlatformDispatcher it composes with).
+//
+// Dispatch runs on the orchestrator's own goroutine, PreflightCreate on the caller's, so the
+// fields each side writes are guarded separately and a test reads them only after the side that
+// wrote them has finished.
+type preflightStub struct {
+	// err is what PreflightCreate returns.
+	err error
+
+	// Recorded by PreflightCreate (the caller's goroutine).
+	calls        int
+	gotProjectID string
+	gotPlatform  model.Provider
+	gotConfig    json.RawMessage
+	hadDeadline  bool
+	gotDeadline  time.Time
+
+	// Recorded by Dispatch (the orchestrator's goroutine).
+	mu               sync.Mutex
+	dispatches       int
+	dispatchedConfig json.RawMessage
+}
+
+func (s *preflightStub) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, config json.RawMessage) (*model.Campaign, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dispatches++
+	s.dispatchedConfig = append(json.RawMessage(nil), config...)
+	return nil, errors.New("stub dispatch: nothing to create")
+}
+
+func (s *preflightStub) PreflightCreate(ctx context.Context, projectID string, platform model.Provider, config json.RawMessage) error {
+	s.calls++
+	s.gotProjectID = projectID
+	s.gotPlatform = platform
+	s.gotConfig = append(json.RawMessage(nil), config...)
+	s.gotDeadline, s.hadDeadline = ctx.Deadline()
+	return s.err
+}
+
+func (s *preflightStub) dispatchCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dispatches
+}
+
+func (s *preflightStub) dispatchedWith() json.RawMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dispatchedConfig
+}
+
+// A refusal is the one error the pre-check lets through, and it must arrive intact -- the
+// sentinel is what the service maps to a 409, so losing it (or wrapping it into something
+// errors.Is cannot see) would turn the guard back into the silent single email it replaces.
+// The platform, project and config the dispatcher is handed are asserted too: the config is
+// the caller's raw JSON, unparsed, because only the dispatcher knows its own config key.
+func TestOrchestrator_PreflightCreate_RefusesWithTheSentinel(t *testing.T) {
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","abTestEnabled":true}}`)
+	stub := &preflightStub{err: fmt.Errorf("read the source email type for the A/B pre-check: %w", ErrABTestUnsupportedSendType)}
+	orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderHubSpot: stub,
+	})
+
+	err := orch.PreflightCreate(context.Background(), "proj-1", []model.Provider{model.ProviderHubSpot}, cfg)
+	if !errors.Is(err, ErrABTestUnsupportedSendType) {
+		t.Fatalf("PreflightCreate = %v, want a refusal that errors.Is ErrABTestUnsupportedSendType", err)
+	}
+	if stub.calls != 1 {
+		t.Errorf("pre-check calls = %d, want 1", stub.calls)
+	}
+	if stub.gotProjectID != "proj-1" || stub.gotPlatform != model.ProviderHubSpot {
+		t.Errorf("pre-check saw (%q, %q), want (\"proj-1\", %q)", stub.gotProjectID, stub.gotPlatform, model.ProviderHubSpot)
+	}
+	if string(stub.gotConfig) != string(cfg) {
+		t.Errorf("pre-check saw config %s, want the caller's JSON verbatim: %s", stub.gotConfig, cfg)
+	}
+}
+
+// FAIL-OPEN is enforced by the orchestrator, not trusted to each dispatcher: only the sentinel
+// refuses. Every other error -- including ones the brief service would map to a 404 or 409 if
+// they escaped -- must be swallowed, or a malfunction in an optimisation of an error message
+// becomes an availability dependency on every create.
+func TestOrchestrator_PreflightCreate_FailsOpenOnEveryOtherError(t *testing.T) {
+	cases := map[string]error{
+		"ordinary error":    errors.New("hubspot is unreachable"),
+		"deadline exceeded": context.DeadlineExceeded,
+		"canceled":          context.Canceled,
+		"not found":         domain.ErrNotFound,
+		"conflict":          domain.ErrConflict,
+		"service defect":    domain.ErrServiceDefect,
+		"wrapped not found": fmt.Errorf("resolve hubspot client for the A/B pre-check: %w", domain.ErrNotFound),
+		"wrapped conflict":  fmt.Errorf("read the source email type for the A/B pre-check: %w", domain.ErrConflict),
+	}
+	for name, perr := range cases {
+		t.Run(name, func(t *testing.T) {
+			stub := &preflightStub{err: perr}
+			orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+				model.ProviderHubSpot: stub,
+			})
+			if err := orch.PreflightCreate(context.Background(), "proj-1", []model.Provider{model.ProviderHubSpot}, nil); err != nil {
+				t.Fatalf("PreflightCreate = %v, want nil: %v is not a refusal and must not block the create", err, perr)
+			}
+			if stub.calls != 1 {
+				t.Errorf("pre-check calls = %d, want 1 (the error must come from a real call, not a skip)", stub.calls)
+			}
+		})
+	}
+}
+
+// The loop must keep going after an absorbed error and stop at the first refusal. Returning on
+// the first error would let a flaky first platform switch the check off for the rest; carrying
+// on past a refusal would run a second platform's lookup for a request that is already refused.
+func TestOrchestrator_PreflightCreate_ContinuesPastAnAbsorbedErrorAndStopsAtARefusal(t *testing.T) {
+	t.Run("an absorbed error does not skip the next platform", func(t *testing.T) {
+		flaky := &preflightStub{err: errors.New("hubspot is unreachable")}
+		refusing := &preflightStub{err: ErrABTestUnsupportedSendType}
+		orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+			model.ProviderHubSpot:   flaky,
+			model.ProviderGoogleAds: refusing,
+		})
+		err := orch.PreflightCreate(context.Background(), "proj-1",
+			[]model.Provider{model.ProviderHubSpot, model.ProviderGoogleAds}, nil)
+		if !errors.Is(err, ErrABTestUnsupportedSendType) {
+			t.Fatalf("PreflightCreate = %v, want the second platform's refusal", err)
+		}
+		if flaky.calls != 1 || refusing.calls != 1 {
+			t.Errorf("calls = (%d, %d), want (1, 1)", flaky.calls, refusing.calls)
+		}
+	})
+
+	t.Run("a refusal stops the walk", func(t *testing.T) {
+		refusing := &preflightStub{err: ErrABTestUnsupportedSendType}
+		later := &preflightStub{}
+		orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+			model.ProviderHubSpot:   refusing,
+			model.ProviderGoogleAds: later,
+		})
+		err := orch.PreflightCreate(context.Background(), "proj-1",
+			[]model.Provider{model.ProviderHubSpot, model.ProviderGoogleAds}, nil)
+		if !errors.Is(err, ErrABTestUnsupportedSendType) {
+			t.Fatalf("PreflightCreate = %v, want the refusal", err)
+		}
+		if later.calls != 0 {
+			t.Errorf("a platform after the refusal was checked %d times, want 0", later.calls)
+		}
+	})
+}
+
+// "No pre-check" is the normal case for every ad platform, and an unregistered platform is
+// Start's to report. Neither may block, error, or count as an upstream call: nothing was asked
+// of the platform, so recording one would put local no-ops on the upstream latency histogram.
+func TestOrchestrator_PreflightCreate_SkipsWhatItCannotCheck(t *testing.T) {
+	rec := &recordingMetrics{}
+	orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: plainDispatcher{},
+	})
+	orch.SetMetrics(rec)
+
+	err := orch.PreflightCreate(context.Background(), "proj-1",
+		[]model.Provider{model.ProviderGoogleAds, model.ProviderHubSpot}, nil)
+	if err != nil {
+		t.Fatalf("PreflightCreate = %v, want nil for a platform with no pre-check and one with no dispatcher", err)
+	}
+	if got := rec.upstreamCalls(); len(got) != 0 {
+		t.Errorf("a skipped platform recorded %d upstream calls, want 0: %+v", len(got), got)
+	}
+}
+
+// A dispatcher that looked at the request and had nothing to check made no platform call, so it
+// answers ErrPreflightNotApplicable and the orchestrator treats that like the skips above: no
+// error, and NO upstream call recorded. That is what HubSpot answers for every create that does
+// not ask for an A/B test, and recording it would add a near-zero "ok" sample to the upstream
+// latency histogram for each one, burying the quantiles and error rate of the lookups that happen.
+func TestOrchestrator_PreflightCreate_NotApplicableIsSkippedNotRecorded(t *testing.T) {
+	cases := map[string]error{
+		"bare":    ErrPreflightNotApplicable,
+		"wrapped": fmt.Errorf("hubspot: %w", ErrPreflightNotApplicable),
+	}
+	for name, perr := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := &recordingMetrics{}
+			stub := &preflightStub{err: perr}
+			orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+				model.ProviderHubSpot: stub,
+			})
+			orch.SetMetrics(rec)
+
+			if err := orch.PreflightCreate(context.Background(), "proj-1", []model.Provider{model.ProviderHubSpot}, nil); err != nil {
+				t.Fatalf("PreflightCreate = %v, want nil: nothing to check is not a refusal or a failure", err)
+			}
+			if stub.calls != 1 {
+				t.Errorf("the dispatcher was asked %d times, want 1: only the RECORDING is skipped", stub.calls)
+			}
+			if got := rec.upstreamCalls(); len(got) != 0 {
+				t.Errorf("a not-applicable pre-check recorded %d upstream calls, want 0: %+v", len(got), got)
+			}
+		})
+	}
+
+	// The skip must not end the walk: a later platform that does have something to refuse still does.
+	t.Run("does not mask a later platform's refusal", func(t *testing.T) {
+		rec := &recordingMetrics{}
+		skipped := &preflightStub{err: ErrPreflightNotApplicable}
+		refusing := &preflightStub{err: ErrABTestUnsupportedSendType}
+		orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+			model.ProviderHubSpot:   skipped,
+			model.ProviderGoogleAds: refusing,
+		})
+		orch.SetMetrics(rec)
+
+		err := orch.PreflightCreate(context.Background(), "proj-1",
+			[]model.Provider{model.ProviderHubSpot, model.ProviderGoogleAds}, nil)
+		if !errors.Is(err, ErrABTestUnsupportedSendType) {
+			t.Fatalf("PreflightCreate = %v, want the second platform's refusal", err)
+		}
+		got := rec.upstreamCalls()
+		if len(got) != 1 || got[0].platform != model.ProviderGoogleAds {
+			t.Errorf("recorded %+v, want exactly the refusing platform's call", got)
+		}
+	})
+}
+
+// The pre-check runs on the HTTP request goroutine before the 202, against an external API.
+// Left unbounded, a portal that stops answering would hold every create open instead of merely
+// losing the pre-check, so the ceiling must come from the orchestrator rather than the caller.
+func TestOrchestrator_PreflightCreate_BoundsThePlatformCall(t *testing.T) {
+	stub := &preflightStub{}
+	orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderHubSpot: stub,
+	})
+
+	// The caller's context deliberately carries NO deadline, so the bound cannot be inherited.
+	beforeCall := time.Now()
+	err := orch.PreflightCreate(context.Background(), "proj-1", []model.Provider{model.ProviderHubSpot}, nil)
+	afterCall := time.Now()
+	if err != nil {
+		t.Fatalf("PreflightCreate: %v", err)
+	}
+	if !stub.hadDeadline {
+		t.Fatal("the pre-check received a context with NO deadline; a hung portal would hold the create request open")
+	}
+	expectedMin := beforeCall.Add(preflightCallTimeout)
+	expectedMax := afterCall.Add(preflightCallTimeout)
+	if stub.gotDeadline.Before(expectedMin) || stub.gotDeadline.After(expectedMax) {
+		t.Errorf("deadline %v not within [%v, %v] (call bracket + preflightCallTimeout=%v)",
+			stub.gotDeadline, expectedMin, expectedMax, preflightCallTimeout)
+	}
+}
+
+// A refusal is HubSpot answering a question, not HubSpot failing, so it is recorded as a
+// successful upstream read. Counting it as an error would put a caller picking an unsupported
+// template on the same upstream-failure rate that alerts on the platform being down; an
+// ordinary failure must still record as one.
+func TestOrchestrator_PreflightCreate_RecordsARefusalAsASuccessfulRead(t *testing.T) {
+	cases := []struct {
+		name        string
+		err         error
+		wantOutcome string
+	}{
+		{"refusal", ErrABTestUnsupportedSendType, callOutcomeOK},
+		{"wrapped refusal", fmt.Errorf("pre-check: %w", ErrABTestUnsupportedSendType), callOutcomeOK},
+		{"ordinary failure", errors.New("hubspot is unreachable"), callOutcomeError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingMetrics{}
+			orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+				model.ProviderHubSpot: &preflightStub{err: tc.err},
+			})
+			orch.SetMetrics(rec)
+
+			_ = orch.PreflightCreate(context.Background(), "proj-1", []model.Provider{model.ProviderHubSpot}, nil)
+
+			got := rec.upstreamCalls()
+			if len(got) != 1 {
+				t.Fatalf("recorded %d upstream calls, want exactly 1: %+v", len(got), got)
+			}
+			if got[0].operation != opPreflightCreate || got[0].outcome != tc.wantOutcome || got[0].platform != model.ProviderHubSpot {
+				t.Errorf("recorded (%s, %s, %s), want (%s, %s, %s)",
+					got[0].platform, got[0].operation, got[0].outcome,
+					model.ProviderHubSpot, opPreflightCreate, tc.wantOutcome)
 			}
 		})
 	}

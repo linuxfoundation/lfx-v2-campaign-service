@@ -25,6 +25,7 @@ type Endpoints struct {
 	GetExistingAudienceMasterLists goa.Endpoint
 	PreviewAudienceCount           goa.Endpoint
 	ComposeAudienceMaster          goa.Endpoint
+	AttachExistingAudience         goa.Endpoint
 	RunAudienceQa                  goa.Endpoint
 }
 
@@ -42,6 +43,7 @@ func NewEndpoints(s Service) *Endpoints {
 		GetExistingAudienceMasterLists: NewGetExistingAudienceMasterListsEndpoint(s, a.JWTAuth),
 		PreviewAudienceCount:           NewPreviewAudienceCountEndpoint(s, a.JWTAuth),
 		ComposeAudienceMaster:          NewComposeAudienceMasterEndpoint(s, a.JWTAuth),
+		AttachExistingAudience:         NewAttachExistingAudienceEndpoint(s, a.JWTAuth),
 		RunAudienceQa:                  NewRunAudienceQaEndpoint(s, a.JWTAuth),
 	}
 }
@@ -57,6 +59,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.GetExistingAudienceMasterLists = m(e.GetExistingAudienceMasterLists)
 	e.PreviewAudienceCount = m(e.PreviewAudienceCount)
 	e.ComposeAudienceMaster = m(e.ComposeAudienceMaster)
+	e.AttachExistingAudience = m(e.AttachExistingAudience)
 	e.RunAudienceQa = m(e.RunAudienceQa)
 }
 
@@ -249,6 +252,30 @@ func NewComposeAudienceMasterEndpoint(s Service, authJWTFn security.AuthJWTFunc)
 			return nil, err
 		}
 		return s.ComposeAudienceMaster(ctx, p)
+	}
+}
+
+// NewAttachExistingAudienceEndpoint returns an endpoint function that calls
+// the method "attach-existing-audience" of service
+// "lfx-v2-campaign-service-audience-builder".
+func NewAttachExistingAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*AttachExistingAudiencePayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.AttachExistingAudience(ctx, p)
 	}
 }
 

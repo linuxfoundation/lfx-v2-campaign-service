@@ -426,16 +426,25 @@ func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
 	// separate it from a sibling. Requiring both is the only pair that leaves all three
 	// correct cases passing.
 	terms := NewLastSentTerms(eventName, "")
+	// `isOtherEdition` is what separates a sibling region, not the token count.
+	//
+	// The token rule this replaced was a SUBSET test: a sibling's list is a strict token
+	// superset, so whenever the event name omitted a region -- the common portfolio shape --
+	// the sibling was flagged. Measured: event "KubeCon 2026" FAILed
+	// "26Q1 KubeCon Europe 2026 Event Registration", and "PyTorch Conference 2026" FAILed the
+	// Japan edition. Four successive token rules each produced a false positive on a list an
+	// operator legitimately chose, because the question is about REGIONS and tokens cannot ask
+	// it: `editionRegions` carries the alias table and the latin/south disambiguation.
+	eventRegions := editionRegions(eventName)
 	// An event name made ENTIRELY of portfolio-common words has an EMPTY distinctive tier, and
-	// then no token rule can separate this edition from a sibling region. Measured on
+	// with no region named either there is nothing left to judge on. Measured on
 	// "Open Source Summit 2026": the edition's own list and "Open Source Summit Japan 2026"
-	// BOTH score overlap=3 against the same 3 generic tokens, because the event name carries
-	// no region of its own to be missing from the sibling.
+	// BOTH score overlap=3 against the same 3 generic tokens.
 	//
 	// Reported as NEEDS VERIFY rather than guessed in either direction. Flagging would hit a
 	// sibling's list, which is correct to include; passing would miss this edition's own, which
 	// is the defect the check exists for. Neither is defensible, so the operator is asked.
-	if len(terms.Event) == 0 {
+	if len(terms.Event) == 0 && len(eventRegions) == 0 {
 		return Check{
 			Verdict: VerdictNeedsVerify,
 			Findings: []Finding{{
@@ -459,6 +468,10 @@ func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
 		}
 	}
 	findings := make([]Finding, 0, 1)
+	// Set when a registration list could not be judged because the event names no region and
+	// the list does. Reported only if nothing else FAILED -- a real hit is the more useful
+	// answer, and NEEDS VERIFY alongside a CRITICAL would read as the lesser finding.
+	undecidable := false
 	for _, name := range includedNames {
 		if !containsAny(name, registrationHints) {
 			continue
@@ -466,13 +479,28 @@ func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
 		if !namesTheEdition(name, year) {
 			continue
 		}
-		// EVERY token, not merely a match. `MatchLastSent` admits on the distinctive tier
-		// alone, which a sibling region shares: measured on "AGNTCon + MCPCon North America
-		// 2026", the NA registration list scores overlap=4 (agntcon, mcpcon, north, america)
-		// while "AGNTCon + MCPCon Japan 2026" scores 2 -- it carries the event tokens and the
-		// year but not the region. The GENERIC tier is what names the edition, so requiring
-		// the full set is what separates this edition from its siblings.
-		if MatchLastSent(name, "", terms).Overlap < len(terms.Event)+len(terms.Generic) {
+		// A DIFFERENT region is a different event, however many tokens it shares.
+		if isOtherEdition(name, eventRegions) {
+			continue
+		}
+		// And the reverse, which `isOtherEdition` cannot answer: the LIST names a region while
+		// the EVENT names none. "KubeCon 2026" against "26Q1 KubeCon Europe 2026 Event
+		// Registration" -- the list may be this event's regional edition or a sibling's, and
+		// the event name carries nothing to decide it. `isOtherEdition` returns false here by
+		// design (it has no event region to compare), which reads as "same edition" and is how
+		// four successive token rules each produced a false positive on a list an operator
+		// legitimately chose.
+		//
+		// Skipped rather than flagged: a sibling's registration list is correct to include, so
+		// flagging it is the error that gets the check switched off. The caller is told below
+		// that the audit was incomplete.
+		if len(eventRegions) == 0 && len(editionRegions(name)) > 0 {
+			undecidable = true
+			continue
+		}
+		// And it must still match the event itself. `MatchLastSent` admits on the distinctive
+		// tier, which is the right bar once the region question is settled separately.
+		if !MatchLastSent(name, "", terms).Matched {
 			continue
 		}
 		findings = append(findings, Finding{
@@ -483,6 +511,16 @@ func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
 		break
 	}
 
+	if len(findings) == 0 && undecidable {
+		return Check{
+			Verdict: VerdictNeedsVerify,
+			Findings: []Finding{{
+				Severity: SeverityMedium,
+				Message:  fmt.Sprintf("Could not check every included registration list: %q names no region, so a list naming one cannot be told from a sibling edition's.", eventName),
+				Fix:      "Confirm by hand that any regional registration list among the inclusions belongs to an EARLIER edition, and that this edition's own registrants are excluded.",
+			}},
+		}
+	}
 	return Check{Verdict: VerdictFromFindings(findings), Findings: findings}
 }
 

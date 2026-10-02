@@ -60,6 +60,15 @@ var (
 // carries the specifics an operator needs to reconcile before trying again.
 var ErrComposePartial = errors.New("audience compose: left platform state that must be reconciled before retrying")
 
+// ErrComposePortalUnconfirmed reports that a compose asked to RECORD its result could not
+// establish which portal it would be composing into.
+//
+// Distinct from ErrComposePartial because it is the opposite situation: nothing was created,
+// so a plain retry is not only safe but correct. It exists at all because recording without
+// provable provenance is refused — a `built` audience with an empty portal is one the dispatch
+// guard rejects permanently, and no retry can repair a stored empty value.
+var ErrComposePortalUnconfirmed = errors.New("audience compose: could not confirm which HubSpot portal the lists would be created in")
+
 // ComposePartialError carries the orphaned suppression list alongside the cause.
 //
 // MasterName is set only when the MASTER create itself is unconfirmed (HubSpot may
@@ -74,10 +83,17 @@ var ErrComposePartial = errors.New("audience compose: left platform state that m
 // confirmed one). Without this marker, an unconfirmed suppression create is
 // indistinguishable from a confirmed one that merely lacks a size -- both would
 // otherwise present Suppression.Name set and ListID empty as "created".
+// Master is set only on the RECORD-failed shape: both lists were confirmed created, and
+// the attempt to record them as the brief's audience failed. It is the one partial shape
+// where the master exists and is usable — the operator can attach it by hand — so it
+// carries the whole list rather than just a reconcile name. Every other shape leaves it
+// zero-valued, because on those the master either definitely does not exist or is
+// unconfirmed and has only MasterName to offer.
 type ComposePartialError struct {
 	Suppression            ComposedList
 	SuppressionUnconfirmed bool
 	MasterName             string
+	Master                 *ComposedList
 	Err                    error
 }
 
