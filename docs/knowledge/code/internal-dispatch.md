@@ -549,8 +549,9 @@ moving a field between compared and upstream-only is a CONTRACT change: the desc
 copied verbatim into the generated clients and into both OpenAPI copies, and a stale one
 keeps telling every consumer the field can only ever read `unknown`. Re-run `make apigen` and
 commit `gen/` plus `cmd/campaign-service/kodata/gen/http/openapi*` with the design edit.
-The count of permanently-unknown fields is a RANGE, not a constant — six on a row whose
-snapshot records a channel, seven on a legacy row without one — precisely because this field's
+The count of permanently-unknown fields is a RANGE, not a constant — four on a row whose
+snapshot records a channel, five on a legacy row without one (it was six/seven before the
+flight dates gained a recorded side and stopped being permanently unknown) — precisely because this field's
 recorded side depends on the snapshot; any prose stating one number is wrong for the other row. Flight dates
 are normalised to the row's `YYYY-MM-DD` before comparison (`googleAdsDateOnly`): Google
 returns `yyyy-MM-dd HH:mm:ss` in the ad account's timezone, so comparing the raw strings

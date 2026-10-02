@@ -361,7 +361,9 @@ func toGoogleDateTime(date, clock string) (*string, error) {
 		return nil, nil
 	}
 	if _, err := time.Parse(googleCampaignDateLayout, date); err != nil {
-		return nil, fmt.Errorf("date %q is not %s", date, googleCampaignDateLayout)
+		// YYYY-MM-DD, not googleCampaignDateLayout: the constant is Go's reference layout
+		// ("2006-01-02"), which reads to an operator as a required literal year.
+		return nil, fmt.Errorf("date %q is not YYYY-MM-DD", date)
 	}
 	out := date + " " + clock
 	return &out, nil

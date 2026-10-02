@@ -4,7 +4,9 @@
 meta/reddit/linkedin/twitter already use), the create payload carries them, and
 `applyCampaignConfig` persists them.
 
-Google was the ONLY platform calling `applyCampaignConfig` with `"", ""`:
+Google was the only one of the FIVE date-capable platforms calling `applyCampaignConfig`
+with `"", ""` (Microsoft also passes empty dates, but exposes no flight window in its config
+at all, so it is a different gap):
 
 | platform | passes |
 |---|---|

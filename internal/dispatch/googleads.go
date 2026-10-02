@@ -1928,9 +1928,13 @@ func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string
 	// now carries StartDate/EndDate and applyCampaignConfig persists them, so a recorded
 	// side exists and a real divergence is now reportable.
 	//
-	// A nil recorded side remains ordinary rather than a defect: the window is optional,
-	// campaigns created before it existed have NULL columns, and an adopted campaign was
-	// never created from one of our configs at all. Both sides are formatted to the row's
+	// A nil recorded side remains ordinary rather than a defect: the window is optional, and
+	// campaigns created before it existed have NULL columns. Adoption is NOT automatically
+	// in that set -- it persists whatever window the adopting request supplied, and the
+	// campaign it binds may well be one a prior partial attempt of ours created. What is
+	// true of adoption is narrower: the recorded side reflects the ADOPTING request, not
+	// whatever created the campaign upstream, so the two can disagree for a reason the
+	// comparison is right to surface. Both sides are formatted to the row's
 	// YYYY-MM-DD, never compared as raw strings: Google returns 'yyyy-MM-dd HH:mm:ss' in
 	// the ad account's timezone, so a raw comparison would report a divergence for every
 	// campaign that agrees.
