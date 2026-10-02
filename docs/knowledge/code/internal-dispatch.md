@@ -687,6 +687,20 @@ the zero value, so a decode error alone does not catch an explicit null — it n
 check before the decode. That gap survived the first version of this fix and was caught only
 because the test table enumerated `null` separately from the wrong-typed values.
 
+**Adding a field to `googleAdsConfig` means adding it WITHOUT `omitempty`.** The
+recognisability rule above rests on "a snapshot this adapter wrote always contains every key",
+and one `omitempty` tag anywhere in the struct silently retires that guarantee for rows written
+after it lands. The serving-readiness fields (`negativeKeywords`, `cpcBid`, `startDate`,
+`endDate` — see
+[internal/platform/googleads](internal-platform-googleads.md) § Search serving readiness)
+follow it, and `startDate`/`endDate` are spelled exactly as the meta and reddit configs spell
+them so a caller does not learn a third vocabulary for the same idea. All four are passed
+straight through to `googleads.CampaignInput`, which owns their validation; the adapter adds no
+interpretation of its own. `startDate`/`endDate` also reach `applyCampaignConfig` on BOTH the
+create and the adoption path, so the recorded flight-window side is populated whenever the
+caller supplied a date and is nil only for rows predating the fields and callers that omit
+them.
+
 **`status` is reported but deliberately NOT compared.** The row's `Status` is this service's
 lifecycle vocabulary and Google's is `ENABLED`/`PAUSED`/`REMOVED` — different axes (see
 `model.PlatformCampaignRef`). Comparing them would report a permanent, meaningless

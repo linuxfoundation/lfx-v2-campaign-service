@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067); and Search serving readiness — an optional manual CPC bid on the ad group (0 means unset, no default invented), an optional campaign flight window rendered into the v23 startDateTime/endDateTime request fields on both channels, and optional campaign-level negative keywords batched into one atomic campaignCriteria:mutate with negative:true, all three validated before the first paid mutate and each a no-op when absent."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -924,6 +924,86 @@ Failures follow the same contract as every other post-campaign step: the criteri
 call happens AFTER the campaign exists, so an error is returned ALONGSIDE the
 non-nil result, never as `(nil, err)` that would discard the claim on a campaign
 that spends.
+
+## Search serving readiness: CPC bid, flight window, negative keywords
+
+Three independent gaps that each kept a created campaign from being something a
+human could simply un-pause. All three are OPTIONAL and all three are no-ops
+when absent, because every caller that predates them omits them and failing
+those creates would break dispatches that work today.
+
+**CPC bid (`adgroup_ad.go`).** `CampaignInput.CPCBid` is a manual CPC bid in
+whole units of the ad ACCOUNT's currency — the same denomination as `Budget`,
+with no FX conversion — converted to `adGroup.cpcBidMicros` by
+`validateCPCBid`. `0` means UNSET and omits the field entirely rather than
+inventing a default: an explicit `"cpcBidMicros": 0` is a different request (a
+zero bid), not an absent one. The accepted window is `0.01`..`1000.0`, the same
+window `internal/platform/microsoft/targeting.go` uses, and NaN/Inf are
+rejected explicitly because they pass every ordered comparison. The window is
+not a Google platform limit — Google documents no account-currency minimum to
+fall back to, so unlike the Microsoft client there is no second clause that
+substitutes one. It is deliberately loose: it exists to catch the
+micros-vs-units mistake (a caller passing `2_500_000` meaning 2.50), and
+over-refusal — refusing a bid Google would have accepted — is the worse
+failure. The ad-group step string says what was set or that nothing was, and
+does NOT claim a serving consequence; whether a bid is what makes a given ad
+group eligible has not been verified live.
+
+**Flight window (`campaign.go`, `demandgen.go`).** `StartDate`/`EndDate` are
+`YYYY-MM-DD` — spelled as the meta and reddit configs spell them —
+and `validateFlightWindow` renders them into the **v23** `startDateTime` /
+`endDateTime` request fields as `"<date> 00:00:00"` and `"<date> 23:59:59"`.
+Those are the same v23 names the settings readback documents above: the pre-v23
+`startDate`/`endDate` spellings are rejected as unrecognized, so the request
+side had to be written against the new names from the start. The flight window
+is a property of the campaign, not of the channel, so BOTH the Search and the
+Demand Gen create carry it. Each date is independently optional: an absent
+start leaves Google's default (the campaign starts when enabled), an absent end
+leaves it running until someone stops it — there is no `2037-12-30` sentinel
+to write any more.
+
+Validation is a format regex THEN `time.Parse`, not `time.Parse` alone:
+`time.Parse("2006-01-02", …)` accepts single-digit months and days, so
+`2026-1-5` would otherwise pass and reach Google in a shape it rejects (the
+meta client pairs them for the same reason). The only cross-check is
+`end.After(start)` when both are present. There is deliberately **no
+past-start-date check**, diverging from the meta client: Google interprets
+these in the ad account's timezone, which this client does not know, so a UTC
+"today" would refuse creates Google accepts — over-refusal again being the
+worse failure.
+
+**Negative keywords (`targeting.go`).** `NegativeKeywords` become CAMPAIGN-level
+`campaignCriteria` with `negative: true`, batched into ONE atomic mutate by
+`createCampaignNegativeKeywords`. Campaign level is a choice, not a constraint:
+an exclusion attached there keeps applying to any ad group added later, which an
+ad-group criterion would not. It is also deliberately NOT folded into the
+existing geo `campaignCriteria:mutate` — a shared mutate would make either
+list's failure discard the other, and geo's failure sentence ("it has NO
+location criteria and would serve worldwide if enabled") would be false for a
+dropped negative.
+
+`negative` carries **no** `omitempty`. The field's whole purpose is to be
+`true`, and a serialisation that dropped it on a `false` would create a
+POSITIVE keyword — i.e. buy the traffic the caller asked to exclude. A test
+pins both values on the wire.
+
+Validation shares `validateKeywordList(noun, keywords, max)` with the positive
+path, which is what keeps the positive path's four error strings
+byte-identical while every negative-path message says "negative keyword". The
+cap is `maxNegativeKeywords = 60`, matched to the positive cap rather than set
+tighter: the 2026-08-13 incident where a 20-keyword cap blocked every default
+create is the reason a cap here is sized for real inputs, not for tidiness.
+Dedupe is **per list** — a term may legitimately be both a positive and a
+negative keyword, so a cross-list collision is not refused.
+
+All three are validated inside `preflightCampaignKind`, BEFORE the first budget
+`:mutate`, so a bad local input can never orphan a paid resource; the same
+validation runs in `ValidateCampaignInput`, so the adoption path cannot accept
+an input the create path would refuse. The negatives mutate itself runs after
+the campaign exists and so follows the usual partial-result contract: an error
+comes back ALONGSIDE the non-nil `*CampaignResult`, never as `(nil, err)`.
+`CampaignResult.NegativeKeywordCriteriaIDs` records the criterion ids created,
+with the same three-way presence convention `GeoCriterionIDs` documents.
 
 ## Scope
 

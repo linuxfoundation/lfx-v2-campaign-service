@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"unicode/utf8"
@@ -42,6 +43,22 @@ const (
 	// already exist, orphaning that paid hierarchy for what is purely a local length failure.
 	maxFinalURLBytes = 2084
 
+	// minCPCBid/maxCPCBid bound a caller-supplied ad-group CPC bid, expressed in the
+	// ad ACCOUNT's currency (not USD — the account's currency is whatever it was
+	// opened with, and this client never converts). The range is the same sanity
+	// window the Microsoft adapter uses for the same field (microsoft/targeting.go):
+	// a floor low enough that no real bid is refused, and a ceiling that catches the
+	// units mistake this field invites — a caller passing micros (2_500_000) instead
+	// of currency units (2.50) would otherwise set a bid five orders of magnitude
+	// over the intent, against a real budget.
+	//
+	// Neither bound is a Google platform limit. Google's own ceiling is far higher
+	// and its floor is currency-dependent, so this is a broker-side guard, and a
+	// deliberately loose one: refusing a bid Google would have accepted is the worse
+	// failure of the two.
+	minCPCBid = 0.01
+	maxCPCBid = 1_000.0
+
 	// errCodeDuplicateAdGroupName is Google's AdGroupError code when an ad group
 	// name already exists within the campaign — the ad-group analogue of
 	// errCodeDuplicateBudgetName/errCodeDuplicateCampaignName. A retry with the
@@ -53,12 +70,62 @@ const (
 // set only when GA-4 attaches audience segments (see createAdGroupAndAd) — see
 // targetingSetting's doc comment in campaign.go for why this lives at the ad
 // group level rather than the campaign level.
+//
+// CpcBidMicros is omitempty on purpose, and the zero value genuinely means
+// "unset" rather than "bid nothing": a manual-CPC ad group created without it
+// inherits whatever Google derives for the campaign, which is the behaviour
+// every campaign this client created before the field existed had. Emitting an
+// explicit 0 instead would be a different request — a zero bid — so the field
+// must disappear entirely when the caller supplies no bid.
 type adGroupCreate struct {
 	Name             string            `json:"name"`
 	Campaign         string            `json:"campaign"`
 	Status           string            `json:"status"`
 	Type             string            `json:"type"`
+	CpcBidMicros     int64             `json:"cpcBidMicros,omitempty"`
 	TargetingSetting *targetingSetting `json:"targetingSetting,omitempty"`
+}
+
+// validateCPCBid validates a caller-supplied ad-group CPC bid and converts it to
+// Google's micros.
+//
+// 0 means UNSET and is returned as (0, false, nil) — no default is invented. This
+// is the same contract the Microsoft adapter's validateCpcBid carries, and it
+// matters more here than it looks: the alternative, picking some house default
+// when the caller says nothing, would silently change the bid on every campaign
+// created before this field existed.
+//
+// NaN/Inf are rejected before any range comparison, because every comparison
+// against NaN is false — a NaN bid would slip past both bounds and then round to
+// a garbage int64.
+//
+// Deliberately NOT built on ValidateBudgetMicros, despite the shared shape (finite
+// check, bound, math.Round to micros). That helper's contract is incompatible in the
+// one place that matters: it rejects anything rounding to <= 0 micros, so it turns a
+// 0 — this function's "caller supplied no bid" — into an error. Routing through it
+// would make every create that omits cpcBid fail, which is every caller predating
+// this field. The bounds differ too (0.01..1000 in the account currency, versus a
+// budget's 1e9 ceiling with no floor), and so does the arity: the `set` return is
+// what lets the caller omit cpcBidMicros rather than send a zero bid. Only
+// microsPerUnit and the round-don't-truncate rule are genuinely shared, and both are
+// already single definitions.
+func validateCPCBid(bid float64) (micros int64, set bool, err error) {
+	if bid == 0 {
+		return 0, false, nil
+	}
+	if math.IsNaN(bid) || math.IsInf(bid, 0) {
+		return 0, false, fmt.Errorf("google-ads: cpc bid must be a finite number, got %v", bid)
+	}
+	if bid < minCPCBid {
+		return 0, false, fmt.Errorf("google-ads: cpc bid must be at least %.2f in the account currency, got %.4f", minCPCBid, bid)
+	}
+	if bid > maxCPCBid {
+		return 0, false, fmt.Errorf("google-ads: cpc bid %.2f exceeds the maximum %.0f in the account currency", bid, maxCPCBid)
+	}
+	// math.Round, not truncation, for the same reason the budget conversion rounds:
+	// a bid of 0.07 is 0.07000000000000001 in float64, and truncating micros would
+	// bill a cent less than the caller asked for on every such value.
+	return int64(math.Round(bid * microsPerUnit)), true, nil
 }
 
 // adGroupStatusUpdate is the update payload for adGroups:mutate (status-only toggle,
@@ -258,16 +325,17 @@ func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, headlines, de
 // res is mutated in place (AdGroupName/AdGroupID/AdID/Steps) so the caller's
 // existing partial-result plumbing (campaignNamePartial-derived) carries
 // whatever was created even when this returns an error.
-func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campaignID, finalURL string, headlines, descriptions []string, adGroupName string, keywords []Keyword, audienceSegments []string, res *CampaignResult) error {
+func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campaignID, finalURL string, headlines, descriptions []string, adGroupName string, cpcBidMicros int64, keywords []Keyword, audienceSegments []string, res *CampaignResult) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return fmt.Errorf("google-ads ad group creation aborted before any request (context already done): %w", ctxErr)
 	}
 
 	adGroupCreateVal := adGroupCreate{
-		Name:     adGroupName,
-		Campaign: campaignResource,
-		Status:   StatusPaused,
-		Type:     adGroupTypeSearchStandard,
+		Name:         adGroupName,
+		Campaign:     campaignResource,
+		Status:       StatusPaused,
+		Type:         adGroupTypeSearchStandard,
+		CpcBidMicros: cpcBidMicros,
 	}
 	// See targetingSetting's doc comment (campaign.go): GA-4's audience criteria
 	// are AdGroupCriterions, so the observation-only setting must be declared
@@ -304,7 +372,18 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 		return fmt.Errorf("google-ads ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", adGroupName, verr)
 	}
 	res.AdGroupID = adGroupID
-	res.Steps = append(res.Steps, fmt.Sprintf("Ad group created: %s (PAUSED, %s)", adGroupID, adGroupTypeSearchStandard))
+	// Two variants rather than one with a formatted zero: the step log is read by
+	// operators reconciling a campaign against the account, and "CpcBidMicros 0" would
+	// read as a zero bid that was set rather than a field that was never sent. Neither
+	// variant claims what the presence or absence of a bid does to serving — that is
+	// Google's behaviour to state, not this client's, and it has not been verified
+	// against a live account from here.
+	if cpcBidMicros > 0 {
+		res.Steps = append(res.Steps, fmt.Sprintf("Ad group created: %s (PAUSED, %s, CPC bid %.2f in the account currency)",
+			adGroupID, adGroupTypeSearchStandard, float64(cpcBidMicros)/microsPerUnit))
+	} else {
+		res.Steps = append(res.Steps, fmt.Sprintf("Ad group created: %s (PAUSED, %s, no CPC bid set)", adGroupID, adGroupTypeSearchStandard))
+	}
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return fmt.Errorf("google-ads ad creation aborted after ad group %s created (context done before ad create; the ad group has no ad yet): %w", adGroupID, ctxErr)

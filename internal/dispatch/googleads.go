@@ -106,6 +106,32 @@ type googleAdsConfig struct {
 	// not created by this dispatcher. See googleads.validateAudienceSegments for the
 	// accepted shapes.
 	AudienceSegments []string `json:"audienceSegments"`
+	// NegativeKeywords are optional CAMPAIGN-level keyword exclusions — queries the
+	// campaign must never pay for, however broadly Keywords match. Search only, like
+	// Keywords: Demand Gen has no keyword criteria at all, and this field is ignored
+	// rather than refused on that path.
+	//
+	// Left empty, no exclusions are created, which is the behaviour of every caller
+	// that predates this field.
+	NegativeKeywords []googleAdsKeywordConfig `json:"negativeKeywords"`
+	// CPCBid is an optional manual CPC bid for the ad group, in whole units of the ad
+	// ACCOUNT's currency (no FX conversion, same as Budget). Search only — Demand Gen
+	// bids with targetSpend and rejects manualCpc outright.
+	//
+	// 0 or absent means no bid is sent and Google's own derivation stands, which is
+	// what every campaign created before this field existed did. See
+	// googleads.validateCPCBid for the accepted range.
+	CPCBid float64 `json:"cpcBid"`
+	// StartDate/EndDate are the campaign's flight window as YYYY-MM-DD, spelled exactly
+	// as the meta and reddit configs spell them. Each is independently optional: an
+	// absent StartDate leaves Google's default (the campaign starts when enabled) and an
+	// absent EndDate leaves it running until someone stops it.
+	//
+	// Google interprets both in the ad ACCOUNT's timezone, not UTC — which is also why
+	// a past start date is not refused here; see googleads.validateFlightWindow. These
+	// apply to BOTH channels.
+	StartDate string `json:"startDate"` // YYYY-MM-DD
+	EndDate   string `json:"endDate"`   // YYYY-MM-DD
 	// GeoTargets are ISO 3166-1 alpha-2 country codes the campaign should serve in
 	// (LFXV2-3283), spelled exactly as the meta and reddit configs spell them so a
 	// caller does not have to learn a third vocabulary for the same idea. The client
@@ -218,8 +244,12 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		Headlines:        cfg.Headlines,
 		Descriptions:     cfg.Descriptions,
 		Keywords:         googleAdsKeywords(cfg.Keywords),
+		NegativeKeywords: googleAdsKeywords(cfg.NegativeKeywords),
 		AudienceSegments: cfg.AudienceSegments,
 		GeoTargets:       cfg.GeoTargets,
+		CPCBid:           cfg.CPCBid,
+		StartDate:        cfg.StartDate,
+		EndDate:          cfg.EndDate,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
 		// with the same suffix is rejected by whichever family it reaches first —
@@ -400,7 +430,7 @@ func campaignFromGoogleAds(ctx context.Context, r *googleads.CampaignResult, cfg
 	// (a NULL budget/type/config_snapshot row otherwise loses the campaign's configuration).
 	// GA's shell uses a DAILY budget (no lifetime flag) and sets no flight dates here — those
 	// land with GA-3+; ConfigSnapshot captures the validated config regardless.
-	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", cfg)
+	applyCampaignConfig(ctx, c, cfg.Budget, false, cfg.StartDate, cfg.EndDate, cfg)
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT
 		// swallow it: Result is the sole carrier of the reconcile-by-name payload (the
@@ -463,7 +493,7 @@ func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName
 	// written over them would destroy the only record of the request. Divergence is
 	// surfaced for an operator to act on, on demand; nothing polls, and no status is
 	// stored.
-	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", cfg)
+	applyCampaignConfig(ctx, c, cfg.Budget, false, cfg.StartDate, cfg.EndDate, cfg)
 	// The blob must carry CustomerID: googleAdsCreationCustomerID reads it as this row's
 	// provenance, and what an ABSENT one costs is per-operation, not one rule (see that
 	// helper's comment). Comparison-only callers — the account-mismatch check on read and
@@ -1895,12 +1925,13 @@ func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string
 		recordedName = strPtr(campaign.CampaignName)
 	}
 
-	// Flight dates. The RECORDED side is always nil for Google Ads today —
-	// googleAdsConfig carries no start/end date, so applyCampaignConfig is called with
-	// empty strings and the columns stay NULL — which makes these `unknown` rather than a
-	// divergence. They are compared rather than reported upstream-only because the columns
-	// EXIST and a future config that populates them must start diverging without anyone
-	// having to remember to wire the comparison. Both sides are formatted to the row's
+	// Flight dates. The RECORDED side is now populated whenever the caller supplied one:
+	// googleAdsConfig carries startDate/endDate and applyCampaignConfig writes them to the
+	// columns on both the create and the adoption path. It is still nil for the two cases
+	// that leave the columns NULL — a campaign created before those config fields existed,
+	// and a caller that omits them — and those report `unknown` rather than a divergence,
+	// which is correct: no date was ever requested, so there is nothing for upstream to
+	// diverge FROM. Both sides are formatted to the row's
 	// YYYY-MM-DD, never compared as raw strings: Google returns 'yyyy-MM-dd HH:mm:ss' in
 	// the ad account's timezone, so a raw comparison would report a divergence for every
 	// campaign that agrees.

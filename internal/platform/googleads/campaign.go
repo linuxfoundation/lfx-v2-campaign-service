@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -114,6 +116,37 @@ type CampaignInput struct {
 	// enabled must supply at least one. See validateKeywords for the
 	// text/match-type/count rules.
 	Keywords []Keyword
+	// NegativeKeywords are CAMPAIGN-level exclusions: queries this campaign must
+	// never pay for, however broadly Keywords match. Optional; see
+	// validateNegativeKeywords for the text/match-type/count rules.
+	//
+	// Campaign level rather than ad group, deliberately — an exclusion expresses
+	// intent for the whole campaign and must keep applying to an ad group a human
+	// adds later in the UI. SEARCH only: Demand Gen has no keyword criteria at all,
+	// and this field is ignored on that path rather than refused, the same way
+	// Keywords already is.
+	NegativeKeywords []Keyword
+	// CPCBid is the ad group's manual CPC bid in whole units of the ad ACCOUNT's
+	// currency — the same no-FX-conversion caveat Budget carries applies here.
+	//
+	// 0 means UNSET and no bid field is sent, which is exactly what every campaign
+	// created before this field existed did; no default is invented. SEARCH only —
+	// Demand Gen bids via targetSpend and rejects manualCpc outright. See
+	// validateCPCBid (adgroup_ad.go) for the accepted range.
+	CPCBid float64
+	// StartDate / EndDate are the campaign's flight window as YYYY-MM-DD, matching
+	// the vocabulary the meta and reddit dispatch configs already use. Each is
+	// INDEPENDENTLY optional: empty means the field is not sent, so an empty
+	// StartDate leaves Google's own default (the campaign starts today) and an empty
+	// EndDate leaves it running until someone stops it.
+	//
+	// They are interpreted in the ad ACCOUNT's timezone, not UTC, because that is
+	// what Google does with them — see campaignCreate.StartDateTime. That is also
+	// why no "start date is in the past" check exists here, unlike the meta client's:
+	// this client does not know the account's timezone, so a UTC "today" would refuse
+	// a start date Google accepts for an account several hours behind.
+	StartDate string
+	EndDate   string
 	// AudienceSegments are EXISTING Google Ads audience resource names (Customer
 	// Match "user list" resources the caller has already built elsewhere — this
 	// client does not create audiences) attached to the ad group as observation-only
@@ -197,8 +230,17 @@ type CampaignResult struct {
 	// adGroupCriterion ids on the Demand Gen path; reconcile against the level the campaign's
 	// channel uses.
 	GeoCriterionIDs []string `json:"geoCriterionIds,omitempty"`
-	GoogleAdsURL    string   `json:"googleAdsUrl"`
-	Steps           []string `json:"steps"`
+	// NegativeKeywordCriteriaIDs are the campaign-level negative keyword criteria
+	// created for CampaignInput.NegativeKeywords. Empty is ambiguous in exactly the
+	// three ways GeoCriterionIDs documents above — none asked for, the mutate failed,
+	// or the mutate was unconfirmed — and the returned ERROR is likewise what tells
+	// them apart: a nil error with an empty slice is the first case and only the first.
+	//
+	// Always campaignCriterion ids: unlike the geo criteria, these exist on the Search
+	// path only, since Demand Gen has no keyword criteria.
+	NegativeKeywordCriteriaIDs []string `json:"negativeKeywordCriteriaIds,omitempty"`
+	GoogleAdsURL               string   `json:"googleAdsUrl"`
+	Steps                      []string `json:"steps"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
@@ -308,6 +350,17 @@ type campaignCreate struct {
 	NetworkSettings                networkSettings      `json:"networkSettings"`
 	GeoTargetTypeSetting           geoTargetTypeSetting `json:"geoTargetTypeSetting"`
 	ManualCPC                      json.RawMessage      `json:"manualCpc"`
+	// StartDateTime/EndDateTime are campaign.start_date_time / campaign.end_date_time,
+	// formatted 'yyyy-MM-dd HH:mm:ss' and interpreted by Google in the ad ACCOUNT's
+	// timezone — NOT UTC and NOT the bare YYYY-MM-DD this service's config uses.
+	//
+	// These are the v23 field names and the OLD ONES WILL NOT WORK: `campaign.start_date`
+	// and `campaign.end_date` were REPLACED in v23, and sending either is rejected as an
+	// unrecognized field — after the budget mutate has already committed. The pre-v23
+	// 2037-12-30 "no end date" sentinel went with them; no end date is now an ABSENT
+	// field, which is what omitempty gives us.
+	StartDateTime string `json:"startDateTime,omitempty"`
+	EndDateTime   string `json:"endDateTime,omitempty"`
 }
 
 // geoTargetTypeSetting decides what a location criterion actually MEANS, and Google's default
@@ -536,6 +589,91 @@ type campaignPreflight struct {
 	// preflight so an unmapped country code fails BEFORE the budget mutate,
 	// rather than after a paid campaign exists — see validateGeoTargets.
 	geoConstantIDs []string
+	// negativeKeywords are the validated campaign-level exclusions, and cpcBidMicros
+	// the validated ad-group bid already converted to micros (0 = unset). Both are
+	// computed here, with everything else, so a bad exclusion or an out-of-range bid
+	// fails before the budget mutate rather than after a paid campaign exists.
+	negativeKeywords []Keyword
+	cpcBidMicros     int64
+	// startDateTime/endDateTime are the caller's YYYY-MM-DD flight window already
+	// rendered into the 'yyyy-MM-dd HH:mm:ss' form campaignCreate sends; empty means
+	// the corresponding field is omitted.
+	startDateTime string
+	endDateTime   string
+}
+
+// campaignDateRE pins the flight-window format BEFORE time.Parse sees it.
+//
+// time.Parse("2006-01-02", …) is more permissive than the layout suggests — it
+// accepts single-digit months and days, so "2026-1-5" parses cleanly and would then
+// be rendered back as a date the caller never wrote. The meta client pairs its own
+// parse with exactly this kind of regex for the same reason.
+var campaignDateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// campaignDateOnlyLayout is the Go layout for the YYYY-MM-DD dates CampaignInput
+// carries — the calendar-date half of what Google is sent, not the wire format.
+const campaignDateOnlyLayout = "2006-01-02"
+
+// validateFlightWindow validates the optional start/end dates and renders them into
+// the 'yyyy-MM-dd HH:mm:ss' strings campaign.start_date_time/end_date_time take.
+//
+// Each date is independently optional: an empty one yields an empty string, which
+// campaignCreate omits. The day boundaries are explicit — 00:00:00 for a start and
+// 23:59:59 for an end — so a one-day window covers that whole day rather than
+// collapsing to a zero-length instant at midnight.
+//
+// Only ONE cross-field rule is enforced, and only when both dates are present: the
+// end must be after the start. There is deliberately no "start date is in the past"
+// check, which the meta client does have. Google interprets these in the ad ACCOUNT's
+// timezone; this client does not know that timezone, so a UTC "today" would refuse a
+// start date that is still today for an account several hours behind — refusing a
+// create Google would have accepted.
+func validateFlightWindow(startDate, endDate string) (startDateTime, endDateTime string, err error) {
+	var start, end time.Time
+	if startDate != "" {
+		if !campaignDateRE.MatchString(startDate) {
+			return "", "", fmt.Errorf("google-ads campaign start date %q is not in YYYY-MM-DD format", startDate)
+		}
+		start, err = time.Parse(campaignDateOnlyLayout, startDate)
+		if err != nil {
+			return "", "", fmt.Errorf("google-ads campaign start date %q is not a valid calendar date: %w", startDate, err)
+		}
+		startDateTime = startDate + " 00:00:00"
+	}
+	if endDate != "" {
+		if !campaignDateRE.MatchString(endDate) {
+			return "", "", fmt.Errorf("google-ads campaign end date %q is not in YYYY-MM-DD format", endDate)
+		}
+		end, err = time.Parse(campaignDateOnlyLayout, endDate)
+		if err != nil {
+			return "", "", fmt.Errorf("google-ads campaign end date %q is not a valid calendar date: %w", endDate, err)
+		}
+		endDateTime = endDate + " 23:59:59"
+	}
+	if startDate != "" && endDate != "" && !end.After(start) {
+		return "", "", fmt.Errorf("google-ads campaign end date %s must be after start date %s", endDate, startDate)
+	}
+	return startDateTime, endDateTime, nil
+}
+
+// flightWindowStep renders the flight window for the campaign-created step log.
+//
+// The step log is what an operator reconciles a campaign against the account with,
+// so an omitted date is reported as the DEFAULT IT LEAVES IN PLACE rather than as a
+// blank: "starts today" and "no end date" are Google's behaviour for an absent
+// start_date_time/end_date_time, and a reader should not have to know that to
+// interpret the line. The times are the account-timezone boundaries actually sent,
+// not reformatted, so the line can be compared against the campaign directly.
+func flightWindowStep(startDateTime, endDateTime string) string {
+	start := "starts immediately (no start date set)"
+	if startDateTime != "" {
+		start = "starts " + startDateTime
+	}
+	end := "no end date"
+	if endDateTime != "" {
+		end = "ends " + endDateTime
+	}
+	return start + ", " + end + ", account timezone"
 }
 
 // ValidateCampaignInput runs exactly the input validation CreateCampaign runs before it
@@ -664,6 +802,24 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// The three remaining inputs join the same pre-mutate block for the same
+	// orphan-avoidance reason: each is purely local, and each would otherwise be
+	// rejected by Google only at a mutate that runs after the budget and campaign have
+	// committed — the negatives at a campaignCriteria:mutate two steps later, the bid
+	// at the adGroups:mutate after that, and a malformed date at the campaign create
+	// itself, which is already one paid resource too late.
+	negativeKeywords, err := validateNegativeKeywords(in.NegativeKeywords)
+	if err != nil {
+		return nil, err
+	}
+	cpcBidMicros, _, err := validateCPCBid(in.CPCBid)
+	if err != nil {
+		return nil, err
+	}
+	startDateTime, endDateTime, err := validateFlightWindow(in.StartDate, in.EndDate)
+	if err != nil {
+		return nil, err
+	}
 
 	return &campaignPreflight{
 		amountMicros:     amountMicros,
@@ -676,6 +832,10 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		keywords:         keywords,
 		audienceSegments: audienceSegments,
 		geoConstantIDs:   geoConstantIDs,
+		negativeKeywords: negativeKeywords,
+		cpcBidMicros:     cpcBidMicros,
+		startDateTime:    startDateTime,
+		endDateTime:      endDateTime,
 	}, nil
 }
 
@@ -712,6 +872,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	headlines, descriptions := pf.headlines, pf.descriptions
 	keywords, audienceSegments := pf.keywords, pf.audienceSegments
 	geoConstantIDs := pf.geoConstantIDs
+	negativeKeywords, cpcBidMicros := pf.negativeKeywords, pf.cpcBidMicros
+	startDateTime, endDateTime := pf.startDateTime, pf.endDateTime
 
 	var steps []string
 	googleAdsURL := "https://ads.google.com/aw/campaigns?ocid=" + c.account.CustomerID
@@ -814,6 +976,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// then restricts by presence rather than silently reverting to the permissive default.
 		GeoTargetTypeSetting: geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
 		ManualCPC:            json.RawMessage(`{}`),
+		// Both omitempty: an empty string here is "the caller gave no such date", and the
+		// field disappears rather than being sent empty — which Google rejects outright.
+		StartDateTime: startDateTime,
+		EndDateTime:   endDateTime,
 	}
 	campaignReq := mutateRequest{Operations: []mutateOperation{{Create: campaignCreateVal}}}
 	campaignPath := c.customerPath("campaigns:mutate")
@@ -839,7 +1005,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := c.validateCampaignResource(campaignResource); err != nil {
 		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, manual CPC)", campaignID))
+	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, manual CPC, %s)", campaignID, flightWindowStep(startDateTime, endDateTime)))
 
 	res := budgetPartial()
 	res.CampaignID = campaignID
@@ -860,6 +1026,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		res.Steps = steps
 	}
 
+	// Negative keywords are campaign-level criteria, so they are attached here —
+	// after geo, still before the ad group — for the same reason geo is: the less
+	// that has been built on top of a failure, the easier it is to reconcile. Same
+	// partial-result contract as every step past the campaign create.
+	if len(negativeKeywords) > 0 {
+		negIDs, negErr := c.createCampaignNegativeKeywords(ctx, campaignResource, campaignID, negativeKeywords)
+		if negErr != nil {
+			return res, negErr
+		}
+		res.NegativeKeywordCriteriaIDs = negIDs
+		steps = append(steps, fmt.Sprintf("Negative keywords applied: %d campaign-level exclusions", len(negIDs)))
+		res.Steps = steps
+	}
+
 	// The campaign+budget are now committed. GA-3: extend the shell with a PAUSED
 	// ad group + responsive search ad. Any failure here (ambiguous, duplicate, or
 	// definite) is returned ALONGSIDE the now-non-nil res — the campaign/budget
@@ -867,7 +1047,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// point. The caller (GoogleAdsDispatcher.Dispatch) treats a non-nil result +
 	// error as "retain the claim, record the partial" — the same contract already
 	// used for an ambiguous/duplicate budget or campaign.
-	if err := c.createAdGroupAndAd(ctx, campaignResource, campaignID, finalURL, headlines, descriptions, adGroupName, keywords, audienceSegments, res); err != nil {
+	if err := c.createAdGroupAndAd(ctx, campaignResource, campaignID, finalURL, headlines, descriptions, adGroupName, cpcBidMicros, keywords, audienceSegments, res); err != nil {
 		return res, err
 	}
 	return res, nil

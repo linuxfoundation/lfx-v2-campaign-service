@@ -38,6 +38,13 @@ type demandGenCampaignCreate struct {
 	// This is one of the few fields the two channel payloads DO share; they are otherwise
 	// separate because Demand Gen rejects networkSettings and manualCpc.
 	GeoTargetTypeSetting geoTargetTypeSetting `json:"geoTargetTypeSetting"`
+	// StartDateTime/EndDateTime are the same v23 campaign.start_date_time /
+	// campaign.end_date_time fields campaignCreate carries, with the same format,
+	// account-timezone interpretation and omitempty semantics — see that type for the
+	// v23 rename trap. A flight window is a property of the campaign, not of the
+	// channel, so both payloads take it from the one shared preflight.
+	StartDateTime string `json:"startDateTime,omitempty"`
+	EndDateTime   string `json:"endDateTime,omitempty"`
 }
 
 // demandGenAdGroupCreate omits the `type` field that the Search path sets to
@@ -148,7 +155,9 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		// BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET against the same budget.
 		// Do not "fix" this to a maximize-* strategy without re-running that check — the
 		// rejection lands AFTER the budget is created, which orphans it.
-		TargetSpend: map[string]any{},
+		TargetSpend:   map[string]any{},
+		StartDateTime: pf.startDateTime,
+		EndDateTime:   pf.endDateTime,
 	}}}}
 	campaignResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), campaignReq, false)
 	if err != nil {
@@ -168,7 +177,7 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	if err := c.validateCampaignResource(campaignResource); err != nil {
 		return budgetPartial(), fmt.Errorf("google-ads demand gen campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, DEMAND_GEN, target spend)", campaignID))
+	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, DEMAND_GEN, target spend, %s)", campaignID, flightWindowStep(pf.startDateTime, pf.endDateTime)))
 
 	campaignPartial := func() *CampaignResult {
 		r := budgetPartial()
