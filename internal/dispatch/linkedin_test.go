@@ -1449,3 +1449,70 @@ func TestLinkedIn_ListAccountCampaignMetrics_RefusesSystemFallback(t *testing.T)
 			"report the project as having no connection of its own", err)
 	}
 }
+
+// TestLinkedIn_ListAccountCampaignMetrics_AccountScope pins the account-scope guard as a
+// TABLE over all three states the request can be in, not just the mismatch that motivated
+// it. The happy path is in the table deliberately: a guard that refuses a legitimate read is
+// the same defect as one that permits an illegitimate one, and only the pair proves the
+// comparison rather than a blanket refusal.
+//
+// The requested-account values are what distinguishes the cases; the stored account is
+// always the fixture's 123456789 except where the case overrides it.
+func TestLinkedIn_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
+	cases := []struct {
+		name      string
+		stored    string // "" means "leave the fixture's value"
+		requested string
+		wantErr   error
+		// wantNoErrSentinel asserts the guard did NOT fire. The call still fails on the
+		// fake credential's 401, so the assertion is about WHICH error, not about success.
+		wantNoErrSentinel bool
+	}{
+		{
+			name:      "a different account is refused as a request mismatch",
+			requested: "999999999",
+			wantErr:   domain.ErrAccountNotManagedByConnection,
+		},
+		{
+			name:      "an unselected stored account is an account_not_selected setup state",
+			stored:    "   ",
+			requested: "999999999",
+			wantErr:   domain.ErrAccountNotSelected,
+		},
+		{
+			name:              "the connection's own account is permitted",
+			requested:         "123456789",
+			wantNoErrSentinel: true,
+		},
+		{
+			name:              "surrounding whitespace does not make a matching account a mismatch",
+			requested:         "  123456789  ",
+			wantNoErrSentinel: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := activeLinkedInConn(goodLinkedInCreds)
+			if tc.stored != "" {
+				conn.AccountID = tc.stored
+			}
+			d := NewLinkedInDispatcher(&scopedConnReader{
+				rows: map[string]*model.Connection{"cncf": conn},
+			}, identityEncryptor{})
+
+			_, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderLinkedInAds, tc.requested, 30)
+
+			if tc.wantNoErrSentinel {
+				if errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+					t.Fatalf("the guard refused the connection's OWN account (requested %q): %v", tc.requested, err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v — the read must not reach LinkedIn with an account "+
+					"this project's connection does not manage", err, tc.wantErr)
+			}
+		})
+	}
+}

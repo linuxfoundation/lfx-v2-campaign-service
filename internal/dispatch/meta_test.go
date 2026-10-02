@@ -3210,3 +3210,63 @@ func (p *panickingCreativeAssets) GetAssetSize(ctx context.Context, projectID, b
 	}
 	return p.inner.GetAssetSize(ctx, projectID, briefID, assetID)
 }
+
+// TestMeta_ListAccountCampaignMetrics_AccountScope is linkedin_test.go's
+// TestLinkedIn_ListAccountCampaignMetrics_AccountScope for Meta — same three request states
+// in one table, including the happy path, for the same reason: only the matched pair proves
+// the guard compares rather than refuses everything.
+//
+// Meta's empty-account arm comes from requireMetaAccountID, which this guard layers onto, so
+// the sentinel pair is ErrConnectionNotUsable+ErrAccountNotSelected exactly as the dispatch
+// and budget paths already answer with.
+func TestMeta_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
+	cases := []struct {
+		name              string
+		stored            string
+		requested         string
+		wantErr           error
+		wantNoErrSentinel bool
+	}{
+		{
+			name:      "a different account is refused as a request mismatch",
+			requested: "act_999",
+			wantErr:   domain.ErrAccountNotManagedByConnection,
+		},
+		{
+			name:      "an unselected stored account is an account_not_selected setup state",
+			stored:    "   ",
+			requested: "act_999",
+			wantErr:   domain.ErrAccountNotSelected,
+		},
+		{
+			name:              "the connection's own account is permitted",
+			requested:         "act_777",
+			wantNoErrSentinel: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := activeMetaConn(goodMetaCreds)
+			if tc.stored != "" {
+				conn.AccountID = tc.stored
+			}
+			d := NewMetaDispatcher(&scopedConnReader{
+				rows: map[string]*model.Connection{"cncf": conn},
+			}, identityEncryptor{})
+
+			_, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderMetaAds, tc.requested, 30)
+
+			if tc.wantNoErrSentinel {
+				if errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+					t.Fatalf("the guard refused the connection's OWN account (requested %q): %v", tc.requested, err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v — the read must not reach Meta with an account "+
+					"this project's connection does not manage", err, tc.wantErr)
+			}
+		})
+	}
+}

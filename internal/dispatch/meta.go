@@ -584,6 +584,39 @@ func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID s
 // it HERE, before an empty AccountConfig.AccountID can reach the Meta client and fail
 // opaquely with a malformed "//campaigns" request instead of a reason naming the fix.
 // ToggleStatus and ReadMetrics do not call this — see resolveMetaCredentials for why.
+// requireMetaManagedAccount proves the caller-supplied accountID is the one THIS project's
+// own connection is bound to. It layers the mismatch check onto requireMetaAccountID rather
+// than repeating its empty-account handling, so the two paths cannot drift.
+//
+// A connection stores exactly one account (`account_id TEXT NOT NULL` under
+// `UNIQUE (project_id)` — a column shared by every provider table, see
+// docs/channel-connections-schema.md), so a request naming any OTHER account is a request
+// mismatch and must not be served. Mirrors reddit.go's resolveMonitorClient.
+//
+// Refusing the LF system fallback is NOT a substitute: that is about whose CREDENTIAL is
+// used, this is about which ACCOUNT the request named. A project with its own active
+// connection passes the fallback check and can still name another project's account.
+//
+// Latent rather than live today — only one Meta ad account is configured, so there is no
+// second account to cross into — but Meta uses the separate-account-per-foundation model
+// (docs/channel-connections-schema.md, "Current Account Inventory"), so connecting a second
+// account would make it reachable with no code change. That is the reason to carry the guard
+// now rather than when it starts mattering.
+func requireMetaManagedAccount(res *resolved, projectID, accountID string) (string, error) {
+	stored, err := requireMetaAccountID(res, projectID)
+	if err != nil {
+		return "", err
+	}
+	want := strings.TrimSpace(accountID)
+	if want != stored {
+		// ErrAccountNotManagedByConnection, not ErrConnectionNotUsable: the stored
+		// connection is usable, the REQUEST named a different account.
+		return "", fmt.Errorf("%w: meta connection for project %s resolves to account %s, not the requested account %s",
+			domain.ErrAccountNotManagedByConnection, projectID, stored, want)
+	}
+	return stored, nil
+}
+
 func requireMetaAccountID(res *resolved, projectID string) (string, error) {
 	accountID := strings.TrimSpace(res.accountID)
 	if accountID == "" {
@@ -1121,22 +1154,17 @@ func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, project
 	return meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{}, d.opts...), nil
 }
 
-// resolveOwnedMetaDiscoveryClient is resolveMetaDiscoveryClient WITHOUT the LF system
-// fallback — the monitor read's equivalent of googleads.go's
-// resolveOwnedGoogleAdsDiscoveryClient (see that function's doc comment for the shared
-// rationale: round-16 review escalated the pre-existing credential-scope gap to Critical, and
-// membership-checking against ListAccounts would not have closed it given the same shared-
-// tenancy exposure through the fallback).
+// resolveOwnedMetaDiscovery is resolveMetaDiscoveryClient WITHOUT the LF system fallback —
+// the monitor read's equivalent of googleads.go's resolveOwnedGoogleAdsDiscoveryClient (see
+// that function's doc comment for the shared rationale: round-16 review escalated the
+// pre-existing credential-scope gap to Critical, and membership-checking against ListAccounts
+// would not have closed it given the same shared-tenancy exposure through the fallback).
 //
 // It calls resolveMetaCredentials bound to d.creds.resolveOwned instead of d.creds.resolve, so
 // a project with no Meta connection of its own gets domain.ErrNotFound (via noOwnConnection)
 // instead of a credential borrowed from the shared LF system row.
-func (d *MetaDispatcher) resolveOwnedMetaDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*meta.Client, error) {
-	client, _, err := d.resolveOwnedMetaDiscovery(ctx, projectID, platform)
-	return client, err
-}
-
-// resolveOwnedMetaDiscovery is the body of the above, returning the resolved row as well as
+//
+// It returns the resolved row as well as
 // the client. ProbeConnection needs both — the client to make the call, and the row to know
 // WHICH ad account the connection is configured for, which is the half of a connection test
 // that "does the token authenticate" does not answer.
@@ -1249,7 +1277,7 @@ func (d *MetaDispatcher) ListAccounts(ctx context.Context, projectID string, pla
 // account the project's connection currently points at), then reads every campaign visible
 // on that account via meta.Client.ListAccountCampaigns.
 //
-// Trust boundary (round-16 review, fixed): resolveOwnedMetaDiscoveryClient refuses the LF
+// Trust boundary (round-16 review, fixed): resolveOwnedMetaDiscovery refuses the LF
 // system fallback entirely, so a project with no Meta connection of its own gets a 404 instead
 // of a read served from a credential that could reach another project's data. See that
 // resolver's doc comment, and GoogleAdsDispatcher.ListAccountCampaignMetrics
@@ -1266,9 +1294,16 @@ func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, project
 	if err := validateMonitorDays(days); err != nil {
 		return nil, err
 	}
-	client, err := d.resolveOwnedMetaDiscoveryClient(ctx, projectID, platform)
+	// The resolved ROW is needed as well as the client: the account-scope check below
+	// reads it to know which account this project's connection is bound to.
+	client, res, err := d.resolveOwnedMetaDiscovery(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
+	}
+	// Before any request is issued: the account the caller named must be the one this
+	// project's connection manages. See requireMetaManagedAccount.
+	if _, aerr := requireMetaManagedAccount(res, projectID, accountID); aerr != nil {
+		return nil, aerr
 	}
 	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
 	if lerr != nil {

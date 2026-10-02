@@ -631,8 +631,9 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		return &conn.InternalServerError{Code: "500", Message: d.label() + " could not be completed"}
 	case errors.Is(aerr, domain.ErrAccountNotManagedByConnection):
 		// The stored connection is fine; the REQUEST named an account the connection
-		// does not manage (Reddit only, whose connection is bound to exactly one ad
-		// account). Checked before ErrConnectionNotUsable below: prior to round-18 review
+		// does not manage. Answerable by every account-scoped monitor read, since a
+		// connection is bound to exactly one ad account; Reddit was simply the first
+		// dispatcher to check. Checked before ErrConnectionNotUsable below: prior to round-18 review
 		// this sentinel did not exist and the mismatch rode on ErrConnectionNotUsable,
 		// whose message tells the caller to check that the stored credential is active
 		// and valid, which it is, so that message pointed at the wrong remedy.

@@ -1052,9 +1052,13 @@ var (
 	// ErrAccountNotManagedByConnection indicates a caller-supplied account id is well-formed
 	// but names an account the project's OWN resolved connection does not manage. Maps to 400.
 	//
-	// Reddit's resolveMonitorClient is the only place this can happen: a Reddit connection is
-	// bound to exactly one ad account, so a request for any other account id is a request
-	// mismatch, not a connection defect. Before round-18 review this rode on
+	// Every account-scoped monitor read can answer with this: a connection is bound to
+	// exactly one ad account (`account_id TEXT NOT NULL` under `UNIQUE (project_id)`, a
+	// column shared by every provider table), so a request for any other account id is a
+	// request mismatch, not a connection defect. Reddit's resolveMonitorClient was the
+	// first and, until the LinkedIn/Meta guards, the only producer — the property it
+	// relied on was always the shared schema's rather than a Reddit quirk.
+	// Before round-18 review this rode on
 	// ErrConnectionNotUsable, whose message tells the operator to check that the STORED
 	// credential is active and valid — which it is; the wrong thing here is the REQUEST, not
 	// the connection. Distinct for the same reason ErrAccountIDMalformed is distinct from

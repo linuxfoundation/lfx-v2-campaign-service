@@ -697,6 +697,52 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 // It satisfies the service-side AccountMetricsReader interface, which Orchestrator
 // type-asserts on the dispatcher for the requested platform.
 //
+// requireLinkedInManagedAccount proves the caller-supplied accountID is the one THIS
+// project's own connection is bound to, and returns it trimmed.
+//
+// A connection stores exactly one account (`account_id TEXT NOT NULL` under
+// `UNIQUE (project_id)` — a column shared by every provider table, see
+// docs/channel-connections-schema.md), so a request naming any OTHER account is a
+// request mismatch and must not be served. Mirrors reddit.go's resolveMonitorClient,
+// which has made this check since round-18 review; the property it relies on is the
+// shared schema's, not a Reddit quirk.
+//
+// Refusing the LF system fallback (resolveLinkedInOwnedDiscoveryCredentials) is NOT a
+// substitute for this check and does not make it redundant. That fallback is about WHOSE
+// CREDENTIAL is used; this is about WHICH ACCOUNT the request named. A project with its
+// own active connection passes the fallback check and can still name a sibling project's
+// account — and one LinkedIn token reaches several ad accounts (that is exactly what
+// ListAccounts enumerates), so the token is not the boundary either. Today tlf and
+// lf-events hold two different LinkedIn accounts under two different projects.
+//
+// The empty case is kept DISTINCT from the mismatch rather than folded into it. An empty
+// stored account means the operator has not finished setting the connection up, whose
+// remedy is "pick an account"; a mismatch means the request is wrong and the stored
+// connection is fine. ErrConnectionNotUsable+ErrAccountNotSelected is the pair
+// unusableConnectionReason already reports as "account_not_selected", matching
+// requireMetaAccountID. Reddit can treat this as a plain equality check because its
+// resolver already refused an empty stored account upstream;
+// resolveLinkedInOwnedDiscoveryCredentials deliberately does NOT — it returns success on
+// ErrAccountNotSelected so VerifyAccountOrg can report a half-configured pairing itself —
+// so this helper has to handle the empty case rather than assume it away.
+func requireLinkedInManagedAccount(res *resolved, projectID, accountID string) (string, error) {
+	stored := strings.TrimSpace(res.accountID)
+	if stored == "" {
+		return "", res.systemScoped(fmt.Errorf("%w: %w: linkedin connection for project %s has no account id selected",
+			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID))
+	}
+	want := strings.TrimSpace(accountID)
+	if want != stored {
+		// ErrAccountNotManagedByConnection, not ErrConnectionNotUsable: the stored
+		// connection is usable, the REQUEST named a different account. The latter's
+		// classification tells the operator to check that the credential is active and
+		// valid, which is the wrong remedy for a request mismatch.
+		return "", fmt.Errorf("%w: linkedin connection for project %s resolves to account %s, not the requested account %s",
+			domain.ErrAccountNotManagedByConnection, projectID, stored, want)
+	}
+	return stored, nil
+}
+
 // Trust boundary (round-16 review, fixed): resolveLinkedInOwnedDiscoveryCredentials refuses the
 // LF system fallback entirely, so a project with no LinkedIn connection of its own gets a 404
 // instead of a read served from a credential that could reach another project's data. See that
@@ -717,6 +763,11 @@ func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, pro
 	res, creds, err := d.resolveLinkedInOwnedDiscoveryCredentials(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
+	}
+	// Before the client is built, let alone a request issued: the account the caller named
+	// must be the one this project's connection manages. See requireLinkedInManagedAccount.
+	if _, aerr := requireLinkedInManagedAccount(res, projectID, accountID); aerr != nil {
+		return nil, aerr
 	}
 	// RuntimeConfig is left ZERO, same rationale as ListAccounts: the monitor read is scoped
 	// to accountID by the platform-client call itself, not by the client's own AccountConfig.
