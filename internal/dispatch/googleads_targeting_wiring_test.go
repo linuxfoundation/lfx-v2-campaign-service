@@ -809,3 +809,55 @@ func TestGoogleAdsClient_ValidateCampaignInputKindGatesOnTheKind(t *testing.T) {
 		t.Errorf("ValidateCampaignInput assumes Search, got %v", err)
 	}
 }
+
+// Sibling parity with the Microsoft dispatcher's TestMicrosoft_UnresolvableGeoTargetCreatesNothing
+// and with TestGoogleAds_BadServingReadinessConfigIsPreCreate, extended to the field
+// families LFXV2-2665 added. Those two cover an unusable value in a field that
+// predates this work; every validator below is new, and each one of them runs
+// inside preflightCampaignKind precisely so a bad value costs nothing upstream.
+//
+// This is the SEARCH channel, where all of these fields are supported — so a
+// refusal here is about the value, not the channel, which is what separates this
+// table from TestGoogleAds_SearchOnlyFieldsAreRefusedOnDemandGenBeforeAnyCreate.
+// One case per validator: they fail independently, and a regression in one would
+// be invisible behind the others.
+func TestGoogleAds_BadTargetingConfigIsPreCreate(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  string
+	}{
+		{"geo target also excluded", `"geoTargets":["GB"],"excludedGeoTargets":["GB"]`},
+		{"unmapped excluded geo target", `"excludedGeoTargets":["Narnia"]`},
+		{"proximity radius unit", `"proximityTargets":[{"latitude":37.7749,"longitude":-122.4194,"radius":25,"radiusUnit":"FURLONGS"}]`},
+		{"unmapped language", `"languages":["Klingon"]`},
+		{"schedule ends before it starts", `"adSchedules":[{"dayOfWeek":"MONDAY","startHour":17,"startMinute":0,"endHour":9,"endMinute":0}]`},
+		{"duplicate device", `"deviceBidModifiers":[{"device":"MOBILE","bidModifier":1.2},{"device":"MOBILE","bidModifier":1.4}]`},
+		{"bid modifier out of range", `"deviceBidModifiers":[{"device":"MOBILE","bidModifier":99}]`},
+		{"unknown excluded gender", `"excludedGenders":["OTHER"]`},
+		{"sitelink with one description line", `"sitelinks":[{"text":"Register","finalUrl":"https://events.example/kc","description1":"Save your seat"}]`},
+		{"duplicate callout", `"callouts":["Free workshops","Free workshops"]`},
+		{"structured snippet with too few values", `"structuredSnippets":[{"header":"Courses","values":["Kubernetes"]}]`},
+		{"ad group without a name", `"adGroups":[{"name":""}]`},
+		{"duplicate ad group name", `"adGroups":[{"name":"Training"},{"name":"Training"}]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, cap := targetingServers(t)
+			d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+			cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,` + tc.cfg + `}}`)
+
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+			if err == nil {
+				t.Fatal("expected the dispatch to be refused")
+			}
+			if camp != nil {
+				t.Errorf("nothing may be created for a refused input, got campaign %+v", camp)
+			}
+			cap.mu.Lock()
+			defer cap.mu.Unlock()
+			if cap.sawBudget {
+				t.Error("the refusal must happen BEFORE the budget mutate — a later one strands a paid budget and campaign")
+			}
+		})
+	}
+}
