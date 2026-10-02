@@ -5,6 +5,7 @@ package googleads
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -320,18 +321,26 @@ func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, headlines, de
 // campaign left in that state needs manual reconciliation, same as a
 // duplicate-budget or duplicate-campaign orphan today.
 //
-// finalURL/headlines/descriptions/adGroupName/keywords/audienceSegments are
-// precomputed by precomputeAdGroupAdInputs BEFORE CreateCampaign's first
-// mutate, so this method performs no local validation of its own — by the
+// finalURL and every field of plan are resolved by preflightCampaignKind
+// (precomputeAdGroupAdInputs, then validateAdGroupPlans) BEFORE CreateCampaign's
+// first mutate, so this method performs no local validation of its own — by the
 // time it runs, the campaign already exists and there is nothing left to
-// reject before sending. If both keywords and audienceSegments are empty
-// (GA-4 targeting is optional), the ad group/ad are created with no
+// reject before sending. If both plan.keywords and plan.audienceSegments are
+// empty (GA-4 targeting is optional), the ad group/ad are created with no
 // criteria, same as pre-GA-4 behavior.
 //
-// res is mutated in place (AdGroupName/AdGroupID/AdID/Steps) so the caller's
-// existing partial-result plumbing (campaignNamePartial-derived) carries
-// whatever was created even when this returns an error.
-func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campaignID, finalURL string, headlines, descriptions []string, adGroupName string, cpcBidMicros int64, keywords []Keyword, audienceSegments []string, res *CampaignResult) error {
+// res is mutated in place (AdGroups/AdGroupName/AdGroupID/AdID/Steps) so the
+// caller's existing partial-result plumbing (campaignNamePartial-derived)
+// carries whatever was created even when this returns an error.
+//
+// One plan per ad group: createAdGroupsAndAds loops this over the whole list,
+// and a single-group campaign is simply a list of one.
+func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campaignID, finalURL string, plan adGroupPlan, res *CampaignResult) error {
+	adGroupName := plan.name
+	cpcBidMicros := plan.cpcBidMicros
+	keywords := plan.keywords
+	audienceSegments := plan.audienceSegments
+
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return fmt.Errorf("google-ads ad group creation aborted before any request (context already done): %w", ctxErr)
 	}
@@ -352,10 +361,22 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 		}
 	}
 	adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: adGroupCreateVal}}}
-	// Set the ad group name into the result before sending the mutate, so that on failure
+	// Record the ad group name before sending the mutate, so that on failure
 	// (duplicate, ambiguous) the partial result still carries the deterministic name for
-	// reconciliation.
-	res.AdGroupName = adGroupName
+	// reconciliation. With several groups this is also what says HOW FAR the cascade got:
+	// the entry exists for every group that was attempted, with an empty ID for the one
+	// that failed and no entry at all for the groups never reached.
+	isFirstAdGroup := len(res.AdGroups) == 0
+	res.AdGroups = append(res.AdGroups, AdGroupResult{Name: adGroupName})
+	group := &res.AdGroups[len(res.AdGroups)-1]
+	// The scalar AdGroupName/AdGroupID/AdID predate multi-group support and are kept
+	// populated from the FIRST group, so every existing reader — the dispatcher's
+	// status toggle, the campaign_settings readback, persisted result blobs — keeps
+	// working unchanged on a single-group campaign and still resolves to a real ad
+	// group on a multi-group one.
+	if isFirstAdGroup {
+		res.AdGroupName = adGroupName
+	}
 	adGroupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), adGroupReq, false)
 	if err != nil {
 		switch {
@@ -377,7 +398,10 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 	if verr := c.validateResourceKind("adGroups", adGroupResource, true); verr != nil {
 		return fmt.Errorf("google-ads ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", adGroupName, verr)
 	}
-	res.AdGroupID = adGroupID
+	group.ID = adGroupID
+	if isFirstAdGroup {
+		res.AdGroupID = adGroupID
+	}
 	// Two variants rather than one with a formatted zero: the step log is read by
 	// operators reconciling a campaign against the account, and "CpcBidMicros 0" would
 	// read as a zero bid that was set rather than a field that was never sent. Neither
@@ -395,51 +419,73 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 		return fmt.Errorf("google-ads ad creation aborted after ad group %s created (context done before ad create; the ad group has no ad yet): %w", adGroupID, ctxErr)
 	}
 
-	adReq := mutateRequest{Operations: []mutateOperation{{Create: adGroupAdCreate{
-		AdGroup: adGroupResource,
-		Status:  StatusPaused,
-		Ad: adCreate{
-			FinalUrls: []string{finalURL},
-			ResponsiveSearchAd: &responsiveSearchAd{
-				Headlines:    textAssets(headlines),
-				Descriptions: textAssets(descriptions),
+	// Every ad in the group goes in ONE mutate. Google applies a mutate atomically
+	// unless partial failure is asked for, so a group either gets all its ads or
+	// none — which is the outcome worth having, because a group holding one of the
+	// three ads a caller asked for reads as complete in the UI and quietly rotates
+	// less copy than the campaign was built to test.
+	adOps := make([]mutateOperation, 0, len(plan.ads))
+	for _, ad := range plan.ads {
+		adOps = append(adOps, mutateOperation{Create: adGroupAdCreate{
+			AdGroup: adGroupResource,
+			Status:  StatusPaused,
+			Ad: adCreate{
+				FinalUrls: []string{finalURL},
+				ResponsiveSearchAd: &responsiveSearchAd{
+					Headlines:    textAssets(ad.headlines),
+					Descriptions: textAssets(ad.descriptions),
+				},
 			},
-		},
-	}}}}
-	adResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroupAds:mutate"), adReq, false)
+		}})
+	}
+	adResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroupAds:mutate"), mutateRequest{Operations: adOps}, false)
 	if err != nil {
 		if createOutcomeAmbiguous(err) {
-			return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; ad may exist — verify in Google Ads before retrying): %w", adGroupID, err)
+			return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; %d ad(s) may exist — verify in Google Ads before retrying): %w", adGroupID, len(adOps), err)
 		}
 		// Ads carry no unique name/duplicate-error code (Google allows duplicate ad
 		// content within an ad group), so a definite 4xx here is a straightforward
 		// rejection, not a possible prior-attempt collision.
 		return fmt.Errorf("google-ads ad creation failed (ad group %s created): %w", adGroupID, err)
 	}
-	adResource, _, err := firstResourceName(adResp)
-	if err != nil {
-		return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; 2xx with no/malformed resource name — an ad may exist — verify in Google Ads before retrying): %w", adGroupID, err)
+	var adResults mutateResponse
+	if uErr := json.Unmarshal(adResp, &adResults); uErr != nil || len(adResults.Results) != len(adOps) {
+		return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; 2xx with a malformed/short mutate response for %d ad(s) — ads may exist — verify in Google Ads before retrying)", adGroupID, len(adOps))
 	}
-	// adGroupAdID validates the resource KIND but not the account; without this, a
-	// wrong-account adGroupAds resource would still pass adGroupAdID and could be
-	// accepted as this ad. requireNumericID=false: the trailing segment is the
-	// composite "{adGroupId}~{adId}" shape, validated by adGroupAdID below.
-	if verr := c.validateResourceKind("adGroupAds", adResource, false); verr != nil {
-		return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; %w — verify in Google Ads before retrying)", adGroupID, verr)
+	adIDs := make([]string, 0, len(adOps))
+	for i, r := range adResults.Results {
+		adResource := r.ResourceName
+		// adGroupAdID validates the resource KIND but not the account; without this, a
+		// wrong-account adGroupAds resource would still pass adGroupAdID and could be
+		// accepted as this ad. requireNumericID=false: the trailing segment is the
+		// composite "{adGroupId}~{adId}" shape, validated by adGroupAdID below.
+		if verr := c.validateResourceKind("adGroupAds", adResource, false); verr != nil {
+			return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; ad %d of %d: %w — verify in Google Ads before retrying)", adGroupID, i+1, len(adOps), verr)
+		}
+		returnedAdGroupID, adID := adGroupAdID(adResource)
+		if adID == "" || returnedAdGroupID == "" {
+			return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; malformed adGroupAd resource name %q at index %d — verify in Google Ads before retrying)", adGroupID, adResource, i)
+		}
+		// The adGroupAd resourceName's ad-group-id half must match the ad group this
+		// ad was created under — a mismatch means the response doesn't describe the
+		// ad this call just created (a malformed/substituted resourceName), so the
+		// returned adID cannot be trusted enough to persist.
+		if returnedAdGroupID != adGroupID {
+			return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; adGroupAd resource name %q reports a different ad group id %q — verify in Google Ads before retrying)", adGroupID, adResource, returnedAdGroupID)
+		}
+		adIDs = append(adIDs, adID)
 	}
-	returnedAdGroupID, adID := adGroupAdID(adResource)
-	if adID == "" || returnedAdGroupID == "" {
-		return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; malformed adGroupAd resource name %q — verify in Google Ads before retrying)", adGroupID, adResource)
+	group.AdIDs = adIDs
+	// The scalar AdID is the FIRST ad of the FIRST group, for the same
+	// compatibility reason AdGroupID is.
+	if isFirstAdGroup && len(adIDs) > 0 {
+		res.AdID = adIDs[0]
 	}
-	// The adGroupAd resourceName's ad-group-id half must match the ad group this
-	// ad was created under — a mismatch means the response doesn't describe the
-	// ad this call just created (a malformed/substituted resourceName), so the
-	// returned adID cannot be trusted enough to persist.
-	if returnedAdGroupID != adGroupID {
-		return fmt.Errorf("google-ads ad creation UNCONFIRMED (ad group %s created; adGroupAd resource name %q reports a different ad group id %q — verify in Google Ads before retrying)", adGroupID, adResource, returnedAdGroupID)
+	if len(adIDs) == 1 {
+		res.Steps = append(res.Steps, fmt.Sprintf("Responsive search ad created: %s (PAUSED, %d headlines, %d descriptions)", adIDs[0], len(plan.ads[0].headlines), len(plan.ads[0].descriptions)))
+	} else {
+		res.Steps = append(res.Steps, fmt.Sprintf("Responsive search ads created: %s (PAUSED, %d ads in ad group %s)", strings.Join(adIDs, ", "), len(adIDs), adGroupID))
 	}
-	res.AdID = adID
-	res.Steps = append(res.Steps, fmt.Sprintf("Responsive search ad created: %s (PAUSED, %d headlines, %d descriptions)", adID, len(headlines), len(descriptions)))
 
 	if len(keywords) == 0 && len(audienceSegments) == 0 {
 		return nil
@@ -448,9 +494,32 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 	if err != nil {
 		return err
 	}
-	res.KeywordCriteriaIDs = keywordIDs
-	res.AudienceCriteriaIDs = audienceIDs
+	group.KeywordCriteriaIDs = keywordIDs
+	group.AudienceCriteriaIDs = audienceIDs
+	if isFirstAdGroup {
+		res.KeywordCriteriaIDs = keywordIDs
+		res.AudienceCriteriaIDs = audienceIDs
+	}
 	res.Steps = append(res.Steps, fmt.Sprintf("Keyword/audience targeting attached: %d keyword(s), %d audience segment(s)", len(keywordIDs), len(audienceIDs)))
+	return nil
+}
+
+// createAdGroupsAndAds runs the ad group + ad cascade once per planned group.
+//
+// It stops at the FIRST failure rather than carrying on with the remaining
+// groups. A failure here is almost never specific to one group — a dead context,
+// a revoked token, a rate limit — and pressing on would turn one reconcilable
+// partial into several. What was built is already in res.AdGroups, so the caller
+// knows exactly which groups exist and which were never attempted.
+func (c *Client) createAdGroupsAndAds(ctx context.Context, campaignResource, campaignID, finalURL string, plans []adGroupPlan, res *CampaignResult) error {
+	for i, plan := range plans {
+		if err := c.createAdGroupAndAd(ctx, campaignResource, campaignID, finalURL, plan, res); err != nil {
+			if len(plans) == 1 {
+				return err
+			}
+			return fmt.Errorf("ad group %d of %d (%d created before it): %w", i+1, len(plans), i, err)
+		}
+	}
 	return nil
 }
 

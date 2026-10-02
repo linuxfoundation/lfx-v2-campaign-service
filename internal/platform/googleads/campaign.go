@@ -221,6 +221,31 @@ type CampaignInput struct {
 	Sitelinks          []Sitelink
 	Callouts           []string
 	StructuredSnippets []StructuredSnippet
+	// AdGroups splits the campaign into one ad group per theme, each with its own
+	// keywords, bid and up to three responsive search ads. Optional and SEARCH
+	// ONLY (refused at preflight on Demand Gen, which builds its own ad group and
+	// no ad).
+	//
+	// Left empty, the campaign gets exactly the single ad group with a single ad
+	// this client has always built, from Headlines/Descriptions/Keywords/CPCBid
+	// above — and those same fields remain the per-group fallback when a spec
+	// omits one. See adgroup_plan.go for why more than one group is worth having:
+	// Google scores Ad Rank per keyword against the ad that would serve for it.
+	AdGroups []AdGroupSpec
+}
+
+// AdGroupResult is one ad group the cascade attempted, and everything created
+// under it. ID empty means the ad group's own mutate failed or was unconfirmed;
+// AdIDs empty means the group exists but its ads did not get created.
+type AdGroupResult struct {
+	Name  string   `json:"name"`
+	ID    string   `json:"id,omitempty"`
+	AdIDs []string `json:"adIds,omitempty"`
+	// KeywordCriteriaIDs/AudienceCriteriaIDs are this group's own criteria, with
+	// the same three-way ambiguity on empty that CampaignResult.GeoCriterionIDs
+	// documents: none asked for, the mutate failed, or it was unconfirmed.
+	KeywordCriteriaIDs  []string `json:"keywordCriteriaIds,omitempty"`
+	AudienceCriteriaIDs []string `json:"audienceCriteriaIds,omitempty"`
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
@@ -248,13 +273,29 @@ type CampaignResult struct {
 	// (createAdGroupAndAd in adgroup_ad.go). AdGroupID/AdID are empty on a
 	// pre-ad-group failure; AdID alone is empty if the ad group was created but
 	// the ad step failed/is unconfirmed.
+	//
+	// On a campaign with several ad groups these describe the FIRST one only, and
+	// AdID the first ad of it. They are kept populated so every reader that
+	// predates multi-group support keeps resolving to a real ad group rather than
+	// an empty string; AdGroups below is the complete picture.
 	AdGroupName string `json:"adGroupName,omitempty"`
 	AdGroupID   string `json:"adGroupId,omitempty"`
 	AdID        string `json:"adId,omitempty"`
+	// AdGroups is every ad group this cascade attempted, in creation order.
+	//
+	// It is the only field that says how far a multi-group cascade got: an entry
+	// is appended BEFORE the group's mutate is sent, so a group that failed is
+	// present with an empty ID, and a group never reached has no entry at all.
+	// Always at least one entry once the ad group stage started, including for a
+	// single-group campaign.
+	AdGroups []AdGroupResult `json:"adGroups,omitempty"`
 	// KeywordCriteriaIDs/AudienceCriteriaIDs are set by the GA-4 targeting step
 	// (createAdGroupTargeting in targeting.go) when the corresponding input list
 	// was non-empty. Both are empty if targeting was never attempted or failed
 	// before any criterion resource name could be parsed.
+	//
+	// Like the scalar ad group fields above, on a multi-group campaign these are
+	// the FIRST group's criteria; each group's own are in its AdGroups entry.
 	KeywordCriteriaIDs  []string `json:"keywordCriteriaIds,omitempty"`
 	AudienceCriteriaIDs []string `json:"audienceCriteriaIds,omitempty"`
 	// GeoCriterionIDs are the location criteria created for CampaignInput.GeoTargets
@@ -671,6 +712,13 @@ type campaignPreflight struct {
 	// callout or a sitelink with no destination must fail before anything is paid
 	// for. See validateAssetPlan.
 	assets assetPlan
+	// adGroups are the ad groups the cascade will create, always at least one. When
+	// the caller asked for none, it holds exactly the single group the fields above
+	// describe, so the cascade has one shape to walk rather than two. A duplicate
+	// group name or a fourth ad in a group fails here, before the budget mutate —
+	// discovering either mid-cascade strands the groups already created. See
+	// validateAdGroupPlans.
+	adGroups []adGroupPlan
 	// negativeKeywords are the validated campaign-level exclusions, and cpcBidMicros
 	// the validated ad-group bid already converted to micros (0 = unset). Both are
 	// computed here, with everything else, so a bad exclusion or an out-of-range bid
@@ -915,6 +963,21 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// The ad group list is resolved LAST of the pre-mutate block because it is the
+	// only validator that needs other preflight results: every per-group fallback
+	// — the composed name, the bid, the keywords, the audiences, the ad copy —
+	// comes from the single group the campaign-level fields already produced, so
+	// "inherit" means exactly what the single-group path would have done.
+	adGroups, err := validateAdGroupPlans(kind, in, adGroupPlan{
+		name:             adGroupName,
+		cpcBidMicros:     cpcBidMicros,
+		keywords:         keywords,
+		audienceSegments: audienceSegments,
+		ads:              []adPlan{{headlines: headlines, descriptions: descriptions}},
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	return &campaignPreflight{
 		amountMicros:     amountMicros,
@@ -929,6 +992,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		geo:              geo,
 		criteria:         criteria,
 		assets:           assets,
+		adGroups:         adGroups,
 		negativeKeywords: negativeKeywords,
 		cpcBidMicros:     cpcBidMicros,
 		startDateTime:    startDateTime,
@@ -965,11 +1029,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 	amountMicros, budgetName, campaignName := pf.amountMicros, pf.budgetName, pf.campaignName
-	finalURL, adGroupName := pf.finalURL, pf.adGroupName
-	headlines, descriptions := pf.headlines, pf.descriptions
-	keywords, audienceSegments := pf.keywords, pf.audienceSegments
+	// The ad group, its bid, its copy and its targeting are no longer read
+	// individually here: validateAdGroupPlans has already folded them into
+	// pf.adGroups as the first (and, absent CampaignInput.AdGroups, only) group,
+	// and the cascade walks that list rather than the scalars.
+	finalURL := pf.finalURL
 	geo := pf.geo
-	negativeKeywords, cpcBidMicros := pf.negativeKeywords, pf.cpcBidMicros
+	negativeKeywords := pf.negativeKeywords
 	startDateTime, endDateTime := pf.startDateTime, pf.endDateTime
 
 	var steps []string
@@ -1170,13 +1236,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	// The campaign+budget are now committed. GA-3: extend the shell with a PAUSED
-	// ad group + responsive search ad. Any failure here (ambiguous, duplicate, or
-	// definite) is returned ALONGSIDE the now-non-nil res — the campaign/budget
-	// exist regardless, so this can never become a (nil, err) return past this
-	// point. The caller (GoogleAdsDispatcher.Dispatch) treats a non-nil result +
-	// error as "retain the claim, record the partial" — the same contract already
-	// used for an ambiguous/duplicate budget or campaign.
-	if err := c.createAdGroupAndAd(ctx, campaignResource, campaignID, finalURL, headlines, descriptions, adGroupName, cpcBidMicros, keywords, audienceSegments, res); err != nil {
+	// ad group + responsive search ad per planned group. Any failure here
+	// (ambiguous, duplicate, or definite) is returned ALONGSIDE the now-non-nil
+	// res — the campaign/budget exist regardless, so this can never become a
+	// (nil, err) return past this point. The caller (GoogleAdsDispatcher.Dispatch)
+	// treats a non-nil result + error as "retain the claim, record the partial" —
+	// the same contract already used for an ambiguous/duplicate budget or campaign.
+	//
+	// The plan line is recorded BEFORE the cascade runs, not after: a failure on
+	// the third of four groups returns a partial result, and the operator reading
+	// it needs to know four were intended. res.Steps is appended to directly from
+	// here on — createAdGroupAndAd and the targeting step do the same, so the
+	// local `steps` slice is no longer the live one past this point.
+	if len(pf.adGroups) > 1 {
+		res.Steps = append(res.Steps, "Ad group split planned: "+adGroupPlanStep(pf.adGroups))
+	}
+	if err := c.createAdGroupsAndAds(ctx, campaignResource, campaignID, finalURL, pf.adGroups, res); err != nil {
 		return res, err
 	}
 	return res, nil
