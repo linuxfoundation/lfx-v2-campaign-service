@@ -1310,10 +1310,14 @@ func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, project
 	}
 	// Before any request is issued: the account the caller named must be the one this
 	// project's connection manages. See requireMetaManagedAccount.
-	if _, aerr := requireMetaManagedAccount(res, projectID, accountID); aerr != nil {
+	// The guard's trimmed return is what flows onward, not the caller's raw value: one
+	// validated value, used once. See requireLinkedInManagedAccount's call site for why the
+	// caller's string would only be safe by leaning on ValidateAccountID a second time.
+	scopedAccountID, aerr := requireMetaManagedAccount(res, projectID, accountID)
+	if aerr != nil {
 		return nil, aerr
 	}
-	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
+	rows, lerr := client.ListAccountCampaigns(ctx, scopedAccountID, days)
 	if lerr != nil {
 		// Defense in depth only, mirroring reddit.go's equivalent remap: reachable if
 		// ListAccountCampaigns' own shape check ever diverges from ValidateAccountID's above it.

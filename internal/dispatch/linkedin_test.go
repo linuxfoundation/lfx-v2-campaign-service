@@ -1460,12 +1460,14 @@ func TestLinkedIn_ListAccountCampaignMetrics_RefusesSystemFallback(t *testing.T)
 // vendor's current auth behaviour. Local review caught it by running with the network
 // blocked, where both permitted arms failed.
 //
-// The permitted arms assert on the PATH the request reached, which is the strongest
-// assertion available here: it pins that the account forwarded upstream is the one the
-// connection stores, so a guard that validated the stored id but forwarded the caller's
-// would fail. What no permitted-path assertion can detect is a guard that is MISSING
-// altogether — "the read proceeds to the stored account" is equally true with no guard —
-// and only the refusal arms are sensitive to that, which mutation confirms.
+// The permitted arms assert on the PATH the request reached. Stated precisely, because two
+// earlier versions of this comment claimed more than the assertion delivers: it proves the
+// request WAS issued and carried the matching account. It does NOT discriminate stored-from-
+// caller — the guard passes only when the two are equal after trimming, so no assertion on
+// this path can tell them apart — and it cannot detect a guard that is missing altogether,
+// since "the read proceeds" is equally true with none. The refusal arms carry both of those:
+// they assert the stub was never called at all, and mutation confirms they fail when the
+// guard call is removed.
 func TestLinkedIn_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 	cases := []struct {
 		name      string

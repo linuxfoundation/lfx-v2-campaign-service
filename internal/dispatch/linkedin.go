@@ -775,13 +775,18 @@ func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, pro
 	}
 	// Before the client is built, let alone a request issued: the account the caller named
 	// must be the one this project's connection manages. See requireLinkedInManagedAccount.
-	if _, aerr := requireLinkedInManagedAccount(res, projectID, accountID); aerr != nil {
+	// The guard's trimmed return is what flows onward, not the caller's raw value: one
+	// validated value, used once. Forwarding the caller's string instead would be correct
+	// only because each platform's ValidateAccountID already refuses a padded id upstream —
+	// a second validator this code would then depend on without saying so.
+	scopedAccountID, aerr := requireLinkedInManagedAccount(res, projectID, accountID)
+	if aerr != nil {
 		return nil, aerr
 	}
 	// RuntimeConfig is left ZERO, same rationale as ListAccounts: the monitor read is scoped
 	// to accountID by the platform-client call itself, not by the client's own AccountConfig.
 	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), linkedin.RuntimeConfig{}, d.opts...)
-	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
+	rows, lerr := client.ListAccountCampaigns(ctx, scopedAccountID, days)
 	if lerr != nil {
 		// Defense in depth only, mirroring reddit.go's equivalent remap: reachable if
 		// ListAccountCampaigns' own shape check ever diverges from ValidateAccountID's above it.
