@@ -1742,17 +1742,17 @@ func TestLastSent_ADegenerateEventNameStillSweepsOnAUsableBrand(t *testing.T) {
 func TestLastSent_ALegacyIDForAListAlreadyListedIsNotRepeated(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.URL.Path == hubSpotTokenInfoPath:
+		switch r.URL.Path {
+		case hubSpotTokenInfoPath:
 			_, _ = io.WriteString(w, `{"hubId":8112310}`)
-		case r.URL.Path == "/marketing/v3/emails":
+		case "/marketing/v3/emails":
 			_, _ = io.WriteString(w, `{"results":[{"id":"e1","name":"AGNTCon Japan Invite","state":"PUBLISHED",`+
 				`"updatedAt":"2026-09-01T00:00:00Z","publishDate":"2026-02-01T09:00:00Z"}]}`)
-		case r.URL.Path == "/marketing/v3/emails/e1":
+		case "/marketing/v3/emails/e1":
 			_, _ = io.WriteString(w, `{"id":"e1","publishDate":"2026-02-01T09:00:00Z","to":{`+
 				`"contactIlsLists":{"include":[500],"exclude":[600]},`+
 				`"contactLists":{"include":[50,51],"exclude":[60]}}}`)
-		case r.URL.Path == "/crm/v3/lists/idmapping":
+		case "/crm/v3/lists/idmapping":
 			switch r.URL.Query().Get("legacyListId") {
 			case "50":
 				_, _ = io.WriteString(w, `{"legacyListId":"50","listId":"500"}`)
@@ -1761,11 +1761,11 @@ func TestLastSent_ALegacyIDForAListAlreadyListedIsNotRepeated(t *testing.T) {
 			default:
 				w.WriteHeader(http.StatusNotFound)
 			}
-		case r.URL.Path == "/crm/v3/lists/500":
+		case "/crm/v3/lists/500":
 			_, _ = io.WriteString(w, `{"list":{"listId":"500","name":"AGNTCon Master","objectTypeId":"0-1","size":1200}}`)
-		case r.URL.Path == "/crm/v3/lists/600":
+		case "/crm/v3/lists/600":
 			_, _ = io.WriteString(w, `{"list":{"listId":"600","name":"LF Global Opt-Outs","objectTypeId":"0-1","size":90}}`)
-		case r.URL.Path == "/contacts/v1/lists/51":
+		case "/contacts/v1/lists/51":
 			// Unmapped, and a name already present: still a duplicate.
 			_, _ = io.WriteString(w, `{"name":"agntcon master"}`)
 		default:
