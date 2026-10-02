@@ -623,11 +623,16 @@ const campaignDateOnlyLayout = "2006-01-02"
 // collapsing to a zero-length instant at midnight.
 //
 // Only ONE cross-field rule is enforced, and only when both dates are present: the
-// end must be after the start. There is deliberately no "start date is in the past"
-// check, which the meta client does have. Google interprets these in the ad ACCOUNT's
-// timezone; this client does not know that timezone, so a UTC "today" would refuse a
-// start date that is still today for an account several hours behind — refusing a
-// create Google would have accepted.
+// end must not be BEFORE the start. The same day on both sides is accepted on
+// purpose — with the boundaries above it is a well-defined 24-hour flight, which is
+// what a one-day event promo wants, and rejecting it would contradict the whole
+// reason those boundaries are explicit.
+//
+// There is deliberately no "start date is in the past" check, which the meta client
+// does have. Google interprets these in the ad ACCOUNT's timezone; this client does
+// not know that timezone, so a UTC "today" would refuse a start date that is still
+// today for an account several hours behind — refusing a create Google would have
+// accepted.
 func validateFlightWindow(startDate, endDate string) (startDateTime, endDateTime string, err error) {
 	var start, end time.Time
 	if startDate != "" {
@@ -650,8 +655,8 @@ func validateFlightWindow(startDate, endDate string) (startDateTime, endDateTime
 		}
 		endDateTime = endDate + " 23:59:59"
 	}
-	if startDate != "" && endDate != "" && !end.After(start) {
-		return "", "", fmt.Errorf("google-ads campaign end date %s must be after start date %s", endDate, startDate)
+	if startDate != "" && endDate != "" && end.Before(start) {
+		return "", "", fmt.Errorf("google-ads campaign end date %s must not be before start date %s", endDate, startDate)
 	}
 	return startDateTime, endDateTime, nil
 }
@@ -812,7 +817,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
-	cpcBidMicros, _, err := validateCPCBid(in.CPCBid)
+	cpcBidMicros, err := validateCPCBid(in.CPCBid)
 	if err != nil {
 		return nil, err
 	}

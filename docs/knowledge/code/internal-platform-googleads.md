@@ -937,7 +937,12 @@ whole units of the ad ACCOUNT's currency — the same denomination as `Budget`,
 with no FX conversion — converted to `adGroup.cpcBidMicros` by
 `validateCPCBid`. `0` means UNSET and omits the field entirely rather than
 inventing a default: an explicit `"cpcBidMicros": 0` is a different request (a
-zero bid), not an absent one. The accepted window is `0.01`..`1000.0`, the same
+zero bid), not an absent one. The omission is performed by `omitempty` on
+`adGroupCreate.CpcBidMicros`, not by a presence flag out of the validator —
+`minCPCBid` is what stops the two meanings colliding, since an accepted bid
+never rounds below 10000 micros. (`internal/platform/microsoft/targeting.go`'s
+`validateCpcBid` does return such a flag; its payload is not `omitempty`-driven,
+so it has to.) The accepted window is `0.01`..`1000.0`, the same
 window `internal/platform/microsoft/targeting.go` uses, and NaN/Inf are
 rejected explicitly because they pass every ordered comparison. The window is
 not a Google platform limit — Google documents no account-currency minimum to
@@ -966,7 +971,10 @@ Validation is a format regex THEN `time.Parse`, not `time.Parse` alone:
 `time.Parse("2006-01-02", …)` accepts single-digit months and days, so
 `2026-1-5` would otherwise pass and reach Google in a shape it rejects (the
 meta client pairs them for the same reason). The only cross-check is
-`end.After(start)` when both are present. There is deliberately **no
+`!end.Before(start)` when both are present — a SAME-DAY window is accepted,
+because the explicit day boundaries make it a real 24-hour flight (a one-day
+event promo), and refusing it would both contradict the reason those boundaries
+exist and refuse a create Google accepts. There is deliberately **no
 past-start-date check**, diverging from the meta client: Google interprets
 these in the ad account's timezone, which this client does not know, so a UTC
 "today" would refuse creates Google accepts — over-refusal again being the

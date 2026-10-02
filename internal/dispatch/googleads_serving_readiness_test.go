@@ -61,16 +61,30 @@ func servingServers(t *testing.T) ([]googleads.Option, *servingCapture) {
 			cap.mu.Lock()
 			cap.campaignCriteria = body
 			cap.mu.Unlock()
-			_, _ = io.WriteString(w, criteriaResults(t, body, "campaignCriteria", "222"))
+			writeCriteria(t, w, body, "campaignCriteria", "222")
 		case strings.HasSuffix(r.URL.Path, "adGroupCriteria:mutate"):
 			body, _ := io.ReadAll(r.Body)
-			_, _ = io.WriteString(w, criteriaResults(t, body, "adGroupCriteria", "333"))
+			writeCriteria(t, w, body, "adGroupCriteria", "333")
 		default:
 			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
 		}
 	}))
 	t.Cleanup(apiSrv.Close)
 	return []googleads.Option{googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL)}, cap
+}
+
+// writeCriteria echoes the criteria results from inside a handler goroutine, where
+// t.Fatalf (FailNow) must never be called. A malformed body is reported with
+// t.Errorf and answered with a 500, which fails the create loudly rather than
+// hanging the server while a deferred Close runs.
+func writeCriteria(t *testing.T, w http.ResponseWriter, body []byte, kind, parentID string) {
+	out, err := criteriaResultsOrErr(body, kind, parentID)
+	if err != nil {
+		t.Errorf("decode %s request: %v (body=%s)", kind, err, body)
+		http.Error(w, "bad criteria request", http.StatusInternalServerError)
+		return
+	}
+	_, _ = io.WriteString(w, out)
 }
 
 func servingCreate(t *testing.T, body []byte) map[string]any {

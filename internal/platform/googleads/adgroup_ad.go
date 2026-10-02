@@ -89,11 +89,18 @@ type adGroupCreate struct {
 // validateCPCBid validates a caller-supplied ad-group CPC bid and converts it to
 // Google's micros.
 //
-// 0 means UNSET and is returned as (0, false, nil) — no default is invented. This
-// is the same contract the Microsoft adapter's validateCpcBid carries, and it
-// matters more here than it looks: the alternative, picking some house default
-// when the caller says nothing, would silently change the bid on every campaign
-// created before this field existed.
+// 0 means UNSET and is returned as (0, nil) — no default is invented. The
+// alternative, picking some house default when the caller says nothing, would
+// silently change the bid on every campaign created before this field existed.
+//
+// The omission itself is done by `json:"cpcBidMicros,omitempty"` on adGroupCreate,
+// NOT by any flag this function returns: 0 micros reaches the marshaller and the
+// field disappears. minCPCBid is what keeps those two meanings from colliding — an
+// accepted bid is at least 0.01, so it never rounds to fewer than 10000 micros and
+// can never be mistaken for the unset zero. Lowering minCPCBid far enough to break
+// that (below 0.0000005) would need an explicit presence flag threaded to the
+// payload instead; the Microsoft adapter's validateCpcBid returns exactly such a
+// flag because its own payload is not omitempty-driven.
 //
 // NaN/Inf are rejected before any range comparison, because every comparison
 // against NaN is false — a NaN bid would slip past both bounds and then round to
@@ -105,27 +112,26 @@ type adGroupCreate struct {
 // 0 — this function's "caller supplied no bid" — into an error. Routing through it
 // would make every create that omits cpcBid fail, which is every caller predating
 // this field. The bounds differ too (0.01..1000 in the account currency, versus a
-// budget's 1e9 ceiling with no floor), and so does the arity: the `set` return is
-// what lets the caller omit cpcBidMicros rather than send a zero bid. Only
-// microsPerUnit and the round-don't-truncate rule are genuinely shared, and both are
-// already single definitions.
-func validateCPCBid(bid float64) (micros int64, set bool, err error) {
+// budget's 1e9 ceiling with no floor). Only microsPerUnit and the
+// round-don't-truncate rule are genuinely shared, and both are already single
+// definitions.
+func validateCPCBid(bid float64) (micros int64, err error) {
 	if bid == 0 {
-		return 0, false, nil
+		return 0, nil
 	}
 	if math.IsNaN(bid) || math.IsInf(bid, 0) {
-		return 0, false, fmt.Errorf("google-ads: cpc bid must be a finite number, got %v", bid)
+		return 0, fmt.Errorf("google-ads: cpc bid must be a finite number, got %v", bid)
 	}
 	if bid < minCPCBid {
-		return 0, false, fmt.Errorf("google-ads: cpc bid must be at least %.2f in the account currency, got %.4f", minCPCBid, bid)
+		return 0, fmt.Errorf("google-ads: cpc bid must be at least %.2f in the account currency, got %.4f", minCPCBid, bid)
 	}
 	if bid > maxCPCBid {
-		return 0, false, fmt.Errorf("google-ads: cpc bid %.2f exceeds the maximum %.0f in the account currency", bid, maxCPCBid)
+		return 0, fmt.Errorf("google-ads: cpc bid %.2f exceeds the maximum %.0f in the account currency", bid, maxCPCBid)
 	}
 	// math.Round, not truncation, for the same reason the budget conversion rounds:
 	// a bid of 0.07 is 0.07000000000000001 in float64, and truncating micros would
 	// bill a cent less than the caller asked for on every such value.
-	return int64(math.Round(bid * microsPerUnit)), true, nil
+	return int64(math.Round(bid * microsPerUnit)), nil
 }
 
 // adGroupStatusUpdate is the update payload for adGroups:mutate (status-only toggle,

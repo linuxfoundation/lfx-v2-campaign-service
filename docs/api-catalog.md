@@ -623,6 +623,49 @@ geoTargets?: string[]           — OPTIONAL ISO 3166-1 alpha-2 country codes th
                                   That is the pre-LFXV2-3283 behaviour, preserved so callers predating
                                   this field keep working; the dispatcher logs a WARN when it happens.
                                   Supply it for any campaign with a target region.
+negativeKeywords?:              — OPTIONAL Search keyword EXCLUSIONS, attached at CAMPAIGN level (not
+  {text, matchType}[]             ad group), so they keep applying to any ad group a human adds later.
+                                  Same `text`/`matchType` rules as `keywords` above (≤80 runes; EXACT,
+                                  PHRASE or BROAD, case-insensitive), at most 60 entries, deduped
+                                  independently of the positive list — a term may legitimately appear
+                                  in both. An empty text or unsupported matchType fails the job BEFORE
+                                  any Google Ads request is made.
+
+                                  SEARCH only: Demand Gen has no keyword criteria, and this field is
+                                  IGNORED on that channel rather than refused — the same way `keywords`
+                                  already is. Omitted/empty, no exclusions are attached and the campaign
+                                  is eligible for every query its positive keywords match.
+cpcBid?: number                 — OPTIONAL manual CPC bid for the ad group, in whole units of the ad
+                                  ACCOUNT's currency (the same no-FX-conversion caveat `budget`
+                                  carries). Accepted range 0.01..1000.0 inclusive; NaN/Inf or a value
+                                  outside it fails the job before any Google Ads request. The range is
+                                  deliberately loose — it exists to catch a micros-vs-units mistake,
+                                  not to mirror a Google limit.
+
+                                  0 (or omitted) means UNSET: no bid field is sent and the ad group
+                                  inherits whatever Google derives, which is what every campaign
+                                  created before this field existed did. An explicit 0 is NOT sent as
+                                  a zero bid. SEARCH only — Demand Gen bids via targetSpend and
+                                  rejects manualCpc.
+startDate?: string              — OPTIONAL campaign flight window as `YYYY-MM-DD` (spelled as in
+endDate?: string                  `metaConfig`/`redditConfig`). Each is INDEPENDENTLY optional: an
+                                  omitted `startDate` leaves Google's default (the campaign starts
+                                  today) and an omitted `endDate` leaves it running until someone
+                                  stops it. When both are present, the end must not be BEFORE the
+                                  start — the same day on both sides is accepted and is a full 24-hour
+                                  flight.
+
+                                  The format is strict: `2026-8-1` is refused, because Go's date parse
+                                  would otherwise accept it and silently render back a date the caller
+                                  never wrote. There is deliberately no "start date is in the past"
+                                  check — Google interprets these in the ad ACCOUNT's timezone, which
+                                  this service does not know, so a UTC "today" would refuse a start
+                                  date Google accepts for an account several hours behind.
+
+                                  Applies to BOTH channels: a flight window is a property of the
+                                  campaign, not of the channel. Sent as v23's
+                                  `startDateTime`/`endDateTime` with the account-timezone day
+                                  boundaries (`00:00:00` / `23:59:59`).
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of
