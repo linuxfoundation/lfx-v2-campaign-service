@@ -1,6 +1,6 @@
 # 2026-10-01 A/B test on a time-zone email is refused up front
 
-**Feature** — Ticking "A/B test" on an email cloned from a template that sends "based on recipients'
+**Update** — Ticking "A/B test" on an email cloned from a template that sends "based on recipients'
 time zones" produced a single email and no explanation. HubSpot does not allow the two together:
 `POST /marketing/v3/emails/ab-test/create-variation` answers HTTP 400 for a `LOCALTIME_EMAIL`. The
 send mode is a property of the email and `CloneEmail` copies it, so the template picked as

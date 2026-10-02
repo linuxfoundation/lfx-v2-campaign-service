@@ -1126,8 +1126,13 @@ func (x *AudienceExplorer) listBriefs(ctx context.Context, client *hubspot.Clien
 		if !brief.Missing {
 			brief.HubSpotURL = client.ListURL(brief.ListID)
 		}
+		// The name-based drop applies ONLY to a brief resolved from a legacy id, which is what
+		// it was for: the same list reached through both the v3 and legacy APIs appears twice
+		// under one name. Applied to every brief it also collapsed two DISTINCT v3 lists that
+		// happen to share a display name -- legal in HubSpot -- and under-reported the prior
+		// send's real selection. v3 ids are deduped by id alone, above.
 		if name := strings.ToLower(strings.TrimSpace(brief.Name)); name != "" {
-			if _, dup := seenNames[name]; dup {
+			if _, dup := seenNames[name]; dup && brief.ResolvedFromLegacyID != "" {
 				return
 			}
 			seenNames[name] = struct{}{}
@@ -1452,6 +1457,21 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 	}
 	masterName, suppressionName = names.master, names.suppression
 	if names.existingMaster != nil {
+		// REFUSED rather than reused when exclusions were requested and the tagged suppression
+		// list is gone. The master is fingerprinted with the selection, so finding it means this
+		// exact selection was composed before -- WITH its suppression. If that list has since
+		// been deleted or renamed in the portal, reusing the master alone returns success with
+		// `Suppression == nil`, `audienceFromCompose` records the audience with no suppression
+		// ids, and the operator believes exclusions apply to a send that now has none. For an
+		// exclusion list that is an opt-out roster, that emails people who asked not to be.
+		//
+		// Falling through to create is wrong too: the master already exists under this
+		// fingerprint, so a create would duplicate it. The honest answer is to refuse and say
+		// which list is missing, so the operator can restore or rename it.
+		if len(exclude) > 0 && names.existingSuppression == nil {
+			return nil, fmt.Errorf("audience compose: the master list %q already exists for this selection but its suppression list %q is missing from the portal, so the exclusions cannot be reapplied: %w",
+				names.master, names.suppression, audience.ErrListNotFound)
+		}
 		outcome := &audience.ComposeOutcome{
 			Master:        audience.ComposedList{ListRow: listRow(names.existingMaster)},
 			SourceListIDs: include,

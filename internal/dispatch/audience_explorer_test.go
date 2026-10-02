@@ -1890,6 +1890,40 @@ func TestComposeMaster_SameSelectionAgain_ReusesItsEarlierLists(t *testing.T) {
 	assert.Contains(t, outcome.Master.HubSpotURL, "/objectLists/40001/filters")
 }
 
+// TestComposeMaster_ReuseRefusesWhenTheSuppressionListIsGone pins the fail-closed half of the
+// reuse path.
+//
+// Finding the fingerprinted master means this exact selection was composed before -- WITH its
+// suppression, since the fingerprint covers both the includes and the excludes. If that
+// suppression list has since been deleted or renamed in the portal, reusing the master alone
+// returned success with `Suppression == nil`, the audience was recorded with no suppression
+// ids, and the operator believed exclusions applied to a send that had none. For an exclusion
+// list that is an opt-out roster, that emails people who asked not to be.
+//
+// Falling through to create would be wrong too: the master already exists under this
+// fingerprint, so a create duplicates it. Refusing and naming the missing list is the only
+// answer that leaves the operator able to act.
+func TestComposeMaster_ReuseRefusesWhenTheSuppressionListIsGone(t *testing.T) {
+	const name = "AGNTCon Japan - Master"
+	tag := audience.SelectionFingerprint([]string{"111"}, []string{"222"})
+	// The tagged MASTER exists; its tagged suppression does NOT.
+	srv, created := composeNameServer(t, map[string]string{
+		name:                                "31349",
+		audience.WithFingerprint(name, tag): "40001",
+	})
+	x := composeExplorer(srv.URL)
+
+	outcome, err := x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs: []string{"111"}, ExcludeListIDs: []string{"222"}, Name: name, RecordUnderBriefID: "brief-1",
+	})
+
+	require.Error(t, err, "a reuse that cannot reapply the exclusions must not report success")
+	assert.ErrorIs(t, err, audience.ErrListNotFound)
+	assert.Contains(t, err.Error(), "suppression", "the operator needs to know WHICH list is missing")
+	assert.Nil(t, outcome)
+	assert.Empty(t, created(), "refusing must not duplicate the master that already exists")
+}
+
 // TestAttachExisting_VerifiesEveryListAndCreatesNothing: reusing an earlier send's lists
 // reads each id back, stamps the portal, and never POSTs a create.
 func TestAttachExisting_VerifiesEveryListAndCreatesNothing(t *testing.T) {
