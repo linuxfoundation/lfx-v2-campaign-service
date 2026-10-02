@@ -422,8 +422,10 @@ func campaignFromGoogleAds(ctx context.Context, r *googleads.CampaignResult, cfg
 	}
 	// Persist the caller-supplied budget + validated config, mirroring the sibling adapters
 	// (a NULL budget/type/config_snapshot row otherwise loses the campaign's configuration).
-	// GA's shell uses a DAILY budget (no lifetime flag) and sets no flight dates here — those
-	// land with GA-3+; ConfigSnapshot captures the validated config regardless.
+	// GA's shell uses a DAILY budget (no lifetime flag). The flight window is OPTIONAL and
+	// persists whatever the config supplied -- nil columns mean the caller sent none, not
+	// that this path cannot record them. ConfigSnapshot captures the validated config
+	// regardless.
 	applyCampaignConfig(ctx, c, cfg.Budget, false, cfg.StartDate, cfg.EndDate, cfg)
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT
