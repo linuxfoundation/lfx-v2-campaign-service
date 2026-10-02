@@ -154,6 +154,13 @@ type audienceBackendSetter interface {
 // endpoints that serve 503 for the life of the pod.
 type exploreBackendSetter interface {
 	SetExplorer(service.AudienceExplorer)
+	// SetAudienceRepo and SetBriefRepo are part of this interface for the same reason
+	// SetBriefRepo/SetBuilder are part of audienceBackendSetter: a compose carrying a
+	// brief_id needs both, and a cold-started pod that bound only the explorer would
+	// serve every ATTACHING compose a 503 while every exploratory one succeeded --
+	// looking fully wired right up to the request that matters.
+	SetAudienceRepo(domain.AudienceRepository)
+	SetBriefRepo(domain.BriefRepository)
 }
 
 // notReady is a ReadinessChecker that always reports not-ready. It is wired as
@@ -409,7 +416,7 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 		c.Connections = c.newConnectionService(nil, nil)
 		c.Briefs = c.newBriefService(nil, nil, nil, nil)
 		c.Audiences = c.newAudienceService(nil, nil)
-		c.Explore = c.newAudienceExploreService()
+		c.Explore = c.newAudienceExploreService(nil, nil)
 		slog.Info("dependency container initialized (no database)")
 		return c, nil
 	}
@@ -462,7 +469,7 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 	connections := c.newConnectionService(nil, enc)
 	briefs := c.newBriefService(nil, nil, nil, nil)
 	auds := c.newAudienceService(nil, nil)
-	expl := c.newAudienceExploreService()
+	expl := c.newAudienceExploreService(nil, nil)
 	c.Service = campaign
 	c.Connections = connections
 	c.Briefs = briefs
@@ -626,9 +633,14 @@ func (c *Container) newAudienceService(repo domain.AudienceRepository, briefs do
 // verifier and, when the platform builder exists, an explorer over it. Same one-helper rule
 // as newBriefService: the explorer is opt-in via SetExplorer, so a path constructing the
 // service directly would compile, mount and serve a permanent 503.
-func (c *Container) newAudienceExploreService() *service.AudienceExploreService {
+func (c *Container) newAudienceExploreService(audienceRepo domain.AudienceRepository, briefRepo domain.BriefRepository) *service.AudienceExploreService {
 	s := service.NewAudienceExploreService(c.newAudienceExplorer())
 	s.SetTokenVerifier(c.tokenVerifier)
+	// Both may be nil in the no-database mode; the setters take them as-is and the
+	// recording half of compose reports its own typed 503, exactly as the exploratory
+	// endpoints do when there is no explorer.
+	s.SetAudienceRepo(audienceRepo)
+	s.SetBriefRepo(briefRepo)
 	return s
 }
 
@@ -927,7 +939,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	bindBriefLiveBackends(briefSvc, pool, briefRepo, campaignRepo, jobRepo, orch, repo, enc, audienceRepo, dispatchers)
 	c.Briefs = briefSvc
 	c.Audiences = c.newAudienceService(audienceRepo, briefRepo)
-	c.Explore = c.newAudienceExploreService()
+	c.Explore = c.newAudienceExploreService(audienceRepo, briefRepo)
 
 	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
 	// dispatch goroutine lived only in that process, so fail them forward now
@@ -1017,6 +1029,11 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// no explorer, so without this every audience-builder route stays 503 for the
 			// life of a pod that merely cold-started. The builder was created just above.
 			xb.SetExplorer(c.newAudienceExplorer())
+			// And the same gap once more for the RECORDING half of compose: without these
+			// a cold-started pod composes lists happily and then refuses to attach any of
+			// them for the life of the pod.
+			xb.SetAudienceRepo(audienceRepo)
+			xb.SetBriefRepo(briefRepo)
 			// Derive from ctx (the init context Close cancels), NOT context.Background():
 			// if shutdown begins while FailStuckJobs is blocked on the DB, cancelling
 			// ctx interrupts the statement so Close's <-c.initDone wait can't overrun the

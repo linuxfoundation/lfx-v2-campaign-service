@@ -277,6 +277,32 @@ var (
 	// would report the wrong missing capability to the caller.
 	ErrCampaignSearchUnsupported = errors.New("campaign search is not supported for this platform")
 
+	// ErrABTestUnsupportedSendType is returned by the create-time pre-check when a campaign asks
+	// for an A/B test but its source email is set to send "based on recipients' time zones".
+	// HubSpot does not allow the two together (its ab-test/create-variation endpoint answers 400
+	// for such an email), and the send mode is inherited from the source email, so the request
+	// as made can never produce an A/B test.
+	//
+	// It is raised SYNCHRONOUSLY, before the create job is accepted. Dispatch runs after a 202,
+	// where every failure is deliberately collapsed to one opaque job error, so a refusal there
+	// could never tell the caller WHICH setting to change. At the create seam it surfaces as a
+	// 409 whose `reason` is "ab_test_unsupported_send_type", which a caller can act on.
+	//
+	// The message is fixed, static text: it is what reaches the caller, so it must never embed a
+	// source email id, a portal id or anything HubSpot returned.
+	ErrABTestUnsupportedSendType = errors.New("A/B testing is not available for emails sent based on recipients' time zones")
+
+	// ErrPreflightNotApplicable is returned by a CreatePreflighter that looked at the request and
+	// had nothing to check, so it made NO platform call. It is neither a refusal nor a failure:
+	// the orchestrator skips the platform without logging it and without recording an upstream
+	// call. Recording it would put a near-zero "ok" sample on the upstream latency histogram for
+	// every create that did not ask for what the check guards, pulling every quantile toward zero
+	// and diluting the error rate of the lookups that do reach the platform. A check that DID look
+	// and found nothing wrong returns nil instead, and that one is recorded.
+	//
+	// Internal to the create pre-check: it is never mapped to a status and never reaches a caller.
+	ErrPreflightNotApplicable = errors.New("create pre-check has nothing to check for this request")
+
 	// ErrAccountsUnsupported indicates the platform has no account-listing capability
 	// wired. The platform is never contacted.
 	//

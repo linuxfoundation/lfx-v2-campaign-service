@@ -143,6 +143,32 @@ func (c *Client) LegacyListName(ctx context.Context, listID string) string {
 	return strings.TrimSpace(resp.Name)
 }
 
+// ListIDForLegacy maps a legacy v1 list id to its ILS (v3) list id, or "" when HubSpot
+// has no mapping for it.
+//
+// A marketing email records the SAME list under both ids -- contactIlsLists and the legacy
+// contactLists -- so a caller that names both sides separately shows every list twice, the
+// legacy copy with no size. Like LegacyListName this is a best-effort enrichment: any
+// failure is "no mapping", and the caller falls back to the legacy name.
+func (c *Client) ListIDForLegacy(ctx context.Context, legacyID string) string {
+	if legacyID = strings.TrimSpace(legacyID); legacyID == "" {
+		return ""
+	}
+	q := url.Values{}
+	q.Set("legacyListId", legacyID)
+	raw, err := c.doRequest(ctx, http.MethodGet, listsPath+"/idmapping?"+q.Encode(), nil, true)
+	if err != nil {
+		return ""
+	}
+	var resp struct {
+		ListID json.Number `json:"listId"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(resp.ListID.String())
+}
+
 // IsNotFound reports whether err is a definite 404 from HubSpot.
 //
 // Separate from IsDefiniteRejection because the two mean different things to a

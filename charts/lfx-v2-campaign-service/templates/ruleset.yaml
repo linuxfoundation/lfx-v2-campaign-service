@@ -190,6 +190,7 @@ spec:
           - path: /projects/:projectId/audience-builder/existing-master-lists
           - path: /projects/:projectId/audience-builder/preview-count
           - path: /projects/:projectId/audience-builder/compose-master
+          - path: /projects/:projectId/audience-builder/attach-existing
           - path: /projects/:projectId/audience-builder/qa/run
       execute:
         - authenticator: oidc

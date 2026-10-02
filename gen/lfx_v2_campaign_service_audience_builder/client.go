@@ -23,12 +23,13 @@ type Client struct {
 	GetExistingAudienceMasterListsEndpoint goa.Endpoint
 	PreviewAudienceCountEndpoint           goa.Endpoint
 	ComposeAudienceMasterEndpoint          goa.Endpoint
+	AttachExistingAudienceEndpoint         goa.Endpoint
 	RunAudienceQaEndpoint                  goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-audience-builder" service
 // client given the endpoints.
-func NewClient(getAudienceBuilderCapabilities, discoverAudienceLists, searchAudienceLists, getAudienceSuppressionLists, getAudienceLastSent, getExistingAudienceMasterLists, previewAudienceCount, composeAudienceMaster, runAudienceQa goa.Endpoint) *Client {
+func NewClient(getAudienceBuilderCapabilities, discoverAudienceLists, searchAudienceLists, getAudienceSuppressionLists, getAudienceLastSent, getExistingAudienceMasterLists, previewAudienceCount, composeAudienceMaster, attachExistingAudience, runAudienceQa goa.Endpoint) *Client {
 	return &Client{
 		GetAudienceBuilderCapabilitiesEndpoint: getAudienceBuilderCapabilities,
 		DiscoverAudienceListsEndpoint:          discoverAudienceLists,
@@ -38,6 +39,7 @@ func NewClient(getAudienceBuilderCapabilities, discoverAudienceLists, searchAudi
 		GetExistingAudienceMasterListsEndpoint: getExistingAudienceMasterLists,
 		PreviewAudienceCountEndpoint:           previewAudienceCount,
 		ComposeAudienceMasterEndpoint:          composeAudienceMaster,
+		AttachExistingAudienceEndpoint:         attachExistingAudience,
 		RunAudienceQaEndpoint:                  runAudienceQa,
 	}
 }
@@ -202,6 +204,26 @@ func (c *Client) ComposeAudienceMaster(ctx context.Context, p *ComposeAudienceMa
 		return
 	}
 	return ires.(*AudienceComposeMasterResult), nil
+}
+
+// AttachExistingAudience calls the "attach-existing-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+// AttachExistingAudience may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) AttachExistingAudience(ctx context.Context, p *AttachExistingAudiencePayload) (res *AudienceAttachExistingResult, err error) {
+	var ires any
+	ires, err = c.AttachExistingAudienceEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*AudienceAttachExistingResult), nil
 }
 
 // RunAudienceQa calls the "run-audience-qa" endpoint of the

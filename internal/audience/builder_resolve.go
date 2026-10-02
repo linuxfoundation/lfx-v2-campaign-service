@@ -3,7 +3,10 @@
 
 package audience
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // ---------------------------------------------------------------------------
 // Name-search predicates (LFXV2-2770)
@@ -37,12 +40,37 @@ func SharesKeyword(name string, keywords map[string]struct{}) bool {
 // MatchesStandardSuppression accepts a hit for one of the fixed portfolio-wide
 // hygiene lists.
 //
-// The search term must appear in the name verbatim. These names are fixed by
-// convention ("LF Events GDPR Suppression"), so a looser test buys nothing and
-// would let "LF Events Suppression List" satisfy the GDPR row — which an operator
-// would then read as GDPR suppression being applied when it is not.
+// The name must EQUAL the search term once both are normalised: lowercased, quarter
+// codes ("26Q1", "Q1 2026") and years removed, separator runs ("-", "_", "|",
+// brackets) collapsed to one space, and a trailing "list"/"lists" dropped.
+//
+// Equality rather than containment is deliberate in both directions. A verbatim
+// substring test missed every real list whose separators or suffix drifted from the
+// convention -- "LF Events GDPR Suppression - 26Q1" or "LF Master Exclusion List" --
+// so four of the six rows reported "not found in this portal" for lists that exist.
+// And containment is what would let "LF Global Opt-Outs - without Internal Emails",
+// or "LF Events Suppression List" for the GDPR row, stand in for the real list, which
+// an operator would then read as that hygiene list being applied when it is not.
 func MatchesStandardSuppression(name, searchTerm string) bool {
-	return strings.Contains(strings.ToLower(name), strings.ToLower(strings.TrimSpace(searchTerm)))
+	term := normaliseSuppressionName(searchTerm)
+	return term != "" && normaliseSuppressionName(name) == term
+}
+
+var (
+	suppressionQuarterRE = regexp.MustCompile(`\b(\d{2}q[1-4]|q[1-4]\s*(19|20)?\d{2})\b`)
+	suppressionSepRE     = regexp.MustCompile(`[^a-z0-9]+`)
+)
+
+// normaliseSuppressionName reduces a list name to the words that identify it.
+func normaliseSuppressionName(name string) string {
+	lower := strings.ToLower(name)
+	lower = suppressionQuarterRE.ReplaceAllString(lower, " ")
+	lower = yearRE.ReplaceAllString(lower, " ")
+	lower = strings.TrimSpace(suppressionSepRE.ReplaceAllString(lower, " "))
+	for _, suffix := range []string{" lists", " list"} {
+		lower = strings.TrimSuffix(lower, suffix)
+	}
+	return lower
 }
 
 // BrandOptOutProbe is the search for a brand's own global opt-out list, e.g.
@@ -161,6 +189,57 @@ var genericEventWords = map[string]struct{}{
 	"day": {}, "days": {}, "north": {}, "america": {}, "europe": {}, "asia": {},
 	"emea": {}, "apac": {}, "event": {}, "events": {}, "series": {},
 	"open": {}, "source": {}, "cloud": {}, "native": {}, "tech": {},
+	// Places. An edition's location is the LEAST distinctive thing in its name: "Japan" is
+	// shared by AGNTCon Japan, Open Source Summit Japan and PyTorch Day Japan, and admitting
+	// on it alone made the last-sent panel for one of them list all three. Where an edition
+	// is held is judged separately, by editionRegions.
+	"japan": {}, "china": {}, "india": {}, "korea": {}, "latin": {}, "latam": {},
+	"africa": {}, "australia": {}, "tokyo": {},
+}
+
+// editionRegionAliases maps a location token to the edition region it names.
+//
+// Not region.go's countryToRegion: that table groups countries into MARKETING regions for
+// widening an audience, where Japan and China are both APAC. An edition is finer than
+// that -- AGNTCon Japan and a China edition are different events -- so this map keeps
+// each edition location apart. Two-letter
+// tokens ("na", "eu") are here on purpose: EventKeywords drops them, but "KubeCon NA" is
+// how the portfolio names the North America edition in almost every send.
+var editionRegionAliases = map[string]string{
+	"japan": "japan", "tokyo": "japan", "yokohama": "japan", "jp": "japan",
+	"china": "china", "shanghai": "china", "beijing": "china", "hong": "china",
+	"india": "india", "bangalore": "india", "bengaluru": "india", "mumbai": "india", "delhi": "india",
+	"korea": "korea", "seoul": "korea",
+	"europe": "europe", "eu": "europe", "emea": "europe", "amsterdam": "europe", "paris": "europe",
+	"london": "europe", "dublin": "europe", "vienna": "europe", "berlin": "europe", "bilbao": "europe",
+	"prague": "europe",
+	"na":     "north_america", "usa": "north_america", "america": "north_america",
+	"latam": "latam", "latin": "latam",
+	"africa":    "africa",
+	"australia": "australia", "anz": "australia", "sydney": "australia",
+}
+
+var regionWordRE = regexp.MustCompile(`[a-z]+`)
+
+// editionRegions is the set of edition regions a piece of text names. "Latin America" is
+// LATAM, not North America, so "america" counts only when "latin" (or "south") does not.
+func editionRegions(text string) map[string]struct{} {
+	words := regionWordRE.FindAllString(strings.ToLower(text), -1)
+	southern := false
+	for _, w := range words {
+		if w == "latin" || w == "south" {
+			southern = true
+		}
+	}
+	out := make(map[string]struct{})
+	for _, w := range words {
+		region, ok := editionRegionAliases[w]
+		if !ok || (w == "america" && southern) {
+			continue
+		}
+		out[region] = struct{}{}
+	}
+	return out
 }
 
 // LastSentTerms is the token evidence a last-sent candidate is judged against.
@@ -178,6 +257,10 @@ type LastSentTerms struct {
 	// Brand tokens. A brand-only hit is a FALLBACK for a renamed or first-time event,
 	// never a match on the event itself -- the caller demotes it accordingly.
 	Brand map[string]struct{}
+	// Regions are the edition regions the event name carries ("japan" for
+	// "AGNTCon + MCPCon Japan"). A candidate that names a DIFFERENT region is another
+	// edition of the same event series and is not precedent for this one.
+	Regions map[string]struct{}
 }
 
 // IsEmpty reports that no tier carries a single token, so there is nothing to match on.
@@ -201,6 +284,7 @@ func NewLastSentTerms(eventName, brandShort string) LastSentTerms {
 		Event:   make(map[string]struct{}),
 		Generic: make(map[string]struct{}),
 		Brand:   EventKeywords(StripYear(brandShort)),
+		Regions: editionRegions(eventName),
 	}
 	for token := range EventKeywords(StripYear(eventName)) {
 		if _, generic := genericEventWords[token]; generic {
@@ -261,8 +345,16 @@ type LastSentMatch struct {
 // rule was rejected: it rejects "KubeCon NA 2026" for a KubeCon event, which overlaps on
 // exactly one token and is the precise case this exists to find. Distinctiveness, not
 // count, is what separates "kubecon" from "summit".
+//
+// A candidate naming a different edition region from the event's is rejected outright,
+// whatever it shares: "AGNTCon North America - Registration Open" carries the distinctive
+// "agntcon", and is still not a send for AGNTCon Japan. A candidate naming no region at all
+// is kept -- most sends never say where the event is, and that is not evidence either way.
 func MatchLastSent(name, subject string, t LastSentTerms) LastSentMatch {
 	words := EventKeywords(name + " " + subject)
+	if isOtherEdition(name+" "+subject, t.Regions) {
+		return LastSentMatch{}
+	}
 
 	distinctive := 0
 	for token := range t.Event {
@@ -299,4 +391,22 @@ func MatchLastSent(name, subject string, t LastSentTerms) LastSentMatch {
 		}
 	}
 	return m
+}
+
+// isOtherEdition reports that text names at least one edition region and none of them is
+// the event's own. An event with no region ("KubeCon 2026") has no edition to protect.
+func isOtherEdition(text string, eventRegions map[string]struct{}) bool {
+	if len(eventRegions) == 0 {
+		return false
+	}
+	named := editionRegions(text)
+	if len(named) == 0 {
+		return false
+	}
+	for region := range named {
+		if _, ok := eventRegions[region]; ok {
+			return false
+		}
+	}
+	return true
 }

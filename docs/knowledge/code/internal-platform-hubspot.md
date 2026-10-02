@@ -160,6 +160,18 @@ read for every candidate row; each row would come back `ListsUnavailable`, the a
 gate would never run, and an email merely BOOKED for next month would be reported as a past
 send. Defusing the shape on the list rows alone would have left exactly that path open.
 
+**`GetEmailType` and `EmailTypeLocalTime`:** `GetEmailType` reads one email and returns only its
+`type` (`BATCH_EMAIL`, `LOCALTIME_EMAIL`, and so on). The type is HubSpot's DERIVED send mode, and
+`CloneEmail` copies it, so an email cloned from a template inherits the template's mode. That matters
+because HubSpot does not allow an A/B test on an email set to send "based on recipients' time zones"
+(`EmailTypeLocalTime`, `LOCALTIME_EMAIL`): `ab-test/create-variation` answers HTTP 400 for it. The read
+decodes `id` and `type` alone rather than going through `GetEmail`, because `Email` is also the shape
+the dispatcher persists in the campaign `Result` blob and a new field there would change what is
+stored. A response with no `type` returns `""` and a nil error: absence means "cannot tell", and the
+caller (the dispatcher's A/B pre-check, which fails open) decides what to do with it. A 2xx with no
+`id` is a plain malformed-response error, not UNCONFIRMED, because it is a read. That a live portal's
+v3 read returns a top-level `type` has not yet been confirmed from this client's own request.
+
 **`SetSendList` recipients (ILS-only):** a HubSpot email's recipient list goes in
 `contactIlsLists` (ILS list ids). HubSpot's ILS migration removed functional support
 for the legacy `contactLists` recipient field after 2024-10-31 (it's silently
@@ -485,6 +497,12 @@ credit, which would turn a correctly-excluded audience into a QA finding about a
 exclusion. `IsNotFound` lets a caller tell "deleted" apart from "unreadable", which are
 different answers for an operator.
 
+`ListIDForLegacy` maps a legacy id to its v3 (ILS) id through `GET /crm/v3/lists/idmapping`, and
+returns `""` on any failure so the caller falls back to `LegacyListName`. It exists because a
+marketing email carries the SAME list in both `contactIlsLists` and the legacy `contactLists`,
+under two different ids — reading them as two lists rendered every inclusion and suppression of a
+pre-cut-off send twice ([[2026-09-30-audience-suppression-and-last-sent-scoping]]).
+
 `email_sendlists.go` reads the same `to.contactIlsLists` object `SetSendList` WRITES — otherwise
 the builder would report a precedent the sender never used. The legacy `to.contactLists`
 selection is read only here: it has been non-functional for sending since 2024-10-31, but a
@@ -512,6 +530,16 @@ section drops it — so the dispatcher does not call this at all when it has no 
 and a preheader-only change is silently not applied. Preview text has no first-class field on the
 Marketing Emails v3 object, so there is no narrower path for it today.
 
+`RebuildEmailContentInput.HeroImageAlt` (LFXV2-2775 follow-up) sets the hero image's alt text.
+`addHeroSection` trims it and falls back to a generic "Event banner" when blank, replacing the
+prior hardcoded "Email Banner" — which described the widget rather than the event and shipped
+identically on every campaign regardless of what the image actually showed.
+
+The CTA button's and footer link's `background_color`/`link_font.color` moved from `#0094ff` to
+`#2563eb` (Tailwind blue-600, matching the frontend preview) in the same change: the old value
+contrasted white text at only ~3.14:1, failing the WCAG AA 4.5:1 text threshold, where `#2563eb`
+clears it at ~5.17:1.
+
 `verifyContentSaved` re-reads the draft afterwards, because HubSpot has in practice accepted a
 content PATCH with a 2xx and silently reverted it. It requires EVERY widget it wrote to be
 referenced from `flexAreas`, not merely one: the keys are fixed, so a single surviving key from
@@ -530,6 +558,20 @@ filename takes its extension from the decoded format and carries a content hash,
 share one folder with `overwrite:true` and source basenames (`hero.png`) collide constantly.
 Error paths never render the source URL verbatim: hero URLs are frequently signed, and both
 `url.Parse` and `http.Client.Do` embed the complete input in their error text.
+
+The download advertises `Accept: image/jpeg,image/png,image/gif;q=0.9,*/*;q=0.1`, and a source that
+still answers `image/avif` or `image/webp` gets exactly ONE retry with `lfx_fmt=1` appended to the
+URL (`downloadImage` over the single-fetch `fetchImage`). The standard library decodes neither format,
+so the sniff refuses both, and `UploadImage`'s caller treats any failure as "no hero section" — the
+email ships without a banner while the in-app preview, rendered by a browser that reads AVIF, still
+shows one. The cause is a CDN that ignores `Vary: Accept`: it caches whichever format the first
+visitor got under the plain `.jpg` URL and serves it to everyone, while the origin still holds the
+JPEG. A new cache key reaches the origin, which negotiates on the Accept header. The retry is
+bounded to one attempt, scoped to those two declared types (HTML claiming to be a PNG is refused
+after a single fetch), uses the same guarded client as the first fetch, and on failure reports the
+FIRST response's error — naming the declared type — rather than the retry's. The sniff still decides
+what is re-hosted; no format was added to `allowedImageFormats`. An origin that serves ONLY AVIF/WebP
+is still refused: accepting one would need transcoding and an image-codec dependency.
 
 ## Scope
 

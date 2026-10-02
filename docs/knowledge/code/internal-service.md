@@ -746,6 +746,13 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
   dispatch layer produces the error, only the two synchronous readers turn it into a status
   code, and the async path turns it into a log attribute rather than into anything the caller
   polling the job can read.
+  `platformResult` also carries `HubspotURL string \`json:"hubspot_url,omitempty"\``, populated only
+  for the HubSpot email channel via `hubspotURLFromResult(result json.RawMessage) string`. It reads
+  back the `hubspotUrl` key that `campaignFromHubSpot` (`internal/dispatch/hubspot.go`) stashed into
+  the campaign's persisted `Result` blob at dispatch time (`HubspotURL: e.AppURL`, restating
+  `hubspot.Email.AppURL` — tagged `json:"-"` on the embedded type — under a real JSON key so it
+  survives the round trip). Every other platform's `Result` blob has no `hubspotUrl` key, so
+  `hubspotURLFromResult` decodes to `""` for them and the field is omitted from the response.
   `validatedLoginCustomerID` in `internal/dispatch/googleads.go` tags the dashed `login_customer_id`,
   and it is now called by all three readers (toggle resolver, discovery resolver, and create dispatcher).
   Neither the cause NOR its text leaves the dispatch layer — not in the response and not in
@@ -1252,6 +1259,59 @@ including LinkedIn's absence. Reading the interface doc alone and "repairing" Li
 `ProbeConnection` method would give the one endpoint that already has the stronger check a second,
 weaker verification path to drift against — which is why both the doc and the test say so.
 
+## Create pre-check: refusing what can never succeed, before the job exists
+
+`CreateCampaigns` (the synchronous half of `POST .../campaigns`) calls `Orchestrator.PreflightCreate`
+after it has validated the platforms and before `Orchestrator.Start`. `CreateCampaigns` is the only
+caller of `Start`, which is why the check sits at this seam. Dispatch runs after the `202`, and the
+orchestrator reports every dispatcher failure as the single fixed job error `platform campaign
+creation failed`, deliberately, since the upstream text can name connections and account ids. A
+curated message must therefore NOT be put in the job result. A request shape that is knowably
+unsatisfiable is only actionable where a typed 4xx can still reach the caller.
+
+`CreatePreflighter` is an OPTIONAL dispatcher capability, discovered by type assertion like the
+others (`StatusToggler`, `MetricsReader`, `AccountLister`, and so on). Only the HubSpot dispatcher
+implements it today; see "A/B test pre-check" in [internal/dispatch](internal-dispatch.md) for what
+it asks. A platform with no registered dispatcher, or whose dispatcher has no pre-check, is skipped
+silently: `Start` reports an unregistered platform itself, and "no pre-check" is the normal case for
+every ad platform.
+
+- **A refusal is a sentinel and nothing else.** The orchestrator returns an error only when a
+  dispatcher's error satisfies `errors.Is(err, ErrABTestUnsupportedSendType)` (an alias of
+  `domain.ErrABTestUnsupportedSendType`).
+- **"Nothing to check" is a second sentinel, and it is not recorded.** A dispatcher that looked at
+  the request and had nothing to check, so made no platform call, returns
+  `ErrPreflightNotApplicable` (an alias of `domain.ErrPreflightNotApplicable`). The orchestrator
+  skips it silently: no error, no WARN, and no `recordUpstream`. HubSpot returns it for every
+  create that does not ask for an A/B test; recording those would put a near-zero "ok" sample on
+  the `preflight_create` histogram for each one and bury the latency and error rate of the lookups
+  that really reach HubSpot. `nil` means a check was made and passed, and
+  THAT is recorded.
+- **Everything else fails open**, enforced by the orchestrator rather than trusted to each
+  dispatcher: the platform unreachable, an unreadable credential, a deadline, a response that did not
+  say. It is logged at WARN ("create pre-check could not be completed; continuing without it") and
+  the create proceeds exactly as it did before the check existed. A pre-check that could block a
+  create on its own malfunction would turn an improvement to an error message into an availability
+  dependency on every create, for a condition that dispatch already tolerates.
+- **Bounded.** Each platform's call runs under `preflightCallTimeout` (10 seconds), because it sits
+  on the HTTP request goroutine. Timing out is a fail-open outcome, not a failure.
+- **Instrumented as an upstream read.** A call that was made is recorded under the operation
+  `preflight_create` via `recordUpstream` (one that was skipped as not applicable is not), and a
+  REFUSAL is recorded as a SUCCESSFUL call: the
+  platform answered and the answer was acted on. Counting it as an error would put a caller who
+  chose an unsupported template on the same upstream-failure rate an operator alerts on for the
+  platform being down. `TestUpstreamCallsAreInstrumented` enforces that every operation passed to
+  `recordUpstream` has a table case, so this op has one, plus a method on its
+  `upstreamCapableDispatcher`.
+
+The refusal reaches the caller through `mapBriefErr` as a `409` `ConflictError` with
+`reason="ab_test_unsupported_send_type"`. The message is fixed static text ("A/B testing is not
+available for emails sent based on recipients' time zones; choose a source email that is not set to
+send by time zone, or turn the A/B test off") and never embeds an id or anything HubSpot returned.
+Clients should key on the reason slug, not the prose. The `mapBriefErr` case sits before the plain
+`ErrConflict` arm because the sentinel is its own error, not a wrapped `ErrConflict`. A refused
+request creates no job row and dispatches nothing.
+
 ## HubSpot email search (LFXV2-3197)
 
 `ListHubspotEmails` serves `GET /projects/{project_id}/connection-hubspot/emails`, returning the
@@ -1639,6 +1699,17 @@ act on; the same failure reported as a 500 sends them looking for an outage that
 handlers stay testable without a live HubSpot portal, and a deployment with no connection store
 degrades to the contract's typed 503 instead of a nil dereference.
 
+A compose carrying `brief_id` records the master as that brief's built audience, and every
+refusal it can raise happens BEFORE the orchestration is entered: a missing audience or brief
+repository is a typed 503 rather than a silent downgrade to composing-unattached, and an unknown
+brief is a 404 — both with zero HubSpot lists created, because compose is not idempotent and a
+refusal raised after two real creates can be neither rolled back nor retried. That brief read uses
+`composeBriefErr`, not `audienceExploreErr`, where `domain.ErrNotFound` means "no usable HubSpot
+connection": a mistyped brief id reported as a connection outage sends the operator to reconnect
+HubSpot over something no reconnection can fix. The insert is plain `CreateAudience` — the approval
+gate exists to stop a build from CREATING platform state, and recording a pointer to lists that
+already exist creates none.
+
 `GetAudienceBuilderCapabilities` returns no error on purpose — an unusable connection is this
 endpoint's ANSWER, not its failure, and it is what lets the UI render one explanatory banner
 with the actions disabled instead of nine broken buttons.
@@ -1649,7 +1720,7 @@ response header — which a proxying BFF does not see. So the BODY is the discri
 `ComposePartial` body carries whichever of three fields describes what actually happened, and the
 presence of ANY of them is the discriminator.
 
-**Four shapes are reachable, and only ONE carries `suppression`** — so keying on
+**Five shapes are reachable, and only ONE carries `suppression`** — so keying on
 `suppression.list_id` alone silently rethrows the other three as ordinary failures. That is the
 worst available outcome here, because the fields it discards are the deterministic NAMES the
 operator needs to find lists that may already exist:
@@ -1658,6 +1729,9 @@ operator needs to find lists that may already exist:
 - `suppression_name` set — the suppression create itself is UNCONFIRMED (no id came back).
 - `master_name` set — no exclusions requested, or suppression failed outright; master unconfirmed.
 - `suppression` + `master_name` — suppression exists, master unconfirmed.
+- `master` set — a RECORDING compose (one carrying `brief_id`) whose lists were both created and
+  whose attachment to the brief failed. The only shape with a CONFIRMED master object rather than
+  a name: the lists are usable, so the operator attaches one by hand instead of composing again.
 
 `suppression` and `suppression_name` are never both set. See `docs/api-catalog.md` for the
 authoritative list. This is what lets a caller show the operator what WAS or MAY HAVE BEEN created
