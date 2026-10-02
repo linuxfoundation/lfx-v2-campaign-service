@@ -196,6 +196,23 @@ type CampaignInput struct {
 	// verified a proximity criterion there. Refusing locally is free; discovering it
 	// after the campaign exists is not. See validateGeoPlan.
 	ProximityTargets []ProximityTarget
+	// Languages are the languages a Search campaign serves in, as ISO 639-1 codes
+	// (EN, DE, JA) or raw numeric language constant ids. Optional; left empty the
+	// campaign serves in EVERY language, which is Google's default and rarely what
+	// an event campaign wants.
+	Languages []string
+	// AdSchedules restrict WHEN the campaign serves, one interval per day of week,
+	// optionally each with its own bid modifier. Optional; left empty the campaign
+	// runs around the clock.
+	AdSchedules []AdSchedule
+	// DeviceBidModifiers adjust the bid per device, or exclude a device outright
+	// with a modifier of 0. Optional.
+	DeviceBidModifiers []DeviceBidModifier
+	// ExcludedAgeRanges and ExcludedGenders are campaign-level demographic
+	// EXCLUSIONS ("18-24", "MALE", …). Optional. Exclusion-only is Google's own
+	// shape at campaign level, not a narrowing — see campaign_criteria.go.
+	ExcludedAgeRanges []string
+	ExcludedGenders   []string
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
@@ -264,8 +281,17 @@ type CampaignResult struct {
 	// Always campaignCriterion ids: unlike the geo criteria, these exist on the Search
 	// path only, since Demand Gen has no keyword criteria.
 	NegativeKeywordCriteriaIDs []string `json:"negativeKeywordCriteriaIds,omitempty"`
-	GoogleAdsURL               string   `json:"googleAdsUrl"`
-	Steps                      []string `json:"steps"`
+	// TargetingCriterionIDs are the campaign-level language, ad schedule, device and
+	// demographic criteria created for the corresponding CampaignInput fields, in
+	// that order. Empty is ambiguous in exactly the three ways GeoCriterionIDs
+	// documents — none asked for, the mutate failed, or the mutate was unconfirmed —
+	// and the returned ERROR is what tells them apart.
+	//
+	// Always campaignCriterion ids: these exist on the Search path only, since
+	// validateCriteriaPlan refuses them on Demand Gen.
+	TargetingCriterionIDs []string `json:"targetingCriterionIds,omitempty"`
+	GoogleAdsURL          string   `json:"googleAdsUrl"`
+	Steps                 []string `json:"steps"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
@@ -615,6 +641,12 @@ type campaignPreflight struct {
 	// contradictory include/exclude pair or an out-of-range radius fails BEFORE the
 	// budget mutate, rather than after a paid campaign exists. See validateGeoPlan.
 	geo geoPlan
+	// criteria is the resolved non-location targeting intent — languages, ad
+	// schedules, device bid modifiers and demographic exclusions — resolved here for
+	// the same reason geo is: an unmapped language, an inverted schedule or an
+	// out-of-range bid modifier must fail before anything is paid for. See
+	// validateCriteriaPlan.
+	criteria criteriaPlan
 	// negativeKeywords are the validated campaign-level exclusions, and cpcBidMicros
 	// the validated ad-group bid already converted to micros (0 = unset). Both are
 	// computed here, with everything else, so a bad exclusion or an out-of-range bid
@@ -833,6 +865,10 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	criteria, err := validateCriteriaPlan(kind, in)
+	if err != nil {
+		return nil, err
+	}
 	// The three remaining inputs join the same pre-mutate block for the same
 	// orphan-avoidance reason: each is purely local, and each would otherwise be
 	// rejected by Google only at a mutate that runs after the budget and campaign have
@@ -863,6 +899,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		keywords:         keywords,
 		audienceSegments: audienceSegments,
 		geo:              geo,
+		criteria:         criteria,
 		negativeKeywords: negativeKeywords,
 		cpcBidMicros:     cpcBidMicros,
 		startDateTime:    startDateTime,
@@ -1068,6 +1105,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		res.NegativeKeywordCriteriaIDs = negIDs
 		steps = append(steps, fmt.Sprintf("Negative keywords applied: %d campaign-level exclusions", len(negIDs)))
+		res.Steps = steps
+	}
+
+	// Language, ad schedule, device and demographic criteria are campaign-level too,
+	// and go in last of the three criteria steps — still before the ad group, so a
+	// failure has as little built on top of it as possible. Separate mutate from both
+	// of the above, for the reason createCampaignTargetingCriteria documents. Same
+	// partial-result contract: the campaign exists either way.
+	if !pf.criteria.empty() {
+		critIDs, critErr := c.createCampaignTargetingCriteria(ctx, campaignResource, campaignID, pf.criteria)
+		if critErr != nil {
+			return res, critErr
+		}
+		res.TargetingCriterionIDs = critIDs
+		steps = append(steps, fmt.Sprintf("Campaign targeting applied: %d criteria (%s)", len(critIDs), criteriaStep(pf.criteria)))
 		res.Steps = steps
 	}
 

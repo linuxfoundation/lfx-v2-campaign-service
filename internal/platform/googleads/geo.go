@@ -421,11 +421,25 @@ type locationInfo struct {
 // omitempty. This type carries BOTH polarities, and for it "absent" is exactly
 // Google's default of a positive criterion, so omitting the field on a false is the
 // accurate encoding, not a dropped one.
+//
+// It models the whole CampaignCriterion resource, not just a location: the arms
+// past Proximity belong to campaign_criteria.go and each is a separate member of
+// Google's criterion oneof, so exactly one is ever set per operation.
 type campaignCriterionCreate struct {
 	Campaign  string         `json:"campaign"`
 	Negative  bool           `json:"negative,omitempty"`
 	Location  *locationInfo  `json:"location,omitempty"`
 	Proximity *proximityInfo `json:"proximity,omitempty"`
+	// BidModifier is a POINTER so the -100% opt-out survives serialisation: a plain
+	// float64 with omitempty would drop an explicit 0, turning "do not serve on
+	// tablets" into "bid on tablets normally" — the exact inverse of the request.
+	// nil means the criterion carries no bid adjustment at all.
+	BidModifier *float64        `json:"bidModifier,omitempty"`
+	Language    *languageInfo   `json:"language,omitempty"`
+	AdSchedule  *adScheduleInfo `json:"adSchedule,omitempty"`
+	Device      *deviceInfo     `json:"device,omitempty"`
+	AgeRange    *ageRangeInfo   `json:"ageRange,omitempty"`
+	Gender      *genderInfo     `json:"gender,omitempty"`
 }
 
 // adGroupCriterionLocationCreate is the create payload for
