@@ -1453,33 +1453,30 @@ func TestLinkedIn_ListAccountCampaignMetrics_RefusesSystemFallback(t *testing.T)
 // TestLinkedIn_ListAccountCampaignMetrics_AccountScope pins the account-scope guard as a
 // TABLE over every state the request can be in, not just the mismatch that motivated it.
 //
-// The permitted arms assert POSITIVELY on the error they must produce rather than merely
-// asserting the guard's sentinel is absent, which any error satisfies — including the fake
-// credential's 401.
+// The upstream is a local stub (linkedin.WithBaseURL), matching how the rest of this file
+// drives the client. An earlier version of this test omitted it and so reached the real
+// api.linkedin.com: the permitted arms "passed" only because LinkedIn answered 401, which
+// makes the test red in CI without egress, flaky with it, and silently dependent on a
+// vendor's current auth behaviour. Local review caught it by running with the network
+// blocked, where both permitted arms failed.
 //
-// What the permitted arms DO and DO NOT prove, stated precisely because the first version of
-// this comment overclaimed it: they pin that the guard does not refuse a legitimate read, so
-// a guard that blanket-refuses fails them. They do NOT detect a guard that is absent
-// altogether — "the read proceeds" is equally true with no guard at all. Only the refusal
-// arms below are sensitive to that, and under mutation (guard call deleted) exactly those
-// fail while these pass. That asymmetry is inherent to a permitted path, not a gap to fix
-// with another arm.
-//
-// Whitespace is exercised on the STORED account, not the requested one. The requested value
-// cannot carry whitespace: ValidateAccountID runs first and accountIDRE is `^[0-9]+$`,
-// anchored with no trim, so a padded request is refused as ErrAccountIDMalformed before any
-// credential resolves and never reaches the guard at all. The stored value comes from the
-// database and is not shape-validated, so its trim is the one that can actually matter.
+// The permitted arms assert on the PATH the request reached, which is the strongest
+// assertion available here: it pins that the account forwarded upstream is the one the
+// connection stores, so a guard that validated the stored id but forwarded the caller's
+// would fail. What no permitted-path assertion can detect is a guard that is MISSING
+// altogether — "the read proceeds to the stored account" is equally true with no guard —
+// and only the refusal arms are sensitive to that, which mutation confirms.
 func TestLinkedIn_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 	cases := []struct {
 		name      string
 		stored    *string // nil keeps the fixture's 123456789
 		requested string
-		// wantErr is the sentinel the guard must answer with. When permitted is true the
-		// guard must NOT fire and wantErr is the error the read legitimately fails with
-		// afterwards — the fake credential's unusable-connection 401.
-		wantErr   error
-		permitted bool
+		// wantErr is the sentinel the guard must answer with, on the arms that refuse.
+		wantErr error
+		// wantPath, on a permitted arm, is the upstream path fragment the request must
+		// reach — proving both that the guard let it through and that it forwarded the
+		// STORED account.
+		wantPath string
 	}{
 		{
 			name:      "a different account is refused as a request mismatch",
@@ -1498,37 +1495,66 @@ func TestLinkedIn_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 			wantErr:   domain.ErrAccountIDMalformed,
 		},
 		{
-			name:      "the connection's own account is permitted through to the upstream read",
+			name:      "the connection's own account reaches upstream as that account",
 			requested: "123456789",
-			wantErr:   domain.ErrConnectionNotUsable,
-			permitted: true,
+			wantPath:  "adAccounts/123456789/",
 		},
 		{
 			name:      "whitespace around the STORED account does not make a matching request a mismatch",
 			stored:    strPtrLI("  123456789  "),
 			requested: "123456789",
-			wantErr:   domain.ErrConnectionNotUsable,
-			permitted: true,
+			wantPath:  "adAccounts/123456789/",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			var gotPath string
+			var mu sync.Mutex
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				if gotPath == "" {
+					gotPath = r.URL.Path
+				}
+				mu.Unlock()
+				w.WriteHeader(http.StatusUnauthorized)
+			}))
+			t.Cleanup(srv.Close)
+
 			conn := activeLinkedInConn(goodLinkedInCreds)
 			if tc.stored != nil {
 				conn.AccountID = *tc.stored
 			}
 			d := NewLinkedInDispatcher(&scopedConnReader{
 				rows: map[string]*model.Connection{"cncf": conn},
-			}, identityEncryptor{})
+			}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
 
 			_, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderLinkedInAds, tc.requested, 30)
-
-			if !errors.Is(err, tc.wantErr) {
-				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			if err == nil {
+				t.Fatalf("err = nil, want a failure (the stub answers 401)")
 			}
-			if tc.permitted && errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+
+			mu.Lock()
+			reached := gotPath
+			mu.Unlock()
+
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				if reached != "" {
+					t.Fatalf("a refused request still reached upstream at %q — the guard must "+
+						"refuse before any request is issued", reached)
+				}
+				return
+			}
+
+			if errors.Is(err, domain.ErrAccountNotManagedByConnection) {
 				t.Fatalf("the guard refused the connection's OWN account (requested %q): %v", tc.requested, err)
+			}
+			if !strings.Contains(reached, tc.wantPath) {
+				t.Fatalf("reached upstream path %q, want it to contain %q — a permitted read must "+
+					"proceed with the account the connection stores", reached, tc.wantPath)
 			}
 		})
 	}

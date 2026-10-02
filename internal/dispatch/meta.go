@@ -609,9 +609,10 @@ func requireMetaAccountID(res *resolved, projectID string) (string, error) {
 // DEFENSIVE, not a live exposure. Meta is one shared ad account across foundations today,
 // so there is no second account for a project to cross into and no caller this refuses that
 // would otherwise have succeeded: a project's stored account_id IS the shared account, so a
-// legitimate request matches it. (docs/architecture.md's "Account Tenancy" table lists Meta
-// as per-foundation; that is stale against how the accounts are actually run, and is being
-// corrected separately — do not use it as the authority here.)
+// legitimate request matches it. (docs/architecture.md lists Meta as per-foundation in BOTH
+// its "Account Tenancy" table and its "Current Platform Accounts" table, the latter with a
+// concrete account id; both are stale against how the accounts are actually run and are being
+// corrected separately — do not use either as the authority here.)
 //
 // It is carried anyway because the check costs one comparison and is the only thing standing
 // between a shared-account read and a per-project one if Meta ever moves to an account per

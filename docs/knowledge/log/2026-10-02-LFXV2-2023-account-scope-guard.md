@@ -31,8 +31,9 @@ DEFENSIVE rather than a live exposure: Meta is one shared ad account across foun
 today, so a project's stored `account_id` IS the shared account and a legitimate request
 matches it. It refuses nothing that would otherwise have succeeded, and it is the only thing
 standing between a shared-account read and a per-project one if Meta ever splits.
-`docs/architecture.md`'s "Account Tenancy" table lists Meta/Reddit/X as per-foundation; that
-is stale against how the accounts are actually run and is not the authority here. Google Ads
+`docs/architecture.md` lists Meta/Reddit/X as per-foundation in BOTH its "Account Tenancy"
+and "Current Platform Accounts" tables; both are stale against how the accounts are actually
+run and neither is the authority here. Google Ads
 is likewise one shared customer id across every foundation; its
 guard is deliberately deferred because `internal/dispatch/googleads.go` is in an open,
 approved PR and landing this there would hand that PR a conflict for a latent issue.

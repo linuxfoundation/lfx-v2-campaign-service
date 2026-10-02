@@ -3213,18 +3213,10 @@ func (p *panickingCreativeAssets) GetAssetSize(ctx context.Context, projectID, b
 
 // TestMeta_ListAccountCampaignMetrics_AccountScope is linkedin_test.go's
 // TestLinkedIn_ListAccountCampaignMetrics_AccountScope for Meta — same request states in one
-// table, including the permitted path, for the same reason that test gives: an arm asserting
-// only that the guard's sentinel is ABSENT passes with the guard removed entirely, so it
-// proves nothing about whether the guard compares or blanket-refuses.
-//
-// Meta's permitted arm asserts on the upstream request rather than a sentinel. Unlike
-// LinkedIn, a Meta 401 carries no domain sentinel — it surfaces as the raw transport error —
-// so the assertion is that the account the request REACHED Meta with is the stored one,
-// visible in the error's URL. That fails if the guard wrongly refuses a legitimate read.
-//
-// It does NOT fail if the guard is absent altogether: "the read proceeds to act_777" is
-// equally true with no guard. Only the refusal arms are sensitive to that, which mutation
-// confirms. See the fuller note in linkedin_test.go's equivalent test.
+// table, same stubbed upstream (meta.WithBaseURL), and the same two-sided assertion: a
+// refused request must reach upstream NOT AT ALL, and a permitted one must reach it with the
+// account the connection STORES. See that test's comment for why the permitted arms cannot
+// detect a missing guard and the refusal arms can.
 //
 // Meta's empty-account arm comes from requireMetaAccountID, which this guard layers onto, so
 // the sentinel pair is ErrConnectionNotUsable+ErrAccountNotSelected exactly as the dispatch
@@ -3234,8 +3226,8 @@ func TestMeta_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 		name      string
 		stored    *string // nil keeps the fixture's act_777
 		requested string
-		wantErr   error  // nil on a permitted arm: the failure is a raw transport error
-		wantInErr string // substring the error must contain (permitted arms)
+		wantErr   error  // set on the arms that must be refused
+		wantPath  string // set on the permitted arms: the upstream path fragment reached
 	}{
 		{
 			name:      "a different account is refused as a request mismatch",
@@ -3249,46 +3241,122 @@ func TestMeta_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 			wantErr:   domain.ErrAccountNotSelected,
 		},
 		{
-			name:      "the connection's own account reaches Meta with that account",
+			name:      "the connection's own account reaches upstream as that account",
 			requested: "act_777",
-			wantInErr: "/act_777/campaigns",
+			wantPath:  "/act_777/campaigns",
 		},
 		{
 			name:      "whitespace around the STORED account does not make a matching request a mismatch",
 			stored:    strPtrMeta("  act_777  "),
 			requested: "act_777",
-			wantInErr: "/act_777/campaigns",
+			wantPath:  "/act_777/campaigns",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				if gotPath == "" {
+					gotPath = r.URL.Path
+				}
+				mu.Unlock()
+				w.WriteHeader(http.StatusUnauthorized)
+			}))
+			t.Cleanup(srv.Close)
+
 			conn := activeMetaConn(goodMetaCreds)
 			if tc.stored != nil {
 				conn.AccountID = *tc.stored
 			}
 			d := NewMetaDispatcher(&scopedConnReader{
 				rows: map[string]*model.Connection{"cncf": conn},
-			}, identityEncryptor{})
+			}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
 
 			_, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderMetaAds, tc.requested, 30)
 			if err == nil {
-				t.Fatalf("err = nil, want a failure (the fixture credential cannot authenticate)")
+				t.Fatalf("err = nil, want a failure (the stub answers 401)")
 			}
+
+			mu.Lock()
+			reached := gotPath
+			mu.Unlock()
 
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("err = %v, want %v — the read must not reach Meta with an account "+
 						"this project's connection does not manage", err, tc.wantErr)
 				}
+				if reached != "" {
+					t.Fatalf("a refused request still reached upstream at %q — the guard must "+
+						"refuse before any request is issued", reached)
+				}
 				return
 			}
+
 			if errors.Is(err, domain.ErrAccountNotManagedByConnection) {
 				t.Fatalf("the guard refused the connection's OWN account (requested %q): %v", tc.requested, err)
 			}
-			if !strings.Contains(err.Error(), tc.wantInErr) {
-				t.Fatalf("err = %v, want it to show the request reaching %q — a permitted read must "+
-					"proceed to the upstream call with the connection's own account", err, tc.wantInErr)
+			if !strings.Contains(reached, tc.wantPath) {
+				t.Fatalf("reached upstream path %q, want it to contain %q", reached, tc.wantPath)
+			}
+		})
+	}
+}
+
+// TestMeta_ListAccountCampaignMetrics_SharedAccountAcrossProjects pins the configuration the
+// guard must NOT break, which is also the live one: Meta is a single ad account shared across
+// foundations, so two different projects legitimately hold connections pointing at the SAME
+// account_id. Each project reading that shared account must be permitted.
+//
+// This is the regression test for the guard's one real failure mode. Refusing a request
+// because it names an account "another project also uses" would turn a working monitor read
+// into a 400 for every project on a shared platform — a worse defect than the cross-project
+// read the guard exists to prevent, and the direction a later "tightening" would plausibly
+// take it. The guard is safe here because it compares against the project's OWN stored
+// account_id, which on a shared platform IS the shared account.
+func TestMeta_ListAccountCampaignMetrics_SharedAccountAcrossProjects(t *testing.T) {
+	const shared = "act_777"
+
+	tlf := activeMetaConn(goodMetaCreds)
+	tlf.AccountID = shared
+	events := activeMetaConn(goodMetaCreds)
+	events.AccountID = shared
+
+	for _, projectID := range []string{"tlf", "lf-events"} {
+		t.Run(projectID, func(t *testing.T) {
+			var mu sync.Mutex
+			var gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				if gotPath == "" {
+					gotPath = r.URL.Path
+				}
+				mu.Unlock()
+				w.WriteHeader(http.StatusUnauthorized)
+			}))
+			t.Cleanup(srv.Close)
+
+			d := NewMetaDispatcher(&scopedConnReader{
+				rows: map[string]*model.Connection{"tlf": tlf, "lf-events": events},
+			}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
+
+			_, err := d.ListAccountCampaignMetrics(context.Background(), projectID, model.ProviderMetaAds, shared, 30)
+			if err == nil {
+				t.Fatalf("err = nil, want a failure (the stub answers 401)")
+			}
+			if errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+				t.Fatalf("project %s was REFUSED the shared account it legitimately connects to: %v",
+					projectID, err)
+			}
+			mu.Lock()
+			reached := gotPath
+			mu.Unlock()
+			if !strings.Contains(reached, "/"+shared+"/campaigns") {
+				t.Fatalf("project %s did not reach the upstream read with the shared account %s (path %q)",
+					projectID, shared, reached)
 			}
 		})
 	}

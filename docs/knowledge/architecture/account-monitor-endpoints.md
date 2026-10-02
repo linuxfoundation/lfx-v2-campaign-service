@@ -65,9 +65,10 @@ reaches), not project-scoped ones.
   reachable request. The other ad platforms share a single account today, so
   their stored `account_id` IS the shared account and a legitimate request
   matches it — the guard is carried there against a future split, and never
-  fires meanwhile. `docs/architecture.md`'s "Account Tenancy" table still
-  lists Meta/Reddit/X as per-foundation; that is stale against how the
-  accounts are actually run and is not the authority for this.
+  fires meanwhile. `docs/architecture.md` still lists Meta/Reddit/X as
+  per-foundation in BOTH its "Account Tenancy" and "Current Platform
+  Accounts" tables; both are stale against how the accounts are actually run
+  and neither is the authority for this.
 
   LinkedIn keeps the empty stored account DISTINCT from a mismatch
   (`ErrAccountNotSelected` vs `ErrAccountNotManagedByConnection`) because its
