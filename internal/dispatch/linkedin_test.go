@@ -1485,7 +1485,7 @@ func TestLinkedIn_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 		},
 		{
 			name:      "an unselected stored account is an account_not_selected setup state",
-			stored:    strPtrLI("   "),
+			stored:    strPtr("   "),
 			requested: "999999999",
 			wantErr:   domain.ErrAccountNotSelected,
 		},
@@ -1501,7 +1501,7 @@ func TestLinkedIn_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 		},
 		{
 			name:      "whitespace around the STORED account does not make a matching request a mismatch",
-			stored:    strPtrLI("  123456789  "),
+			stored:    strPtr("  123456789  "),
 			requested: "123456789",
 			wantPath:  "adAccounts/123456789/",
 		},
@@ -1559,7 +1559,3 @@ func TestLinkedIn_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 		})
 	}
 }
-
-// strPtrLI is a local helper: the table needs to distinguish "leave the fixture's account id"
-// from "set it to an empty or whitespace value", which a bare string cannot express.
-func strPtrLI(s string) *string { return &s }

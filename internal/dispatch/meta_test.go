@@ -3236,7 +3236,7 @@ func TestMeta_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 		},
 		{
 			name:      "an unselected stored account is an account_not_selected setup state",
-			stored:    strPtrMeta("   "),
+			stored:    strPtr("   "),
 			requested: "act_999",
 			wantErr:   domain.ErrAccountNotSelected,
 		},
@@ -3247,7 +3247,7 @@ func TestMeta_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 		},
 		{
 			name:      "whitespace around the STORED account does not make a matching request a mismatch",
-			stored:    strPtrMeta("  act_777  "),
+			stored:    strPtr("  act_777  "),
 			requested: "act_777",
 			wantPath:  "/act_777/campaigns",
 		},
@@ -3361,7 +3361,3 @@ func TestMeta_ListAccountCampaignMetrics_SharedAccountAcrossProjects(t *testing.
 		})
 	}
 }
-
-// strPtrMeta is a local helper: the table needs to distinguish "leave the fixture's account
-// id" from "set it to an empty or whitespace value", which a bare string cannot express.
-func strPtrMeta(s string) *string { return &s }
