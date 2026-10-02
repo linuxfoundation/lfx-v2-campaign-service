@@ -346,6 +346,38 @@ func eventYearFromName(eventName string) string {
 	return strings.TrimSpace(matches[len(matches)-1])
 }
 
+// namesTheEdition reports whether a list name carries `year`, in EITHER spelling this
+// portfolio uses.
+//
+// A raw `strings.Contains(name, "2026")` missed this service's OWN naming convention and so
+// PASSED on the lists it creates itself. `MasterListName` writes a two-digit QUARTER code --
+// `builder_master_test.go` pins "26Q1 - CNCF - KubeCon Europe - Master" -- with no four-digit
+// year anywhere in it. Measured before fixing: "26Q1 - CNCF - KubeCon Europe - Registrants"
+// returned PASS while the same name with "2026" spliced in returned FAIL, so the check was keyed
+// on an accident of one list's name rather than on the edition.
+//
+// The four-digit form is matched as a standalone year, not a substring: a list id or a contact
+// count that happens to read "2026" cannot satisfy it on its own.
+func namesTheEdition(name, year string) bool {
+	if len(year) != 4 {
+		return false
+	}
+	for _, found := range yearRE.FindAllString(name, -1) {
+		if found == year {
+			return true
+		}
+	}
+	// The `YYQN` spelling, compared on the captured two digits rather than by substring, so
+	// "26Q1" matches 2026 and "25Q4" does not. `quarterCodeRE` is builder_master.go's, the same
+	// pattern `MasterListName` writes with.
+	for _, m := range quarterCodeRE.FindAllStringSubmatch(name, -1) {
+		if m[1] == year[2:] {
+			return true
+		}
+	}
+	return false
+}
+
 // CheckCurrentRegistrants asks whether THIS edition's own registration list is being
 // included rather than suppressed.
 //
@@ -389,6 +421,25 @@ func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
 	// separate it from a sibling. Requiring both is the only pair that leaves all three
 	// correct cases passing.
 	terms := NewLastSentTerms(eventName, "")
+	// An event name made ENTIRELY of portfolio-common words has an EMPTY distinctive tier, and
+	// then no token rule can separate this edition from a sibling region. Measured on
+	// "Open Source Summit 2026": the edition's own list and "Open Source Summit Japan 2026"
+	// BOTH score overlap=3 against the same 3 generic tokens, because the event name carries
+	// no region of its own to be missing from the sibling.
+	//
+	// Reported as NEEDS VERIFY rather than guessed in either direction. Flagging would hit a
+	// sibling's list, which is correct to include; passing would miss this edition's own, which
+	// is the defect the check exists for. Neither is defensible, so the operator is asked.
+	if len(terms.Event) == 0 {
+		return Check{
+			Verdict: VerdictNeedsVerify,
+			Findings: []Finding{{
+				Severity: SeverityMedium,
+				Message:  fmt.Sprintf("Could not check whether this event's own registrants are suppressed: every word in %q is common across the portfolio, so this edition cannot be told from a sibling region's.", eventName),
+				Fix:      "Confirm by hand that the registration list among the inclusions is an EARLIER edition's, and that this edition's own registrants are excluded.",
+			}},
+		}
+	}
 	year := eventYearFromName(eventName)
 	if year == "" {
 		// A name with no year cannot be told from its own past editions, and guessing the
@@ -407,7 +458,7 @@ func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
 		if !containsAny(name, registrationHints) {
 			continue
 		}
-		if !strings.Contains(name, year) {
+		if !namesTheEdition(name, year) {
 			continue
 		}
 		// EVERY token, not merely a match. `MatchLastSent` admits on the distinctive tier
@@ -486,6 +537,17 @@ func CombineVerdicts(verdicts ...Verdict) Verdict {
 			worst = VerdictNeedsVerify
 		case VerdictPass:
 			// Leaves `worst` as-is.
+		case "":
+			// A check that did NOT RUN, which check 4 is whenever no event name reached the
+			// audit. Stated rather than left to fall through: the empty verdict is now a
+			// routine input, and an unexhausted switch made "neither passes nor fails" true
+			// by accident of `worst`'s initial value rather than by intent.
+		default:
+			// An unrecognised verdict resolves to NEEDS VERIFY, never to PASS. This roll-up
+			// feeds a send decision, and `severityRank` already applies the same discipline
+			// one level down -- an unknown severity sorts last "so a future severity cannot
+			// silently outrank a CRITICAL".
+			worst = VerdictNeedsVerify
 		}
 	}
 	return worst

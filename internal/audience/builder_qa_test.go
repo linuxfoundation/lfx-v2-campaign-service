@@ -433,6 +433,40 @@ func TestCheckCurrentRegistrants(t *testing.T) {
 	}
 }
 
+// TestCheckCurrentRegistrants_MatchesThisServicesOwnNamingConvention pins the false NEGATIVE
+// that a raw year substring produced.
+//
+// `MasterListName` writes a two-digit QUARTER code, not a four-digit year --
+// `builder_master_test.go` pins "26Q1 - CNCF - KubeCon Europe - Master". So a list this service
+// created itself carries no "2026" anywhere, and the check PASSED on it. Measured before fixing:
+// "26Q1 - CNCF - KubeCon Europe - Registrants" returned PASS while the same name with "2026"
+// spliced in returned FAIL -- the check was keyed on an accident of one list's name.
+//
+// This is the dangerous direction. A false positive gets the check switched off; a false negative
+// lets the send go out to people who already registered, which is the whole point of check 4.
+func TestCheckCurrentRegistrants_MatchesThisServicesOwnNamingConvention(t *testing.T) {
+	const eventName = "KubeCon Europe 2026"
+
+	for _, listName := range []string{
+		"26Q1 - CNCF - KubeCon Europe - Event Registration",
+		"26Q1 - CNCF - KubeCon Europe - Registrants",
+		"26Q1 - CNCF - KubeCon Europe 2026 - Registrants",
+	} {
+		t.Run(listName, func(t *testing.T) {
+			if got := CheckCurrentRegistrants(eventName, []string{listName}); got.Verdict != VerdictFail {
+				t.Fatalf("verdict = %q, want FAIL; this is a list this service names itself", got.Verdict)
+			}
+		})
+	}
+
+	// And the quarter code is compared on its YEAR digits, not by substring: a PRIOR edition
+	// written in the same convention must still pass.
+	prior := CheckCurrentRegistrants(eventName, []string{"25Q4 - CNCF - KubeCon Europe - Registrants"})
+	if prior.Verdict == VerdictFail {
+		t.Error("a prior edition in the same naming convention must not be FAILed")
+	}
+}
+
 // TestCheckCurrentRegistrants_WithoutAnEventNameIsNotAPass pins the discriminated absence.
 //
 // QA can be run on a bare list id, where the event is genuinely unknown. An audit that
@@ -449,6 +483,34 @@ func TestCheckCurrentRegistrants_WithoutAnEventNameIsNotAPass(t *testing.T) {
 	}
 }
 
+// TestCheckCurrentRegistrants_AnAllGenericEventNameIsNotAPass pins the case no token rule can
+// decide.
+//
+// "Open Source Summit" is entirely portfolio-common words, so its distinctive tier is EMPTY and
+// the event name carries no region of its own. Measured: the edition's own registration list and
+// "Open Source Summit Japan 2026" BOTH score overlap=3 against the same three generic tokens.
+// Nothing separates them.
+//
+// Flagging would hit a sibling's list, which is correct to include. Passing would miss this
+// edition's own, which is the defect the check exists for. Neither is defensible, so it reports
+// NEEDS VERIFY and names what the operator has to confirm.
+func TestCheckCurrentRegistrants_AnAllGenericEventNameIsNotAPass(t *testing.T) {
+	got := CheckCurrentRegistrants("Open Source Summit 2026", []string{"26Q2 Open Source Summit 2026 Event Registration"})
+
+	if got.Verdict != VerdictNeedsVerify {
+		t.Fatalf("verdict = %q, want NEEDS VERIFY", got.Verdict)
+	}
+	if len(got.Findings) == 0 {
+		t.Fatal("a NEEDS VERIFY with no finding tells the operator nothing to do")
+	}
+
+	// And the sibling that motivated it: the same name must not be FAILed either.
+	sibling := CheckCurrentRegistrants("Open Source Summit 2026", []string{"26Q2 Open Source Summit Japan 2026 Event Registration"})
+	if sibling.Verdict == VerdictFail {
+		t.Error("a sibling region's list must never be FAILed; including it is a legitimate choice")
+	}
+}
+
 // TestCheckCurrentRegistrants_AnEventNameWithNoYearIsNotAPass is the same reasoning one step
 // in: with no year in the event name, this edition cannot be told from an earlier one, and
 // substituting the current year would flag a list the operator may have chosen on purpose.
@@ -457,5 +519,38 @@ func TestCheckCurrentRegistrants_AnEventNameWithNoYearIsNotAPass(t *testing.T) {
 
 	if got.Verdict != VerdictNeedsVerify {
 		t.Fatalf("verdict = %q, want NEEDS VERIFY", got.Verdict)
+	}
+}
+
+// TestCombineVerdicts_AnEmptyVerdictIsInertAndAnUnknownOneIsNot pins both arms added for
+// check 4.
+//
+// Empty is a check that did NOT RUN -- routine now, since check 4 is skipped whenever no event
+// name reaches the audit. It must neither pass nor fail the roll-up, or every existing caller's
+// overall verdict would shift.
+//
+// An UNKNOWN verdict is the opposite: this roll-up feeds a send decision, so a value nobody
+// recognises must not resolve to the permissive answer. `severityRank` applies the same rule one
+// level down.
+func TestCombineVerdicts_AnEmptyVerdictIsInertAndAnUnknownOneIsNot(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []Verdict
+		want Verdict
+	}{
+		{"empty beside passes", []Verdict{VerdictPass, VerdictPass, VerdictPass, ""}, VerdictPass},
+		{"empty does not mask a needs-verify", []Verdict{VerdictPass, VerdictNeedsVerify, ""}, VerdictNeedsVerify},
+		{"empty does not mask a fail", []Verdict{VerdictPass, VerdictFail, ""}, VerdictFail},
+		{"empty alone", []Verdict{""}, VerdictPass},
+		{"an unknown verdict is not a pass", []Verdict{VerdictPass, Verdict("WARN")}, VerdictNeedsVerify},
+		{"an unknown verdict cannot outrank a fail", []Verdict{VerdictFail, Verdict("WARN")}, VerdictFail},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CombineVerdicts(tc.in...); got != tc.want {
+				t.Fatalf("CombineVerdicts(%v) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
