@@ -467,19 +467,29 @@ func TestCheckCurrentRegistrants_MatchesThisServicesOwnNamingConvention(t *testi
 	}
 }
 
-// TestCheckCurrentRegistrants_WithoutAnEventNameIsNotAPass pins the discriminated absence.
+// TestCheckCurrentRegistrants_WithoutAnEventNameDoesNotRun pins the difference between a
+// question nobody asked and one this check cannot answer.
 //
-// QA can be run on a bare list id, where the event is genuinely unknown. An audit that
-// silently returned PASS there would be indistinguishable from one that looked and found
-// nothing -- and the thing it failed to look for is a send to people who already registered.
-func TestCheckCurrentRegistrants_WithoutAnEventNameIsNotAPass(t *testing.T) {
+// No event name means the caller did not ask. Returning NEEDS VERIFY there would flip EVERY
+// existing audit's Overall -- today no caller supplies an event name, since the UI is not wired
+// -- and append a finding to audits the check has nothing to say about. A check that cannot run
+// must not make unrelated results look worse; that is how a check gets removed.
+//
+// The zero Check is what `currentRegistrantsResult` omits from the wire and what
+// `CombineVerdicts` treats as inert.
+func TestCheckCurrentRegistrants_WithoutAnEventNameDoesNotRun(t *testing.T) {
 	got := CheckCurrentRegistrants("", []string{"26Q2 AGNTCon + MCPCon North America 2026 Event Registration"})
 
-	if got.Verdict != VerdictNeedsVerify {
-		t.Fatalf("verdict = %q, want NEEDS VERIFY", got.Verdict)
+	if got.Verdict != "" {
+		t.Fatalf("verdict = %q, want the zero Check; an absent event name is a question nobody asked", got.Verdict)
 	}
-	if len(got.Findings) == 0 {
-		t.Fatal("a NEEDS VERIFY with no finding tells the operator nothing to do")
+	if len(got.Findings) != 0 {
+		t.Fatalf("findings = %d, want 0; there is nothing to report about a check that did not run", len(got.Findings))
+	}
+
+	// And the consequence that made this blocking: an existing caller's roll-up is unchanged.
+	if overall := CombineVerdicts(VerdictPass, VerdictPass, VerdictPass, got.Verdict); overall != VerdictPass {
+		t.Errorf("Overall = %q, want PASS; check 4 must not change a verdict for callers that do not use it", overall)
 	}
 }
 

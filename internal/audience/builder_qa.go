@@ -398,15 +398,20 @@ func namesTheEdition(name, year string) bool {
 // event (QA can be run on a bare list id), and an audit that silently skipped would be
 // indistinguishable from one that looked and found nothing.
 func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
+	// NO event name means the check DID NOT RUN, which is the zero Check -- an empty verdict and
+	// no findings.
+	//
+	// NEEDS VERIFY would be wrong here, and wrongly in the direction that gets a check removed.
+	// Every caller today supplies no event name (the UI is not wired yet), so returning a
+	// verdict would flip EVERY existing audit's `Overall` to NEEDS VERIFY and append a finding
+	// to it -- a check that cannot run making every unrelated audit look worse.
+	//
+	// The distinction that matters: a caller who gave no event name did not ask this question,
+	// so there is nothing to report. A caller who gave one this check cannot DECIDE -- a
+	// year-less name, an all-generic name -- did ask, and gets NEEDS VERIFY naming what to
+	// confirm by hand. The empty Check is what `currentRegistrantsResult` omits from the wire.
 	if strings.TrimSpace(eventName) == "" {
-		return Check{
-			Verdict: VerdictNeedsVerify,
-			Findings: []Finding{{
-				Severity: SeverityMedium,
-				Message:  "Could not check whether this event's own registrants are suppressed: no event name was supplied with the audit.",
-				Fix:      "Re-run the audit from the campaign's audience tab, which supplies the event name, or confirm by hand that this edition's registration list is excluded rather than included.",
-			}},
-		}
+		return Check{}
 	}
 
 	// The event's tokens AND its year, both required.
