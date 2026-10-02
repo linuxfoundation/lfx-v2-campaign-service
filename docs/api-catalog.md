@@ -636,6 +636,20 @@ adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When t
                                   still-live campaign the delete walked away from. With the flag off,
                                   that dispatch creates, and Google's duplicate-name response surfaces
                                   as a job failure requiring reconciliation.
+startDate?: string              — OPTIONAL flight-window start, YYYY-MM-DD. Sent to Google as
+                                  `start_date_time` "YYYY-MM-DD 00:00:00" (the v23 field; `start_date`
+                                  was REMOVED in v23 and is rejected). Interpreted in the AD ACCOUNT's
+                                  timezone, which this service is not told — the value is passed
+                                  through as wall-clock and never converted, since a guessed timezone
+                                  would move the start by a day.
+endDate?: string                — OPTIONAL flight-window end, YYYY-MM-DD. Sent as `end_date_time`
+                                  "YYYY-MM-DD 23:59:59", which makes the end date INCLUSIVE — the
+                                  campaign serves through the end of that day. Must not be BEFORE
+                                  startDate; equal dates are a valid one-day campaign. A start with
+                                  no end runs until paused, which is the behaviour of every campaign
+                                  created before these fields existed. Both are validated before the
+                                  budget mutate, so a malformed date fails without orphaning a paid
+                                  campaign. Unlike `redditConfig`, both are OPTIONAL here.
 ```
 
 #### HubSpotConfig (the `hubspotConfig` object)

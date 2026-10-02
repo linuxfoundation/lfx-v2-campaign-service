@@ -2998,3 +2998,74 @@ func TestBuildGoogleAdsCampaignURL(t *testing.T) {
 		t.Errorf("buildGoogleAdsCampaignURL(\"\") = %q, want empty string", got)
 	}
 }
+
+// TestGoogleAds_DispatchWiresFlightWindow covers the whole chain the gap spanned: the
+// config's dates must reach GOOGLE's payload and the campaigns table's own columns.
+//
+// Both halves matter and they failed for different reasons. Google was the only platform
+// calling applyCampaignConfig with "","" — so even once the client could send dates, the
+// row would have stayed NULL and the settings readback would have gone on reporting
+// `unknown` against a campaign whose window it could see upstream.
+func TestGoogleAds_DispatchWiresFlightWindow(t *testing.T) {
+	var mu sync.Mutex
+	var campaignBody string
+	opts, _ := googleAdsServers(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		},
+	)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			_, _ = io.WriteString(w, `{"results":[]}`)
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			campaignBody = string(b)
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+	opts = append(opts, googleads.WithBaseURL(apiSrv.URL))
+
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"startDate":"2026-06-17","endDate":"2026-06-20"}}`)
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp == nil {
+		t.Fatal("expected a campaign result")
+	}
+
+	mu.Lock()
+	body := campaignBody
+	mu.Unlock()
+	if !strings.Contains(body, `"startDateTime":"2026-06-17 00:00:00"`) ||
+		!strings.Contains(body, `"endDateTime":"2026-06-20 23:59:59"`) {
+		t.Errorf("config dates did not reach Google's payload.\nbody=%s", body)
+	}
+
+	// The persisted side. Compared as YYYY-MM-DD because that is what the column holds —
+	// the Google payload's time component is a wire detail, not part of the record.
+	if camp.StartDate == nil || camp.StartDate.Format("2006-01-02") != "2026-06-17" {
+		t.Errorf("campaign row start_date = %v, want 2026-06-17 — the readback has nothing to compare against while this is NULL", camp.StartDate)
+	}
+	if camp.EndDate == nil || camp.EndDate.Format("2006-01-02") != "2026-06-20" {
+		t.Errorf("campaign row end_date = %v, want 2026-06-20", camp.EndDate)
+	}
+}
