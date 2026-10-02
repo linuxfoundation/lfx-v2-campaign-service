@@ -1478,6 +1478,108 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("update-campaign-budget", func() {
+		Description("Change how much a campaign may spend, on its ad platform, then persist the new amount. " +
+			"A MUTATION on a live paid campaign, dispatched to the platform first. The invariant is ONE-WAY: " +
+			"the new amount is never persisted before the platform confirms it, so no refusal or platform " +
+			"failure can leave the row reporting an amount the platform was never given. The converse is " +
+			"not promised, because it cannot be — once the platform has confirmed, the row write can still " +
+			"fail, and that case answers 500 with the platform holding the new amount and the row still " +
+			"reporting the old one. It is logged as a divergence, the platform is authoritative, and " +
+			"re-applying the same amount reconciles it. Unlike update-campaign, which writes the DB row alone. " +
+			"AMOUNT ONLY — never the pacing model. `budget_type` must be the pacing the campaign ALREADY " +
+			"has upstream; a request naming the other one is refused (409) rather than translated. " +
+			"Switching a live campaign between daily pacing and a whole-flight cap reinterprets everything " +
+			"it has already spent against, and the platforms do not even name the same two ideas (Google " +
+			"has no LIFETIME period; its counterpart, CUSTOM_PERIOD, is a narrower thing). Change the " +
+			"pacing in the ad platform, then set the amount here. " +
+			"The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor " +
+			"converts it. " +
+			"Google Ads, LinkedIn and Meta today: a campaign on any other platform is refused with 400. " +
+			"Budget writing is added per platform, because each platform's budget model is its own " +
+			"deliberate decision, and the refusals below are the union of what those models can refuse — " +
+			"a platform whose model has no analogue of a given refusal simply never raises it (LinkedIn " +
+			"budgets are fields on the campaign and cannot be shared, so the shared-budget 409 is a " +
+			"Google and Meta answer; Meta's form of it is a campaign-level, ad-set-spanning budget). " +
+			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: " +
+			"the campaign is unprovisioned (no platform campaign id); the campaign belongs to a different " +
+			"ad account than the project's connection now resolves to, or does not record which ad account " +
+			"it was created under; the campaign's budget is SHARED across campaigns, where changing the " +
+			"amount would change the spend of campaigns this request never named — including campaigns this " +
+			"service does not own and cannot see (give the campaign its own budget in the ad platform, or " +
+			"make the change there where its full effect is visible); or the budget could not be addressed " +
+			"at all — the platform did not report which budget resource is attached, did not report whether " +
+			"it is shared, did not report its pacing, or reports a pacing this service has no mapping for. " +
+			"An unreported fact is refused rather than assumed: 'we could not establish that this budget is " +
+			"private' and 'this budget is private' are opposite facts, and only one of them justifies a " +
+			"write that could move a stranger's spend. None of the 409s is retryable — each needs a change " +
+			"in the ad platform or a re-dispatch. " +
+			"**400** for a request fault: a non-positive, non-finite or out-of-range amount, an unknown " +
+			"budget type, a platform with no budget-write capability wired, or an amount the " +
+			"campaign's own platform refuses on its published minimums — the service validates " +
+			"only the bounds every platform shares, so a platform's stricter floor is a " +
+			"permanent request fault and the response names what it was. " +
+			"**503** when the platform could not be reached or did not confirm; the row is unchanged, and " +
+			"re-applying the same amount converges on the same state, so a retry is safe.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			ifMatchAttr()
+			// Minimum is ONE MICRO, not zero. Goa's Minimum is inclusive, so Minimum(0)
+			// would publish an OpenAPI contract admitting a value — zero — that the service
+			// refuses unconditionally, leaving a generated client to discover the real
+			// floor only from a 400. One micro is the LOOSEST floor any supported platform
+			// has — Google Ads bills in micros, LinkedIn in whole cents, Meta in its
+			// account currency's minor unit — so it is the only floor this contract can
+			// state for every platform at once. Each adapter enforces its own, stricter
+			// floor and its own platform minimums, which is where a 400 still comes from
+			// for an amount this range admits. Zero is not a budget — it is a request to
+			// stop spending, and pausing is what expresses that. NaN and Inf remain the
+			// only runtime rejections a Goa range cannot express, and the service checks
+			// them first. The maximum matches the platform adapter's own cap, so a figure
+			// this service would refuse to create with cannot be reached by editing.
+			//
+			// THIS PUBLISHED FLOOR IS MARGINALLY STRICTER THAN THE SERVICE'S OWN CHECK, and
+			// that direction is the safe one. The service refuses an amount whose ROUNDED
+			// micro value is below one — it compares against the adapter's math.Round rather
+			// than a literal, so it cannot drift from it — which admits the half-open sliver
+			// [0.0000005, 0.000001) that rounds UP to one micro. Publishing 0.0000005 as the
+			// contract would state a minimum that is not a whole unit in any platform's
+			// billing and that no caller has a reason to send; publishing one micro states
+			// the real floor and simply closes that sliver to HTTP callers before the handler
+			// sees it. Nothing a generated client can send is accepted here and refused
+			// there — the published contract is never the looser of the two.
+			Attribute("budget", Float64, "New budget amount, in the AD ACCOUNT's own currency (NOT USD). Must be strictly positive.", func() {
+				Minimum(0.000001)
+				Maximum(1000000000)
+				Example(2500.00)
+			})
+			// Required, and deliberately not defaulted: this endpoint refuses a pacing model
+			// that does not match the campaign's current one, so a defaulted 'daily' would
+			// turn a caller's omission into a 409 about a pacing they never named.
+			Attribute("budget_type", String, "The pacing the amount is expressed in. MUST match the campaign's current upstream pacing — this endpoint changes the amount, never the pacing.", func() {
+				Enum("daily", "lifetime")
+				Example("daily")
+			})
+			Required("project_id", "brief_id", "campaign_id", "budget", "budget_type")
+		})
+		Result(Campaign)
+		commonBriefErrors()
+		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
+		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
+		HTTP(func() {
+			PATCH("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/budget")
+			Header("bearer_token:Authorization")
+			Header("if_match:If-Match")
+			Response(StatusOK, func() { Header("etag:ETag") })
+			briefErrorResponses()
+			Response("PreconditionFailed", StatusPreconditionFailed)
+			Response("PreconditionRequired", StatusPreconditionRequired)
+		})
+	})
+
 	Method("apply-keyword-actions", func() {
 		Description("Pause or remove Google Ads keywords on one campaign. " +
 			"A MUTATION on a live paid campaign: pausing or removing a keyword changes what serves, so it " +

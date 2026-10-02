@@ -2443,45 +2443,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// the campaign body, so a non-positive, NaN, or Inf value would otherwise be
 	// rejected by LinkedIn only AFTER the campaign group (a permanent resource)
 	// already exists, orphaning it.
-	if math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) {
-		return nil, fmt.Errorf("budget must be a finite number, got %v", in.BudgetUSD)
-	}
-	if in.BudgetUSD <= 0 {
-		return nil, fmt.Errorf("budget must be greater than zero, got %v", in.BudgetUSD)
-	}
-	// Round the budget to the SAME 2-decimal precision createSponsoredCampaign
-	// serializes to the wire (strconv.FormatFloat(_, 'f', 2, 64)) and validate
-	// against THAT value, so the amount checked here is exactly the amount sent.
-	// Validating the raw float instead diverged from the wire value: e.g. 9.999
-	// is sent as "10.00" (meets the $10 minimum) yet the raw-float check rejected
-	// it, and 99.999 hit the same problem for the lifetime minimum.
-	roundedBudgetStr := strconv.FormatFloat(in.BudgetUSD, 'f', 2, 64)
-	roundedBudget, parseErr := strconv.ParseFloat(roundedBudgetStr, 64)
-	if parseErr != nil {
-		// Should be unreachable for a finite float already validated above, but
-		// fail closed rather than proceed with an unverified budget.
-		return nil, fmt.Errorf("budget %v could not be normalized to a 2-decimal amount: %w", in.BudgetUSD, parseErr)
-	}
-	// A sub-cent budget (e.g. 0.001) passes the > 0 / NaN / Inf checks yet rounds
-	// to "0.00" at the wire precision — a zero budget LinkedIn would reject only
-	// AFTER the campaign group (a permanent resource) already exists, orphaning
-	// it. Reject any budget that rounds to zero, up front, before any POST.
-	if roundedBudgetStr == "0.00" {
-		return nil, fmt.Errorf("budget %v is below the minimum billable amount (0.01) and would round to zero at the API boundary", in.BudgetUSD)
-	}
-	// Enforce LinkedIn's per-campaign budget minimums BEFORE any POST. LinkedIn
-	// rejects a dailyBudget under $10 and a totalBudget (lifetime) under $100, but
-	// only AFTER the campaign group (a permanent resource) already exists,
-	// orphaning it. LifetimeBudget selects the totalBudget field downstream (see
-	// createSponsoredCampaign), so the minimum tracks that choice. These minimums
-	// are USD-specific — the client only ever sends currencyCode "USD". The check
-	// uses roundedBudget so the value checked matches the value sent.
-	if in.LifetimeBudget {
-		if roundedBudget < minLifetimeBudgetUSD {
-			return nil, fmt.Errorf("lifetime budget %v is below LinkedIn's minimum of $%.0f for a total (lifetime) budget", in.BudgetUSD, minLifetimeBudgetUSD)
-		}
-	} else if roundedBudget < minDailyBudgetUSD {
-		return nil, fmt.Errorf("daily budget %v is below LinkedIn's minimum of $%.0f for a daily budget", in.BudgetUSD, minDailyBudgetUSD)
+	//
+	// Every rule — finite, positive, non-zero at wire precision, and LinkedIn's
+	// $10 daily / $100 lifetime minimums checked against the ROUNDED wire value —
+	// now lives in ValidateBudgetAmount, which the budget-WRITE path calls too.
+	// Sharing it is what makes it impossible to EDIT a campaign to an amount this
+	// path would have refused to CREATE it with. The rules and their error texts
+	// are unchanged by the extraction.
+	if _, _, err := ValidateBudgetAmount(in.BudgetUSD, in.LifetimeBudget); err != nil {
+		return nil, err
 	}
 
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and

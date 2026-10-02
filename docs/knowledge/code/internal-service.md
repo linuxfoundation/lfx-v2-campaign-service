@@ -1346,6 +1346,125 @@ refusal is preserved where it can be acted on: it reaches the LOG via `safeErrSu
 caller, who can act on neither. A retry is the right advice for both, since a contradictory
 response can be transient as easily as a timeout.
 
+## Campaign budget write (LFXV2-2665)
+
+`BriefService.UpdateCampaignBudget` (backing `PATCH .../campaigns/{id}/budget`) changes how much
+a campaign may spend ON THE AD PLATFORM, then persists the new amount. It is the
+settings readback's mirror and the pair is deliberate: the readback makes a budget divergence
+legible, and this is the only capability that can act on what it shows. Before it, an operator
+who opened Monitor, saw a campaign pacing over budget and clicked through to Optimize had
+exactly one action available — pause it.
+
+**The platform call happens FIRST and the row is written only after it confirms**, exactly as
+`ToggleCampaignStatus` works, so this service never reports a budget the platform never accepted.
+**That invariant is ONE-WAY and the published description says so.** No refusal and no platform
+failure can leave the row holding an amount the platform was never given; the converse is not
+promised, because once the platform has confirmed, `ReplaceCampaign` can still fail. That case
+answers **500** with the platform holding the new amount and the row the old one — it is logged
+as a platform/DB divergence, the platform is authoritative, and re-applying the same amount
+reconciles it. Claiming the symmetric guarantee in the API description would describe a
+rollback this endpoint does not have.
+**What is persisted is the REQUESTED amount, not a readback of the applied one** — the dispatcher
+confirms acceptance and does not re-read, so the two can differ by less than the platform's
+smallest settable unit (LinkedIn settles on two decimals, Meta on the account currency's minor
+unit, Google on a micro). That is the same meaning the column already carries, and a sub-unit
+drift is exactly what the settings readback exists to surface rather than to hide.
+Writing those columns does NOT breach the readback's "never write an observation back" rule: the
+budget columns record what a dispatch ASKED FOR, and a budget change is a new REQUEST, so the
+column keeps meaning exactly what it already meant and the readback keeps comparing
+live-against-requested rather than live-against-itself.
+
+**Request validation is this layer's job, not the adapter's**, and it runs before anything is
+loaded or claimed. The design's `Minimum`/`Maximum` bound the value for generated clients, but
+Goa's range cannot express any of the three checks that actually matter — NaN, the infinities,
+and strictly-greater-than-zero — and a direct caller reaches the method regardless. **NaN is
+checked FIRST** because it fails every ordered comparison: both `budget <= 0` and
+`budget > max` are false for NaN, so a later range check would pass it straight through to the
+platform. **Zero is refused rather than forwarded**: it is not a budget but a request to stop
+spending, which the status endpoint expresses — an ad platform would accept a zero amount as a
+real instruction and stop delivery through an endpoint whose whole contract is "change how
+much". `budget_type` is validated defensively against the two `model.BudgetType` values even
+though the design's `Enum` restricts it, so a direct caller cannot push an unsupported pacing at
+a platform.
+
+**The state gate ALLOWS `created_degraded`**, unlike an activate. That status means the campaign
+definitely exists upstream with unverified wiring, and it can be spending — so the campaign most
+likely to need its budget cut would otherwise be the one this service could not cut. Nothing
+here activates anything, and because only the budget columns are written, `status` is left
+exactly as found and the reconciliation marker survives the change untouched.
+
+**Ordering, and why each refusal sits where it does.** The `If-Match` version is checked against
+the LOADED row before any state check, for the reason `ToggleCampaignStatus` spells out:
+otherwise a stale ETag is validated against a row the client never saw and a state check reports
+a 409 about that newer row for what is actually a 412. The platform-independent refusals — the
+email channel (400: it stages a draft for a human to send, so there is no ad spend to set) and
+an empty `platform_campaign_id` (409) — sit BEFORE the claim, because claiming takes the
+campaign's advisory lock on a dedicated pooled connection and the lock is a TRY rather than a
+wait, so a request that is going to be rejected anyway must never turn another writer's request
+into a 409.
+
+**The dispatcher error switch** maps `ErrBudgetWriteUnsupported` → 400 (no dispatcher, or one
+that is not a `BudgetWriter`; no retry adds the capability), `ErrBudgetAmountRejected` → 400,
+`ErrServiceDefect` → 500 and `ErrAccountNotSelected` → 409 **both ABOVE the general
+`ErrConnectionNotUsable` arm** (each is always wrapped ALONGSIDE it by the credential resolvers,
+so the general arm swallows either one that is missing — and then names a remedy belonging to
+somebody who has nothing to repair: an operator told to fix credentials that are fine when the
+defect is ours, or when the actual fix is selecting an ad account), `ErrBudgetShared` and
+`ErrBudgetUnwritable` → 409, `ErrPlatformCampaignAbsent` → 404,
+`ErrCampaignProvenanceUnknown` → 409 **above** the `ErrCampaignAccountMismatch` arm (a row that
+names no account cannot be told to reconnect one; the remedy is a re-dispatch), the two system
+connection sentinels and `ErrCredentialDecryptionFailed` → 500, `ErrConnectionNotUsable` → 409
+above the unconfirmed check, and `ErrNotFound` → 404. The shared-budget and unwritable arms log
+through `safeErrSummary` and return a generic message: each cause names upstream configuration,
+which the caller can act on only in the ad platform.
+
+**The SUCCESS path logs too, where the twin toggle's does not**, and the asymmetry is
+deliberate: every other arm of this endpoint logs, so without it the one operation that actually
+moved money was the only one leaving no trace beside the platform-call warnings. A status is
+reconstructable from the campaign's current state; an amount's history is not. The line carries
+the resource ids, the platform, the budget type and the amount — but **not the actor**, which is
+already persisted on the row as `UpdatedBy`, the durable and queryable place for it, and which is
+a different category of data from the resource ids these logs carry.
+
+**The `ErrBudgetAmountRejected` arm is the one that returns a SPECIFIC message, and it is
+specific by construction rather than by string-handling.** A platform's own floor — LinkedIn's
+`$10` daily / `$100` lifetime, Meta's one minor unit — has no equivalent at this layer, which
+validates only what is true for every platform at once (finite, `> 0`, `<= 1e9`, `>= half a
+micro`) and deliberately holds no per-platform floor. Without this arm such a refusal fell to the
+default 503, inviting a retry of a request that can never succeed. The adapter therefore hands
+up a client-safe sentence through a behavioural interface — `BudgetAmountReason() string`,
+detected with `errors.As` exactly as `Unconfirmed() bool` already is — and only that sentence is
+appended to the 400. **The rendered error chain is never interpolated into a client message**:
+`safeErrSummary` strips non-graphic runes and bounds length, it does not redact, so returning a
+wrapped chain would publish whatever an adapter or transport put in it.
+
+**A positive amount that rounds to zero micros is refused 400 here too**, alongside NaN, Inf,
+zero and the ceiling. Every supported platform bills in micros, so an amount under 0.000001 of
+the account's currency rounds to nothing upstream and the adapter refuses it with a bare error
+the switch below can classify only as 503 — an "unconfirmed upstream outcome" answer to a
+request that was never going to succeed, inviting a retry that cannot. The check compares the
+ROUNDED value rather than a literal floor so it stays in step with the adapter's own
+`math.Round`, and it sits with the other validations, ahead of the load, the claim and the live
+settings read: a doomed request must not take the write lock. This floor is also what the
+design publishes as the attribute's `Minimum` — Goa's `Minimum` is inclusive, so declaring zero
+there would advertise a value the service refuses unconditionally and leave a generated client
+to discover the real bound from a 400.
+
+**The UNCONFIRMED arm holds the claim lock for a bounded cooldown** rather than releasing it
+inline, the same way the toggle does: an immediate release lets the next caller claim the SAME
+still-unbumped version and write the platform again while this call's outcome is unknown. The
+row is deliberately left untouched — it might already be right, or not — and the caller is told
+to verify before retrying, even though re-applying the same amount CONVERGES (the client sends
+the mutate as idempotent), because the amount this service reports and the amount the platform
+holds may differ until they do.
+
+The final persist runs on a cancel-detached context bounded by `persistResultTimeout`: the
+platform change has already committed, so the row must catch up even if the client disconnected,
+or the platform carries the new budget while the row still reports the old one with no
+compensating rollback. The write is gated on the originally claimed version — the claim takes
+the lock but does not bump — so `ReplaceCampaign` co-commits the index event as every campaign
+write does.
+
 ## Campaign delete
 
 `BriefService.DeleteCampaign` (backing `DELETE .../campaigns/{id}`, `If-Match` required)

@@ -158,6 +158,19 @@ const metricsCallTimeout = 20 * time.Second
 // to child resources, so it takes the same ceiling for the same reasons.
 const settingsCallTimeout = 20 * time.Second
 
+// budgetWriteCallTimeout bounds the SYNCHRONOUS budget-write platform call, which runs on
+// the HTTP request goroutine. It takes toggleCallTimeout's ceiling rather than the readers',
+// because it is a MUTATION and shares the toggle's failure mode: the adapter may read the
+// budget's current shape before mutating it (the shared-budget guard requires that), so the
+// call is a sequence and not a single request.
+//
+// Stated as the same RELATIONSHIP toggleCallTimeout states, and for the reason given there:
+// it must stay comfortably under constants.DefaultWriteTimeout so a failed write still
+// returns an error the client receives. A timeout here surfaces as UNCONFIRMED, which on
+// this path means the operator must check the budget upstream before retrying — a budget
+// applied twice is money.
+const budgetWriteCallTimeout = 45 * time.Second
+
 // accountsCallTimeout bounds the SYNCHRONOUS account-listing platform call, which — like
 // metrics and toggle — runs on the HTTP request goroutine. Account discovery is a pure read
 // with no cascade, so it can use the same ceiling as metrics reads.
@@ -250,6 +263,55 @@ type SettingsReader interface {
 	// never defaulted to a zero or empty value — a fabricated "they match" is the exact
 	// failure this capability exists to prevent.
 	ReadSettings(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.CampaignSettingsReadback, error)
+}
+
+// BudgetWriter is an OPTIONAL dispatcher capability: change an existing campaign's budget
+// ON THE AD PLATFORM. Type-asserted like StatusToggler and SettingsReader, so a dispatcher
+// without it yields a clean ErrBudgetWriteUnsupported -> 400.
+//
+// This is SettingsReader's mirror, and the two are designed as a pair. SettingsReader makes
+// a budget divergence legible; this is the only capability that can act on what it shows.
+// Before it, an operator who opened Monitor, saw a campaign pacing over budget and clicked
+// through to Optimize had exactly one action available — pause it.
+//
+// It MUTATES, which puts it in the small set with StatusToggler and KeywordActioner rather
+// than with the readers, and it is the only one of the three that changes how much money is
+// spent. Three rules follow from that and are not negotiable per-adapter:
+//
+//   - CONFIRM BEFORE PERSISTING. The row is updated by the CALLER only after this returns
+//     nil, exactly as ToggleCampaignStatus works. An implementation must never report
+//     success for a mutate whose outcome it could not confirm; an unconfirmed write is an
+//     error whose message tells the operator to verify upstream before retrying, because a
+//     budget applied twice is a real amount of money.
+//
+//   - REFUSE A SHARED BUDGET. Where a platform's budget can be attached to more than one
+//     campaign, writing it through ONE campaign silently changes the others — including
+//     campaigns this service does not own and the caller cannot see. That must be refused
+//     before the mutate with ErrBudgetShared, never written. See that sentinel for why an
+//     adopted campaign is the case this guard exists for.
+//
+//   - ENFORCE THE ACCOUNT-IDENTITY INVARIANT AT LEAST AS STRICTLY AS ReadSettings DOES.
+//     A platform campaign id is typically unique only within the account it was created
+//     under, so acting on it through a re-pointed connection can reach ANOTHER account's
+//     campaign. ReadSettings fails closed on absent provenance because the cost of getting
+//     it wrong is a misleading report; here the cost is changing a stranger's ad spend, so
+//     nothing about that guard may be relaxed on this path.
+//
+// It does NOT violate SettingsReader's read-only contract, and the distinction is worth
+// stating because the two touch the same field. SettingsReader must not write the row
+// because the row records what the dispatch ASKED FOR, and overwriting a request with an
+// observation destroys the only record of the request. A budget write is a NEW REQUEST —
+// the operator is asking for a different budget — so recording it is the column continuing
+// to mean exactly what it already meant. The readback then compares live-against-requested
+// as before, against a newer request.
+type BudgetWriter interface {
+	// WriteBudget sets the campaign's budget on the platform. campaign is the persisted
+	// row, supplied so the adapter can reach PlatformCampaignID, the creation provenance
+	// and any budget id it stored at creation.
+	//
+	// Returns nil ONLY when the platform confirmed the change. The caller persists the new
+	// budget onto the row on nil and on nothing else.
+	WriteBudget(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, budget model.BudgetChange) error
 }
 
 // AccountLister is an OPTIONAL dispatcher capability: enumerate accessible ad accounts for a
@@ -502,6 +564,17 @@ var (
 	// than the project's current connection resolves to, so its id cannot be read safely.
 	ErrCampaignAccountMismatch = domain.ErrCampaignAccountMismatch
 
+	// ErrBudgetWriteUnsupported: the campaign's platform has no budget-write capability wired.
+	ErrBudgetWriteUnsupported = domain.ErrBudgetWriteUnsupported
+	// ErrBudgetShared: the campaign's upstream budget is shared across campaigns, so writing
+	// it through this campaign would move spend on campaigns the request never named.
+	ErrBudgetShared = domain.ErrBudgetShared
+	// ErrBudgetUnwritable: the campaign's upstream budget could not be addressed for a write.
+	ErrBudgetUnwritable = domain.ErrBudgetUnwritable
+	// ErrBudgetAmountRejected: the requested amount was refused by the platform adapter's own
+	// validator, before anything was written — a permanent request fault, answered 400.
+	ErrBudgetAmountRejected = domain.ErrBudgetAmountRejected
+
 	// ErrAccountsUnsupported: the platform has no account-listing capability wired.
 	ErrAccountsUnsupported = domain.ErrAccountsUnsupported
 
@@ -647,6 +720,7 @@ const (
 	opReadMetrics                = "read_metrics"
 	opLookupCampaign             = "lookup_campaign"
 	opReadSettings               = "read_settings"
+	opWriteBudget                = "write_budget"
 	opListAccounts               = "list_accounts"
 	opListAccountCampaignMetrics = "list_account_campaign_metrics"
 	opSearchEmails               = "search_emails"
@@ -1942,6 +2016,62 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	terr := toggler.ToggleStatus(callCtx, projectID, platform, campaign, status)
 	o.recordUpstream(ctx, platform, opToggleStatus, start, terr)
 	return terr
+}
+
+// WriteCampaignBudget changes an already-created campaign's budget on its ad platform.
+// It looks up the campaign's dispatcher, requires that dispatcher to implement BudgetWriter
+// (else ErrBudgetWriteUnsupported), and delegates the platform call. The caller (the
+// service) updates the persisted row's BudgetAmount/BudgetType only after this returns nil.
+//
+// Structured deliberately as ToggleCampaignStatus's twin: same pre-platform guards, same
+// classification of what the returned error can mean, same confirm-then-persist split. The
+// two are the service's only campaign-scoped mutations of an existing campaign, and an
+// operator hitting one failure mode should not find it reported differently by the other.
+//
+// VALIDATION OF THE REQUEST ITSELF is the SERVICE layer's job, not this one's — the same
+// split every other handler uses. By the time a BudgetChange arrives here its amount is
+// already known positive and its type already one of the two model.BudgetType values.
+func (o *Orchestrator) WriteCampaignBudget(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, budget model.BudgetChange) error {
+	// Pre-platform guards return classifiable sentinels: these NEVER contact the ad
+	// platform, so the caller must NOT report them as a platform failure. Identical to
+	// ToggleCampaignStatus's, and for the identical reason — there is nothing upstream to
+	// address until the row records an upstream id.
+	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
+		return ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		// No dispatcher registered is, from the caller's view, the same as "budget writes
+		// not supported for this platform" — neither reaches the platform.
+		return fmt.Errorf("%w: no dispatcher registered for platform %s", ErrBudgetWriteUnsupported, platform)
+	}
+	writer, ok := d.(BudgetWriter)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrBudgetWriteUnsupported, platform)
+	}
+	// Any error from here is from the platform call itself, from the dispatcher's own
+	// pre-flight cred resolution, or from its CONNECTION-STATE checks — the same three
+	// groups ToggleCampaignStatus documents at length above, classified identically,
+	// because this path resolves credentials through the very same credsSource.
+	//
+	// TWO further sentinels are reachable only here, and both are refusals raised BEFORE
+	// any mutate is issued, so nothing upstream has changed when a caller sees either:
+	// ErrBudgetShared (the budget is attached to campaigns this request never named) and
+	// ErrBudgetUnwritable (the budget could not be addressed at all). Both are permanent
+	// properties of how that budget is set up, which is why the caller answers them 409
+	// rather than 503 — there is no retry that improves them.
+	//
+	// Bounded like the toggle, and for a sharper version of the same reason: the adapter
+	// may read the budget before mutating it, so this is a sequence of calls, and a write
+	// that lands after the response can no longer be delivered leaves an operator unable
+	// to tell whether their money moved. A context deadline surfaces as UNCONFIRMED, and
+	// on this path the caller's message must tell them to VERIFY upstream before retrying.
+	callCtx, cancel := context.WithTimeout(ctx, budgetWriteCallTimeout)
+	defer cancel()
+	start := time.Now()
+	werr := writer.WriteBudget(callCtx, projectID, platform, campaign, budget)
+	o.recordUpstream(ctx, platform, opWriteBudget, start, werr)
+	return werr
 }
 
 // ReadCampaignMetrics fetches live performance metrics for one campaign from its ad

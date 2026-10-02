@@ -2997,30 +2997,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// mutating call, rather than guessing 100, which would silently encode a
 	// zero-decimal budget 100× too high (a warning after resource creation cannot
 	// prevent that budget from being activated).
-	offset := c.account.CurrencyOffset
-	if offset == 0 {
-		if preflightErr != nil {
-			// Wrap with %w (not %s) so the underlying error chain is preserved and a
-			// caller can errors.As it back to *APIError like other Graph failures — a
-			// %s would flatten it to a string and break that unwrap.
-			return nil, fmt.Errorf("meta: could not determine the account currency because the account preflight failed; set AccountConfig.CurrencyOffset explicitly (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP): %w", preflightErr)
-		}
-		derived, ok := currencyOffsetFor(acct.Currency)
-		if !ok {
-			return nil, fmt.Errorf("meta: account preflight returned an unsupported or missing currency code (got %q); it is not in the supported-currency map, so set AccountConfig.CurrencyOffset explicitly (100 for most currencies, 1 for zero-decimal like JPY/KRW/CLP) rather than assuming a default that could encode a zero-decimal budget 100x too high", acct.Currency)
-		}
-		offset = derived
-	} else if preflightErr == nil {
-		// An explicit override is set AND the preflight returned a currency. If that
-		// currency is recognized and its true offset DIFFERS from the override,
-		// reject rather than trust the override: a stale override (e.g. a persisted
-		// CurrencyOffset:100 on an account whose currency is now JPY, true offset 1)
-		// would silently encode the budget 100× wrong. The account's actual currency
-		// is authoritative; only rely on the override when the preflight can't
-		// identify the currency (unrecognized/absent code -> derived !ok).
-		if derived, ok := currencyOffsetFor(acct.Currency); ok && derived != offset {
-			return nil, fmt.Errorf("meta: AccountConfig.CurrencyOffset (%d) conflicts with the account's currency %q (correct offset %d) reported by the preflight; the account currency is authoritative — remove or correct the explicit offset to avoid encoding the budget with the wrong minor-unit scale", offset, acct.Currency, derived)
-		}
+	// The precedence itself lives in resolveCurrencyOffset, shared with the budget-WRITE
+	// path, so an amount this path would refuse to create with cannot be reached by editing
+	// a live campaign. Its rules and error texts are the ones that were inline here.
+	offset, err := c.resolveCurrencyOffset(acct.Currency, preflightErr)
+	if err != nil {
+		return nil, err
 	}
 
 	// Convert whole account-currency units to Meta minor units and reject budgets
@@ -3037,13 +3019,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// float64, so compare against float64(math.MaxInt64) (which rounds up); a scaled
 	// value at or above it (including +Inf from an absurd budget) is rejected as out
 	// of range for a currency amount.
-	scaled := math.Round(in.Budget * float64(offset))
-	if scaled >= float64(math.MaxInt64) {
-		return nil, fmt.Errorf("budget too large after applying currency offset %d: exceeds the representable minor-unit range", offset)
-	}
-	budgetMinor := int64(scaled)
-	if budgetMinor < 1 {
-		return nil, fmt.Errorf("budget too small: must be at least one minor currency unit (offset %d)", offset)
+	budgetMinor, err := budgetToMinorUnits(in.Budget, offset)
+	if err != nil {
+		return nil, err
 	}
 
 	// Step 2: geo filtering + campaign creation.

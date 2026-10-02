@@ -719,6 +719,201 @@ is to report a comparison, so a confidently wrong report about another account's
 the precise outcome it exists to prevent, whereas the toggle and metrics paths weigh that risk
 against serving legacy rows at all.
 
+## Budget write (optional capability, LFXV2-2665)
+
+`BudgetWriter` — `WriteBudget(ctx, projectID, platform, campaign *model.Campaign, budget
+model.BudgetChange) error` — changes an existing campaign's budget ON THE AD PLATFORM.
+Discovered by the same type assertion as `StatusToggler` and `SettingsReader`; a dispatcher
+without it yields `ErrBudgetWriteUnsupported` -> 400. **Google Ads, LinkedIn and Meta implement
+it today**; every other platform still answers 400. It is the settings readback's mirror: the
+readback makes a budget divergence legible, and this is the only capability that can act on it.
+
+**Adding a platform is purely additive** — the service layer holds no allowlist, so a slice is
+the adapter plus its dispatcher method and nothing else. What is NOT shared between the slices
+is the refusal set: each platform's budget model decides which guards even have a subject, and
+the design's published refusal list is the UNION of the three (see [design.md](design.md)). The
+three rules every implementation does obey, stated in `internal/service/orchestrator.go`, are:
+confirm before persisting, refuse a shared budget, and enforce the account-identity invariant at
+least as strictly as `ReadSettings` does.
+
+**All three enforce provenance more strictly than their own sibling paths do, and each says so
+in code.** `verifyLinkedInAccountMatch` returns `nil` when the campaign records no creating
+account; `verifyMetaAccountMatch` returns `nil` when EITHER the recorded account or the current
+one is absent — deliberately, because Meta's toggle and metrics address the campaign node by id
+and need no account at all. Both tolerances are correct for those callers and wrong for a budget
+write, so each budget dispatcher refuses the absence(s) itself BEFORE calling the shared helper,
+which is then still used for the mismatch case so the wording stays common. Reusing the helper
+alone would silently inherit a contract this path cannot accept.
+
+It MUTATES, which puts it with `StatusToggler` and `KeywordActioner` rather than with the
+readers, and it is the only one of the three that changes how much money is spent. It returns
+`nil` ONLY when the platform confirmed the change — the caller persists the new amount on `nil`
+and on nothing else.
+
+**Google's budget is a SEPARATE RESOURCE from the campaign** (`campaign_budget`), and three
+facts live only there: which budget resource is attached (`campaign_budget.id`),
+`explicitly_shared`, and the period. `GoogleAdsDispatcher.WriteBudget` therefore READS the
+campaign's settings before it writes anything, and every refusal below happens BEFORE any
+mutate is issued:
+
+1. **Shared budget.** `explicitly_shared` is the safety fact. A shared budget is attached to
+   more than one campaign, so writing it through this campaign moves the spend of every other
+   campaign attached to it — including campaigns this service does not own and cannot see.
+   Refused with `ErrBudgetShared`. **An UNREAD flag is refused too** (`ErrBudgetUnwritable`),
+   never assumed unshared: the assumption is only ever wrong in the direction that spends other
+   people's money. The create path pins `ExplicitlyShared=false`, so only ADOPTED campaigns can
+   reach this refusal at all.
+2. **No addressable budget.** The platform reported no `campaign_budget.id`, so there is no
+   resource to write. `ErrBudgetUnwritable`.
+3. **Pacing.** The upstream period is absent, is a value this service has no mapping for, or is
+   not the pacing this request named — all `ErrBudgetUnwritable`. **A mismatch is REFUSED, never
+   translated**: `amount_micros` (DAILY) and `total_amount_micros` (CUSTOM_PERIOD) are mutually
+   exclusive fields on the budget resource, so honouring a `budget_type` the campaign does not
+   currently use would silently switch its whole spend model behind a request that only named a
+   number. This endpoint changes an amount; the pacing is changed in the ad platform.
+
+Only then does the amount convert, through `googleads.ValidateBudgetMicros` — the SAME function
+the create path uses, extracted rather than copied, so the two can never drift into disagreeing
+about what a valid budget is — and a single `campaignBudgets:mutate` is sent with
+`idempotent=true` and an update mask naming exactly one of the two amount fields. Re-applying the
+same amount converges on identical state, which is what makes the service's unconfirmed arm able
+to call a retry safe.
+
+**The mutate's error is CLASSIFIED; the settings read's is not.** Google Ads carries "this may
+have applied" in the error's SHAPE — transport failure, 5xx, redirect — rather than in an
+`Unconfirmed()` method, so an unwrapped mutate error would reach the service as a definite
+failure and be answered "the campaign was not modified": an affirmative false claim about a
+money-moving write, with the claim lock released inline instead of held through the cooldown.
+`googleads.IsOutcomeUnconfirmed` therefore gates a wrap in `unconfirmedBudgetWriteError`, the
+same shape every other mutating Google Ads path uses. The wrap is deliberately scoped to the
+mutate alone: the settings read changes nothing, so its failure is definite even when its status
+is a 5xx, and marking it ambiguous would send an operator to verify a write that was never
+built. `unconfirmedBudgetWriteError` is a sibling of `unconfirmedToggleError` rather than a
+reuse of it — both satisfy the same behavioural interface, but that type's message says "status
+change", and a budget write logged as a status change misdirects whoever reads it during exactly
+the incident it exists for.
+
+### LinkedIn — the budget is a FIELD ON THE CAMPAIGN
+
+`dailyBudget` and `totalBudget` are fields on the campaign itself, each a
+`{amount, currencyCode}` pair whose amount is a two-decimal string. A campaign id therefore
+fully addresses its budget: there is no budget-id resolution, and **nothing to share** — a
+LinkedIn budget cannot be attached to a second campaign, so the shared-budget refusal that
+dominates the Google path has no analogue here and is deliberately absent rather than forgotten.
+
+**Both of its platform calls are classified through `linkedinExpiry` and `res.systemScoped`**,
+like every other LinkedIn capability. An expired member credential or a rejected application
+credential is PERMANENT: untagged it loses to every `errors.Is` arm in the service switch and is
+answered 503 with a retry invitation, where the toggle answers the identical failure 409.
+`systemScoped` is what keeps a failure on the LF SYSTEM row from being reported against the
+caller's project. The ORDER differs between the two calls and that is the contract: the
+current-budget read built no mutate, so its defect tag is applied directly; the `PARTIAL_UPDATE`
+checks `IsOutcomeUnconfirmed` FIRST, because a 401 there may still have applied and "nothing was
+modified" is then the one claim that cannot be made — the cause is not lost either way, since
+`unconfirmedBudgetWriteError` wraps the tagged error.
+
+`LinkedInDispatcher.WriteBudget` refuses, before any mutate: an unparseable current amount
+(`ErrBudgetUnwritable` — a value that failed to parse reads as "this field is unused", which is
+the answer that selects the wrong field to write); the same pacing guard Google makes, reached
+through a different fact — LinkedIn reports its pacing model by WHICH FIELD IS PRESENT, so BOTH
+present is ambiguous and NEITHER present identifies no shape to write; and then a campaign whose
+currency is not USD, because the minimums are USD-specific and this client only ever SENDS
+`currencyCode "USD"`, so writing over another currency would silently redenominate the campaign.
+
+**The currency guard sits BELOW the pacing guard, and that ORDER is itself the guard.** The
+currency is read off whichever budget field the platform reported, so an EMPTY currency has two
+possible meanings — a campaign with no budget at all, where it is harmless, and a campaign that
+HAS a budget whose `currencyCode` LinkedIn did not report, where writing USD over it is exactly
+the redenomination the guard exists to prevent. Placed above the pacing guard it had to permit
+empty to let the first case through; placed below it, the first case has already been refused
+("NEITHER budget present"), so the only empty left is the second and it is REFUSED.
+
+The amount then converts through `linkedin.ValidateBudgetAmount`, the same function the create
+path calls — `$10` daily and `$100` lifetime minimums — and **the WIRE STRING it returns is what
+is sent**, never a re-formatted float, so the amount validated is byte-for-byte the amount
+written. Its rules are checked against the ROUNDED value, which is load-bearing: `9.999` is sent
+as `"10.00"` and therefore meets the $10 minimum, where checking the raw float would refuse an
+amount the platform accepts. The mutate is a `PARTIAL_UPDATE` that returns **no body**, so the
+2xx itself is the confirmation.
+
+**A refused AMOUNT is classified, not passed through as a generic failure.** Every refusal
+`ValidateBudgetAmount` makes wraps `linkedin.ErrBudgetAmountInvalid` and carries a client-safe
+sentence, retrievable with `linkedin.BudgetAmountReason`. The dispatcher maps exactly those to
+`domain.ErrBudgetAmountRejected` inside a `rejectedBudgetAmountError`, whose
+`BudgetAmountReason() string` method is the behavioural interface the service reads — the same
+shape as `unconfirmedBudgetWriteError`'s `Unconfirmed() bool`. That is what keeps LinkedIn's
+`$10`/`$100` minimums a **400** rather than falling to the default 503: the service layer holds
+no per-platform floor, so without this the caller would be invited to retry a request that can
+never succeed. Only the adapter's own sentence reaches the client; the rendered error chain
+never does.
+
+### Meta — the budget is on the AD SET, in MINOR UNITS
+
+Meta differs from both: the amount lives on the **ad set** this service created under the
+campaign, read from the persisted result blob (`meta.CampaignResult` is marshalled UNTAGGED, so
+the persisted keys are the Go field names `AccountID`/`AdSetID`). A row recording no ad set is
+`ErrCampaignNotProvisioned` — there is nothing addressable to write, and the refusal is
+deterministic, so it is a 409 rather than the default 503.
+
+**The ad set's OWNERSHIP is then checked against the campaign the request named**
+(`ErrCampaignAccountMismatch`), and this is the one invariant the account guards cannot reach.
+Every guard above establishes that the ACCOUNT is right; none establishes that the AD SET is.
+The ad set id comes from this service's own persisted row and the write is addressed to it
+directly, so a stale or corrupted `AdSetID` reaches a real, writable ad set — and inside one
+account, the shared LF system account most of all, that ad set belongs to another campaign, with
+every account check passing on the way there. `GetAdSetBudget` already reports the owner on the
+read this path makes anyway, so the fact is checked rather than assumed. An **unreported** owner
+is refused too, the same fail-closed reading the shared-budget and pacing guards apply: "we could
+not establish that this ad set belongs to the named campaign" and "it does" are opposite facts,
+and only the second justifies moving money.
+
+**A connection with no ad account selected is NOT unknown campaign provenance.** The refusal
+goes through the shared `requireMetaAccountID`, which wraps `ErrAccountNotSelected` under
+`ErrConnectionNotUsable` and passes it through `res.systemScoped`. The campaign DID record its
+creating account — the provenance guard above has already refused the case where it did not — so
+what is missing is a selection on the CONNECTION, and the remedy is saving an ad account id on
+it, not re-dispatching a campaign row that is correct. A hand-rolled refusal joining
+`ErrCampaignProvenanceUnknown` here claims the opposite and skips the system-origin scoping
+every other Meta account check goes through.
+
+**Campaign Budget Optimization is Meta's form of Google's shared budget.** Under CBO the
+campaign holds one amount and distributes it across every ad set beneath it, so writing an
+ad-set budget there either fails or converts the campaign off CBO — and in both cases changes
+the spend of ad sets this request never named, including ad sets this service does not own and
+cannot see. `GetAdSetBudget` therefore fetches the ad set's budget fields and the parent
+campaign's **in ONE request** via field expansion, so a CBO budget appearing between two
+separate calls cannot slip past the guard that exists to catch it, and CBO is checked BEFORE
+pacing: an ad set under a CBO campaign has no budget fields of its own, so a pacing answer there
+would explain the wrong thing.
+
+Amounts are handled throughout in the **account currency's minor units**, resolved by
+`resolveCurrencyOffset` — extracted from `CreateCampaign` with its rules and error texts intact,
+so an amount this service would refuse to create with cannot be reached by editing. The account
+currency is authoritative and a conflicting explicit `AccountConfig.CurrencyOffset` is REJECTED
+rather than preferred; a value the account does not supply falls back to the explicit offset.
+Unlike the create path, the budget write **deliberately does NOT gate on `account_status`**:
+lowering the budget of an account under review is precisely the action that reduces exposure.
+A reported amount that is present but unparseable — including a fractional one — is refused, not
+truncated, because truncation is a silent change to money.
+
+Meta classifies refusals the same way LinkedIn does, and the SPLIT is the point.
+`ResolveBudgetMinorUnits` can fail three ways and they are not the same fault. A refused amount
+wraps `meta.ErrBudgetAmountInvalid`, is read back with `meta.BudgetAmountReason`, and becomes
+`domain.ErrBudgetAmountRejected` → **400**. An ad account whose currency has no known minor-unit
+scale wraps `meta.ErrAccountCurrencyUnresolvable` and becomes `ErrBudgetUnwritable` → **409**:
+the amount is perfectly valid and the remedy is in Meta Ads Manager or in this service's
+currency map, so mapping it to a 400 would tell an operator to change a number that is not the
+problem. A failed account preflight stays the default 503. **This path cannot fall back to an
+explicit `AccountConfig.CurrencyOffset`** the way the create path can — the client here is built
+from the connection row alone and the offset is carried on neither the row nor the campaign — so
+a project whose account uses an unmapped currency can be CREATED with an explicit offset and
+never EDITED here. That is the fail-closed side of the trade: a budget encoded at the wrong
+scale is off by a factor of a hundred.
+
+`UpdateAdSetBudget` writes exactly one field, `daily_budget` or `lifetime_budget`, as a decimal
+STRING, and **sends no `end_time`**: it only ever writes `lifetime_budget` on an ad set that
+already reports one, which already has its end time set.
+
 ## Metrics read (optional capability)
 
 `MetricsReader` is a second OPTIONAL dispatcher interface, alongside `StatusToggler` —
@@ -2211,7 +2406,7 @@ after adoption could already have bound a campaign. `googleads.CampaignKindSearc
 `internal/service/orchestrator.go` and discovered by the same type assertion as the others
 (`StatusToggler`, `MetricsReader`, `AccountLister`, `CampaignAdopter`, `SettingsReader`,
 `AccountMetricsReader`, `EmailSearcher`, `KeywordInsightsReader`,
-`KeywordActioner`). **LinkedIn is the
+`KeywordActioner`, `BudgetWriter`). **LinkedIn is the
 only implementation today** — it is the only platform with an upstream signal to cross-check
 a connection's configured account/org pairing against.
 

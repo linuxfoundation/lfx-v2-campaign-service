@@ -3787,6 +3787,260 @@ func DecodeToggleCampaignStatusResponse(decoder func(*http.Response) goahttp.Dec
 	}
 }
 
+// BuildUpdateCampaignBudgetRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "update-campaign-budget" endpoint
+func (c *Client) BuildUpdateCampaignBudgetRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID  string
+		briefID    string
+		campaignID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.UpdateCampaignBudgetPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "update-campaign-budget", "*lfxv2campaignservicebriefs.UpdateCampaignBudgetPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		campaignID = p.CampaignID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: UpdateCampaignBudgetLfxV2CampaignServiceBriefsPath(projectID, briefID, campaignID)}
+	req, err := http.NewRequest("PATCH", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "update-campaign-budget", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeUpdateCampaignBudgetRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-briefs update-campaign-budget server.
+func EncodeUpdateCampaignBudgetRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.UpdateCampaignBudgetPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "update-campaign-budget", "*lfxv2campaignservicebriefs.UpdateCampaignBudgetPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		if p.IfMatch != nil {
+			head := *p.IfMatch
+			req.Header.Set("If-Match", head)
+		}
+		body := NewUpdateCampaignBudgetRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+		}
+		return nil
+	}
+}
+
+// DecodeUpdateCampaignBudgetResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-briefs update-campaign-budget endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeUpdateCampaignBudgetResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "PreconditionFailed" (type *lfxv2campaignservicebriefs.PreconditionFailedError): http.StatusPreconditionFailed
+//   - "PreconditionRequired" (type *lfxv2campaignservicebriefs.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeUpdateCampaignBudgetResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body UpdateCampaignBudgetResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			err = ValidateUpdateCampaignBudgetResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			var (
+				etag *string
+			)
+			etagRaw := resp.Header.Get("Etag")
+			if etagRaw != "" {
+				etag = &etagRaw
+			}
+			res := NewUpdateCampaignBudgetCampaignOK(&body, etag)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body UpdateCampaignBudgetBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			err = ValidateUpdateCampaignBudgetBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			return nil, NewUpdateCampaignBudgetBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body UpdateCampaignBudgetConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			err = ValidateUpdateCampaignBudgetConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			return nil, NewUpdateCampaignBudgetConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body UpdateCampaignBudgetServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			err = ValidateUpdateCampaignBudgetServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			return nil, NewUpdateCampaignBudgetServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body UpdateCampaignBudgetInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			err = ValidateUpdateCampaignBudgetInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			return nil, NewUpdateCampaignBudgetInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body UpdateCampaignBudgetNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			err = ValidateUpdateCampaignBudgetNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			return nil, NewUpdateCampaignBudgetNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateCampaignBudgetPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			err = ValidateUpdateCampaignBudgetPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			return nil, NewUpdateCampaignBudgetPayloadTooLarge(&body)
+		case http.StatusPreconditionFailed:
+			var (
+				body UpdateCampaignBudgetPreconditionFailedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			err = ValidateUpdateCampaignBudgetPreconditionFailedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			return nil, NewUpdateCampaignBudgetPreconditionFailed(&body)
+		case http.StatusPreconditionRequired:
+			var (
+				body UpdateCampaignBudgetPreconditionRequiredResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			err = ValidateUpdateCampaignBudgetPreconditionRequiredResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			return nil, NewUpdateCampaignBudgetPreconditionRequired(&body)
+		case http.StatusUnauthorized:
+			var (
+				body UpdateCampaignBudgetUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			err = ValidateUpdateCampaignBudgetUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+			}
+			return nil, NewUpdateCampaignBudgetUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "update-campaign-budget", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildApplyKeywordActionsRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-briefs" service
 // "apply-keyword-actions" endpoint

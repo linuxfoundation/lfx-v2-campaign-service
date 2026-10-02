@@ -53,6 +53,15 @@ type CampaignSettings struct {
 	// see model.PlatformCampaignRef — and a caller that cannot interpret a value must be
 	// able to tell "Google said something we do not handle" from "Google said nothing".
 	Status *string
+	// BudgetID is campaign_budget.id: which budget RESOURCE this campaign is attached to
+	// right now, according to the platform. nil when it could not be read.
+	//
+	// Present for the budget-WRITE path (UpdateCampaignBudget), which needs a resource to
+	// address; the readback itself does not report it. Read here rather than taken from the
+	// campaign row's stored CampaignBudgetID for the reason settingsQueryFields gives: a
+	// write must aim at the budget the campaign carries now, not the one it was created
+	// with.
+	BudgetID *string
 	// BudgetAmountMicros is campaign_budget.amount_micros: the DAILY spend amount, in
 	// micros of the ad account's own currency. Google Ads REST renders int64 fields as
 	// JSON strings (the same encoding gaqlMetricsRow decodes, and the reason every id
@@ -121,6 +130,7 @@ type gaqlSettingsRow struct {
 		EndDateTime            *string `json:"endDateTime"`
 	} `json:"campaign"`
 	CampaignBudget struct {
+		ID                *string `json:"id"`
 		AmountMicros      *string `json:"amountMicros"`
 		TotalAmountMicros *string `json:"totalAmountMicros"`
 		Period            *string `json:"period"`
@@ -147,9 +157,22 @@ type gaqlSettingsRow struct {
 // Deliberately selects NO metrics.* and NO segments.* field. Adding one would segment
 // the result, and this query's single-row guard would then start failing on healthy
 // campaigns — the guard is what makes reading rows[0] correct.
+//
+// campaign_budget.id is selected for the WRITE path, not the readback: it is the only
+// authoritative way to learn which budget resource a campaign is actually attached to,
+// on the same connection and in the same read that establishes the budget's period and
+// whether it is shared. It is deliberately NOT surfaced in model.CampaignSettingsReadback
+// — the readback's HTTP shape is unchanged by its presence here.
+//
+// Taking it from THIS read rather than from the campaign row's stored CampaignBudgetID is
+// the same rule the account-identity guards follow: a mutation addresses what the platform
+// says is attached now, not what a local blob recorded at creation. An adopted campaign has
+// no stored budget id at all, and a campaign whose budget was swapped in Google's UI has a
+// stale one — and a budget write aimed at a stale id is a write to somebody else's budget.
 const settingsQueryFields = "campaign.id, campaign.name, campaign.status, campaign.resource_name, " +
 	"campaign.advertising_channel_type, campaign.bidding_strategy_type, " +
 	"campaign.start_date_time, campaign.end_date_time, " +
+	"campaign_budget.id, " +
 	"campaign_budget.amount_micros, campaign_budget.total_amount_micros, " +
 	"campaign_budget.period, campaign_budget.delivery_method, " +
 	"campaign_budget.explicitly_shared"
@@ -333,6 +356,7 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 		BiddingStrategyType:    blankToNil(row.Campaign.BiddingStrategyType),
 		StartDateTime:          blankToNil(row.Campaign.StartDateTime),
 		EndDateTime:            blankToNil(row.Campaign.EndDateTime),
+		BudgetID:               blankToNil(row.CampaignBudget.ID),
 		BudgetPeriod:           blankToNil(row.CampaignBudget.Period),
 		BudgetDeliveryMethod:   blankToNil(row.CampaignBudget.DeliveryMethod),
 		BudgetExplicitlyShared: row.CampaignBudget.ExplicitlyShared,

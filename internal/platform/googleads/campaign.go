@@ -229,6 +229,46 @@ type mutateResponse struct {
 	} `json:"results"`
 }
 
+// ValidateBudgetMicros validates a budget amount and converts it to Google's micros.
+//
+// Named for what it does rather than for the field it feeds, because it feeds TWO that are
+// mutually exclusive: a DAILY budget's amount_micros and a CUSTOM_PERIOD one's
+// total_amount_micros. (It is deliberately not called BudgetAmountMicros — that is already
+// the name of CampaignSettings' daily-only field, and a helper sharing that name would read
+// as belonging to it.)
+//
+// EXTRACTED rather than duplicated: the create path (CreateCampaign) and the update path
+// (UpdateCampaignBudget) must agree exactly on what a valid budget is, and the failure mode
+// of two copies is the one that matters here — an amount the create path refuses but the
+// update path accepts would let an operator set, through an edit, a budget the service
+// would never have created. One definition makes that impossible rather than merely
+// unlikely.
+//
+// The four checks are each load-bearing, and the first is the least obvious:
+//
+//   - NaN and Inf are rejected EXPLICITLY, because NaN fails every ordered comparison. A
+//     bare `> 0` / `<= maxBudget` pair passes NaN straight through, and it converts to 0
+//     micros — a zero budget nobody asked for.
+//   - maxBudget bounds the value before the multiply, so the conversion cannot overflow.
+//   - Round, never truncate: float64(2.01)*1e6 is 2009999.99…, which int64() would truncate
+//     to 2009999, silently dropping a micro on ordinary budgets.
+//   - <= 0 micros is checked AFTER the conversion, not before it: a sub-micro amount like
+//     0.0000001 is genuinely > 0 yet rounds to 0 micros, and only the post-conversion check
+//     catches it.
+func ValidateBudgetMicros(budget float64) (int64, error) {
+	if math.IsNaN(budget) || math.IsInf(budget, 0) {
+		return 0, fmt.Errorf("google-ads campaign budget must be a finite number, got %v", budget)
+	}
+	if budget > maxBudget {
+		return 0, fmt.Errorf("google-ads campaign budget %.2f exceeds the maximum %.0f", budget, maxBudget)
+	}
+	micros := int64(math.Round(budget * microsPerUnit))
+	if micros <= 0 {
+		return 0, fmt.Errorf("google-ads campaign budget must be > 0 (rounds to %d micros), got %.6f", micros, budget)
+	}
+	return micros, nil
+}
+
 // campaignBudgetCreate is the create payload for campaignBudgets:mutate.
 type campaignBudgetCreate struct {
 	Name           string `json:"name"`
@@ -591,17 +631,9 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// (NaN passes every ordered comparison, so `> 0`/`<= max` alone would let it
 	// through and create a 0 budget), and reject anything that rounds to <= 0 micros
 	// (a sub-micro budget like 0.0000001 is > 0 but converts to 0 amountMicros).
-	if math.IsNaN(in.Budget) || math.IsInf(in.Budget, 0) {
-		return nil, fmt.Errorf("google-ads campaign budget must be a finite number, got %v", in.Budget)
-	}
-	if in.Budget > maxBudget {
-		return nil, fmt.Errorf("google-ads campaign budget %.2f exceeds the maximum %.0f", in.Budget, maxBudget)
-	}
-	// Round (not truncate): float64(2.01)*1e6 is 2009999.99…, which int64() would
-	// truncate to 2009999 — silently dropping a micro on ordinary budgets.
-	amountMicros := int64(math.Round(in.Budget * microsPerUnit))
-	if amountMicros <= 0 {
-		return nil, fmt.Errorf("google-ads campaign budget must be > 0 (rounds to %d micros), got %.6f", amountMicros, in.Budget)
+	amountMicros, err := ValidateBudgetMicros(in.Budget)
+	if err != nil {
+		return nil, err
 	}
 
 	budgetName := ComposeName(budgetKindFor(kind), in)

@@ -17,6 +17,32 @@ const (
 	BudgetLifetime BudgetType = "lifetime"
 )
 
+// BudgetChange is a request to set an existing campaign's budget on its ad platform:
+// the payload of the BudgetWriter capability. It is a REQUEST, never an observation —
+// what the operator is asking the platform for, which is the same thing the campaign
+// row's BudgetAmount/BudgetType have always recorded.
+//
+// Both fields are REQUIRED and neither is a pointer, deliberately. A budget write is a
+// mutation that moves money, and a partial one ("change the amount, leave the pacing as
+// it is") would have to read the current pacing to know what it just asked for — a
+// read-modify-write over a value another operator may be changing in the platform's own
+// UI at the same moment. Requiring both makes the request state its own full meaning, so
+// what the platform is asked for is exactly what the caller wrote and what the row then
+// records. A caller that wants only the amount changed sends the pacing it already sees.
+type BudgetChange struct {
+	// Amount is the new budget in the AD ACCOUNT's own currency, not USD. The service
+	// does not convert currencies anywhere, and inventing a conversion here would ask
+	// the platform for an amount nobody typed. Must be strictly positive: zero is not a
+	// budget, it is a request to stop spending, and pausing is what expresses that.
+	Amount float64
+	// Type is the pacing model the Amount is expressed in — BudgetDaily or
+	// BudgetLifetime. These are THIS SERVICE's vocabulary, and are deliberately not the
+	// platforms'. Google spells the same two ideas DAILY and CUSTOM_PERIOD and has no
+	// value named "lifetime" at all; each adapter maps its own, where the mapping can be
+	// stated once and tested.
+	Type BudgetType
+}
+
 // Campaign is one platform's campaign, subordinate to a brief. A brief drives
 // many campaigns (one per platform), discriminated by Platform and sharing
 // BriefID. The row is updated in place (not recreated) when a brief changes
