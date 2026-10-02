@@ -1616,7 +1616,7 @@ func TestGoogleAds_Adoption_FindsAndAdoptsExistingCampaign(t *testing.T) {
 		googleads.WithTokenURL(tokenSrv.URL),
 		googleads.WithBaseURL(apiSrv.URL),
 	)
-	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"adoptExisting":true}}`)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"adoptExisting":true,"startDate":"2026-06-17","endDate":"2026-06-20"}}`)
 	brief := testBrief() // "brief-1" / "cncf" / "KubeCon NA 2026"
 
 	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
@@ -1647,6 +1647,21 @@ func TestGoogleAds_Adoption_FindsAndAdoptsExistingCampaign(t *testing.T) {
 	}
 	if len(camp.ConfigSnapshot) == 0 {
 		t.Error("adopted campaign ConfigSnapshot is empty; the validated config must be persisted")
+	}
+	// The flight window persists on adoption for the same reason the budget does: these
+	// columns hold what the dispatch ASKED for, and adoption has its OWN call to
+	// applyCampaignConfig. Reverting just that call leaves adopted rows with NULL dates
+	// while every create-path test still passes, which is the gap this covers.
+	//
+	// Nothing was pushed upstream here -- adoption binds an existing campaign and writes
+	// nothing -- so the recorded window is a record of the request, not an observation.
+	// The settings readback is what reports whether the adopted campaign actually carries
+	// it, and it can only do that if the recorded side exists.
+	if camp.StartDate == nil || camp.StartDate.Format("2006-01-02") != "2026-06-17" {
+		t.Errorf("adopted campaign StartDate = %v, want 2026-06-17 — the caller's window must persist", camp.StartDate)
+	}
+	if camp.EndDate == nil || camp.EndDate.Format("2006-01-02") != "2026-06-20" {
+		t.Errorf("adopted campaign EndDate = %v, want 2026-06-20", camp.EndDate)
 	}
 	if !searchCalled.Load() {
 		t.Error("adoption must call googleAds:search")

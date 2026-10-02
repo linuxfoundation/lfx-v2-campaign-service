@@ -125,11 +125,15 @@ type googleAdsConfig struct {
 	// shape and json names meta/reddit/linkedin/twitter already use so one caller does
 	// not have to remember a per-platform spelling.
 	//
-	// Google was the only platform passing "" for both to applyCampaignConfig, so the
-	// campaigns table's start_date/end_date columns stayed NULL for every Google campaign
-	// and the settings readback had nothing to compare its upstream dates against. The
-	// columns, the parser and the drift comparison all existed already -- only the config
-	// field and these two call sites were missing.
+	// Google passed "" for both to applyCampaignConfig, so the campaigns table's
+	// start_date/end_date columns stayed NULL for every Google campaign and the settings
+	// readback had nothing to compare its upstream dates against. The columns, the parser
+	// and the drift comparison all existed already -- only the config field and these two
+	// call sites were missing.
+	//
+	// Microsoft still passes "" for both (internal/dispatch/microsoft.go), so this is not
+	// the last adapter without a window -- only the one whose readback made the absence
+	// visible.
 	//
 	// Both optional. Blank means the field is omitted from the Google payload entirely
 	// (see googleads.CampaignInput), which is the pre-existing behaviour: a campaign with

@@ -332,10 +332,14 @@ type campaignCreate struct {
 	NetworkSettings                networkSettings      `json:"networkSettings"`
 	GeoTargetTypeSetting           geoTargetTypeSetting `json:"geoTargetTypeSetting"`
 	ManualCPC                      json.RawMessage      `json:"manualCpc"`
-	// Pointers so an absent flight window is OMITTED rather than sent as "". Google
-	// rejects an empty string on these fields, so `omitempty` on a value type would not
-	// be enough -- it omits the zero value, but a caller that set only one of the two
-	// would still send the other as empty.
+	// Pointers so an absent flight window is OMITTED rather than sent as "". Google rejects
+	// an empty string on these fields.
+	//
+	// `string` + omitempty would also omit an empty value, including when only one of the
+	// two is set -- that is not the reason. The reason is that the preflight already
+	// represents absence as nil (toGoogleDateTime returns a nil pointer for a blank date),
+	// so a pointer carries that absence through unchanged instead of flattening it to ""
+	// and relying on the tag to re-derive it.
 	StartDateTime *string `json:"startDateTime,omitempty"`
 	EndDateTime   *string `json:"endDateTime,omitempty"`
 }
