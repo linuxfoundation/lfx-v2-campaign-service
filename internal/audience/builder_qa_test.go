@@ -321,3 +321,489 @@ func TestPickNameMatchesStillResolvesASingleExactMatch(t *testing.T) {
 		t.Errorf("a single exact match must not be ambiguous; got %d candidates", len(ambiguous))
 	}
 }
+
+// TestCheckCurrentRegistrants pins the A-02 gap: an event's own registration list offered as
+// an INCLUDE, with all three existing checks passing.
+//
+// Verified on AGNTCon + MCPCon North America (2026-09-30): the edition's registration list,
+// 1,346 contacts, was offered as an include, ticking it raised nothing, and QA passed. The
+// other three checks read consent suppression and filter shape; none reads the audience's
+// own intent.
+//
+// The table is the whole point. Two earlier versions of this predicate flagged lists that are
+// CORRECT to include, and a check that cries wolf on the common case gets switched off:
+//   - event tokens alone  -> flagged a PAST edition (the strongest evidence a first edition
+//     has) and a SIBLING region (a different event).
+//   - tokens + year       -> still flagged the sibling, which shares both.
+//   - tokens + year + a full-token-set rule -> still wrong, and this is the version the
+//     docblock here used to describe. Counting tokens cannot answer the region question: the
+//     shipped code asks `isOtherEdition`/`editionRegions` whether the list names a DIFFERENT
+//     region, and admits on `MatchLastSent`'s distinctive tier once that is settled separately.
+//     See `builder_qa.go` -- "isOtherEdition is what separates a sibling region, not the token
+//     count".
+func TestCheckCurrentRegistrants(t *testing.T) {
+	const eventName = "AGNTCon + MCPCon North America 2026"
+
+	cases := []struct {
+		name     string
+		listName string
+		wantFail bool
+		why      string
+	}{
+		{
+			name:     "this edition's own registration list",
+			listName: "26Q2 AGNTCon + MCPCon North America 2026 Event Registration",
+			wantFail: true,
+			why:      "every invitation would go to someone who already registered",
+		},
+		{
+			name:     "this edition's attendees, named differently",
+			listName: "AGNTCon + MCPCon North America 2026 - Attendees",
+			wantFail: true,
+			why:      "attendee and registrant are the same population for a pre-event send",
+		},
+		{
+			name:     "a PAST edition's registrants",
+			listName: "25Q2 AGNTCon North America 2025 Event Registration",
+			wantFail: false,
+			why:      "the strongest evidence a first-edition send has; flagging it would be wrong far more often than right",
+		},
+		{
+			// This past edition carries the IDENTICAL token set -- overlap=4, the same as the
+			// current edition -- so nothing but the year separates it.
+			//
+			// It does NOT uniquely bind the year gate: measured against the real gate sequence,
+			// the 2025 case above is rejected by the year gate too, not by a token rule. The
+			// docblock here used to claim otherwise, reasoning from a full-token-set rule the
+			// shipped code does not implement.
+			name:     "a past edition with the identical token set",
+			listName: "24Q2 AGNTCon + MCPCon North America 2024 Event Registration",
+			wantFail: false,
+			why:      "only the year separates this from the current edition",
+		},
+		{
+			name:     "a sibling region's registrants",
+			listName: "26Q1 AGNTCon + MCPCon Japan 2026 Event Registration",
+			wantFail: false,
+			why:      "same series and same year, different event",
+		},
+		{
+			name:     "an unrelated event's registrants",
+			listName: "26Q2 PyTorch Conference 2026 Event Registration",
+			wantFail: false,
+			why:      "a portfolio holds many registration lists",
+		},
+		{
+			name:     "this event's web visitors",
+			listName: "26Q2 - AGNTCon North America Web Visitors",
+			wantFail: false,
+			why:      "not a registration list at all",
+		},
+		{
+			name:     "this event's speakers",
+			listName: "26Q2 AGNTCon + MCPCon North America 2026 Speakers",
+			wantFail: false,
+			why:      "a speaker has not necessarily registered",
+		},
+		{
+			name:     "a portfolio suppression list",
+			listName: "LF Global Opt-Outs",
+			wantFail: false,
+			why:      "carries no registration signal and no event tokens",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := CheckCurrentRegistrants(eventName, []string{tc.listName})
+
+			if tc.wantFail {
+				if got.Verdict != VerdictFail {
+					t.Fatalf("verdict = %q, want FAIL: %s", got.Verdict, tc.why)
+				}
+				if len(got.Findings) != 1 {
+					t.Fatalf("findings = %d, want 1", len(got.Findings))
+				}
+				if got.Findings[0].Severity != SeverityCritical {
+					t.Errorf("severity = %q, want CRITICAL; a send to people who already hold a ticket is not advisory", got.Findings[0].Severity)
+				}
+				if !strings.Contains(got.Findings[0].Message, tc.listName) {
+					t.Errorf("message does not name the offending list, so the operator cannot act on it: %q", got.Findings[0].Message)
+				}
+				return
+			}
+			if got.Verdict != VerdictPass {
+				t.Fatalf("verdict = %q, want PASS: %s", got.Verdict, tc.why)
+			}
+		})
+	}
+}
+
+// TestNamesRegistrants pins the predicate that replaced a `strings.Contains` hint scan.
+//
+// `strings.Contains(name, "registered")` could not tell this event's registrants from the people
+// who have NOT registered, because "unregistered" contains "registered". Every name in the negated
+// group below matched before this, so "KubeCon 2026 - Unregistered Prospects" -- the list a
+// registration-push send most obviously SHOULD include -- failed QA as CRITICAL.
+//
+// Enumerated rather than sampled, in both directions. The plain group carries the names a first
+// attempt broke: it looked for a negating word ANYWHERE in the name, which made "Registrants
+// (De-duplicated)" and "Registration - No Discount" undecidable. The negation has to sit ON the
+// registration term, which is a question about structure; "does any negating spelling appear" is a
+// denylist, and a denylist over spellings does not converge.
+func TestNamesRegistrants(t *testing.T) {
+	negated := []string{
+		"KubeCon 2026 - Unregistered Prospects",
+		"Not Registered",
+		"KubeCon NA 2026 - Non-Registered Leads",
+		"Unregistered - KubeCon Europe 2026",
+		"KubeCon 2026 - Never Attended",
+		"KubeCon 2026 - Not Attendees",
+		"KubeCon 2026 - Deregistered",
+		"KubeCon 2026 - Pre-registration Interest",
+		"KubeCon 2026 - Unattended Sessions",
+		// A negation separated from the term by intervening words. The second version of this
+		// predicate required ADJACENCY, so every one of these read as plain and produced the
+		// false CRITICAL the first version was written to remove.
+		"KubeCon 2026 - Not Yet Registered",
+		"KubeCon 2026 - Not Currently Registered",
+		"KubeCon 2026 - Have Not Registered",
+		"KubeCon 2026 - Never Yet Registered",
+		"KubeCon 2026 - Not Registered Yet",
+		// A contraction, in both the spellings an operator types.
+		"KubeCon 2026 - Haven't Registered",
+		"KubeCon 2026 - Havent Registered",
+		// A non-ASCII leading character. Go's `\b` is ASCII-only, so there is no boundary between
+		// "Ü" and "n" and the `un` prefix never matched -- the unsafe direction, a false CRITICAL
+		// on the list a registration push is FOR.
+		"KubeCon 2026 Ünregistered",
+		// A fused prefix that qualifies rather than negates: neither names THIS edition's own
+		// registrant set, so neither may reach the CRITICAL finding.
+		"KubeCon 2026 - Co-Registrants",
+		"KubeCon 2026 - Anti-Registration",
+		"KubeCon 2026 - Misregistered",
+		"Reregistered",
+	}
+	plain := []string{
+		"26Q1 KubeCon Europe 2026 Event Registration",
+		"KubeCon NA 2026 - Registrants",
+		"KubeCon NA 2026 - Attendees",
+		"KubeCon NA 2026 - Attended",
+		"KubeCon 2026 Registered Users",
+		// Each of these carries a word a spelling denylist catches, negating something else.
+		"KubeCon NA 2026 - Registrants (De-duplicated)",
+		"Open Source Summit 2026 Registration - No Discount",
+		"KubeCon 2026 Registration - Denver",
+		"PyTorch Conference 2026 Registered - Nonprofit Rate",
+		"KubeCon 2026 Attendees - Presenters",
+		"KubeCon 2026 Registrants - Premium",
+		"KubeCon EU 2026 - Event Registration (Unpaid)",
+		"KubeCon 2026 Attendees - Denmark",
+		// ANY un-negated occurrence decides it, not the first one.
+		"Not Registered - Event Registration List",
+		// A negating word in a DIFFERENT phrase negates something else. A negation reaches only
+		// to the end of its own phrase, which is what keeps these plain.
+		"KubeCon 2026 - Not Interested - Registration List",
+		// A decorated capital that folds to a real term. Judging the raw string read this as NO
+		// mention at all and missed a real registrant list -- the quiet direction of the same bug.
+		"KubeCon 2026 - REGİSTRANTS",
+	}
+	// A term must be a whole token. An optional `\b?` in the second version could match empty, so
+	// any word merely ENDING in a stem matched and reached the CRITICAL finding.
+	none := []string{"KubeCon 2026 - Prospects", "KubeCon 2026", "LF Global Opt-Outs",
+		"xregistrants", "bioregistration", "KubeCon 2026 - Preregistrationsomething"}
+
+	for _, name := range negated {
+		if got := namesRegistrants(name); got != registrantNamingNegated {
+			t.Errorf("namesRegistrants(%q) = %v, want negated; the people who have NOT registered are who this send is FOR", name, got)
+		}
+	}
+	for _, name := range plain {
+		if got := namesRegistrants(name); got != registrantNamingPlain {
+			t.Errorf("namesRegistrants(%q) = %v, want plain; a legitimate registrant list was made undecidable", name, got)
+		}
+	}
+	for _, name := range none {
+		if got := namesRegistrants(name); got != registrantNamingNone {
+			t.Errorf("namesRegistrants(%q) = %v, want none", name, got)
+		}
+	}
+}
+
+// TestCheckCurrentRegistrants_UndecidableCauses pins the two NEEDS VERIFY causes separately, and
+// the roll-up that reports both.
+//
+// Neither was driven by any test: the only reference to the "names no region" message was an
+// assertion that it is ABSENT, so deleting `undecidable = true` broke nothing. It is a
+// verdict-changing branch -- it turns PASS into NEEDS VERIFY -- and `make([]Finding, 0, 2)` exists
+// solely to hold both causes at once.
+//
+// They are reported separately on purpose: the region cause and the naming cause send the operator
+// to check different things, so one message standing in for both would misdirect.
+func TestCheckCurrentRegistrants_UndecidableCauses(t *testing.T) {
+	t.Run("the event names no region and the list does", func(t *testing.T) {
+		// "KubeCon 2026" against "26Q1 KubeCon Europe 2026 Event Registration": the list may be
+		// this event's regional edition or a sibling's, and the event name cannot decide it.
+		got := CheckCurrentRegistrants("KubeCon 2026", []string{"26Q1 KubeCon Europe 2026 Event Registration"})
+
+		if got.Verdict != VerdictNeedsVerify {
+			t.Fatalf("verdict = %q, want NEEDS VERIFY; an undecidable region read as a pass", got.Verdict)
+		}
+		if len(got.Findings) != 1 {
+			t.Fatalf("findings = %d, want 1", len(got.Findings))
+		}
+		if !strings.Contains(got.Findings[0].Message, "names no region") {
+			t.Errorf("the region cause was not reported: %q", got.Findings[0].Message)
+		}
+	})
+
+	t.Run("both causes in one audit", func(t *testing.T) {
+		got := CheckCurrentRegistrants("KubeCon 2026", []string{
+			"26Q1 KubeCon Europe 2026 Event Registration",
+			"26Q1 KubeCon 2026 - Unregistered Prospects",
+		})
+
+		if got.Verdict != VerdictNeedsVerify {
+			t.Fatalf("verdict = %q, want NEEDS VERIFY", got.Verdict)
+		}
+		if len(got.Findings) != 2 {
+			t.Fatalf("findings = %d, want 2; the two causes send the operator to check different things", len(got.Findings))
+		}
+		joined := got.Findings[0].Message + "\n" + got.Findings[1].Message
+		if !strings.Contains(joined, "names no region") {
+			t.Errorf("the region cause is missing: %q", joined)
+		}
+		if !strings.Contains(joined, "negated form") {
+			t.Errorf("the naming cause is missing: %q", joined)
+		}
+	})
+}
+
+// TestCheckCurrentRegistrants_NegatedNamesAreScopedToThisEdition pins that the negation question
+// is asked LAST, after every edition gate.
+//
+// Asked first -- as it was when the negated-naming fix was introduced -- an unrelated event's
+// negated list downgraded the whole audit: "PyTorch 2025 - Unregistered Prospects" turned an
+// AGNTCon 2026 audit into NEEDS VERIFY for a list this check is not scoped to at all. Check 4
+// asks one question about ONE edition, so a name it would never judge must not change its verdict.
+//
+// Every gate is represented: an unrelated event, an unrelated event in the same year, a PAST
+// edition of this series, and a SIBLING REGION of this edition.
+func TestCheckCurrentRegistrants_NegatedNamesAreScopedToThisEdition(t *testing.T) {
+	const eventName = "AGNTCon + MCPCon North America 2026"
+
+	cases := []struct {
+		name     string
+		listName string
+		want     Verdict
+		why      string
+	}{
+		{
+			// THIS year, deliberately. With a 2025 year it was rejected by the year gate -- the
+			// same gate as the past-edition case below -- so it proved nothing about the
+			// unrelated-event gate it is named for, and deleting `MatchLastSent` left it passing.
+			name:     "an unrelated event's negated list",
+			listName: "PyTorch 2026 - Unregistered Prospects",
+			want:     VerdictPass,
+			why:      "a portfolio holds many such lists; none of them is this edition's registrants",
+		},
+		{
+			name:     "an unrelated event in the same year",
+			listName: "26Q2 PyTorch Conference 2026 - Not Registered",
+			want:     VerdictPass,
+			why:      "sharing a year is not sharing an edition",
+		},
+		{
+			name:     "a past edition's negated list",
+			listName: "25Q2 AGNTCon North America 2025 - Unregistered Prospects",
+			want:     VerdictPass,
+			why:      "the year gate already settles this one",
+		},
+		{
+			name:     "a sibling region's negated list",
+			listName: "26Q1 AGNTCon + MCPCon Japan 2026 - Unregistered Prospects",
+			want:     VerdictPass,
+			why:      "a different region is a different event, however many tokens it shares",
+		},
+		{
+			name:     "THIS edition's negated list",
+			listName: "26Q2 AGNTCon + MCPCon North America 2026 - Unregistered Prospects",
+			want:     VerdictNeedsVerify,
+			why:      "the only one the check is scoped to, and the only one it cannot read",
+		},
+		{
+			name:     "THIS edition's actual registration list",
+			listName: "26Q2 AGNTCon + MCPCon North America 2026 Event Registration",
+			want:     VerdictFail,
+			why:      "the negation reordering must not weaken the finding the check exists for",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CheckCurrentRegistrants(eventName, []string{tc.listName}).Verdict; got != tc.want {
+				t.Errorf("verdict = %q, want %q: %s", got, tc.want, tc.why)
+			}
+		})
+	}
+}
+
+// TestCheckCurrentRegistrants_NegatedRegistrationNaming pins what the check REPORTS for a name it
+// cannot read, which is neither a pass nor a CRITICAL.
+//
+// Flagging it CRITICAL fails QA for the right list; passing it silently hides the inclusion this
+// check exists to catch. Undecidable is the honest answer, and it is already how this check reports
+// a region it cannot resolve.
+func TestCheckCurrentRegistrants_NegatedRegistrationNaming(t *testing.T) {
+	const eventName = "AGNTCon + MCPCon North America 2026"
+
+	got := CheckCurrentRegistrants(eventName, []string{"26Q2 AGNTCon + MCPCon North America 2026 - Unregistered Prospects"})
+
+	if got.Verdict != VerdictNeedsVerify {
+		t.Fatalf("verdict = %q, want NEEDS VERIFY; a registration-push send's own target list is not a QA failure", got.Verdict)
+	}
+	if len(got.Findings) != 1 {
+		t.Fatalf("findings = %d, want 1", len(got.Findings))
+	}
+	if got.Findings[0].Severity != SeverityMedium {
+		t.Errorf("severity = %q, want MEDIUM; an unreadable name is not the same as a confirmed inclusion", got.Findings[0].Severity)
+	}
+	if !strings.Contains(got.Findings[0].Message, "Unregistered Prospects") {
+		t.Errorf("message does not name the list the operator has to check: %q", got.Findings[0].Message)
+	}
+	if strings.Contains(got.Findings[0].Message, "names no region") {
+		t.Errorf("reported the REGION cause for a naming problem, so the operator would check the wrong thing: %q", got.Findings[0].Message)
+	}
+}
+
+// TestCheckCurrentRegistrants_MatchesThisServicesOwnNamingConvention pins the false NEGATIVE
+// that a raw year substring produced.
+//
+// `MasterListName` writes a two-digit QUARTER code, not a four-digit year --
+// `builder_master_test.go` pins "26Q1 - CNCF - KubeCon Europe - Master". So a list this service
+// created itself carries no "2026" anywhere, and the check PASSED on it. Measured before fixing:
+// "26Q1 - CNCF - KubeCon Europe - Registrants" returned PASS while the same name with "2026"
+// spliced in returned FAIL -- the check was keyed on an accident of one list's name.
+//
+// This is the dangerous direction. A false positive gets the check switched off; a false negative
+// lets the send go out to people who already registered, which is the whole point of check 4.
+func TestCheckCurrentRegistrants_MatchesThisServicesOwnNamingConvention(t *testing.T) {
+	const eventName = "KubeCon Europe 2026"
+
+	for _, listName := range []string{
+		"26Q1 - CNCF - KubeCon Europe - Event Registration",
+		"26Q1 - CNCF - KubeCon Europe - Registrants",
+		"26Q1 - CNCF - KubeCon Europe 2026 - Registrants",
+	} {
+		t.Run(listName, func(t *testing.T) {
+			if got := CheckCurrentRegistrants(eventName, []string{listName}); got.Verdict != VerdictFail {
+				t.Fatalf("verdict = %q, want FAIL; this is a list this service names itself", got.Verdict)
+			}
+		})
+	}
+
+	// And the quarter code is compared on its YEAR digits, not by substring: a PRIOR edition
+	// written in the same convention must still pass.
+	prior := CheckCurrentRegistrants(eventName, []string{"25Q4 - CNCF - KubeCon Europe - Registrants"})
+	if prior.Verdict == VerdictFail {
+		t.Error("a prior edition in the same naming convention must not be FAILed")
+	}
+}
+
+// TestCheckCurrentRegistrants_WithoutAnEventNameDoesNotRun pins the difference between a
+// question nobody asked and one this check cannot answer.
+//
+// No event name means the caller did not ask. Returning NEEDS VERIFY there would flip EVERY
+// existing audit's Overall -- today no caller supplies an event name, since the UI is not wired
+// -- and append a finding to audits the check has nothing to say about. A check that cannot run
+// must not make unrelated results look worse; that is how a check gets removed.
+//
+// The zero Check is what `currentRegistrantsResult` omits from the wire and what
+// `CombineVerdicts` treats as inert.
+func TestCheckCurrentRegistrants_WithoutAnEventNameDoesNotRun(t *testing.T) {
+	got := CheckCurrentRegistrants("", []string{"26Q2 AGNTCon + MCPCon North America 2026 Event Registration"})
+
+	if got.Verdict != "" {
+		t.Fatalf("verdict = %q, want the zero Check; an absent event name is a question nobody asked", got.Verdict)
+	}
+	if len(got.Findings) != 0 {
+		t.Fatalf("findings = %d, want 0; there is nothing to report about a check that did not run", len(got.Findings))
+	}
+
+	// And the consequence that made this blocking: an existing caller's roll-up is unchanged.
+	if overall := CombineVerdicts(VerdictPass, VerdictPass, VerdictPass, got.Verdict); overall != VerdictPass {
+		t.Errorf("Overall = %q, want PASS; check 4 must not change a verdict for callers that do not use it", overall)
+	}
+}
+
+// TestCheckCurrentRegistrants_AnAllGenericEventNameIsNotAPass pins the case no token rule can
+// decide.
+//
+// "Open Source Summit" is entirely portfolio-common words, so its distinctive tier is EMPTY and
+// the event name carries no region of its own. Measured: the edition's own registration list and
+// "Open Source Summit Japan 2026" BOTH score overlap=3 against the same three generic tokens.
+// Nothing separates them.
+//
+// Flagging would hit a sibling's list, which is correct to include. Passing would miss this
+// edition's own, which is the defect the check exists for. Neither is defensible, so it reports
+// NEEDS VERIFY and names what the operator has to confirm.
+func TestCheckCurrentRegistrants_AnAllGenericEventNameIsNotAPass(t *testing.T) {
+	got := CheckCurrentRegistrants("Open Source Summit 2026", []string{"26Q2 Open Source Summit 2026 Event Registration"})
+
+	if got.Verdict != VerdictNeedsVerify {
+		t.Fatalf("verdict = %q, want NEEDS VERIFY", got.Verdict)
+	}
+	if len(got.Findings) == 0 {
+		t.Fatal("a NEEDS VERIFY with no finding tells the operator nothing to do")
+	}
+
+	// And the sibling that motivated it: the same name must not be FAILed either.
+	sibling := CheckCurrentRegistrants("Open Source Summit 2026", []string{"26Q2 Open Source Summit Japan 2026 Event Registration"})
+	if sibling.Verdict == VerdictFail {
+		t.Error("a sibling region's list must never be FAILed; including it is a legitimate choice")
+	}
+}
+
+// TestCheckCurrentRegistrants_AnEventNameWithNoYearIsNotAPass is the same reasoning one step
+// in: with no year in the event name, this edition cannot be told from an earlier one, and
+// substituting the current year would flag a list the operator may have chosen on purpose.
+func TestCheckCurrentRegistrants_AnEventNameWithNoYearIsNotAPass(t *testing.T) {
+	got := CheckCurrentRegistrants("AGNTCon + MCPCon North America", []string{"26Q2 AGNTCon + MCPCon North America 2026 Event Registration"})
+
+	if got.Verdict != VerdictNeedsVerify {
+		t.Fatalf("verdict = %q, want NEEDS VERIFY", got.Verdict)
+	}
+}
+
+// TestCombineVerdicts_AnEmptyVerdictIsInertAndAnUnknownOneIsNot pins both arms added for
+// check 4.
+//
+// Empty is a check that did NOT RUN -- routine now, since check 4 is skipped whenever no event
+// name reaches the audit. It must neither pass nor fail the roll-up, or every existing caller's
+// overall verdict would shift.
+//
+// An UNKNOWN verdict is the opposite: this roll-up feeds a send decision, so a value nobody
+// recognises must not resolve to the permissive answer. `severityRank` applies the same rule one
+// level down.
+func TestCombineVerdicts_AnEmptyVerdictIsInertAndAnUnknownOneIsNot(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []Verdict
+		want Verdict
+	}{
+		{"empty beside passes", []Verdict{VerdictPass, VerdictPass, VerdictPass, ""}, VerdictPass},
+		{"empty does not mask a needs-verify", []Verdict{VerdictPass, VerdictNeedsVerify, ""}, VerdictNeedsVerify},
+		{"empty does not mask a fail", []Verdict{VerdictPass, VerdictFail, ""}, VerdictFail},
+		{"empty alone", []Verdict{""}, VerdictPass},
+		{"an unknown verdict is not a pass", []Verdict{VerdictPass, Verdict("WARN")}, VerdictNeedsVerify},
+		{"an unknown verdict cannot outrank a fail", []Verdict{VerdictFail, Verdict("WARN")}, VerdictFail},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CombineVerdicts(tc.in...); got != tc.want {
+				t.Fatalf("CombineVerdicts(%v) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

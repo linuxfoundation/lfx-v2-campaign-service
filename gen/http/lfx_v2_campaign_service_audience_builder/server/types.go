@@ -56,6 +56,9 @@ type RunAudienceQaRequestBody struct {
 	TargetsEu *bool `form:"targets_eu,omitempty" json:"targets_eu,omitempty" xml:"targets_eu,omitempty"`
 	// The send targets Canada, so a CASL opt-out suppression is expected
 	TargetsCa *bool `form:"targets_ca,omitempty" json:"targets_ca,omitempty" xml:"targets_ca,omitempty"`
+	// This edition's event name, so an included registration list for THIS event
+	// can be told from another event's
+	EventName *string `form:"event_name,omitempty" json:"event_name,omitempty" xml:"event_name,omitempty"`
 }
 
 // GetAudienceBuilderCapabilitiesResponseBody is the type of the
@@ -1123,6 +1126,8 @@ type AudienceQaChecksResponseBody struct {
 	Suppression *AudienceQaSuppressionCheckResponseBody `form:"suppression" json:"suppression" xml:"suppression"`
 	// Are the exclusions present and well-formed?
 	ExclusionCompleteness *AudienceQaExclusionCheckResponseBody `form:"exclusion_completeness" json:"exclusion_completeness" xml:"exclusion_completeness"`
+	// Is this edition's own registration list suppressed rather than included?
+	CurrentRegistrants *AudienceQaCheckResponseBody `form:"current_registrants,omitempty" json:"current_registrants,omitempty" xml:"current_registrants,omitempty"`
 }
 
 // AudienceQaCheckResponseBody is used to define fields on response body types.
@@ -2353,6 +2358,7 @@ func NewRunAudienceQaPayload(body *RunAudienceQaRequestBody, projectID string, b
 		ListRef:   *body.ListRef,
 		TargetsEu: body.TargetsEu,
 		TargetsCa: body.TargetsCa,
+		EventName: body.EventName,
 	}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
@@ -2421,6 +2427,11 @@ func ValidateRunAudienceQaRequestBody(body *RunAudienceQaRequestBody) (err error
 	if body.ListRef != nil {
 		if utf8.RuneCountInString(*body.ListRef) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ref", *body.ListRef, utf8.RuneCountInString(*body.ListRef), 1, true))
+		}
+	}
+	if body.EventName != nil {
+		if utf8.RuneCountInString(*body.EventName) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_name", *body.EventName, utf8.RuneCountInString(*body.EventName), 1, true))
 		}
 	}
 	return

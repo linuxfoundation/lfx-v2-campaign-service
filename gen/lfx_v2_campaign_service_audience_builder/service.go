@@ -46,7 +46,8 @@ type Service interface {
 	// the portal first. Creates nothing in HubSpot.
 	AttachExistingAudience(context.Context, *AttachExistingAudiencePayload) (res *AudienceAttachExistingResult, err error)
 	// Audit a composed master list's filters: signal mapping, regulatory
-	// suppression, and exclusion completeness. Creates nothing.
+	// suppression, exclusion completeness, and whether this edition's own
+	// registrants are included. Creates nothing.
 	RunAudienceQa(context.Context, *RunAudienceQaPayload) (res *AudienceQaResult, err error)
 }
 
@@ -316,6 +317,8 @@ type AudienceQaChecks struct {
 	Suppression *AudienceQaSuppressionCheck
 	// Are the exclusions present and well-formed?
 	ExclusionCompleteness *AudienceQaExclusionCheck
+	// Is this edition's own registration list suppressed rather than included?
+	CurrentRegistrants *AudienceQaCheck
 }
 
 type AudienceQaExclusionCheck struct {
@@ -512,6 +515,9 @@ type RunAudienceQaPayload struct {
 	TargetsEu *bool
 	// The send targets Canada, so a CASL opt-out suppression is expected
 	TargetsCa *bool
+	// This edition's event name, so an included registration list for THIS event
+	// can be told from another event's
+	EventName *string
 }
 
 // SearchAudienceListsPayload is the payload type of the

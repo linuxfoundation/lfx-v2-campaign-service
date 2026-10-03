@@ -1115,7 +1115,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-audience-builder
             summary: run-audience-qa lfx-v2-campaign-service-audience-builder
-            description: 'Audit a composed master list''s filters: signal mapping, regulatory suppression, and exclusion completeness. Creates nothing.'
+            description: 'Audit a composed master list''s filters: signal mapping, regulatory suppression, exclusion completeness, and whether this edition''s own registrants are included. Creates nothing.'
             operationId: lfx-v2-campaign-service-audience-builder#run-audience-qa
             parameters:
                 - name: project_id
@@ -1134,6 +1134,7 @@ paths:
                         schema:
                             $ref: '#/components/schemas/RunAudienceQaRequestBody'
                         example:
+                            event_name: q
                             list_ref: ux
                             targets_ca: false
                             targets_eu: false
@@ -1146,19 +1147,34 @@ paths:
                                 $ref: '#/components/schemas/AudienceQaResult'
                             example:
                                 candidates:
-                                    - list_id: Soluta non vel pariatur quo veritatis nisi.
-                                      name: Distinctio animi fugit provident rerum et.
+                                    - list_id: Vel pariatur quo veritatis nisi velit distinctio.
+                                      name: Fugit provident rerum et.
                                       size: 6503538155577912372
-                                    - list_id: Soluta non vel pariatur quo veritatis nisi.
-                                      name: Distinctio animi fugit provident rerum et.
+                                    - list_id: Vel pariatur quo veritatis nisi velit distinctio.
+                                      name: Fugit provident rerum et.
                                       size: 6503538155577912372
-                                    - list_id: Soluta non vel pariatur quo veritatis nisi.
-                                      name: Distinctio animi fugit provident rerum et.
+                                    - list_id: Vel pariatur quo veritatis nisi velit distinctio.
+                                      name: Fugit provident rerum et.
                                       size: 6503538155577912372
-                                    - list_id: Soluta non vel pariatur quo veritatis nisi.
-                                      name: Distinctio animi fugit provident rerum et.
+                                    - list_id: Vel pariatur quo veritatis nisi velit distinctio.
+                                      name: Fugit provident rerum et.
                                       size: 6503538155577912372
                                 checks:
+                                    current_registrants:
+                                        findings:
+                                            - fix: Dolor molestiae quia voluptatem deserunt libero.
+                                              message: Sed minima nihil voluptatem quaerat ipsa voluptatem.
+                                              severity: HIGH
+                                            - fix: Dolor molestiae quia voluptatem deserunt libero.
+                                              message: Sed minima nihil voluptatem quaerat ipsa voluptatem.
+                                              severity: HIGH
+                                            - fix: Dolor molestiae quia voluptatem deserunt libero.
+                                              message: Sed minima nihil voluptatem quaerat ipsa voluptatem.
+                                              severity: HIGH
+                                            - fix: Dolor molestiae quia voluptatem deserunt libero.
+                                              message: Sed minima nihil voluptatem quaerat ipsa voluptatem.
+                                              severity: HIGH
+                                        verdict: FAIL
                                     exclusion_completeness:
                                         exclusion_count: 7396157524892640779
                                         findings:
@@ -14491,6 +14507,8 @@ components:
         AudienceQaChecks:
             type: object
             properties:
+                current_registrants:
+                    $ref: '#/components/schemas/AudienceQaCheck'
                 exclusion_completeness:
                     $ref: '#/components/schemas/AudienceQaExclusionCheck'
                 signal_mapping:
@@ -14498,6 +14516,18 @@ components:
                 suppression:
                     $ref: '#/components/schemas/AudienceQaSuppressionCheck'
             example:
+                current_registrants:
+                    findings:
+                        - fix: Ratione incidunt est saepe.
+                          message: Eligendi earum qui est et id laudantium.
+                          severity: CRITICAL
+                        - fix: Ratione incidunt est saepe.
+                          message: Eligendi earum qui est et id laudantium.
+                          severity: CRITICAL
+                        - fix: Ratione incidunt est saepe.
+                          message: Eligendi earum qui est et id laudantium.
+                          severity: CRITICAL
+                    verdict: PASS
                 exclusion_completeness:
                     exclusion_count: 7942474471707790766
                     findings:
@@ -14619,12 +14649,12 @@ components:
                         $ref: '#/components/schemas/AudienceQaCandidate'
                     description: Matches to choose between; set only when needs_disambiguation is true
                     example:
-                        - list_id: Sequi sit laudantium excepturi.
-                          name: Labore ut iusto dolores.
-                          size: 1972575219725106705
-                        - list_id: Sequi sit laudantium excepturi.
-                          name: Labore ut iusto dolores.
-                          size: 1972575219725106705
+                        - list_id: Laudantium excepturi dolor.
+                          name: Ut iusto dolores omnis rem non natus.
+                          size: 9048508761263251751
+                        - list_id: Laudantium excepturi dolor.
+                          name: Ut iusto dolores omnis rem non natus.
+                          size: 9048508761263251751
                 checks:
                     $ref: '#/components/schemas/AudienceQaChecks'
                 findings:
@@ -14671,13 +14701,25 @@ components:
                         - FAIL
             example:
                 candidates:
-                    - list_id: Sequi sit laudantium excepturi.
-                      name: Labore ut iusto dolores.
-                      size: 1972575219725106705
-                    - list_id: Sequi sit laudantium excepturi.
-                      name: Labore ut iusto dolores.
-                      size: 1972575219725106705
+                    - list_id: Laudantium excepturi dolor.
+                      name: Ut iusto dolores omnis rem non natus.
+                      size: 9048508761263251751
+                    - list_id: Laudantium excepturi dolor.
+                      name: Ut iusto dolores omnis rem non natus.
+                      size: 9048508761263251751
                 checks:
+                    current_registrants:
+                        findings:
+                            - fix: Ratione incidunt est saepe.
+                              message: Eligendi earum qui est et id laudantium.
+                              severity: CRITICAL
+                            - fix: Ratione incidunt est saepe.
+                              message: Eligendi earum qui est et id laudantium.
+                              severity: CRITICAL
+                            - fix: Ratione incidunt est saepe.
+                              message: Eligendi earum qui est et id laudantium.
+                              severity: CRITICAL
+                        verdict: PASS
                     exclusion_completeness:
                         exclusion_count: 7942474471707790766
                         findings:
@@ -15033,11 +15075,11 @@ components:
                 event_slug:
                     type: string
                     description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
-                    example: Molestiae et distinctio voluptas placeat.
+                    example: Placeat eum voluptas.
                 id:
                     type: string
                     description: Brief UUID
-                    example: Debitis tenetur adipisci praesentium enim mollitia quas.
+                    example: Officiis perspiciatis quos minus.
                 keywords:
                     description: Keyword list
                     example: Qui minus amet est.
@@ -15054,7 +15096,7 @@ components:
                 program_type:
                     type: string
                     description: Funnel context
-                    example: education
+                    example: events
                     enum:
                         - events
                         - education
@@ -15062,7 +15104,7 @@ components:
                 project_id:
                     type: string
                     description: Owning project
-                    example: Perspiciatis quos minus et at alias.
+                    example: At alias dolorem est molestiae et.
                 stage:
                     type: string
                     description: Stage within an email series. Empty for paid, which has no series.
@@ -15089,7 +15131,7 @@ components:
                 url:
                     type: string
                     description: Event/course page URL
-                    example: Voluptas laboriosam recusandae quae.
+                    example: Recusandae quae.
                 version:
                     type: integer
                     description: Optimistic-concurrency version
@@ -20382,6 +20424,11 @@ components:
         RunAudienceQaRequestBody:
             type: object
             properties:
+                event_name:
+                    type: string
+                    description: This edition's event name, so an included registration list for THIS event can be told from another event's
+                    example: vd
+                    minLength: 1
                 list_ref:
                     type: string
                     description: List id or name to audit
@@ -20396,8 +20443,9 @@ components:
                     description: The send targets the EU, so a GDPR suppression is expected
                     example: true
             example:
-                list_ref: vd
-                targets_ca: true
+                event_name: ob
+                list_ref: 28f
+                targets_ca: false
                 targets_eu: false
             required:
                 - list_ref
