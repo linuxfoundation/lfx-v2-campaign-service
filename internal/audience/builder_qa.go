@@ -528,24 +528,8 @@ func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
 	negatedName := ""
 
 	for _, name := range includedNames {
-		switch namesRegistrants(name) {
-		case registrantNamingNone:
-			continue
-		case registrantNamingNegated:
-			// A name that mentions registration only in a NEGATED form -- "Unregistered
-			// Prospects", "Not Registered", "Never Attended" -- is the audience this send is FOR,
-			// not the one it must exclude, so flagging it CRITICAL would fail QA for exactly the
-			// right list. `strings.Contains` could not tell them apart: "unregistered" contains
-			// "registered".
-			//
-			// Reported as incomplete rather than skipped, because the opposite reading is also
-			// available: a list genuinely named for this edition's registrants could carry a
-			// negated word elsewhere, and silently passing it would hide the very inclusion this
-			// check exists to catch. Undecidable is the honest answer and it is already how this
-			// check reports a region it cannot resolve.
-			if negatedName == "" {
-				negatedName = name
-			}
+		naming := namesRegistrants(name)
+		if naming == registrantNamingNone {
 			continue
 		}
 		if !namesTheEdition(name, year) {
@@ -573,6 +557,28 @@ func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
 		// And it must still match the event itself. `MatchLastSent` admits on the distinctive
 		// tier, which is the right bar once the region question is settled separately.
 		if !MatchLastSent(name, "", terms).Matched {
+			continue
+		}
+		// The negation question is asked LAST, after every edition gate, because it only matters
+		// for a name already established as THIS edition's. Asked first -- as it was when this
+		// was introduced -- an unrelated event's negated list downgraded the whole audit:
+		// "PyTorch 2025 - Unregistered Prospects" turned an AGNTCon 2026 audit into NEEDS VERIFY
+		// for a list check 4 is not scoped to at all.
+		//
+		// A name that mentions registration only in a NEGATED form -- "Unregistered Prospects",
+		// "Not Registered", "Never Attended" -- is the audience this send is FOR, not the one it
+		// must exclude, so CRITICAL here would fail QA for exactly the right list.
+		// `strings.Contains` could not tell them apart: "unregistered" contains "registered".
+		//
+		// Reported as incomplete rather than skipped, because the opposite reading is also
+		// available: a list genuinely named for this edition's registrants could carry a negated
+		// word, and silently passing it would hide the very inclusion this check exists to catch.
+		// Undecidable is the honest answer, and it is already how this check reports a region it
+		// cannot resolve.
+		if naming == registrantNamingNegated {
+			if negatedName == "" {
+				negatedName = name
+			}
 			continue
 		}
 		findings = append(findings, Finding{

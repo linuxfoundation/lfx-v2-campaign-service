@@ -1115,7 +1115,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-audience-builder
             summary: run-audience-qa lfx-v2-campaign-service-audience-builder
-            description: 'Audit a composed master list''s filters: signal mapping, regulatory suppression, and exclusion completeness. Creates nothing.'
+            description: 'Audit a composed master list''s filters: signal mapping, regulatory suppression, exclusion completeness, and whether this edition''s own registrants are included. Creates nothing.'
             operationId: lfx-v2-campaign-service-audience-builder#run-audience-qa
             parameters:
                 - name: project_id

@@ -1592,7 +1592,7 @@ func lfxV2CampaignServiceAudienceBuilderUsage() {
 	fmt.Fprintln(os.Stderr, `    preview-audience-count: Count the union of the selected lists' memberships — exactly when that is within bounds, as an UPPER-bound estimate (the sum of list sizes, which double-counts overlap) when it is not, and as no number at all when any selected list did not report a size. Creates nothing.`)
 	fmt.Fprintln(os.Stderr, `    compose-audience-master: Create the combined suppression list and then the master list in the project's HubSpot portal, and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.`)
 	fmt.Fprintln(os.Stderr, `    attach-existing-audience: Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. Creates nothing in HubSpot.`)
-	fmt.Fprintln(os.Stderr, `    run-audience-qa: Audit a composed master list's filters: signal mapping, regulatory suppression, and exclusion completeness. Creates nothing.`)
+	fmt.Fprintln(os.Stderr, `    run-audience-qa: Audit a composed master list's filters: signal mapping, regulatory suppression, exclusion completeness, and whether this edition's own registrants are included. Creates nothing.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-audience-builder COMMAND --help\n", os.Args[0])
@@ -1811,7 +1811,7 @@ func lfxV2CampaignServiceAudienceBuilderRunAudienceQaUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Audit a composed master list's filters: signal mapping, regulatory suppression, and exclusion completeness. Creates nothing.`)
+	fmt.Fprintln(os.Stderr, `Audit a composed master list's filters: signal mapping, regulatory suppression, exclusion completeness, and whether this edition's own registrants are included. Creates nothing.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)

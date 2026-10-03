@@ -494,6 +494,72 @@ func TestNamesRegistrants(t *testing.T) {
 	}
 }
 
+// TestCheckCurrentRegistrants_NegatedNamesAreScopedToThisEdition pins that the negation question
+// is asked LAST, after every edition gate.
+//
+// Asked first -- as it was when the negated-naming fix was introduced -- an unrelated event's
+// negated list downgraded the whole audit: "PyTorch 2025 - Unregistered Prospects" turned an
+// AGNTCon 2026 audit into NEEDS VERIFY for a list this check is not scoped to at all. Check 4
+// asks one question about ONE edition, so a name it would never judge must not change its verdict.
+//
+// Every gate is represented: an unrelated event, an unrelated event in the same year, a PAST
+// edition of this series, and a SIBLING REGION of this edition.
+func TestCheckCurrentRegistrants_NegatedNamesAreScopedToThisEdition(t *testing.T) {
+	const eventName = "AGNTCon + MCPCon North America 2026"
+
+	cases := []struct {
+		name     string
+		listName string
+		want     Verdict
+		why      string
+	}{
+		{
+			name:     "an unrelated event's negated list",
+			listName: "PyTorch 2025 - Unregistered Prospects",
+			want:     VerdictPass,
+			why:      "a portfolio holds many such lists; none of them is this edition's registrants",
+		},
+		{
+			name:     "an unrelated event in the same year",
+			listName: "26Q2 PyTorch Conference 2026 - Not Registered",
+			want:     VerdictPass,
+			why:      "sharing a year is not sharing an edition",
+		},
+		{
+			name:     "a past edition's negated list",
+			listName: "25Q2 AGNTCon North America 2025 - Unregistered Prospects",
+			want:     VerdictPass,
+			why:      "the year gate already settles this one",
+		},
+		{
+			name:     "a sibling region's negated list",
+			listName: "26Q1 AGNTCon + MCPCon Japan 2026 - Unregistered Prospects",
+			want:     VerdictPass,
+			why:      "a different region is a different event, however many tokens it shares",
+		},
+		{
+			name:     "THIS edition's negated list",
+			listName: "26Q2 AGNTCon + MCPCon North America 2026 - Unregistered Prospects",
+			want:     VerdictNeedsVerify,
+			why:      "the only one the check is scoped to, and the only one it cannot read",
+		},
+		{
+			name:     "THIS edition's actual registration list",
+			listName: "26Q2 AGNTCon + MCPCon North America 2026 Event Registration",
+			want:     VerdictFail,
+			why:      "the negation reordering must not weaken the finding the check exists for",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CheckCurrentRegistrants(eventName, []string{tc.listName}).Verdict; got != tc.want {
+				t.Errorf("verdict = %q, want %q: %s", got, tc.want, tc.why)
+			}
+		})
+	}
+}
+
 // TestCheckCurrentRegistrants_NegatedRegistrationNaming pins what the check REPORTS for a name it
 // cannot read, which is neither a pass nor a CRITICAL.
 //

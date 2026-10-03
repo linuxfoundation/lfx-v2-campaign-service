@@ -658,20 +658,23 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 	})
 
 	Method("run-audience-qa", func() {
-		Description("Audit a composed master list's filters: signal mapping, regulatory suppression, and exclusion completeness. Creates nothing.")
+		Description("Audit a composed master list's filters: signal mapping, regulatory suppression, exclusion completeness, and whether this edition's own registrants are included. Creates nothing.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
 			Attribute("list_ref", String, "List id or name to audit", func() { MinLength(1) })
 			Attribute("targets_eu", Boolean, "The send targets the EU, so a GDPR suppression is expected")
 			Attribute("targets_ca", Boolean, "The send targets Canada, so a CASL opt-out suppression is expected")
-			// OPTIONAL, and the check it enables is skipped without it rather than guessed.
+			// OPTIONAL, and the check it enables is OMITTED without it rather than guessed.
 			//
 			// A registration list names its own edition ("26Q2 AGNTCon + MCPCon North America
 			// 2026 Event Registration"), so deciding whether an INCLUDED registration list is
-			// THIS event's needs the event's name. Absent, check 4 reports NEEDS VERIFY: an
-			// audit that silently skipped would read as a PASS on a send that may be inviting
-			// people who already registered.
+			// THIS event's needs the event's name. Absent, `current_registrants` is omitted
+			// entirely and `overall` is unaffected -- see the godoc on the result attribute.
+			// Reporting NEEDS VERIFY instead, which this comment used to describe, flipped every
+			// existing caller's audit: no client sends `event_name` yet, so every previously
+			// PASSing audit would have become NEEDS VERIFY and trained operators to ignore the
+			// verdict.
 			Attribute("event_name", String, "This edition's event name, so an included registration list for THIS event can be told from another event's", func() {
 				MinLength(1)
 			})

@@ -46,7 +46,8 @@ type Service interface {
 	// the portal first. Creates nothing in HubSpot.
 	AttachExistingAudience(context.Context, *AttachExistingAudiencePayload) (res *AudienceAttachExistingResult, err error)
 	// Audit a composed master list's filters: signal mapping, regulatory
-	// suppression, and exclusion completeness. Creates nothing.
+	// suppression, exclusion completeness, and whether this edition's own
+	// registrants are included. Creates nothing.
 	RunAudienceQa(context.Context, *RunAudienceQaPayload) (res *AudienceQaResult, err error)
 }
 
