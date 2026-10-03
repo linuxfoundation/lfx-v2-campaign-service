@@ -438,6 +438,17 @@ func namesRegistrants(name string) registrantNaming {
 // ticking it raised nothing, and QA passed -- the three existing checks all look at consent
 // suppression or filter shape, and none of them reads the audience's own INTENT.
 //
+// SCOPED TO A REGISTRATION-ORIENTED SEND, and the contract cannot yet say so. `Post-Event`
+// is a real stage (`internal/service/emailstage/stage.go`), and for one this edition's own
+// attendees are the intended audience -- so this finding would be wrong there. The QA payload
+// carries no stage today, so there is nothing to gate on.
+//
+// That is safe only because the check is DORMANT: `event_name` is optional and no client sends
+// it, so check 4 is omitted from every audit in production. The gate belongs in the same change
+// that wires `event_name` through from the UI, where the stage is known -- adding a stage
+// attribute to the contract now would be guessing at a shape before there is a caller to fit.
+// Until then this must not be enabled for a `Post-Event` send -- tracked as #244.
+//
 // Keyed on the registration SIGNAL plus the event's own name, not on the name alone. A
 // portfolio contains many registration lists and including a PAST edition's is the correct
 // and common case -- that is the strongest evidence available for a first-edition send. Only

@@ -35,3 +35,16 @@ also refreshed `cmd/campaign-service/kodata/`. And the `event_name` comment besi
 said "Absent, check 4 reports NEEDS VERIFY" — the behaviour `c2cf7d5e` deliberately changed
 to OMITTING the field. A stale comment describing the contradiction a previous review
 already rejected is worse than no comment; it now records why omitting is the right answer.
+
+**A third finding, answered with scope rather than code.** Copilot then noted that check 4
+treats including current registrants as universally critical while `Post-Event` is a real
+stage (`internal/service/emailstage/stage.go`) whose intended audience IS this edition's
+attendees. Verified — the stage exists, and the finding is right that the check would fail a
+legitimate send there.
+
+It is not a bug *today* only because check 4 is **dormant**: `event_name` is optional and no
+client sends it, so the check is omitted from every audit in production. The gate belongs in
+the same change that wires `event_name` through from the UI, where the stage is known;
+adding a stage attribute to the contract now would be fitting a shape to no caller. Recorded
+in the godoc next to the code and filed as #244, so the constraint cannot be lost between
+this PR and that one.
