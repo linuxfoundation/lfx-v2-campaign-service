@@ -378,6 +378,56 @@ func namesTheEdition(name, year string) bool {
 	return false
 }
 
+// registrantNaming is how a list name mentions registration, for CheckCurrentRegistrants.
+type registrantNaming int
+
+const (
+	// registrantNamingNone: the name does not mention registration at all.
+	registrantNamingNone registrantNaming = iota
+	// registrantNamingPlain: at least one registration term appears un-negated.
+	registrantNamingPlain
+	// registrantNamingNegated: every registration term in the name is negated.
+	registrantNamingNegated
+)
+
+// registrantTermRE matches one registration term, capturing any negation that sits ON it --
+// either a negating word immediately before it ("not registered", "never attended") or a negating
+// prefix fused to it ("unregistered", "de-registered", "pre-registration").
+//
+// The negation has to be ADJACENT, which is the whole reason this is one regex rather than two
+// checks. A first attempt looked for a negating word anywhere in the name and turned
+// "Registrants (De-duplicated)" and "Registration - No Discount" into undecidable names: both
+// carry a negating word that negates something else entirely. Asking whether the negation is
+// attached to the registration term is a question about structure, which converges; asking
+// whether any negating spelling appears is a denylist, which does not.
+var registrantTermRE = regexp.MustCompile(
+	`(?i)(\b(?:not|non|never|without|excluding|exclude)\s+|\b(?:un|non|de|pre)-?)?\b?(?:registrant|registration|registered|attendee|attended)`,
+)
+
+// namesRegistrants reports how name mentions registration.
+//
+// `strings.Contains(name, "registered")` -- what this replaced -- could not tell this event's
+// registrants from the people who have NOT registered, because "unregistered" contains
+// "registered". That made "KubeCon 2026 - Unregistered Prospects" fail QA as CRITICAL: the one
+// list a registration-push send most obviously SHOULD include, reported as the list it must
+// exclude. Nine such names were enumerated, every one of them matching before this.
+//
+// A name counts as plain when ANY occurrence is un-negated, not when the first one is. "Not
+// Registered - Event Registration List" names both, and the un-negated mention is the one that
+// decides it: the list does hold registrants.
+func namesRegistrants(name string) registrantNaming {
+	matches := registrantTermRE.FindAllStringSubmatch(name, -1)
+	if len(matches) == 0 {
+		return registrantNamingNone
+	}
+	for _, match := range matches {
+		if match[1] == "" {
+			return registrantNamingPlain
+		}
+	}
+	return registrantNamingNegated
+}
+
 // CheckCurrentRegistrants asks whether THIS edition's own registration list is being
 // included rather than suppressed.
 //
@@ -472,8 +522,30 @@ func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
 	// the list does. Reported only if nothing else FAILED -- a real hit is the more useful
 	// answer, and NEEDS VERIFY alongside a CRITICAL would read as the lesser finding.
 	undecidable := false
+	// Set when a name mentions registration only in a negated form. Tracked separately from
+	// `undecidable` because the two have different causes and the operator is told which: the
+	// existing message names the region question, which has nothing to do with this.
+	negatedName := ""
+
 	for _, name := range includedNames {
-		if !containsAny(name, registrationHints) {
+		switch namesRegistrants(name) {
+		case registrantNamingNone:
+			continue
+		case registrantNamingNegated:
+			// A name that mentions registration only in a NEGATED form -- "Unregistered
+			// Prospects", "Not Registered", "Never Attended" -- is the audience this send is FOR,
+			// not the one it must exclude, so flagging it CRITICAL would fail QA for exactly the
+			// right list. `strings.Contains` could not tell them apart: "unregistered" contains
+			// "registered".
+			//
+			// Reported as incomplete rather than skipped, because the opposite reading is also
+			// available: a list genuinely named for this edition's registrants could carry a
+			// negated word elsewhere, and silently passing it would hide the very inclusion this
+			// check exists to catch. Undecidable is the honest answer and it is already how this
+			// check reports a region it cannot resolve.
+			if negatedName == "" {
+				negatedName = name
+			}
 			continue
 		}
 		if !namesTheEdition(name, year) {
@@ -511,15 +583,23 @@ func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
 		break
 	}
 
-	if len(findings) == 0 && undecidable {
-		return Check{
-			Verdict: VerdictNeedsVerify,
-			Findings: []Finding{{
+	if len(findings) == 0 && (undecidable || negatedName != "") {
+		reported := make([]Finding, 0, 2)
+		if undecidable {
+			reported = append(reported, Finding{
 				Severity: SeverityMedium,
 				Message:  fmt.Sprintf("Could not check every included registration list: %q names no region, so a list naming one cannot be told from a sibling edition's.", eventName),
 				Fix:      "Confirm by hand that any regional registration list among the inclusions belongs to an EARLIER edition, and that this edition's own registrants are excluded.",
-			}},
+			})
 		}
+		if negatedName != "" {
+			reported = append(reported, Finding{
+				Severity: SeverityMedium,
+				Message:  fmt.Sprintf("Could not check whether %q is this event's registrants or the people who have NOT registered: it names registration in a negated form.", negatedName),
+				Fix:      "Confirm by hand which it is. A list of people who have not registered belongs in the inclusions; this edition's registrants belong in the combined suppression.",
+			})
+		}
+		return Check{Verdict: VerdictNeedsVerify, Findings: reported}
 	}
 	return Check{Verdict: VerdictFromFindings(findings), Findings: findings}
 }

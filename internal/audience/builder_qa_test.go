@@ -433,6 +433,95 @@ func TestCheckCurrentRegistrants(t *testing.T) {
 	}
 }
 
+// TestNamesRegistrants pins the predicate that replaced a `strings.Contains` hint scan.
+//
+// `strings.Contains(name, "registered")` could not tell this event's registrants from the people
+// who have NOT registered, because "unregistered" contains "registered". Every name in the negated
+// group below matched before this, so "KubeCon 2026 - Unregistered Prospects" -- the list a
+// registration-push send most obviously SHOULD include -- failed QA as CRITICAL.
+//
+// Enumerated rather than sampled, in both directions. The plain group carries the names a first
+// attempt broke: it looked for a negating word ANYWHERE in the name, which made "Registrants
+// (De-duplicated)" and "Registration - No Discount" undecidable. The negation has to sit ON the
+// registration term, which is a question about structure; "does any negating spelling appear" is a
+// denylist, and a denylist over spellings does not converge.
+func TestNamesRegistrants(t *testing.T) {
+	negated := []string{
+		"KubeCon 2026 - Unregistered Prospects",
+		"Not Registered",
+		"KubeCon NA 2026 - Non-Registered Leads",
+		"Unregistered - KubeCon Europe 2026",
+		"KubeCon 2026 - Never Attended",
+		"KubeCon 2026 - Not Attendees",
+		"KubeCon 2026 - Deregistered",
+		"KubeCon 2026 - Pre-registration Interest",
+		"KubeCon 2026 - Unattended Sessions",
+	}
+	plain := []string{
+		"26Q1 KubeCon Europe 2026 Event Registration",
+		"KubeCon NA 2026 - Registrants",
+		"KubeCon NA 2026 - Attendees",
+		"KubeCon NA 2026 - Attended",
+		"KubeCon 2026 Registered Users",
+		// Each of these carries a word a spelling denylist catches, negating something else.
+		"KubeCon NA 2026 - Registrants (De-duplicated)",
+		"Open Source Summit 2026 Registration - No Discount",
+		"KubeCon 2026 Registration - Denver",
+		"PyTorch Conference 2026 Registered - Nonprofit Rate",
+		"KubeCon 2026 Attendees - Presenters",
+		"KubeCon 2026 Registrants - Premium",
+		"KubeCon EU 2026 - Event Registration (Unpaid)",
+		"KubeCon 2026 Attendees - Denmark",
+		// ANY un-negated occurrence decides it, not the first one.
+		"Not Registered - Event Registration List",
+	}
+	none := []string{"KubeCon 2026 - Prospects", "KubeCon 2026", "LF Global Opt-Outs"}
+
+	for _, name := range negated {
+		if got := namesRegistrants(name); got != registrantNamingNegated {
+			t.Errorf("namesRegistrants(%q) = %v, want negated; the people who have NOT registered are who this send is FOR", name, got)
+		}
+	}
+	for _, name := range plain {
+		if got := namesRegistrants(name); got != registrantNamingPlain {
+			t.Errorf("namesRegistrants(%q) = %v, want plain; a legitimate registrant list was made undecidable", name, got)
+		}
+	}
+	for _, name := range none {
+		if got := namesRegistrants(name); got != registrantNamingNone {
+			t.Errorf("namesRegistrants(%q) = %v, want none", name, got)
+		}
+	}
+}
+
+// TestCheckCurrentRegistrants_NegatedRegistrationNaming pins what the check REPORTS for a name it
+// cannot read, which is neither a pass nor a CRITICAL.
+//
+// Flagging it CRITICAL fails QA for the right list; passing it silently hides the inclusion this
+// check exists to catch. Undecidable is the honest answer, and it is already how this check reports
+// a region it cannot resolve.
+func TestCheckCurrentRegistrants_NegatedRegistrationNaming(t *testing.T) {
+	const eventName = "AGNTCon + MCPCon North America 2026"
+
+	got := CheckCurrentRegistrants(eventName, []string{"26Q2 AGNTCon + MCPCon North America 2026 - Unregistered Prospects"})
+
+	if got.Verdict != VerdictNeedsVerify {
+		t.Fatalf("verdict = %q, want NEEDS VERIFY; a registration-push send's own target list is not a QA failure", got.Verdict)
+	}
+	if len(got.Findings) != 1 {
+		t.Fatalf("findings = %d, want 1", len(got.Findings))
+	}
+	if got.Findings[0].Severity != SeverityMedium {
+		t.Errorf("severity = %q, want MEDIUM; an unreadable name is not the same as a confirmed inclusion", got.Findings[0].Severity)
+	}
+	if !strings.Contains(got.Findings[0].Message, "Unregistered Prospects") {
+		t.Errorf("message does not name the list the operator has to check: %q", got.Findings[0].Message)
+	}
+	if strings.Contains(got.Findings[0].Message, "names no region") {
+		t.Errorf("reported the REGION cause for a naming problem, so the operator would check the wrong thing: %q", got.Findings[0].Message)
+	}
+}
+
 // TestCheckCurrentRegistrants_MatchesThisServicesOwnNamingConvention pins the false NEGATIVE
 // that a raw year substring produced.
 //
