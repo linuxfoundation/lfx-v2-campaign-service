@@ -3117,6 +3117,9 @@ func EncodeGenerateEmailCopyRequest(encoder func(*http.Request) goahttp.Encoder)
 		if p.Variant != nil {
 			values.Add("variant", *p.Variant)
 		}
+		if p.Segment != nil {
+			values.Add("segment", *p.Segment)
+		}
 		req.URL.RawQuery = values.Encode()
 		return nil
 	}
@@ -6658,6 +6661,7 @@ func unmarshalPlatformResultResponseBodyToLfxv2campaignservicebriefsPlatformResu
 		OK:         *v.OK,
 		CampaignID: v.CampaignID,
 		Error:      v.Error,
+		HubspotURL: v.HubspotURL,
 	}
 
 	return res

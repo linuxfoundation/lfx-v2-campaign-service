@@ -216,6 +216,13 @@ type googleAdsConfig struct {
 	// Google interprets both in the ad ACCOUNT's timezone, not UTC — which is also why
 	// a past start date is not refused here; see googleads.validateFlightWindow. These
 	// apply to BOTH channels.
+	//
+	// They are also what applyCampaignConfig records in the campaigns table's
+	// start_date/end_date columns: before this field existed Google passed "" for both,
+	// so those columns stayed NULL for every Google campaign and the settings readback
+	// had nothing to compare its upstream dates against. Microsoft still passes "" for
+	// both (internal/dispatch/microsoft.go), so Google is not the last adapter without a
+	// window — only the one whose readback made the absence visible.
 	StartDate string `json:"startDate"` // YYYY-MM-DD
 	EndDate   string `json:"endDate"`   // YYYY-MM-DD
 	// GeoTargets are ISO 3166-1 alpha-2 country codes the campaign should serve in
@@ -2363,7 +2370,13 @@ func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string
 	// that leave the columns NULL — a campaign created before those config fields existed,
 	// and a caller that omits them — and those report `unknown` rather than a divergence,
 	// which is correct: no date was ever requested, so there is nothing for upstream to
-	// diverge FROM. Both sides are formatted to the row's
+	// diverge FROM.
+	//
+	// Adoption is NOT automatically in that set — it persists whatever window the adopting
+	// request supplied, and the campaign it binds may well be one a prior partial attempt of
+	// ours created. What is true of adoption is narrower: the recorded side reflects the
+	// ADOPTING request, not whatever created the campaign upstream, so the two can disagree
+	// for a reason this comparison is right to surface. Both sides are formatted to the row's
 	// YYYY-MM-DD, never compared as raw strings: Google returns 'yyyy-MM-dd HH:mm:ss' in
 	// the ad account's timezone, so a raw comparison would report a divergence for every
 	// campaign that agrees.

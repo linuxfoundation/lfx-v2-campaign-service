@@ -107,6 +107,8 @@ type ListBrief struct {
 	Size                 *int64
 	Missing              bool
 	ResolvedFromLegacyID string
+	// HubSpotURL links to the list; empty when it no longer resolves.
+	HubSpotURL string
 }
 
 // LastSentEmail is a prior send and the lists it used — the best available precedent
@@ -131,6 +133,15 @@ type ComposeInput struct {
 	BrandShort     string
 	EventName      string
 	EventDates     []string
+	// RecordUnderBriefID asks the caller's service layer to record the composed master as
+	// this brief's built audience. It is empty for the exploratory use of the builder, which
+	// composes lists without a campaign to attach them to.
+	//
+	// The orchestration itself records nothing — it only resolves the PORTAL when this is set,
+	// because the portal must be read from the same build-scoped client the lists are created
+	// with. Resolving it anywhere else would stamp provenance that does not provably describe
+	// the ids it is attached to.
+	RecordUnderBriefID string
 }
 
 // ComposedList is a list this service just created.
@@ -148,6 +159,18 @@ type ComposeOutcome struct {
 	Master        ComposedList
 	Suppression   *ComposedList
 	SourceListIDs []string
+	// PortalID is the HubSpot portal both lists were created in, read from the token of the
+	// build-scoped client that created them. It is set only when ComposeInput.RecordUnderBriefID
+	// was set, because it is only ever needed to stamp provenance on a recorded audience — and
+	// the lookup is a network round trip the exploratory path should not pay for.
+	PortalID string
+	// AttachedSuppressionIDs are EXISTING suppression lists recorded beside the master by an
+	// attach (AttachExisting), which composes no combined suppression of its own. Empty for a
+	// compose, whose single suppression is Suppression above.
+	AttachedSuppressionIDs []string
+	// Attached marks an outcome that created nothing: the lists already existed and were
+	// only verified. It changes the recorded row's default summary, nothing else.
+	Attached bool
 }
 
 // QaCandidate is one of several lists a typed name matched.

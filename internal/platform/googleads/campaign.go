@@ -1027,7 +1027,6 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
-
 	return &campaignPreflight{
 		amountMicros:     amountMicros,
 		budgetName:       budgetName,

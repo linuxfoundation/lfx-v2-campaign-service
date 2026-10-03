@@ -42,7 +42,16 @@ type demandGenCampaignCreate struct {
 	// campaign.end_date_time fields campaignCreate carries, with the same format,
 	// account-timezone interpretation and omitempty semantics — see that type for the
 	// v23 rename trap. A flight window is a property of the campaign, not of the
-	// channel, so both payloads take it from the one shared preflight.
+	// channel, so both payloads take it from the one shared preflight: these are
+	// CAMPAIGN-level fields in the Google Ads API, not Search-specific ones, and
+	// Google's own Demand Gen create guide lists both as optional on this channel.
+	//
+	// Carrying them is not optional for correctness. A Demand Gen campaign that
+	// validated a window and then did not send it would be worse than one that never
+	// had dates: applyCampaignConfig records the window on the row either way, so the
+	// campaigns table would claim an end date the campaign does not have, and the
+	// settings readback reports `unknown` rather than `diverged` when one side is
+	// absent — blinding the drift detector precisely where it is needed.
 	StartDateTime string `json:"startDateTime,omitempty"`
 	EndDateTime   string `json:"endDateTime,omitempty"`
 }
@@ -145,6 +154,10 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		CampaignBudget:                 budgetResource,
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
 		GeoTargetTypeSetting:           geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
+		// Resolved by the SHARED preflight, so an invalid window is refused before the
+		// budget mutate on this channel exactly as it is on Search.
+		StartDateTime: pf.startDateTime,
+		EndDateTime:   pf.endDateTime,
 		// targetSpend, matching the legacy Express implementation's `target_spend: {}` —
 		// which is what serves this channel on app.lfx.dev today.
 		//
@@ -155,9 +168,7 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		// BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET against the same budget.
 		// Do not "fix" this to a maximize-* strategy without re-running that check — the
 		// rejection lands AFTER the budget is created, which orphans it.
-		TargetSpend:   map[string]any{},
-		StartDateTime: pf.startDateTime,
-		EndDateTime:   pf.endDateTime,
+		TargetSpend: map[string]any{},
 	}}}}
 	campaignResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), campaignReq, false)
 	if err != nil {

@@ -707,12 +707,21 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 		seen[prov] = struct{}{}
 		platforms = append(platforms, prov)
 	}
+	config := marshalAny(p.Input.Config)
+	// Refuse a request that can never produce what it asks for BEFORE the job exists. Dispatch
+	// runs after the 202 and reports every failure as one opaque job error, so a request shape
+	// that is knowably unsatisfiable (an A/B test on an email that sends by recipients' time
+	// zones) is only actionable here, where a typed 409 reaches the caller. Fail-open: the
+	// orchestrator turns only a recognised sentinel into a refusal and ignores anything else.
+	if err := orch.PreflightCreate(ctx, p.ProjectID, platforms, config); err != nil {
+		return nil, mapBriefErr(err)
+	}
 	// Pass the version we just observed as 'approved'. Start gates job creation on
 	// the brief still being approved at this exact version, so a concurrent replace
 	// (which resets it to draft, bumping version) or archive committing between this
 	// read and job creation makes Start fail (domain.ErrStaleApproval → 409) rather
 	// than launching paid campaigns from a stale "approved" snapshot.
-	jobID, err := orch.Start(ctx, brief, brief.Version, platforms, marshalAny(p.Input.Config))
+	jobID, err := orch.Start(ctx, brief, brief.Version, platforms, config)
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -1846,6 +1855,7 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			CampaignID string `json:"campaign_id"`
 			Error      string `json:"error"`
 			Skipped    bool   `json:"skipped"`
+			HubspotURL string `json:"hubspot_url"`
 		}
 		if err := json.Unmarshal(j.Result, &stored); err != nil {
 			// A persisted result that won't decode is corruption, not a valid empty
@@ -1869,6 +1879,10 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			if r.CampaignID != "" {
 				id := r.CampaignID
 				pr.CampaignID = &id
+			}
+			if r.HubspotURL != "" {
+				u := r.HubspotURL
+				pr.HubspotURL = &u
 			}
 			switch {
 			case r.Skipped && !r.OK:
@@ -2109,6 +2123,18 @@ func mapBriefErr(err error) error {
 		// changing one names a different brief. Say what to do instead, because "immutable"
 		// alone leaves a caller who wants a second channel or another send with no next step.
 		return &briefs.ConflictError{Code: "409", Message: "a brief's delivery type and stage are part of its identity and cannot be changed; create a brief for the other surface or stage instead"}
+	case errors.Is(err, domain.ErrABTestUnsupportedSendType):
+		// A 409 with a reason, unlike the briefs conflicts above that carry prose only: this is the
+		// one refusal whose caller must act on WHICH setting is at fault (choose another source
+		// email, or drop the A/B test), and the front end shows no upstream text for any other
+		// rejection, so it needs a discriminator it can key on rather than this message. The text
+		// is fixed on purpose -- it reaches the caller, so it must never embed the source email id
+		// or anything HubSpot returned.
+		return &briefs.ConflictError{
+			Code:    "409",
+			Reason:  conflictReason("ab_test_unsupported_send_type"),
+			Message: domain.ErrABTestUnsupportedSendType.Error() + "; choose a source email that is not set to send by time zone, or turn the A/B test off",
+		}
 	case errors.Is(err, domain.ErrConflict):
 		return &briefs.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):

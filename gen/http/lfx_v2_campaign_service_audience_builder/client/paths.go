@@ -51,6 +51,11 @@ func ComposeAudienceMasterLfxV2CampaignServiceAudienceBuilderPath(projectID stri
 	return fmt.Sprintf("/projects/%v/audience-builder/compose-master", projectID)
 }
 
+// AttachExistingAudienceLfxV2CampaignServiceAudienceBuilderPath returns the URL path to the lfx-v2-campaign-service-audience-builder service attach-existing-audience HTTP endpoint.
+func AttachExistingAudienceLfxV2CampaignServiceAudienceBuilderPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/audience-builder/attach-existing", projectID)
+}
+
 // RunAudienceQaLfxV2CampaignServiceAudienceBuilderPath returns the URL path to the lfx-v2-campaign-service-audience-builder service run-audience-qa HTTP endpoint.
 func RunAudienceQaLfxV2CampaignServiceAudienceBuilderPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/audience-builder/qa/run", projectID)

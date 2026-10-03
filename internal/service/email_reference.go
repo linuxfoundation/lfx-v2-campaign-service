@@ -284,10 +284,18 @@ func plainTextFromBlocks(blocks []hubspot.EmailHTMLBlock) string {
 
 // truncateRunes cuts s to at most n runes, appending no ellipsis: this feeds a prompt block, and
 // an abrupt cut costs nothing a model would otherwise use as a structural cue.
+//
+// It ranges over s rather than converting to []rune so that an over-long input costs nothing: every
+// caller here bounds something that arrives from outside the service (a HubSpot email body, a
+// scraped event description), and the return is a slice of s, not a copy. Ranging a string yields
+// byte indices at rune starts, so s[:i] never splits a rune.
 func truncateRunes(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
+	runes := 0
+	for i := range s {
+		if runes == n {
+			return s[:i]
+		}
+		runes++
 	}
-	return string(r[:n])
+	return s
 }

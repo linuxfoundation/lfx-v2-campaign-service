@@ -390,3 +390,86 @@ func TestCreateDemandGenCampaign_RestrictsGeoToPresence(t *testing.T) {
 		t.Errorf("Demand Gen campaign create does not set positiveGeoTargetType=PRESENCE; its ad-group geo criteria would be read as PRESENCE_OR_INTEREST and serve worldwide")
 	}
 }
+
+// TestCreateDemandGenCampaignSendsTheFlightWindow pins the half of the flight-window
+// feature that a Search-only test cannot reach.
+//
+// Both channels share preflightCampaignKind, so validateFlightWindow runs for Demand Gen
+// and resolves the dates — but this channel builds its OWN payload
+// (demandGenCampaignCreate, deliberately separate because the two channels disagree on
+// required fields). A window that validated and then was not sent is worse than one that
+// never existed: applyCampaignConfig records it on the row for BOTH channels, so the
+// campaigns table would claim an end date the campaign upstream does not have, and the
+// settings readback reports `unknown` rather than `diverged` when one side is absent —
+// so the drift detector goes quiet exactly where it is needed.
+func TestCreateDemandGenCampaignSendsTheFlightWindow(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	var bodies []map[string]any
+	srv := captureServer(t, &bodies, &paths, &mu)
+	t.Cleanup(srv.Close)
+
+	in := demandGenInput()
+	in.StartDate = "2026-06-17"
+	in.EndDate = "2026-06-20"
+
+	if _, err := newDemandGenClient(t, srv.URL).CreateDemandGenCampaign(context.Background(), in); err != nil {
+		t.Fatalf("CreateDemandGenCampaign: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	var campaign map[string]any
+	for i, p := range paths {
+		if strings.HasSuffix(p, "campaigns:mutate") {
+			ops, _ := bodies[i]["operations"].([]any)
+			if len(ops) == 0 {
+				t.Fatal("campaigns:mutate carried no operations")
+			}
+			op, _ := ops[0].(map[string]any)
+			campaign, _ = op["create"].(map[string]any)
+		}
+	}
+	if campaign == nil {
+		t.Fatal("no campaigns:mutate create payload was captured")
+	}
+	if got := campaign["startDateTime"]; got != "2026-06-17 00:00:00" {
+		t.Errorf("startDateTime = %v, want \"2026-06-17 00:00:00\" — the row records a window this campaign would not have", got)
+	}
+	if got := campaign["endDateTime"]; got != "2026-06-20 23:59:59" {
+		t.Errorf("endDateTime = %v, want \"2026-06-20 23:59:59\" — without it the campaign serves past the deadline", got)
+	}
+}
+
+// TestCreateDemandGenCampaignOmitsAnAbsentFlightWindow is the companion: no window must
+// mean no field on this channel too. Google rejects an empty string, so emitting one
+// would break every Demand Gen create that does not supply dates — which is all of them
+// before this feature existed.
+func TestCreateDemandGenCampaignOmitsAnAbsentFlightWindow(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	var bodies []map[string]any
+	srv := captureServer(t, &bodies, &paths, &mu)
+	t.Cleanup(srv.Close)
+
+	if _, err := newDemandGenClient(t, srv.URL).CreateDemandGenCampaign(context.Background(), demandGenInput()); err != nil {
+		t.Fatalf("CreateDemandGenCampaign: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for i, p := range paths {
+		if !strings.HasSuffix(p, "campaigns:mutate") {
+			continue
+		}
+		ops, _ := bodies[i]["operations"].([]any)
+		op, _ := ops[0].(map[string]any)
+		campaign, _ := op["create"].(map[string]any)
+		if _, ok := campaign["startDateTime"]; ok {
+			t.Error("an absent window still emitted startDateTime; Google rejects an empty one")
+		}
+		if _, ok := campaign["endDateTime"]; ok {
+			t.Error("an absent window still emitted endDateTime; Google rejects an empty one")
+		}
+	}
+}

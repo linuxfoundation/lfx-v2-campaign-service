@@ -4,9 +4,12 @@
 package audience
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -90,6 +93,37 @@ func CombinedSuppressionName(baseName string, id EventIdentity, now time.Time) s
 		return baseName + " - Combined Suppression"
 	}
 	return MasterListName(id, "Combined Suppression", now)
+}
+
+// SelectionFingerprint is a short, deterministic tag for one include/exclude selection.
+//
+// HubSpot list names are unique per portal, and MasterListName derives the SAME name for
+// every compose against one event — so a second compose for that event, even with a
+// different selection, was refused by HubSpot and reached the operator as an opaque 500.
+// Suffixing the fingerprint makes the name unique per SELECTION while staying stable for a
+// repeat of the same one, which is what lets ComposeMaster recognise and reuse its own
+// earlier list instead of failing or creating a duplicate.
+//
+// Order-insensitive and blank-insensitive: the ids are trimmed, deduplicated and sorted
+// before hashing, so the same selection clicked in a different order tags the same.
+func SelectionFingerprint(include, exclude []string) string {
+	norm := func(ids []string) []string {
+		out := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if id = strings.TrimSpace(id); id != "" {
+				out = append(out, id)
+			}
+		}
+		slices.Sort(out)
+		return slices.Compact(out)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(norm(include), ",") + "|" + strings.Join(norm(exclude), ",")))
+	return hex.EncodeToString(sum[:])[:8]
+}
+
+// WithFingerprint appends a SelectionFingerprint to a list name: `<name> (<tag>)`.
+func WithFingerprint(name, tag string) string {
+	return strings.TrimSpace(name) + " (" + tag + ")"
 }
 
 // QuarterRank is a sortable rank from a name's `YYQN` code; `(-1, -1)` when it has

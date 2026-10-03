@@ -1017,6 +1017,10 @@ group eligible has not been verified live.
 `YYYY-MM-DD` — spelled as the meta and reddit configs spell them —
 and `validateFlightWindow` renders them into the **v23** `startDateTime` /
 `endDateTime` request fields as `"<date> 00:00:00"` and `"<date> 23:59:59"`.
+Those boundaries are what make the end date INCLUSIVE — the campaign serves
+through the end of the named day — and the instant is read in the AD ACCOUNT's
+timezone, which this client is never told, so the wall-clock string is passed
+through unconverted; guessing a zone would move either end by a day.
 Those are the same v23 names the settings readback documents above: the pre-v23
 `startDate`/`endDate` spellings are rejected as unrecognized, so the request
 side had to be written against the new names from the start. The flight window

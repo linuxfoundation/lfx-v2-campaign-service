@@ -1591,7 +1591,7 @@ func TestGoogleAds_Adoption_FindsAndAdoptsExistingCampaign(t *testing.T) {
 		googleads.WithTokenURL(tokenSrv.URL),
 		googleads.WithBaseURL(apiSrv.URL),
 	)
-	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"adoptExisting":true}}`)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"adoptExisting":true,"startDate":"2026-06-17","endDate":"2026-06-20"}}`)
 	brief := testBrief() // "brief-1" / "cncf" / "KubeCon NA 2026"
 
 	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
@@ -1622,6 +1622,21 @@ func TestGoogleAds_Adoption_FindsAndAdoptsExistingCampaign(t *testing.T) {
 	}
 	if len(camp.ConfigSnapshot) == 0 {
 		t.Error("adopted campaign ConfigSnapshot is empty; the validated config must be persisted")
+	}
+	// The flight window persists on adoption for the same reason the budget does: these
+	// columns hold what the dispatch ASKED for, and adoption has its OWN call to
+	// applyCampaignConfig. Reverting just that call leaves adopted rows with NULL dates
+	// while every create-path test still passes, which is the gap this covers.
+	//
+	// Nothing was pushed upstream here -- adoption binds an existing campaign and writes
+	// nothing -- so the recorded window is a record of the request, not an observation.
+	// The settings readback is what reports whether the adopted campaign actually carries
+	// it, and it can only do that if the recorded side exists.
+	if camp.StartDate == nil || camp.StartDate.Format("2006-01-02") != "2026-06-17" {
+		t.Errorf("adopted campaign StartDate = %v, want 2026-06-17 — the caller's window must persist", camp.StartDate)
+	}
+	if camp.EndDate == nil || camp.EndDate.Format("2006-01-02") != "2026-06-20" {
+		t.Errorf("adopted campaign EndDate = %v, want 2026-06-20", camp.EndDate)
 	}
 	if !searchCalled.Load() {
 		t.Error("adoption must call googleAds:search")
@@ -2971,5 +2986,76 @@ func TestBuildGoogleAdsCampaignURL(t *testing.T) {
 	}
 	if got := buildGoogleAdsCampaignURL(""); got != "" {
 		t.Errorf("buildGoogleAdsCampaignURL(\"\") = %q, want empty string", got)
+	}
+}
+
+// TestGoogleAds_DispatchWiresFlightWindow covers the whole chain the gap spanned: the
+// config's dates must reach GOOGLE's payload and the campaigns table's own columns.
+//
+// Both halves matter and they failed for different reasons. Google was the only platform
+// calling applyCampaignConfig with "","" — so even once the client could send dates, the
+// row would have stayed NULL and the settings readback would have gone on reporting
+// `unknown` against a campaign whose window it could see upstream.
+func TestGoogleAds_DispatchWiresFlightWindow(t *testing.T) {
+	var mu sync.Mutex
+	var campaignBody string
+	opts, _ := googleAdsServers(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		},
+	)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			_, _ = io.WriteString(w, `{"results":[]}`)
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			campaignBody = string(b)
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+	opts = append(opts, googleads.WithBaseURL(apiSrv.URL))
+
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"startDate":"2026-06-17","endDate":"2026-06-20"}}`)
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp == nil {
+		t.Fatal("expected a campaign result")
+	}
+
+	mu.Lock()
+	body := campaignBody
+	mu.Unlock()
+	if !strings.Contains(body, `"startDateTime":"2026-06-17 00:00:00"`) ||
+		!strings.Contains(body, `"endDateTime":"2026-06-20 23:59:59"`) {
+		t.Errorf("config dates did not reach Google's payload.\nbody=%s", body)
+	}
+
+	// The persisted side. Compared as YYYY-MM-DD because that is what the column holds —
+	// the Google payload's time component is a wire detail, not part of the record.
+	if camp.StartDate == nil || camp.StartDate.Format("2006-01-02") != "2026-06-17" {
+		t.Errorf("campaign row start_date = %v, want 2026-06-17 — the readback has nothing to compare against while this is NULL", camp.StartDate)
+	}
+	if camp.EndDate == nil || camp.EndDate.Format("2006-01-02") != "2026-06-20" {
+		t.Errorf("campaign row end_date = %v, want 2026-06-20", camp.EndDate)
 	}
 }

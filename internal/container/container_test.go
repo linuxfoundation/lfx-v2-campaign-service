@@ -660,7 +660,7 @@ func TestNewServices_LivePathInjectsTheTokenVerifier(t *testing.T) {
 		"briefs":      c.newBriefService(nil, nil, nil, nil),
 		"connections": c.newConnectionService(nil, nil),
 		"audiences":   c.newAudienceService(nil, nil),
-		"explore":     c.newAudienceExploreService(),
+		"explore":     c.newAudienceExploreService(nil, nil),
 	} {
 		assert.True(t, s.HasTokenVerifier(),
 			"%s: the live wiring path built it without a verifier; it would reject every request", name)
@@ -1015,7 +1015,7 @@ func TestNewAudienceExploreService_InjectsExplorer(t *testing.T) {
 	c := &Container{audienceBuilder: b, Config: &config.Config{}}
 	require.NotNil(t, c.audienceBuilder)
 
-	s := c.newAudienceExploreService()
+	s := c.newAudienceExploreService(nil, nil)
 	require.NotNil(t, s)
 	assert.True(t, s.ExplorerIsSet(),
 		"the container's explorer must reach the service; without it every audience-builder route is 503 forever")
@@ -1023,7 +1023,7 @@ func TestNewAudienceExploreService_InjectsExplorer(t *testing.T) {
 	// And a container with no builder must NOT claim an explorer. This is the degraded
 	// deployment, and an explorer over a nil builder would panic on the first request
 	// rather than report that audience building is unconfigured.
-	assert.False(t, (&Container{Config: &config.Config{}}).newAudienceExploreService().ExplorerIsSet())
+	assert.False(t, (&Container{Config: &config.Config{}}).newAudienceExploreService(nil, nil).ExplorerIsSet())
 }
 
 // TestAudienceExploreService_ColdStartBindsExplorer pins the cold-start late-binding for the
