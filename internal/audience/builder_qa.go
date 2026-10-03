@@ -8,6 +8,11 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
+	"unicode"
 )
 
 // ---------------------------------------------------------------------------
@@ -386,46 +391,117 @@ const (
 	registrantNamingNone registrantNaming = iota
 	// registrantNamingPlain: at least one registration term appears un-negated.
 	registrantNamingPlain
-	// registrantNamingNegated: every registration term in the name is negated.
+	// registrantNamingNegated: every registration term in the name is negated or qualified.
 	registrantNamingNegated
-)
-
-// registrantTermRE matches one registration term, capturing any negation that sits ON it --
-// either a negating word immediately before it ("not registered", "never attended") or a negating
-// prefix fused to it ("unregistered", "de-registered", "pre-registration").
-//
-// The negation has to be ADJACENT, which is the whole reason this is one regex rather than two
-// checks. A first attempt looked for a negating word anywhere in the name and turned
-// "Registrants (De-duplicated)" and "Registration - No Discount" into undecidable names: both
-// carry a negating word that negates something else entirely. Asking whether the negation is
-// attached to the registration term is a question about structure, which converges; asking
-// whether any negating spelling appears is a denylist, which does not.
-var registrantTermRE = regexp.MustCompile(
-	`(?i)(\b(?:not|non|never|without|excluding|exclude)\s+|\b(?:un|non|de|pre)-?)?\b?(?:registrant|registration|registered|attendee|attended)`,
 )
 
 // namesRegistrants reports how name mentions registration.
 //
-// `strings.Contains(name, "registered")` -- what this replaced -- could not tell this event's
-// registrants from the people who have NOT registered, because "unregistered" contains
-// "registered". That made "KubeCon 2026 - Unregistered Prospects" fail QA as CRITICAL: the one
-// list a registration-push send most obviously SHOULD include, reported as the list it must
-// exclude. Nine such names were enumerated, every one of them matching before this.
+// `strings.Contains(name, "registered")` -- the first version of this -- could not tell this
+// event's registrants from the people who have NOT registered, because "unregistered" contains
+// "registered". That made "Unregistered Prospects" fail QA as CRITICAL: the one list a
+// registration-push send most obviously SHOULD include, reported as the list it must exclude.
 //
-// A name counts as plain when ANY occurrence is un-negated, not when the first one is. "Not
-// Registered - Event Registration List" names both, and the un-negated mention is the one that
-// decides it: the list does hold registrants.
+// The second version matched the term together with an adjacent negation using one regex, and
+// three separate holes came out of a review of it -- each a case where the pattern judged the RAW
+// string and the raw string did not carry the structure the pattern assumed:
+//
+//   - "Not Yet Registered" and "Haven't Registered" read as PLAIN, because the negation was
+//     required to sit immediately before the term. Any intervening word reopened the false
+//     CRITICAL this predicate exists to close.
+//   - "Co-Registrants" read as PLAIN through an optional `\b?` that could match empty, so a bare
+//     stem matched mid-word. "xregistrants" and "bioregistration" matched too.
+//   - "Ünregistered" read as PLAIN because Go's `\b` is ASCII-only: there is no boundary between
+//     "Ü" and "n", so the `un` prefix never matched. "REGİSTRANTS" went the other way and read as
+//     NO mention at all, missing a real registrant list.
+//
+// So this judges TOKENS of a normalised form rather than substrings of the raw name, and asks the
+// three questions separately rather than encoding them in one pattern:
+//
+//  1. Accents are folded and case lowered first, so "Ünregistered" and "REGİSTRANTS" reduce to
+//     forms the token rules below can read. A list name is operator-typed and arrives from a
+//     HubSpot portal, so it carries whatever the operator pasted.
+//  2. A name is split into PHRASES on separators that end a thought -- a spaced dash, a comma,
+//     brackets, a pipe, a slash. A negation reaches only to the end of its own phrase, which is
+//     what keeps "Not Interested - Registration List" and "Registration - No Discount" plain:
+//     both carry a negating word negating something else, in a different phrase.
+//  3. Within a phrase a hyphen and an apostrophe JOIN rather than separate, so "Pre-registration"
+//     and "Haven't" survive as single tokens. A fused prefix (`un`, `de`, `pre`, `re`, `mis`,
+//     `anti`, `co`) is itself the qualification and needs no separate negating word.
+//
+// A name counts as PLAIN when any phrase carries an un-negated term, not when the first one does:
+// "Not Registered - Event Registration List" names both, and the un-negated mention is the one
+// that decides it -- the list does hold registrants.
 func namesRegistrants(name string) registrantNaming {
-	matches := registrantTermRE.FindAllStringSubmatch(name, -1)
-	if len(matches) == 0 {
-		return registrantNamingNone
-	}
-	for _, match := range matches {
-		if match[1] == "" {
-			return registrantNamingPlain
+	anyTerm, anyPlain := false, false
+	for _, phrase := range registrantPhraseSplitRE.Split(foldForNaming(name), -1) {
+		negated := false
+		for _, word := range registrantWords(phrase) {
+			switch {
+			case registrantNegationWords[word]:
+				negated = true
+			case registrantFusedTermRE.MatchString(word):
+				// A fused prefix carries its own qualification, so the term is never plain here.
+				anyTerm = true
+			case registrantTermRE.MatchString(word):
+				anyTerm = true
+				if !negated {
+					anyPlain = true
+				}
+			}
 		}
 	}
-	return registrantNamingNegated
+	switch {
+	case !anyTerm:
+		return registrantNamingNone
+	case anyPlain:
+		return registrantNamingPlain
+	default:
+		return registrantNamingNegated
+	}
+}
+
+// registrantNameFold strips accents so a decorated spelling reduces to the ASCII form the token
+// rules read. `unicode.Mn` is the nonspacing-mark category NFD decomposition produces.
+var registrantNameFold = transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+
+// foldForNaming lower-cases and de-accents. On a transform error it still lower-cases, so the
+// ASCII majority of a malformed name is read rather than the whole name being skipped.
+func foldForNaming(name string) string {
+	folded, _, err := transform.String(registrantNameFold, name)
+	if err != nil {
+		return strings.ToLower(name)
+	}
+	return strings.ToLower(folded)
+}
+
+// registrantPhraseSplitRE splits on separators that END a thought, so a negation cannot reach
+// across one. A SPACED dash only: "Pre-registration" must stay one token.
+var registrantPhraseSplitRE = regexp.MustCompile(`\s+[-\x{2013}\x{2014}]\s+|[,()\[\]|/]+`)
+
+// registrantWords splits a phrase into words, keeping internal `-` and `'` so a fused prefix
+// ("pre-registration") and a contraction ("haven't") survive as one token each.
+func registrantWords(phrase string) []string {
+	return strings.FieldsFunc(phrase, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' && r != '\''
+	})
+}
+
+// registrantTermRE matches a bare registration term, anchored so it cannot match mid-word.
+var registrantTermRE = regexp.MustCompile(`^(?:registrant|registration|registered|attendee|attended)s?$`)
+
+// registrantFusedTermRE matches a registration term carrying a prefix that qualifies it.
+// `co` and `re` are here with the negations because neither names THIS edition's own registrant
+// set either -- a co-registrant or a re-registration is not the population the check judges.
+var registrantFusedTermRE = regexp.MustCompile(`^(?:un|non|de|pre|re|mis|anti|co)-?(?:registrant|registration|registered|attendee|attended)s?$`)
+
+// registrantNegationWords are the words that negate a registration term later in their phrase.
+// Both the apostrophe and bare spellings, because an operator types either.
+var registrantNegationWords = map[string]bool{
+	"not": true, "non": true, "never": true, "without": true, "excluding": true, "exclude": true,
+	"no":      true,
+	"haven't": true, "hasn't": true, "didn't": true, "don't": true, "won't": true,
+	"havent": true, "hasnt": true, "didnt": true, "dont": true, "wont": true,
 }
 
 // CheckCurrentRegistrants asks whether THIS edition's own registration list is being

@@ -460,7 +460,8 @@ func TestRunQA_CheckFourRunsOnlyWhenTheEventIsNamed(t *testing.T) {
 		case hubSpotTokenInfoPath:
 			_, _ = io.WriteString(w, `{"hubId":8112310}`)
 		case "/crm/v3/lists/111":
-			// `filterType":"IN_LIST"` is what this service itself writes (filters.go:274), and
+			// `filterType":"IN_LIST"` is what this service itself writes (`MasterListFilter` in
+			// `internal/audience/filters.go`), and
 			// what `ReferencedListIDs` keys on. A `LIST_BRANCH` spelling is read by the
 			// suppression check but is invisible to the inclusion walk.
 			_, _ = io.WriteString(w, `{"list":{"listId":"111","name":"AGNTCon NA 2026 - Master",`+
