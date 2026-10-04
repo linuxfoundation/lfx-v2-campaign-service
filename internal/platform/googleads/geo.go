@@ -267,6 +267,37 @@ type proximityInfo struct {
 // same rule the currency conversions follow: truncating 37.7749 degrees would shift
 // the point, and at these scales a consistent rounding error is a consistent
 // displacement of every radius.
+//
+// An EXACT repeat is COLLAPSED, the rule resolveGeoList already follows for the two
+// id lists that share this criterion mutate. Google refuses a duplicate proximity
+// criterion, and it refuses it only AFTER the campaign exists — so a locally
+// decidable input error would otherwise cost a real paid campaign, which is the whole
+// reason this validator runs before the budget mutate.
+//
+// Collapsing is the right answer here rather than the refusal that adSchedules and
+// DeviceBidModifiers give a repeat, and the difference is in the payload, not in the
+// policy: those carry a bid modifier, so two entries naming the same slot can
+// DISAGREE and one of the two values would be the one silently dropped. A proximity
+// target carries no such field — two entries that render to the same wire tuple say
+// exactly the same thing, so there is nothing to lose by keeping one.
+//
+// The key is the RENDERED tuple, not the caller's spelling, for the reason
+// resolveGeoList dedupes by resolved id: 37.7749 and 37.77490 are the same
+// microdegrees, and "MILES", " miles " and "Miles" are the same unit — those are
+// different spellings of one criterion, and Google sees only the rendered form. A
+// mile radius and its kilometre equivalent are deliberately NOT collapsed: that is a
+// conversion, not a spelling, and whether Google treats the two as one criterion is
+// not locally decidable — the same line the ad-schedule overlap check draws.
+//
+// proximityInfo is comparable (two int64, a float64 and a string), so it is the map
+// key directly. A NaN key, which would never equal itself, cannot arise: NaN is
+// refused earlier in this same loop iteration, before anything is rendered.
+//
+// The cap is checked against the SUBMITTED count, before any collapsing, which is
+// where resolveGeoList checks its own. It is a limit on the request a caller may
+// send, not on the criteria that survive: a caller handing over a list longer than
+// this has lost track of what it is asking for, and silently shrinking it into the
+// cap would hide that rather than report it.
 func validateProximityTargets(targets []ProximityTarget) ([]proximityInfo, error) {
 	if len(targets) == 0 {
 		return nil, nil
@@ -274,6 +305,7 @@ func validateProximityTargets(targets []ProximityTarget) ([]proximityInfo, error
 	if len(targets) > maxProximityTargets {
 		return nil, fmt.Errorf("google-ads: at most %d proximity targets are supported, got %d", maxProximityTargets, len(targets))
 	}
+	seen := make(map[proximityInfo]struct{}, len(targets))
 	out := make([]proximityInfo, 0, len(targets))
 	for i, t := range targets {
 		if math.IsNaN(t.Latitude) || math.IsInf(t.Latitude, 0) || math.IsNaN(t.Longitude) || math.IsInf(t.Longitude, 0) {
@@ -301,14 +333,19 @@ func validateProximityTargets(targets []ProximityTarget) ([]proximityInfo, error
 		if t.Radius > maxRadius {
 			return nil, fmt.Errorf("google-ads: proximity target %d radius %v exceeds Google's maximum of %.0f %s", i, t.Radius, maxRadius, unit)
 		}
-		out = append(out, proximityInfo{
+		info := proximityInfo{
 			GeoPoint: geoPoint{
 				LatitudeInMicroDegrees:  int64(math.Round(t.Latitude * microDegreesPerDegree)),
 				LongitudeInMicroDegrees: int64(math.Round(t.Longitude * microDegreesPerDegree)),
 			},
 			Radius:      t.Radius,
 			RadiusUnits: unit,
-		})
+		}
+		if _, dup := seen[info]; dup {
+			continue
+		}
+		seen[info] = struct{}{}
+		out = append(out, info)
 	}
 	return out, nil
 }

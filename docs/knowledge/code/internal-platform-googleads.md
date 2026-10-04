@@ -1158,6 +1158,20 @@ group, where proximity has not been verified against a real account, and the two
 honest options were to refuse locally where refusing is free or to find out after
 a paid campaign exists. Lift it the moment someone confirms the behaviour live.
 
+An exact repeat COLLAPSES, keyed on the rendered `proximityInfo` — microdegree
+coordinates, radius and normalised unit — which is the same rule `resolveGeoList`
+applies by resolved id, and for the same reason: Google rejects a duplicate
+criterion, and it rejects it at the criteria mutate, after the campaign exists.
+Collapsing rather than refusing is what separates this list from `AdSchedules` and
+`DeviceBidModifiers`, which refuse a repeat whose bid modifiers DISAGREE. The
+difference is in the payload, not the policy — a proximity target carries no bid
+modifier, so two entries rendering to one tuple say the same thing and nothing is
+dropped by keeping one. Units are deliberately not converted: 10 MILES and 16.09
+KILOMETERS is a conversion rather than a spelling, and whether Google treats them
+as one criterion is not locally decidable — the line `validateAdSchedules` draws at
+interval overlap. The `maxProximityTargets` cap is checked against the SUBMITTED
+count, before collapsing, exactly where `resolveGeoList` checks its own.
+
 `maxGeoTargets` rose from 30 to 60 with this slice. The old value carried the note
 that the map's 30 entries made it unreachable without duplicates — which stopped
 being true the moment raw ids were accepted, since a metro-level campaign targets

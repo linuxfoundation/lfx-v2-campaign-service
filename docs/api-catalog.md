@@ -623,13 +623,20 @@ geoTargets?: string[]           — OPTIONAL locations the campaign should serve
                                   de-duplicated by the RESOLVED id — "US" and "2840" are one criterion;
                                   at most 60 entries.
 
-                                  A numeric id is checked only for SHAPE. This client cannot know
-                                  whether 1014044 names a real place without asking Google, and a lookup
-                                  would make the pre-create validation send a request. A well-formed id
-                                  naming nothing is therefore refused by Google at the criteria mutate,
-                                  AFTER the campaign exists — the cost of reaching past the curated
-                                  country map. Country codes are still verified locally and so still
-                                  fail before any request.
+                                  A numeric id is checked for SHAPE only, but that shape check is
+                                  stricter than "all digits": the entry must be the CANONICAL base-10
+                                  spelling of a POSITIVE int64, which is the type Google exposes these
+                                  ids as. `0` names nothing, `02840` is a non-canonical spelling of
+                                  2840, and a 21-digit run overflows the type — all three fail the job
+                                  BEFORE any Google Ads request, alongside the country codes.
+
+                                  What the shape check cannot do is tell you the id EXISTS. This client
+                                  cannot know whether 1014044 names a real place without asking Google,
+                                  and a lookup would make the pre-create validation send a request. A
+                                  well-formed id naming nothing is therefore refused by Google at the
+                                  criteria mutate, AFTER the campaign exists — the cost of reaching past
+                                  the curated country map, and the one way a geo target can fail late.
+                                  Country codes are verified locally in full and so always fail early.
 
                                   Both channel creates set `geoTargetTypeSetting.positiveGeoTargetType`
                                   to PRESENCE. Google's default is PRESENCE_OR_INTEREST, under which a
@@ -674,8 +681,17 @@ proximityTargets?:              — OPTIONAL radius targeting: "everyone within 
                                   be "MILES" or "KILOMETERS" — there is deliberately no default, since
                                   a radius of 50 means two very different campaigns depending on the
                                   unit and guessing would silently buy ~2.5x (or 0.4x) the intended
-                                  area. At most 20 entries; a non-finite coordinate, an out-of-range
-                                  radius or an unknown unit fails the job before any request.
+                                  area. At most 20 entries, counted as SUBMITTED; a non-finite
+                                  coordinate, an out-of-range radius or an unknown unit fails the job
+                                  before any request.
+
+                                  De-duplicated by the RENDERED criterion — microdegree coordinates,
+                                  radius and normalised unit — so a trailing zero on a coordinate or a
+                                  differently-cased unit does not produce the duplicate criterion Google
+                                  rejects. As with `geoTargets`, a repeat COLLAPSES rather than failing
+                                  the job: a proximity target carries no bid modifier, so two identical
+                                  entries cannot disagree about anything. Units are NOT converted — 10
+                                  MILES and 16.09 KILOMETERS stay two criteria.
 
                                   SEARCH ONLY, and REFUSED rather than ignored on Demand Gen: that
                                   channel takes location criteria on the ad group, where this client

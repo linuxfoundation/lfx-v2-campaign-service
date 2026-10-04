@@ -196,6 +196,60 @@ func TestValidateProximityTargets_RejectsOutOfRangeAndNonFinite(t *testing.T) {
 	}
 }
 
+// An exact repeat renders to one wire tuple, and Google refuses a duplicate proximity
+// criterion only at the criteria mutate — after the budget and the campaign exist. This
+// list COLLAPSES rather than refusing, the rule resolveGeoList follows, because a
+// proximity target carries no bid modifier: unlike an ad schedule or a device, two
+// entries naming the same criterion cannot disagree about anything, so nothing is
+// silently dropped by keeping one.
+func TestValidateProximityTargets_CollapsesAnExactRepeat(t *testing.T) {
+	sf := ProximityTarget{Latitude: 37.7749, Longitude: -122.4194, Radius: 25, RadiusUnit: "MILES"}
+	got, err := validateProximityTargets([]ProximityTarget{sf, sf, sf})
+	if err != nil {
+		t.Fatalf("an exact repeat must collapse, not fail: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d proximity criteria, want 1", len(got))
+	}
+
+	// The key is the RENDERED tuple, not the caller's spelling: a trailing zero on a
+	// coordinate and a differently-cased unit are the same criterion once rendered,
+	// exactly as "US" and "2840" are one geo target.
+	spelled := ProximityTarget{Latitude: 37.77490, Longitude: -122.4194, Radius: 25, RadiusUnit: " miles "}
+	got, err = validateProximityTargets([]ProximityTarget{sf, spelled})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("differently-spelled identical targets gave %d criteria, want 1", len(got))
+	}
+}
+
+// The over-refusal guard. Collapsing must key on the WHOLE tuple — a dedupe written on
+// the coordinates alone would drop a legitimate pair of concentric radii, and a caller
+// that asked for two criteria Google would have accepted would get one, which is the
+// failure this validator exists to avoid rather than commit.
+func TestValidateProximityTargets_KeepsTargetsThatDifferInAnyField(t *testing.T) {
+	base := ProximityTarget{Latitude: 37.7749, Longitude: -122.4194, Radius: 25, RadiusUnit: "MILES"}
+	distinct := map[string]ProximityTarget{
+		"different latitude":  {Latitude: 37.7750, Longitude: -122.4194, Radius: 25, RadiusUnit: "MILES"},
+		"different longitude": {Latitude: 37.7749, Longitude: -122.4195, Radius: 25, RadiusUnit: "MILES"},
+		"different radius":    {Latitude: 37.7749, Longitude: -122.4194, Radius: 10, RadiusUnit: "MILES"},
+		// 25 KILOMETERS is not 25 MILES, and neither is the converted value: units are
+		// deliberately not converted, so these stay two criteria.
+		"different unit": {Latitude: 37.7749, Longitude: -122.4194, Radius: 25, RadiusUnit: "KILOMETERS"},
+	}
+	for name, other := range distinct {
+		got, err := validateProximityTargets([]ProximityTarget{base, other})
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", name, err)
+		}
+		if len(got) != 2 {
+			t.Errorf("%s: got %d proximity criteria, want 2 — collapsing distinct targets is over-refusal", name, len(got))
+		}
+	}
+}
+
 func TestValidateProximityTargets_CapsTheList(t *testing.T) {
 	targets := make([]ProximityTarget, 0, maxProximityTargets+1)
 	for i := 0; i < maxProximityTargets+1; i++ {
