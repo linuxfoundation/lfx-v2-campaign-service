@@ -29,19 +29,6 @@ type demandGenCampaignCreate struct {
 	CampaignBudget                 string         `json:"campaignBudget"`
 	ContainsEuPoliticalAdvertising string         `json:"containsEuPoliticalAdvertising"`
 	TargetSpend                    map[string]any `json:"targetSpend"`
-	// Flight window, carried for the same reason as geoTargetTypeSetting below:
-	// start_date_time/end_date_time are CAMPAIGN-level fields in the Google Ads API, not
-	// Search-specific ones, and Google's own Demand Gen create guide lists both as
-	// optional fields on this channel.
-	//
-	// Omitted when nil. A Demand Gen campaign that validated a window and then did not
-	// send it would be worse than one that never had dates: applyCampaignConfig records
-	// the window on the row either way, so the campaigns table would claim an end date the
-	// campaign does not have, and the settings readback reports `unknown` rather than
-	// `diverged` when one side is absent -- blinding the drift detector precisely where it
-	// is needed.
-	StartDateTime *string `json:"startDateTime,omitempty"`
-	EndDateTime   *string `json:"endDateTime,omitempty"`
 	// Carried even though this channel attaches its geo criteria at the AD GROUP level:
 	// geoTargetTypeSetting is a CAMPAIGN-level field in the Google Ads API and governs how
 	// location criteria are interpreted for the whole campaign, ad-group criteria included.
@@ -51,6 +38,22 @@ type demandGenCampaignCreate struct {
 	// This is one of the few fields the two channel payloads DO share; they are otherwise
 	// separate because Demand Gen rejects networkSettings and manualCpc.
 	GeoTargetTypeSetting geoTargetTypeSetting `json:"geoTargetTypeSetting"`
+	// StartDateTime/EndDateTime are the same v23 campaign.start_date_time /
+	// campaign.end_date_time fields campaignCreate carries, with the same format,
+	// account-timezone interpretation and omitempty semantics — see that type for the
+	// v23 rename trap. A flight window is a property of the campaign, not of the
+	// channel, so both payloads take it from the one shared preflight: these are
+	// CAMPAIGN-level fields in the Google Ads API, not Search-specific ones, and
+	// Google's own Demand Gen create guide lists both as optional on this channel.
+	//
+	// Carrying them is not optional for correctness. A Demand Gen campaign that
+	// validated a window and then did not send it would be worse than one that never
+	// had dates: applyCampaignConfig records the window on the row either way, so the
+	// campaigns table would claim an end date the campaign does not have, and the
+	// settings readback reports `unknown` rather than `diverged` when one side is
+	// absent — blinding the drift detector precisely where it is needed.
+	StartDateTime string `json:"startDateTime,omitempty"`
+	EndDateTime   string `json:"endDateTime,omitempty"`
 }
 
 // demandGenAdGroupCreate omits the `type` field that the Search path sets to
@@ -185,7 +188,7 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	if err := c.validateCampaignResource(campaignResource); err != nil {
 		return budgetPartial(), fmt.Errorf("google-ads demand gen campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, DEMAND_GEN, target spend)", campaignID))
+	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, DEMAND_GEN, target spend, %s)", campaignID, flightWindowStep(pf.startDateTime, pf.endDateTime)))
 
 	campaignPartial := func() *CampaignResult {
 		r := budgetPartial()
@@ -251,13 +254,13 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	//
 	// A failure is returned ALONGSIDE the non-nil res, like every step past the
 	// campaign create: the campaign and ad group exist and are reconcilable either way.
-	if len(pf.geoConstantIDs) > 0 {
-		geoIDs, geoErr := c.createAdGroupGeoTargeting(ctx, adGroupResource, adGroupID, pf.geoConstantIDs)
+	if !pf.geo.empty() {
+		geoIDs, geoErr := c.createAdGroupGeoTargeting(ctx, adGroupResource, adGroupID, pf.geo)
 		if geoErr != nil {
 			return res, geoErr
 		}
 		res.GeoCriterionIDs = geoIDs
-		steps = append(steps, fmt.Sprintf("Geo targeting applied: %d ad-group location criteria (%s)", len(geoIDs), strings.Join(in.GeoTargets, ", ")))
+		steps = append(steps, fmt.Sprintf("Geo targeting applied: %d ad-group location criteria (%s)", len(geoIDs), geoStep(in, pf.geo)))
 		res.Steps = steps
 	}
 

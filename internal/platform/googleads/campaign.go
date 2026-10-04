@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -115,6 +116,42 @@ type CampaignInput struct {
 	// enabled must supply at least one. See validateKeywords for the
 	// text/match-type/count rules.
 	Keywords []Keyword
+	// NegativeKeywords are CAMPAIGN-level exclusions: queries this campaign must
+	// never pay for, however broadly Keywords match. Optional; see
+	// validateNegativeKeywords for the text/match-type/count rules.
+	//
+	// Campaign level rather than ad group, deliberately — an exclusion expresses
+	// intent for the whole campaign and must keep applying to an ad group a human
+	// adds later in the UI. SEARCH only, and REFUSED on Demand Gen rather than
+	// ignored — see the guard in preflightCampaignKind. It is deliberately NOT
+	// modelled on Keywords, which IS ignored there: that silence is defensible
+	// because Demand Gen creates no ad and no keyword criteria at all, so a positive
+	// keyword has nothing it could have attached to and the caller is told as much in
+	// the closing step. An exclusion is the opposite case — its whole job is to stop
+	// spend, so dropping it quietly leaves the operator believing the campaign is
+	// protected while it pays for exactly the queries they named.
+	NegativeKeywords []Keyword
+	// CPCBid is the ad group's manual CPC bid in whole units of the ad ACCOUNT's
+	// currency — the same no-FX-conversion caveat Budget carries applies here.
+	//
+	// 0 means UNSET and no bid field is sent, which is exactly what every campaign
+	// created before this field existed did; no default is invented. SEARCH only —
+	// Demand Gen bids via targetSpend and rejects manualCpc outright. See
+	// validateCPCBid (adgroup_ad.go) for the accepted range.
+	CPCBid float64
+	// StartDate / EndDate are the campaign's flight window as YYYY-MM-DD, matching
+	// the vocabulary the meta and reddit dispatch configs already use. Each is
+	// INDEPENDENTLY optional: empty means the field is not sent, so an empty
+	// StartDate leaves Google's own default (the campaign starts today) and an empty
+	// EndDate leaves it running until someone stops it.
+	//
+	// They are interpreted in the ad ACCOUNT's timezone, not UTC, because that is
+	// what Google does with them — see campaignCreate.StartDateTime. That is also
+	// why no "start date is in the past" check exists here, unlike the meta client's:
+	// this client does not know the account's timezone, so a UTC "today" would refuse
+	// a start date Google accepts for an account several hours behind.
+	StartDate string
+	EndDate   string
 	// AudienceSegments are EXISTING Google Ads audience resource names (Customer
 	// Match "user list" resources the caller has already built elsewhere — this
 	// client does not create audiences) attached to the ad group as observation-only
@@ -138,30 +175,82 @@ type CampaignInput struct {
 	// The ATTACH LEVEL differs per channel and is not a detail the caller
 	// controls: Search takes campaign-level criteria, Demand Gen rejects those
 	// and takes ad-group-level ones. See geo.go.
+	//
+	// Entries are ISO alpha-2 country codes OR raw numeric geo target constant ids
+	// from Google's published table, which is how a CITY, region, metro or postal
+	// code is addressed — see resolveGeoList.
 	GeoTargets []string
-	// StartDate and EndDate are the campaign's flight window as YYYY-MM-DD, the same
-	// wire format every other platform's config uses (dispatch.campaignDateLayout), and
-	// the same one the campaigns table stores.
+	// ExcludedGeoTargets are locations this campaign must NOT serve in, in the same
+	// vocabulary as GeoTargets. Optional.
 	//
-	// Google does NOT take that format, and the conversion is not cosmetic. In v23 the
-	// request fields are `start_date_time`/`end_date_time` carrying
-	// "yyyy-MM-dd HH:mm:ss" — `start_date`/`end_date` were REMOVED, so sending the
-	// shorter name is rejected as an unrecognized field rather than silently ignored.
-	// toGoogleDateTime supplies the time component: 00:00:00 for the start and 23:59:59
-	// for the end, which is what Google's own create samples do and is what makes an end
-	// date INCLUSIVE — "2026-06-20" means through the end of the 20th, not up to its
-	// midnight.
+	// Exclusions are not merely the inverse of inclusions: an event campaign
+	// routinely targets a country and carves out the regions a different campaign
+	// already covers, which no inclusion list can express. They are attached in the
+	// SAME atomic mutate as the inclusions — see createCampaignGeoTargeting for why
+	// that is load-bearing rather than an optimisation.
 	//
-	// The instant is interpreted in the AD ACCOUNT's timezone, which this client is not
-	// told. That is why no UTC conversion happens here and the value is passed through as
-	// wall-clock: converting would require guessing the account's zone, and a guess that
-	// is wrong by one zone moves a campaign's start or end by a day.
+	// A location present in both lists is REFUSED at preflight: Google lets the
+	// exclusion win, so the campaign would silently not serve where the caller
+	// plainly asked it to.
+	ExcludedGeoTargets []string
+	// ProximityTargets are radius targets — "within N miles of this point" —
+	// expressed as decimal degrees plus a radius and an explicit unit. Optional.
 	//
-	// Both optional, and independently so: a start with no end runs until paused, which is
-	// the behaviour every campaign has today. Blank means the field is OMITTED from the
-	// payload entirely rather than sent empty — Google rejects an empty string.
-	StartDate string
-	EndDate   string
+	// SEARCH ONLY: refused at preflight on the Demand Gen path, because that channel
+	// attaches location criteria at the ad group level and this client has not
+	// verified a proximity criterion there. Refusing locally is free; discovering it
+	// after the campaign exists is not. See validateGeoPlan.
+	ProximityTargets []ProximityTarget
+	// Languages are the languages a Search campaign serves in, as ISO 639-1 codes
+	// (EN, DE, JA) or raw numeric language constant ids. Optional; left empty the
+	// campaign serves in EVERY language, which is Google's default and rarely what
+	// an event campaign wants.
+	Languages []string
+	// AdSchedules restrict WHEN the campaign serves, one interval per day of week,
+	// optionally each with its own bid modifier. Optional; left empty the campaign
+	// runs around the clock.
+	AdSchedules []AdSchedule
+	// DeviceBidModifiers adjust the bid per device, or exclude a device outright
+	// with a modifier of 0. Optional.
+	DeviceBidModifiers []DeviceBidModifier
+	// ExcludedAgeRanges and ExcludedGenders are campaign-level demographic
+	// EXCLUSIONS ("18-24", "MALE", …). Optional. Exclusion-only is Google's own
+	// shape at campaign level, not a narrowing — see campaign_criteria.go.
+	ExcludedAgeRanges []string
+	ExcludedGenders   []string
+	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions.
+	// All optional, all SEARCH ONLY (refused at preflight on Demand Gen), and all
+	// created as account-level assets that are then linked to the campaign — see
+	// assets.go. Left empty the ad serves as a bare headline+description, which
+	// costs more per click than the same bid with extensions attached.
+	Sitelinks          []Sitelink
+	Callouts           []string
+	StructuredSnippets []StructuredSnippet
+	// AdGroups splits the campaign into one ad group per theme, each with its own
+	// keywords, bid and up to three responsive search ads. Optional and SEARCH
+	// ONLY (refused at preflight on Demand Gen, which builds its own ad group and
+	// no ad).
+	//
+	// Left empty, the campaign gets exactly the single ad group with a single ad
+	// this client has always built, from Headlines/Descriptions/Keywords/CPCBid
+	// above — and those same fields remain the per-group fallback when a spec
+	// omits one. See adgroup_plan.go for why more than one group is worth having:
+	// Google scores Ad Rank per keyword against the ad that would serve for it.
+	AdGroups []AdGroupSpec
+}
+
+// AdGroupResult is one ad group the cascade attempted, and everything created
+// under it. ID empty means the ad group's own mutate failed or was unconfirmed;
+// AdIDs empty means the group exists but its ads did not get created.
+type AdGroupResult struct {
+	Name  string   `json:"name"`
+	ID    string   `json:"id,omitempty"`
+	AdIDs []string `json:"adIds,omitempty"`
+	// KeywordCriteriaIDs/AudienceCriteriaIDs are this group's own criteria, with
+	// the same three-way ambiguity on empty that CampaignResult.GeoCriterionIDs
+	// documents: none asked for, the mutate failed, or it was unconfirmed.
+	KeywordCriteriaIDs  []string `json:"keywordCriteriaIds,omitempty"`
+	AudienceCriteriaIDs []string `json:"audienceCriteriaIds,omitempty"`
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
@@ -189,13 +278,29 @@ type CampaignResult struct {
 	// (createAdGroupAndAd in adgroup_ad.go). AdGroupID/AdID are empty on a
 	// pre-ad-group failure; AdID alone is empty if the ad group was created but
 	// the ad step failed/is unconfirmed.
+	//
+	// On a campaign with several ad groups these describe the FIRST one only, and
+	// AdID the first ad of it. They are kept populated so every reader that
+	// predates multi-group support keeps resolving to a real ad group rather than
+	// an empty string; AdGroups below is the complete picture.
 	AdGroupName string `json:"adGroupName,omitempty"`
 	AdGroupID   string `json:"adGroupId,omitempty"`
 	AdID        string `json:"adId,omitempty"`
+	// AdGroups is every ad group this cascade attempted, in creation order.
+	//
+	// It is the only field that says how far a multi-group cascade got: an entry
+	// is appended BEFORE the group's mutate is sent, so a group that failed is
+	// present with an empty ID, and a group never reached has no entry at all.
+	// Always at least one entry once the ad group stage started, including for a
+	// single-group campaign.
+	AdGroups []AdGroupResult `json:"adGroups,omitempty"`
 	// KeywordCriteriaIDs/AudienceCriteriaIDs are set by the GA-4 targeting step
 	// (createAdGroupTargeting in targeting.go) when the corresponding input list
 	// was non-empty. Both are empty if targeting was never attempted or failed
 	// before any criterion resource name could be parsed.
+	//
+	// Like the scalar ad group fields above, on a multi-group campaign these are
+	// the FIRST group's criteria; each group's own are in its AdGroups entry.
 	KeywordCriteriaIDs  []string `json:"keywordCriteriaIds,omitempty"`
 	AudienceCriteriaIDs []string `json:"audienceCriteriaIds,omitempty"`
 	// GeoCriterionIDs are the location criteria created for CampaignInput.GeoTargets
@@ -221,8 +326,37 @@ type CampaignResult struct {
 	// adGroupCriterion ids on the Demand Gen path; reconcile against the level the campaign's
 	// channel uses.
 	GeoCriterionIDs []string `json:"geoCriterionIds,omitempty"`
-	GoogleAdsURL    string   `json:"googleAdsUrl"`
-	Steps           []string `json:"steps"`
+	// NegativeKeywordCriteriaIDs are the campaign-level negative keyword criteria
+	// created for CampaignInput.NegativeKeywords. Empty is ambiguous in exactly the
+	// three ways GeoCriterionIDs documents above — none asked for, the mutate failed,
+	// or the mutate was unconfirmed — and the returned ERROR is likewise what tells
+	// them apart: a nil error with an empty slice is the first case and only the first.
+	//
+	// Always campaignCriterion ids: unlike the geo criteria, these exist on the Search
+	// path only, since Demand Gen has no keyword criteria.
+	NegativeKeywordCriteriaIDs []string `json:"negativeKeywordCriteriaIds,omitempty"`
+	// TargetingCriterionIDs are the campaign-level language, ad schedule, device and
+	// demographic criteria created for the corresponding CampaignInput fields, in
+	// that order. Empty is ambiguous in exactly the three ways GeoCriterionIDs
+	// documents — none asked for, the mutate failed, or the mutate was unconfirmed —
+	// and the returned ERROR is what tells them apart.
+	//
+	// Always campaignCriterion ids: these exist on the Search path only, since
+	// validateCriteriaPlan refuses them on Demand Gen.
+	TargetingCriterionIDs []string `json:"targetingCriterionIds,omitempty"`
+	// ExtensionAssetIDs are the sitelink/callout/structured-snippet ASSETS created
+	// for this campaign, in that order; ExtensionLinkIDs are the asset ids Google
+	// confirmed LINKED to the campaign.
+	//
+	// They are reported separately because the two can legitimately differ: assets
+	// are created account-wide by one mutate and linked by a second, so a failure
+	// between them leaves created-but-unlinked assets, and a caller reconciling the
+	// campaign needs to know they exist. ExtensionAssetIDs non-empty with
+	// ExtensionLinkIDs empty is exactly that case, and the returned error says so.
+	ExtensionAssetIDs []string `json:"extensionAssetIds,omitempty"`
+	ExtensionLinkIDs  []string `json:"extensionLinkIds,omitempty"`
+	GoogleAdsURL      string   `json:"googleAdsUrl"`
+	Steps             []string `json:"steps"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
@@ -332,41 +466,17 @@ type campaignCreate struct {
 	NetworkSettings                networkSettings      `json:"networkSettings"`
 	GeoTargetTypeSetting           geoTargetTypeSetting `json:"geoTargetTypeSetting"`
 	ManualCPC                      json.RawMessage      `json:"manualCpc"`
-	// Pointers so an absent flight window is OMITTED rather than sent as "". Google rejects
-	// an empty string on these fields.
+	// StartDateTime/EndDateTime are campaign.start_date_time / campaign.end_date_time,
+	// formatted 'yyyy-MM-dd HH:mm:ss' and interpreted by Google in the ad ACCOUNT's
+	// timezone — NOT UTC and NOT the bare YYYY-MM-DD this service's config uses.
 	//
-	// `string` + omitempty would also omit an empty value, including when only one of the
-	// two is set -- that is not the reason. The reason is that the preflight already
-	// represents absence as nil (toGoogleDateTime returns a nil pointer for a blank date),
-	// so a pointer carries that absence through unchanged instead of flattening it to ""
-	// and relying on the tag to re-derive it.
-	StartDateTime *string `json:"startDateTime,omitempty"`
-	EndDateTime   *string `json:"endDateTime,omitempty"`
-}
-
-// googleCampaignDateLayout is the YYYY-MM-DD the CALLER supplies, matching every other
-// platform's config format and the campaigns table's own columns.
-const googleCampaignDateLayout = "2006-01-02"
-
-// toGoogleDateTime renders a YYYY-MM-DD flight-window date as the "yyyy-MM-dd HH:mm:ss"
-// Google's v23 start_date_time/end_date_time require, with the supplied time component.
-//
-// It returns nil for a blank date so the field is omitted, and an error for anything that
-// is not a date -- never a best-effort value. A malformed date that reached Google as
-// something plausible would set a REAL flight window on a real campaign, which is a
-// money-spending difference from the one the operator asked for.
-func toGoogleDateTime(date, clock string) (*string, error) {
-	date = strings.TrimSpace(date)
-	if date == "" {
-		return nil, nil
-	}
-	if _, err := time.Parse(googleCampaignDateLayout, date); err != nil {
-		// YYYY-MM-DD, not googleCampaignDateLayout: the constant is Go's reference layout
-		// ("2006-01-02"), which reads to an operator as a required literal year.
-		return nil, fmt.Errorf("date %q is not YYYY-MM-DD", date)
-	}
-	out := date + " " + clock
-	return &out, nil
+	// These are the v23 field names and the OLD ONES WILL NOT WORK: `campaign.start_date`
+	// and `campaign.end_date` were REPLACED in v23, and sending either is rejected as an
+	// unrecognized field — after the budget mutate has already committed. The pre-v23
+	// 2037-12-30 "no end date" sentinel went with them; no end date is now an ABSENT
+	// field, which is what omitempty gives us.
+	StartDateTime string `json:"startDateTime,omitempty"`
+	EndDateTime   string `json:"endDateTime,omitempty"`
 }
 
 // geoTargetTypeSetting decides what a location criterion actually MEANS, and Google's default
@@ -590,18 +700,120 @@ type campaignPreflight struct {
 	descriptions     []string
 	keywords         []Keyword
 	audienceSegments []string
-	// geoConstantIDs are the resolved Google geo target constant ids (NOT the
-	// caller's country codes) for CampaignInput.GeoTargets. Resolved during the
-	// preflight so an unmapped country code fails BEFORE the budget mutate,
-	// rather than after a paid campaign exists — see validateGeoTargets.
-	geoConstantIDs []string
-	// startDateTime and endDateTime are the flight window already rendered into Google's
-	// "yyyy-MM-dd HH:mm:ss", nil when the caller supplied none. Resolved during the
-	// preflight for the same reason as geoConstantIDs: a malformed date must fail BEFORE
-	// the budget mutate commits, not after a paid campaign exists with no way to reach
-	// the window the operator asked for.
-	startDateTime *string
-	endDateTime   *string
+	// geo is the whole resolved location intent — inclusions, exclusions and
+	// proximity — with every country code already mapped to its Google geo target
+	// constant id. Resolved during the preflight so an unmapped country code, a
+	// contradictory include/exclude pair or an out-of-range radius fails BEFORE the
+	// budget mutate, rather than after a paid campaign exists. See validateGeoPlan.
+	geo geoPlan
+	// criteria is the resolved non-location targeting intent — languages, ad
+	// schedules, device bid modifiers and demographic exclusions — resolved here for
+	// the same reason geo is: an unmapped language, an inverted schedule or an
+	// out-of-range bid modifier must fail before anything is paid for. See
+	// validateCriteriaPlan.
+	criteria criteriaPlan
+	// assets are the validated ad extensions — sitelinks, callouts and structured
+	// snippets — resolved here for the same reason the criteria are: an over-long
+	// callout or a sitelink with no destination must fail before anything is paid
+	// for. See validateAssetPlan.
+	assets assetPlan
+	// adGroups are the ad groups the cascade will create, always at least one. When
+	// the caller asked for none, it holds exactly the single group the fields above
+	// describe, so the cascade has one shape to walk rather than two. A duplicate
+	// group name or a fourth ad in a group fails here, before the budget mutate —
+	// discovering either mid-cascade strands the groups already created. See
+	// validateAdGroupPlans.
+	adGroups []adGroupPlan
+	// negativeKeywords are the validated campaign-level exclusions, and cpcBidMicros
+	// the validated ad-group bid already converted to micros (0 = unset). Both are
+	// computed here, with everything else, so a bad exclusion or an out-of-range bid
+	// fails before the budget mutate rather than after a paid campaign exists.
+	negativeKeywords []Keyword
+	cpcBidMicros     int64
+	// startDateTime/endDateTime are the caller's YYYY-MM-DD flight window already
+	// rendered into the 'yyyy-MM-dd HH:mm:ss' form campaignCreate sends; empty means
+	// the corresponding field is omitted.
+	startDateTime string
+	endDateTime   string
+}
+
+// campaignDateRE pins the flight-window format BEFORE time.Parse sees it.
+//
+// time.Parse("2006-01-02", …) is more permissive than the layout suggests — it
+// accepts single-digit months and days, so "2026-1-5" parses cleanly and would then
+// be rendered back as a date the caller never wrote. The meta client pairs its own
+// parse with exactly this kind of regex for the same reason.
+var campaignDateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// campaignDateOnlyLayout is the Go layout for the YYYY-MM-DD dates CampaignInput
+// carries — the calendar-date half of what Google is sent, not the wire format.
+const campaignDateOnlyLayout = "2006-01-02"
+
+// validateFlightWindow validates the optional start/end dates and renders them into
+// the 'yyyy-MM-dd HH:mm:ss' strings campaign.start_date_time/end_date_time take.
+//
+// Each date is independently optional: an empty one yields an empty string, which
+// campaignCreate omits. The day boundaries are explicit — 00:00:00 for a start and
+// 23:59:59 for an end — so a one-day window covers that whole day rather than
+// collapsing to a zero-length instant at midnight.
+//
+// Only ONE cross-field rule is enforced, and only when both dates are present: the
+// end must not be BEFORE the start. The same day on both sides is accepted on
+// purpose — with the boundaries above it is a well-defined 24-hour flight, which is
+// what a one-day event promo wants, and rejecting it would contradict the whole
+// reason those boundaries are explicit.
+//
+// There is deliberately no "start date is in the past" check, which the meta client
+// does have. Google interprets these in the ad ACCOUNT's timezone; this client does
+// not know that timezone, so a UTC "today" would refuse a start date that is still
+// today for an account several hours behind — refusing a create Google would have
+// accepted.
+func validateFlightWindow(startDate, endDate string) (startDateTime, endDateTime string, err error) {
+	var start, end time.Time
+	if startDate != "" {
+		if !campaignDateRE.MatchString(startDate) {
+			return "", "", fmt.Errorf("google-ads campaign start date %q is not in YYYY-MM-DD format", startDate)
+		}
+		start, err = time.Parse(campaignDateOnlyLayout, startDate)
+		if err != nil {
+			return "", "", fmt.Errorf("google-ads campaign start date %q is not a valid calendar date: %w", startDate, err)
+		}
+		startDateTime = startDate + " 00:00:00"
+	}
+	if endDate != "" {
+		if !campaignDateRE.MatchString(endDate) {
+			return "", "", fmt.Errorf("google-ads campaign end date %q is not in YYYY-MM-DD format", endDate)
+		}
+		end, err = time.Parse(campaignDateOnlyLayout, endDate)
+		if err != nil {
+			return "", "", fmt.Errorf("google-ads campaign end date %q is not a valid calendar date: %w", endDate, err)
+		}
+		endDateTime = endDate + " 23:59:59"
+	}
+	if startDate != "" && endDate != "" && end.Before(start) {
+		return "", "", fmt.Errorf("google-ads campaign end date %s must not be before start date %s", endDate, startDate)
+	}
+	return startDateTime, endDateTime, nil
+}
+
+// flightWindowStep renders the flight window for the campaign-created step log.
+//
+// The step log is what an operator reconciles a campaign against the account with,
+// so an omitted date is reported as the DEFAULT IT LEAVES IN PLACE rather than as a
+// blank: "starts today" and "no end date" are Google's behaviour for an absent
+// start_date_time/end_date_time, and a reader should not have to know that to
+// interpret the line. The times are the account-timezone boundaries actually sent,
+// not reformatted, so the line can be compared against the campaign directly.
+func flightWindowStep(startDateTime, endDateTime string) string {
+	start := "starts immediately (no start date set)"
+	if startDateTime != "" {
+		start = "starts " + startDateTime
+	}
+	end := "no end date"
+	if endDateTime != "" {
+		end = "ends " + endDateTime
+	}
+	return start + ", " + end + ", account timezone"
 }
 
 // ValidateCampaignInput runs exactly the input validation CreateCampaign runs before it
@@ -617,7 +829,28 @@ type campaignPreflight struct {
 // It delegates to the SAME helper CreateCampaign uses rather than repeating the checks,
 // because a second copy would pass review once and drift on the next change to either.
 func (c *Client) ValidateCampaignInput(in CampaignInput) error {
-	_, err := c.preflightCampaign(in)
+	return c.ValidateCampaignInputKind(CampaignKindSearch, in)
+}
+
+// ValidateCampaignInputKind is ValidateCampaignInput for a caller that already knows
+// which channel the request is for. Prefer it: ValidateCampaignInput assumes Search.
+//
+// The kind is load-bearing now in a way it was not when this entry point was written.
+// preflightCampaignKind used to take kind only to compose the name, so validating as
+// Search was harmless for every channel. It now GATES refusals — proximity targeting,
+// the four campaign criteria kinds, the extension assets, the ad-group list and the
+// CPC bid are all Search-only — so a Demand Gen request carrying one of those validates
+// clean as Search and is then refused by CreateDemandGenCampaign. On the create path
+// that is merely a late error; on the ADOPTION path, which returns before any create
+// runs, it is the exact defect this function exists to prevent: the same request
+// accepted when a campaign happens to exist and refused when it does not.
+//
+// Unknown kinds are not rejected here. The dispatch layer refuses an unrecognised
+// channel before it reaches the client at all, and a kind this package does not know
+// gates nothing — it simply gets the un-restricted Search treatment, which is the
+// pre-existing behaviour and cannot refuse something upstream would have accepted.
+func (c *Client) ValidateCampaignInputKind(kind string, in CampaignInput) error {
+	_, err := c.preflightCampaignKind(kind, in)
 	return err
 }
 
@@ -726,18 +959,74 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// inputs above: an unmapped country code is pure local input validation, and refusing
 	// it only after the budget and campaign have committed would orphan a real paid
 	// campaign over a typo like "USA".
-	geoConstantIDs, err := validateGeoTargets(in.GeoTargets)
+	geo, err := validateGeoPlan(kind, in)
 	if err != nil {
 		return nil, err
 	}
-	// Same placement, same reason: a malformed or inverted flight window is local input
-	// validation, and refusing it after the budget has committed would orphan a paid
-	// campaign over a typo.
+	criteria, err := validateCriteriaPlan(kind, in)
+	if err != nil {
+		return nil, err
+	}
+	assets, err := validateAssetPlan(kind, in)
+	if err != nil {
+		return nil, err
+	}
+	// The three remaining inputs join the same pre-mutate block for the same
+	// orphan-avoidance reason: each is purely local, and each would otherwise be
+	// rejected by Google only at a mutate that runs after the budget and campaign have
+	// committed — the negatives at a campaignCriteria:mutate two steps later, the bid
+	// at the adGroups:mutate after that, and a malformed date at the campaign create
+	// itself, which is already one paid resource too late.
+	// REFUSED on Demand Gen rather than dropped, for the same reason the CPC bid below
+	// is. createCampaignNegativeKeywords is called only from CreateCampaign's cascade;
+	// CreateDemandGenCampaign never reads pf.negativeKeywords, so accepting the list
+	// there would validate every term and then discard the lot — and the operator would
+	// read "campaign created" and believe the exclusions are live while the campaign
+	// keeps paying for exactly the queries they named. A silent drop is worse here than
+	// anywhere else in this preflight precisely because the field's whole purpose is to
+	// STOP spend. Every other Search-only input in this block already refuses
+	// (proximity, the five criteria kinds, extension assets, the ad-group list, the
+	// bid); this was the one that neither refused nor applied.
+	if len(in.NegativeKeywords) > 0 && kind == campaignKindDemandGen {
+		return nil, fmt.Errorf("google-ads: campaign-level negative keywords are not supported on %s (this client attaches them only on the Search cascade); omit NegativeKeywords, or create a Search campaign to exclude queries", kind)
+	}
+	negativeKeywords, err := validateNegativeKeywords(in.NegativeKeywords)
+	if err != nil {
+		return nil, err
+	}
+	// The bid is REFUSED on Demand Gen rather than dropped. demandGenAdGroupCreate has
+	// no cpcBidMicros field and demandgen.go never reads this value, so accepting the
+	// bid there would validate it, convert it, and then silently discard it — the same
+	// defect LFXV2-3283 fixed for geo, and the reason every other Search-only input in
+	// this preflight refuses instead of ignoring. The refusal costs nothing upstream:
+	// Demand Gen bids via targetSpend and rejects manualCpc, so no bid supplied here
+	// could ever have reached a Google call that wanted it.
+	if in.CPCBid != 0 && kind == campaignKindDemandGen {
+		return nil, fmt.Errorf("google-ads: a CPC bid is not supported on %s (Demand Gen bids via targetSpend and rejects manualCpc); omit CPCBid, or create a Search campaign for manual bidding", kind)
+	}
+	cpcBidMicros, err := validateCPCBid(in.CPCBid)
+	if err != nil {
+		return nil, err
+	}
 	startDateTime, endDateTime, err := validateFlightWindow(in.StartDate, in.EndDate)
 	if err != nil {
 		return nil, err
 	}
-
+	// The ad group list is resolved LAST of the pre-mutate block because it is the
+	// only validator that needs other preflight results: every per-group fallback
+	// — the composed name, the bid, the keywords, the audiences, the ad copy —
+	// comes from the single group the campaign-level fields already produced, so
+	// "inherit" means exactly what the single-group path would have done.
+	adGroups, err := validateAdGroupPlans(kind, in, adGroupPlan{
+		name:             adGroupName,
+		cpcBidMicros:     cpcBidMicros,
+		keywords:         keywords,
+		audienceSegments: audienceSegments,
+		ads:              []adPlan{{headlines: headlines, descriptions: descriptions}},
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &campaignPreflight{
 		amountMicros:     amountMicros,
 		budgetName:       budgetName,
@@ -748,43 +1037,15 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		descriptions:     descriptions,
 		keywords:         keywords,
 		audienceSegments: audienceSegments,
-		geoConstantIDs:   geoConstantIDs,
+		geo:              geo,
+		criteria:         criteria,
+		assets:           assets,
+		adGroups:         adGroups,
+		negativeKeywords: negativeKeywords,
+		cpcBidMicros:     cpcBidMicros,
 		startDateTime:    startDateTime,
 		endDateTime:      endDateTime,
 	}, nil
-}
-
-// validateFlightWindow renders the caller's YYYY-MM-DD dates into Google's
-// "yyyy-MM-dd HH:mm:ss" and refuses a window that cannot mean what it says.
-//
-// Only one ordering rule is enforced, and deliberately only one: an end BEFORE the start
-// describes a window with no days in it, which no caller can have meant. A start in the
-// PAST is NOT refused -- Google itself accepts one (the campaign simply becomes eligible
-// immediately) and refusing it here would break the ordinary case of creating a campaign
-// for an event whose promotion was always meant to have begun already.
-//
-// Equal dates are allowed: start 00:00:00 to end 23:59:59 is a one-day campaign, which is
-// a real thing to want on the last day before an event.
-func validateFlightWindow(start, end string) (*string, *string, error) {
-	startDateTime, err := toGoogleDateTime(start, "00:00:00")
-	if err != nil {
-		return nil, nil, fmt.Errorf("campaign start %w", err)
-	}
-	endDateTime, err := toGoogleDateTime(end, "23:59:59")
-	if err != nil {
-		return nil, nil, fmt.Errorf("campaign end %w", err)
-	}
-	// Compared as the caller's dates, not the rendered strings: the rendered pair carries
-	// different time components by design, so an equal-date window would otherwise look
-	// like end > start for a reason that has nothing to do with what was requested.
-	if startDateTime != nil && endDateTime != nil {
-		s, _ := time.Parse(googleCampaignDateLayout, strings.TrimSpace(start))
-		e, _ := time.Parse(googleCampaignDateLayout, strings.TrimSpace(end))
-		if e.Before(s) {
-			return nil, nil, fmt.Errorf("campaign end date %q is before the start date %q", end, start)
-		}
-	}
-	return startDateTime, endDateTime, nil
 }
 
 // CreateCampaign creates a PAUSED Google Ads search campaign as a four-resource
@@ -816,10 +1077,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 	amountMicros, budgetName, campaignName := pf.amountMicros, pf.budgetName, pf.campaignName
-	finalURL, adGroupName := pf.finalURL, pf.adGroupName
-	headlines, descriptions := pf.headlines, pf.descriptions
-	keywords, audienceSegments := pf.keywords, pf.audienceSegments
-	geoConstantIDs := pf.geoConstantIDs
+	// The ad group, its bid, its copy and its targeting are no longer read
+	// individually here: validateAdGroupPlans has already folded them into
+	// pf.adGroups as the first (and, absent CampaignInput.AdGroups, only) group,
+	// and the cascade walks that list rather than the scalars.
+	finalURL := pf.finalURL
+	geo := pf.geo
+	negativeKeywords := pf.negativeKeywords
+	startDateTime, endDateTime := pf.startDateTime, pf.endDateTime
 
 	var steps []string
 	googleAdsURL := "https://ads.google.com/aw/campaigns?ocid=" + c.account.CustomerID
@@ -922,10 +1187,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// then restricts by presence rather than silently reverting to the permissive default.
 		GeoTargetTypeSetting: geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
 		ManualCPC:            json.RawMessage(`{}`),
-		// nil unless the caller supplied one, which omits the field. Resolved in the
-		// preflight so a malformed date fails before the budget mutate commits.
-		StartDateTime: pf.startDateTime,
-		EndDateTime:   pf.endDateTime,
+		// Both omitempty: an empty string here is "the caller gave no such date", and the
+		// field disappears rather than being sent empty — which Google rejects outright.
+		StartDateTime: startDateTime,
+		EndDateTime:   endDateTime,
 	}
 	campaignReq := mutateRequest{Operations: []mutateOperation{{Create: campaignCreateVal}}}
 	campaignPath := c.customerPath("campaigns:mutate")
@@ -951,7 +1216,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := c.validateCampaignResource(campaignResource); err != nil {
 		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, manual CPC)", campaignID))
+	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, manual CPC, %s)", campaignID, flightWindowStep(startDateTime, endDateTime)))
 
 	res := budgetPartial()
 	res.CampaignID = campaignID
@@ -962,24 +1227,79 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// ad group, so a geo failure surfaces with as little built on top of it as
 	// possible. Like every step past the campaign create, a failure is returned
 	// ALONGSIDE the non-nil res: the campaign exists and is PAUSED either way.
-	if len(geoConstantIDs) > 0 {
-		geoIDs, geoErr := c.createCampaignGeoTargeting(ctx, campaignResource, campaignID, geoConstantIDs)
+	if !geo.empty() {
+		geoIDs, geoErr := c.createCampaignGeoTargeting(ctx, campaignResource, campaignID, geo)
 		if geoErr != nil {
 			return res, geoErr
 		}
 		res.GeoCriterionIDs = geoIDs
-		steps = append(steps, fmt.Sprintf("Geo targeting applied: %d location criteria (%s)", len(geoIDs), strings.Join(in.GeoTargets, ", ")))
+		steps = append(steps, fmt.Sprintf("Geo targeting applied: %d location criteria (%s)", len(geoIDs), geoStep(in, geo)))
+		res.Steps = steps
+	}
+
+	// Negative keywords are campaign-level criteria, so they are attached here —
+	// after geo, still before the ad group — for the same reason geo is: the less
+	// that has been built on top of a failure, the easier it is to reconcile. Same
+	// partial-result contract as every step past the campaign create.
+	if len(negativeKeywords) > 0 {
+		negIDs, negErr := c.createCampaignNegativeKeywords(ctx, campaignResource, campaignID, negativeKeywords)
+		if negErr != nil {
+			return res, negErr
+		}
+		res.NegativeKeywordCriteriaIDs = negIDs
+		steps = append(steps, fmt.Sprintf("Negative keywords applied: %d campaign-level exclusions", len(negIDs)))
+		res.Steps = steps
+	}
+
+	// Language, ad schedule, device and demographic criteria are campaign-level too,
+	// and go in last of the three criteria steps — still before the ad group, so a
+	// failure has as little built on top of it as possible. Separate mutate from both
+	// of the above, for the reason createCampaignTargetingCriteria documents. Same
+	// partial-result contract: the campaign exists either way.
+	if !pf.criteria.empty() {
+		critIDs, critErr := c.createCampaignTargetingCriteria(ctx, campaignResource, campaignID, pf.criteria)
+		if critErr != nil {
+			return res, critErr
+		}
+		res.TargetingCriterionIDs = critIDs
+		steps = append(steps, fmt.Sprintf("Campaign targeting applied: %d criteria (%s)", len(critIDs), criteriaStep(pf.criteria)))
+		res.Steps = steps
+	}
+
+	// Ad extensions are the last campaign-level step before the ad group. They go
+	// AFTER the criteria rather than before because they are the only step here
+	// that takes two mutates and can leave something behind (unlinked assets) —
+	// the less that is already built when that happens, the cheaper the
+	// reconciliation. Same partial-result contract: the campaign exists either way,
+	// and the asset ids are reported even when the linking half fails.
+	if !pf.assets.empty() {
+		assetIDs, linkIDs, assetErr := c.createCampaignAssets(ctx, campaignResource, campaignID, pf.assets)
+		res.ExtensionAssetIDs = assetIDs
+		if assetErr != nil {
+			return res, assetErr
+		}
+		res.ExtensionLinkIDs = linkIDs
+		steps = append(steps, fmt.Sprintf("Ad extensions applied: %d assets (%s)", len(linkIDs), assetStep(pf.assets)))
 		res.Steps = steps
 	}
 
 	// The campaign+budget are now committed. GA-3: extend the shell with a PAUSED
-	// ad group + responsive search ad. Any failure here (ambiguous, duplicate, or
-	// definite) is returned ALONGSIDE the now-non-nil res — the campaign/budget
-	// exist regardless, so this can never become a (nil, err) return past this
-	// point. The caller (GoogleAdsDispatcher.Dispatch) treats a non-nil result +
-	// error as "retain the claim, record the partial" — the same contract already
-	// used for an ambiguous/duplicate budget or campaign.
-	if err := c.createAdGroupAndAd(ctx, campaignResource, campaignID, finalURL, headlines, descriptions, adGroupName, keywords, audienceSegments, res); err != nil {
+	// ad group + responsive search ad per planned group. Any failure here
+	// (ambiguous, duplicate, or definite) is returned ALONGSIDE the now-non-nil
+	// res — the campaign/budget exist regardless, so this can never become a
+	// (nil, err) return past this point. The caller (GoogleAdsDispatcher.Dispatch)
+	// treats a non-nil result + error as "retain the claim, record the partial" —
+	// the same contract already used for an ambiguous/duplicate budget or campaign.
+	//
+	// The plan line is recorded BEFORE the cascade runs, not after: a failure on
+	// the third of four groups returns a partial result, and the operator reading
+	// it needs to know four were intended. res.Steps is appended to directly from
+	// here on — createAdGroupAndAd and the targeting step do the same, so the
+	// local `steps` slice is no longer the live one past this point.
+	if len(pf.adGroups) > 1 {
+		res.Steps = append(res.Steps, "Ad group split planned: "+adGroupPlanStep(pf.adGroups))
+	}
+	if err := c.createAdGroupsAndAds(ctx, campaignResource, campaignID, finalURL, pf.adGroups, res); err != nil {
 		return res, err
 	}
 	return res, nil
@@ -1209,8 +1529,31 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 	// which is correct: by then a mutation HAS been sent. That path is reachable without any
 	// user cancellation, since the orchestrator wraps every toggle in a toggleCallTimeout —
 	// pinned by TestUpdateCampaignStatus_CancelDuringBackoffIsUnconfirmed.
-	if _, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), req, true); err != nil {
+	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), req, true)
+	if err != nil {
 		return fmt.Errorf("google-ads campaign %s status update to %s failed: %w", id, status, err)
+	}
+	// A 2xx that does not acknowledge the one operation is UNCONFIRMED, the same standard
+	// the ad group and ad stages hold their own mutates to (checkStatusMutateResults in
+	// adgroup_ad.go). Holding the CAMPAIGN stage to it matters most of the three: on PAUSE
+	// it runs FIRST and its success is what gates the child cascade, so an unacknowledged
+	// campaign flip taken as confirmed would send the children on from a state nobody
+	// verified. Wrapped in a dedicated type rather than partialCascadeError, which asserts
+	// the preceding stages succeeded — on PAUSE there are none, and the claim would be false.
+	if cErr := checkStatusMutateResults(resp, 1, "campaign"); cErr != nil {
+		return &unconfirmedCampaignStatusError{err: fmt.Errorf("google-ads campaign %s status update to %s: %w", id, status, cErr)}
 	}
 	return nil
 }
+
+// unconfirmedCampaignStatusError marks a campaign status mutate Google ACCEPTED but did not
+// acknowledge usably. The flip may well have been applied, so it satisfies the same
+// Unconfirmed() behavioral interface IsOutcomeUnconfirmed honors — exactly as
+// unconfirmedBudgetMutateError and partialCascadeError do — and the dispatcher carries it
+// through as "verify upstream before retrying" rather than "nothing was modified", which
+// keeps the claim RETAINED. A retry re-applies the same idempotent status.
+type unconfirmedCampaignStatusError struct{ err error }
+
+func (e *unconfirmedCampaignStatusError) Error() string     { return e.err.Error() }
+func (e *unconfirmedCampaignStatusError) Unwrap() error     { return e.err }
+func (e *unconfirmedCampaignStatusError) Unconfirmed() bool { return true }

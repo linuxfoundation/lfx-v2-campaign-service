@@ -555,6 +555,14 @@ group (GA-4) — without it, the ad group has zero criteria and the campaign can
 even once a human enables it. **Budget is in whole units of the ad ACCOUNT's currency**, not
 USD — the service does no FX conversion (mirroring `metaConfig`).
 
+Every field below is OPTIONAL except `budget`, and every one of them is additive: a config
+that names none of them produces exactly the single-ad-group, single-ad campaign this
+service created before they existed. Additive does NOT mean channel-independent — the
+entries below marked SEARCH ONLY are REFUSED, not ignored, when `campaignType` is
+`demand-gen`. Each is validated BEFORE the first budget mutate, so a
+refused value cannot strand a paid campaign — and the same validation runs on the
+`adoptExisting` path, so a config is refused identically whether it creates or adopts.
+
 ```
 budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…),
                                   applied as the campaign's DAILY budget. Must be a finite, POSITIVE
@@ -599,13 +607,36 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   `targetingSetting.targetRestrictions` (AUDIENCE, bidOnly) on the ad group
                                   create so these segments stay observation-only rather than Google's
                                   default of restricting delivery to the audience alone.
-geoTargets?: string[]           — OPTIONAL ISO 3166-1 alpha-2 country codes the campaign should serve
-                                  in (LFXV2-3283), spelled as in `metaConfig`/`redditConfig`. Each is
-                                  resolved to Google's numeric geo target constant and attached as a
-                                  location criterion at the level the CHANNEL requires: campaign level
-                                  for Search, AD GROUP level for Demand Gen (which rejects
+geoTargets?: string[]           — OPTIONAL locations the campaign should serve in (LFXV2-3283). Each
+                                  entry is EITHER an ISO 3166-1 alpha-2 country code, spelled as in
+                                  `metaConfig`/`redditConfig`, OR a raw numeric geo target constant id
+                                  from Google's published geo-targets table (LFXV2-2665) — which is how
+                                  a caller addresses a CITY, region, metro or postal code, none of which
+                                  a country code can express. The two spellings mix freely in one list
+                                  and are told apart by SHAPE (two letters vs all digits), so nothing is
+                                  ambiguous and no flag says which kind an entry is.
+
+                                  Each is resolved to Google's numeric geo target constant and attached
+                                  as a location criterion at the level the CHANNEL requires: campaign
+                                  level for Search, AD GROUP level for Demand Gen (which rejects
                                   campaign-level location criteria). Case/whitespace-insensitive and
-                                  de-duplicated; at most 30 entries.
+                                  de-duplicated by the RESOLVED id — "US" and "2840" are one criterion;
+                                  at most 60 entries.
+
+                                  A numeric id is checked for SHAPE only, but that shape check is
+                                  stricter than "all digits": the entry must be the CANONICAL base-10
+                                  spelling of a POSITIVE int64, which is the type Google exposes these
+                                  ids as. `0` names nothing, `02840` is a non-canonical spelling of
+                                  2840, and a 21-digit run overflows the type — all three fail the job
+                                  BEFORE any Google Ads request, alongside the country codes.
+
+                                  What the shape check cannot do is tell you the id EXISTS. This client
+                                  cannot know whether 1014044 names a real place without asking Google,
+                                  and a lookup would make the pre-create validation send a request. A
+                                  well-formed id naming nothing is therefore refused by Google at the
+                                  criteria mutate, AFTER the campaign exists — the cost of reaching past
+                                  the curated country map, and the one way a geo target can fail late.
+                                  Country codes are verified locally in full and so always fail early.
 
                                   Both channel creates set `geoTargetTypeSetting.positiveGeoTargetType`
                                   to PRESENCE. Google's default is PRESENCE_OR_INTEREST, under which a
@@ -626,6 +657,237 @@ geoTargets?: string[]           — OPTIONAL ISO 3166-1 alpha-2 country codes th
                                   That is the pre-LFXV2-3283 behaviour, preserved so callers predating
                                   this field keep working; the dispatcher logs a WARN when it happens.
                                   Supply it for any campaign with a target region.
+excludedGeoTargets?: string[]   — OPTIONAL locations the campaign must NOT serve in (LFXV2-2665).
+                                  Exactly the vocabulary, caps, case rules and dedupe of `geoTargets`
+                                  above (country codes or raw constant ids, at most 60), attached as
+                                  NEGATIVE location criteria at the same channel-dependent level. The
+                                  two lists are bounded and de-duplicated independently — a parent
+                                  region may legitimately be targeted while a city inside it is
+                                  excluded.
+
+                                  Listing the SAME resolved location in both fails the job BEFORE any
+                                  Google Ads request. Google resolves that contradiction by letting the
+                                  exclusion win, so the campaign would silently not serve where the
+                                  caller plainly asked it to.
+
+                                  Applies to BOTH channels — unlike proximity below, an excluded
+                                  location is the same criterion at either level. Omitted/empty, no
+                                  exclusions are attached.
+proximityTargets?:              — OPTIONAL radius targeting: "everyone within N of this point"
+  {latitude, longitude,           (LFXV2-2665). `latitude`/`longitude` are decimal degrees (e.g.
+   radius, radiusUnit}[]          37.7749, -122.4194), converted to the microdegrees Google's GeoPoint
+                                  carries. `radius` must be > 0 and within Google's ceiling for the
+                                  unit: 500 MILES or 800 KILOMETERS. `radiusUnit` is REQUIRED and must
+                                  be "MILES" or "KILOMETERS" — there is deliberately no default, since
+                                  a radius of 50 means two very different campaigns depending on the
+                                  unit and guessing would silently buy ~2.5x (or 0.4x) the intended
+                                  area. At most 20 entries, counted as SUBMITTED; a non-finite
+                                  coordinate, an out-of-range radius or an unknown unit fails the job
+                                  before any request.
+
+                                  De-duplicated by the RENDERED criterion — microdegree coordinates,
+                                  radius and normalised unit — so a trailing zero on a coordinate or a
+                                  differently-cased unit does not produce the duplicate criterion Google
+                                  rejects. As with `geoTargets`, a repeat COLLAPSES rather than failing
+                                  the job: a proximity target carries no bid modifier, so two identical
+                                  entries cannot disagree about anything. Units are NOT converted — 10
+                                  MILES and 16.09 KILOMETERS stay two criteria.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen: that
+                                  channel takes location criteria on the ad group, where this client
+                                  has not verified proximity against a real account. Dropping it
+                                  silently would create a campaign serving nationwide when the caller
+                                  asked for a 25-mile radius.
+negativeKeywords?:              — OPTIONAL Search keyword EXCLUSIONS, attached at CAMPAIGN level (not
+  {text, matchType}[]             ad group), so they keep applying to any ad group a human adds later.
+                                  Same `text`/`matchType` rules as `keywords` above (≤80 runes; EXACT,
+                                  PHRASE or BROAD, case-insensitive), at most 60 entries, deduped
+                                  independently of the positive list — a term may legitimately appear
+                                  in both. An empty text or unsupported matchType fails the job BEFORE
+                                  any Google Ads request is made.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored when `campaignType` is
+                                  `demand-gen` — unlike `keywords`, which IS ignored there. The
+                                  difference is deliberate: Demand Gen creates no ad and no keyword
+                                  criteria, so a positive keyword has nothing to attach to, but an
+                                  exclusion exists to STOP spend and dropping it quietly would leave the
+                                  campaign paying for exactly the queries you named. Omitted/empty, no
+                                  exclusions are attached and the campaign is eligible for every query
+                                  its positive keywords match.
+cpcBid?: number                 — OPTIONAL manual CPC bid for the ad group, in whole units of the ad
+                                  ACCOUNT's currency (the same no-FX-conversion caveat `budget`
+                                  carries). Accepted range 0.01..100000.0 inclusive; NaN/Inf or a
+                                  value outside it fails the job before any Google Ads request. The
+                                  range is deliberately loose — it exists to catch a micros-vs-units
+                                  mistake, not to mirror a Google limit, and the ceiling is sized for
+                                  the weakest currency an account can be opened in (1000 JPY is under
+                                  $7) rather than for USD, because the value is never converted.
+
+                                  0 (or omitted) means UNSET: no bid field is sent and the ad group
+                                  inherits whatever Google derives, which is what every campaign
+                                  created before this field existed did. An explicit 0 is NOT sent as
+                                  a zero bid. SEARCH only — Demand Gen bids via targetSpend and
+                                  rejects manualCpc — and a non-zero bid on that channel is REFUSED
+                                  before anything is created, not dropped: Demand Gen's ad group has
+                                  no bid field at all, so accepting it would discard it silently.
+startDate?: string              — OPTIONAL campaign flight window as `YYYY-MM-DD` (spelled as in
+endDate?: string                  `metaConfig`/`redditConfig`). Each is INDEPENDENTLY optional: an
+                                  omitted `startDate` leaves Google's default (the campaign starts
+                                  today) and an omitted `endDate` leaves it running until someone
+                                  stops it. When both are present, the end must not be BEFORE the
+                                  start — the same day on both sides is accepted and is a full 24-hour
+                                  flight.
+
+                                  The format is strict: `2026-8-1` is refused, because Go's date parse
+                                  would otherwise accept it and silently render back a date the caller
+                                  never wrote. There is deliberately no "start date is in the past"
+                                  check — Google interprets these in the ad ACCOUNT's timezone, which
+                                  this service does not know, so a UTC "today" would refuse a start
+                                  date Google accepts for an account several hours behind.
+
+                                  Applies to BOTH channels: a flight window is a property of the
+                                  campaign, not of the channel. Sent as v23's
+                                  `startDateTime`/`endDateTime` with the account-timezone day
+                                  boundaries (`00:00:00` / `23:59:59`) — the pre-v23 `startDate`/
+                                  `endDate` request fields were REMOVED and are rejected. The
+                                  `23:59:59` end boundary is what makes `endDate` INCLUSIVE: the
+                                  campaign serves through the end of the day named. Both are
+                                  validated before the budget mutate, so a malformed date fails
+                                  without orphaning a paid campaign. Unlike `redditConfig`, both
+                                  are OPTIONAL here.
+languages?: string[]            — OPTIONAL languages the campaign targets (LFXV2-2665), as campaign-level
+                                  language criteria. Each entry is EITHER an ISO 639-1 code (EN, DE, JA)
+                                  OR a raw numeric language constant id from Google's language-constants
+                                  table, told apart by shape exactly as `geoTargets` does, deduped by the
+                                  resolved id; at most 40 entries. Targets the user's Google INTERFACE
+                                  language, not the ad copy's language — Google does not translate.
+
+                                  Omitted/empty, NO language criteria are created and the campaign is
+                                  eligible in every language, which is what every campaign created
+                                  before this field existed did.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen — as are
+                                  `adSchedules`, `deviceBidModifiers`, `excludedAgeRanges` and
+                                  `excludedGenders`, which the same guard refuses together. Demand Gen
+                                  attaches this targeting at the AD GROUP level, where this client has
+                                  not verified it against a real account; accepting the field and
+                                  dropping it would create a campaign with none of the targeting the
+                                  caller asked for.
+adSchedules?:                   — OPTIONAL dayparting (LFXV2-2665): the intervals in the ad ACCOUNT's
+  {dayOfWeek, startHour,          timezone during which the campaign may serve. `dayOfWeek` is
+   startMinute, endHour,          MONDAY..SUNDAY (case-insensitive). `startHour` is 0..23 and `endHour`
+   endMinute, bidModifier?}[]     1..24 (24 being midnight at the END of the day, and then only with
+                                  minute 0). Minutes are 0, 15, 30 or 45 — Google models them as an
+                                  enum, not a number. The end must be strictly after the start. At most
+                                  42 entries — Google permits 6 intervals per day of the week, so that
+                                  is the upstream ceiling rather than a tighter broker opinion.
+
+                                  Intervals are NOT checked for overlap here. Google rejects a true
+                                  overlap itself, and a check written here would have to decide whether
+                                  09:00-12:00 and 12:00-17:00 touch — they do not — and a wrong answer
+                                  would refuse an ordinary split-day schedule.
+
+                                  `bidModifier` is OPTIONAL PER INTERVAL and is a true tri-state: absent
+                                  means no adjustment, and an explicit 0 is Google's -100% opt-out
+                                  (do not serve). Otherwise it must be between 0.1 and 10.0.
+
+                                  Omitted/empty, no schedule criteria are created and the campaign is
+                                  eligible around the clock. Supplying ANY interval restricts the
+                                  campaign to the intervals listed — Google treats the set as
+                                  exhaustive, so a single Monday interval means a Monday-only campaign.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen; see
+                                  `languages` for why.
+deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2665). `device` is one of
+  {device, bidModifier}[]         MOBILE, DESKTOP, TABLET, CONNECTED_TV (case-insensitive); at most 4
+                                  entries and a device may appear only ONCE — two criteria for the same
+                                  device are a conflict Google rejects after the campaign exists, and
+                                  the caller plainly meant one of the two values.
+
+                                  `bidModifier` is REQUIRED here (unlike on `adSchedules`, where the
+                                  absent case means "listed but unadjusted"; a device entry with no
+                                  modifier would say nothing at all). Same range: exactly 0 is the
+                                  -100% opt-out that stops the campaign serving on that device,
+                                  otherwise 0.1..10.0.
+
+                                  Omitted/empty, no device criteria are created and the campaign bids
+                                  equally on every device.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen; see
+                                  `languages` for why.
+excludedAgeRanges?: string[]    — OPTIONAL demographic EXCLUSIONS (LFXV2-2665), attached as negative
+excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34, 35-44, 45-54, 55-64,
+                                  65+ or UNDETERMINED (Google's own AGE_RANGE_* enum names are accepted
+                                  too); genders are MALE, FEMALE or UNDETERMINED. At most 20 entries
+                                  each, bounded independently.
+
+                                  EXCLUSIONS only — there is no positive demographic field. Google
+                                  targets demographics by excluding the buckets you do not want, and
+                                  UNDETERMINED covers every user whose demographic Google has not
+                                  inferred, which on Search is a large share of traffic: excluding it
+                                  narrows reach far more than the other buckets do.
+
+                                  Omitted/empty, no demographic criteria are created and the campaign
+                                  is eligible for every bucket.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen; see
+                                  `languages` for why.
+sitelinks?:                     — OPTIONAL sitelink extensions (LFXV2-2665): extra links shown under the
+  {text, description1?,           ad. `text` ≤25 runes, required and unique within the list.
+   description2?, finalUrl}       `description1`/`description2` are ≤35 runes each and ALL-OR-NOTHING —
+                                  one without the other is refused, because Google renders a sitelink
+                                  with a single description line as if it had none, silently discarding
+                                  copy the caller wrote. `finalUrl` is required and must be a servable
+                                  http(s) URL; it is UTM-tagged by the same builder as the ad's own
+                                  destination and must be ≤2084 bytes AFTER tagging. At most 20.
+
+                                  Lengths are RUNE counts, not the double-width WEIGHT the RSA copy
+                                  uses, and over-long text is REFUSED rather than truncated: generated
+                                  ad copy may be cut because this service wrote it, but extension text
+                                  is written by a human for a reason.
+callouts?: string[]             — OPTIONAL callout extensions (LFXV2-2665): short non-clickable phrases
+                                  ("Free workshops"). ≤25 runes each, de-duplicated, at most 20.
+structuredSnippets?:            — OPTIONAL structured-snippet extensions (LFXV2-2665): a header and the
+  {header, values[]}[]            list it labels ("Courses: Kubernetes, Observability, Security").
+                                  `header` ≤25 runes and unique within the list; 3..10 distinct `values`
+                                  of ≤25 runes each — fewer than 3 is refused because Google will not
+                                  serve the snippet. At most 10 snippets.
+
+                                  The header is checked for SHAPE only, not against Google's published
+                                  header vocabulary: the valid set is LANGUAGE-DEPENDENT and Google
+                                  revises it, so a local list would refuse headers Google accepts. An
+                                  unrecognised header is rejected upstream, after the campaign exists.
+
+                                  All three extension fields are SEARCH ONLY and are REFUSED, not
+                                  ignored, on Demand Gen. Omitted/empty, no assets are created and the
+                                  ad serves with no extensions — the pre-LFXV2-2665 behaviour.
+adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-2665), each with its own
+  {name, cpcBid?, keywords?,      keywords and up to 3 Responsive Search Ads. SEARCH ONLY and REFUSED on
+   audienceSegments?,             Demand Gen, which creates its own single ad group and no ad. At most
+   ads?: {headlines?,             20 groups, at most 3 ads per group.
+          descriptions?}[]}[]
+                                  `name` is REQUIRED per group and is a THEME LABEL, not the full name:
+                                  the created ad group is named `<composed campaign name> | <label>`.
+                                  Names must be distinct case-insensitively — Google rejects duplicates
+                                  at the mutate, by which point the earlier groups already exist.
+
+                                  Every other key is a PER-FIELD override of the campaign-level value,
+                                  and inheritance is per field rather than all-or-nothing: a group that
+                                  sets only `keywords` keeps the campaign's `cpcBid`, audiences and ad
+                                  copy. Omitting a key inherits; `cpcBid: 0` also inherits, since 0
+                                  already means "unset" on the campaign-level field. Each override is
+                                  validated by the same rules as its campaign-level counterpart
+                                  (`keywords`, `audienceSegments`, `cpcBid`, `headlines`,
+                                  `descriptions` above), with the group's name in the error.
+
+                                  Duplicate ad copy across two ads in a group is NOT refused — Google
+                                  accepts it; it is wasteful, not invalid.
+
+                                  Omitted/empty, exactly ONE ad group with ONE ad is created from the
+                                  campaign-level fields, byte-for-byte what this config produced before
+                                  the field existed. The groups are created in the order listed, and a
+                                  failure partway through leaves the groups before it in place — the
+                                  error names which group of how many failed and how many were created.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of
@@ -639,23 +901,6 @@ adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When t
                                   still-live campaign the delete walked away from. With the flag off,
                                   that dispatch creates, and Google's duplicate-name response surfaces
                                   as a job failure requiring reconciliation.
-startDate?: string              — OPTIONAL flight-window start, YYYY-MM-DD. Sent to Google as
-                                  `start_date_time` "YYYY-MM-DD 00:00:00" (the v23 field; `start_date`
-                                  was REMOVED in v23 and is rejected). Interpreted in the AD ACCOUNT's
-                                  timezone, which this service is not told — the value is passed
-                                  through as wall-clock and never converted, since a guessed timezone
-                                  would move the start by a day.
-endDate?: string                — OPTIONAL flight-window end, YYYY-MM-DD. Sent as `end_date_time`
-                                  "YYYY-MM-DD 23:59:59", which makes the end date INCLUSIVE — the
-                                  campaign serves through the end of that day. Must not be BEFORE
-                                  startDate; equal dates are a valid one-day campaign. A start with
-                                  no end runs until paused, which is the behaviour of every campaign
-                                  created before these fields existed. Both are validated before the
-                                  budget mutate, so a malformed date fails without orphaning a paid
-                                  campaign. Unlike `redditConfig`, both are OPTIONAL here.
-                                  Sent on BOTH channels: start_date_time/end_date_time are
-                                  campaign-level fields, so Search and Demand Gen carry them
-                                  alike (unlike geoTargets, which attach at different levels).
 ```
 
 #### HubSpotConfig (the `hubspotConfig` object)

@@ -158,6 +158,42 @@ func TestValidateGeoTargets_EmptyIsNoError(t *testing.T) {
 	}
 }
 
+// A raw constant id must be the CANONICAL base-10 spelling of a positive int64. Each of
+// these is shaped like an id and is a permanent input fault, and without this check it
+// would be refused only at the campaignCriteria:mutate — after the budget and campaign
+// are already committed.
+func TestValidateGeoTargets_RejectsNonCanonicalNumericIDs(t *testing.T) {
+	for _, id := range []string{
+		"0",                      // names nothing
+		"000",                    // still names nothing
+		"02840",                  // non-canonical spelling of 2840
+		"0000000000000000000",    // leading zeros all the way down
+		"9999999999999999999999", // past math.MaxInt64
+	} {
+		if _, err := validateGeoTargets([]string{id}); err == nil {
+			t.Errorf("geo target %q: expected a refusal before any mutate, got nil", id)
+		}
+		// The exclusion list shares the implementation but must name its own half, so an
+		// operator reading the rejection fixes the right field.
+		if _, err := validateExcludedGeoTargets([]string{id}); err == nil {
+			t.Errorf("excluded geo target %q: expected a refusal before any mutate, got nil", id)
+		}
+	}
+}
+
+// The over-refusal guard on the check above: a well-formed city/region constant id is
+// exactly what the raw-id path exists to carry, and tightening the spelling rule must not
+// cost a caller the ability to target a metro.
+func TestValidateGeoTargets_StillAcceptsCanonicalNumericIDs(t *testing.T) {
+	got, err := validateGeoTargets([]string{"1014044", "2840", "9"})
+	if err != nil {
+		t.Fatalf("a canonical geo target constant id must still be accepted: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d resolved targets, want 3: %v", len(got), got)
+	}
+}
+
 func TestGeoTargetResource_RendersConstantPath(t *testing.T) {
 	if got := geoTargetResource("2840"); got != "geoTargetConstants/2840" {
 		t.Fatalf("got %q, want geoTargetConstants/2840", got)

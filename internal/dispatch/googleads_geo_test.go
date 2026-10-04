@@ -74,17 +74,29 @@ func geoServers(t *testing.T) ([]googleads.Option, *geoCapture) {
 // operation count it did not happen to match — and would hide a real count mismatch.
 func criteriaResults(t *testing.T, body []byte, kind, parentID string) string {
 	t.Helper()
+	out, err := criteriaResultsOrErr(body, kind, parentID)
+	if err != nil {
+		t.Fatalf("decode criteria request: %v", err)
+	}
+	return out
+}
+
+// criteriaResultsOrErr is criteriaResults' handler-safe form: it returns an error
+// instead of calling t.Fatalf, which calls FailNow and is only valid on the test
+// goroutine. Use this one inside an httptest.Server handler. Mirrors
+// googleads.decodeRequest; see test-hygiene.md:httptest-handler-state-needs-synchronized-handoff.
+func criteriaResultsOrErr(body []byte, kind, parentID string) (string, error) {
 	var req struct {
 		Operations []json.RawMessage `json:"operations"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
-		t.Fatalf("decode criteria request: %v", err)
+		return "", err
 	}
 	parts := make([]string, 0, len(req.Operations))
 	for i := range req.Operations {
 		parts = append(parts, fmt.Sprintf(`{"resourceName":"customers/1234567890/%s/%s~%d"}`, kind, parentID, 901+i))
 	}
-	return `{"results":[` + strings.Join(parts, ",") + `]}`
+	return `{"results":[` + strings.Join(parts, ",") + `]}`, nil
 }
 
 type geoCapture struct {

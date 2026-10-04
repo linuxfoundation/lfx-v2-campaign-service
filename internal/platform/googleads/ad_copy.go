@@ -244,35 +244,45 @@ func capForError(s string) string {
 // already present (mirrors the microsoft client's final-URL builder to avoid
 // misattribution).
 func buildAdFinalURL(registrationURL, eventSlug, eventName, project, nameSuffix string) (string, error) {
+	return buildTaggedFinalURL("registration URL", registrationURL, eventSlug, eventName, project, nameSuffix)
+}
+
+// buildTaggedFinalURL is buildAdFinalURL with the noun its error messages use
+// made a parameter. Sitelinks are ad destinations too — a click on one is an ad
+// click and must attribute to google/cpc exactly like the headline's — so they
+// need this builder verbatim, and only the wording of a validation failure
+// differs. Keeping one implementation is what stops sitelink URLs from drifting
+// into a second, laxer set of checks.
+func buildTaggedFinalURL(noun, registrationURL, eventSlug, eventName, project, nameSuffix string) (string, error) {
 	registrationURL = strings.TrimSpace(registrationURL)
 	if registrationURL == "" {
-		return "", fmt.Errorf("registration URL is empty")
+		return "", fmt.Errorf("%s is empty", noun)
 	}
 	u, err := url.Parse(registrationURL)
 	if err != nil {
 		// Do NOT echo the raw URL or wrap err (both may carry secrets in
 		// userinfo/query/fragment) — this message and its wrapped url.Error
 		// can both be logged or persisted in a result step/snapshot.
-		return "", fmt.Errorf("registration URL %q is not a valid URL", redactURLForError(registrationURL))
+		return "", fmt.Errorf("%s %q is not a valid URL", noun, redactURLForError(registrationURL))
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "http" && scheme != "https" {
-		return "", fmt.Errorf("registration URL %q must be http(s), got scheme %q", redactURLForError(registrationURL), capForError(u.Scheme))
+		return "", fmt.Errorf("%s %q must be http(s), got scheme %q", noun, redactURLForError(registrationURL), capForError(u.Scheme))
 	}
 	if u.Hostname() == "" {
-		return "", fmt.Errorf("registration URL %q has no host", redactURLForError(registrationURL))
+		return "", fmt.Errorf("%s %q has no host", noun, redactURLForError(registrationURL))
 	}
 	// Reject embedded userinfo (user[:password]@host): an ad destination never
 	// needs URL credentials, and forwarding them downstream would leak a
 	// basic-auth secret. Mirrors the twitter/reddit/meta clients' validators.
 	if u.User != nil {
-		return "", fmt.Errorf("registration URL %q must not contain embedded credentials (userinfo)", redactURLForError(registrationURL))
+		return "", fmt.Errorf("%s %q must not contain embedded credentials (userinfo)", noun, redactURLForError(registrationURL))
 	}
 	// Validate the existing query before merging in utm_* params: a malformed
 	// percent-escape in RawQuery is silently dropped by u.Query(), which would
 	// alter the destination the ad actually points to.
 	if _, err := url.ParseQuery(u.RawQuery); err != nil {
-		return "", fmt.Errorf("registration URL %q has a malformed query string", redactURLForError(registrationURL))
+		return "", fmt.Errorf("%s %q has a malformed query string", noun, redactURLForError(registrationURL))
 	}
 
 	campaign := sanitizeNamePart(eventSlug)

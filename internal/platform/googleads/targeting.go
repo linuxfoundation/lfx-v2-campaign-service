@@ -41,6 +41,16 @@ const (
 	maxKeywords         = 60
 	maxAudienceSegments = 20
 
+	// maxNegativeKeywords bounds campaign-level NEGATIVE keyword input for the same
+	// reason maxKeywords bounds positive input — one bounded campaignCriteria:mutate
+	// call — and is deliberately the SAME number rather than a tighter one. A negative
+	// list is routinely longer than its positive counterpart (brand terms, competitor
+	// names, "free"/"jobs"/"salary" style exclusions), so a smaller cap here would be
+	// the sibling of the 20-keyword cap that blocked every default create on
+	// 2026-08-13: a limit the system's own upstream stage exceeds is not protecting a
+	// caller from a mistake, it is refusing a create Google would have accepted.
+	maxNegativeKeywords = 60
+
 	// MatchTypeExact/Phrase/Broad are the only Search keyword match types.
 	MatchTypeExact  = "EXACT"
 	MatchTypePhrase = "PHRASE"
@@ -91,28 +101,55 @@ type adGroupCriterionCreate struct {
 // fall back to for a keyword, so a bad entry must fail loudly rather than be
 // silently dropped.
 func validateKeywords(keywords []Keyword) ([]Keyword, error) {
+	return validateKeywordList("keyword", keywords, maxKeywords)
+}
+
+// validateNegativeKeywords is the NEGATIVE-keyword analogue of validateKeywords:
+// the same text/match-type/count rules, applied to the campaign-level exclusion
+// list, with "negative keyword" in every message so an operator reading a
+// rejection knows which of the two lists was refused.
+//
+// It is a separate entry point rather than a direct call to validateKeywords
+// because that function's error strings all say "keyword", and reusing it would
+// report a bad NEGATIVE as a bad positive — sending whoever has to fix it looking
+// at the wrong half of the config. The rules themselves are genuinely identical,
+// so they live once in validateKeywordList and the two callers differ only in the
+// noun and the cap.
+//
+// Dedupe is PER LIST, deliberately: a term appearing as both a positive and a
+// negative is legal upstream (that is how a broad positive is narrowed), the two
+// criteria live at different levels — ad group vs campaign — and refusing the
+// combination here would reject a create Google accepts.
+func validateNegativeKeywords(keywords []Keyword) ([]Keyword, error) {
+	return validateKeywordList("negative keyword", keywords, maxNegativeKeywords)
+}
+
+// validateKeywordList is the shared implementation behind validateKeywords and
+// validateNegativeKeywords. `noun` names the list in every error message; `max`
+// is that list's own sanity cap.
+func validateKeywordList(noun string, keywords []Keyword, max int) ([]Keyword, error) {
 	if len(keywords) == 0 {
 		return nil, nil
 	}
-	if len(keywords) > maxKeywords {
-		return nil, fmt.Errorf("google-ads: at most %d keywords are supported, got %d", maxKeywords, len(keywords))
+	if len(keywords) > max {
+		return nil, fmt.Errorf("google-ads: at most %d %ss are supported, got %d", max, noun, len(keywords))
 	}
 	seen := map[string]struct{}{}
 	out := make([]Keyword, 0, len(keywords))
 	for _, kw := range keywords {
 		text := strings.TrimSpace(kw.Text)
 		if text == "" {
-			return nil, fmt.Errorf("google-ads: keyword text must not be empty")
+			return nil, fmt.Errorf("google-ads: %s text must not be empty", noun)
 		}
 		if utf8.RuneCountInString(text) > maxKeywordTextRunes {
-			return nil, fmt.Errorf("google-ads: keyword %q exceeds the %d-character limit", text, maxKeywordTextRunes)
+			return nil, fmt.Errorf("google-ads: %s %q exceeds the %d-character limit", noun, text, maxKeywordTextRunes)
 		}
 		matchType := strings.ToUpper(strings.TrimSpace(kw.MatchType))
 		switch matchType {
 		case MatchTypeExact, MatchTypePhrase, MatchTypeBroad:
 		default:
-			return nil, fmt.Errorf("google-ads: keyword %q has unsupported match type %q (want %s, %s, or %s)",
-				text, kw.MatchType, MatchTypeExact, MatchTypePhrase, MatchTypeBroad)
+			return nil, fmt.Errorf("google-ads: %s %q has unsupported match type %q (want %s, %s, or %s)",
+				noun, text, kw.MatchType, MatchTypeExact, MatchTypePhrase, MatchTypeBroad)
 		}
 		// Google Ads treats keyword text as case-insensitive for uniqueness within an
 		// ad group, so the dedupe key case-folds text (the stored/sent Text keeps its
@@ -193,6 +230,24 @@ func audienceCriterionField(resourceName string) (field string, ok bool) {
 	}
 
 	return field_name, true
+}
+
+// campaignNegativeKeywordCreate is the create payload for a NEGATIVE keyword
+// criterion on campaignCriteria:mutate.
+//
+// It is a separate type from geo.go's campaignCriterionCreate — which carries the
+// `location` arm of the same oneof — for the reason that file already states for
+// its own two payloads: one type per criterion SHAPE, named for what it carries,
+// so a payload can never emit two arms of the oneof or silently omit the field
+// that gives it meaning. Here that field is `negative`, which is emitted
+// explicitly (no omitempty) rather than relying on a default: a campaign keyword
+// criterion with negative=false is a POSITIVE campaign-level keyword, which is
+// not a thing this client ever means to create, so the false case must be
+// impossible to reach by omission.
+type campaignNegativeKeywordCreate struct {
+	Campaign string       `json:"campaign"`
+	Negative bool         `json:"negative"`
+	Keyword  *keywordInfo `json:"keyword,omitempty"`
 }
 
 // validateAudienceSegments trims/validates each caller-supplied audience
@@ -330,4 +385,78 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 		}
 	}
 	return keywordIDs, audienceIDs, nil
+}
+
+// createCampaignNegativeKeywords attaches NEGATIVE keyword criteria to a
+// just-created SEARCH campaign as a single campaignCriteria:mutate call, one
+// operation per negative. Batched into one call so the whole exclusion list
+// shares one atomic outcome (partialFailure stays false, as everywhere else in
+// this client): a half-applied negative list is worse than none, because an
+// operator looking at the campaign sees exclusions in place and has no reason to
+// suspect the rest were dropped.
+//
+// CAMPAIGN level, not ad group, and that is a choice rather than a convenience.
+// A negative keyword expresses campaign-wide intent — queries this event should
+// never pay for — so it must keep applying when someone adds a second ad group
+// later, which an ad-group-level exclusion would not. The Search path already
+// owns a campaignCriteria:mutate call for geo, so the level costs nothing new.
+//
+// It is deliberately NOT folded into that geo call. createCampaignGeoTargeting's
+// failure messages name the consequence of ITS criteria going missing ("it has NO
+// location criteria and would serve worldwide if enabled"); a shared mutate would
+// report that sentence for a dropped negative keyword, which is simply false, and
+// would make either list's failure discard the other.
+//
+// Called AFTER the campaign create and reported as a partial-result failure by
+// the caller: the campaign exists and is PAUSED regardless, so a failure here
+// must never be a (nil, err) that discards the claim.
+//
+// Duplicate-criterion classification is unverified for this resource, as it is
+// for the ad-group criteria above: any definite 4xx here is reported as a
+// straightforward failure rather than reconciled by a duplicate predicate.
+func (c *Client) createCampaignNegativeKeywords(ctx context.Context, campaignResource, campaignID string, negatives []Keyword) ([]string, error) {
+	if len(negatives) == 0 {
+		return nil, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, fmt.Errorf("google-ads negative keywords aborted before any request (context already done; campaign %s has no negative keywords yet): %w", campaignID, ctxErr)
+	}
+
+	ops := make([]mutateOperation, 0, len(negatives))
+	for _, kw := range negatives {
+		ops = append(ops, mutateOperation{Create: campaignNegativeKeywordCreate{
+			Campaign: campaignResource,
+			Negative: true,
+			Keyword:  &keywordInfo{Text: kw.Text, MatchType: kw.MatchType},
+		}})
+	}
+
+	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaignCriteria:mutate"), mutateRequest{Operations: ops}, false)
+	if err != nil {
+		if createOutcomeAmbiguous(err) {
+			return nil, fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; negative keyword criteria may exist — verify in Google Ads before retrying): %w", campaignID, err)
+		}
+		return nil, fmt.Errorf("google-ads negative keywords failed (campaign %s created; it has NO negative keywords and would be eligible for every query its positive keywords match if enabled): %w", campaignID, err)
+	}
+
+	var mr mutateResponse
+	if uErr := json.Unmarshal(resp, &mr); uErr != nil || len(mr.Results) != len(ops) {
+		return nil, fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; 2xx with a malformed/short mutate response — negative keyword criteria may exist — verify in Google Ads before retrying)", campaignID)
+	}
+
+	ids := make([]string, 0, len(ops))
+	for i, r := range mr.Results {
+		returnedCampaignID, critID := c.campaignCriterionID(r.ResourceName)
+		if critID == "" || returnedCampaignID == "" {
+			return nil, fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; malformed/wrong-kind/wrong-account criterion resource name %q at index %d — verify in Google Ads before retrying)", campaignID, r.ResourceName, i)
+		}
+		// The campaignCriterion resourceName's campaign-id half must match the campaign
+		// these negatives were created under — a mismatch means the response does not
+		// describe what this call created, so the ids cannot be trusted enough to persist.
+		if returnedCampaignID != campaignID {
+			return nil, fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; campaignCriterion resource name %q reports a different campaign id %q — verify in Google Ads before retrying)", campaignID, r.ResourceName, returnedCampaignID)
+		}
+		ids = append(ids, critID)
+	}
+	return ids, nil
 }

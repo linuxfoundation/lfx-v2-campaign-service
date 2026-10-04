@@ -280,6 +280,15 @@ by a slash and still falls through the truncating branch.
 `campaignFromTwitter` sanitizes a COPY of the config, so the
 text actually sent to X is untouched.
 
+**Google Ads sitelinks are sanitized the same way, and for the same reason.**
+`googleAdsSnapshotConfig` deep-copies the `Sitelinks` slice and reduces each caller-supplied
+`finalUrl` through `sanitizeSnapshotURL` before `applyCampaignConfig` persists it, on both
+the create and the adoption path. `config_snapshot` is stored UNENCRYPTED, and a registration
+URL pasted from a browser brings whatever query that session put in it. The DEEP copy is the
+load-bearing half: the config is passed by value but its slice shares a backing array with
+the caller's, so sanitizing in place would redact the URL the create path is about to send to
+Google and break the sitelink — a worse defect than the one being fixed.
+
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a
 credential-SHAPED parameter because the text is about to be PUBLISHED, and it is a
 denylist that cannot name every credential parameter a registration page might use, and it
@@ -564,9 +573,11 @@ dates WAS always NULL for Google Ads — its config carried none — and the com
 wired through anyway so a future config populating them would start diverging without
 anyone having to remember. `googleAdsConfig` now carries `startDate`/`endDate`
 (LFXV2-2023), so that recorded side exists and these compare for real. A nil recorded side
-is still ordinary rather than a defect: both fields are optional, campaigns created before
-they existed have NULL columns, and an adopted campaign was never created from one of this
-service's configs at all. It also
+is still ordinary rather than a defect: both fields are optional and campaigns created
+before they existed have NULL columns. Adoption is NOT in that set — it persists whatever
+window the ADOPTING request supplied, so the recorded side reflects that request and not
+whatever created the campaign upstream, which is a disagreement the comparison is right to
+surface. It also
 translates Google's `campaign_budget.period` into `model.BudgetType` via
 `googleAdsBudgetTypeFromPeriod` — `DAILY` -> `daily`, `CUSTOM_PERIOD` -> `lifetime` (Google
 has no `LIFETIME` value), and `UNKNOWN`/anything else -> unmapped, which fails closed to an
@@ -691,6 +702,54 @@ One trap worth recording: `json.Unmarshal` of `null` into a `string` SUCCEEDS in
 the zero value, so a decode error alone does not catch an explicit null — it needs its own
 check before the decode. That gap survived the first version of this fix and was caught only
 because the test table enumerated `null` separately from the wrong-typed values.
+
+**Adding a field to `googleAdsConfig` means adding it WITHOUT `omitempty`.** The
+recognisability rule above rests on "a snapshot this adapter wrote always contains every key",
+and one `omitempty` tag anywhere in the struct silently retires that guarantee for rows written
+after it lands. The serving-readiness fields (`negativeKeywords`, `cpcBid`, `startDate`,
+`endDate` — see
+[internal/platform/googleads](internal-platform-googleads.md) § Search serving readiness)
+follow it, and `startDate`/`endDate` are spelled exactly as the meta and reddit configs spell
+them so a caller does not learn a third vocabulary for the same idea. All four are passed
+straight through to `googleads.CampaignInput`, which owns their validation; the adapter adds no
+interpretation of its own. `startDate`/`endDate` also reach `applyCampaignConfig` on BOTH the
+create and the adoption path, so the recorded flight-window side is populated whenever the
+caller supplied a date and is nil only for rows predating the fields and callers that omit
+them.
+
+The LFXV2-2665 targeting, extension and ad-group fields — `excludedGeoTargets`,
+`proximityTargets`, `languages`, `adSchedules`, `deviceBidModifiers`, `excludedAgeRanges`,
+`excludedGenders`, `sitelinks`, `callouts`, `structuredSnippets` and `adGroups`, plus
+`geoTargets` now also carrying raw geo target constant ids (see
+[internal/platform/googleads](internal-platform-googleads.md) § Search campaign
+completeness) — follow the same rule and the same hands-off posture: each gets its own
+JSON-tagged wire type for the reason `googleAdsKeywordConfig` has one, and a mapper that
+copies fields and validates nothing.
+
+Two details of those mappers are load-bearing. Each returns **nil** for an empty input, as
+`googleAdsKeywords` does, so an omitted field stays nil end-to-end rather than becoming an
+empty-but-non-nil slice — and for the per-ad-group fields nil is specifically what the client
+reads as "inherit the campaign-level value", so the distinction is not cosmetic. And
+`adSchedules[].bidModifier` is a POINTER on the wire type as well as in the client, because an
+explicit `0` is Google's -100% opt-out: a value-typed hop would make an absent modifier
+indistinguishable from an instruction to stop serving in that interval.
+
+The Search-only channel rules — proximity, languages, schedules, devices, demographics,
+extensions and ad groups are all refused on Demand Gen — are deliberately **not** restated
+here. The client refuses them inside its own preflight, before its first mutate, and `Dispatch`
+validates unconditionally (including on the adoption path), so both paths already refuse in one
+place. A second copy in the adapter could only drift from it.
+
+**Validate for the RESOLVED kind, which is why the channel switch runs first.** `Dispatch` calls
+`ValidateCampaignInputKind(campaignKind, in)`, not the Search-assuming `ValidateCampaignInput`,
+and the channel switch was moved ABOVE that call to make the kind available. The ordering is
+load-bearing: `preflightCampaignKind` once took its kind only to compose a name, so validating
+everything as Search was harmless, but the kind now gates the Search-only refusals. Validating as
+Search let a Demand Gen request carrying proximity, criteria, extensions, ad groups or a CPC bid
+pass, and adoption — which returns before any create — then accepted it, reinstating for exactly
+those fields the accepted-if-a-campaign-happens-to-exist asymmetry the unconditional validate
+exists to prevent. The switch is pure-local and contacts nothing, so moving it first keeps the
+no-upstream-call guarantee intact.
 
 **`status` is reported but deliberately NOT compared.** The row's `Status` is this service's
 lifecycle vocabulary and Google's is `ENABLED`/`PAUSED`/`REMOVED` — different axes (see
@@ -1129,6 +1188,17 @@ project's own account there would make the guard refuse every campaign created w
 POST-cutover stranding `resolveExisting` exists to prevent, arriving on the path that stops
 keywords from serving. All three call sites state which case they are in, because the argument
 that merely type-checks is not the argument that is correct.
+
+**The keyword-action ad-group bound is the campaign's FULL set of ad groups.**
+`googleAdsCampaignAdGroupIDs` reads every `AdGroups` entry's id from the persisted result
+blob, plus the scalar `adGroupId` for legacy rows, and each action's `adGroupId` must be in
+that set — the guard that stops a caller holding a criterion id from any campaign in the
+shared account from acting on it through a campaign they do own. Checking only the scalar id
+refused every action naming group 2 or later: fail-closed, so never unsafe, but it made
+keyword actions unusable on exactly the multi-group campaigns the feature was added for. The
+set is deliberately NOT `googleAdsToggleTargets`' narrower list — a group with keyword
+criteria but no ad is still this campaign's, its keywords are real and serving nothing, and
+pausing or removing them is a legitimate thing to ask for.
 
 ORDERING is load-bearing on all four. The provenance check runs BEFORE each platform's
 narrower provisioning guard — Meta's ad-set check, Reddit's child-id check, X's line-item
