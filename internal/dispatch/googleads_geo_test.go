@@ -4,10 +4,12 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -255,5 +257,46 @@ func TestGoogleAds_UnmappedGeoFailsDispatchWithNoCampaign(t *testing.T) {
 	defer cap.mu.Unlock()
 	if len(cap.campaignCriteria) != 0 || len(cap.adGroupGeoCriteria) != 0 {
 		t.Error("no criteria request may be sent when validation refuses the input")
+	}
+}
+
+// The "no geo targeting" warning is the operator's only signal that a campaign will
+// spend wherever the ad account allows, so its polarity matters: proximityTargets is a
+// second POSITIVE shape, and a radius criterion bounds spend exactly as a location
+// criterion does. Warning on a proximity-only campaign would report a worldwide spend
+// the criteria prevent, and an operator who learns the warning lies stops reading it.
+//
+// slog.SetDefault is process-global, so these cases run in sequence rather than in
+// parallel, and the previous default is restored.
+func TestGoogleAds_NoGeoTargetingWarningCountsEveryPositiveShape(t *testing.T) {
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cases := map[string]struct {
+		cfg       string
+		wantWarns bool
+	}{
+		"nothing positive warns":      {`{"googleAdsConfig":{"budget":50,"channel":"search"}}`, true},
+		"geo targets silence it":      {`{"googleAdsConfig":{"budget":50,"channel":"search","geoTargets":["GB"]}}`, false},
+		"proximity alone silences it": {`{"googleAdsConfig":{"budget":50,"channel":"search","proximityTargets":[{"latitude":37.7749,"longitude":-122.4194,"radius":25,"radiusUnit":"MILES"}]}}`, false},
+		// An exclusion narrows an otherwise-unbounded campaign without bounding it, so it
+		// must NOT silence the warning.
+		"exclusions alone still warn": {`{"googleAdsConfig":{"budget":50,"channel":"search","excludedGeoTargets":["GB"]}}`, true},
+	}
+
+	for name, tc := range cases {
+		var buf bytes.Buffer
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+		opts, _ := geoServers(t)
+		d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+		if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, json.RawMessage(tc.cfg)); err != nil {
+			t.Fatalf("%s: Dispatch: %v", name, err)
+		}
+
+		warned := strings.Contains(buf.String(), "NO geo targeting")
+		if warned != tc.wantWarns {
+			t.Errorf("%s: warning emitted = %v, want %v", name, warned, tc.wantWarns)
+		}
 	}
 }

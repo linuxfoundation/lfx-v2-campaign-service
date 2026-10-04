@@ -779,13 +779,19 @@ adSchedules?:                   — OPTIONAL dayparting (LFXV2-2665): the interv
    endMinute, bidModifier?}[]     1..24 (24 being midnight at the END of the day, and then only with
                                   minute 0). Minutes are 0, 15, 30 or 45 — Google models them as an
                                   enum, not a number. The end must be strictly after the start. At most
-                                  42 entries — Google permits 6 intervals per day of the week, so that
-                                  is the upstream ceiling rather than a tighter broker opinion.
+                                  42 entries, AND at most 6 per day of the week — 42 is 6x7, so the
+                                  list cap alone would admit seven Monday intervals, which Google
+                                  refuses. Both limits are Google's own, so neither refuses anything
+                                  upstream would have accepted; they only move the refusal to before
+                                  the budget mutate.
 
-                                  Intervals are NOT checked for overlap here. Google rejects a true
-                                  overlap itself, and a check written here would have to decide whether
-                                  09:00-12:00 and 12:00-17:00 touch — they do not — and a wrong answer
-                                  would refuse an ordinary split-day schedule.
+                                  Intervals on one day must NOT overlap, and an overlap fails the job
+                                  before any Google Ads request. The window is HALF-OPEN, so
+                                  09:00-12:00 and 12:00-17:00 do not overlap and an ordinary split-day
+                                  schedule is accepted; 09:00-12:00 and 11:00-13:00 do, and are
+                                  refused. An exact repeat is not an overlap — it is one criterion
+                                  written twice, and collapses (or is refused for a conflicting
+                                  `bidModifier`, below). Intervals on DIFFERENT days never interact.
 
                                   `bidModifier` is OPTIONAL PER INTERVAL and is a true tri-state: absent
                                   means no adjustment, and an explicit 0 is Google's -100% opt-out

@@ -1197,10 +1197,20 @@ to one is also what makes the dedupe below it correct — a leading zero would
 otherwise defeat it. `AdSchedules` carry
 Google's enum-valued minutes (`ZERO`/`FIFTEEN`/`THIRTY`/`FORTY_FIVE`), an end
 hour that reaches 24 only at minute 0, and an end strictly after the start.
-There is deliberately no overlap check between intervals: Google rejects a true
-overlap itself, and a test here would have to decide whether 09:00-12:00 and
-12:00-17:00 touch — they do not — with a wrong answer refusing an ordinary
-split-day schedule. An EXACT repeat is a different question and is handled:
+Intervals on one day are checked for OVERLAP and counted against Google's
+per-day limit, both refused upstream and both locally decidable, so leaving
+them to Google would mean discovering a typo at the criteria mutate with the
+budget already committed. The half-open window is what makes overlap decidable,
+and the test matches it exactly — `startA < endB && startB < endA` — so
+09:00-12:00 and 12:00-17:00 do NOT overlap and the ordinary split-day schedule
+a naive "do they touch" test would refuse still passes; that over-refusal is
+pinned by its own test rather than left to the reader. Comparison is on minutes
+of the day, the same form the empty-window check uses, so 24:00 is 1440.
+`maxAdSchedulesPerDay` is the half of the ceiling `maxAdSchedules` cannot
+express: 42 is 6x7, so a list satisfying the global cap can still put seven
+intervals on Monday and none on Sunday. An EXACT repeat is a different question
+again, and is collapsed BEFORE the overlap test so the caller is told which
+defect they actually have:
 the same day with the same half-open window is one criterion written twice, and
 Google refuses the second as an overlapping ad schedule after the campaign
 exists. It is collapsed when the two entries agree and REFUSED when they

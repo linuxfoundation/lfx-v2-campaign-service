@@ -679,6 +679,130 @@ func TestValidateAdSchedules_RefusesSameIntervalWithDifferentBidModifier(t *test
 // two legitimate criteria — a morning and an evening slot is the most ordinary
 // split there is — and a dedupe keyed too coarsely (on the day alone) would drop
 // one of them.
+// Google rejects overlapping ad schedules for a day, and rejects them at the criteria
+// mutate — after the budget and the campaign are committed. Overlap is decidable from
+// the half-open window this validator already enforces, so it is refused here, where
+// refusing is free.
+func TestValidateAdSchedules_RefusesOverlappingIntervalsOnOneDay(t *testing.T) {
+	overlapping := map[string][]AdSchedule{
+		"partial overlap": {
+			{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 12},
+			{DayOfWeek: "MONDAY", StartHour: 11, EndHour: 13},
+		},
+		"fully contained": {
+			{DayOfWeek: "TUESDAY", StartHour: 8, EndHour: 20},
+			{DayOfWeek: "TUESDAY", StartHour: 12, EndHour: 13},
+		},
+		"container written second": {
+			{DayOfWeek: "TUESDAY", StartHour: 12, EndHour: 13},
+			{DayOfWeek: "TUESDAY", StartHour: 8, EndHour: 20},
+		},
+		"overlap by one quarter hour": {
+			{DayOfWeek: "FRIDAY", StartHour: 9, EndHour: 12, EndMinute: 15},
+			{DayOfWeek: "FRIDAY", StartHour: 12, EndHour: 17},
+		},
+		"differing only in case and padding": {
+			{DayOfWeek: "monday", StartHour: 9, EndHour: 12},
+			{DayOfWeek: " MONDAY ", StartHour: 10, EndHour: 11},
+		},
+	}
+	for name, schedules := range overlapping {
+		if _, _, err := validateAdSchedules(schedules); err == nil {
+			t.Errorf("%s: overlapping intervals must be refused before any mutate", name)
+		}
+	}
+}
+
+// The over-refusal guard, and the case the no-overlap-check comment used to cite as the
+// reason not to test at all: the window is HALF-OPEN, so a split day whose halves meet
+// at a boundary is an ordinary schedule and must still be accepted. Same for intervals
+// that merely share a day, or share a clock window on DIFFERENT days.
+func TestValidateAdSchedules_AdjacentAndCrossDayIntervalsAreNotOverlaps(t *testing.T) {
+	fine := map[string][]AdSchedule{
+		"meeting at a boundary": {
+			{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 12},
+			{DayOfWeek: "MONDAY", StartHour: 12, EndHour: 17},
+		},
+		"meeting at a quarter-hour boundary": {
+			{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 12, EndMinute: 30},
+			{DayOfWeek: "MONDAY", StartHour: 12, StartMinute: 30, EndHour: 17},
+		},
+		"meeting at end of day": {
+			{DayOfWeek: "SUNDAY", StartHour: 0, EndHour: 12},
+			{DayOfWeek: "SUNDAY", StartHour: 12, EndHour: 24},
+		},
+		"same window on different days": {
+			{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17},
+			{DayOfWeek: "TUESDAY", StartHour: 9, EndHour: 17},
+			{DayOfWeek: "WEDNESDAY", StartHour: 9, EndHour: 17},
+		},
+		"disjoint windows out of order": {
+			{DayOfWeek: "THURSDAY", StartHour: 17, EndHour: 21},
+			{DayOfWeek: "THURSDAY", StartHour: 6, EndHour: 9},
+		},
+	}
+	for name, schedules := range fine {
+		got, _, err := validateAdSchedules(schedules)
+		if err != nil {
+			t.Errorf("%s: must be accepted, got %v", name, err)
+			continue
+		}
+		if len(got) != len(schedules) {
+			t.Errorf("%s: got %d criteria, want %d", name, len(got), len(schedules))
+		}
+	}
+}
+
+// An exact repeat is one criterion written twice, not two criteria that overlap. The
+// dedupe runs first so the caller is told which defect they actually have.
+func TestValidateAdSchedules_AnExactRepeatIsNotReportedAsAnOverlap(t *testing.T) {
+	got, _, err := validateAdSchedules([]AdSchedule{
+		{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17},
+		{DayOfWeek: "MONDAY", StartHour: 9, EndHour: 17},
+	})
+	if err != nil {
+		t.Fatalf("an exact repeat must collapse, not be reported as an overlap: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d criteria, want 1", len(got))
+	}
+}
+
+// maxAdSchedules is 6x7, so the global cap alone admits seven intervals on one day —
+// which Google refuses, and refuses only after the campaign exists. The per-day limit
+// is Google's own, so the sixth must still be accepted: a cap that refuses its own
+// boundary refuses a create upstream would have taken.
+func TestValidateAdSchedules_EnforcesGooglesPerDayLimit(t *testing.T) {
+	// Six disjoint one-hour windows on Monday, well inside the global cap of 42.
+	six := make([]AdSchedule, 0, maxAdSchedulesPerDay+1)
+	for i := 0; i < maxAdSchedulesPerDay; i++ {
+		six = append(six, AdSchedule{DayOfWeek: "MONDAY", StartHour: i * 2, EndHour: i*2 + 1})
+	}
+	if _, _, err := validateAdSchedules(six); err != nil {
+		t.Fatalf("exactly %d intervals on one day must be accepted, got %v", maxAdSchedulesPerDay, err)
+	}
+
+	seventh := append(append([]AdSchedule{}, six...), AdSchedule{DayOfWeek: "MONDAY", StartHour: 20, EndHour: 21})
+	if _, _, err := validateAdSchedules(seventh); err == nil {
+		t.Fatalf("a %dth interval on one day must be refused before any mutate", maxAdSchedulesPerDay+1)
+	}
+
+	// The limit is PER DAY, not global: the same six on each of seven days is 42
+	// criteria, every one of which Google accepts.
+	var week []AdSchedule
+	for _, day := range []string{"MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"} {
+		for i := 0; i < maxAdSchedulesPerDay; i++ {
+			week = append(week, AdSchedule{DayOfWeek: day, StartHour: i * 2, EndHour: i*2 + 1})
+		}
+	}
+	if len(week) != maxAdSchedules {
+		t.Fatalf("test builds %d schedules, want the global cap of %d", len(week), maxAdSchedules)
+	}
+	if _, _, err := validateAdSchedules(week); err != nil {
+		t.Fatalf("%d intervals spread %d per day must all be accepted, got %v", maxAdSchedules, maxAdSchedulesPerDay, err)
+	}
+}
+
 func TestValidateAdSchedules_DistinctWindowsOnOneDayBothSurvive(t *testing.T) {
 	got, _, err := validateAdSchedules([]AdSchedule{
 		{DayOfWeek: "MONDAY", StartHour: 6, EndHour: 9},

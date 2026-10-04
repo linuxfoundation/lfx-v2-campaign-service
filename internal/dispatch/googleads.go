@@ -568,7 +568,16 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// existing campaign that may already carry targeting — so it claimed a worldwide spend for
 	// campaigns that were never created. The `result != nil` condition includes the partial
 	// post-campaign failures, where a campaign does exist upstream and the warning is warranted.
-	if len(cfg.GeoTargets) == 0 && result != nil && result.CampaignID != "" {
+	//
+	// Both POSITIVE shapes count. proximityTargets is the second way to restrict where a
+	// campaign serves, and a radius criterion restricts spend exactly as a location
+	// criterion does — so a proximity-only campaign that warned about having "no geo
+	// targeting" would be reporting a worldwide spend that the criteria it carries
+	// prevent. ExcludedGeoTargets is deliberately NOT counted: an exclusion narrows an
+	// otherwise-unbounded campaign without bounding it, so a campaign carrying only
+	// exclusions still serves wherever the account allows minus a few places, which is
+	// what this warning exists to say out loud.
+	if len(cfg.GeoTargets) == 0 && len(cfg.ProximityTargets) == 0 && result != nil && result.CampaignID != "" {
 		slog.WarnContext(ctx, "google ads campaign created with NO geo targeting (it will serve wherever the ad account allows once enabled)",
 			"brief_id", brief.ID,
 			"channel", channel,

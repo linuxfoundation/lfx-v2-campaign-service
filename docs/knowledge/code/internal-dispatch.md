@@ -734,6 +734,17 @@ reads as "inherit the campaign-level value", so the distinction is not cosmetic.
 explicit `0` is Google's -100% opt-out: a value-typed hop would make an absent modifier
 indistinguishable from an instruction to stop serving in that interval.
 
+One thing this layer does decide for itself is the post-create "NO geo targeting" warning,
+which is the operator's only signal that a campaign will spend wherever the ad account
+allows. It counts every POSITIVE shape, so `proximityTargets` silences it exactly as
+`geoTargets` does — a radius criterion bounds spend the same way a location criterion
+does, and warning about a proximity-only campaign would report a worldwide spend the
+criteria prevent. `excludedGeoTargets` deliberately does NOT silence it: an exclusion
+narrows an otherwise-unbounded campaign without bounding it, so a campaign carrying only
+exclusions still serves wherever the account allows minus a few places, which is precisely
+what the warning exists to say out loud. A warning an operator learns to distrust is worse
+than none.
+
 The Search-only channel rules — proximity, languages, schedules, devices, demographics,
 extensions and ad groups are all refused on Demand Gen — are deliberately **not** restated
 here. The client refuses them inside its own preflight, before its first mutate, and `Dispatch`

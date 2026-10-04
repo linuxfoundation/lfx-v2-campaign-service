@@ -95,6 +95,14 @@ const maxLanguages = 40
 // tighter broker opinion: nothing Google would accept is refused here.
 const maxAdSchedules = 42
 
+// maxAdSchedulesPerDay is the half of that ceiling the global cap cannot express.
+// 42 is 6x7, so a list that satisfies it can still put seven intervals on Monday
+// and none on Sunday — refused upstream, and refused only at the criteria mutate,
+// after the budget and campaign are committed. The per-day limit is Google's own,
+// so enforcing it here refuses nothing Google would have accepted; it only moves
+// the refusal to where it costs nothing.
+const maxAdSchedulesPerDay = 6
+
 // maxDeviceBidModifiers bounds the device list at one entry per device type this
 // client accepts. A longer list is necessarily a duplicate, which Google rejects
 // with a criterion conflict AFTER the campaign exists.
@@ -349,12 +357,23 @@ func languageResource(id string) string {
 // payloads and their per-interval bid modifiers positionally — the two slices are
 // always the same length, so index i of one belongs with index i of the other.
 //
-// There is deliberately NO overlap check between intervals. Google rejects a true
-// overlap itself, and an overlap test written here would have to decide whether
-// 09:00-12:00 and 12:00-17:00 touch — they do not, the window is half-open — and
-// a wrong answer refuses a perfectly ordinary split-day schedule. Under-refusal
-// costs an upstream error message; over-refusal costs a campaign that cannot be
-// created at all.
+// Intervals are checked for OVERLAP within a day, and counted against Google's
+// per-day limit. Both are locally decidable and both are refused upstream, so
+// leaving them to Google means discovering a typo only at the criteria mutate,
+// after the budget and the campaign are committed.
+//
+// The half-open window is what makes the overlap question decidable, and the test
+// is written to match it exactly: `startA < endB && startB < endA`. 09:00-12:00
+// and 12:00-17:00 therefore do NOT overlap — 12:00 is not before 12:00 — so the
+// ordinary split-day schedule a naive "do they touch" test would refuse is still
+// accepted. That is the over-refusal this file cares about, and it is pinned by a
+// test rather than left to the reader.
+//
+// Comparison is on MINUTES OF THE DAY, which is also what the empty-window check
+// above uses, so 24:00 is 1440 and sorts after every real end. An exact repeat is
+// collapsed BEFORE this test runs: a duplicate is one criterion written twice, not
+// two criteria that overlap, and reporting it as an overlap would name the wrong
+// defect.
 func validateAdSchedules(schedules []AdSchedule) ([]adScheduleInfo, []*float64, error) {
 	if len(schedules) == 0 {
 		return nil, nil, nil
@@ -371,6 +390,9 @@ func validateAdSchedules(schedules []AdSchedule) ([]adScheduleInfo, []*float64, 
 	// thing, refuse when they disagree about the bid, which is the device rule and for
 	// the device reason: one of the two values would be the one silently dropped.
 	seen := make(map[string]int, len(schedules))
+	// Accepted intervals per normalised day, as minutes of the day. Only days a caller
+	// actually names get an entry, so the common single-day schedule allocates once.
+	perDay := make(map[string][]adScheduleSpan, len(schedules))
 	for i, s := range schedules {
 		day := strings.ToUpper(strings.TrimSpace(s.DayOfWeek))
 		if _, ok := adScheduleDays[day]; !ok {
@@ -420,11 +442,31 @@ func validateAdSchedules(schedules []AdSchedule) ([]adScheduleInfo, []*float64, 
 			}
 			continue
 		}
+		span := adScheduleSpan{start: s.StartHour*60 + s.StartMinute, end: s.EndHour*60 + s.EndMinute}
+		for _, other := range perDay[day] {
+			if span.start < other.end && other.start < span.end {
+				return nil, nil, fmt.Errorf("google-ads: ad schedule %d (%s %02d:%02d-%02d:%02d) overlaps %s %02d:%02d-%02d:%02d — Google rejects overlapping ad schedules for the same day", i, day, s.StartHour, s.StartMinute, s.EndHour, s.EndMinute, day, other.start/60, other.start%60, other.end/60, other.end%60)
+			}
+		}
+		if len(perDay[day]) >= maxAdSchedulesPerDay {
+			return nil, nil, fmt.Errorf("google-ads: ad schedule %d is the %dth interval on %s, and Google permits at most %d per day", i, len(perDay[day])+1, day, maxAdSchedulesPerDay)
+		}
+		perDay[day] = append(perDay[day], span)
+
 		seen[key] = len(out)
 		out = append(out, info)
 		mods = append(mods, s.BidModifier)
 	}
 	return out, mods, nil
+}
+
+// adScheduleSpan is one accepted interval as minutes of the day, the form both the
+// overlap test and the empty-window check compare in. It exists so the per-day list
+// carries the two numbers those tests need rather than the four fields a caller
+// wrote them as.
+type adScheduleSpan struct {
+	start int
+	end   int
 }
 
 // sameBidModifier compares two optional bid modifiers by VALUE, so that a repeated
