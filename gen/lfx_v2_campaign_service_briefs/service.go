@@ -437,6 +437,10 @@ type Campaign struct {
 	CampaignName string
 	// Campaign status
 	Status string
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion int
 	// Optimistic-concurrency version
 	Version int64
 	// ETag header value (mirrors version)
@@ -463,6 +467,19 @@ type CampaignCreateInput struct {
 	Platforms []string
 	// Per-platform campaign configuration
 	Config any
+	// Create ANOTHER campaign on each selected platform instead of retrying.
+	// Without it, repeating a create for a platform that already has a completed
+	// campaign returns that campaign (idempotent retry). With it, a platform whose
+	// latest campaign is complete gets a new campaign alongside it; a platform
+	// with none gets its first; a platform whose latest campaign is still in
+	// flight or needs reconciliation is reported exactly as a retry would be. The
+	// version is tracked by this service only and is never shown on the ad
+	// platform as a label. Supported on microsoft-ads only for now; any other
+	// platform in the request is refused with 400. Until the follow-up release
+	// removes the one-campaign-per-slot index, a request on a platform that
+	// already has a live campaign fails that platform with 'not available yet' and
+	// creates nothing.
+	NewVersion bool
 }
 
 // CampaignMetrics is the result type of the lfx-v2-campaign-service-briefs

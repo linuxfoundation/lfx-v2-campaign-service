@@ -363,6 +363,25 @@ not be read", a RETRYABLE 503, from a verdict on the connection; see
 a settled fact) and from `ErrConnectionNotUsable` (the row was read and is unusable), and is the
 only one of the three that retrying can fix.
 
+### Slot versions and unique upstream names
+
+A deliberate second campaign on one slot (the service concept's `new_version`) must not
+compose the first campaign's upstream name on a provider that treats a matching name as the
+same campaign. Microsoft enforces case-insensitive name uniqueness and its find-first lookup
+REUSES a match, so `MicrosoftDispatcher` sets `NameSuffix: model.SlotNameSuffix(brief.ID,
+model.DispatchSlotVersion(ctx))`: slot 1 is the bare brief id (every existing name and retry is
+byte-identical) and slot 2+ appends `-<n>` — an internal identifier where the brief id already
+sat, not a version label.
+
+Every other provider still composes the same name for every slot, and most look campaigns up by
+it: Google (`FindCampaignByName`, `DUPLICATE_CAMPAIGN_NAME`), LinkedIn
+(`findCampaignByNameInGroup`, which would also push new creatives onto the live campaign), X and
+Meta (`findCampaignByName`); HubSpot clones under the same email name. So
+`model.ProviderSupportsSlotVersions` is an allowlist holding only Microsoft, and `create-campaigns`
+refuses `new_version` with a 400 for anything else. A provider joins it in the same change that
+makes its name unique per slot version. Google and LinkedIn are owned by the Google-readiness
+workstream (LFXV2-2665).
+
 ## Registration
 
 Adapters are registered in `internal/container` (`registerDispatchers`), called from
@@ -799,22 +818,22 @@ against serving legacy rows at all.
 `BudgetWriter` — `WriteBudget(ctx, projectID, platform, campaign *model.Campaign, budget
 model.BudgetChange) error` — changes an existing campaign's budget ON THE AD PLATFORM.
 Discovered by the same type assertion as `StatusToggler` and `SettingsReader`; a dispatcher
-without it yields `ErrBudgetWriteUnsupported` -> 400. **Google Ads, LinkedIn and Meta implement
-it today**; every other platform still answers 400. It is the settings readback's mirror: the
+without it yields `ErrBudgetWriteUnsupported` -> 400. **Google Ads, LinkedIn, Meta and Reddit
+implement it today**; every other platform still answers 400. It is the settings readback's mirror: the
 readback makes a budget divergence legible, and this is the only capability that can act on it.
 
 **Adding a platform is purely additive** — the service layer holds no allowlist, so a slice is
 the adapter plus its dispatcher method and nothing else. What is NOT shared between the slices
 is the refusal set: each platform's budget model decides which guards even have a subject, and
-the design's published refusal list is the UNION of the three (see [design.md](design.md)). The
+the design's published refusal list is the UNION of the four (see [design.md](design.md)). The
 three rules every implementation does obey, stated in `internal/service/orchestrator.go`, are:
 confirm before persisting, refuse a shared budget, and enforce the account-identity invariant at
 least as strictly as `ReadSettings` does.
 
-**All three enforce provenance more strictly than their own sibling paths do, and each says so
+**All four enforce provenance more strictly than their own sibling paths do, and each says so
 in code.** `verifyLinkedInAccountMatch` returns `nil` when the campaign records no creating
-account; `verifyMetaAccountMatch` returns `nil` when EITHER the recorded account or the current
-one is absent — deliberately, because Meta's toggle and metrics address the campaign node by id
+account (and so does `verifyRedditAccountMatch`); `verifyMetaAccountMatch` returns `nil` when
+EITHER the recorded account or the current one is absent — deliberately, because Meta's toggle and metrics address the campaign node by id
 and need no account at all. Both tolerances are correct for those callers and wrong for a budget
 write, so each budget dispatcher refuses the absence(s) itself BEFORE calling the shared helper,
 which is then still used for the mismatch case so the wording stays common. Reusing the helper
@@ -988,6 +1007,72 @@ scale is off by a factor of a hundred.
 `UpdateAdSetBudget` writes exactly one field, `daily_budget` or `lifetime_budget`, as a decimal
 STRING, and **sends no `end_time`**: it only ever writes `lifetime_budget` on an ad set that
 already reports one, which already has its end time set.
+
+### Reddit — the budget is the CAMPAIGN's goal, in MICRO-UNITS
+
+Where the budget lives is taken from this repo's own create path, not assumed:
+`reddit.Client.CreateCampaign` sends `is_campaign_budget_optimization: true`, `goal_type:
+"LIFETIME_SPEND"` and `goal_value` (integer micro-units of the account currency) on the
+**campaign**, and sends no budget on the ad group. So `RedditDispatcher.WriteBudget` addresses
+the campaign itself — the same `/ad_accounts/{accountID}/campaigns/{campaignID}` resource the
+status toggle PATCHes — and writes `goal_value` alone: never `goal_type` (the pacing), never a
+schedule field.
+
+Order, all before the one PATCH:
+
+1. **Provenance, failed closed.** `verifyRedditAccountMatch` waves an absent creating account
+   through, and on Reddit that covers every row written before `accountId` existed — there is no
+   URL fallback to recover it from. The budget write refuses that absence itself
+   (`ErrCampaignProvenanceUnknown` joined with `ErrCampaignAccountMismatch`), before a credential
+   is resolved or a token fetched, then uses the shared helper for the mismatch.
+2. **Amount.** `reddit.BudgetMicros` applies the create path's own bound (`redditMaxBudgetUSD`,
+   which keeps the ×1e6 conversion clear of int64 overflow) and rounding (`toMicrodollars`,
+   half-away-from-zero), and refuses an amount that rounds to zero micros. Its refusals wrap
+   `reddit.ErrBudgetAmountInvalid` and become `ErrBudgetAmountRejected` → **400** via
+   `rejectedBudgetAmountError`. Like Google's, these bounds are the service's own, so the mapping
+   is defense in depth for a non-HTTP caller.
+3. **Credentials** through `resolveRedditClient` with `existingResolver(created)` — the same
+   resolution and connection-defect tagging as `ToggleStatus` and `ReadMetrics`.
+4. **Read** (`GetCampaignBudget`, a pure read — its failure is definite, never unconfirmed). A 404
+   is `ErrPlatformCampaignAbsent`; an answer naming a different campaign id is refused; an
+   answer naming a different `ad_account_id` is `ErrCampaignAccountMismatch`. The two ids the
+   client refuses before building a request are classified by their owner: an unaddressable
+   ACCOUNT id is the connection's (`client.AccountID()`), so it is `ErrConnectionNotUsable` +
+   `ErrProviderConfigInvalid` (system-scoped on the LF fallback row) → 409 "repair the
+   connection"; an unaddressable CAMPAIGN id is the persisted row's, so it is
+   `ErrBudgetUnwritable` → 409.
+5. **The budget must be on the campaign.** `is_campaign_budget_optimization` false means spend is
+   governed per AD GROUP; following Meta's precedent this service **refuses rather than choose an
+   allocation** across ad groups (`ErrBudgetUnwritable`). An UNREPORTED flag is refused too, the
+   fail-closed reading Google applies to `explicitly_shared`. This service creates no such
+   campaign, so only one changed by hand in Reddit Ads Manager reaches it. With CBO on the number
+   of ad groups is irrelevant: none of them holds a budget.
+6. **Legible amount and matching pacing.** An unreadable `goal_value` (non-integer, fractional) is
+   refused rather than read as "no budget". `LIFETIME_SPEND` ↔ `lifetime`, `DAILY_SPEND` ↔
+   `daily`; anything else, or no `goal_type`, is a shape with no mapping; a request naming the
+   other pacing is refused **409**, never translated — all `ErrBudgetUnwritable`. The create path
+   only makes `LIFETIME_SPEND` campaigns, so a `daily` request against one this service created
+   is always this 409.
+
+There is **no shared-budget analogue**: a Reddit campaign's goal cannot be attached to another
+campaign, so that refusal is deliberately absent. There is no currency guard either: Reddit
+reports `goal_value` in the account's own currency's micro-units and this service never
+converts, matching the create path.
+
+**The PATCH is classified.** It goes through `request()`, which retries a 429 because setting the
+same `goal_value` twice converges (the status toggle's PATCH does the same); an exhausted
+throttle, a transport failure, a 3xx or a 5xx is `reddit.IsOutcomeUnconfirmed` and is wrapped in
+`unconfirmedBudgetWriteError` → 503 "verify before retrying". **The 2xx echo is checked**: a
+response naming another campaign id or another `goal_value` than the one sent — or a `data` that
+is not a campaign object — is returned as an UNCONFIRMED `transportError`, because the request
+reached Reddit and something not asked for may have applied. An echo naming neither is accepted;
+the 2xx is the confirmation, as for the toggle. A definite 4xx passes through as a refusal.
+
+**Unverified against a live Reddit account**: the single-campaign `GET` on the account-scoped
+path, whether that GET reports `is_campaign_budget_optimization` and `ad_account_id`, the
+`DAILY_SPEND` token, and whether the PATCH response echoes the campaign. Each unknown fails
+closed (a 409 refusal or an UNCONFIRMED 503), never as a wrong write. See
+[internal/platform/reddit](internal-platform-reddit.md).
 
 ## Metrics read (optional capability)
 

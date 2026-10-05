@@ -181,7 +181,13 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// (`AlreadyExisted=true`, no error) rather than creating a second paid campaign — a
 		// poor-man's idempotency key until LFXV2-2665 lands provider idempotency keys. (An
 		// UNCONFIRMED partial is the distinct case below: a non-nil result WITH an error.)
-		NameSuffix: brief.ID,
+		//
+		// The slot version extends the suffix for a deliberate SECOND campaign on the same
+		// slot (model.SlotNameSuffix): slot 1 keeps the bare brief id, so every existing
+		// campaign's name — and every retry of one — is unchanged, while slot 2 gets a name
+		// the first campaign does not hold. Without it the second campaign would compose the
+		// first one's name and be refused as a duplicate or matched to the first by name.
+		NameSuffix: model.SlotNameSuffix(brief.ID, model.DispatchSlotVersion(ctx)),
 	}
 
 	// customer_id is the OPTIONAL parent manager (MCC) account the ad account is accessed

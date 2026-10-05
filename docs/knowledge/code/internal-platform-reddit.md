@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/reddit"
-description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
+description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), the campaign status toggle and campaign-level budget (goal_value) write, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
 resource: "internal/platform/reddit"
 tags:
   - platform-client
@@ -10,7 +10,7 @@ tags:
   - oauth2
   - go-package
   - metrics
-timestamp: "2026-08-05T00:00:00Z"
+timestamp: "2026-10-05T00:00:00Z"
 ---
 
 # internal/platform/reddit
@@ -342,6 +342,41 @@ account. Reddit has NO recoverable fallback for it: `redditUrl` is the bare
 field existed records no provenance at all and is treated as "unknown, proceed". See
 `internal-dispatch.md` for the guard itself.
 
+## Campaign budget write (LFXV2-2665)
+
+`budget_update.go` backs `RedditDispatcher.WriteBudget` (see
+[internal/dispatch](internal-dispatch.md) for the guard order). The budget this service sets is
+the one `CreateCampaign` sets: `goal_value` on the **campaign**, in integer micro-units of the
+account currency, under `goal_type: "LIFETIME_SPEND"` with `is_campaign_budget_optimization:
+true`. The ad group carries no budget.
+
+- `BudgetMicros(amount)` — the create path's own bound (`redditMaxBudgetUSD`) and rounding
+  (`toMicrodollars`), refusing an amount that rounds to zero. Refusals wrap
+  `ErrBudgetAmountInvalid` and carry a client-safe sentence via `BudgetAmountReason`, the same
+  split the Meta and LinkedIn clients make.
+- `GetCampaignBudget(ctx, campaignID)` — `GET /ad_accounts/{accountID}/campaigns/{campaignID}`,
+  a pure read. Returns `goal_type`, `goal_value` (a present-but-unreadable value sets
+  `GoalValueUnparseable` rather than reading as absent; a fractional value is never truncated),
+  `is_campaign_budget_optimization` (nil when unreported — never assumed on) and
+  `ad_account_id`. A 404 is `(nil, nil)`; a 2xx naming another campaign id is an error.
+- `UpdateCampaignBudget(ctx, campaignID, micros)` — `PATCH
+  /ad_accounts/{accountID}/campaigns/{campaignID}` with exactly `{"data":{"goal_value":
+  <micros>}}`, the same resource and envelope as the status toggle. Never sends `goal_type` or a
+  schedule field. Through `request()`, so a 429 is retried (setting the same amount converges)
+  and an exhausted throttle is UNCONFIRMED. The 2xx echo is checked: another campaign id, another
+  or unreadable `goal_value`, or a non-object `data` is an UNCONFIRMED `transportError`.
+
+Both ids are checked with the letters/digits/underscores guard before interpolation
+(`ErrInvalidAccountID` / `ErrInvalidCampaignID`), so no request is built for an unsafe id.
+
+**Confidence.** Verified in this repo: the budget's location and units (the create body), the
+`/ad_accounts/{id}/campaigns/{id}` PATCH resource (the toggle), and `goal_value` in micros (the
+create body and the monitor read's `goal_value/1e6`). **Not verified against a live account or
+the published spec** (Reddit's OpenAPI document could not be fetched from this environment): the
+single-campaign GET on that path, whether it reports `is_campaign_budget_optimization` and
+`ad_account_id`, the `DAILY_SPEND` token, and the PATCH response's echo shape. Each fails closed
+— an unreported CBO flag or `goal_type` is refused 409, a mismatched echo is UNCONFIRMED.
+
 ## Metrics reads — contract from Reddit's public OpenAPI spec (LFXV2-3282)
 
 `GetCampaignMetrics(ctx, campaignID, window)` reads impressions, clicks, and spend for a
@@ -445,6 +480,10 @@ and a toggle accept exactly the same connections) builds the client, then
 `client.UpdateCampaignAndChildrenStatus` PATCHes `configured_status` on the campaign AND its
 child ad group + ad (read from the persisted `CampaignResult`) — because the create path
 PAUSES all three, so toggling only the campaign would not serve.
+
+It also implements `BudgetWriter` (`reddit_budget.go`): the same credential resolution, with
+provenance failed closed, then `GetCampaignBudget` → guards → one `UpdateCampaignBudget` PATCH.
+See "Campaign budget write" above.
 
 ## Account-monitor read
 
