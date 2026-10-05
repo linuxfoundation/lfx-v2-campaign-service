@@ -1046,13 +1046,30 @@ while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
   `daily_budget_amount_local_micro` / `total_budget_amount_local_micro` ÷ 1e6, account
   currency; null/absent is "no budget", anything but a non-negative JSON integer sets
   `BudgetUnparseable`. The flight comes from the line items (v12 campaigns carry none):
-  earliest `start_time`, latest `end_time`, `EndDate` empty if any line item is open-ended,
-  dates in the ACCOUNT's timezone, `EndDate` the last day served (an end at local midnight
-  belongs to the previous day). An unreadable time sets `FlightUnparseable`.
-- **`SubmitAccountCampaignReport`** — window `[local midnight of today-(days-1), the local
-  midnight after today)` in the account's zone, sent as UTC instants floored to the whole
-  hour X requires (UNVERIFIED for half-hour zones), trimmed to 90 days across a DST
-  fall-back. GET `stats/accounts/:id/active_entities?entity=CAMPAIGN`, then one POST
+  the envelope `StartDate`/`EndDate` — earliest `start_time`, latest `end_time`, `EndDate`
+  empty if any line item is open-ended — and `Flights`, the union of the line items
+  (`flightRanges`: each line item's first through last local day, sorted, overlapping or
+  touching ranges merged, disjoint ones kept apart, an open-ended one absorbing everything
+  after it), so the gap between line items Sep 1–5 and Oct 1–5 is not reported as scheduled.
+  Dates are in the ACCOUNT's timezone, the last day being the last day served (an end at
+  local midnight belongs to the previous day). An unreadable time sets `FlightUnparseable`,
+  and so does a line item whose `end_time` is not after its `start_time` (inverted or
+  zero-length): it is rejected before the envelope or the union changes, never recorded as a
+  scheduled day and never silently dropped.
+- **`SubmitAccountCampaignReport`** — window `[start of today-(days-1), start of the day after
+  today)` in the account's zone (`accountReportWindow`), sent as UTC instants, and always
+  EXACTLY the days returned as the report's first/last day. A day's start is its local
+  midnight, or — when a DST spring-forward skips 00:00 (America/Santiago on 2026-09-06,
+  America/Asuncion …) — the first instant that exists on that day (`localDayStart`): plain
+  `time.Date` normalizes the nonexistent midnight BACK to 23:00 of the previous day, which put
+  an hour of the previous day into the window and dated the saved first/last day one day early.
+  A day start that is not a whole UTC hour (X takes whole hours only) is refused with
+  `ErrReportWindowNotWholeHours`, never floored — before any stats request or job is created,
+  though the account timezone has been read by then (an account GET when the cache is cold); a
+  90-day window over a DST fall-back (90 days and an hour) drops its earliest local day instead
+  of trimming an hour, so it covers 89 whole days and says so — the account monitor response
+  exposes those days as `metrics_window_start` / `metrics_window_end` beside the requested
+  `days`. GET `stats/accounts/:id/active_entities?entity=CAMPAIGN`, then one POST
   `stats/jobs/accounts/:id` per ≤20 active campaigns (`entity=CAMPAIGN`, `granularity=TOTAL`,
   `placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`), each through the write
   pacer and never retried on a 429. Before the first POST, `statsJobsFitBudget` compares the
@@ -1062,7 +1079,10 @@ while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
   (the dispatcher wraps it as `domain.ErrAccountReportBudgetTooShort`). Returns ONE composite id — the jobs' `id_str`s
   comma-joined — or `NoActiveCampaignsReportID` (`"none"`) when nothing was active, which
   Check answers as a finished empty report without a request. More than
-  `maxStatsJobsPerReport` (10 jobs = 200 active campaigns) is refused, not truncated.
+  `MaxMonitorActiveCampaigns` (`maxStatsJobsPerReport` 10 jobs × 20 = 200) active campaigns
+  is refused with `ErrTooManyActiveCampaigns` before any job is created, not truncated. The
+  dispatcher wraps the two permanent refusals as `domain.ErrAccountTooManyActiveCampaigns` /
+  `domain.ErrAccountTimezoneUnsupported`, which the monitor endpoint answers with 409.
 - **`CheckAccountCampaignReport`** — ONE GET `stats/jobs/accounts/:id?job_ids=<all>`. Any
   `FAILED`/`FAILURE`/`CANCELLED` job, or a `SUCCESS` with no `url`, fails the report; any
   `QUEUED`/`PROCESSING` job, or one missing from X's answer, leaves it pending; an unknown

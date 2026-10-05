@@ -592,13 +592,22 @@ So the read is split, and the state between requests is saved:
   its report id, so a request that collected an older report cannot clear a newer one's
   pending marker. Platform-neutral on purpose, and now SHARED: X's monitor keeps its rows in
   the same table under `platform = 'twitter-ads'`, with no schema change (see below).
-- **Response.** Same `AccountMonitor` type, plus two Microsoft-only fields:
+- **Response.** Same `AccountMonitor` type, plus two fields set only by the report-backed
+  platforms, Microsoft and X:
   `metrics_as_of` (when the report was REQUESTED — the point in time the data describes, never
   the later moment it was collected, which would overstate freshness; absent before the first
   one finishes) and
-  `metrics_pending` (a newer report is building; always set on Microsoft, omitted on the
-  live four). Before any report has finished, every row is `fetch_failed` and therefore
-  skipped by the rules — unavailable metrics never read as a campaign spending nothing.
+  `metrics_pending` (a newer report is building; always set on Microsoft and X, omitted on
+  the live four), and
+  `metrics_window_start` / `metrics_window_end` (`YYYY-MM-DD`, the first and last calendar day
+  the metrics cover, both inclusive, from the saved report's own window — not re-derived from
+  `days`, which is the request echoed and can differ: X covers 89 days of a 90-day request
+  across a DST fall-back). The days are in the timezone the report is built in: the account's
+  on X; on Microsoft the report's GMT (Europe/London) zone, named by the UTC dates sent as
+  `CustomDateRangeStart` / `CustomDateRangeEnd` (inclusive). Both are omitted before the first
+  report finishes and on the live four, which cover exactly the requested days. Before any
+  report has finished, every row is `fetch_failed` and therefore skipped by the rules —
+  unavailable metrics never read as a campaign spending nothing.
 - **Report scope.** The submission is scoped by `AccountIds` — the account-wide union the
   per-campaign read deliberately avoids is exactly what this read wants — so a campaign
   absent from a finished report served nothing (spend/impressions/clicks zero, conversions
@@ -621,7 +630,8 @@ So the read is split, and the state between requests is saved:
 
 X reuses the Microsoft machinery unchanged — `service.AccountReportReader`,
 `Orchestrator.ReadReportedAccountCampaigns`, `account_monitor_reports`, the same freshness
-(30m) and abandon (60m) timings, the same `metrics_as_of` / `metrics_pending` response fields —
+(30m) and abandon (60m) timings, the same `metrics_as_of` / `metrics_pending` /
+`metrics_window_start` / `metrics_window_end` response fields —
 with `TwitterDispatcher` as a second implementation. Nothing was forked.
 
 - **Why report-backed, for every `days`.** X's synchronous stats are capped at 7 days per
@@ -633,13 +643,28 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
   count=1000, line items filtered by ≤200 `campaign_ids`), on the strict cursor rule: anything
   short of X's documented null `next_cursor` fails the read. Status is `entity_status`
   verbatim; budgets are `*_local_micro` ÷ 1e6 in the account's currency (malformed →
-  `fetch_failed`); the flight is the line items' earliest start and latest end, as dates in
-  the ACCOUNT's timezone (read from the account resource), open-ended if any line item is.
+  `fetch_failed`); the flight is the line items' dates in the ACCOUNT's timezone (read from
+  the account resource). Two shapes travel together: the envelope `StartDate`/`EndDate`
+  (earliest start, latest end, open-ended if any line item is) and `FlightRanges`, the UNION of
+  the line items as sorted, disjoint day ranges — overlapping or touching line items merge,
+  disjoint ones stay apart. The rules judge on the ranges, so a window in the gap between two
+  line items (Sep 1–5 and Oct 1–5, window Sep 15–21) is not "scheduled".
 - **Submit.** `active_entities` for the window, then one stats job per ≤20 active campaigns
   (`entity=CAMPAIGN`, `granularity=TOTAL`, `placement=ALL_ON_TWITTER`,
   `metric_groups=ENGAGEMENT,BILLING`), paced on the client's write pacer and never retried on
-  a 429. The window is today-(days-1) 00:00 to the next midnight in the ACCOUNT's timezone,
-  sent as whole UTC hours. Before the first job POST the time left on the call budget is
+  a 429. The window is today-(days-1) 00:00 to the next midnight in the ACCOUNT's timezone
+  (where a DST spring-forward skips a midnight — America/Santiago — that day starts at its first
+  existing instant, so the window is never dated a day early), and the window QUERIED is
+  exactly the window SAVED — nothing is floored or trimmed. An
+  account whose local midnight is not a whole UTC hour (Asia/Kolkata, Asia/Kathmandu,
+  America/St_Johns …) cannot be queried on its own days, since X takes whole-hour bounds only,
+  so the submission is refused before any stats request (`twitter.ErrReportWindowNotWholeHours`
+  → `domain.ErrAccountTimezoneUnsupported` → **409**, reason `account_timezone_unsupported`).
+  A 90-day window across a DST fall-back is 90 days and an hour, over X's 90-day cap, so its
+  earliest local day is dropped: it covers the trailing 89 whole days and its saved first day
+  says so — the response echoes `days: 90` (the request) and states the 89 covered days in
+  `metrics_window_start` / `metrics_window_end` (an earlier draft trimmed one hour off the start, querying a window that began an
+  hour into the first saved day). Before the first job POST the time left on the call budget is
   checked against one pacer interval per job plus a 2s margin; if it cannot fit, the
   submission is declined whole (`twitter.ErrStatsJobBudget` → `domain.ErrAccountReportBudgetTooShort`)
   rather than stranding half-created jobs in X's 100 concurrent-job slots. The account timezone
@@ -647,7 +672,15 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
   account once. The saved report id is ONE composite value — the jobs' `id_str`s
   comma-joined (≤10 jobs, ~210 bytes in a TEXT column). No active campaign gives the sentinel
   `none`, which Check answers as a finished empty report without calling X. An account with
-  more than 200 active campaigns is refused rather than half-reported.
+  more than 200 campaigns active in the window (`twitter.MaxMonitorActiveCampaigns`, ten jobs
+  of 20) is refused before any job is created rather than half-reported
+  (`twitter.ErrTooManyActiveCampaigns` → `domain.ErrAccountTooManyActiveCampaigns` → **409**,
+  reason `account_too_many_active_campaigns`).
+- **Permanent refusals fail the read.** Unlike a transient submit failure (logged, retried on
+  the next read), those two refusals cannot succeed later, so
+  `ReadReportedAccountCampaigns` returns them and `classifyDiscoveryError` maps each to a 409
+  `ConflictError` with its `reason` and fixed text. A fresh saved report is still served,
+  because no submission is attempted while it is fresh.
 - **Check.** ONE job-status read for every job. Any failed or cancelled job fails the report
   (and so does a finished job whose file is gone); any job still building, or missing from
   X's answer, leaves it pending; otherwise every file is downloaded — unsigned, because X says
@@ -664,9 +697,12 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
   monitor does not request, and reports nothing at all for an account with no conversion tag,
   which is indistinguishable from a measured zero. Every row's `conversions` is absent.
 - **Rules.** `rules.EvaluateTwitterMonitor`: a daily budget paced as `BudgetDay` × the window
-  days the flight covers (window closed by the exclusive midnight after its last day, as
-  Reddit's daily branch settled); otherwise a total budget prorated over the flight; otherwise
-  unknown. The window is the SAVED REPORT's own — its first and last day in the account's
+  days a line item is scheduled on (window closed by the exclusive midnight after its last
+  day, as Reddit's daily branch settled); otherwise a total budget prorated over the scheduled
+  days (the sum of `FlightRanges`, gaps excluded); otherwise unknown. The zero-delivery HIGH
+  needs at least one scheduled day in the window. Amounts in item text are printed as
+  "12.50 in account currency" — no currency symbol, since X's `*_local_micro` figures are in the
+  account's own currency, which the account resource does not carry. The window is the SAVED REPORT's own — its first and last day in the account's
   timezone, carried to the service as `ReportedAccountRead.MetricsWindowStart/End` — so the
   rules, the stats jobs and the line items' flight dates all count the account's calendar
   days. (An earlier draft derived "today" from the service's UTC clock: on a US/Pacific
@@ -685,6 +721,6 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
   platform with no monitor — before any credential is resolved. It gates only the monitor; X's
   per-campaign metrics read is a different endpoint and is not affected.
 - **Unverified.** The whole X contract here follows docs.x.com and has not been exercised
-  against a live X account; the specific open points (half-hour timezones, the queued and
-  failed status spellings, whether job creation counts as a write) are marked UNVERIFIED in
+  against a live X account; the specific open points (the queued and failed status spellings,
+  whether job creation counts as a write) are marked UNVERIFIED in
   `internal/platform/twitter/monitor.go`.

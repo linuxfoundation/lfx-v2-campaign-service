@@ -929,7 +929,12 @@ type CreateHubspotCampaignResponseBody struct {
 type MonitorGoogleAdsAccountResponseBody struct {
 	// The account this read covers, echoed back from the request.
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// The trailing-days window this read covers, echoed back from the request.
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
 	// Every campaign visible on the account, with the rule engine's per-row pacing
 	// output attached.
@@ -946,6 +951,18 @@ type MonitorGoogleAdsAccountResponseBody struct {
 	// pacing and action items. Omitted on every other platform, whose metrics are
 	// read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
 	// is building on the platform, so a later read will return newer metrics (or
 	// the first ones, when metrics_as_of is absent). Omitted on every other
@@ -959,7 +976,12 @@ type MonitorGoogleAdsAccountResponseBody struct {
 type MonitorLinkedinAdsAccountResponseBody struct {
 	// The account this read covers, echoed back from the request.
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// The trailing-days window this read covers, echoed back from the request.
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
 	// Every campaign visible on the account, with the rule engine's per-row pacing
 	// output attached.
@@ -976,6 +998,18 @@ type MonitorLinkedinAdsAccountResponseBody struct {
 	// pacing and action items. Omitted on every other platform, whose metrics are
 	// read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
 	// is building on the platform, so a later read will return newer metrics (or
 	// the first ones, when metrics_as_of is absent). Omitted on every other
@@ -989,7 +1023,12 @@ type MonitorLinkedinAdsAccountResponseBody struct {
 type MonitorMetaAdsAccountResponseBody struct {
 	// The account this read covers, echoed back from the request.
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// The trailing-days window this read covers, echoed back from the request.
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
 	// Every campaign visible on the account, with the rule engine's per-row pacing
 	// output attached.
@@ -1006,6 +1045,18 @@ type MonitorMetaAdsAccountResponseBody struct {
 	// pacing and action items. Omitted on every other platform, whose metrics are
 	// read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
 	// is building on the platform, so a later read will return newer metrics (or
 	// the first ones, when metrics_as_of is absent). Omitted on every other
@@ -1019,7 +1070,12 @@ type MonitorMetaAdsAccountResponseBody struct {
 type MonitorRedditAdsAccountResponseBody struct {
 	// The account this read covers, echoed back from the request.
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// The trailing-days window this read covers, echoed back from the request.
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
 	// Every campaign visible on the account, with the rule engine's per-row pacing
 	// output attached.
@@ -1036,6 +1092,18 @@ type MonitorRedditAdsAccountResponseBody struct {
 	// pacing and action items. Omitted on every other platform, whose metrics are
 	// read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
 	// is building on the platform, so a later read will return newer metrics (or
 	// the first ones, when metrics_as_of is absent). Omitted on every other
@@ -1049,7 +1117,12 @@ type MonitorRedditAdsAccountResponseBody struct {
 type MonitorMicrosoftAdsAccountResponseBody struct {
 	// The account this read covers, echoed back from the request.
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// The trailing-days window this read covers, echoed back from the request.
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
 	// Every campaign visible on the account, with the rule engine's per-row pacing
 	// output attached.
@@ -1066,6 +1139,18 @@ type MonitorMicrosoftAdsAccountResponseBody struct {
 	// pacing and action items. Omitted on every other platform, whose metrics are
 	// read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
 	// is building on the platform, so a later read will return newer metrics (or
 	// the first ones, when metrics_as_of is absent). Omitted on every other
@@ -1079,7 +1164,12 @@ type MonitorMicrosoftAdsAccountResponseBody struct {
 type MonitorTwitterAdsAccountResponseBody struct {
 	// The account this read covers, echoed back from the request.
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// The trailing-days window this read covers, echoed back from the request.
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
 	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
 	// Every campaign visible on the account, with the rule engine's per-row pacing
 	// output attached.
@@ -1096,6 +1186,18 @@ type MonitorTwitterAdsAccountResponseBody struct {
 	// pacing and action items. Omitted on every other platform, whose metrics are
 	// read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
 	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
 	// is building on the platform, so a later read will return newer metrics (or
 	// the first ones, when metrics_as_of is absent). Omitted on every other
@@ -4784,6 +4886,19 @@ type MonitorTwitterAdsAccountBadRequestResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorTwitterAdsAccountConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body for the "Conflict" error.
+type MonitorTwitterAdsAccountConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // MonitorTwitterAdsAccountServiceUnavailableResponseBody is the type of the
@@ -10144,10 +10259,12 @@ func NewCreateHubspotCampaignUnauthorized(body *CreateHubspotCampaignUnauthorize
 // endpoint result from a HTTP "OK" response.
 func NewMonitorGoogleAdsAccountAccountMonitorOK(body *MonitorGoogleAdsAccountResponseBody) *lfxv2campaignserviceconnections.AccountMonitor {
 	v := &lfxv2campaignserviceconnections.AccountMonitor{
-		AccountID:      *body.AccountID,
-		Days:           *body.Days,
-		MetricsAsOf:    body.MetricsAsOf,
-		MetricsPending: body.MetricsPending,
+		AccountID:          *body.AccountID,
+		Days:               *body.Days,
+		MetricsAsOf:        body.MetricsAsOf,
+		MetricsWindowStart: body.MetricsWindowStart,
+		MetricsWindowEnd:   body.MetricsWindowEnd,
+		MetricsPending:     body.MetricsPending,
 	}
 	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
 	for i, val := range body.Campaigns {
@@ -10248,10 +10365,12 @@ func NewMonitorGoogleAdsAccountUnauthorized(body *MonitorGoogleAdsAccountUnautho
 // endpoint result from a HTTP "OK" response.
 func NewMonitorLinkedinAdsAccountAccountMonitorOK(body *MonitorLinkedinAdsAccountResponseBody) *lfxv2campaignserviceconnections.AccountMonitor {
 	v := &lfxv2campaignserviceconnections.AccountMonitor{
-		AccountID:      *body.AccountID,
-		Days:           *body.Days,
-		MetricsAsOf:    body.MetricsAsOf,
-		MetricsPending: body.MetricsPending,
+		AccountID:          *body.AccountID,
+		Days:               *body.Days,
+		MetricsAsOf:        body.MetricsAsOf,
+		MetricsWindowStart: body.MetricsWindowStart,
+		MetricsWindowEnd:   body.MetricsWindowEnd,
+		MetricsPending:     body.MetricsPending,
 	}
 	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
 	for i, val := range body.Campaigns {
@@ -10352,10 +10471,12 @@ func NewMonitorLinkedinAdsAccountUnauthorized(body *MonitorLinkedinAdsAccountUna
 // endpoint result from a HTTP "OK" response.
 func NewMonitorMetaAdsAccountAccountMonitorOK(body *MonitorMetaAdsAccountResponseBody) *lfxv2campaignserviceconnections.AccountMonitor {
 	v := &lfxv2campaignserviceconnections.AccountMonitor{
-		AccountID:      *body.AccountID,
-		Days:           *body.Days,
-		MetricsAsOf:    body.MetricsAsOf,
-		MetricsPending: body.MetricsPending,
+		AccountID:          *body.AccountID,
+		Days:               *body.Days,
+		MetricsAsOf:        body.MetricsAsOf,
+		MetricsWindowStart: body.MetricsWindowStart,
+		MetricsWindowEnd:   body.MetricsWindowEnd,
+		MetricsPending:     body.MetricsPending,
 	}
 	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
 	for i, val := range body.Campaigns {
@@ -10456,10 +10577,12 @@ func NewMonitorMetaAdsAccountUnauthorized(body *MonitorMetaAdsAccountUnauthorize
 // endpoint result from a HTTP "OK" response.
 func NewMonitorRedditAdsAccountAccountMonitorOK(body *MonitorRedditAdsAccountResponseBody) *lfxv2campaignserviceconnections.AccountMonitor {
 	v := &lfxv2campaignserviceconnections.AccountMonitor{
-		AccountID:      *body.AccountID,
-		Days:           *body.Days,
-		MetricsAsOf:    body.MetricsAsOf,
-		MetricsPending: body.MetricsPending,
+		AccountID:          *body.AccountID,
+		Days:               *body.Days,
+		MetricsAsOf:        body.MetricsAsOf,
+		MetricsWindowStart: body.MetricsWindowStart,
+		MetricsWindowEnd:   body.MetricsWindowEnd,
+		MetricsPending:     body.MetricsPending,
 	}
 	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
 	for i, val := range body.Campaigns {
@@ -10560,10 +10683,12 @@ func NewMonitorRedditAdsAccountUnauthorized(body *MonitorRedditAdsAccountUnautho
 // "monitor-microsoft-ads-account" endpoint result from a HTTP "OK" response.
 func NewMonitorMicrosoftAdsAccountAccountMonitorOK(body *MonitorMicrosoftAdsAccountResponseBody) *lfxv2campaignserviceconnections.AccountMonitor {
 	v := &lfxv2campaignserviceconnections.AccountMonitor{
-		AccountID:      *body.AccountID,
-		Days:           *body.Days,
-		MetricsAsOf:    body.MetricsAsOf,
-		MetricsPending: body.MetricsPending,
+		AccountID:          *body.AccountID,
+		Days:               *body.Days,
+		MetricsAsOf:        body.MetricsAsOf,
+		MetricsWindowStart: body.MetricsWindowStart,
+		MetricsWindowEnd:   body.MetricsWindowEnd,
+		MetricsPending:     body.MetricsPending,
 	}
 	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
 	for i, val := range body.Campaigns {
@@ -10664,10 +10789,12 @@ func NewMonitorMicrosoftAdsAccountUnauthorized(body *MonitorMicrosoftAdsAccountU
 // endpoint result from a HTTP "OK" response.
 func NewMonitorTwitterAdsAccountAccountMonitorOK(body *MonitorTwitterAdsAccountResponseBody) *lfxv2campaignserviceconnections.AccountMonitor {
 	v := &lfxv2campaignserviceconnections.AccountMonitor{
-		AccountID:      *body.AccountID,
-		Days:           *body.Days,
-		MetricsAsOf:    body.MetricsAsOf,
-		MetricsPending: body.MetricsPending,
+		AccountID:          *body.AccountID,
+		Days:               *body.Days,
+		MetricsAsOf:        body.MetricsAsOf,
+		MetricsWindowStart: body.MetricsWindowStart,
+		MetricsWindowEnd:   body.MetricsWindowEnd,
+		MetricsPending:     body.MetricsPending,
 	}
 	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
 	for i, val := range body.Campaigns {
@@ -10697,6 +10824,19 @@ func NewMonitorTwitterAdsAccountBadRequest(body *MonitorTwitterAdsAccountBadRequ
 	v := &lfxv2campaignserviceconnections.BadRequestError{
 		Code:    *body.Code,
 		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorTwitterAdsAccountConflict builds a
+// lfx-v2-campaign-service-connections service monitor-twitter-ads-account
+// endpoint Conflict error.
+func NewMonitorTwitterAdsAccountConflict(body *MonitorTwitterAdsAccountConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -11681,6 +11821,12 @@ func ValidateMonitorGoogleAdsAccountResponseBody(body *MonitorGoogleAdsAccountRe
 	if body.MetricsAsOf != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
 	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
 	return
 }
 
@@ -11723,6 +11869,12 @@ func ValidateMonitorLinkedinAdsAccountResponseBody(body *MonitorLinkedinAdsAccou
 	}
 	if body.MetricsAsOf != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
 	}
 	return
 }
@@ -11767,6 +11919,12 @@ func ValidateMonitorMetaAdsAccountResponseBody(body *MonitorMetaAdsAccountRespon
 	if body.MetricsAsOf != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
 	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
 	return
 }
 
@@ -11809,6 +11967,12 @@ func ValidateMonitorRedditAdsAccountResponseBody(body *MonitorRedditAdsAccountRe
 	}
 	if body.MetricsAsOf != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
 	}
 	return
 }
@@ -11853,6 +12017,12 @@ func ValidateMonitorMicrosoftAdsAccountResponseBody(body *MonitorMicrosoftAdsAcc
 	if body.MetricsAsOf != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
 	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
 	return
 }
 
@@ -11896,6 +12066,12 @@ func ValidateMonitorTwitterAdsAccountResponseBody(body *MonitorTwitterAdsAccount
 	if body.MetricsAsOf != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
 	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
 	return
 }
 
@@ -11921,8 +12097,8 @@ func ValidateCreateGoogleAdsConflictResponseBody(body *CreateGoogleAdsConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
 		}
 	}
 	return
@@ -12385,8 +12561,8 @@ func ValidateCreateLinkedinAdsConflictResponseBody(body *CreateLinkedinAdsConfli
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
 		}
 	}
 	return
@@ -12849,8 +13025,8 @@ func ValidateCreateMetaAdsConflictResponseBody(body *CreateMetaAdsConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
 		}
 	}
 	return
@@ -13312,8 +13488,8 @@ func ValidateCreateRedditAdsConflictResponseBody(body *CreateRedditAdsConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
 		}
 	}
 	return
@@ -13776,8 +13952,8 @@ func ValidateCreateTwitterAdsConflictResponseBody(body *CreateTwitterAdsConflict
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
 		}
 	}
 	return
@@ -14240,8 +14416,8 @@ func ValidateCreateMicrosoftAdsConflictResponseBody(body *CreateMicrosoftAdsConf
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
 		}
 	}
 	return
@@ -14706,8 +14882,8 @@ func ValidateCreateHubspotConflictResponseBody(body *CreateHubspotConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
 		}
 	}
 	return
@@ -15243,8 +15419,8 @@ func ValidateGetGoogleAdsKeywordsConflictResponseBody(body *GetGoogleAdsKeywords
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
 		}
 	}
 	return
@@ -15334,8 +15510,8 @@ func ValidateGetGoogleAdsAudienceConflictResponseBody(body *GetGoogleAdsAudience
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
 		}
 	}
 	return
@@ -16381,6 +16557,23 @@ func ValidateMonitorTwitterAdsAccountBadRequestResponseBody(body *MonitorTwitter
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorTwitterAdsAccountConflictResponseBody runs the validations
+// defined on monitor-twitter-ads-account_Conflict_response_body
+func ValidateMonitorTwitterAdsAccountConflictResponseBody(body *MonitorTwitterAdsAccountConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		}
 	}
 	return
 }

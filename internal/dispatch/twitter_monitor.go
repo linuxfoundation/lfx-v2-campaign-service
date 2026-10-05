@@ -108,6 +108,13 @@ func (d *TwitterDispatcher) ListAccountCampaigns(ctx context.Context, projectID 
 	}
 	out := make([]model.AccountCampaignMetrics, 0, len(campaigns))
 	for _, c := range campaigns {
+		var ranges []model.FlightRange
+		if len(c.Flights) > 0 {
+			ranges = make([]model.FlightRange, 0, len(c.Flights))
+			for _, f := range c.Flights {
+				ranges = append(ranges, model.FlightRange{StartDate: f.StartDate, EndDate: f.EndDate})
+			}
+		}
 		out = append(out, model.AccountCampaignMetrics{
 			PlatformCampaignID: c.ID,
 			Name:               c.Name,
@@ -116,6 +123,7 @@ func (d *TwitterDispatcher) ListAccountCampaigns(ctx context.Context, projectID 
 			TotalBudget:        c.TotalBudget,
 			StartDate:          c.StartDate,
 			EndDate:            c.EndDate,
+			FlightRanges:       ranges,
 			FetchFailed:        c.BudgetUnparseable || c.FlightUnparseable,
 		})
 	}
@@ -135,6 +143,16 @@ func (d *TwitterDispatcher) SubmitAccountReport(ctx context.Context, projectID s
 	if errors.Is(err, twitter.ErrStatsJobBudget) {
 		// Declined before any job was created; the orchestrator logs it as a skip.
 		return nil, fmt.Errorf("submit x ads account report: %w: %w", domain.ErrAccountReportBudgetTooShort, err)
+	}
+	if errors.Is(err, twitter.ErrTooManyActiveCampaigns) {
+		// Permanent while the account stays this busy: the orchestrator surfaces it to the
+		// caller (409) instead of logging it and retrying on every read.
+		return nil, fmt.Errorf("submit x ads account report: %w: %w", domain.ErrAccountTooManyActiveCampaigns, err)
+	}
+	if errors.Is(err, twitter.ErrReportWindowNotWholeHours) {
+		// Permanent for the account's timezone; surfaced the same way. No stats request or job
+		// was made, though the account and its campaigns may already have been read.
+		return nil, fmt.Errorf("submit x ads account report: %w: %w", domain.ErrAccountTimezoneUnsupported, err)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("submit x ads account report: %w", err)

@@ -216,7 +216,7 @@ var NotFoundError = Type("not-found-error", func() {
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
 	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
-		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type")
+		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported")
 		Example("already_exists")
 	})
 })
@@ -1200,18 +1200,29 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 // metrics_as_of / metrics_pending are set by the report-backed platforms only — Microsoft Ads and
 // X. Their delivery metrics come from asynchronous reports (Microsoft's Reporting service, X's
 // stats jobs) that take minutes to build, so the service serves the last report that finished and
-// builds the next one between requests (model.ReportedAccountRead). The other four platforms read
-// their metrics live in the request, so for them the metrics are as of the read itself and both
-// fields are omitted rather than restating that.
+// builds the next one between requests (model.ReportedAccountRead). metrics_window_start /
+// metrics_window_end are set by the same platforms, from that report's own window: the days the
+// metrics actually cover, which `days` (the request, echoed) cannot always state. The other four
+// platforms read their metrics live in the request, so for them the metrics are as of the read
+// itself and over exactly the requested days, and all of these fields are omitted rather than
+// restating that.
 var AccountMonitor = Type("account-monitor", func() {
 	Attribute("account_id", String, "The account this read covers, echoed back from the request.", func() { Example("8666746580") })
-	Attribute("days", Int, "The trailing-days window this read covers, echoed back from the request.", func() { Example(30) })
+	Attribute("days", Int, "The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X's 90-day cap by an hour.", func() { Example(30) })
 	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "Every campaign visible on the account, with the rule engine's per-row pacing output attached.")
 	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the account's campaigns.")
 	Attribute("totals", AccountMonitorTotals)
 	Attribute("metrics_as_of", String, "Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.", func() {
 		Format(FormatDateTime)
 		Example("2026-10-05T14:30:00Z")
+	})
+	Attribute("metrics_window_start", String, "Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report's own window, in the timezone the platform's report is built in — the account's timezone on X; on Microsoft Ads the report's GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.", func() {
+		Format(FormatDate)
+		Example("2026-07-08")
+	})
+	Attribute("metrics_window_end", String, "Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.", func() {
+		Format(FormatDate)
+		Example("2026-10-05")
 	})
 	Attribute("metrics_pending", Boolean, "Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.", func() { Example(false) })
 	Required("account_id", "days", "campaigns", "action_items", "totals")
@@ -2003,7 +2014,14 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"metrics_as_of and metrics_pending — while the next one builds. The first read for an account " +
 			"and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. " +
 			"Conversions are never reported for X. Saved reports are cached platform data, not a record " +
-			"of anything this service did.")
+			"of anything this service did. Two account states are refused with 409 rather than served " +
+			"metrics that would be wrong: more than 200 campaigns active in the window (reason " +
+			"account_too_many_active_campaigns — one report covers at most ten X stats jobs of 20 " +
+			"campaigns), and an account timezone whose local midnight is not a whole UTC hour, such as " +
+			"Asia/Kolkata (reason account_timezone_unsupported — X accepts whole-hour window bounds only, " +
+			"so the account's own days cannot be queried exactly). A 90-day window that crosses a DST " +
+			"fall-back covers the trailing 89 whole local days, because 90 such days are 90 days and an " +
+			"hour, over X's 90-day limit.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2024,6 +2042,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
+		Error("Conflict", ConflictError, "The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2035,6 +2054,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Param("days")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
