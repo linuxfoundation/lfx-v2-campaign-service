@@ -550,6 +550,27 @@ func TestBriefService_CreateCampaigns_RejectsDuplicatePlatforms(t *testing.T) {
 	}
 }
 
+// new_version is refused synchronously for any platform that is not on the slot-version
+// allowlist. Google, LinkedIn and X reuse campaigns by name, so a "new" campaign there would be
+// bound to the existing one upstream; the 400 must come before a job exists.
+func TestBriefService_CreateCampaigns_NewVersionRefusedOutsideTheAllowlist(t *testing.T) {
+	for _, pl := range []string{"google-ads", "linkedin-ads", "twitter-ads"} {
+		repo := newFakeBriefRepo()
+		repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+			ID: "b1", ProjectID: "cncf", Status: model.BriefApproved, DeliveryType: model.DeliveryPaidMarketing,
+		}
+		s := newTestBriefService(repo)
+		_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+			ProjectID: "cncf", BriefID: "b1",
+			Input: &briefs.CampaignCreateInput{Platforms: []string{"microsoft-ads", pl}, NewVersion: true},
+		})
+		var bad *briefs.BadRequestError
+		if !errors.As(err, &bad) || !strings.Contains(bad.Message, "new_version is not supported for "+pl) {
+			t.Errorf("%s: expected a 400 naming the platform, got %T (%v)", pl, err, err)
+		}
+	}
+}
+
 // Create/Get must round-trip the full brief content (event_details, copy,
 // keywords, targeting), not drop it from the response.
 func TestBriefService_ResponseIncludesBriefContent(t *testing.T) {
@@ -805,10 +826,10 @@ func (r *campaignEditRepo) ListCampaignsForBrief(context.Context, string, string
 func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider, string) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
-func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, string, *model.Actor) (bool, *model.Campaign, error) {
+func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
 	return true, nil, nil
 }
-func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Provider, string) error {
+func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Provider, string, int) error {
 	return nil
 }
 func (r *campaignEditRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
@@ -2027,12 +2048,14 @@ func TestIndexedDocsUseSnakeCase(t *testing.T) {
 	pcid := "pc-9"
 	raw, err = json.Marshal(campaignDoc(&briefs.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: "hubspot",
-		PlatformCampaignID: &pcid, CampaignName: "n", Status: "created", Version: 1,
+		PlatformCampaignID: &pcid, CampaignName: "n", Status: "created", SlotVersion: 2, Version: 1,
 	}))
 	if err != nil {
 		t.Fatalf("marshal campaign doc: %v", err)
 	}
-	for _, want := range []string{`"project_id":"cncf"`, `"brief_id":"b1"`, `"platform_campaign_id":"pc-9"`, `"campaign_name":"n"`} {
+	// slot_version is indexed: lists come from the Query Service, and without it two live
+	// campaigns on one slot (a first and a new_version second) would read as duplicates.
+	for _, want := range []string{`"project_id":"cncf"`, `"brief_id":"b1"`, `"platform_campaign_id":"pc-9"`, `"campaign_name":"n"`, `"slot_version":2`} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("campaign doc missing %s\ngot: %s", want, raw)
 		}

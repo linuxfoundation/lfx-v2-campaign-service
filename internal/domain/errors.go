@@ -131,7 +131,7 @@ var (
 	// ErrToggleUnsupported: a platform dispatcher can return it directly without
 	// importing the orchestration layer.
 	//
-	// Google Ads, LinkedIn and Meta implement the capability today; every other platform
+	// Google Ads, LinkedIn, Meta and Reddit implement the capability today; every other platform
 	// still answers 400. Budget writing is added per platform, and each addition is a
 	// separate deliberate decision about that platform's budget model — not a gap to be
 	// closed mechanically. The service layer holds NO allowlist, so what a platform
@@ -979,6 +979,14 @@ var (
 	// one live campaign; the 409 message says so without identifying the other project, which
 	// the caller may not be able to see. Maps to 409.
 	ErrPlatformCampaignAlreadyBound = errors.New("this platform campaign is already bound to another brief")
+
+	// ErrSlotVersionUnavailable indicates a request for ANOTHER campaign on a slot that
+	// already has one could not be claimed because the schema still enforces one live
+	// campaign per (brief, platform, variant). Migration 000037 adds the per-slot-version
+	// index alongside the old one, and the old one is dropped a release later (expand/
+	// contract); until then this is the expected answer to new_version, not a fault.
+	// Nothing was created upstream.
+	ErrSlotVersionUnavailable = errors.New("another campaign on this platform cannot be created for this brief yet")
 
 	// ErrAdoptionRequiresOwnConnection indicates the project has no ad-platform connection of
 	// its own. Maps to 409.

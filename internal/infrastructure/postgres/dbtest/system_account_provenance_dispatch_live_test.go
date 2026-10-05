@@ -73,7 +73,7 @@ func TestLiveClaimThenUpsertPersistsProvenance(t *testing.T) {
 			// Step 1 — the claim. This INSERTs the 'pending' placeholder that makes the
 			// upsert below take its conflict arm.
 			claimed, _, err := repo.ClaimCampaignDispatch(ctx, projectID, briefID,
-				model.ProviderGoogleAds, "", jobID, nil)
+				model.ProviderGoogleAds, "", model.FirstSlotVersion, jobID, nil)
 			if err != nil {
 				t.Fatalf("ClaimCampaignDispatch: %v", err)
 			}
@@ -178,7 +178,7 @@ func TestLiveProvenanceIsWrittenOnceThenFrozen(t *testing.T) {
 			upstream := dbtest.UniqueID(t, "upstream")
 
 			claimed, _, err := repo.ClaimCampaignDispatch(ctx, projectID, briefID,
-				model.ProviderGoogleAds, "", jobID, nil)
+				model.ProviderGoogleAds, "", model.FirstSlotVersion, jobID, nil)
 			if err != nil {
 				t.Fatalf("ClaimCampaignDispatch: %v", err)
 			}

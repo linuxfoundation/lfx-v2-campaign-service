@@ -27,11 +27,15 @@ const maxCampaignBudget = 1_000_000_000.0
 // NOT all bill in micros — one micro is simply the finest unit any of them accepts, so it is the
 // only floor this contract can state for every platform at once (matching the design's Minimum
 // and its comment). LinkedIn and Meta enforce their own, stricter floors on top (whole cents with
-// $10/$100 minimums; one minor unit); Google's floor IS this one — its bounds are the service's
-// own (see googleads_budget.go), so for Google nothing below this check can refuse the amount.
-// It is here for the same reason maxCampaignBudget is: the smallest settable amount is part of
-// the API contract (answered 400, and declared as the design's Minimum), not a platform
-// conversion detail.
+// $10/$100 minimums; one minor unit); Google's (and Reddit's, which also bills in micros) floor IS
+// this one, so for them nothing below this check can refuse the amount.
+//
+// Two bounds use this constant and they are not the same number. The CONTRACT floor is one micro
+// (0.000001, the design's Minimum, enforced by Goa's decoder before this service runs). The
+// RUNTIME check below compares the ROUNDED value, math.Round(budget*microsPerCurrencyUnit) < 1, so
+// its cutoff is half a micro: [0.0000005, 0.000001) rounds up to one micro and is accepted, which
+// only a direct (non-HTTP) caller can reach. It is here for the same reason maxCampaignBudget is:
+// the smallest settable amount is part of the API contract, not a platform conversion detail.
 const microsPerCurrencyUnit = 1_000_000.0
 
 // UpdateCampaignBudget changes how much a campaign may spend ON THE AD PLATFORM, then persists
@@ -97,7 +101,7 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 	// The comparison is against the rounded value, not a literal floor, so it stays in step
 	// with the adapter's own math.Round rather than drifting from it.
 	if math.Round(budget*microsPerCurrencyUnit) < 1 {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "budget is too small to set; it rounds to zero micro-units (it is under 0.0000005 of the account's currency), which no ad platform accepts"}
+		return nil, &briefs.BadRequestError{Code: "400", Message: "budget is too small to set; it rounds to zero micros (one micro is 0.000001 of the account's currency, and this amount is under half of one), which no ad platform accepts"}
 	}
 	budgetType := model.BudgetType(p.BudgetType)
 	if budgetType != model.BudgetDaily && budgetType != model.BudgetLifetime {
@@ -292,7 +296,7 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 				"platform", existing.Platform, "reason", unusableConnectionReason(werr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign budget could not be changed"}
 		case errors.Is(werr, domain.ErrAccountNotSelected):
-			// Above the general arm for the same reason, and on all three budget-writing
+			// Above the general arm for the same reason, and on all four budget-writing
 			// platforms this sentinel is ALWAYS wrapped alongside ErrConnectionNotUsable — so
 			// without this arm the generic message tells an operator to repair credentials that
 			// are perfectly fine when the actual remedy is choosing an ad account. The

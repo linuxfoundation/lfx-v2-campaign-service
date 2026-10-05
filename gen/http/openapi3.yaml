@@ -3137,6 +3137,7 @@ paths:
                                             - kubernetes
                                         variants:
                                             - headline: Join us
+                                new_version: false
                                 platforms:
                                     - reddit-ads
                                     - meta-ads
@@ -3426,6 +3427,7 @@ paths:
                                 platform: Quia sed eum ad sunt impedit sint.
                                 platform_campaign_id: Iusto aspernatur fugit et facere eligendi.
                                 project_id: Est voluptatum nobis ipsam blanditiis.
+                                slot_version: 1
                                 status: Harum nisi illo quia.
                                 version: 3925257924313425571
                 "400":
@@ -3580,6 +3582,7 @@ paths:
                                 platform: Quos est eum tenetur impedit sequi.
                                 platform_campaign_id: Est dolore delectus odio nostrum molestiae.
                                 project_id: Et quo vitae alias nesciunt dolor.
+                                slot_version: 1
                                 status: Tenetur tenetur cum maiores et.
                                 version: 497171543030165729
                 "400":
@@ -3751,6 +3754,7 @@ paths:
                                 platform: In vero.
                                 platform_campaign_id: Rerum dolor.
                                 project_id: Labore temporibus ut sint ipsam impedit.
+                                slot_version: 1
                                 status: Iure voluptas voluptatem impedit est similique.
                                 version: 8909692114394228722
                 "400":
@@ -4372,6 +4376,7 @@ paths:
                                 platform: Amet voluptatem adipisci.
                                 platform_campaign_id: Ipsam consequuntur.
                                 project_id: Quia quibusdam adipisci rerum harum facilis est.
+                                slot_version: 1
                                 status: Tenetur enim sed architecto perspiciatis dolorem voluptas.
                                 version: 1051231997937712301
                 "400":
@@ -4526,6 +4531,7 @@ paths:
                                 platform: Enim corrupti.
                                 platform_campaign_id: Qui voluptas culpa.
                                 project_id: Expedita nihil molestiae soluta consequuntur sapiente.
+                                slot_version: 1
                                 status: Delectus non aut ipsum.
                                 version: 1315230394652948056
                 "400":
@@ -6720,6 +6726,8 @@ paths:
                                       status: ENABLED
                                       total_budget: 5000
                                 days: 30
+                                metrics_as_of: "2026-10-05T14:30:00Z"
+                                metrics_pending: false
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -8611,6 +8619,8 @@ paths:
                                       status: ENABLED
                                       total_budget: 5000
                                 days: 30
+                                metrics_as_of: "2026-10-05T14:30:00Z"
+                                metrics_pending: false
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -9523,6 +9533,8 @@ paths:
                                       status: ENABLED
                                       total_budget: 5000
                                 days: 30
+                                metrics_as_of: "2026-10-05T14:30:00Z"
+                                metrics_pending: false
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -10305,6 +10317,196 @@ paths:
                             example:
                                 code: "428"
                                 message: An If-Match header is required.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/connection-microsoft-ads/account-monitor:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: monitor-microsoft-ads-account lfx-v2-campaign-service-connections
+            description: Read every live campaign on a Microsoft Advertising account with pacing and action items derived by this service's rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is, and resolved from the project's OWN connection only. The campaign list (names, statuses, daily budgets) is read live; delivery metrics come from Microsoft's asynchronous Reporting service, which takes minutes to build a report, so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Saved reports are cached platform data, not a record of anything this service did.
+            operationId: lfx-v2-campaign-service-connections#monitor-microsoft-ads-account
+            parameters:
+                - name: account_id
+                  in: query
+                  description: The Microsoft Advertising account to read.
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: string
+                    description: The Microsoft Advertising account to read.
+                    example: "187654321"
+                    pattern: ^[1-9][0-9]{0,17}$
+                    maxLength: 18
+                  example: "187654321"
+                - name: days
+                  in: query
+                  description: Trailing days to read metrics over.
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: integer
+                    description: Trailing days to read metrics over.
+                    example: 30
+                    format: int64
+                    minimum: 7
+                    maximum: 90
+                  example: 30
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AccountMonitor'
+                            example:
+                                account_id: "8666746580"
+                                action_items:
+                                    - action: Increase daily budget or check for delivery limits
+                                      campaign_id: "24183781329"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      issue: 'Underspending: 42% of expected spend'
+                                      priority: MED
+                                    - action: Increase daily budget or check for delivery limits
+                                      campaign_id: "24183781329"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      issue: 'Underspending: 42% of expected spend'
+                                      priority: MED
+                                campaigns:
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: overspending
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: overspending
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: overspending
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
+                                days: 30
+                                metrics_as_of: "2026-10-05T14:30:00Z"
+                                metrics_pending: false
+                                totals:
+                                    campaign_count: 14
+                                    clicks: 11420
+                                    conversions: 212.5
+                                    impressions: 184200
+                                    spend: 1842.55
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError103'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -11181,6 +11383,8 @@ paths:
                                       status: ENABLED
                                       total_budget: 5000
                                 days: 30
+                                metrics_as_of: "2026-10-05T14:30:00Z"
+                                metrics_pending: false
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -12965,6 +13169,15 @@ components:
                     description: The trailing-days window this read covers, echoed back from the request.
                     example: 30
                     format: int64
+                metrics_as_of:
+                    type: string
+                    description: 'Microsoft Ads only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Microsoft reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                    example: "2026-10-05T14:30:00Z"
+                    format: date-time
+                metrics_pending:
+                    type: boolean
+                    description: 'Microsoft Ads only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                    example: false
                 totals:
                     $ref: '#/components/schemas/AccountMonitorTotals'
             example:
@@ -13023,6 +13236,8 @@ components:
                       status: ENABLED
                       total_budget: 5000
                 days: 30
+                metrics_as_of: "2026-10-05T14:30:00Z"
+                metrics_pending: false
                 totals:
                     campaign_count: 14
                     clicks: 11420
@@ -16033,6 +16248,12 @@ components:
                     type: string
                     description: Owning project
                     example: Sint at ipsum rerum et.
+                slot_version:
+                    type: integer
+                    description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                    example: 1
+                    format: int64
+                    minimum: 1
                 status:
                     type: string
                     description: Campaign status
@@ -16050,6 +16271,7 @@ components:
                 platform: Nihil id eius.
                 platform_campaign_id: Assumenda consequatur repellat vitae laboriosam qui.
                 project_id: Necessitatibus voluptatem ut dolore itaque soluta deserunt.
+                slot_version: 1
                 status: Illo molestiae ut sed.
                 version: 593220271754621541
             required:
@@ -16059,6 +16281,7 @@ components:
                 - platform
                 - campaign_name
                 - status
+                - slot_version
                 - version
         Campaign2:
             type: object
@@ -16087,6 +16310,12 @@ components:
                     type: string
                     description: Owning project
                     example: Minima veritatis impedit quia perspiciatis.
+                slot_version:
+                    type: integer
+                    description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                    example: 1
+                    format: int64
+                    minimum: 1
                 status:
                     type: string
                     description: Campaign status
@@ -16103,6 +16332,7 @@ components:
                 platform: Occaecati molestias ea et nostrum officia quo.
                 platform_campaign_id: Alias minima soluta vitae et in ab.
                 project_id: Recusandae omnis.
+                slot_version: 1
                 status: Esse facilis eaque explicabo molestiae ab tenetur.
                 version: 3019486667174714
             required:
@@ -16112,6 +16342,7 @@ components:
                 - platform
                 - campaign_name
                 - status
+                - slot_version
                 - version
         Campaign3:
             type: object
@@ -16140,6 +16371,12 @@ components:
                     type: string
                     description: Owning project
                     example: Totam voluptates delectus fugit.
+                slot_version:
+                    type: integer
+                    description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                    example: 1
+                    format: int64
+                    minimum: 1
                 status:
                     type: string
                     description: Campaign status
@@ -16156,6 +16393,7 @@ components:
                 platform: Vitae deserunt debitis minima.
                 platform_campaign_id: Molestiae et veritatis amet fuga repudiandae enim.
                 project_id: Omnis animi omnis ut tempora incidunt.
+                slot_version: 1
                 status: Pariatur corporis eos ut.
                 version: 469702199722590689
             required:
@@ -16165,6 +16403,7 @@ components:
                 - platform
                 - campaign_name
                 - status
+                - slot_version
                 - version
         Campaign4:
             type: object
@@ -16193,6 +16432,12 @@ components:
                     type: string
                     description: Owning project
                     example: Dolor non.
+                slot_version:
+                    type: integer
+                    description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                    example: 1
+                    format: int64
+                    minimum: 1
                 status:
                     type: string
                     description: Campaign status
@@ -16209,6 +16454,7 @@ components:
                 platform: Asperiores perspiciatis doloribus iure.
                 platform_campaign_id: Mollitia totam officiis repellat.
                 project_id: Fugit repudiandae dolore alias provident.
+                slot_version: 1
                 status: Voluptas assumenda reiciendis.
                 version: 3524274000852413512
             required:
@@ -16218,6 +16464,7 @@ components:
                 - platform
                 - campaign_name
                 - status
+                - slot_version
                 - version
         Campaign5:
             type: object
@@ -16246,6 +16493,12 @@ components:
                     type: string
                     description: Owning project
                     example: Amet numquam sit qui cum.
+                slot_version:
+                    type: integer
+                    description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                    example: 1
+                    format: int64
+                    minimum: 1
                 status:
                     type: string
                     description: Campaign status
@@ -16262,6 +16515,7 @@ components:
                 platform: Quo sunt in suscipit.
                 platform_campaign_id: Ut error.
                 project_id: Reiciendis dicta culpa dolore.
+                slot_version: 1
                 status: Et perspiciatis amet qui et doloremque nemo.
                 version: 6416569196866466769
             required:
@@ -16271,6 +16525,7 @@ components:
                 - platform
                 - campaign_name
                 - status
+                - slot_version
                 - version
         Campaign6:
             type: object
@@ -16299,6 +16554,12 @@ components:
                     type: string
                     description: Owning project
                     example: Saepe distinctio dolorem vel a animi veniam.
+                slot_version:
+                    type: integer
+                    description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                    example: 1
+                    format: int64
+                    minimum: 1
                 status:
                     type: string
                     description: Campaign status
@@ -16315,6 +16576,7 @@ components:
                 platform: Sunt laboriosam.
                 platform_campaign_id: Dicta quae magni dicta odio quo esse.
                 project_id: Necessitatibus veritatis ullam nemo sed omnis.
+                slot_version: 1
                 status: A delectus natus cupiditate dolorem fuga quia.
                 version: 8585318525416244582
             required:
@@ -16324,6 +16586,7 @@ components:
                 - platform
                 - campaign_name
                 - status
+                - slot_version
                 - version
         CampaignActionItem:
             type: object
@@ -16402,6 +16665,11 @@ components:
                                 - kubernetes
                             variants:
                                 - headline: Join us
+                new_version:
+                    type: boolean
+                    description: Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Until the follow-up release removes the one-campaign-per-slot index, a request on a platform that already has a live campaign fails that platform with 'not available yet' and creates nothing.
+                    default: false
+                    example: false
                 platforms:
                     type: array
                     items:
@@ -16443,6 +16711,7 @@ components:
                             - kubernetes
                         variants:
                             - headline: Join us
+                new_version: false
                 platforms:
                     - reddit-ads
                     - meta-ads
@@ -16921,6 +17190,7 @@ components:
                                 - kubernetes
                             variants:
                                 - headline: Join us
+                    new_version: false
                     platforms:
                         - reddit-ads
                         - meta-ads
@@ -22849,6 +23119,24 @@ components:
                 - code
                 - message
         UnauthorizedError102:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "401"
+                message:
+                    type: string
+                    description: Error message
+                    example: Unauthorized.
+            description: Unauthorized
+            example:
+                code: "401"
+                message: Unauthorized.
+            required:
+                - code
+                - message
+        UnauthorizedError103:
             type: object
             properties:
                 code:

@@ -111,9 +111,11 @@ type BriefRepository interface {
 type CampaignReader interface {
 	// GetCampaign returns a single campaign under a brief, or ErrNotFound.
 	GetCampaign(ctx context.Context, projectID, briefID, id string) (*model.Campaign, error)
-	// GetCampaignByPlatform returns the campaign for a (brief, platform, variant)
-	// slot, or
-	// ErrNotFound. Used to make dispatch idempotent: a brief already dispatched to
+	// GetCampaignByPlatform returns the LATEST live campaign for a (brief, platform,
+	// variant) slot — the one with the highest SlotVersion — or ErrNotFound. Latest,
+	// because that is the campaign a retry is retrying and the one a new_version request
+	// builds on; and any live row at all is enough for a caller asking "is this slot
+	// taken". Used to make dispatch idempotent: a brief already dispatched to
 	// a platform must not create a second upstream (paid) campaign on retry. Scoped
 	// by projectID for tenant isolation, matching GetCampaign/ClaimCampaignDispatch.
 	// `variant` names WHICH of that platform's campaign types is wanted — Google has
@@ -183,12 +185,16 @@ type CampaignReader interface {
 	// hand and threads it down. nil is legitimate: Start reads the actor with
 	// attributedActor, which returns nil — after logging a warning — when the request
 	// carried no authenticated principal, and NULL means "not recorded", not "nobody".
-	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant, jobID string, by *model.Actor) (claimed bool, row *model.Campaign, err error)
+	//
+	// slotVersion names WHICH campaign on the slot is being claimed (model.Campaign.
+	// SlotVersion); 1 for the first. A claim for a slot version the schema cannot hold yet
+	// returns domain.ErrSlotVersionUnavailable, having written nothing.
+	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (claimed bool, row *model.Campaign, err error)
 	// DeleteDispatchClaim removes a still-'pending' claim row for (brief, platform)
 	// so the pair can be retried after a dispatch fails before the upstream
 	// campaign is created. It only deletes rows still in 'pending' status, so it
 	// can never remove a real (created) campaign.
-	DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider, variant string) error
+	DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider, variant string, slotVersion int) error
 }
 
 // CampaignLockToken is an opaque handle identifying one successful ClaimCampaignVersion call.
