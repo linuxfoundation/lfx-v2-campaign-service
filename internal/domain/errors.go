@@ -171,7 +171,8 @@ var (
 	// This is refused rather than written, and the platform was NOT changed when the caller
 	// sees it: the adapter refuses it from its read BEFORE the mutate, or — Microsoft's
 	// server-side backstop for a budget attached between that read and the write — the
-	// platform DEFINITELY refused the mutate (CampaignServiceCannotUpdateSharedBudget). Maps to 409: it is a permanent property of how that
+	// platform DEFINITELY refused the mutate (CampaignServiceCannotUpdateSharedBudget). An
+	// outcome the platform did not confirm either way is never this sentinel. Maps to 409: it is a permanent property of how that
 	// budget was set up, so retrying cannot help. The remedy is a human one and belongs in
 	// the ad platform — give the campaign its own budget, or accept the shared change there
 	// with full sight of what else it moves.

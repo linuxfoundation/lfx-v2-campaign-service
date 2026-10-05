@@ -31,11 +31,13 @@ var microsoftCampaignIDRE = regexp.MustCompile(`^[1-9][0-9]*$`)
 // other campaigns also draw on. So the shared-budget guard Google has, and LinkedIn deliberately
 // lacks, reappears here, reached through BudgetId.
 //
-// DAILY ONLY. Microsoft's Search campaigns take DailyBudgetStandard or DailyBudgetAccelerated;
-// LifetimeBudgetStandard is documented as an Audience-campaign feature, and this service creates
-// and reads Search campaigns only. A lifetime request is therefore the pacing-mismatch refusal
-// every sibling makes — ErrBudgetUnwritable, 409 — raised here before anything is resolved,
-// because no Microsoft campaign this path can reach is paced that way.
+// DAILY STANDARD ONLY. Microsoft's BudgetLimitType reference documents both
+// DailyBudgetAccelerated and LifetimeBudgetStandard as available ONLY to Audience campaigns
+// (https://learn.microsoft.com/en-us/advertising/campaign-management-service/budgetlimittype),
+// and this service creates and reads Search campaigns only — so DailyBudgetStandard is the one
+// pacing a campaign this path can reach may have. A lifetime request is therefore the
+// pacing-mismatch refusal every sibling makes — ErrBudgetUnwritable, 409 — raised here before
+// anything is resolved, because no Microsoft campaign this path can reach is paced that way.
 //
 // Amounts are a plain decimal in the AD ACCOUNT's currency — not micros, not minor units — and
 // are sent unrounded; see microsoft.ValidateDailyBudget for why, and for what decides the
@@ -43,7 +45,9 @@ var microsoftCampaignIDRE = regexp.MustCompile(`^[1-9][0-9]*$`)
 //
 // NOTHING IS MUTATED UNTIL EVERY GUARD HAS PASSED, so a caller seeing any refusal below knows the
 // platform is untouched — which is what lets the service answer them 409 rather than "verify
-// upstream".
+// upstream". The PUT's own DEFINITE refusals (a shared budget attached since the read, an amount
+// Microsoft rejects) are sent-and-refused rather than refused-before-sending, but carry the same
+// guarantee: Microsoft confirmed nothing was applied. An UNCONFIRMED outcome is never one of them.
 func (d *MicrosoftDispatcher) WriteBudget(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, budget model.BudgetChange) error {
 	// PROVENANCE, FAILED CLOSED, BEFORE ANYTHING ELSE.
 	//
@@ -126,16 +130,21 @@ func (d *MicrosoftDispatcher) WriteBudget(ctx context.Context, projectID string,
 			campaignID, domain.ErrBudgetShared)
 	}
 
-	// GUARD 3 — THE PACING MUST BE A DAILY TYPE MICROSOFT REPORTED. The request is already known
-	// to be daily; this establishes that the campaign is too, and which of the two daily types
-	// to send back so the write changes the amount and nothing else. An unreported type is
-	// refused rather than defaulted: defaulting to Standard would silently convert an
-	// Accelerated campaign.
+	// GUARD 3 — THE PACING MUST BE DailyBudgetStandard, AS MICROSOFT REPORTED IT. The request is
+	// already known to be daily; this establishes that the campaign is too. The read asks for
+	// CampaignType Search explicitly, and Microsoft documents DailyBudgetAccelerated as available
+	// ONLY to Audience campaigns with unshared campaign-level budgets, so a Search campaign
+	// reporting it is a response that contradicts its own documentation. It is refused rather than
+	// echoed back on the PUT: a write resting on a read this service cannot explain is a guard in
+	// name only. An unreported type is refused rather than defaulted for the same reason.
 	switch current.BudgetType {
-	case microsoft.BudgetTypeDailyStandard, microsoft.BudgetTypeDailyAccelerated:
+	case microsoft.BudgetTypeDailyStandard:
 	case "":
 		return fmt.Errorf("write microsoft campaign budget: campaign %s did not report its budget type, so the write cannot preserve it: %w",
 			campaignID, domain.ErrBudgetUnwritable)
+	case microsoft.BudgetTypeDailyAccelerated:
+		return fmt.Errorf("write microsoft campaign budget: campaign %s was read as a Search campaign but reports budget type %q, which Microsoft Advertising documents as available only to Audience campaigns; this service does not write a budget whose reported pacing contradicts the campaign's type — check the campaign in Microsoft Advertising: %w",
+			campaignID, current.BudgetType, domain.ErrBudgetUnwritable)
 	case microsoft.BudgetTypeLifetimeStandard:
 		return fmt.Errorf("write microsoft campaign budget: campaign %s is paced as %q upstream but the request asks for %q; this endpoint changes a budget's amount, never its pacing model — change the pacing in Microsoft Advertising, then set the amount here: %w",
 			campaignID, model.BudgetLifetime, budget.Type, domain.ErrBudgetUnwritable)
@@ -164,9 +173,13 @@ func (d *MicrosoftDispatcher) WriteBudget(ctx context.Context, projectID string,
 			return &unconfirmedBudgetWriteError{err: werr}
 		case errors.Is(err, microsoft.ErrSharedBudget):
 			// Microsoft's own backstop for a budget attached between the read and the write.
-			// Nothing changed; same 409 as the guard above.
+			// The PUT WAS sent, but this is a DEFINITE refusal — Microsoft confirmed nothing was
+			// applied — so it is the same "platform unchanged" 409 as the guard above. That, not
+			// "refused before any mutate", is what ErrBudgetShared promises.
 			return fmt.Errorf("%w: %w", werr, domain.ErrBudgetShared)
 		case errors.Is(err, microsoft.ErrBudgetAmountInvalid):
+			// Likewise sent and DEFINITELY refused: Microsoft rejected the amount and applied
+			// nothing, so the 400 still means "platform unchanged".
 			return microsoftBudgetAmountRejected(err)
 		}
 		return werr

@@ -132,7 +132,7 @@ func TestUpdateCampaignDailyBudget_SendsAmountAndPreservesBudgetType(t *testing.
 		rec.record(r)
 		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
 	})
-	if err := c.UpdateCampaignDailyBudget(context.Background(), "321", 125.5, BudgetTypeDailyAccelerated); err != nil {
+	if err := c.UpdateCampaignDailyBudget(context.Background(), "321", 125.5, BudgetTypeDailyStandard); err != nil {
 		t.Fatalf("UpdateCampaignDailyBudget: %v", err)
 	}
 	reqs := rec.all()
@@ -141,7 +141,7 @@ func TestUpdateCampaignDailyBudget_SendsAmountAndPreservesBudgetType(t *testing.
 	}
 	// The amount is sent as the decimal it is — not micros, not rounded — and the budget type
 	// is the one passed in, so the write changes the amount and nothing else.
-	if want := `{"AccountId":1234567,"Campaigns":[{"Id":321,"BudgetType":"DailyBudgetAccelerated","DailyBudget":125.5}]}`; reqs[0].body != want {
+	if want := `{"AccountId":1234567,"Campaigns":[{"Id":321,"BudgetType":"DailyBudgetStandard","DailyBudget":125.5}]}`; reqs[0].body != want {
 		t.Errorf("PUT body = %s, want %s", reqs[0].body, want)
 	}
 }
@@ -159,6 +159,8 @@ func TestUpdateCampaignDailyBudget_RejectsBadInputBeforeAnyCall(t *testing.T) {
 	}{
 		{name: "non-numeric id", id: "abc", budgetType: BudgetTypeDailyStandard, amount: 10},
 		{name: "lifetime type", id: "321", budgetType: BudgetTypeLifetimeStandard, amount: 10},
+		// Audience-only per Microsoft's BudgetLimitType reference, so never sent for a Search campaign.
+		{name: "accelerated type", id: "321", budgetType: BudgetTypeDailyAccelerated, amount: 10},
 		{name: "empty type", id: "321", budgetType: "", amount: 10},
 		{name: "zero", id: "321", budgetType: BudgetTypeDailyStandard, amount: 0, amountErr: true},
 		{name: "NaN", id: "321", budgetType: BudgetTypeDailyStandard, amount: math.NaN(), amountErr: true},

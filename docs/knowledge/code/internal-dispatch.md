@@ -1019,9 +1019,12 @@ which case the campaign draws on a SHARED `Budget` entity and both fields are re
 a pool other campaigns also spend from. So the shared-budget guard Google has, and LinkedIn
 deliberately lacks, reappears here, reached through `BudgetId`.
 
-**Daily only.** v13 Search campaigns take `DailyBudgetStandard` or `DailyBudgetAccelerated`;
-`LifetimeBudgetStandard` exists in the enum but is documented as Audience-only, and this service
-creates and reads Search campaigns only. A `lifetime` request is therefore the SAME pacing
+**Daily Standard only.** Microsoft's
+[BudgetLimitType](https://learn.microsoft.com/en-us/advertising/campaign-management-service/budgetlimittype)
+reference documents both `DailyBudgetAccelerated` ("only available for Audience campaigns that
+use unshared campaign-level budgets") and `LifetimeBudgetStandard` as Audience-only, and this
+service creates and reads Search campaigns only — so `DailyBudgetStandard` is the one pacing a
+campaign this path can reach may have. A `lifetime` request is therefore the SAME pacing
 refusal every sibling makes — `ErrBudgetUnwritable` → **409**, not a 400 — and is raised locally
 before any credential is decrypted, because no Microsoft campaign this path can reach is paced
 that way. (409 rather than `ErrBudgetWriteUnsupported`'s 400 is deliberate: that sentinel's
@@ -1046,9 +1049,12 @@ Order, every refusal before the one mutate:
    from the base campaign and Microsoft documents it as not settable.
 7. **Shared budget** → `ErrBudgetShared` (409); an UNREADABLE `BudgetId` → `ErrBudgetUnwritable`,
    never assumed private.
-8. **Budget type** must be one of the two daily types Microsoft REPORTED; unreported, lifetime or
-   unknown → `ErrBudgetUnwritable`. The reported type is what the write sends back, so an
-   Accelerated campaign stays Accelerated — defaulting to Standard would silently re-pace it.
+8. **Budget type** must be `DailyBudgetStandard` as Microsoft REPORTED it; unreported, lifetime or
+   unknown → `ErrBudgetUnwritable`. **`DailyBudgetAccelerated` is refused too**
+   (`ErrBudgetUnwritable`, zero PUTs): the read asked for `CampaignType` Search, and Microsoft
+   documents Accelerated as Audience-only, so a Search campaign reporting it is a contradictory
+   response — failed closed rather than echoed back on the PUT. The reported type is what the
+   write sends back, never a default.
 
 Then ONE `PUT Campaigns` (UpdateCampaigns), idempotent, body
 `{"AccountId":…,"Campaigns":[{"Id":…,"BudgetType":<reported>,"DailyBudget":<amount>}]}`. The
@@ -1056,7 +1062,10 @@ mutate's outcome is classified: `microsoft.IsOutcomeUnconfirmed` (5xx, transport
 exhausted 429, or a 200 that does not answer `PartialErrors`) → `unconfirmedBudgetWriteError`
 (503 "verify upstream"); Microsoft's `CampaignServiceCannotUpdateSharedBudget` (a budget attached
 between the read and the write) → `ErrBudgetShared`; `CampaignServiceInvalidDailyBudget` or a
-budget below spend → `rejectedBudgetAmountError` (**400** with the client's sentence); any other
+budget below spend → `rejectedBudgetAmountError` (**400** with the client's sentence). Those two
+follow a PUT that WAS sent, so on Microsoft these sentinels do not mean "refused before any
+mutate": they mean what they mean on every platform — the platform confirmed NO change, here by a
+DEFINITE refusal of the mutate. An unconfirmed outcome is never either of them. Any other
 `PartialError` on the single operation, or a definite 4xx, is a definite failure (503 "not
 modified").
 

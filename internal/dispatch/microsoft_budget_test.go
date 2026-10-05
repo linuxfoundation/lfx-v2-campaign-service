@@ -110,28 +110,41 @@ func assertNoMicrosoftWrite(t *testing.T, reqs []budgetRequest) {
 }
 
 func TestMicrosoft_WriteBudget_DailyWritesAmountAndKeepsBudgetType(t *testing.T) {
-	for _, budgetType := range []string{microsoft.BudgetTypeDailyStandard, microsoft.BudgetTypeDailyAccelerated} {
-		t.Run(budgetType, func(t *testing.T) {
-			d, calls := msBudgetDispatcher(t, msOwnBudget(budgetType), http.StatusOK, `{"PartialErrors":[]}`)
-			err := d.WriteBudget(context.Background(), "proj", model.ProviderMicrosoftAds, msBudgetCampaign(),
-				model.BudgetChange{Amount: 75.25, Type: model.BudgetDaily})
-			if err != nil {
-				t.Fatalf("WriteBudget: %v", err)
-			}
-			reqs := calls()
-			if len(reqs) != 2 || !strings.HasSuffix(reqs[0].Path, "/Campaigns/QueryByIds") {
-				t.Fatalf("want the QueryByIds read then one write, got %+v", reqs)
-			}
-			writes := msWrites(reqs)
-			if len(writes) != 1 || !strings.HasSuffix(writes[0].Path, "/CampaignManagement/v13/Campaigns") {
-				t.Fatalf("want exactly one PUT .../Campaigns, got %+v", writes)
-			}
-			want := `{"AccountId":1234567,"Campaigns":[{"Id":321,"BudgetType":"` + budgetType + `","DailyBudget":75.25}]}`
-			if writes[0].Body != want {
-				t.Errorf("PUT body = %s\nwant       %s", writes[0].Body, want)
-			}
-		})
+	d, calls := msBudgetDispatcher(t, msOwnBudget(microsoft.BudgetTypeDailyStandard), http.StatusOK, `{"PartialErrors":[]}`)
+	err := d.WriteBudget(context.Background(), "proj", model.ProviderMicrosoftAds, msBudgetCampaign(),
+		model.BudgetChange{Amount: 75.25, Type: model.BudgetDaily})
+	if err != nil {
+		t.Fatalf("WriteBudget: %v", err)
 	}
+	reqs := calls()
+	if len(reqs) != 2 || !strings.HasSuffix(reqs[0].Path, "/Campaigns/QueryByIds") {
+		t.Fatalf("want the QueryByIds read then one write, got %+v", reqs)
+	}
+	writes := msWrites(reqs)
+	if len(writes) != 1 || !strings.HasSuffix(writes[0].Path, "/CampaignManagement/v13/Campaigns") {
+		t.Fatalf("want exactly one PUT .../Campaigns, got %+v", writes)
+	}
+	want := `{"AccountId":1234567,"Campaigns":[{"Id":321,"BudgetType":"DailyBudgetStandard","DailyBudget":75.25}]}`
+	if writes[0].Body != want {
+		t.Errorf("PUT body = %s\nwant       %s", writes[0].Body, want)
+	}
+}
+
+// TestMicrosoft_WriteBudget_AcceleratedSearchCampaignRefused pins GUARD 3's contradiction case:
+// Microsoft documents DailyBudgetAccelerated as Audience-only, and the read asks for Search
+// campaigns, so a Search campaign reporting it is refused — and the platform is not written —
+// rather than having the contradictory type echoed back on the PUT.
+func TestMicrosoft_WriteBudget_AcceleratedSearchCampaignRefused(t *testing.T) {
+	d, calls := msBudgetDispatcher(t, msOwnBudget(microsoft.BudgetTypeDailyAccelerated), http.StatusOK, `{"PartialErrors":[]}`)
+	err := d.WriteBudget(context.Background(), "proj", model.ProviderMicrosoftAds, msBudgetCampaign(),
+		model.BudgetChange{Amount: 75.25, Type: model.BudgetDaily})
+	if !errors.Is(err, domain.ErrBudgetUnwritable) {
+		t.Fatalf("err = %v, want ErrBudgetUnwritable", err)
+	}
+	if !strings.Contains(err.Error(), "only to Audience campaigns") {
+		t.Errorf("err = %v, want it to say Accelerated is Audience-only", err)
+	}
+	assertNoMicrosoftWrite(t, calls())
 }
 
 // TestMicrosoft_WriteBudget_Guards is the refusal table: each case must return its sentinel AND

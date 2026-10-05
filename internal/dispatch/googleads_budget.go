@@ -201,7 +201,7 @@ func (e *unconfirmedBudgetWriteError) Unconfirmed() bool { return true }
 //
 // It satisfies the same errors.Is/errors.As split the unconfirmed wrapper does: Unwrap reaches
 // domain.ErrBudgetAmountRejected so the service's switch arm matches, while the reason comes
-// back through a behavioral interface. Nothing has been written when this is returned — every
+// back through a behavioral interface. The platform is unchanged when this is returned — every
 // adapter-side amount validation happens before the first mutating call, and Microsoft's, the
 // one platform whose floor is stated only by its own mutate, is a DEFINITE refusal of that
 // mutate (a PartialError on a 200, or a 4xx), never an ambiguous outcome.

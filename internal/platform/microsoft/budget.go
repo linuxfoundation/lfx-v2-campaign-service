@@ -26,10 +26,11 @@ import (
 //     the campaign is using a shared budget." On a shared budget both fields become read-only
 //     echoes of the shared Budget, and writing them is refused upstream with
 //     CampaignServiceCannotUpdateSharedBudget (1159).
-//   - BudgetType is DailyBudgetStandard or DailyBudgetAccelerated for a Search campaign.
-//     LifetimeBudgetStandard exists in the enum but is documented as available ONLY to Audience
-//     campaigns; this service creates and reads Search campaigns only, so a lifetime budget is
-//     not a shape this path can write.
+//   - BudgetType is DailyBudgetStandard for a Search campaign. DailyBudgetAccelerated and
+//     LifetimeBudgetStandard exist in the enum but are documented as available ONLY to Audience
+//     campaigns (https://learn.microsoft.com/en-us/advertising/campaign-management-service/budgetlimittype);
+//     this service creates and reads Search campaigns only, so neither is a shape this path can
+//     write, and a Search campaign reporting either is refused by the dispatcher.
 //   - An EXPERIMENT campaign's budget is inherited from its base campaign: "With experiment
 //     campaigns you cannot set the Budget, BudgetType, or Status."
 //
@@ -43,7 +44,10 @@ const (
 	// BudgetTypeDailyStandard spreads the daily budget evenly through the day. The create path
 	// sets this one.
 	BudgetTypeDailyStandard = "DailyBudgetStandard"
-	// BudgetTypeDailyAccelerated spends the daily budget as fast as traffic allows.
+	// BudgetTypeDailyAccelerated spends the daily budget as fast as traffic allows. Microsoft
+	// documents it as available only to Audience campaigns that use unshared campaign-level
+	// budgets, so it is never written here; it is named so a read reporting it on a Search
+	// campaign can be recognized and refused rather than treated as unknown.
 	BudgetTypeDailyAccelerated = "DailyBudgetAccelerated"
 	// BudgetTypeLifetimeStandard is a whole-flight budget, documented as available only to
 	// Audience campaigns with an unshared campaign-level budget.
@@ -70,10 +74,11 @@ const (
 	errCodeCannotUpdateSharedNum    = "1159"
 )
 
-// ErrSharedBudget marks a budget write Microsoft REFUSED because the campaign is attached to a
-// shared Budget (CampaignServiceCannotUpdateSharedBudget). The dispatcher refuses a shared budget
-// itself, from the read, before any write; this is the server-side backstop for a budget attached
-// between that read and the write. Nothing was changed when it is returned.
+// ErrSharedBudget marks a budget write Microsoft DEFINITELY REFUSED because the campaign is
+// attached to a shared Budget (CampaignServiceCannotUpdateSharedBudget). The dispatcher refuses a
+// shared budget itself, from the read, before any write; this is the server-side backstop for a
+// budget attached between that read and the write. The PUT was sent, but Microsoft confirmed
+// nothing was changed when it is returned; an unconfirmed outcome is never this error.
 var ErrSharedBudget = errors.New("microsoft-ads: the campaign uses a shared budget, which cannot be changed through the campaign")
 
 // ErrBudgetAmountInvalid marks a budget write refused because of the AMOUNT — by this client's
@@ -261,7 +266,8 @@ type msCampaignBudgetUpdate struct {
 }
 
 // UpdateCampaignDailyBudget sets an existing campaign's DailyBudget, keeping budgetType — which
-// must be one of the two DAILY types, and should be the one the campaign already reports.
+// must be DailyBudgetStandard, the only daily type a Search campaign can have (DailyBudgetAccelerated
+// is Audience-only), and should be the one the campaign already reports.
 //
 // The amount is sent as the JSON double encoding/json produces for it — the shortest decimal that
 // round-trips — with NO rounding, for the reason ValidateDailyBudget gives.
@@ -280,8 +286,8 @@ func (c *Client) UpdateCampaignDailyBudget(ctx context.Context, campaignID strin
 	if !idRE.MatchString(id) {
 		return fmt.Errorf("microsoft-ads: campaign id %q is not a numeric id", campaignID)
 	}
-	if budgetType != BudgetTypeDailyStandard && budgetType != BudgetTypeDailyAccelerated {
-		return fmt.Errorf("microsoft-ads: budget type %q is not a daily budget type (want %s or %s)", budgetType, BudgetTypeDailyStandard, BudgetTypeDailyAccelerated)
+	if budgetType != BudgetTypeDailyStandard {
+		return fmt.Errorf("microsoft-ads: budget type %q is not writable on a Search campaign (want %s)", budgetType, BudgetTypeDailyStandard)
 	}
 	if err := ValidateDailyBudget(amount); err != nil {
 		return err

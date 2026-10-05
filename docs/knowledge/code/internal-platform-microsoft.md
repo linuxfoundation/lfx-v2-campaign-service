@@ -805,8 +805,11 @@ Two further details belong to this layer specifically:
   UpdateCampaigns as `PUT CampaignManagement/v13/Campaigns`, body
   `{"AccountId":…,"Campaigns":[{"Id":…,"BudgetType":…,"DailyBudget":…}]}`. Only Id plus the two
   budget fields are sent ("If no value is set for the update, this setting is not changed").
-  `budgetType` must be one of the DAILY types and is the one the read reported, so the PUT
-  changes the amount and nothing else. The amount is validated by `ValidateDailyBudget` (finite,
+  `budgetType` must be `DailyBudgetStandard` — the only daily type a Search campaign can have,
+  since Microsoft's BudgetLimitType reference documents `DailyBudgetAccelerated` as available only
+  to Audience campaigns — and is the one the read reported, so the PUT changes the amount and
+  nothing else. Any other value is refused before a request is made. `BudgetTypeDailyAccelerated`
+  stays named so the dispatcher can recognize, and refuse, a Search campaign reporting it. The amount is validated by `ValidateDailyBudget` (finite,
   > 0, ≤ `maxBudget` — the create path's bounds) and sent UNROUNDED: this client does not know
   the account currency, so rounding to an assumed two decimals would change a JPY amount; Microsoft's
   own validation decides the smallest settable amount. Its over-maximum refusal names the amount
@@ -824,7 +827,10 @@ Two further details belong to this layer specifically:
   whose client-safe sentence `BudgetAmountReason` returns. That sentence renders the amount as a
   plain decimal (`strconv.FormatFloat(amount, 'f', -1, 64)`), never `%g`'s exponent form —
   seven-figure daily budgets are ordinary in JPY, KRW, IDR and VND, and `1.5e+06` is not a figure
-  to hand a caller. Anything else is returned as the definite failure it is.
+  to hand a caller. Both are DEFINITE refusals of a PUT that was sent: Microsoft confirmed nothing
+  was applied, which is what lets the dispatcher map them to the "platform unchanged"
+  `ErrBudgetShared` / `ErrBudgetAmountRejected`. Anything else is returned as the definite failure
+  it is.
 
 The endpoint names, field names and error codes come from Microsoft's published v13 reference
 (GetCampaignsByIds, UpdateCampaigns, the Campaign object, the operation error-code list). The

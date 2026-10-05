@@ -1,10 +1,10 @@
 # 2026-10-05 — LFXV2-2665 budget writer: Microsoft Advertising slice
 
-**Creation** — `update-campaign-budget` now supports Microsoft Advertising, the fourth
+**Creation** — `update-campaign-budget` now supports Microsoft Advertising, the fifth
 platform. `MicrosoftDispatcher.WriteBudget` (`internal/dispatch/microsoft_budget.go`) joins the
-Google Ads, LinkedIn and Meta implementations of the optional `BudgetWriter` capability, over a
-new `GetCampaignBudget` + `UpdateCampaignDailyBudget` pair in
-`internal/platform/microsoft/budget.go`. Reddit and X still answer 400.
+Google Ads, LinkedIn, Meta and Reddit implementations of the optional `BudgetWriter` capability,
+over a new `GetCampaignBudget` + `UpdateCampaignDailyBudget` pair in
+`internal/platform/microsoft/budget.go`. Only X still answers 400.
 
 ## What Microsoft's model decided
 
@@ -12,10 +12,12 @@ new `GetCampaignBudget` + `UpdateCampaignDailyBudget` pair in
   `BudgetType` live on the campaign, so the id addresses the budget — but a `BudgetId` > 0 means a
   shared Budget, refused with `ErrBudgetShared` (409) from the read, and again from Microsoft's own
   `CampaignServiceCannotUpdateSharedBudget` if one is attached between the read and the write.
-- **Daily only.** Search campaigns are `DailyBudgetStandard`/`DailyBudgetAccelerated`;
-  `LifetimeBudgetStandard` is documented as Audience-only. A lifetime request is the siblings'
-  pacing refusal — `ErrBudgetUnwritable`, 409 — raised before any credential is decrypted. The
-  reported daily type is sent back on the PUT so the write never re-paces a campaign.
+- **Daily Standard only.** Search campaigns are `DailyBudgetStandard`; `DailyBudgetAccelerated`
+  and `LifetimeBudgetStandard` are documented as Audience-only (a Search campaign reporting
+  Accelerated is refused, see the `microsoft-budget-search-daily-standard` entry of the same
+  date). A lifetime request is the siblings' pacing refusal — `ErrBudgetUnwritable`, 409 — raised
+  before any credential is decrypted. The reported daily type is sent back on the PUT so the
+  write never re-paces a campaign.
 - **Experiment campaigns** inherit their budget and are refused (`ErrBudgetUnwritable`).
 - **Provenance fails closed**, stricter than `ToggleStatus`, and uses the toggle's own
   `resolveMicrosoftClient` + `verifyMicrosoftAccountMatch` for the mismatch case.
