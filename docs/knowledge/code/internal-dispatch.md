@@ -310,6 +310,19 @@ guess, so it keeps nothing.
   field (the registration URL comes from the brief), but variant `introText`/`headline` are
   caller free text stored verbatim. Not changed here; LinkedIn is owned by another engineer.
 
+**The redactors live in `pkg/redact`, and the update path uses them generically.** The pure
+string sanitizers (`SnapshotURL`, `SnapshotText` and the run patterns behind them) moved
+unchanged to `pkg/redact/snapshot.go`; `creds.go` keeps `sanitizeSnapshotURL` /
+`sanitizeSnapshotText` as one-line wrappers, so every adapter above and `creds_test.go` are
+untouched and behaviour is byte-identical. The move exists because `internal/dispatch`
+imports `internal/service`, so the service cannot import this package without a cycle, and
+the service needs the same rules: `UpdateCampaign` (`PUT .../campaigns/{id}`) accepts
+`config` as Goa `Any` with no adapter in the loop, and it used to persist that JSON straight
+into `config_snapshot`, bypassing every per-adapter scrub listed above. It now walks the
+value and runs EVERY string through `SnapshotText` before persisting (see
+[internal/service](internal-service.md), "Campaign config update"). The per-adapter list
+above is the CREATE/adoption path only; the LinkedIn create-path gap is unchanged.
+
 **Microsoft scrubs `timeZone` and the links inside keywords.** `campaignFromMicrosoft` persists
 `microsoftSnapshotConfig(cfg)`, never the caller's raw `microsoftConfig`. The struct carries no
 URL field: the ad's `FinalUrls` is the BRIEF's registration URL plus the client's `utm_*`
