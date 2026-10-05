@@ -77,8 +77,8 @@ func msSnapshotServers(t *testing.T) ([]microsoft.Option, *msSnapshotCapture) {
 	return []microsoft.Option{microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL)}, cap
 }
 
-// msSnapKeywords are legitimate keywords the prose redactor's path-only pass WOULD rewrite
-// (or that look link-ish); the snapshot must keep every one byte for byte.
+// msSnapKeywords look link-ish. The snapshot stores each through sanitizeSnapshotText (a redacted
+// record), while the platform receives every one exactly as written.
 var msSnapKeywords = []microsoftKeywordConfig{
 	{Text: "k8s.io/docs tutorial", MatchType: "Exact"},
 	{Text: "node.js/express", MatchType: "Phrase"},
@@ -138,9 +138,10 @@ func TestMicrosoft_ConfigSnapshotScrubsTimeZoneKeepsKeywordsVerbatim(t *testing.
 	if len(snap.Keywords) != len(msSnapKeywords) {
 		t.Fatalf("snapshot keywords = %+v, want %+v", snap.Keywords, msSnapKeywords)
 	}
-	for i := range msSnapKeywords {
-		if snap.Keywords[i] != msSnapKeywords[i] {
-			t.Errorf("snapshot keyword[%d] = %+v, want it stored verbatim as %+v", i, snap.Keywords[i], msSnapKeywords[i])
+	for i, kw := range msSnapKeywords {
+		want := microsoftKeywordConfig{Text: sanitizeSnapshotText(kw.Text), MatchType: kw.MatchType}
+		if snap.Keywords[i] != want {
+			t.Errorf("snapshot keyword[%d] = %+v, want the redacted %+v", i, snap.Keywords[i], want)
 		}
 	}
 	if snap.TimeZone != "https://tz.example.net" {
@@ -193,8 +194,9 @@ func TestMicrosoftSnapshotConfig_DoesNotMutateDispatchConfig(t *testing.T) {
 		t.Fatalf("microsoftSnapshotConfig mutated the dispatch timeZone: %q", cfg.TimeZone)
 	}
 	for i, kw := range msSnapKeywords {
-		if cfg.Keywords[i] != kw || snap.Keywords[i] != kw {
-			t.Errorf("keyword[%d]: dispatch %+v, snapshot %+v, want both %+v", i, cfg.Keywords[i], snap.Keywords[i], kw)
+		redacted := microsoftKeywordConfig{Text: sanitizeSnapshotText(kw.Text), MatchType: kw.MatchType}
+		if cfg.Keywords[i] != kw || snap.Keywords[i] != redacted {
+			t.Errorf("keyword[%d]: dispatch %+v (want %+v), snapshot %+v (want %+v)", i, cfg.Keywords[i], kw, snap.Keywords[i], redacted)
 		}
 	}
 	if snap.TimeZone != "https://tz.example.net" {
@@ -214,42 +216,53 @@ func TestMicrosoftSnapshotConfig_DoesNotMutateDispatchConfig(t *testing.T) {
 	}
 }
 
-// A keyword is caller text: an unambiguous link in it is redacted before the unencrypted
-// snapshot, while path-like targeting terms stay exactly as written. The dispatch config the
-// keywords came from is not mutated.
-func TestMicrosoftSnapshotConfig_KeywordLinksRedactedTargetingTermsKept(t *testing.T) {
-	cases := map[string]string{
-		"https://example.test/reset/SECRET?token=VALUE": "https://example.test",
-		"buy https://shop.example/p#FRAG now":           "buy https://shop.example now",
-		"a.example/r?token=SECRET":                      "a.example",
-		"bob:pw@a.example":                              "",
-		"k8s.io/docs tutorial":                          "k8s.io/docs tutorial",
-		"node.js/express":                               "node.js/express",
-		"10.0.0.0/8":                                    "10.0.0.0/8",
-		"kubernetes.io":                                 "kubernetes.io",
-		"c++ jobs":                                      "c++ jobs",
+// A keyword is caller text: any link in it — including one whose secret is in the PATH — is
+// redacted before the unencrypted snapshot, and the dispatch config is not mutated.
+func TestMicrosoftSnapshotConfig_KeywordLinksRedacted(t *testing.T) {
+	in := []string{
+		"https://example.test/reset/SECRET?token=VALUE",
+		"buy https://shop.example/p#SECRETFRAG now",
+		"a.example/r?token=SECRET",
+		"example.org/reset/SECRET",
+		"www.example.org/reset/SECRET",
+		"a.example/r/s/t/SECRET",
+		"host.example:8443/reset/SECRET",
+		"10.0.0.5/reset/SECRET",
+		"bob:SECRET@a.example",
+		"kubernetes.io",
+		"c++ jobs",
 	}
-	var kws []microsoftKeywordConfig
-	for in := range cases {
-		kws = append(kws, microsoftKeywordConfig{Text: in, MatchType: "Exact"})
+	kws := make([]microsoftKeywordConfig, len(in))
+	for i, s := range in {
+		kws[i] = microsoftKeywordConfig{Text: s, MatchType: "Exact"}
 	}
+	orig := append([]string(nil), in...)
 	cfg := microsoftConfig{Keywords: kws}
 	snap := microsoftSnapshotConfig(cfg)
+	if len(snap.Keywords) != len(orig) {
+		t.Fatalf("snapshot has %d keywords, want %d", len(snap.Keywords), len(orig))
+	}
 	for i, k := range snap.Keywords {
-		in := cfg.Keywords[i].Text
-		if want := cases[in]; k.Text != want {
-			t.Errorf("snapshot keyword for %q = %q, want %q", in, k.Text, want)
+		if strings.Contains(k.Text, "SECRET") || strings.Contains(k.Text, "VALUE") {
+			t.Errorf("snapshot keyword for %q = %q still carries the secret", orig[i], k.Text)
 		}
-		if strings.Contains(k.Text, "SECRET") || strings.Contains(k.Text, "VALUE") || strings.Contains(k.Text, "FRAG") || strings.Contains(k.Text, "pw@") {
-			t.Errorf("snapshot keyword %q still carries a secret", k.Text)
+		if k.Text != sanitizeSnapshotText(orig[i]) {
+			t.Errorf("snapshot keyword for %q = %q, want sanitizeSnapshotText's %q", orig[i], k.Text, sanitizeSnapshotText(orig[i]))
 		}
-	}
-	for i, k := range cfg.Keywords {
-		if k.Text != kws[i].Text {
-			t.Errorf("dispatch keyword %d mutated to %q", i, k.Text)
+		if cfg.Keywords[i].Text != orig[i] {
+			t.Errorf("dispatch keyword %d mutated: %q, want %q", i, cfg.Keywords[i].Text, orig[i])
 		}
 	}
-	if cfg.Keywords[0].Text == snap.Keywords[0].Text && &cfg.Keywords[0] == &snap.Keywords[0] {
+	for _, plain := range []string{"kubernetes.io", "c++ jobs"} {
+		found := false
+		for _, k := range snap.Keywords {
+			found = found || k.Text == plain
+		}
+		if !found {
+			t.Errorf("plain keyword %q was not stored as written", plain)
+		}
+	}
+	if &cfg.Keywords[0] == &snap.Keywords[0] {
 		t.Error("snapshot keywords alias the dispatch slice")
 	}
 }

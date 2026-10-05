@@ -283,24 +283,6 @@ func sanitizeSnapshotText(raw string) string {
 	return schemelessPathSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeSchemelessPathSnapshotRun)
 }
 
-// sanitizeSnapshotKeyword is sanitizeSnapshotText WITHOUT its path-only pass, for short
-// targeting text such as a search keyword. It redacts every UNAMBIGUOUS link — scheme-ful
-// (`https://host/p?token=S` → `https://host`), scheme-less with a query or fragment
-// (`host.tld/r?token=S` → `host.tld`) and scheme-less userinfo (`user:pw@host`, dropped whole) —
-// because a keyword is caller text and can be a pasted secret-bearing URL. It deliberately
-// keeps a scheme-less `host.tld/path` with nothing after it: for a keyword that shape is
-// ordinary targeting text (`k8s.io/docs tutorial`, `node.js/express`, a CIDR `10.0.0.0/8`),
-// the path is the point, and it carries no query, fragment or credential to leak.
-func sanitizeSnapshotKeyword(raw string) string {
-	if raw == "" {
-		return ""
-	}
-	// Same order as sanitizeSnapshotText, minus its last pass; see the reasoning there.
-	out := snapshotURLRunRe.ReplaceAllStringFunc(raw, sanitizeSnapshotURL)
-	out = schemelessSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeSchemelessSnapshotRun)
-	return schemelessUserinfoSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeUserinfoSnapshotRun)
-}
-
 // schemelessSnapshotRunRe matches a scheme-less link carrying a query or fragment, the
 // same shape internal/platform/twitter screens before publication.
 //

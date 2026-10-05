@@ -256,13 +256,14 @@ func microsoftKeywords(in []microsoftKeywordConfig) []microsoft.Keyword {
 // tweetText uses — which reduces any link-shaped run to scheme+host. Every real enum value is
 // a bare identifier and passes through unchanged.
 //
-// Keywords[].Text goes through sanitizeSnapshotKeyword, NOT the prose redactor. A keyword is
-// caller text, so an unambiguous link in it (`https://host/reset/S?token=V`, `host.tld/r?x=S`,
-// `user:pw@host`) is redacted like any caller URL headed for the unencrypted snapshot. But the
-// prose redactor's path-only pass would also rewrite legitimate keywords — `k8s.io/docs
-// tutorial` to `k8s.io tutorial`, `node.js/express` to `node.js`, a CIDR `10.0.0.0/8` to
-// `10.0.0.0` — so the snapshot would no longer say what was targeted; the keyword sanitizer
-// keeps those as written.
+// Keywords[].Text goes through sanitizeSnapshotText too. A keyword is caller text bound for the
+// unencrypted snapshot — validateKeywords only trims, length-checks and validates the match
+// type, so `https://example.test/reset/SECRET?token=VALUE` or `example.org/reset/SECRET` is a
+// valid keyword — and a link's PATH can carry a token as readily as its query
+// (knowledge base: caller-url-must-be-redacted-before-errors-steps-and-snapshots). So the
+// snapshot is a REDACTED record, not a verbatim one: a path-like targeting term is reduced too
+// (`k8s.io/docs tutorial` is stored as `k8s.io tutorial`), while Microsoft still receives every
+// keyword exactly as written.
 //
 // Also kept verbatim, because they cannot carry a URL by construction: Budget and CpcBid
 // (numbers), Keywords[].MatchType (only Exact/Phrase/Broad gets past the client, and a
@@ -278,7 +279,7 @@ func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 		snapshot.Keywords = make([]microsoftKeywordConfig, len(cfg.Keywords))
 		copy(snapshot.Keywords, cfg.Keywords)
 		for i := range snapshot.Keywords {
-			snapshot.Keywords[i].Text = sanitizeSnapshotKeyword(snapshot.Keywords[i].Text)
+			snapshot.Keywords[i].Text = sanitizeSnapshotText(snapshot.Keywords[i].Text)
 		}
 	}
 	return snapshot

@@ -7,10 +7,13 @@ type, so `https://example.test/reset/SECRET?token=VALUE` is a valid keyword and 
 written — against the knowledge-base rule that caller URLs are redacted before
 `config_snapshot` (copilot review on #256).
 
-New `sanitizeSnapshotKeyword` (`internal/dispatch/creds.go`) is `sanitizeSnapshotText` minus its
-path-only pass: it redacts scheme-ful links, scheme-less links with a query or fragment, and
-scheme-less `user:pw@host` runs (dropped whole, as the shared userinfo pass does), and keeps a
-scheme-less `host.tld/path` with nothing after it — for a keyword that is targeting text
-(`k8s.io/docs tutorial`, `node.js/express`, `10.0.0.0/8`), not a secret. `microsoftSnapshotConfig`
-reallocates the keyword slice and applies it to each keyword; the config sent to Microsoft is
-unchanged. Pinned by `TestMicrosoftSnapshotConfig_KeywordLinksRedactedTargetingTermsKept`.
+Every keyword now goes through the full `sanitizeSnapshotText`, the same redactor as `timeZone`.
+A first cut of this fix used a keyword-specific variant without the path-only pass, to keep
+targeting terms like `k8s.io/docs tutorial` intact; pre-PR review showed it let a token in the
+PATH through (`example.org/reset/SECRET`, `www.example.org/reset/SECRET`, `host:8443/reset/S`,
+`10.0.0.5/reset/SECRET`) — the shape the path-only pass exists to close, and "it kept the path"
+is itself a finding under that rule. So no exemption is made: the snapshot is a redacted
+record, a path-like keyword is stored reduced (`k8s.io/docs tutorial` → `k8s.io tutorial`), and
+Microsoft still receives every keyword exactly as written. `microsoftSnapshotConfig` reallocates
+the keyword slice before rewriting it. Pinned by `TestMicrosoftSnapshotConfig_KeywordLinksRedacted`
+(nine secret-bearing shapes; all leak without the fix).

@@ -302,8 +302,8 @@ guess, so it keeps nothing.
 - `googleads.go` — each sitelink's `finalUrl` (`googleAdsSnapshotConfig`); keyword and ad text
   are kept VERBATIM by design.
 - `twitter.go` — `tweetText` (`sanitizeSnapshotText`).
-- `microsoft.go` — `timeZone` (`sanitizeSnapshotText`) and links inside `keywords[].text`
-  (`sanitizeSnapshotKeyword`), in `microsoftSnapshotConfig`.
+- `microsoft.go` — `timeZone` and every `keywords[].text`, both through `sanitizeSnapshotText`
+  (`microsoftSnapshotConfig`); the snapshot is a redacted record, not a verbatim one.
 - `hubspot.go` — snapshots only the provenance fields (`hubspotConfigProvenance`); subject and
   body HTML are never stored.
 - `linkedin.go` — passes the raw `linkedinConfig`; NOTHING is scrubbed. It has no dedicated URL
@@ -317,12 +317,13 @@ params and never reaches the snapshot. `timeZone` is meant to be an enum but is 
 UNVALIDATED, so it is caller free text and goes through `sanitizeSnapshotText` (every real enum
 value is a bare identifier and passes through unchanged). `keywords[].text` is caller text too —
 `validateKeywords` only trims, length-checks and validates the match type, so
-`https://example.test/reset/SECRET?token=VALUE` is a valid keyword — and goes through
-`sanitizeSnapshotKeyword` (`creds.go`): `sanitizeSnapshotText` WITHOUT its path-only pass. It
-redacts every unambiguous link (scheme-ful, scheme-less with a query or fragment, scheme-less
-`user:pw@host`) but keeps a scheme-less `host.tld/path` with nothing after it, because for a
-keyword that is ordinary targeting text — `k8s.io/docs tutorial`, `node.js/express`,
-`10.0.0.0/8` stay exactly as written. The keyword slice is reallocated first, so the config sent
+`https://example.test/reset/SECRET?token=VALUE` and `example.org/reset/SECRET` are valid keywords
+— and goes through the same full `sanitizeSnapshotText`. A link's PATH can carry a token as
+readily as its query (knowledge base: `caller-url-must-be-redacted-before-errors-steps-and-snapshots`
+— "it kept the path" is a finding), so no keyword exemption is made: the snapshot is a REDACTED
+record, and a path-like targeting term is reduced too (`k8s.io/docs tutorial` is stored as
+`k8s.io tutorial`, `node.js/express` as `node.js`). Microsoft still receives every keyword exactly
+as written; only the stored copy changes. The keyword slice is reallocated first, so the config sent
 to Microsoft is untouched. `budget`, `cpcBid`, `matchType` (only Exact/Phrase/Broad gets past
 the client before a snapshot can be written) and `geoTargets` (ISO-2 codes, shape-checked by
 the client) cannot carry a URL. The persisted `result` (`microsoft.CampaignResult`) carries no
