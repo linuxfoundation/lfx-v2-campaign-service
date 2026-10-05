@@ -351,6 +351,33 @@ var (
 	// submission is the producer, since its job creates are paced at one per second.
 	ErrAccountReportBudgetTooShort = errors.New("account report submission skipped: not enough call budget left for its paced writes")
 
+	// ErrAccountTooManyActiveCampaigns indicates a report-backed account monitor refused to
+	// submit a report because the account has more campaigns active in the window than one
+	// report can cover. Nothing was created on the platform. Unlike
+	// ErrAccountReportBudgetTooShort it is PERMANENT for as long as the account stays that busy —
+	// retrying cannot help, and a report covering only some campaigns would read the rest as
+	// having served nothing — so Orchestrator.ReadReportedAccountCampaigns fails the read with it
+	// and the monitor handlers map it to 409 with reason "account_too_many_active_campaigns".
+	// Producer: the X monitor, whose limit is 200 active campaigns (ten stats jobs of 20).
+	//
+	// The message is fixed, client-safe text: it reaches the HTTP body.
+	ErrAccountTooManyActiveCampaigns = errors.New("the account has more campaigns active in the window than the account monitor can report on")
+
+	// ErrAccountTimezoneUnsupported indicates a report-backed account monitor refused to submit a
+	// report because the account's calendar days cannot be queried exactly: its timezone puts
+	// local midnight off a whole UTC hour (a fractional-hour offset such as Asia/Kolkata's
+	// +05:30), and the platform accepts whole-hour bounds only. Querying a shifted window while
+	// reporting the account's own days would misattribute delivery, so the read fails closed
+	// instead. The refusal comes before any stats request or job creation; reads (the account's
+	// timezone, its campaigns and line items) may already have happened. PERMANENT for as long
+	// as the account's timezone keeps a fractional-hour offset (all year in most such zones;
+	// only part of the year in one with a half-hour DST shift, e.g. Australia/Lord_Howe);
+	// surfaced by Orchestrator.ReadReportedAccountCampaigns and mapped to 409 with reason
+	// "account_timezone_unsupported". Producer: the X monitor.
+	//
+	// The message is fixed, client-safe text: it reaches the HTTP body.
+	ErrAccountTimezoneUnsupported = errors.New("the account's timezone does not start its days on a whole UTC hour, which the platform's report window requires")
+
 	// ErrKeywordInsightsUnsupported indicates the platform has no keyword/audience-insight
 	// capability wired. The platform is never contacted.
 	//

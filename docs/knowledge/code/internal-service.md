@@ -1796,7 +1796,12 @@ budget spent (X's paced job creates take ~1s each), and a report built upstream 
 recorded would be resubmitted on every read and never collected
 (`TestReadReported_MarkUsesItsOwnBudget`). A submission the dispatcher declines up front for
 lack of budget (`domain.ErrAccountReportBudgetTooShort`) is logged at info as a skip, not a
-failure. `mergeAccountReport` also carries the finished report's calendar window as
+failure. A PERMANENT refusal — `domain.ErrAccountTooManyActiveCampaigns` or
+`domain.ErrAccountTimezoneUnsupported` (`isPermanentReportRefusal`; X is the producer) — instead
+fails the read, since no later read could submit either, and `classifyDiscoveryError` answers
+it with a 409 `ConflictError` whose `reason` is `account_too_many_active_campaigns` or
+`account_timezone_unsupported` (`TestReadReported_PermanentRefusalFailsTheRead`,
+`TestMonitorTwitterAdsAccount_PermanentRefusalsAre409`). `mergeAccountReport` also carries the finished report's calendar window as
 `ReportedAccountRead.MetricsWindowStart/End`, and `monitorReportedAccount`'s evaluate callback
 now receives the whole read, so `MonitorTwitterAdsAccount` evaluates X's rules on the report's
 own account-local days rather than on `time.Now()`; Microsoft's callback still passes only the

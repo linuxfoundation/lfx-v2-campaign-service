@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -307,4 +308,69 @@ func (c *countingConnReader) Get(ctx context.Context, projectID string, p model.
 func (c *countingConnReader) Disconnected(ctx context.Context, projectID string, p model.Provider) (bool, error) {
 	c.n.Add(1)
 	return c.inner.Disconnected(ctx, projectID, p)
+}
+
+// The two permanent refusals reach the orchestrator as their own domain sentinels — so it fails
+// the read with a 409 instead of logging a retry — and neither creates a stats job.
+func TestTwitterMonitor_SubmitPermanentRefusalsAreTyped(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
+	many := make([]string, twitter.MaxMonitorActiveCampaigns+1)
+	for i := range many {
+		many[i] = fmt.Sprintf(`{"entity_id":"c%d"}`, i)
+	}
+	tooMany := map[string]string{}
+	for k, v := range twitterMonitorRoutes {
+		tooMany[k] = v
+	}
+	tooMany["/12/stats/accounts/acc1/active_entities"] = `{"data":[` + strings.Join(many, ",") + `]}`
+	kolkata := map[string]string{}
+	for k, v := range twitterMonitorRoutes {
+		kolkata[k] = v
+	}
+	kolkata["/12/accounts/acc1"] = `{"data":{"id":"acc1","timezone":"Asia/Kolkata"}}`
+
+	for name, tc := range map[string]struct {
+		routes          map[string]string
+		domainErr, xErr error
+	}{
+		"too many active campaigns": {tooMany, domain.ErrAccountTooManyActiveCampaigns, twitter.ErrTooManyActiveCampaigns},
+		"fractional-hour timezone":  {kolkata, domain.ErrAccountTimezoneUnsupported, twitter.ErrReportWindowNotWholeHours},
+	} {
+		t.Run(name, func(t *testing.T) {
+			opts, _, seen := twitterMonitorServer(t, tc.routes)
+			d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, opts...)
+			_, err := d.SubmitAccountReport(context.Background(), "cncf", model.ProviderTwitterAds, "acc1", 7)
+			if !errors.Is(err, tc.domainErr) || !errors.Is(err, tc.xErr) {
+				t.Fatalf("err = %v, want %v wrapping %v", err, tc.domainErr, tc.xErr)
+			}
+			for _, p := range seen() {
+				if strings.HasPrefix(p, "/12/stats/jobs/") {
+					t.Errorf("a stats job was created (%s) although the submission was refused", p)
+				}
+			}
+		})
+	}
+}
+
+// The line items' union reaches the rule engine as FlightRanges, gaps intact.
+func TestTwitterMonitor_ListCarriesFlightRanges(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
+	routes := map[string]string{}
+	for k, v := range twitterMonitorRoutes {
+		routes[k] = v
+	}
+	routes["/12/accounts/acc1/line_items"] = `{"data":[
+		{"id":"l1","campaign_id":"c1","start_time":"2026-09-01T04:00:00Z","end_time":"2026-09-06T04:00:00Z"},
+		{"id":"l2","campaign_id":"c1","start_time":"2026-10-01T04:00:00Z","end_time":"2026-10-06T04:00:00Z"}
+	],"next_cursor":null}`
+	opts, _, _ := twitterMonitorServer(t, routes)
+	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, opts...)
+	rows, err := d.ListAccountCampaigns(context.Background(), "cncf", model.ProviderTwitterAds, "acc1")
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	want := []model.FlightRange{{StartDate: "2026-09-01", EndDate: "2026-09-05"}, {StartDate: "2026-10-01", EndDate: "2026-10-05"}}
+	if rows[0].PlatformCampaignID != "c1" || len(rows[0].FlightRanges) != 2 || rows[0].FlightRanges[0] != want[0] || rows[0].FlightRanges[1] != want[1] {
+		t.Errorf("c1 = %+v, want FlightRanges %+v", rows[0], want)
+	}
 }
