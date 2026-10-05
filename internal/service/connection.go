@@ -16,11 +16,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 )
 
 // validateConnectionProjectSlug guards the connection CREATE endpoints: project_id
@@ -691,7 +693,7 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		return &conn.ConflictError{
 			Code:    "409",
 			Reason:  conflictReason("account_too_many_active_campaigns"),
-			Message: domain.ErrAccountTooManyActiveCampaigns.Error() + " (at most 200 campaigns active in the window for " + d.displayName + ")",
+			Message: domain.ErrAccountTooManyActiveCampaigns.Error() + " (at most " + strconv.Itoa(twitter.MaxMonitorActiveCampaigns) + " campaigns active in the window for " + d.displayName + ")",
 		}
 	case errors.Is(aerr, domain.ErrAccountTimezoneUnsupported):
 		// Same shape as the arm above: permanent for the account's timezone, not a fault of the
