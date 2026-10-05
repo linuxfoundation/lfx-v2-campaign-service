@@ -1089,14 +1089,20 @@ while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
   and so does a line item whose `end_time` is not after its `start_time` (inverted or
   zero-length): it is rejected before the envelope or the union changes, never recorded as a
   scheduled day and never silently dropped.
-- **`SubmitAccountCampaignReport`** — window `[local midnight of today-(days-1), the local
-  midnight after today)` in the account's zone (`accountReportWindow`), sent as UTC instants,
-  and always EXACTLY the days returned as the report's first/last day. A local midnight that
-  is not a whole UTC hour (X takes whole hours only) is refused with
+- **`SubmitAccountCampaignReport`** — window `[start of today-(days-1), start of the day after
+  today)` in the account's zone (`accountReportWindow`), sent as UTC instants, and always
+  EXACTLY the days returned as the report's first/last day. A day's start is its local
+  midnight, or — when a DST spring-forward skips 00:00 (America/Santiago on 2026-09-06,
+  America/Asuncion …) — the first instant that exists on that day (`localDayStart`): plain
+  `time.Date` normalizes the nonexistent midnight BACK to 23:00 of the previous day, which put
+  an hour of the previous day into the window and dated the saved first/last day one day early.
+  A day start that is not a whole UTC hour (X takes whole hours only) is refused with
   `ErrReportWindowNotWholeHours`, never floored — before any stats request or job is created,
-  though the account timezone has been read by then (an account GET when the cache is cold); a 90-day window over a DST fall-back (90 days
-  and an hour) drops its earliest local day instead of trimming an hour, so it covers 89 whole
-  days and says so. GET `stats/accounts/:id/active_entities?entity=CAMPAIGN`, then one POST
+  though the account timezone has been read by then (an account GET when the cache is cold); a
+  90-day window over a DST fall-back (90 days and an hour) drops its earliest local day instead
+  of trimming an hour, so it covers 89 whole days and says so — the account monitor response
+  exposes those days as `metrics_window_start` / `metrics_window_end` beside the requested
+  `days`. GET `stats/accounts/:id/active_entities?entity=CAMPAIGN`, then one POST
   `stats/jobs/accounts/:id` per ≤20 active campaigns (`entity=CAMPAIGN`, `granularity=TOTAL`,
   `placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`), each through the write
   pacer and never retried on a 429. Before the first POST, `statsJobsFitBudget` compares the

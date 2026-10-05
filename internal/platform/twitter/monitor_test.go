@@ -523,6 +523,8 @@ func TestSubmitAccountCampaignReport_RefusesFractionalHourTimezone(t *testing.T)
 func TestAccountReportWindow_Boundaries(t *testing.T) {
 	ny, _ := time.LoadLocation("America/New_York")
 	la, _ := time.LoadLocation("America/Los_Angeles")
+	scl, _ := time.LoadLocation("America/Santiago") // DST spring-forward skips 00:00 (2026-09-06)
+	apia, _ := time.LoadLocation("Pacific/Apia")    // skipped 2011-12-30 entirely (-10 → +14)
 	cases := []struct {
 		name            string
 		now             time.Time
@@ -546,6 +548,17 @@ func TestAccountReportWindow_Boundaries(t *testing.T) {
 		// Across the spring-forward a 90-day window is 90d-1h: it fits whole.
 		{"dst spring-forward at 90 days (LA)", time.Date(2027, 4, 20, 20, 0, 0, 0, time.UTC), la, 90,
 			"2027-01-21T08:00:00Z", "2027-04-21T07:00:00Z", "2027-01-21", "2027-04-20"},
+		// Santiago skips local midnight on 2026-09-06: that day begins at 01:00 -03. time.Date
+		// would normalize to 23:00 of 09-05, dating the window a day early. Today is the skipped day:
+		{"skipped midnight is today (Santiago)", time.Date(2026, 9, 6, 15, 0, 0, 0, time.UTC), scl, 7,
+			"2026-08-31T04:00:00Z", "2026-09-07T03:00:00Z", "2026-08-31", "2026-09-06"},
+		// ...and the window STARTS on the skipped day.
+		{"skipped midnight starts the window (Santiago)", time.Date(2026, 9, 12, 15, 0, 0, 0, time.UTC), scl, 7,
+			"2026-09-06T04:00:00Z", "2026-09-13T03:00:00Z", "2026-09-06", "2026-09-12"},
+		// A window whose first day was skipped ENTIRELY starts at the next real day, and firstDay
+		// says so (6 reported days, never a day that did not exist or part of the day before).
+		{"skipped day starts the window (Apia 2011-12-30)", time.Date(2012, 1, 4, 22, 0, 0, 0, time.UTC), apia, 7,
+			"2011-12-30T10:00:00Z", "2012-01-05T10:00:00Z", "2011-12-31", "2012-01-05"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -559,9 +572,13 @@ func TestAccountReportWindow_Boundaries(t *testing.T) {
 			if first.Format(time.DateOnly) != tc.firstDay || last.Format(time.DateOnly) != tc.lastD {
 				t.Errorf("days = %s..%s, want %s..%s", first.Format(time.DateOnly), last.Format(time.DateOnly), tc.firstDay, tc.lastD)
 			}
-			// Queried == reported: the bounds ARE the local midnights of the reported days.
-			fl := time.Date(first.Year(), first.Month(), first.Day(), 0, 0, 0, 0, tc.loc)
-			ll := time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, tc.loc).AddDate(0, 0, 1)
+			// Queried == reported: the bounds ARE the first instants of the reported days (local
+			// midnight, or the instant after a skipped one).
+			fl := localDayStart(first.Year(), first.Month(), first.Day(), tc.loc)
+			ll := localDayStart(last.Year(), last.Month(), last.Day()+1, tc.loc)
+			if localDate(s.In(tc.loc)) != first || localDate(e.Add(-time.Nanosecond).In(tc.loc)) != last {
+				t.Errorf("bounds fall outside the reported days: [%v, %v) vs %s..%s", s.In(tc.loc), e.In(tc.loc), first.Format(time.DateOnly), last.Format(time.DateOnly))
+			}
 			if !s.Equal(fl) || !e.Equal(ll) {
 				t.Errorf("queried [%v, %v) is not the reported days' local midnights [%v, %v)", s, e, fl, ll)
 			}
