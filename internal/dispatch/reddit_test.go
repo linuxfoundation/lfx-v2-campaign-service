@@ -1282,7 +1282,7 @@ func TestReddit_ListAccountCampaignMetrics_RejectsMismatchedAccount(t *testing.T
 // account-monitor read actually produces — which is why a fabricated conversions count lived
 // here undetected.
 //
-// This read never asks Reddit for conversions (see fetchMonitorReport's "fields" list), so
+// This read never asks Reddit for conversions (see fetchMonitorCampaignReport's "fields" list), so
 // Conversions must be nil: absent, not a measured 0. The port originally set a non-nil 0 on
 // every row, copying the BFF's campaignMetrics[].conversions = 0, and monitor_reddit.go's
 // "clicks but 0 conversions" rule then fired for every campaign past its click floor — an
@@ -1296,10 +1296,10 @@ func TestReddit_ListAccountCampaignMetrics_ConversionsAbsentNotZero(t *testing.T
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/reports"):
-			_, _ = w.Write([]byte(`{"data":{"metrics":[{"impressions":1000,"clicks":150,"spend":25000000,"conversions":9}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"metrics":[{"campaign_id":"t2_c1","impressions":1000,"clicks":150,"spend":25000000,"conversions":9}]}}`))
 		default:
 			_, _ = w.Write([]byte(`{"data":{"campaigns":[{"id":"t2_c1","name":"c","configured_status":"ACTIVE",` +
-				`"goal_value":100000000,"start_time":"2026-06-05T00:00:00Z","end_time":"2026-06-25T00:00:00Z"}]}}`))
+				`"goal_type":"LIFETIME_SPEND","goal_value":100000000,"start_time":"2026-06-05T00:00:00Z","end_time":"2026-06-25T00:00:00Z"}]}}`))
 		}
 	}))
 	defer api.Close()
@@ -1331,5 +1331,42 @@ func TestReddit_ListAccountCampaignMetrics_ConversionsAbsentNotZero(t *testing.T
 	}
 	if rows[0].StartDate != "2026-06-05" || rows[0].EndDate != "2026-06-25" {
 		t.Errorf("flight = %q..%q, want 2026-06-05..2026-06-25", rows[0].StartDate, rows[0].EndDate)
+	}
+}
+
+// TestReddit_ListAccountCampaignMetrics_DailyBudgetMapsToBudgetDay pins the dispatcher half of
+// the goal_type fix: a DAILY_SPEND campaign's goal_value reaches the rule engine as BudgetDay
+// (paced per day), never as TotalBudget (prorated across the flight as a lifetime total, which
+// reported a campaign spending exactly its daily cap as heavily overspending).
+func TestReddit_ListAccountCampaignMetrics_DailyBudgetMapsToBudgetDay(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/reports"):
+			_, _ = w.Write([]byte(`{"data":{"metrics":[{"campaign_id":"t2_c1","impressions":1000,"clicks":15,"spend":25000000}]}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":[{"id":"t2_c1","name":"c","configured_status":"ACTIVE",` +
+				`"goal_type":"DAILY_SPEND","goal_value":40000000}]}`))
+		}
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+	)
+	rows, err := d.ListAccountCampaignMetrics(context.Background(), "proj", model.ProviderRedditAds, "t2_acct", 30)
+	if err != nil {
+		t.Fatalf("ListAccountCampaignMetrics: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
+	}
+	if rows[0].BudgetDay != 40 || rows[0].TotalBudget != 0 {
+		t.Errorf("BudgetDay, TotalBudget = %v, %v; want 40, 0 for a DAILY_SPEND campaign", rows[0].BudgetDay, rows[0].TotalBudget)
 	}
 }

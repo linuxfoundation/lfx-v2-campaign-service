@@ -535,10 +535,14 @@ func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, proje
 			Impressions:        r.Impressions,
 			Clicks:             r.Clicks,
 			Ctr:                r.Ctr,
-			TotalBudget:        r.TotalBudget,
-			StartDate:          r.StartDate,
-			EndDate:            r.EndDate,
-			FetchFailed:        r.FetchFailed,
+			// goal_value routed by goal_type (reddit.AccountCampaignRow.TotalBudget's doc
+			// comment): a DAILY_SPEND campaign is paced as a daily budget, and an unknown
+			// goal_type sets neither, so the rule engine reports pacing as unknown.
+			BudgetDay:   r.DailyBudget,
+			TotalBudget: r.TotalBudget,
+			StartDate:   r.StartDate,
+			EndDate:     r.EndDate,
+			FetchFailed: r.FetchFailed,
 		})
 	}
 	return out, nil

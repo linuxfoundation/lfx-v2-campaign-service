@@ -135,42 +135,13 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	// "Reddit did not tell us", which is the only claim this adapter can support until the
 	// real reporting contract is available.
 	var metrics model.CampaignMetrics
-	for i, row := range rows {
-		if err := row.validate(id); err != nil {
-			return nil, reportDecodeError(fmt.Errorf("row %d: %w", i, err))
-		}
-
-		// validate() has rejected a nil field and a negative value, so each dereference is
-		// safe and each value is individually in range. Only the running SUMS can overflow.
-		if *row.Impressions > math.MaxInt64-metrics.Impressions {
-			return nil, reportDecodeError(fmt.Errorf("row %d: impressions total would overflow", i))
-		}
-		metrics.Impressions += *row.Impressions
-
-		if *row.Clicks > math.MaxInt64-metrics.Clicks {
-			return nil, reportDecodeError(fmt.Errorf("row %d: clicks total would overflow", i))
-		}
-		metrics.Clicks += *row.Clicks
-
-		// CORRECTED against the spec (LFXV2-3282): spend is an int64 in MICROCURRENCY
-		// ("The amount spent during this report period (microcurrency)"), so it needs no
-		// conversion at all. The previous code parsed it as a decimal-currency STRING and
-		// multiplied by 1e6 — against the real contract that path fails to decode outright
-		// (a JSON number into a Go string), which is the loud failure, but had it been
-		// written to coerce instead it would have reported every spend figure one million
-		// times too large. This is also the one guess the client's own proven conventions
-		// already argued against: every monetary value the create path sends is an integer
-		// micro-dollar count (goal_value carries toMicrodollars(BudgetUSD)).
-		//
-		// NOTE the spec says "microcurrency", not micro-dollars: the unit is the ad
-		// account's own billing currency, which this client does not read. CostMicros is
-		// therefore micros of an unspecified currency, exactly as it is for X — callers
-		// must not sum it across platforms. internal/service records the same caveat.
-		if *row.Spend > math.MaxInt64-metrics.CostMicros {
-			return nil, reportDecodeError(fmt.Errorf("row %d: cost total would overflow", i))
-		}
-		metrics.CostMicros += *row.Spend
+	impressions, clicks, spendMicros, err := sumReportRows(rows, id)
+	if err != nil {
+		return nil, reportDecodeError(err)
 	}
+	metrics.Impressions = impressions
+	metrics.Clicks = clicks
+	metrics.CostMicros = spendMicros
 	// CTR is recomputed from the totals rather than read from the row's own `ctr` field,
 	// which the spec also offers. Across multiple rows a per-row rate cannot be summed,
 	// and averaging rates weights a quiet day equally with a busy one; deriving it once
@@ -194,6 +165,56 @@ func reportDecodeError(err error) error {
 		Path:   "reports",
 		Err:    fmt.Errorf("decode campaign metrics response: %w", err),
 	}
+}
+
+// sumReportRows validates every report row against wantCampaignID (see reportRow.validate:
+// a missing/null field, a row attributed to another campaign, a negative counter or clicks
+// without impressions are all refused) and sums impressions, clicks and spend across them.
+// Shared by GetCampaignMetrics and the account monitor's per-campaign read, so the two
+// readers of the one verified reporting operation cannot disagree about which rows they
+// believe or how they total them.
+//
+// A refused row fails the whole sum rather than being skipped: a row the reader cannot
+// attribute or believe might carry this campaign's numbers, so dropping it would publish a
+// partial total as a complete one.
+//
+// Only the running SUMS can overflow — validate() has already rejected a nil field and a
+// negative value, so each value is individually in range.
+func sumReportRows(rows []reportRow, wantCampaignID string) (impressions, clicks, spendMicros int64, err error) {
+	for i, row := range rows {
+		if err := row.validate(wantCampaignID); err != nil {
+			return 0, 0, 0, fmt.Errorf("row %d: %w", i, err)
+		}
+		if *row.Impressions > math.MaxInt64-impressions {
+			return 0, 0, 0, fmt.Errorf("row %d: impressions total would overflow", i)
+		}
+		impressions += *row.Impressions
+
+		if *row.Clicks > math.MaxInt64-clicks {
+			return 0, 0, 0, fmt.Errorf("row %d: clicks total would overflow", i)
+		}
+		clicks += *row.Clicks
+
+		// CORRECTED against the spec (LFXV2-3282): spend is an int64 in MICROCURRENCY
+		// ("The amount spent during this report period (microcurrency)"), so it needs no
+		// conversion at all. The previous code parsed it as a decimal-currency STRING and
+		// multiplied by 1e6 — against the real contract that path fails to decode outright
+		// (a JSON number into a Go string), which is the loud failure, but had it been
+		// written to coerce instead it would have reported every spend figure one million
+		// times too large. This is also the one guess the client's own proven conventions
+		// already argued against: every monetary value the create path sends is an integer
+		// micro-dollar count (goal_value carries toMicrodollars(BudgetUSD)).
+		//
+		// NOTE the spec says "microcurrency", not micro-dollars: the unit is the ad
+		// account's own billing currency, which this client does not read. CostMicros is
+		// therefore micros of an unspecified currency, exactly as it is for X — callers
+		// must not sum it across platforms. internal/service records the same caveat.
+		if *row.Spend > math.MaxInt64-spendMicros {
+			return 0, 0, 0, fmt.Errorf("row %d: cost total would overflow", i)
+		}
+		spendMicros += *row.Spend
+	}
+	return impressions, clicks, spendMicros, nil
 }
 
 // redactReportPath removes the ad account id from any error returned by the report request.
@@ -475,5 +496,23 @@ func dateRangeForWindow(window model.MetricsWindow, now time.Time) (startsAt, en
 		// a test pins the two in agreement. Kept as a defensive backstop.
 		return "", "", fmt.Errorf("%w: %q", ErrUnsupportedWindow, window)
 	}
-	return start.Format(reportTimestampLayout), end.Add(23 * time.Hour).Format(reportTimestampLayout), nil
+	startsAt, endsAt = reportRange(start, end)
+	return startsAt, endsAt, nil
+}
+
+// reportRange renders an INCLUSIVE range of UTC calendar days [startDay, endDay] as the
+// starts_at/ends_at pair a report request takes: startDay's 00:00 hour and endDay's 23:00
+// hour. See dateRangeForWindow for why the end bound is the 23:00 hour rather than midnight
+// (midnight stops the range as its final day begins). Both GetCampaignMetrics' windows and
+// the account monitor's trailing-days range render through here, so the two readers of the
+// one verified reporting operation cannot disagree about where a day ends.
+//
+// Each bound is truncated to its UTC calendar day first, so a caller passing an instant
+// mid-day still gets whole-day bounds.
+func reportRange(startDay, endDay time.Time) (startsAt, endsAt string) {
+	s := startDay.UTC()
+	e := endDay.UTC()
+	s = time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, time.UTC)
+	e = time.Date(e.Year(), e.Month(), e.Day(), 0, 0, 0, 0, time.UTC)
+	return s.Format(reportTimestampLayout), e.Add(23 * time.Hour).Format(reportTimestampLayout)
 }
