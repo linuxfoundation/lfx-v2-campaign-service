@@ -1604,6 +1604,84 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("update-campaign-bid", func() {
+		Description("Change a campaign's MAX COST-PER-CLICK BID on its ad platform, then persist the new bid. " +
+			"A MUTATION on a live paid campaign, dispatched to the platform first, with the same ONE-WAY " +
+			"invariant as update-campaign-budget: the new bid is never persisted before the platform " +
+			"confirms it; once confirmed, a failed row write answers 500 with the platform holding the new " +
+			"bid, logged as a divergence, and re-applying the same bid reconciles it. " +
+			"ONE MANUAL CPC BID, AT THE LEVEL THIS SERVICE'S CREATE PATH PUTS IT — never a bid strategy. " +
+			"Microsoft Advertising: the default CpcBid of the ONE ad group this service created for the " +
+			"campaign (keywords are created without their own bids, so they inherit it). Reddit: the " +
+			"bid_value of the ONE ad group this service created. A campaign whose row records no ad group " +
+			"(an adopted campaign, or one whose creation never reached the ad group) is refused (409): the " +
+			"service will not choose which of several ad groups to re-bid. " +
+			"REFUSED (409) WHEN THE BID WOULD BE IGNORED. A manual bid only does something under a bid " +
+			"strategy that reads it — Microsoft's EnhancedCpc or ManualCpc; Reddit's MANUAL_BIDDING. Under " +
+			"an automated strategy (Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas, " +
+			"MaxConversionValue, TargetImpressionShare, a portfolio strategy the read cannot name; Reddit " +
+			"BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX) the platform would ignore it or, worse, the write would " +
+			"be read as a request to switch strategy — and this endpoint NEVER switches strategy. An " +
+			"unreported strategy is refused the same way rather than assumed manual. NOTE: every Reddit " +
+			"campaign this service creates is BIDLESS, so the Reddit leg applies only after an operator has " +
+			"moved the ad group to manual bidding in Reddit Ads Manager. " +
+			"The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor " +
+			"converts it. " +
+			"Microsoft Advertising and Reddit today: a campaign on any other platform is refused with 400. " +
+			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: the " +
+			"campaign is unprovisioned; it belongs to a different ad account than the project's connection " +
+			"now resolves to, or does not record which ad account it was created under; its bid strategy is " +
+			"automated or unreported; or the bid could not be addressed (no recorded ad group, an ad group " +
+			"reporting another campaign, or one bidding in a unit other than `bid_type`). None is retryable. " +
+			"**400** for a request fault: a non-positive, non-finite or out-of-range bid, an unknown bid type, " +
+			"a platform with no bid-write capability wired, or a bid the campaign's platform refuses on its " +
+			"own minimum or maximum — the response names what it was. " +
+			"**503** when the platform could not be reached or did not confirm; the row is unchanged. Setting " +
+			"the same bid twice converges, but verify the bid in the ad platform before retrying.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			ifMatchAttr()
+			// Minimum is ONE MICRO for the reason update-campaign-budget's is: Goa's Minimum
+			// is inclusive, zero is not a bid, and a micro is the finest unit any supported
+			// platform bills in (Reddit sets bid_value in micro-units). Each platform's own,
+			// stricter floor — Microsoft's 0.01 in the account currency, for one — is applied
+			// by its adapter and answered 400 with the reason. The maximum is the CONTRACT's
+			// ceiling, deliberately loose enough for high-unit currencies (JPY, KRW, IDR);
+			// each adapter applies the platform's own, lower one.
+			Attribute("bid", Float64, "New maximum cost-per-click bid, in the AD ACCOUNT's own currency (NOT USD). Must be strictly positive.", func() {
+				Minimum(0.000001)
+				Maximum(1000000)
+				Example(2.50)
+			})
+			// Optional and defaulted, unlike budget_type: there is only one value today, and it
+			// exists so the contract names the unit the amount is in. An ad group bidding in
+			// another unit (a Reddit CPM ad group) is refused 409 rather than re-bid in a unit the
+			// caller never named — the same "never translate" rule budget_type follows.
+			Attribute("bid_type", String, "The unit the bid is expressed in. Only a max cost-per-click bid is supported; it MUST match how the ad group bids upstream.", func() {
+				Enum("cpc")
+				Default("cpc")
+				Example("cpc")
+			})
+			Required("project_id", "brief_id", "campaign_id", "bid")
+		})
+		Result(Campaign)
+		commonBriefErrors()
+		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
+		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
+		HTTP(func() {
+			PATCH("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/bid")
+			Header("bearer_token:Authorization")
+			Header("if_match:If-Match")
+			Response(StatusOK, func() { Header("etag:ETag") })
+			briefErrorResponses()
+			Response("PreconditionFailed", StatusPreconditionFailed)
+			Response("PreconditionRequired", StatusPreconditionRequired)
+		})
+	})
+
 	Method("apply-keyword-actions", func() {
 		Description("Pause or remove Google Ads keywords on one campaign. " +
 			"A MUTATION on a live paid campaign: pausing or removing a keyword changes what serves, so it " +

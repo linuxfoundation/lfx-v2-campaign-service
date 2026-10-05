@@ -284,7 +284,7 @@ func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, 
 
 const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, variant, slot_version, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
-	created_by, updated_by, ran_on_system_account, created_at, updated_at`
+	created_by, updated_by, ran_on_system_account, created_at, updated_at, max_cpc_bid::float8`
 
 // getCampaignQuery and getCampaignByPlatformQuery both exclude soft-deleted rows;
 // pinned by TestCampaignRepo_ReadsExcludeSoftDeleted.
@@ -623,6 +623,9 @@ const claimCampaignExistsQuery = `SELECT EXISTS (
 const replaceCampaignQuery = `UPDATE campaigns SET
 	campaign_name=$1, status=$2, budget_amount=$3, budget_type=$4, start_date=$5, end_date=$6,
 	config_snapshot=$7, result=$8,
+	-- max_cpc_bid (000038) is written from the loaded row, so every caller that does not
+	-- change the bid writes back exactly what it read. Only update-campaign-bid changes it.
+	max_cpc_bid=$14,
 	-- Same COALESCE reasoning as the upsert's conflict arm: an update whose caller had no
 	-- authenticated principal (attributedActor returned nil, having logged it) is an
 	-- ordinary unattributed write, not an instruction to forget the last actor we know.
@@ -901,6 +904,7 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	updated, err := scanCampaign(tx.QueryRow(ctx, q,
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType), c.StartDate, c.EndDate,
 		nullJSON(c.ConfigSnapshot), nullJSON(c.Result), updatedBy, c.ID, c.BriefID, c.ProjectID, expectedVersion,
+		c.MaxCPCBid,
 	))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("replace campaign: %w", err)
@@ -1670,7 +1674,7 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		&c.ID, &c.ProjectID, &c.BriefID, &c.JobID, &platform, &c.Variant, &c.SlotVersion, &pcID, &c.CampaignName,
 		&c.Status, &c.BudgetAmount, &budgetType, &c.StartDate, &c.EndDate,
 		&c.ConfigSnapshot, &c.Result, &c.Version, &createdBy, &updatedBy, &c.RanOnSystemAccount,
-		&c.CreatedAt, &c.UpdatedAt,
+		&c.CreatedAt, &c.UpdatedAt, &c.MaxCPCBid,
 	)
 	if err != nil {
 		return nil, err

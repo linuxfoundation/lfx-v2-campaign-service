@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/reddit"
-description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), the campaign status toggle and campaign-level budget (goal_value) write, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
+description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), the campaign status toggle, campaign-level budget (goal_value) write and ad-group manual bid (bid_value) write, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
 resource: "internal/platform/reddit"
 tags:
   - platform-client
@@ -376,6 +376,31 @@ the published spec** (Reddit's OpenAPI document could not be fetched from this e
 single-campaign GET on that path, whether it reports `is_campaign_budget_optimization` and
 `ad_account_id`, the `DAILY_SPEND` token, and the PATCH response's echo shape. Each fails closed
 — an unreported CBO flag or `goal_type` is refused 409, a mismatched echo is UNCONFIRMED.
+
+## Ad-group bid write (LFXV2-2665)
+
+`bid_update.go` backs `RedditDispatcher.WriteBid`. A Reddit ad group bids through `bid_strategy`
+(BIDLESS, MANUAL_BIDDING, MAXIMIZE_VOLUME, TARGET_CPX), `bid_type` (CPC, CPM, CPV, ...) and
+`bid_value` in micro-units; only MANUAL_BIDDING pays the `bid_value` given. **The create path
+sends `bid_strategy: "BIDLESS"` on the campaign and the ad group**, so every campaign this
+service creates is refused by the dispatcher until an operator switches it to manual bidding.
+The field names and enum follow the OpenAPI document this package already cites
+(`https://ads-api.reddit.com/api/v3/openapi.json`); it could not be re-fetched when this was
+written (the host refuses automated fetches), so the guards fail closed on anything they do not
+recognize.
+
+- `BidMicros(amount)` — positive, finite, at most `redditMaxBid` (1,000,000), rounded like
+  `BudgetMicros`, refused if it rounds to zero; refusals are `ErrBidAmountInvalid` with a sentence
+  (`BidAmountReason`).
+- `GetAdGroupBid(ctx, adGroupID)` — `GET /ad_accounts/{account}/ad_groups/{id}`; a pure read; 404
+  → `(nil, nil)`; an answer for another ad group is an error; an id that cannot address a path is
+  `ErrInvalidAdGroupID` before any request.
+- `UpdateAdGroupBid(ctx, adGroupID, micros)` — PATCH of the same path naming ONLY `bid_value`
+  (never `bid_strategy`/`bid_type`), with `UpdateCampaignBudget`'s 429-retry and echo checks
+  (another ad group or another `bid_value` in a 2xx → UNCONFIRMED). A definite 400 whose body
+  names `bid_value` is a `bidAmountError` with this package's own sentence — Reddit's error
+  shape is not documented field-by-field, so this is a best-effort match whose miss is still a
+  truthful definite failure.
 
 ## Metrics reads — contract from Reddit's public OpenAPI spec (LFXV2-3282)
 

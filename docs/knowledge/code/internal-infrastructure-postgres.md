@@ -188,6 +188,12 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `uq_campaigns_platform_campaign_live` means `ErrPlatformCampaignAlreadyBound`. Both indexes are in
   `requiredIndexes` until the follow-up release drops the narrower one.
 
+  `max_cpc_bid` (added by `000038`, `NUMERIC(18,6)`, nullable, `CHECK > 0`) records the manual
+  max CPC bid most recently set through `update-campaign-bid` — a confirmed REQUEST, like
+  `budget_amount`, never an observation. It is in `campaignCols`/`scanCampaign` (cast
+  `::float8`) and in `replaceCampaignQuery`'s SET list (every other caller writes back the value
+  it loaded); the dispatch upsert never writes it, so a re-dispatch cannot erase the record.
+
   **Authoring rule — expand/contract, one release apart.** The general form of the
   constraint `000013`/`000014` had to break: *a migration that removes or narrows something
   the N-1 release's SQL depends on ships one release AFTER the code change that stopped

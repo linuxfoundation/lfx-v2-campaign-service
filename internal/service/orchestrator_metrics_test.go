@@ -378,6 +378,12 @@ func (d upstreamCapableDispatcher) WriteBudget(context.Context, string, model.Pr
 	return d.err
 }
 
+// WriteBid implements BidWriter so this same fake drives the bid-write upstream call, for the
+// budget write's reason: it changes what a live campaign pays per click.
+func (d upstreamCapableDispatcher) WriteBid(context.Context, string, model.Provider, *model.Campaign, model.BidChange) error {
+	return d.err
+}
+
 func (d upstreamCapableDispatcher) VerifyAccountOrg(context.Context, string, model.Provider) error {
 	return d.err
 }
@@ -552,6 +558,13 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opWriteBudget,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				return o.WriteCampaignBudget(ctx, "p1", platform, campaign, model.BudgetChange{Amount: 100, Type: model.BudgetDaily})
+			},
+		},
+		{
+			name: "write bid",
+			op:   opWriteBid,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				return o.WriteCampaignBid(ctx, "p1", platform, campaign, model.BidChange{Amount: 2, Type: model.BidTypeCPC})
 			},
 		},
 		{
