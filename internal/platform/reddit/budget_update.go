@@ -215,7 +215,9 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID string, mi
 		// A budgetAmountError, so a caller can classify it with ErrBudgetAmountInvalid exactly as
 		// it classifies BudgetMicros's own refusals — a permanent amount rejection, never an
 		// upstream failure.
-		return &budgetAmountError{msg: fmt.Sprintf("budget %d micro-units is not a valid amount; it must come from BudgetMicros", micros)}
+		// Client-safe: this text can reach the caller through BudgetAmountReason, so it states the
+		// constraint, not which helper should have produced the value.
+		return &budgetAmountError{msg: fmt.Sprintf("budget %d micro-units is not a valid amount; it must be a positive number of micro-units", micros)}
 	}
 	body := map[string]any{"data": map[string]any{"goal_value": micros}}
 	resp, err := c.request(ctx, http.MethodPatch, path, body)
@@ -228,7 +230,10 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID string, mi
 	var echo campaignBudgetWire
 	if jerr := json.Unmarshal(resp.Data, &echo); jerr != nil {
 		// A 2xx whose data is not a campaign object says nothing about what was applied.
-		return &transportError{Method: http.MethodPatch, Path: "campaign budget", Err: fmt.Errorf("decode 2xx budget update response for campaign %s: not a campaign object", campaignID)}
+		// The decode error is kept in the chain for diagnosis. encoding/json's errors name a type
+		// or a single offending character, never the response body, so wrapping it does not echo
+		// upstream content.
+		return &transportError{Method: http.MethodPatch, Path: "campaign budget", Err: fmt.Errorf("decode 2xx budget update response for campaign %s: not a campaign object: %w", campaignID, jerr)}
 	}
 	if got := strings.TrimSpace(echo.ID); got != "" && got != campaignID {
 		return &transportError{Method: http.MethodPatch, Path: "campaign budget", Err: fmt.Errorf("budget update for campaign %s was acknowledged for campaign %s", campaignID, got)}

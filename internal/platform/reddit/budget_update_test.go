@@ -216,7 +216,7 @@ func TestUpdateCampaignBudget_OutcomeClassification(t *testing.T) {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
 			if err != nil && IsOutcomeUnconfirmed(err) != tc.unconfirmed {
-				t.Errorf("IsOutcomeUnconfirmed = %v, want %v: %v", !tc.unconfirmed, tc.unconfirmed, err)
+				t.Errorf("IsOutcomeUnconfirmed = %v, want %v: %v", IsOutcomeUnconfirmed(err), tc.unconfirmed, err)
 			}
 		})
 	}
