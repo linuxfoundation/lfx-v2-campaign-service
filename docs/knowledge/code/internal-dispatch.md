@@ -2313,7 +2313,7 @@ overlay flip like the cutover flags; the branch stays dormant until an operator 
 | --- | --- | --- |
 | `resolve` | `Dispatch` (creation) and the discovery/`ListAccounts` helpers | system when the flag is on, else project-then-fallback |
 | `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` | **the account the campaign RECORDS being created under** |
-| `resolveOwned` | adoption, and every provider's account-monitor read (`ListAccountCampaignMetrics`, round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
+| `resolveOwned` | adoption, and every provider's account-monitor read (`ListAccountCampaignMetrics`, and Microsoft's report-backed `ListAccountCampaigns`/`SubmitAccountReport`/`CheckAccountReport` in `microsoft_monitor.go`; round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
 
 The rule for an existing campaign is NOT "never forced". It is "follow the recorded creation
 account", and the difference is the whole point: those two agree for a campaign created before the

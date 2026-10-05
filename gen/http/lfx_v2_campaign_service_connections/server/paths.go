@@ -295,3 +295,8 @@ func MonitorMetaAdsAccountLfxV2CampaignServiceConnectionsPath(projectID string) 
 func MonitorRedditAdsAccountLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/connection-reddit-ads/account-monitor", projectID)
 }
+
+// MonitorMicrosoftAdsAccountLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service monitor-microsoft-ads-account HTTP endpoint.
+func MonitorMicrosoftAdsAccountLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/connection-microsoft-ads/account-monitor", projectID)
+}

@@ -246,6 +246,10 @@ type Client struct {
 	// monitor-reddit-ads-account endpoint.
 	MonitorRedditAdsAccountDoer goahttp.Doer
 
+	// MonitorMicrosoftAdsAccount Doer is the HTTP client used to make requests to
+	// the monitor-microsoft-ads-account endpoint.
+	MonitorMicrosoftAdsAccountDoer goahttp.Doer
+
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -267,68 +271,69 @@ func NewClient(
 	restoreBody bool,
 ) *Client {
 	return &Client{
-		CreateGoogleAdsDoer:           doer,
-		GetGoogleAdsDoer:              doer,
-		UpdateGoogleAdsDoer:           doer,
-		DeleteGoogleAdsDoer:           doer,
-		TestGoogleAdsDoer:             doer,
-		SetCredentialGoogleAdsDoer:    doer,
-		CreateLinkedinAdsDoer:         doer,
-		GetLinkedinAdsDoer:            doer,
-		UpdateLinkedinAdsDoer:         doer,
-		DeleteLinkedinAdsDoer:         doer,
-		TestLinkedinAdsDoer:           doer,
-		SetCredentialLinkedinAdsDoer:  doer,
-		CreateMetaAdsDoer:             doer,
-		GetMetaAdsDoer:                doer,
-		UpdateMetaAdsDoer:             doer,
-		DeleteMetaAdsDoer:             doer,
-		TestMetaAdsDoer:               doer,
-		SetCredentialMetaAdsDoer:      doer,
-		CreateRedditAdsDoer:           doer,
-		GetRedditAdsDoer:              doer,
-		UpdateRedditAdsDoer:           doer,
-		DeleteRedditAdsDoer:           doer,
-		TestRedditAdsDoer:             doer,
-		SetCredentialRedditAdsDoer:    doer,
-		CreateTwitterAdsDoer:          doer,
-		GetTwitterAdsDoer:             doer,
-		UpdateTwitterAdsDoer:          doer,
-		DeleteTwitterAdsDoer:          doer,
-		TestTwitterAdsDoer:            doer,
-		SetCredentialTwitterAdsDoer:   doer,
-		CreateMicrosoftAdsDoer:        doer,
-		GetMicrosoftAdsDoer:           doer,
-		UpdateMicrosoftAdsDoer:        doer,
-		DeleteMicrosoftAdsDoer:        doer,
-		TestMicrosoftAdsDoer:          doer,
-		SetCredentialMicrosoftAdsDoer: doer,
-		CreateHubspotDoer:             doer,
-		GetHubspotDoer:                doer,
-		UpdateHubspotDoer:             doer,
-		DeleteHubspotDoer:             doer,
-		TestHubspotDoer:               doer,
-		SetCredentialHubspotDoer:      doer,
-		ListGoogleAdsAccountsDoer:     doer,
-		GetGoogleAdsKeywordsDoer:      doer,
-		GetGoogleAdsAudienceDoer:      doer,
-		ResolveGoogleAdsCampaignDoer:  doer,
-		ListMetaAdsAccountsDoer:       doer,
-		ListLinkedinAdsAccountsDoer:   doer,
-		ListMicrosoftAdsAccountsDoer:  doer,
-		ListTwitterAdsAccountsDoer:    doer,
-		ListHubspotEmailsDoer:         doer,
-		SearchHubspotCampaignsDoer:    doer,
-		CreateHubspotCampaignDoer:     doer,
-		MonitorGoogleAdsAccountDoer:   doer,
-		MonitorLinkedinAdsAccountDoer: doer,
-		MonitorMetaAdsAccountDoer:     doer,
-		MonitorRedditAdsAccountDoer:   doer,
-		RestoreResponseBody:           restoreBody,
-		scheme:                        scheme,
-		host:                          host,
-		decoder:                       dec,
-		encoder:                       enc,
+		CreateGoogleAdsDoer:            doer,
+		GetGoogleAdsDoer:               doer,
+		UpdateGoogleAdsDoer:            doer,
+		DeleteGoogleAdsDoer:            doer,
+		TestGoogleAdsDoer:              doer,
+		SetCredentialGoogleAdsDoer:     doer,
+		CreateLinkedinAdsDoer:          doer,
+		GetLinkedinAdsDoer:             doer,
+		UpdateLinkedinAdsDoer:          doer,
+		DeleteLinkedinAdsDoer:          doer,
+		TestLinkedinAdsDoer:            doer,
+		SetCredentialLinkedinAdsDoer:   doer,
+		CreateMetaAdsDoer:              doer,
+		GetMetaAdsDoer:                 doer,
+		UpdateMetaAdsDoer:              doer,
+		DeleteMetaAdsDoer:              doer,
+		TestMetaAdsDoer:                doer,
+		SetCredentialMetaAdsDoer:       doer,
+		CreateRedditAdsDoer:            doer,
+		GetRedditAdsDoer:               doer,
+		UpdateRedditAdsDoer:            doer,
+		DeleteRedditAdsDoer:            doer,
+		TestRedditAdsDoer:              doer,
+		SetCredentialRedditAdsDoer:     doer,
+		CreateTwitterAdsDoer:           doer,
+		GetTwitterAdsDoer:              doer,
+		UpdateTwitterAdsDoer:           doer,
+		DeleteTwitterAdsDoer:           doer,
+		TestTwitterAdsDoer:             doer,
+		SetCredentialTwitterAdsDoer:    doer,
+		CreateMicrosoftAdsDoer:         doer,
+		GetMicrosoftAdsDoer:            doer,
+		UpdateMicrosoftAdsDoer:         doer,
+		DeleteMicrosoftAdsDoer:         doer,
+		TestMicrosoftAdsDoer:           doer,
+		SetCredentialMicrosoftAdsDoer:  doer,
+		CreateHubspotDoer:              doer,
+		GetHubspotDoer:                 doer,
+		UpdateHubspotDoer:              doer,
+		DeleteHubspotDoer:              doer,
+		TestHubspotDoer:                doer,
+		SetCredentialHubspotDoer:       doer,
+		ListGoogleAdsAccountsDoer:      doer,
+		GetGoogleAdsKeywordsDoer:       doer,
+		GetGoogleAdsAudienceDoer:       doer,
+		ResolveGoogleAdsCampaignDoer:   doer,
+		ListMetaAdsAccountsDoer:        doer,
+		ListLinkedinAdsAccountsDoer:    doer,
+		ListMicrosoftAdsAccountsDoer:   doer,
+		ListTwitterAdsAccountsDoer:     doer,
+		ListHubspotEmailsDoer:          doer,
+		SearchHubspotCampaignsDoer:     doer,
+		CreateHubspotCampaignDoer:      doer,
+		MonitorGoogleAdsAccountDoer:    doer,
+		MonitorLinkedinAdsAccountDoer:  doer,
+		MonitorMetaAdsAccountDoer:      doer,
+		MonitorRedditAdsAccountDoer:    doer,
+		MonitorMicrosoftAdsAccountDoer: doer,
+		RestoreResponseBody:            restoreBody,
+		scheme:                         scheme,
+		host:                           host,
+		decoder:                        dec,
+		encoder:                        enc,
 	}
 }
 
@@ -1704,6 +1709,31 @@ func (c *Client) MonitorRedditAdsAccount() goa.Endpoint {
 		resp, err := c.MonitorRedditAdsAccountDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "monitor-reddit-ads-account", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// MonitorMicrosoftAdsAccount returns an endpoint that makes HTTP requests to
+// the lfx-v2-campaign-service-connections service
+// monitor-microsoft-ads-account server.
+func (c *Client) MonitorMicrosoftAdsAccount() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeMonitorMicrosoftAdsAccountRequest(c.encoder)
+		decodeResponse = DecodeMonitorMicrosoftAdsAccountResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildMonitorMicrosoftAdsAccountRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.MonitorMicrosoftAdsAccountDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "monitor-microsoft-ads-account", err)
 		}
 		return decodeResponse(resp)
 	}

@@ -38,7 +38,7 @@ var JWTAuth = JWTSecurity("jwt", func() {
 })
 
 // monitorDaysMin and monitorDaysMax are the account-monitor `days` attribute's
-// inclusive bound, shared by all four provider monitor methods so the pair can't
+// inclusive bound, shared by all five provider monitor methods so the pair can't
 // drift between them. This file defines the API contract only (see the package
 // doc) and deliberately does not import internal/domain's mirrored
 // MonitorDaysMin/MonitorDaysMax — internal/apivalidation/monitor_account_id_drift_test.go
@@ -1135,7 +1135,7 @@ var HubSpotConnection = Type("hubspot-connection", func() {
 
 // AccountMonitorCampaign is one campaign row from the account-scoped monitor read, mirroring
 // model.AccountCampaignMetrics plus the rule engine's per-row pacing output
-// (model.AccountMonitorRow). One shared type across all four platforms rather than a
+// (model.AccountMonitorRow). One shared type across all five platforms rather than a
 // per-provider result, matching AccessibleAccount above — Goa cannot express a per-platform
 // result union, so the house convention is one method per platform sharing one result shape.
 //
@@ -1194,14 +1194,25 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 	Required("spend", "impressions", "clicks", "campaign_count")
 })
 
-// AccountMonitor is the account-scoped monitor read result, shared across all four
+// AccountMonitor is the account-scoped monitor read result, shared across all five
 // monitor-*-ads-account methods below.
+//
+// metrics_as_of / metrics_pending are set by Microsoft only. Its delivery metrics come from an
+// asynchronous report that takes minutes to build, so the service serves the last report that
+// finished and builds the next one between requests (model.ReportedAccountRead). The other four
+// platforms read their metrics live in the request, so for them the metrics are as of the read
+// itself and both fields are omitted rather than restating that.
 var AccountMonitor = Type("account-monitor", func() {
 	Attribute("account_id", String, "The account this read covers, echoed back from the request.", func() { Example("8666746580") })
 	Attribute("days", Int, "The trailing-days window this read covers, echoed back from the request.", func() { Example(30) })
 	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "Every campaign visible on the account, with the rule engine's per-row pacing output attached.")
 	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the account's campaigns.")
 	Attribute("totals", AccountMonitorTotals)
+	Attribute("metrics_as_of", String, "Microsoft Ads only: the point in time these campaigns' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Microsoft reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.", func() {
+		Format(FormatDateTime)
+		Example("2026-10-05T14:30:00Z")
+	})
+	Attribute("metrics_pending", Boolean, "Microsoft Ads only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.", func() { Example(false) })
 	Required("account_id", "days", "campaigns", "action_items", "totals")
 })
 
@@ -1924,6 +1935,53 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/connection-reddit-ads/account-monitor")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("account_id")
+			Param("days")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("monitor-microsoft-ads-account", func() {
+		Description("Read every live campaign on a Microsoft Advertising account with pacing and action " +
+			"items derived by this service's rule engine. Account-scoped, not project-scoped, the same way " +
+			"monitor-google-ads-account is, and resolved from the project's OWN connection only. The " +
+			"campaign list (names, statuses, daily budgets) is read live; delivery metrics come from " +
+			"Microsoft's asynchronous Reporting service, which takes minutes to build a report, so they are " +
+			"served from the last report that finished — see metrics_as_of and metrics_pending — while the " +
+			"next one builds. The first read for an account and window therefore returns campaigns with " +
+			"fetch_failed=true and metrics_pending=true. Saved reports are cached platform data, not a " +
+			"record of anything this service did.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			// Same shape as MicrosoftAdsConnectionConfig.account_id above: a Microsoft account id
+			// is a positive int64 with no leading zero, and real ones are 7–9 digits. MaxLength
+			// follows that config (18) rather than the siblings' 64, because the Pattern already
+			// bounds it at 18 and a looser MaxLength would describe ids the Pattern refuses.
+			Attribute("account_id", String, "The Microsoft Advertising account to read.", func() {
+				Pattern(`^[1-9][0-9]{0,17}$`)
+				MaxLength(18)
+				Example("187654321")
+			})
+			Attribute("days", Int, "Trailing days to read metrics over.", func() {
+				Minimum(monitorDaysMin)
+				Maximum(monitorDaysMax)
+				Example(30)
+			})
+			Required("project_id", "account_id", "days")
+		})
+		Result(AccountMonitor)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-microsoft-ads/account-monitor")
 			Header("bearer_token:Authorization")
 			connectionAuthErrorResponses()
 			Param("account_id")

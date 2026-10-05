@@ -698,7 +698,7 @@ func TestNewBriefService_InjectsSharedPublisher(t *testing.T) {
 // unsearchable until a later update republished it — a gap invisible from BriefService.
 func TestNewOrchestrator_InjectsSharedPublisher(t *testing.T) {
 	c := &Container{indexPublisher: indexer.Noop{}}
-	assert.True(t, c.newOrchestrator(nil, nil, nil).IndexerIsNoop(),
+	assert.True(t, c.newOrchestrator(nil, nil, nil, nil).IndexerIsNoop(),
 		"a Noop publisher must pass through as a Noop")
 
 	live, err := indexer.NewNATSPublisher("nats://127.0.0.1:14222")
@@ -706,7 +706,7 @@ func TestNewOrchestrator_InjectsSharedPublisher(t *testing.T) {
 	_ = err // a dial failure still yields a usable publisher; that is not what this asserts
 	t.Cleanup(live.Close)
 	c = &Container{indexPublisher: live}
-	assert.False(t, c.newOrchestrator(nil, nil, nil).IndexerIsNoop(),
+	assert.False(t, c.newOrchestrator(nil, nil, nil, nil).IndexerIsNoop(),
 		"the container's real publisher must reach the Orchestrator")
 }
 

@@ -1962,3 +1962,56 @@ func BuildMonitorRedditAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorR
 
 	return v, nil
 }
+
+// BuildMonitorMicrosoftAdsAccountPayload builds the payload for the
+// lfx-v2-campaign-service-connections monitor-microsoft-ads-account endpoint
+// from CLI flags.
+func BuildMonitorMicrosoftAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountProjectID string, lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountAccountID string, lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountDays string, lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountBearerToken string) (*lfxv2campaignserviceconnections.MonitorMicrosoftAdsAccountPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountProjectID
+	}
+	var accountID string
+	{
+		accountID = lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountAccountID
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[1-9][0-9]{0,17}$"))
+		if utf8.RuneCountInString(accountID) > 18 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 18, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var days int
+	{
+		var v int64
+		v, err = strconv.ParseInt(lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountDays, 10, strconv.IntSize)
+		days = int(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid value for days, must be INT")
+		}
+		if days < 7 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 7, true))
+		}
+		if days > 90 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.MonitorMicrosoftAdsAccountPayload{}
+	v.ProjectID = projectID
+	v.AccountID = accountID
+	v.Days = days
+	v.BearerToken = bearerToken
+
+	return v, nil
+}

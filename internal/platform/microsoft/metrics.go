@@ -104,7 +104,9 @@ const (
 
 	// reportDownloadCap bounds the ZIP read. A campaign-scoped, aggregate-over-window
 	// report is a handful of rows, so anything approaching this is a contract surprise
-	// (a per-day or per-keyword breakdown) and is refused rather than parsed.
+	// (a per-day or per-keyword breakdown) and is refused rather than parsed. The account
+	// monitor's report (monitor.go) is one Summary row per campaign that served, so it stays
+	// in the same order of magnitude — thousands of campaigns would still be well under 1 MiB.
 	reportDownloadCap = 8 << 20 // 8 MiB
 )
 
@@ -211,8 +213,94 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	return c.downloadReport(ctx, downloadURL, campaignID, window)
 }
 
-// submitReport posts the report definition and returns the ReportRequestId.
+// submitReport posts the CAMPAIGN-scoped report definition and returns the ReportRequestId.
+//
+// The report definition itself (type, format, completeness setting, aggregation, columns,
+// date range and time zone) lives in submitReportDefinition, shared with the account monitor's
+// SubmitAccountCampaignReport (monitor.go), so the two reads cannot drift apart on any of the
+// settings whose reasoning is recorded there. What this function owns is the SCOPE — the one
+// thing the two reads must differ on — and the 2027 diagnostic that only a campaign-only scope
+// can provoke.
 func (c *Client) submitReport(ctx context.Context, campaignID string, start, end time.Time) (string, error) {
+	// Scope carries ONLY Campaigns. AccountThroughCampaignReportScope — the type of
+	// CampaignPerformanceReportRequest.Scope — documents, on both of its elements,
+	// that "the report scope includes a UNION of the AccountIds and Campaigns
+	// elements", and the XSD agrees (both minOccurs="0" in an xs:sequence, not an
+	// xs:choice). Sending AccountIds alongside Campaigns therefore widened this
+	// campaign-scoped read to EVERY campaign in the account, which foldReportRows
+	// then summed into an account-wide total reported as one campaign's metrics —
+	// a valid request, no error raised, and a silently wrong number. That is the
+	// failure-as-measurement class this file refuses everywhere else. The nested
+	// AccountId inside Campaigns[] already scopes the request, so dropping
+	// AccountIds loses nothing.
+	//
+	// KNOWN RISK, untestable here: community Q&A threads report error 2027
+	// (InvalidAccountThruCampaignReportScope) when AccountIds is omitted. Those are
+	// not normative — the docs require only "at least one of these elements" — and
+	// no Microsoft credentials exist to settle it (see the UNVERIFIED CONTRACT
+	// banner). We deliberately chose a correct-but-possibly-rejected request over
+	// one that reliably returns the wrong number; submitReport names 2027 explicitly
+	// in its error so the first live run diagnoses it in one read.
+	//
+	// Ids go out as QUOTED STRINGS, not as bare JSON numbers — the opposite of
+	// what campaign.go does, deliberately, because campaign.go is a different API.
+	// Its precedent is Campaign Management v13; this is Reporting v13, and the two
+	// are versioned in lockstep but are not one contract.
+	//
+	// Microsoft's own Reporting v13 JSON reference renders every `long` in this
+	// request as a quoted string, and its placeholder convention distinguishes the
+	// two cases rather than quoting everything: CampaignReportScope and
+	// AccountThroughCampaignReportScope show "AccountId": "LongValueHere" and
+	// "CampaignId": "LongValueHere" QUOTED, while ReportTime's Day/Month/Year on
+	// the same page show IntValueHere UNQUOTED. `long` quoted, `int` bare, in one
+	// document — so the quoting is a type signal, not a docs-formatting habit.
+	//
+	// That is also the safe direction independent of the docs: a 64-bit id exceeds
+	// the 2^53 a JSON number represents exactly, and a server that accepts `long`
+	// parses a numeric string, whereas a bare number risks a silent precision loss
+	// on a large id. Sending an id that has been rounded would scope the report to
+	// the wrong campaign and report ANOTHER campaign's numbers as this one's —
+	// the failure-as-measurement class this file refuses everywhere.
+	scope := map[string]any{
+		"Campaigns": []map[string]any{
+			{
+				"AccountId":  c.account.AccountID,
+				"CampaignId": campaignID,
+			},
+		},
+	}
+	reportID, err := c.submitReportDefinition(ctx, scope, start, end)
+	if err != nil {
+		// If Microsoft rejects the campaign-only scope, say so in the error itself rather
+		// than leaving whoever first runs this against a live account to rediscover the
+		// tradeoff recorded above. 2027 / InvalidAccountThruCampaignReportScope is the code
+		// the community threads name; both spellings are matched because Microsoft returns
+		// a numeric Code on some services and a string ErrorCode on others (see
+		// parseErrorCodes/codeString).
+		//
+		// Matched HERE, on the campaign-scoped path only: the account monitor's scope DOES
+		// carry AccountIds, so a 2027 there cannot mean "AccountIds was required after all",
+		// and naming this tradeoff in its error would send the reader the wrong way.
+		//
+		// errors.Unwrap peels submitReportDefinition's own "submit microsoft report:" prefix so
+		// the message is not prefixed twice; what is wrapped is the transport's error itself,
+		// exactly as before the definition was shared.
+		var ae *apiError
+		if errors.As(err, &ae) && (ae.hasErrorCode(msErrCodeInvalidScope) || ae.hasErrorCode(msErrNameInvalidScope)) {
+			return "", fmt.Errorf("submit microsoft report: the campaign-only report scope was REJECTED "+
+				"(error %s/%s); Scope.AccountIds may be required after all — see "+
+				"docs/knowledge/log/2026-08-18-LFXV2-3260-scope-union-tradeoff.md: %w",
+				msErrCodeInvalidScope, msErrNameInvalidScope, errors.Unwrap(err))
+		}
+		return "", err
+	}
+	return reportID, nil
+}
+
+// submitReportDefinition posts a CampaignPerformanceReportRequest for scope over [start, end]
+// and returns the ReportRequestId. scope is the AccountThroughCampaignReportScope object; every
+// other setting is fixed here, with its reasoning, and shared by every caller.
+func (c *Client) submitReportDefinition(ctx context.Context, scope map[string]any, start, end time.Time) (string, error) {
 	body := map[string]any{
 		"ReportRequest": map[string]any{
 			"Type":   "CampaignPerformanceReportRequest",
@@ -223,7 +311,9 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 			// day of the window may be an under-count, flagged in the report's header block
 			// rather than the HTTP status. foldReportRows reads that flag and refuses the
 			// report (see ErrReportDataIncomplete); without that check this setting would
-			// render a partial total as a complete measurement.
+			// render a partial total as a complete measurement. The account monitor reads the
+			// same flag but REPORTS it (AccountReportResult.Partial) instead of refusing — see
+			// CheckAccountCampaignReport for why its window makes refusal unworkable.
 			"ReturnOnlyCompleteData": false,
 			"Aggregation":            "Summary",
 			// ConversionsQualified, NOT Conversions. Microsoft's CampaignPerformanceReportColumn
@@ -242,53 +332,7 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 			"Columns": []string{
 				"CampaignId", "Impressions", "Clicks", "Spend", "ConversionsQualified",
 			},
-			// Scope carries ONLY Campaigns. AccountThroughCampaignReportScope — the type of
-			// CampaignPerformanceReportRequest.Scope — documents, on both of its elements,
-			// that "the report scope includes a UNION of the AccountIds and Campaigns
-			// elements", and the XSD agrees (both minOccurs="0" in an xs:sequence, not an
-			// xs:choice). Sending AccountIds alongside Campaigns therefore widened this
-			// campaign-scoped read to EVERY campaign in the account, which foldReportRows
-			// then summed into an account-wide total reported as one campaign's metrics —
-			// a valid request, no error raised, and a silently wrong number. That is the
-			// failure-as-measurement class this file refuses everywhere else. The nested
-			// AccountId inside Campaigns[] already scopes the request, so dropping
-			// AccountIds loses nothing.
-			//
-			// KNOWN RISK, untestable here: community Q&A threads report error 2027
-			// (InvalidAccountThruCampaignReportScope) when AccountIds is omitted. Those are
-			// not normative — the docs require only "at least one of these elements" — and
-			// no Microsoft credentials exist to settle it (see the UNVERIFIED CONTRACT
-			// banner). We deliberately chose a correct-but-possibly-rejected request over
-			// one that reliably returns the wrong number; submitReport names 2027 explicitly
-			// in its error so the first live run diagnoses it in one read.
-			//
-			// Ids go out as QUOTED STRINGS, not as bare JSON numbers — the opposite of
-			// what campaign.go does, deliberately, because campaign.go is a different API.
-			// Its precedent is Campaign Management v13; this is Reporting v13, and the two
-			// are versioned in lockstep but are not one contract.
-			//
-			// Microsoft's own Reporting v13 JSON reference renders every `long` in this
-			// request as a quoted string, and its placeholder convention distinguishes the
-			// two cases rather than quoting everything: CampaignReportScope and
-			// AccountThroughCampaignReportScope show "AccountId": "LongValueHere" and
-			// "CampaignId": "LongValueHere" QUOTED, while ReportTime's Day/Month/Year on
-			// the same page show IntValueHere UNQUOTED. `long` quoted, `int` bare, in one
-			// document — so the quoting is a type signal, not a docs-formatting habit.
-			//
-			// That is also the safe direction independent of the docs: a 64-bit id exceeds
-			// the 2^53 a JSON number represents exactly, and a server that accepts `long`
-			// parses a numeric string, whereas a bare number risks a silent precision loss
-			// on a large id. Sending an id that has been rounded would scope the report to
-			// the wrong campaign and report ANOTHER campaign's numbers as this one's —
-			// the failure-as-measurement class this file refuses everywhere.
-			"Scope": map[string]any{
-				"Campaigns": []map[string]any{
-					{
-						"AccountId":  c.account.AccountID,
-						"CampaignId": campaignID,
-					},
-				},
-			},
+			"Scope": scope,
 			"Time": map[string]any{
 				// toMSDate/msDate already exist in campaign.go for exactly this: Microsoft
 				// rejects an ISO-8601 string for a date field and requires the
@@ -330,19 +374,6 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 	// anything the caller can observe. idempotent=true buys the shared 429 policy.
 	raw, err := c.doReportingRequest(ctx, http.MethodPost, "GenerateReport/Submit", body, true)
 	if err != nil {
-		// If Microsoft rejects the campaign-only scope, say so in the error itself rather
-		// than leaving whoever first runs this against a live account to rediscover the
-		// tradeoff recorded above. 2027 / InvalidAccountThruCampaignReportScope is the code
-		// the community threads name; both spellings are matched because Microsoft returns
-		// a numeric Code on some services and a string ErrorCode on others (see
-		// parseErrorCodes/codeString).
-		var ae *apiError
-		if errors.As(err, &ae) && (ae.hasErrorCode(msErrCodeInvalidScope) || ae.hasErrorCode(msErrNameInvalidScope)) {
-			return "", fmt.Errorf("submit microsoft report: the campaign-only report scope was REJECTED "+
-				"(error %s/%s); Scope.AccountIds may be required after all — see "+
-				"docs/knowledge/log/2026-08-18-LFXV2-3260-scope-union-tradeoff.md: %w",
-				msErrCodeInvalidScope, msErrNameInvalidScope, err)
-		}
 		return "", fmt.Errorf("submit microsoft report: %w", err)
 	}
 	var resp struct {
@@ -443,12 +474,24 @@ func (c *Client) pollOnce(ctx context.Context, reportID string) (string, string,
 }
 
 // downloadReport fetches the ZIP, extracts its single CSV, and folds the rows into metrics.
+func (c *Client) downloadReport(ctx context.Context, downloadURL, campaignID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	records, err := c.downloadReportRecords(ctx, downloadURL)
+	if err != nil {
+		return nil, err
+	}
+	return foldReportRows(records, campaignID, window)
+}
+
+// downloadReportRecords fetches the ZIP and returns its single CSV's parsed records, unfolded.
+// It is the transport half of downloadReport, shared with the account monitor's
+// CheckAccountCampaignReport, which folds the same records PER CAMPAIGN instead of into one
+// total — so the credential hygiene below is written once and holds for both reads.
 //
 // The download URL is a pre-signed Microsoft storage URL, NOT an API endpoint: it carries
 // its own authorization in the query string, so this request deliberately does NOT attach
 // the OAuth bearer token or the account headers. Sending them would leak our credentials to
 // a storage host that neither needs nor expects them.
-func (c *Client) downloadReport(ctx context.Context, downloadURL, campaignID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+func (c *Client) downloadReportRecords(ctx context.Context, downloadURL string) ([][]string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		// The cause is NOT wrapped: net/http builds a *url.Error carrying the full URL,
@@ -491,11 +534,22 @@ func (c *Client) downloadReport(ctx context.Context, downloadURL, campaignID str
 	if len(data) > reportDownloadCap {
 		return nil, fmt.Errorf("microsoft report exceeds %d bytes", reportDownloadCap)
 	}
-	return parseReportZip(data, campaignID, window)
+	return readReportZipRecords(data)
 }
 
 // parseReportZip extracts the first CSV entry and totals its rows.
 func parseReportZip(data []byte, campaignID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	records, err := readReportZipRecords(data)
+	if err != nil {
+		return nil, err
+	}
+	return foldReportRows(records, campaignID, window)
+}
+
+// readReportZipRecords extracts the first CSV entry and returns its parsed records. Every
+// bound and parse setting below applies equally to the campaign-scoped and account-scoped
+// reads; only the fold differs.
+func readReportZipRecords(data []byte) ([][]string, error) {
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, fmt.Errorf("open microsoft report zip: %w", err)
@@ -546,7 +600,7 @@ func parseReportZip(data []byte, campaignID string, window model.MetricsWindow) 
 	if err != nil {
 		return nil, fmt.Errorf("parse microsoft report csv: %w", err)
 	}
-	return foldReportRows(records, campaignID, window)
+	return records, nil
 }
 
 // foldReportRows totals the metric columns across every data row.
