@@ -688,6 +688,67 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 	return accounts, nil
 }
 
+// requireLinkedInManagedAccount proves the caller-supplied accountID is the one THIS
+// project's own connection is bound to, and returns it trimmed.
+//
+// A connection stores exactly one account: `account_id TEXT NOT NULL` on every
+// provider table, with one LIVE row per project — a unique index on `(project_id)`
+// partial to `WHERE status <> 'deleted'` (migration 000001, the sole authority;
+// docs/channel-connections-schema.md renders it as a flat UNIQUE and is stale on
+// that detail). So a request naming any OTHER account is a
+// request mismatch and must not be served. Mirrors reddit.go's resolveMonitorClient,
+// which has made this check since round-18 review; the property it relies on is the
+// shared schema's, not a Reddit quirk.
+//
+// Refusing the LF system fallback (resolveLinkedInOwnedDiscoveryCredentials) is NOT a
+// substitute for this check and does not make it redundant. That fallback is about WHOSE
+// CREDENTIAL is used; this is about WHICH ACCOUNT the request named. A project with its
+// own active connection passes the fallback check and can still name a sibling project's
+// account — and one LinkedIn token reaches several ad accounts (that is exactly what
+// ListAccounts enumerates), so the token is not the boundary either.
+//
+// LinkedIn is the platform where this is LIVE rather than defensive: it genuinely runs
+// several ad accounts across foundations (tlf and lf-events are two of them), so a project
+// naming another project's account is a real, reachable request and this is what refuses
+// it. The other ad platforms share one account today, where the same check is defensive —
+// see requireMetaManagedAccount. Do not take per-platform tenancy from
+// docs/architecture.md: both its "Account Tenancy" and "Current Platform Accounts" tables
+// still show the shared platforms as per-foundation, and both are stale.
+//
+// The empty case is kept DISTINCT from the mismatch rather than folded into it. An empty
+// stored account means the operator has not finished setting the connection up, whose
+// remedy is "pick an account"; a mismatch means the request is wrong and the stored
+// connection is fine. ErrConnectionNotUsable+ErrAccountNotSelected is the pair
+// unusableConnectionReason already reports as "account_not_selected", matching
+// requireMetaAccountID. Reddit can treat this as a plain equality check because its
+// resolver already refused an empty stored account upstream;
+// resolveLinkedInOwnedDiscoveryCredentials deliberately does NOT — it returns success on
+// ErrAccountNotSelected so VerifyAccountOrg can report a half-configured pairing itself —
+// so this helper has to handle the empty case rather than assume it away.
+func requireLinkedInManagedAccount(res *resolved, projectID, accountID string) (string, error) {
+	stored := strings.TrimSpace(res.accountID)
+	if stored == "" {
+		return "", res.systemScoped(fmt.Errorf("%w: %w: linkedin connection for project %s has no account id selected",
+			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID))
+	}
+	want := strings.TrimSpace(accountID)
+	if want != stored {
+		// ErrAccountNotManagedByConnection, not ErrConnectionNotUsable: the stored
+		// connection is usable, the REQUEST named a different account. The latter's
+		// classification tells the operator to check that the credential is active and
+		// valid, which is the wrong remedy for a request mismatch.
+		return "", fmt.Errorf("%w: linkedin connection for project %s resolves to account %s, not the requested account %s",
+			domain.ErrAccountNotManagedByConnection, projectID, stored, want)
+	}
+	// Plain trimmed equality is correct here, unlike Meta's, which must compare through
+	// matchesAccount: a LinkedIn account id has ONE form. accountIDRE is `^[0-9]+$` with
+	// no optional prefix, so a stored row and a request cannot be equivalent-but-unequal
+	// the way "777" and "act_777" are, and there is no equivalence class to normalise.
+	// Returning the stored value is likewise safe because both forms are identical once
+	// trimmed. Do not add prefix handling here by symmetry with meta.go.
+	return stored, nil
+}
+
 // ListAccountCampaignMetrics reads every ACTIVE/PAUSED campaign on accountID plus an
 // account-wide Ad Analytics pivot=CAMPAIGN read over the trailing `days` days, ported from
 // lfx-self-serve's linkedin-ads.service.ts (getLinkedInAnalytics). accountID is the bare
@@ -718,10 +779,20 @@ func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, pro
 	if err != nil {
 		return nil, err
 	}
+	// Before the client is built, let alone a request issued: the account the caller named
+	// must be the one this project's connection manages. See requireLinkedInManagedAccount.
+	// The guard's trimmed return is what flows onward, not the caller's raw value: one
+	// validated value, used once. Forwarding the caller's string instead would be correct
+	// only because each platform's ValidateAccountID already refuses a padded id upstream —
+	// a second validator this code would then depend on without saying so.
+	scopedAccountID, aerr := requireLinkedInManagedAccount(res, projectID, accountID)
+	if aerr != nil {
+		return nil, aerr
+	}
 	// RuntimeConfig is left ZERO, same rationale as ListAccounts: the monitor read is scoped
 	// to accountID by the platform-client call itself, not by the client's own AccountConfig.
 	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), linkedin.RuntimeConfig{}, d.opts...)
-	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
+	rows, lerr := client.ListAccountCampaigns(ctx, scopedAccountID, days)
 	if lerr != nil {
 		// Defense in depth only, mirroring reddit.go's equivalent remap: reachable if
 		// ListAccountCampaigns' own shape check ever diverges from ValidateAccountID's above it.

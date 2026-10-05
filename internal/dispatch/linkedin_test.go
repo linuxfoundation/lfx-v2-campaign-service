@@ -1449,3 +1449,115 @@ func TestLinkedIn_ListAccountCampaignMetrics_RefusesSystemFallback(t *testing.T)
 			"report the project as having no connection of its own", err)
 	}
 }
+
+// TestLinkedIn_ListAccountCampaignMetrics_AccountScope pins the account-scope guard as a
+// TABLE over every state the request can be in, not just the mismatch that motivated it.
+//
+// The upstream is a local stub (linkedin.WithBaseURL), matching how the rest of this file
+// drives the client. An earlier version of this test omitted it and so reached the real
+// api.linkedin.com: the permitted arms "passed" only because LinkedIn answered 401, which
+// makes the test red in CI without egress, flaky with it, and silently dependent on a
+// vendor's current auth behaviour. Local review caught it by running with the network
+// blocked, where both permitted arms failed.
+//
+// The permitted arms assert on the PATH the request reached. Stated precisely, because two
+// earlier versions of this comment claimed more than the assertion delivers: it proves the
+// request WAS issued and carried the matching account. It does NOT discriminate stored-from-
+// caller — the guard passes only when the two are equal after trimming, so no assertion on
+// this path can tell them apart — and it cannot detect a guard that is missing altogether,
+// since "the read proceeds" is equally true with none. The refusal arms carry both of those:
+// they assert the stub was never called at all, and mutation confirms they fail when the
+// guard call is removed.
+func TestLinkedIn_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
+	cases := []struct {
+		name      string
+		stored    *string // nil keeps the fixture's 123456789
+		requested string
+		// wantErr is the sentinel the guard must answer with, on the arms that refuse.
+		wantErr error
+		// wantPath, on a permitted arm, is the upstream path fragment the request must
+		// reach — proving both that the guard let it through and that it forwarded the
+		// STORED account.
+		wantPath string
+	}{
+		{
+			name:      "a different account is refused as a request mismatch",
+			requested: "999999999",
+			wantErr:   domain.ErrAccountNotManagedByConnection,
+		},
+		{
+			name:      "an unselected stored account is an account_not_selected setup state",
+			stored:    strPtr("   "),
+			requested: "999999999",
+			wantErr:   domain.ErrAccountNotSelected,
+		},
+		{
+			name:      "a padded request never reaches the guard — the validator refuses it first",
+			requested: "  123456789  ",
+			wantErr:   domain.ErrAccountIDMalformed,
+		},
+		{
+			name:      "the connection's own account reaches upstream as that account",
+			requested: "123456789",
+			wantPath:  "adAccounts/123456789/",
+		},
+		{
+			name:      "whitespace around the STORED account does not make a matching request a mismatch",
+			stored:    strPtr("  123456789  "),
+			requested: "123456789",
+			wantPath:  "adAccounts/123456789/",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath string
+			var mu sync.Mutex
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				if gotPath == "" {
+					gotPath = r.URL.Path
+				}
+				mu.Unlock()
+				w.WriteHeader(http.StatusUnauthorized)
+			}))
+			t.Cleanup(srv.Close)
+
+			conn := activeLinkedInConn(goodLinkedInCreds)
+			if tc.stored != nil {
+				conn.AccountID = *tc.stored
+			}
+			d := NewLinkedInDispatcher(&scopedConnReader{
+				rows: map[string]*model.Connection{"cncf": conn},
+			}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+
+			_, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderLinkedInAds, tc.requested, 30)
+			if err == nil {
+				t.Fatalf("err = nil, want a failure (the stub answers 401)")
+			}
+
+			mu.Lock()
+			reached := gotPath
+			mu.Unlock()
+
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				if reached != "" {
+					t.Fatalf("a refused request still reached upstream at %q — the guard must "+
+						"refuse before any request is issued", reached)
+				}
+				return
+			}
+
+			if errors.Is(err, domain.ErrAccountNotManagedByConnection) {
+				t.Fatalf("the guard refused the connection's OWN account (requested %q): %v", tc.requested, err)
+			}
+			if !strings.Contains(reached, tc.wantPath) {
+				t.Fatalf("reached upstream path %q, want it to contain %q — a permitted read must "+
+					"proceed with the account the connection stores", reached, tc.wantPath)
+			}
+		})
+	}
+}

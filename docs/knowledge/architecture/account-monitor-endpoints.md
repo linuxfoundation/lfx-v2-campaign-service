@@ -38,10 +38,45 @@ reaches), not project-scoped ones.
   chain (`resolve` → `resolveWithFallback` → `systemConn` → forced-system)
   that account discovery still uses. This is deliberately narrower than
   discovery: see the Trust boundary section below for why (round-16/17
-  review). Google Ads/LinkedIn/Meta build an account-agnostic client the
-  same way discovery does; Reddit additionally scopes the requested
-  `account_id` to its own resolved connection's single account, since a
-  Reddit connection is bound to exactly one ad account.
+  review). Google Ads builds an account-agnostic client the same way
+  discovery does; Reddit, LinkedIn and Meta additionally scope the requested
+  `account_id` to their own resolved connection's single account. A
+  connection is bound to exactly one ad account (`account_id TEXT NOT NULL` on
+  every provider table, one LIVE row per project via a `(project_id)` unique
+  index partial to `WHERE status <> 'deleted'`), so
+  a request naming any other account is a request mismatch and answers
+  `domain.ErrAccountNotManagedByConnection` (400) before any upstream call.
+  Reddit checked this first (round-18 review); LinkedIn and Meta followed,
+  since the property is the shared schema's and not a Reddit quirk. Google
+  Ads is the remaining gap and is tracked separately — it is one shared
+  customer id across every foundation, so there is no second account to
+  cross into today, and the change collides with an open PR.
+
+  Refusing the LF system fallback does **not** make this check redundant:
+  that is about whose CREDENTIAL resolves the client, this is about which
+  ACCOUNT the request named. A project with its own active connection passes
+  the fallback check and can still name a sibling project's account — and one
+  LinkedIn token reaches several ad accounts (that is what `ListAccounts`
+  enumerates), so the token is not the boundary either.
+
+  LinkedIn is the one platform where this is LIVE rather than defensive: it
+  genuinely runs several ad accounts across foundations (`tlf` and `lf-events`
+  are two of them), so a project naming another project's account is a real,
+  reachable request. The other ad platforms share a single account today, so
+  their stored `account_id` IS the shared account and a legitimate request
+  matches it — the guard is carried there against a future split, and never
+  fires meanwhile. `docs/architecture.md` still lists Meta/Reddit/X as
+  per-foundation in BOTH its "Account Tenancy" and "Current Platform
+  Accounts" tables; both are stale against how the accounts are actually run
+  and neither is the authority for this.
+
+  LinkedIn keeps the empty stored account DISTINCT from a mismatch
+  (`ErrAccountNotSelected` vs `ErrAccountNotManagedByConnection`) because its
+  owned-discovery resolver deliberately returns success on
+  `ErrAccountNotSelected` so `VerifyAccountOrg` can report a half-configured
+  pairing itself. Reddit can use a plain equality check because its resolver
+  already refused an empty stored account upstream. Meta layers its mismatch
+  check onto the existing `requireMetaAccountID` so the two cannot drift.
 - The four rule engines (`internal/service/rules/monitor_*.go`) were ported as
   four separate files so the empty-diff proof against the legacy BFF path
   stayed meaningful. That diff is no longer the plan of record, so what the
@@ -238,7 +273,7 @@ because these four endpoints are externally routed (this branch's
 `httproute.yaml`/`ruleset.yaml` chart changes), and fixed it for
 Google/LinkedIn/Meta by adding a parallel "owned discovery" resolver per
 platform (`resolveOwnedGoogleAdsDiscoveryClient`,
-`resolveLinkedInOwnedDiscoveryCredentials`, `resolveOwnedMetaDiscoveryClient`)
+`resolveLinkedInOwnedDiscoveryCredentials`, `resolveOwnedMetaDiscovery`)
 that refuses the system fallback the way `resolveOwned`
 (`internal/dispatch/creds.go`) already does for the adoption flow. A project
 with no connection of its own now gets `domain.ErrNotFound` → 404 via the
