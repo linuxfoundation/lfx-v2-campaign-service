@@ -216,7 +216,7 @@ var NotFoundError = Type("not-found-error", func() {
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
 	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
-		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type")
+		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported")
 		Example("already_exists")
 	})
 })
@@ -2003,7 +2003,14 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"metrics_as_of and metrics_pending — while the next one builds. The first read for an account " +
 			"and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. " +
 			"Conversions are never reported for X. Saved reports are cached platform data, not a record " +
-			"of anything this service did.")
+			"of anything this service did. Two account states are refused with 409 rather than served " +
+			"metrics that would be wrong: more than 200 campaigns active in the window (reason " +
+			"account_too_many_active_campaigns — one report covers at most ten X stats jobs of 20 " +
+			"campaigns), and an account timezone whose local midnight is not a whole UTC hour, such as " +
+			"Asia/Kolkata (reason account_timezone_unsupported — X accepts whole-hour window bounds only, " +
+			"so the account's own days cannot be queried exactly). A 90-day window that crosses a DST " +
+			"fall-back covers the trailing 89 whole local days, because 90 such days are 90 days and an " +
+			"hour, over X's 90-day limit.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2024,6 +2031,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
+		Error("Conflict", ConflictError, "The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2035,6 +2043,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Param("days")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})

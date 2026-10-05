@@ -43,12 +43,12 @@ const (
 	xMinImpressions = 1000
 )
 
-// xAmountPrefix prefixes every amount in an item's text. "$" for parity with the sibling
-// monitors, but the figures are in the ACCOUNT'S OWN CURRENCY as X reports it (*_local_micro) —
-// nothing on this path converts — so on a non-USD account the symbol is nominal.
-const xAmountPrefix = "$"
-
-func xMoney(v float64) string { return fmt.Sprintf("%s%.2f", xAmountPrefix, v) }
+// xMoney renders an amount for an item's text. The figures are in the ACCOUNT'S OWN CURRENCY as
+// X reports it (*_local_micro) and nothing on this path converts, so no currency symbol is
+// printed: a "$" would misstate every non-USD account's amounts. X's account object carries no
+// currency (it lives on the funding instrument, a further read per campaign), so the text names
+// the unit instead of guessing its code.
+func xMoney(v float64) string { return fmt.Sprintf("%.2f in account currency", v) }
 
 // EvaluateTwitterMonitor computes each row's pacing percentage/label and the account's action
 // items for an X Ads account.
@@ -127,14 +127,68 @@ func twitterWindow(firstDay, lastDay *time.Time) (xWindow, bool) {
 	return xWindow{start: start, end: last.AddDate(0, 0, 1)}, true
 }
 
-// twitterFlight returns the flight as UTC instants, [StartDate, the midnight after EndDate);
-// either bound is zero when unknown (EndDate empty means open-ended).
+// twitterFlight returns the flight ENVELOPE as UTC instants, [StartDate, the midnight after
+// EndDate); either bound is zero when unknown (EndDate empty means open-ended).
 func twitterFlight(m model.AccountCampaignMetrics) (start, end time.Time) {
-	start = parseMonitorDate(m.StartDate)
-	if e := parseMonitorDate(m.EndDate); !e.IsZero() {
+	return flightBounds(m.StartDate, m.EndDate)
+}
+
+func flightBounds(startDate, endDate string) (start, end time.Time) {
+	start = parseMonitorDate(startDate)
+	if e := parseMonitorDate(endDate); !e.IsZero() {
 		end = e.AddDate(0, 0, 1)
 	}
 	return start, end
+}
+
+// twitterCoveredDays is the number of days of the window the campaign is scheduled on.
+//
+// With FlightRanges (the union of the line items' flights) it is the days of the window covered
+// by at least one range — the ranges are disjoint, so their per-range coverage sums. The envelope
+// StartDate..EndDate is NOT used then: it counts the gap between two line items as scheduled, so
+// line items Sep 1–5 and Oct 1–5 would make a Sep 15–21 window look scheduled — a false
+// zero-delivery HIGH, and a pacing expectation over days nothing could serve.
+//
+// Without ranges (no line items) it falls back to the envelope, where an unknown start counts as
+// covering the window from its start (see twitterPacingPct).
+func twitterCoveredDays(m model.AccountCampaignMetrics, w xWindow) float64 {
+	if len(m.FlightRanges) == 0 {
+		fs, fe := twitterFlight(m)
+		return windowFlightDays(w.start, w.end, fs, fe)
+	}
+	var covered float64
+	for _, r := range m.FlightRanges {
+		rs, re := flightBounds(r.StartDate, r.EndDate)
+		if rs.IsZero() {
+			// A range always has a start; an unreadable one cannot be placed, and counting it
+			// as "from the window's start" would invent scheduled days.
+			continue
+		}
+		covered += windowFlightDays(w.start, w.end, rs, re)
+	}
+	return covered
+}
+
+// twitterScheduledDays is the total length in days of the campaign's flight — the denominator a
+// total budget is prorated over — and whether it is finite. With FlightRanges it is the sum of the
+// ranges (the gaps are not days the budget is spread over); otherwise the envelope's length.
+func twitterScheduledDays(m model.AccountCampaignMetrics) (float64, bool) {
+	if len(m.FlightRanges) == 0 {
+		fs, fe := twitterFlight(m)
+		if fs.IsZero() || fe.IsZero() || !fe.After(fs) {
+			return 0, false
+		}
+		return math.Ceil(fe.Sub(fs).Hours() / 24), true
+	}
+	var days float64
+	for _, r := range m.FlightRanges {
+		rs, re := flightBounds(r.StartDate, r.EndDate)
+		if rs.IsZero() || re.IsZero() || !re.After(rs) {
+			return 0, false
+		}
+		days += math.Ceil(re.Sub(rs).Hours() / 24)
+	}
+	return days, days > 0
 }
 
 // windowFlightDays is the number of whole days of [ws, we) the flight [fs, fe) covers. A zero
@@ -167,24 +221,25 @@ func windowFlightDays(ws, we, fs, fe time.Time) float64 {
 //     has no per-day share). expected = TotalBudget / flight days × days of the window the
 //     flight covers.
 //
+// "Days the flight covers" and "flight days" count only the days a line item is scheduled on
+// (twitterCoveredDays / twitterScheduledDays), never the gaps between line items.
+//
 // No overlap between the flight and the window means the campaign was not scheduled to spend in
 // it, so there is nothing to compare its spend against: not computable.
 func twitterPacingPct(m model.AccountCampaignMetrics, w xWindow) (float64, bool) {
-	ws, we := w.start, w.end
-	fs, fe := twitterFlight(m)
 	switch {
 	case m.BudgetDay > 0:
-		covered := windowFlightDays(ws, we, fs, fe)
+		covered := twitterCoveredDays(m, w)
 		if covered <= 0 {
 			return 0, false
 		}
 		return math.Round(m.Spend / (m.BudgetDay * covered) * 100), true
 	case m.TotalBudget > 0:
-		if fs.IsZero() || fe.IsZero() || !fe.After(fs) {
+		flightDays, ok := twitterScheduledDays(m)
+		if !ok {
 			return 0, false
 		}
-		flightDays := math.Ceil(fe.Sub(fs).Hours() / 24)
-		covered := windowFlightDays(ws, we, fs, fe)
+		covered := twitterCoveredDays(m, w)
 		if covered <= 0 {
 			return 0, false
 		}
@@ -194,13 +249,12 @@ func twitterPacingPct(m model.AccountCampaignMetrics, w xWindow) (float64, bool)
 	}
 }
 
-// twitterScheduledInWindow reports whether the campaign's flight overlaps the window, treating
-// an unknown start as "scheduled" (see twitterPacingPct) — the gate for the zero-delivery rule,
-// so a campaign whose flight ended before the window, or starts after it, is not reported as
-// failing to deliver.
+// twitterScheduledInWindow reports whether any line item is scheduled on a day of the window,
+// treating an unknown start as "scheduled" (see twitterPacingPct) — the gate for the
+// zero-delivery rule, so a campaign whose flight ended before the window, starts after it, or
+// has a gap between line items spanning it, is not reported as failing to deliver.
 func twitterScheduledInWindow(m model.AccountCampaignMetrics, w xWindow) bool {
-	fs, fe := twitterFlight(m)
-	return windowFlightDays(w.start, w.end, fs, fe) > 0
+	return twitterCoveredDays(m, w) > 0
 }
 
 // twitterActionItems evaluates every rule independently for one row. label is a real verdict
@@ -226,8 +280,8 @@ func twitterActionItems(m model.AccountCampaignMetrics, pacingPct float64, label
 	}
 	if active && m.BudgetDay > 0 && m.BudgetDay <= xPlaceholderBudgetMax {
 		add(model.MonitorPriorityHigh,
-			fmt.Sprintf("Budget is %s/day — this is a placeholder and won't generate meaningful traffic", xMoney(m.BudgetDay)),
-			"Set a real daily budget (typically $10-50/day for events) before expecting results")
+			fmt.Sprintf("Daily budget is %s — this is a placeholder and won't generate meaningful traffic", xMoney(m.BudgetDay)),
+			"Set a realistic daily budget for the campaign's goal and audience before expecting results")
 	}
 
 	// MED

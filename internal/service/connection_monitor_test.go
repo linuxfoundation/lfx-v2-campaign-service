@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -542,5 +543,33 @@ func TestMonitorTwitterAdsAccount_ServesSavedReport(t *testing.T) {
 	}
 	if !paused {
 		t.Errorf("action_items = %+v, want X's paused-campaign item for c2", got.ActionItems)
+	}
+}
+
+// The permanent refusals reach the caller as a 409 whose reason names the account state — not
+// the generic 503 an upstream failure gets, which would invite a retry that cannot succeed.
+func TestMonitorTwitterAdsAccount_PermanentRefusalsAre409(t *testing.T) {
+	for sentinel, reason := range map[error]string{
+		domain.ErrAccountTooManyActiveCampaigns: "account_too_many_active_campaigns",
+		domain.ErrAccountTimezoneUnsupported:    "account_timezone_unsupported",
+	} {
+		t.Run(reason, func(t *testing.T) {
+			reader := &fakeReportReader{
+				campaigns: []model.AccountCampaignMetrics{{PlatformCampaignID: "c1", Name: "a", Status: "ACTIVE", BudgetDay: 10}},
+				submitErr: fmt.Errorf("submit x ads account report: %w: upstream detail", sentinel),
+			}
+			_, err := twitterMonitorService(reader, &fakeReportStore{}).MonitorTwitterAdsAccount(context.Background(),
+				&conn.MonitorTwitterAdsAccountPayload{ProjectID: "p", AccountID: "a1", Days: 7})
+			var ce *conn.ConflictError
+			if !errors.As(err, &ce) {
+				t.Fatalf("err = %T %v, want *conn.ConflictError", err, err)
+			}
+			if ce.Code != "409" || ce.Reason == nil || *ce.Reason != reason {
+				t.Errorf("conflict = %+v (reason %v), want 409 with reason %q", ce, ce.Reason, reason)
+			}
+			if strings.Contains(ce.Message, "upstream detail") {
+				t.Errorf("message %q echoes the wrapped error; it must be fixed text", ce.Message)
+			}
+		})
 	}
 }

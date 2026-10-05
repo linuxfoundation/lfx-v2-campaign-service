@@ -236,8 +236,13 @@ func TestEvaluateTwitterMonitor_Rules(t *testing.T) {
 	})
 	t.Run("placeholder budget is inclusive at 1", func(t *testing.T) {
 		_, items := xItems(t, xRow(func(m *model.AccountCampaignMetrics) { m.BudgetDay = 1; m.Spend = 7 }))
-		if !hasItem(items, model.MonitorPriorityHigh, "placeholder") {
+		if !hasItem(items, model.MonitorPriorityHigh, "Daily budget is 1.00 in account currency") {
 			t.Errorf("items = %+v, want the placeholder item at 1/day", items)
+		}
+		for _, it := range items {
+			if strings.Contains(it.Issue+it.Action, "$") {
+				t.Errorf("item %+v names a currency symbol; X amounts are in the account's own currency", it)
+			}
 		}
 		_, items = xItems(t, xRow(func(m *model.AccountCampaignMetrics) { m.BudgetDay = 1.01; m.Spend = 7 }))
 		if hasItem(items, model.MonitorPriorityHigh, "placeholder") {
@@ -246,7 +251,7 @@ func TestEvaluateTwitterMonitor_Rules(t *testing.T) {
 	})
 	t.Run("paused", func(t *testing.T) {
 		_, items := xItems(t, xRow(func(m *model.AccountCampaignMetrics) { m.Status = "PAUSED"; m.BudgetDay = 10; m.Spend = 12 }))
-		if !hasItem(items, model.MonitorPriorityMed, "paused — spent $12.00") {
+		if !hasItem(items, model.MonitorPriorityMed, "paused — spent 12.00 in account currency in the window") {
 			t.Errorf("items = %+v, want the paused item", items)
 		}
 		if hasItem(items, model.MonitorPriorityMed, "Underspending") {
@@ -276,6 +281,72 @@ func TestEvaluateTwitterMonitor_Rules(t *testing.T) {
 		)
 		if len(items) < 2 || items[0].Priority != model.MonitorPriorityHigh {
 			t.Errorf("items = %+v, want HIGH first", items)
+		}
+	})
+}
+
+// Line items Sep 1–5 and Oct 1–5: the envelope Sep 1..Oct 5 spans the gap, but no line item is
+// scheduled in a Sep 15–21 window, so a campaign that delivered nothing there is not failing to
+// deliver and has no pacing to report. Overlapping or touching line items arrive as ONE range
+// (twitter.flightRanges merges them), and pace on every day of it.
+func TestEvaluateTwitterMonitor_FlightRangesNotEnvelope(t *testing.T) {
+	first := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
+	last := time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC)
+	gap := func(m *model.AccountCampaignMetrics) {
+		m.StartDate, m.EndDate = "2026-09-01", "2026-10-05"
+		m.FlightRanges = []model.FlightRange{{StartDate: "2026-09-01", EndDate: "2026-09-05"}, {StartDate: "2026-10-01", EndDate: "2026-10-05"}}
+	}
+	t.Run("window in the gap: no zero-delivery finding, pacing unknown", func(t *testing.T) {
+		for _, budget := range []func(*model.AccountCampaignMetrics){
+			func(m *model.AccountCampaignMetrics) { m.BudgetDay = 10 },
+			func(m *model.AccountCampaignMetrics) { m.TotalBudget = 100 },
+		} {
+			rows, items := EvaluateTwitterMonitor([]model.AccountCampaignMetrics{xRow(func(m *model.AccountCampaignMetrics) {
+				gap(m)
+				budget(m)
+				m.Impressions, m.Clicks = 0, 0
+			})}, &first, &last)
+			if hasItem(items, model.MonitorPriorityHigh, "delivered nothing") {
+				t.Errorf("items = %+v, want no zero-delivery HIGH for a window between line items", items)
+			}
+			if !rows[0].Metrics.PacingUnknown {
+				t.Errorf("row = %+v, want pacing unknown: nothing was scheduled in the window", rows[0])
+			}
+		}
+	})
+	t.Run("window straddling a range counts only its scheduled days", func(t *testing.T) {
+		// Window Sep 29..Oct 5 (xItems): only Oct 1–5 is scheduled, five days at 10/day.
+		rows, _ := xItems(t, xRow(func(m *model.AccountCampaignMetrics) { gap(m); m.BudgetDay = 10; m.Spend = 50 }))
+		if rows[0].PacingPct != 100 {
+			t.Errorf("row = %+v, want 100%% of five scheduled days", rows[0])
+		}
+		// A total budget is spread over the ten scheduled days, not the 35-day envelope:
+		// 100 / 10 days × 5 window days = 50 expected.
+		rows, _ = xItems(t, xRow(func(m *model.AccountCampaignMetrics) { gap(m); m.TotalBudget = 100; m.Spend = 50 }))
+		if rows[0].PacingPct != 100 {
+			t.Errorf("row = %+v, want 100%% of the prorated ten-day total", rows[0])
+		}
+	})
+	t.Run("a single merged range paces on every day", func(t *testing.T) {
+		rows, items := xItems(t, xRow(func(m *model.AccountCampaignMetrics) {
+			m.StartDate, m.EndDate = "2026-09-01", "2026-10-30"
+			m.FlightRanges = []model.FlightRange{{StartDate: "2026-09-01", EndDate: "2026-10-30"}}
+			m.BudgetDay = 10
+			m.Impressions, m.Clicks = 0, 0
+		}))
+		if rows[0].Metrics.PacingUnknown || !hasItem(items, model.MonitorPriorityHigh, "delivered nothing") {
+			t.Errorf("rows=%+v items=%+v, want paced and the zero-delivery HIGH", rows, items)
+		}
+	})
+	t.Run("an open-ended last range is scheduled through the window", func(t *testing.T) {
+		rows, _ := xItems(t, xRow(func(m *model.AccountCampaignMetrics) {
+			m.StartDate = "2026-09-01"
+			m.FlightRanges = []model.FlightRange{{StartDate: "2026-09-01", EndDate: "2026-09-05"}, {StartDate: "2026-10-03"}}
+			m.BudgetDay = 10
+			m.Spend = 30
+		}))
+		if rows[0].PacingPct != 100 {
+			t.Errorf("row = %+v, want 100%% of the three days from Oct 3", rows[0])
 		}
 	})
 }

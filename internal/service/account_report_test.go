@@ -460,6 +460,32 @@ func TestReadReported_BudgetSkipIsNotRecorded(t *testing.T) {
 	}
 }
 
+// A PERMANENT refusal — too many active campaigns, or a timezone off the whole UTC hour — fails
+// the read with its sentinel instead of being logged as a retry: no later read could submit, so
+// serving the saved (or absent) metrics as if a refresh were merely delayed would hide it
+// forever. Nothing is recorded as pending.
+func TestReadReported_PermanentRefusalFailsTheRead(t *testing.T) {
+	for _, sentinel := range []error{domain.ErrAccountTooManyActiveCampaigns, domain.ErrAccountTimezoneUnsupported} {
+		t.Run(sentinel.Error(), func(t *testing.T) {
+			reader := &fakeReportReader{campaigns: twoCampaigns(), submitErr: fmt.Errorf("submit: %w", sentinel)}
+			store := &fakeReportStore{}
+			got, err := reportOrch(reader, store).ReadReportedAccountCampaigns(context.Background(), "proj", model.ProviderMicrosoftAds, "123", 7)
+			if !errors.Is(err, sentinel) || got != nil {
+				t.Fatalf("got %+v, err = %v; want the read to fail with %v", got, err, sentinel)
+			}
+			if store.snap != nil && store.snap.Pending != nil {
+				t.Errorf("saved pending = %+v, want nothing recorded", store.snap.Pending)
+			}
+		})
+	}
+	// A fresh saved report means no submission is attempted, so it is still served.
+	reader := &fakeReportReader{campaigns: twoCampaigns(), submitErr: domain.ErrAccountTooManyActiveCampaigns}
+	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{ReportID: "r0", AsOf: time.Now()}}}
+	if got := readReported(t, reportOrch(reader, store)); len(got.Rows) != 2 || reader.submits != 0 {
+		t.Errorf("rows=%d submits=%d, want the fresh report served with no submission", len(got.Rows), reader.submits)
+	}
+}
+
 // The finished report's window travels with its metrics, so a rule engine that judges dates
 // (X's) evaluates on the days the report covered.
 func TestReadReported_CarriesTheReportWindow(t *testing.T) {

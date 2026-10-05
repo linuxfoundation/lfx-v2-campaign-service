@@ -8963,6 +8963,19 @@ func EncodeMonitorTwitterAdsAccountError(encoder func(context.Context, http.Resp
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusBadRequest)
 			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignserviceconnections.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorTwitterAdsAccountConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
