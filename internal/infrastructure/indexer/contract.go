@@ -238,5 +238,10 @@ type CampaignDoc struct {
 	PlatformCampaignID string `json:"platform_campaign_id,omitempty"`
 	CampaignName       string `json:"campaign_name"`
 	Status             string `json:"status"`
-	Version            int64  `json:"version"`
+	// SlotVersion tells two campaigns on one (brief, platform, variant) slot apart — the
+	// first and a deliberate second (new_version). Always emitted: lists and revision
+	// history are served from these documents, and without it two live campaigns on a slot
+	// would read as duplicates. Unrelated to Version, the optimistic-concurrency counter.
+	SlotVersion int   `json:"slot_version"`
+	Version     int64 `json:"version"`
 }

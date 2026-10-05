@@ -2229,6 +2229,7 @@ paths:
                             - platform
                             - campaign_name
                             - status
+                            - slot_version
                             - version
                     headers:
                         ETag:
@@ -2344,6 +2345,7 @@ paths:
                             - platform
                             - campaign_name
                             - status
+                            - slot_version
                             - version
                     headers:
                         ETag:
@@ -2583,6 +2585,7 @@ paths:
                             - platform
                             - campaign_name
                             - status
+                            - slot_version
                             - version
                     headers:
                         ETag:
@@ -3029,6 +3032,7 @@ paths:
                             - platform
                             - campaign_name
                             - status
+                            - slot_version
                             - version
                     headers:
                         ETag:
@@ -3151,6 +3155,7 @@ paths:
                             - platform
                             - campaign_name
                             - status
+                            - slot_version
                             - version
                     headers:
                         ETag:
@@ -11761,6 +11766,12 @@ definitions:
                 type: string
                 description: Owning project
                 example: Dolor asperiores ut in perferendis blanditiis.
+            slot_version:
+                type: integer
+                description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                example: 1
+                format: int64
+                minimum: 1
             status:
                 type: string
                 description: Campaign status
@@ -11777,6 +11788,7 @@ definitions:
             platform: Qui odio quas et ipsa est voluptatem.
             platform_campaign_id: Ut natus doloremque.
             project_id: Ut rerum.
+            slot_version: 1
             status: Error natus.
             version: 7647482016795851593
         required:
@@ -11786,6 +11798,7 @@ definitions:
             - platform
             - campaign_name
             - status
+            - slot_version
             - version
     CampaignActionItem:
         title: CampaignActionItem
@@ -11866,6 +11879,11 @@ definitions:
                             - kubernetes
                         variants:
                             - headline: Join us
+            new_version:
+                type: boolean
+                description: Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Until the follow-up release removes the one-campaign-per-slot index, a request on a platform that already has a live campaign fails that platform with 'not available yet' and creates nothing.
+                default: false
+                example: false
             platforms:
                 type: array
                 items:
@@ -11907,6 +11925,7 @@ definitions:
                         - kubernetes
                     variants:
                         - headline: Join us
+            new_version: false
             platforms:
                 - reddit-ads
                 - meta-ads
@@ -14100,6 +14119,7 @@ definitions:
                             - kubernetes
                         variants:
                             - headline: Join us
+                new_version: false
                 platforms:
                     - reddit-ads
                     - meta-ads

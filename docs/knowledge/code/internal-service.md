@@ -126,6 +126,22 @@ upstream create, so it fails loud instead. Replacing a brief's
 content resets it to `draft` (re-approval required). Optimistic concurrency is enforced via
 version/If-Match (`428` when missing, `412` on mismatch).
 
+**A deliberate second campaign (`new_version`).** Reuse is right for a retry and wrong for an
+operator who asks for another campaign on a platform the brief already has one on — the service
+used to hand back the first campaign as a success. `create-campaigns` now takes `new_version`,
+threaded as `StartOptions.NewVersion` (`Start` is `StartWithOptions` with the zero value). In
+`dispatchPlatform` the lookup returns the slot's LATEST campaign, and the claim takes a
+`slotVersion`: the latest one's for a retry, `latest+1` when `NewVersion` is set AND the latest
+is complete, and `1` on an empty slot. An UNFINISHED latest campaign is never built on — the
+claim targets its own slot version and gets the skip / reconciliation-required answer a retry
+gets, because a second campaign beside an unresolved one would spend twice. The slot version
+reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). While `000022`'s
+three-column index still exists, the claim returns `domain.ErrSlotVersionUnavailable` and the
+platform result is a plain "not available yet" refusal; nothing is created. `CreateCampaigns`
+refuses `new_version` synchronously (400, before a job exists) for any platform outside
+`model.ProviderSupportsSlotVersions` — today Microsoft only, because the other providers reuse
+campaigns by a name that does not yet vary by slot version (see the dispatch concept).
+
 Dispatch is durable (LFXV2-2665): single-flight per (brief, platform) is
 enforced by an atomic claim — `ClaimCampaignDispatch` does INSERT ... ON CONFLICT
 DO NOTHING of a `pending` campaign row, so exactly one worker across replicas

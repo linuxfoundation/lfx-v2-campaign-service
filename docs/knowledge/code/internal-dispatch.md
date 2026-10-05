@@ -363,6 +363,25 @@ not be read", a RETRYABLE 503, from a verdict on the connection; see
 a settled fact) and from `ErrConnectionNotUsable` (the row was read and is unusable), and is the
 only one of the three that retrying can fix.
 
+### Slot versions and unique upstream names
+
+A deliberate second campaign on one slot (the service concept's `new_version`) must not
+compose the first campaign's upstream name on a provider that treats a matching name as the
+same campaign. Microsoft enforces case-insensitive name uniqueness and its find-first lookup
+REUSES a match, so `MicrosoftDispatcher` sets `NameSuffix: model.SlotNameSuffix(brief.ID,
+model.DispatchSlotVersion(ctx))`: slot 1 is the bare brief id (every existing name and retry is
+byte-identical) and slot 2+ appends `-<n>` — an internal identifier where the brief id already
+sat, not a version label.
+
+Every other provider still composes the same name for every slot, and most look campaigns up by
+it: Google (`FindCampaignByName`, `DUPLICATE_CAMPAIGN_NAME`), LinkedIn
+(`findCampaignByNameInGroup`, which would also push new creatives onto the live campaign), X and
+Meta (`findCampaignByName`); HubSpot clones under the same email name. So
+`model.ProviderSupportsSlotVersions` is an allowlist holding only Microsoft, and `create-campaigns`
+refuses `new_version` with a 400 for anything else. A provider joins it in the same change that
+makes its name unique per slot version. Google and LinkedIn are owned by the Google-readiness
+workstream (LFXV2-2665).
+
 ## Registration
 
 Adapters are registered in `internal/container` (`registerDispatchers`), called from

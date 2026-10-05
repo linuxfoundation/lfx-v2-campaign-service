@@ -193,6 +193,16 @@ type fakeCampaignRepo struct {
 	byID map[string]*model.Campaign
 	// claimVersionErr, when set, is returned by ClaimCampaignVersion.
 	claimVersionErr error
+	// superseded holds a slot's EARLIER live campaigns, keyed slotVersionKey, once a later
+	// slot version has been claimed on top of them. `existing` always holds the LATEST, which
+	// is what GetCampaignByPlatform returns, so the many single-campaign fixtures are unchanged.
+	superseded map[string]*model.Campaign
+	// legacySlotIndex simulates the expand phase of 000037, when 000022's three-column index
+	// still exists: a claim for a slot version above an existing live one fails with
+	// ErrSlotVersionUnavailable, exactly as the real INSERT's unique violation is classified.
+	legacySlotIndex bool
+	// claimSlotVersions records the slotVersion argument of every ClaimCampaignDispatch call.
+	claimSlotVersions []int
 	// claimActors records the `by` argument of every ClaimCampaignDispatch call, so a
 	// test can assert the DISPATCHING actor reached the claim INSERT — which is the
 	// only INSERT this row ever gets — rather than only checking the model field.
@@ -380,47 +390,79 @@ func legacySlotKey(briefID string, platform model.Provider) string {
 	return briefID + "|" + string(platform)
 }
 
-func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, variant, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+// slotVersionKey names one slot version's row in fakeCampaignRepo.superseded.
+func slotVersionKey(briefID string, platform model.Provider, variant string, slotVersion int) string {
+	return fmt.Sprintf("%s#%d", slotKey(briefID, platform, variant), model.NormalizeSlotVersion(slotVersion))
+}
+
+func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// Recorded BEFORE the error and conflict returns: the question the binding test asks
 	// is what the orchestrator PASSED, which it did on every one of these paths.
 	r.claimActors = append(r.claimActors, by)
+	slotVersion = model.NormalizeSlotVersion(slotVersion)
+	r.claimSlotVersions = append(r.claimSlotVersions, slotVersion)
 	if r.claimErr != nil {
 		return false, nil, r.claimErr
 	}
 	key := slotKey(briefID, platform, variant)
-	if c, ok := r.existing[key]; ok {
-		return false, c, nil
-	}
+	cur, ok := r.existing[key]
 	// A fixture written in the bare form occupies the DEFAULT slot only.
-	if model.NormalizeVariant(variant) == model.VariantDefault {
-		if c, ok := r.existing[legacySlotKey(briefID, platform)]; ok {
-			return false, c, nil
+	if !ok && model.NormalizeVariant(variant) == model.VariantDefault {
+		cur, ok = r.existing[legacySlotKey(briefID, platform)]
+	}
+	if ok {
+		curVersion := model.NormalizeSlotVersion(cur.SlotVersion)
+		switch {
+		case curVersion == slotVersion:
+			// The four-column arbiter conflicts: DO NOTHING, hand back the winner.
+			return false, cur, nil
+		case slotVersion < curVersion:
+			if c, ok := r.superseded[slotVersionKey(briefID, platform, variant, slotVersion)]; ok {
+				return false, c, nil
+			}
+			return false, nil, fmt.Errorf("fake: claim of superseded slot version %d with no row", slotVersion)
+		case r.legacySlotIndex:
+			// The three-column index rejects a second live row on the slot.
+			return false, nil, fmt.Errorf("claim campaign dispatch: %w", domain.ErrSlotVersionUnavailable)
 		}
+		if r.superseded == nil {
+			r.superseded = map[string]*model.Campaign{}
+		}
+		r.superseded[slotVersionKey(briefID, platform, variant, curVersion)] = cur
 	}
 	// Both actor columns, because claimCampaignDispatchQuery inserts `created_by, updated_by`
 	// from the SAME $5. A fake that stamped only CreatedBy would hand every orchestrator test
 	// a claimed row production cannot create, and the creation-time updated_by invariant would
 	// have no fake capable of catching a regression in it.
-	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, Variant: model.NormalizeVariant(variant), JobID: &jobID, Status: "pending", CreatedBy: by, UpdatedBy: by}
-	if r.existing == nil {
-		r.existing = map[string]*model.Campaign{}
-	}
-	r.existing[key] = pending
+	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, Variant: model.NormalizeVariant(variant), SlotVersion: slotVersion, JobID: &jobID, Status: "pending", CreatedBy: by, UpdatedBy: by}
+	r.storeRow(pending)
 	return true, pending, nil
 }
 
-func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string, platform model.Provider, variant string) error {
+func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string, platform model.Provider, variant string, slotVersion int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	slotVersion = model.NormalizeSlotVersion(slotVersion)
+	// The real DELETE also keys on slot_version, so releasing slot 2's claim leaves slot 1's
+	// row live — and slot 1 is then the latest again.
+	defer func() {
+		prev := slotVersionKey(briefID, platform, variant, slotVersion-1)
+		if c, ok := r.superseded[prev]; ok {
+			if _, still := r.existing[slotKey(briefID, platform, variant)]; !still {
+				delete(r.superseded, prev)
+				r.storeRow(c)
+			}
+		}
+	}()
 	// Only this slot's claim: releasing on the bare key would free a DIFFERENT variant's
 	// pending row, which the real DELETE (keyed on all three columns) cannot do.
 	for _, key := range []string{slotKey(briefID, platform, variant), legacySlotKey(briefID, platform)} {
 		if key == legacySlotKey(briefID, platform) && model.NormalizeVariant(variant) != model.VariantDefault {
 			continue
 		}
-		if c, ok := r.existing[key]; ok && c.Status == "pending" {
+		if c, ok := r.existing[key]; ok && c.Status == "pending" && model.NormalizeSlotVersion(c.SlotVersion) == slotVersion {
 			delete(r.existing, key)
 		}
 	}
@@ -1218,7 +1260,7 @@ func TestClaimCampaignDispatch_ConcurrentSingleWinner(t *testing.T) {
 			defer wg.Done()
 			<-start // release all goroutines at once to maximize contention
 			claimed, row, err := repo.ClaimCampaignDispatch(
-				context.Background(), "cncf", "b1", model.ProviderGoogleAds, model.VariantDefault, "job1", nil)
+				context.Background(), "cncf", "b1", model.ProviderGoogleAds, model.VariantDefault, model.FirstSlotVersion, "job1", nil)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -1414,7 +1456,7 @@ type claimCountingCampaignRepo struct {
 	claims int
 }
 
-func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, p model.Provider, variant, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, p model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
 	r.cmu.Lock()
 	r.claims++
 	r.cmu.Unlock()
@@ -1422,7 +1464,7 @@ func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, p
 	// the slot key would claim the default slot for every dispatch routed through it and
 	// hide exactly the variant-routing regression this PR exists to prevent — the same
 	// "a fake that does not model the key hides the bug" class the PR argues elsewhere.
-	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, variant, jobID, by)
+	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, variant, slotVersion, jobID, by)
 }
 
 // TestOrchestrator_DispatchGoesThroughClaim verifies each per-platform dispatch
