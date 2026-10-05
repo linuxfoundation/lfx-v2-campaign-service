@@ -937,12 +937,13 @@ type MonitorGoogleAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Microsoft Ads only: when the platform report these campaigns' metrics come
-	// from finished building. Microsoft reports take minutes, so the service
-	// serves the last finished report and builds the next one between requests.
-	// Absent when no report has finished yet; in that case every campaign has
-	// fetch_failed=true and is excluded from pacing and action items. Omitted on
-	// every other platform, whose metrics are read live in the request.
+	// Microsoft Ads only: the point in time these campaigns' metrics describe —
+	// when the platform report they come from was requested (not when it was
+	// collected, which can be later). Microsoft reports take minutes, so the
+	// service serves the last finished report and builds the next one between
+	// requests. Absent when no report has finished yet; in that case every
+	// campaign has fetch_failed=true and is excluded from pacing and action items.
+	// Omitted on every other platform, whose metrics are read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
 	// Microsoft Ads only: true while a newer report is building on the platform,
 	// so a later read will return newer metrics (or the first ones, when
@@ -964,12 +965,13 @@ type MonitorLinkedinAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Microsoft Ads only: when the platform report these campaigns' metrics come
-	// from finished building. Microsoft reports take minutes, so the service
-	// serves the last finished report and builds the next one between requests.
-	// Absent when no report has finished yet; in that case every campaign has
-	// fetch_failed=true and is excluded from pacing and action items. Omitted on
-	// every other platform, whose metrics are read live in the request.
+	// Microsoft Ads only: the point in time these campaigns' metrics describe —
+	// when the platform report they come from was requested (not when it was
+	// collected, which can be later). Microsoft reports take minutes, so the
+	// service serves the last finished report and builds the next one between
+	// requests. Absent when no report has finished yet; in that case every
+	// campaign has fetch_failed=true and is excluded from pacing and action items.
+	// Omitted on every other platform, whose metrics are read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
 	// Microsoft Ads only: true while a newer report is building on the platform,
 	// so a later read will return newer metrics (or the first ones, when
@@ -991,12 +993,13 @@ type MonitorMetaAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Microsoft Ads only: when the platform report these campaigns' metrics come
-	// from finished building. Microsoft reports take minutes, so the service
-	// serves the last finished report and builds the next one between requests.
-	// Absent when no report has finished yet; in that case every campaign has
-	// fetch_failed=true and is excluded from pacing and action items. Omitted on
-	// every other platform, whose metrics are read live in the request.
+	// Microsoft Ads only: the point in time these campaigns' metrics describe —
+	// when the platform report they come from was requested (not when it was
+	// collected, which can be later). Microsoft reports take minutes, so the
+	// service serves the last finished report and builds the next one between
+	// requests. Absent when no report has finished yet; in that case every
+	// campaign has fetch_failed=true and is excluded from pacing and action items.
+	// Omitted on every other platform, whose metrics are read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
 	// Microsoft Ads only: true while a newer report is building on the platform,
 	// so a later read will return newer metrics (or the first ones, when
@@ -1018,12 +1021,13 @@ type MonitorRedditAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Microsoft Ads only: when the platform report these campaigns' metrics come
-	// from finished building. Microsoft reports take minutes, so the service
-	// serves the last finished report and builds the next one between requests.
-	// Absent when no report has finished yet; in that case every campaign has
-	// fetch_failed=true and is excluded from pacing and action items. Omitted on
-	// every other platform, whose metrics are read live in the request.
+	// Microsoft Ads only: the point in time these campaigns' metrics describe —
+	// when the platform report they come from was requested (not when it was
+	// collected, which can be later). Microsoft reports take minutes, so the
+	// service serves the last finished report and builds the next one between
+	// requests. Absent when no report has finished yet; in that case every
+	// campaign has fetch_failed=true and is excluded from pacing and action items.
+	// Omitted on every other platform, whose metrics are read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
 	// Microsoft Ads only: true while a newer report is building on the platform,
 	// so a later read will return newer metrics (or the first ones, when
@@ -1045,12 +1049,13 @@ type MonitorMicrosoftAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Microsoft Ads only: when the platform report these campaigns' metrics come
-	// from finished building. Microsoft reports take minutes, so the service
-	// serves the last finished report and builds the next one between requests.
-	// Absent when no report has finished yet; in that case every campaign has
-	// fetch_failed=true and is excluded from pacing and action items. Omitted on
-	// every other platform, whose metrics are read live in the request.
+	// Microsoft Ads only: the point in time these campaigns' metrics describe —
+	// when the platform report they come from was requested (not when it was
+	// collected, which can be later). Microsoft reports take minutes, so the
+	// service serves the last finished report and builds the next one between
+	// requests. Absent when no report has finished yet; in that case every
+	// campaign has fetch_failed=true and is excluded from pacing and action items.
+	// Omitted on every other platform, whose metrics are read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
 	// Microsoft Ads only: true while a newer report is building on the platform,
 	// so a later read will return newer metrics (or the first ones, when

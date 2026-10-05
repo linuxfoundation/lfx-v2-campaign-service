@@ -40,7 +40,7 @@ const maxAccountReportFailureRunes = 500
 const (
 	getAccountReportQuery = `SELECT
 		ready_report_id, ready_rows, ready_partial, ready_window_start, ready_window_end,
-		ready_completed_at,
+		ready_as_of,
 		pending_report_id, pending_window_start, pending_window_end, pending_submitted_at,
 		last_failure, last_failure_at
 		FROM account_monitor_reports
@@ -76,7 +76,7 @@ const (
 		ready_partial        = $7,
 		ready_window_start   = $8,
 		ready_window_end     = $9,
-		ready_completed_at   = $10,
+		ready_as_of   = $10,
 		pending_report_id    = NULL,
 		pending_window_start = NULL,
 		pending_window_end   = NULL,
@@ -147,7 +147,7 @@ func (r *AccountReportRepo) CompleteAccountReport(ctx context.Context, key model
 	if err := validateReportWindow(rep.WindowStart, rep.WindowEnd); err != nil {
 		return false, fmt.Errorf("complete account report: %w", err)
 	}
-	if rep.CompletedAt.IsZero() {
+	if rep.AsOf.IsZero() {
 		return false, errors.New("complete account report: zero completed-at")
 	}
 	// A nil slice is stored as '[]', never as JSON null (which json.Marshal would produce).
@@ -164,7 +164,7 @@ func (r *AccountReportRepo) CompleteAccountReport(ctx context.Context, key model
 		return false, fmt.Errorf("complete account report: marshal rows: %w", err)
 	}
 	args := append(accountReportKeyArgs(key), rep.ReportID, rowsJSON, rep.Partial,
-		reportDate(rep.WindowStart), reportDate(rep.WindowEnd), rep.CompletedAt)
+		reportDate(rep.WindowStart), reportDate(rep.WindowEnd), rep.AsOf)
 	tag, err := r.db.Exec(ctx, completeAccountReportQuery, args...)
 	if err != nil {
 		return false, fmt.Errorf("complete account report: %w", err)
@@ -284,7 +284,7 @@ func scanAccountReport(key model.AccountReportKey, row pgx.Row) (*model.AccountR
 			Partial:     derefAccountReportBool(readyPartial),
 			WindowStart: reportDate(derefAccountReportTime(readyStart)),
 			WindowEnd:   reportDate(derefAccountReportTime(readyEnd)),
-			CompletedAt: derefAccountReportTime(readyDone),
+			AsOf:        derefAccountReportTime(readyDone),
 		}
 	}
 	if pendingID != nil {

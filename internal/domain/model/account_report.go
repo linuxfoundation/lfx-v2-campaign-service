@@ -85,7 +85,11 @@ type ReadyAccountReport struct {
 	Partial     bool
 	WindowStart time.Time
 	WindowEnd   time.Time
-	CompletedAt time.Time
+	// AsOf is when the report was REQUESTED from the platform, not when this service collected
+	// it. It is the closest available point to when the data was taken, and it never overstates
+	// freshness: a report collected an hour after submission still describes the moment it was
+	// asked for, and freshness (accountReportFreshFor) is measured from here for the same reason.
+	AsOf time.Time
 }
 
 // PendingAccountReport is a report submitted to the platform and not yet collected.
@@ -116,8 +120,8 @@ type ReportedAccountRead struct {
 	// exists, each row has FetchFailed set: the rule engines skip it rather than reading its
 	// zero metrics as a measurement.
 	Rows []AccountCampaignMetrics
-	// MetricsAsOf is when the report the metrics came from finished; nil when no report has
-	// finished yet.
+	// MetricsAsOf is when the report the metrics came from was requested from the platform
+	// (ReadyAccountReport.AsOf); nil when no report has finished yet.
 	MetricsAsOf *time.Time
 	// MetricsPending is true while a report is building on the platform, so a later request
 	// will see newer (or first) metrics.

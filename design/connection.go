@@ -1208,7 +1208,7 @@ var AccountMonitor = Type("account-monitor", func() {
 	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "Every campaign visible on the account, with the rule engine's per-row pacing output attached.")
 	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the account's campaigns.")
 	Attribute("totals", AccountMonitorTotals)
-	Attribute("metrics_as_of", String, "Microsoft Ads only: when the platform report these campaigns' metrics come from finished building. Microsoft reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.", func() {
+	Attribute("metrics_as_of", String, "Microsoft Ads only: the point in time these campaigns' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Microsoft reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.", func() {
 		Format(FormatDateTime)
 		Example("2026-10-05T14:30:00Z")
 	})

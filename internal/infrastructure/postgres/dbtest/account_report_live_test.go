@@ -79,7 +79,7 @@ func TestLiveAccountReportRoundTrip(t *testing.T) {
 		Partial:     true,
 		WindowStart: reportDay(2026, 9, 6),
 		WindowEnd:   reportDay(2026, 10, 5),
-		CompletedAt: completed,
+		AsOf:        completed,
 	}
 	applied, err := repo.CompleteAccountReport(ctx, key, r1)
 	require.NoError(t, err)
@@ -92,7 +92,7 @@ func TestLiveAccountReportRoundTrip(t *testing.T) {
 	assert.True(t, snap.Ready.Partial)
 	assert.Equal(t, reportDay(2026, 9, 6), snap.Ready.WindowStart)
 	assert.Equal(t, reportDay(2026, 10, 5), snap.Ready.WindowEnd)
-	assert.True(t, snap.Ready.CompletedAt.Equal(completed))
+	assert.True(t, snap.Ready.AsOf.Equal(completed))
 	require.Len(t, snap.Ready.Rows, 2)
 	assert.Equal(t, "c-nil", snap.Ready.Rows[0].PlatformCampaignID)
 	assert.Nil(t, snap.Ready.Rows[0].Conversions, "an unreported conversion count must read back nil, not 0")
@@ -104,7 +104,7 @@ func TestLiveAccountReportRoundTrip(t *testing.T) {
 	// Complete with a stale id -> not applied, nothing changed.
 	before := snap
 	applied, err = repo.CompleteAccountReport(ctx, key, model.ReadyAccountReport{
-		ReportID: "r0-stale", WindowStart: reportDay(2026, 9, 1), WindowEnd: reportDay(2026, 9, 30), CompletedAt: completed,
+		ReportID: "r0-stale", WindowStart: reportDay(2026, 9, 1), WindowEnd: reportDay(2026, 9, 30), AsOf: completed,
 	})
 	require.NoError(t, err)
 	assert.False(t, applied, "a stale collector must not apply")
@@ -169,7 +169,7 @@ func TestLiveAccountReportZeroRowsStoresEmptyArray(t *testing.T) {
 		ReportID: "z1", WindowStart: reportDay(2026, 9, 29), WindowEnd: reportDay(2026, 10, 5), SubmittedAt: at,
 	}))
 	applied, err := repo.CompleteAccountReport(ctx, key, model.ReadyAccountReport{
-		ReportID: "z1", Rows: nil, WindowStart: reportDay(2026, 9, 29), WindowEnd: reportDay(2026, 10, 5), CompletedAt: at,
+		ReportID: "z1", Rows: nil, WindowStart: reportDay(2026, 9, 29), WindowEnd: reportDay(2026, 10, 5), AsOf: at,
 	})
 	require.NoError(t, err)
 	require.True(t, applied)
@@ -227,7 +227,7 @@ func TestLiveAccountReportChecksRejectMalformedRows(t *testing.T) {
 	})
 	t.Run("ready_rows not an array", func(t *testing.T) {
 		requireCheckViolation(t, insert(t, 30,
-			", ready_report_id, ready_rows, ready_partial, ready_window_start, ready_window_end, ready_completed_at",
+			", ready_report_id, ready_rows, ready_partial, ready_window_start, ready_window_end, ready_as_of",
 			", $5, '{}'::jsonb, false, DATE '2026-09-01', DATE '2026-09-30', now()", "obj-rows"))
 	})
 }
@@ -245,7 +245,7 @@ func TestLiveAccountReportRejectsEmptyReportID(t *testing.T) {
 		WindowStart: reportDay(2026, 9, 22), WindowEnd: reportDay(2026, 10, 5), SubmittedAt: at,
 	}))
 	_, err := repo.CompleteAccountReport(ctx, key, model.ReadyAccountReport{
-		WindowStart: reportDay(2026, 9, 22), WindowEnd: reportDay(2026, 10, 5), CompletedAt: at,
+		WindowStart: reportDay(2026, 9, 22), WindowEnd: reportDay(2026, 10, 5), AsOf: at,
 	})
 	require.Error(t, err)
 	_, err = repo.FailAccountReport(ctx, key, "", "x", at)

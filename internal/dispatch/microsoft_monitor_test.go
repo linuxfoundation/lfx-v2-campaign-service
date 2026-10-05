@@ -85,7 +85,10 @@ func TestMicrosoftMonitor_RefusesSystemFallback(t *testing.T) {
 	}
 }
 
-// Every refusal arm stops before any upstream call; the permitted arm reaches the stored account.
+// Every refusal arm stops before any upstream call, on ALL THREE methods — submit spends a
+// Microsoft report build and check downloads account data, so a refactor that bypassed
+// resolveMicrosoftMonitorClient on either must fail here, not only on the list. The permitted
+// arm (list only) reaches the stored account.
 func TestMicrosoftMonitor_AccountScope(t *testing.T) {
 	t.Setenv(constants.EnvMicrosoftMetricsEnabled, "true")
 	cases := []struct {
@@ -102,16 +105,31 @@ func TestMicrosoftMonitor_AccountScope(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			opts, calls := microsoftMonitorServers(t, `{"Campaigns":[]}`)
 			d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{}, opts...)
-			rows, err := d.ListAccountCampaigns(context.Background(), "cncf", model.ProviderMicrosoftAds, tc.requested)
 			if tc.wantErr != nil {
-				if !errors.Is(err, tc.wantErr) {
-					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				for name, call := range map[string]func() error{
+					"list": func() error {
+						_, err := d.ListAccountCampaigns(context.Background(), "cncf", model.ProviderMicrosoftAds, tc.requested)
+						return err
+					},
+					"submit": func() error {
+						_, err := d.SubmitAccountReport(context.Background(), "cncf", model.ProviderMicrosoftAds, tc.requested, 7)
+						return err
+					},
+					"check": func() error {
+						_, err := d.CheckAccountReport(context.Background(), "cncf", model.ProviderMicrosoftAds, tc.requested, "r1")
+						return err
+					},
+				} {
+					if err := call(); !errors.Is(err, tc.wantErr) {
+						t.Errorf("%s: err = %v, want %v", name, err, tc.wantErr)
+					}
 				}
 				if n := calls.Load(); n != 0 {
 					t.Errorf("%d upstream calls, want none for a refused request", n)
 				}
 				return
 			}
+			rows, err := d.ListAccountCampaigns(context.Background(), "cncf", model.ProviderMicrosoftAds, tc.requested)
 			if err != nil {
 				t.Fatalf("ListAccountCampaigns: %v", err)
 			}

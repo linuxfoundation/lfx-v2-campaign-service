@@ -66,7 +66,10 @@ CREATE TABLE IF NOT EXISTS account_monitor_reports (
     -- platform's daily aggregation does not have.
     ready_window_start   DATE,
     ready_window_end     DATE,
-    ready_completed_at   TIMESTAMPTZ,
+    -- ready_as_of: when the report was REQUESTED from the platform, which is the point in
+    -- time its data describes -- not when this service happened to collect it, which can be
+    -- an hour later and would overstate freshness by that much.
+    ready_as_of          TIMESTAMPTZ,
 
     -- PENDING half: the report submitted and not yet collected.
     pending_report_id    TEXT,
@@ -91,11 +94,11 @@ CREATE TABLE IF NOT EXISTS account_monitor_reports (
     CONSTRAINT account_monitor_reports_ready_whole CHECK (
         (ready_report_id IS NULL AND ready_rows IS NULL AND ready_partial IS NULL
          AND ready_window_start IS NULL AND ready_window_end IS NULL
-         AND ready_completed_at IS NULL)
+         AND ready_as_of IS NULL)
         OR
         (ready_report_id IS NOT NULL AND ready_rows IS NOT NULL AND ready_partial IS NOT NULL
          AND ready_window_start IS NOT NULL AND ready_window_end IS NOT NULL
-         AND ready_completed_at IS NOT NULL)
+         AND ready_as_of IS NOT NULL)
     ),
     CONSTRAINT account_monitor_reports_pending_whole CHECK (
         (pending_report_id IS NULL AND pending_window_start IS NULL

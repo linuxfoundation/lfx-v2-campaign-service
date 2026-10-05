@@ -393,7 +393,7 @@ func TestMonitorMicrosoftAdsAccount_ReportsMetricsFreshness(t *testing.T) {
 	completed := time.Date(2026, 10, 5, 14, 30, 0, 0, time.UTC)
 	reader := &fakeReportReader{campaigns: twoCampaigns()}
 	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{
-		CompletedAt: completed,
+		AsOf: completed,
 		Rows: []model.AccountReportRow{
 			{PlatformCampaignID: "1", Spend: 70, Impressions: 1000, Clicks: 30},
 			{PlatformCampaignID: "2", Spend: 10, Impressions: 500, Clicks: 5},

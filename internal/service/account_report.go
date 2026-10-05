@@ -106,6 +106,22 @@ func (o *Orchestrator) ReadReportedAccountCampaigns(ctx context.Context, project
 	defer cancel()
 
 	key := model.AccountReportKey{ProjectID: projectID, Platform: platform, AccountID: accountID, Days: days}
+
+	// The saved snapshot is read FIRST, on the request context rather than callCtx. It is a
+	// cheap local query, and reading it after the live list meant a slow Microsoft list could
+	// spend the shared budget and turn the store read — and so the whole response — into a
+	// 503 even though the one required step had succeeded.
+	snap, serr := store.GetAccountReport(ctx, key)
+	switch {
+	case errors.Is(serr, domain.ErrNotFound):
+		snap = &model.AccountReportSnapshot{Key: key}
+	case serr != nil:
+		// The store is this service's own database. A read failure here would otherwise answer
+		// "no metrics yet" for an account that has them, so it fails the call (503) rather than
+		// degrading silently.
+		return nil, fmt.Errorf("%s account monitor: read saved report: %w", platform, serr)
+	}
+
 	campaigns, lerr := o.listAccountCampaigns(callCtx, ctx, reader, key)
 	if lerr != nil {
 		return nil, lerr
@@ -113,17 +129,6 @@ func (o *Orchestrator) ReadReportedAccountCampaigns(ctx context.Context, project
 	if campaigns == nil {
 		// Same contract-violation guard as ReadAccountCampaignMetrics.
 		return nil, fmt.Errorf("%s account campaign lister returned a nil result with no error", platform)
-	}
-
-	snap, serr := store.GetAccountReport(callCtx, key)
-	switch {
-	case errors.Is(serr, domain.ErrNotFound):
-		snap = &model.AccountReportSnapshot{Key: key}
-	case serr != nil:
-		// The store is this service's own database. Unlike a platform hiccup in steps 2–3, a read
-		// failure here would mean answering "no metrics yet" for an account that has them, so it
-		// fails the call (503) rather than degrading silently.
-		return nil, fmt.Errorf("%s account monitor: read saved report: %w", platform, serr)
 	}
 
 	now := time.Now()
@@ -141,35 +146,47 @@ func (o *Orchestrator) collectPendingAccountReport(callCtx, ctx context.Context,
 		return
 	}
 	key := snap.Key
-	if now.Sub(p.SubmittedAt) > accountReportAbandonAfter {
+	// The abandon cutoff applies only to a report that is STILL not finished. An earlier draft
+	// abandoned on age alone, before checking — so an account viewed less than hourly never
+	// collected anything: each visit discarded the previous (by then almost certainly finished)
+	// report unread and submitted another. Checking first costs one Poll.
+	overdue := now.Sub(p.SubmittedAt) > accountReportAbandonAfter
+	abandon := func() {
 		reason := fmt.Sprintf("report not finished %s after submission; abandoned", accountReportAbandonAfter)
 		if _, ferr := store.FailAccountReport(callCtx, key, p.ReportID, reason, now); ferr != nil {
 			slog.WarnContext(ctx, "account monitor: could not record an abandoned report", "platform", key.Platform, "project_id", key.ProjectID, "error", ferr)
 			return
 		}
 		snap.Pending = nil
-		return
 	}
 
 	check, cerr := o.checkAccountReport(callCtx, ctx, reader, key, p.ReportID)
-	if cerr != nil {
-		// Transient by assumption: the report stays pending and the next read checks again. A
-		// report that keeps failing to check is bounded by accountReportAbandonAfter.
-		slog.WarnContext(ctx, "account monitor: report check failed; will retry on a later read", "platform", key.Platform, "project_id", key.ProjectID, "error", cerr)
-		return
-	}
-	if check == nil {
-		slog.WarnContext(ctx, "account monitor: report check returned no result and no error", "platform", key.Platform, "project_id", key.ProjectID)
+	if cerr != nil || check == nil {
+		// Transient by assumption: the report stays pending and the next read checks again —
+		// until it is overdue, which bounds a report that can never be checked.
+		if cerr == nil {
+			slog.WarnContext(ctx, "account monitor: report check returned no result and no error", "platform", key.Platform, "project_id", key.ProjectID)
+		} else {
+			slog.WarnContext(ctx, "account monitor: report check failed; will retry on a later read", "platform", key.Platform, "project_id", key.ProjectID, "error", cerr)
+		}
+		if overdue {
+			abandon()
+		}
 		return
 	}
 
 	switch check.Status {
 	case model.AccountReportPending:
+		if overdue {
+			abandon()
+		}
 		return
 	case model.AccountReportReady:
+		// AsOf is the SUBMISSION time: the point in time the data describes. Collection time
+		// would overstate freshness by however long the report sat uncollected.
 		ready := model.ReadyAccountReport{
 			ReportID: p.ReportID, Rows: check.Rows, Partial: check.Partial,
-			WindowStart: p.WindowStart, WindowEnd: p.WindowEnd, CompletedAt: now,
+			WindowStart: p.WindowStart, WindowEnd: p.WindowEnd, AsOf: p.SubmittedAt,
 		}
 		applied, perr := store.CompleteAccountReport(callCtx, key, ready)
 		if perr != nil {
@@ -205,7 +222,7 @@ func (o *Orchestrator) refreshAccountReport(callCtx, ctx context.Context, reader
 	if snap.Pending != nil {
 		return
 	}
-	if snap.Ready != nil && now.Sub(snap.Ready.CompletedAt) < accountReportFreshFor {
+	if snap.Ready != nil && now.Sub(snap.Ready.AsOf) < accountReportFreshFor {
 		return
 	}
 	if callCtx.Err() != nil {
@@ -255,7 +272,7 @@ func mergeAccountReport(campaigns []model.AccountCampaignMetrics, snap *model.Ac
 		}
 		return out
 	}
-	asOf := snap.Ready.CompletedAt
+	asOf := snap.Ready.AsOf
 	out.MetricsAsOf = &asOf
 	byID := make(map[string]model.AccountReportRow, len(snap.Ready.Rows))
 	for _, r := range snap.Ready.Rows {

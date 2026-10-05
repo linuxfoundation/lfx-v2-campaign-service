@@ -1749,8 +1749,10 @@ See [internal/service](../../../internal/service).
 metrics come from an ASYNCHRONOUS report — today Microsoft, whose Reporting service takes
 minutes against a 20s call budget. `Orchestrator.ReadReportedAccountCampaigns` lists the
 account's campaigns live, checks a pending report once, submits a new one when nothing is
-building and the last finished report is older than `accountReportFreshFor` (30m), abandons
-one pending past `accountReportAbandonAfter` (60m), and fills metrics from the last finished
+building and the last finished report's as-of (its SUBMISSION time) is older than
+`accountReportFreshFor` (30m), abandons one still pending or uncheckable past
+`accountReportAbandonAfter` (60m) — checked first, so a late-but-finished report is collected
+rather than thrown away — and fills metrics from the last finished
 report — all inside ONE `accountsCallTimeout`, because three per-step timeouts could together
 outlast the 60s ingress. Only the live list can fail the call; a check, submit or save error
 is logged and the response serves whatever was saved. State lives in

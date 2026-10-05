@@ -509,19 +509,24 @@ So the read is split, and the state between requests is saved:
   (`ErrAccountNotManagedByConnection`) — the trust boundary below applies unchanged.
 - **Orchestration.** `Orchestrator.ReadReportedAccountCampaigns`, inside ONE
   `accountsCallTimeout` budget: read the campaign list live (its failure is the call's
-  failure); check a pending report once — store it if finished, drop it if Microsoft failed
-  it or it has been pending past `accountReportAbandonAfter` (60m, Microsoft's own "consider
-  trying again later" point); submit a new one when nothing is pending and the last finished
-  report is missing or older than `accountReportFreshFor` (30m); fill each live campaign's
-  metrics from the last finished report. A check, submit or save that fails is logged and
-  never fails the read.
+  failure); check a pending report once — store it if finished (however late), drop it if
+  Microsoft failed it, or if it is STILL pending or uncheckable past
+  `accountReportAbandonAfter` (60m, Microsoft's own "consider trying again later" point);
+  submit a new one when nothing is pending and the last finished report's as-of is missing or
+  older than `accountReportFreshFor` (30m); fill each live campaign's metrics from the last
+  finished report. The saved snapshot is read first, on the request context, so a slow list
+  cannot turn the store read into a 503. A check, submit or save that fails is logged and
+  never fails the read. Checking BEFORE abandoning matters: an age-only abandon threw away
+  every report on an account viewed less than hourly, so it never showed metrics.
 - **Store.** `account_monitor_reports` (migration `000035`), one row per
   (project, platform, account, days) with a READY half (served, possibly stale) and a
   PENDING half (building upstream). Completing or failing a report is a compare-and-set on
   its report id, so a request that collected an older report cannot clear a newer one's
   pending marker. Platform-neutral on purpose: a second asynchronous platform reuses it.
 - **Response.** Same `AccountMonitor` type, plus two Microsoft-only fields:
-  `metrics_as_of` (when the report finished; absent before the first one) and
+  `metrics_as_of` (when the report was REQUESTED — the point in time the data describes, never
+  the later moment it was collected, which would overstate freshness; absent before the first
+  one finishes) and
   `metrics_pending` (a newer report is building; always set on Microsoft, omitted on the
   live four). Before any report has finished, every row is `fetch_failed` and therefore
   skipped by the rules — unavailable metrics never read as a campaign spending nothing.

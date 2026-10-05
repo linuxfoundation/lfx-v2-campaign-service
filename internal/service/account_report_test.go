@@ -167,16 +167,20 @@ func TestReadReported_CollectsAFinishedReport(t *testing.T) {
 		Status: model.AccountReportReady, Partial: true,
 		Rows: []model.AccountReportRow{{PlatformCampaignID: "1", Spend: 7, Impressions: 200, Clicks: 4, Conversions: &conv}},
 	}}
-	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Pending: &model.PendingAccountReport{ReportID: "r1", SubmittedAt: time.Now().Add(-5 * time.Minute)}}}
+	submitted := time.Now().Add(-5 * time.Minute)
+	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Pending: &model.PendingAccountReport{ReportID: "r1", SubmittedAt: submitted}}}
 	got := readReported(t, reportOrch(reader, store))
 
+	if !store.snap.Ready.AsOf.Equal(submitted) {
+		t.Errorf("saved AsOf = %v, want the submission time %v (not the collection time)", store.snap.Ready.AsOf, submitted)
+	}
 	if reader.checks != 1 || reader.checkedID != "r1" {
 		t.Fatalf("checks=%d id=%q, want one check of r1", reader.checks, reader.checkedID)
 	}
 	if reader.submits != 0 {
 		t.Errorf("submits=%d, want 0: the report just collected is fresh", reader.submits)
 	}
-	if got.MetricsPending || got.MetricsAsOf == nil {
+	if got.MetricsPending || got.MetricsAsOf == nil || !got.MetricsAsOf.Equal(store.snap.Ready.AsOf) {
 		t.Errorf("pending=%v asOf=%v, want not pending with an as-of", got.MetricsPending, got.MetricsAsOf)
 	}
 	r1, r2 := got.Rows[0], got.Rows[1]
@@ -194,7 +198,7 @@ func TestReadReported_CollectsAFinishedReport(t *testing.T) {
 // A fresh finished report is served as-is: no platform report call at all.
 func TestReadReported_FreshReportMakesNoReportCalls(t *testing.T) {
 	reader := &fakeReportReader{campaigns: twoCampaigns()}
-	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{ReportID: "r0", CompletedAt: time.Now().Add(-time.Minute)}}}
+	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{ReportID: "r0", AsOf: time.Now().Add(-time.Minute)}}}
 	got := readReported(t, reportOrch(reader, store))
 	if reader.submits != 0 || reader.checks != 0 {
 		t.Errorf("submits=%d checks=%d, want none", reader.submits, reader.checks)
@@ -209,7 +213,7 @@ func TestReadReported_StaleReportIsServedWhileTheNextBuilds(t *testing.T) {
 	reader := &fakeReportReader{campaigns: twoCampaigns(), submitID: "r2"}
 	completed := time.Now().Add(-2 * accountReportFreshFor)
 	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{
-		ReportID: "r1", CompletedAt: completed,
+		ReportID: "r1", AsOf: completed,
 		Rows: []model.AccountReportRow{{PlatformCampaignID: "1", Spend: 3}},
 	}}}
 	got := readReported(t, reportOrch(reader, store))
@@ -244,13 +248,47 @@ func TestReadReported_FailedReportIsReplaced(t *testing.T) {
 	}
 }
 
-// A report pending past accountReportAbandonAfter is given up on without even checking it.
-func TestReadReported_AbandonsAReportPendingTooLong(t *testing.T) {
-	reader := &fakeReportReader{campaigns: twoCampaigns(), submitID: "r2"}
+// An overdue report is CHECKED before it is abandoned. A finished one is collected, however
+// late — abandoning on age alone meant an account viewed less than hourly never collected
+// anything, because every visit threw away the report the previous visit had started.
+func TestReadReported_OverdueButFinishedReportIsCollected(t *testing.T) {
+	submitted := time.Now().Add(-2 * accountReportAbandonAfter)
+	reader := &fakeReportReader{campaigns: twoCampaigns(), submitID: "r2", check: &model.AccountReportCheck{
+		Status: model.AccountReportReady, Rows: []model.AccountReportRow{{PlatformCampaignID: "1", Spend: 4}},
+	}}
+	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Pending: &model.PendingAccountReport{ReportID: "r1", SubmittedAt: submitted}}}
+	got := readReported(t, reportOrch(reader, store))
+	if reader.checks != 1 || len(store.failures) != 0 {
+		t.Fatalf("checks=%d failures=%v, want r1 checked and collected, not abandoned", reader.checks, store.failures)
+	}
+	if got.Rows[0].Spend != 4 {
+		t.Errorf("row = %+v, want the overdue report's metrics", got.Rows[0])
+	}
+	// Collected two hours after it was requested, so it describes data two hours old: already
+	// stale, and the same read submits the next one.
+	if got.MetricsAsOf == nil || !got.MetricsAsOf.Equal(submitted) || reader.submits != 1 {
+		t.Errorf("asOf=%v submits=%d, want as-of = submission time and a refresh submitted", got.MetricsAsOf, reader.submits)
+	}
+}
+
+// Only a report that is STILL pending past the cutoff is abandoned (and replaced).
+func TestReadReported_AbandonsAReportStillPendingTooLong(t *testing.T) {
+	reader := &fakeReportReader{campaigns: twoCampaigns(), submitID: "r2", check: &model.AccountReportCheck{Status: model.AccountReportPending}}
 	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Pending: &model.PendingAccountReport{ReportID: "r1", SubmittedAt: time.Now().Add(-2 * accountReportAbandonAfter)}}}
 	readReported(t, reportOrch(reader, store))
-	if reader.checks != 0 || len(store.failures) != 1 || reader.submits != 1 {
-		t.Errorf("checks=%d failures=%v submits=%d, want no check, r1 abandoned, a new submit", reader.checks, store.failures, reader.submits)
+	if reader.checks != 1 || len(store.failures) != 1 || reader.submits != 1 {
+		t.Errorf("checks=%d failures=%v submits=%d, want r1 checked, abandoned, and replaced", reader.checks, store.failures, reader.submits)
+	}
+}
+
+// A report that cannot be checked is also abandoned once overdue, so a permanently failing
+// check cannot pin the account to one report forever.
+func TestReadReported_AbandonsAnUncheckableOverdueReport(t *testing.T) {
+	reader := &fakeReportReader{campaigns: twoCampaigns(), submitID: "r2", checkErr: errors.New("timeout")}
+	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Pending: &model.PendingAccountReport{ReportID: "r1", SubmittedAt: time.Now().Add(-2 * accountReportAbandonAfter)}}}
+	readReported(t, reportOrch(reader, store))
+	if len(store.failures) != 1 || reader.submits != 1 {
+		t.Errorf("failures=%v submits=%d, want r1 abandoned and replaced", store.failures, reader.submits)
 	}
 }
 
@@ -329,7 +367,7 @@ func TestReadReported_DispatcherFetchFailedSurvivesTheMerge(t *testing.T) {
 	c[0].FetchFailed = true
 	reader := &fakeReportReader{campaigns: c}
 	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{
-		CompletedAt: time.Now(), Rows: []model.AccountReportRow{{PlatformCampaignID: "1", Spend: 5}},
+		AsOf: time.Now(), Rows: []model.AccountReportRow{{PlatformCampaignID: "1", Spend: 5}},
 	}}}
 	got := readReported(t, reportOrch(reader, store))
 	if !got.Rows[0].FetchFailed || got.Rows[0].Spend != 5 {
