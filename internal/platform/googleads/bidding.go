@@ -221,9 +221,6 @@ var demandGenBiddingStrategies = map[string]bool{
 	biddingMaximizeClicks: true,
 }
 
-// searchBiddingStrategies is the set this client will send on SEARCH — every strategy it
-// offers. Search is the channel the manual and the automated strategies were both designed
-// for, and `manualCpc` is what this client has always sent there.
 // performanceMaxBiddingStrategies is the set this client will send on PERFORMANCE_MAX.
 //
 // The four CONVERSION-based strategies and nothing else, which is Google's own rule
@@ -238,6 +235,9 @@ var performanceMaxBiddingStrategies = map[string]bool{
 	biddingTargetROAS:              true,
 }
 
+// searchBiddingStrategies is the set this client will send on SEARCH — every strategy it
+// offers. Search is the channel the manual and the automated strategies were both designed
+// for, and `manualCpc` is what this client has always sent there.
 var searchBiddingStrategies = map[string]bool{
 	biddingManualCPC:               true,
 	biddingMaximizeClicks:          true,
@@ -320,7 +320,7 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 	}
 
 	if !knownBiddingStrategies[strategy] {
-		return biddingPlan{}, fmt.Errorf("google-ads: unknown bidding strategy %q; supported on %s: %s", in.BiddingStrategy, kind, strings.Join(sortedKeys(allowed), ", "))
+		return biddingPlan{}, fmt.Errorf("google-ads: unknown bidding strategy %q; supported on %s: %s", capForError(in.BiddingStrategy), kind, strings.Join(sortedKeys(allowed), ", "))
 	}
 	if !allowed[strategy] {
 		return biddingPlan{}, fmt.Errorf("google-ads: bidding strategy %q is not supported on %s (this client sends only %s there, which is the only combination verified against the live API; the others were rejected AFTER the budget was created); omit BiddingStrategy for the channel default, or create a Search campaign", strategy, kind, strings.Join(sortedKeys(allowed), ", "))

@@ -1038,6 +1038,10 @@ demandGenCreative?:             — OPTIONAL Demand Gen ad (LFXV2-2665). DEMAND 
                                   mutate, so a bad URL cannot strand a paid campaign. The 64 MiB total
                                   is a separate refusal from the per-image cap: images that each pass
                                   5 MiB and every count and shape bound can still be refused on the sum.
+                                  Fetching is sequential and bounded per image AND as a phase: it may
+                                  spend at most HALF the request's remaining deadline, so a set of slow
+                                  image hosts is refused here rather than leaving the campaign mutates
+                                  to run out of time after something has been created.
 
                                   Each list has its own shape, checked against the decoded image:
                                     marketingImages          1.91:1, min 600x314

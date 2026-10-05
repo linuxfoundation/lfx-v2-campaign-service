@@ -480,6 +480,21 @@ func (c *Client) createCampaignAssets(ctx context.Context, campaignResource, cam
 // "assets" kind, THIS client's customer id, and a numeric trailing id. Returns
 // "" for anything else — a 2xx naming another account's asset, another resource
 // kind, or "garbage/4242" is not proof the asset this run asked for exists.
+// parsedAssetIDs is every well-formed asset id in a mutate response, in order, skipping
+// any resource name assetID refuses. It exists for the arms that return an UNCONFIRMED
+// error over a response that nonetheless PARSED: the ids in it are the only handle an
+// operator has on account-level assets that may already exist, so the error carries them
+// rather than dropping them.
+func (c *Client) parsedAssetIDs(resp mutateResponse) []string {
+	out := make([]string, 0, len(resp.Results))
+	for _, r := range resp.Results {
+		if id := c.assetID(r.ResourceName); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func (c *Client) assetID(resourceName string) string {
 	pathParts := strings.Split(resourceName, "/")
 	if len(pathParts) != 4 || pathParts[0] != "customers" || pathParts[2] != "assets" {

@@ -844,9 +844,18 @@ func TestCreateDemandGenCampaign_ShortAssetResponseIsUnconfirmed(t *testing.T) {
 		failHandler(t, "the ad mutate after a short asset response")))
 	c := demandGenClient(t, srv)
 
-	_, err := c.CreateDemandGenCampaign(context.Background(), creativeInput(creativeAt(srv.URL)))
+	res, err := c.CreateDemandGenCampaign(context.Background(), creativeInput(creativeAt(srv.URL)))
 	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
 		t.Fatalf("a short asset response must be UNCONFIRMED, got: %v", err)
+	}
+	// The body PARSED — the one id in it is real, and is the only handle an operator
+	// has on an account-level asset that may already exist. An UNCONFIRMED outcome
+	// must not take it down with the error.
+	if res == nil {
+		t.Fatal("a failure past the campaign create must return a non-nil partial result")
+	}
+	if len(res.CreativeAssetIDs) != 1 || res.CreativeAssetIDs[0] != "900" {
+		t.Errorf("the ids the short response DID carry must survive the error, got %v", res.CreativeAssetIDs)
 	}
 }
 
@@ -1011,5 +1020,65 @@ func TestFetchSlotImages_TotalBytesCapIsAcrossEverySlot(t *testing.T) {
 	}
 	if len(got) != len(under[0])+len(under[1]) {
 		t.Errorf("fetched %d images, want %d", len(got), len(under[0])+len(under[1]))
+	}
+}
+
+// The fetch phase must not be able to spend the caller's whole budget. Per-image
+// timeouts bound one image; only the phase cap bounds the walk, and the walk is what
+// would otherwise leave the MUTATE cascade running against an exhausted deadline —
+// the orphaned-campaign state the preflight design exists to avoid.
+func TestFetchSlotImages_FetchPhaseCannotSpendTheWholeDeadline(t *testing.T) {
+	body := pngOf(t, 1200, 628)
+	const perImage = 600 * time.Millisecond
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(perImage):
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := imageFetchTestClient(t)
+	slots := demandGenImageSlots[:1]
+	urls := [][]string{{srv.URL + "/a.png", srv.URL + "/b.png", srv.URL + "/c.png"}}
+
+	// Half of this is 1s, so the third image cannot land inside the phase share while
+	// the caller's own deadline is still comfortably alive.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := c.fetchSlotImages(ctx, slots, urls)
+	if err == nil {
+		t.Fatal("the fetch phase must stop at its share of the deadline, not run on")
+	}
+	if !strings.Contains(err.Error(), "used its share of the deadline") {
+		t.Errorf("expected the phase-budget refusal, got: %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Error("the caller's own deadline must survive the fetch phase — the mutate cascade still needs it")
+	}
+}
+
+// And a caller with no deadline keeps the behaviour it had: the share is derived from
+// what the caller actually has left, never invented, so nothing that used to fit is
+// refused now.
+func TestFetchSlotImages_NoCallerDeadlineIsLeftUnbounded(t *testing.T) {
+	body := pngOf(t, 1200, 628)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := imageFetchTestClient(t)
+	got, err := c.fetchSlotImages(context.Background(), demandGenImageSlots[:1], [][]string{{srv.URL + "/a.png"}})
+	if err != nil {
+		t.Fatalf("a caller with no deadline must fetch as before: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("fetched %d images, want 1", len(got))
 	}
 }

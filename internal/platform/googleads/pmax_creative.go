@@ -100,18 +100,18 @@ const (
 // drifted would be rejected at the link mutate — which runs after the campaign, the
 // budget, the assets and the asset group all exist.
 const (
-	assetFieldHeadline              = "HEADLINE"
-	assetFieldLongHeadline          = "LONG_HEADLINE"
-	assetFieldDescription           = "DESCRIPTION"
-	assetFieldBusinessName          = "BUSINESS_NAME"
-	assetFieldMarketingImage        = "MARKETING_IMAGE"
-	assetFieldSquareMarketingImage  = "SQUARE_MARKETING_IMAGE"
-	assetFieldPortraitMarketingImg  = "PORTRAIT_MARKETING_IMAGE"
-	assetFieldLogo                  = "LOGO"
-	assetFieldLandscapeLogo         = "LANDSCAPE_LOGO"
-	assetFieldYouTubeVideo          = "YOUTUBE_VIDEO"
-	performanceMaxAssetGroupSuffix  = " - Asset Group"
-	performanceMaxAssetGroupPending = "PAUSED"
+	assetFieldHeadline             = "HEADLINE"
+	assetFieldLongHeadline         = "LONG_HEADLINE"
+	assetFieldDescription          = "DESCRIPTION"
+	assetFieldBusinessName         = "BUSINESS_NAME"
+	assetFieldMarketingImage       = "MARKETING_IMAGE"
+	assetFieldSquareMarketingImage = "SQUARE_MARKETING_IMAGE"
+	assetFieldPortraitMarketingImg = "PORTRAIT_MARKETING_IMAGE"
+	assetFieldLogo                 = "LOGO"
+	assetFieldLandscapeLogo        = "LANDSCAPE_LOGO"
+	assetFieldYouTubeVideo         = "YOUTUBE_VIDEO"
+	performanceMaxAssetGroupSuffix = " - Asset Group"
+	performanceMaxAssetGroupPaused = "PAUSED"
 )
 
 // PerformanceMaxCreative is the asset-group creative for a Performance Max campaign. It
@@ -378,14 +378,6 @@ func validateDisplayPath(label, raw string) (string, error) {
 	return p, nil
 }
 
-// validateYouTubeVideoIDs checks the SHAPE of each id. Whether the video exists, is
-// public, and belongs to a channel the account may advertise is Google's to judge — this
-// client has no YouTube credentials and inventing a lookup here would make
-// ValidateCampaignInput send a request, which its contract forbids.
-//
-// A URL is REFUSED rather than parsed into an id. Accepting one would mean guessing
-// which of youtu.be, /watch?v=, /shorts/ and /embed/ forms the caller meant, and a guess
-// that extracted the wrong substring would attach the wrong video to a real campaign.
 // isYouTubeIDRune reports whether r is in YouTube's id alphabet: the unreserved
 // base64url characters.
 func isYouTubeIDRune(r rune) bool {
@@ -398,6 +390,14 @@ func isYouTubeIDRune(r rune) bool {
 	return false
 }
 
+// validateYouTubeVideoIDs checks the SHAPE of each id. Whether the video exists, is
+// public, and belongs to a channel the account may advertise is Google's to judge — this
+// client has no YouTube credentials and inventing a lookup here would make
+// ValidateCampaignInput send a request, which its contract forbids.
+//
+// A URL is REFUSED rather than parsed into an id. Accepting one would mean guessing
+// which of youtu.be, /watch?v=, /shorts/ and /embed/ forms the caller meant, and a guess
+// that extracted the wrong substring would attach the wrong video to a real campaign.
 func validateYouTubeVideoIDs(in []string) ([]string, error) {
 	out := make([]string, 0, len(in))
 	seen := make(map[string]struct{}, len(in))
@@ -457,7 +457,9 @@ type performanceMaxAssetCreate struct {
 	TextAsset         *textAssetCreate         `json:"textAsset,omitempty"`
 	ImageAsset        *imageAssetCreate        `json:"imageAsset,omitempty"`
 	YouTubeVideoAsset *youTubeVideoAssetCreate `json:"youtubeVideoAsset,omitempty"`
-	// Name is required by Google for an IMAGE asset and meaningless for a text one.
+	// Name is an optional human-visible asset label. This client NEVER sets it — see
+	// buildPerformanceMaxAssets for why an image's name would export the caller's URL
+	// into the shared account.
 	Name string `json:"name,omitempty"`
 }
 
@@ -571,8 +573,15 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 	// EXACT equality, like every other create-path mutate here: a short response leaves
 	// assets unaccounted for and an extra result is a response that does not describe
 	// what was sent. Both are UNCONFIRMED rather than failed — the assets may exist.
-	if uErr := json.Unmarshal(assetResp, &assetResults); uErr != nil || len(assetResults.Results) != len(assetOps) {
-		return nil, "", 0, fmt.Errorf("google-ads Performance Max asset creation UNCONFIRMED (campaign %s created; 2xx with a malformed/short mutate response for %d asset(s) — assets may exist — verify in Google Ads before retrying)", campaignID, len(assetOps))
+	if uErr := json.Unmarshal(assetResp, &assetResults); uErr != nil {
+		return nil, "", 0, fmt.Errorf("google-ads Performance Max asset creation UNCONFIRMED (campaign %s created; 2xx with a malformed mutate response for %d asset(s) — assets may exist — verify in Google Ads before retrying)", campaignID, len(assetOps))
+	}
+	if len(assetResults.Results) != len(assetOps) {
+		// The body PARSED, so whatever ids it did carry are real — and they are the only
+		// handle an operator has on account-level assets that may already exist. They go
+		// back WITH the error rather than being dropped alongside it, the same way the
+		// malformed-resource-name arm below returns what it had got to.
+		return c.parsedAssetIDs(assetResults), "", 0, fmt.Errorf("google-ads Performance Max asset creation UNCONFIRMED (campaign %s created; 2xx returned %d result(s) for %d asset(s) — assets may exist — verify in Google Ads before retrying)", campaignID, len(assetResults.Results), len(assetOps))
 	}
 	assetResources := make([]string, 0, len(assetOps))
 	assetIDs = make([]string, 0, len(assetOps))
@@ -593,7 +602,7 @@ func (c *Client) createPerformanceMaxAssetGroup(ctx context.Context, campaignRes
 		Name:      plan.assetGroupName,
 		Campaign:  campaignResource,
 		FinalUrls: []string{finalURL},
-		Status:    performanceMaxAssetGroupPending,
+		Status:    performanceMaxAssetGroupPaused,
 		Path1:     plan.path1,
 		Path2:     plan.path2,
 	}}}}

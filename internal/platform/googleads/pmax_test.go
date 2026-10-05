@@ -279,6 +279,12 @@ func TestCreatePerformanceMaxCampaign_ShortAssetResponseIsUnconfirmed(t *testing
 	if !strings.Contains(err.Error(), "UNCONFIRMED") {
 		t.Errorf("error = %q, want it to say UNCONFIRMED — the assets may exist", err)
 	}
+	// The body PARSED — the one id in it is real, and is the only handle an operator
+	// has on an account-level asset that may already exist. An UNCONFIRMED outcome
+	// must not take it down with the error.
+	if len(res.CreativeAssetIDs) != 1 || res.CreativeAssetIDs[0] != "900" {
+		t.Errorf("the ids the short response DID carry must survive the error, got %v", res.CreativeAssetIDs)
+	}
 }
 
 func TestCreatePerformanceMaxCampaign_WrongAccountAssetIsUnconfirmed(t *testing.T) {

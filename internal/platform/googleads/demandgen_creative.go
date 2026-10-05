@@ -131,6 +131,12 @@ const (
 	// context still bounds the whole operation.
 	demandGenImageFetchTimeout = 20 * time.Second
 
+	// creativeImageFetchDeadlineShare is the divisor applied to the caller's REMAINING
+	// deadline to bound the whole fetch phase. Half: the fetch is the only pre-create
+	// network step, and the mutate cascade that follows it is the half that must not
+	// run out of time, because that is the half that creates things.
+	creativeImageFetchDeadlineShare = 2
+
 	// demandGenAspectTolerance is Google's own "+-1%" on every documented ratio.
 	demandGenAspectTolerance = 0.01
 )
@@ -472,6 +478,27 @@ func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls []
 		total += len(u)
 	}
 	out := make([]fetchedImage, 0, total)
+
+	// The fetch phase gets a SHARE of the caller's remaining deadline, not all of it.
+	// demandGenImageFetchTimeout bounds one image and the walk is sequential, so a full
+	// 30-image group against slow hosts is ten minutes of worst case — far past the
+	// dispatcher's per-provider budget. Without this the deadline would expire somewhere
+	// in the MUTATE cascade, which is the orphaned-campaign state the whole preflight
+	// design exists to avoid; with it, exhaustion lands here, before anything is created,
+	// where it costs the caller an error and nothing else.
+	//
+	// Derived from what the caller actually has left rather than set as a constant: a
+	// fixed ceiling would refuse a creative that comfortably fit the caller's budget,
+	// and refusing a create Google would have accepted is the worse failure. A caller
+	// with no deadline at all keeps the behaviour it had.
+	fetchCtx := ctx
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 {
+			var cancel context.CancelFunc
+			fetchCtx, cancel = context.WithTimeout(ctx, remaining/creativeImageFetchDeadlineShare)
+			defer cancel()
+		}
+	}
 	// Checked as a RUNNING total, not after the loop: the point is to stop reading
 	// before the whole set is resident, so an oversized creative never allocates the
 	// hundreds of megabytes the check exists to prevent.
@@ -479,8 +506,14 @@ func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls []
 	for slotIdx, slotURLs := range urls {
 		slot := slots[slotIdx]
 		for _, u := range slotURLs {
-			data, err := c.fetchOneImage(ctx, slot, u)
+			data, err := c.fetchOneImage(fetchCtx, slot, u)
 			if err != nil {
+				// Said plainly, because "context deadline exceeded" on its own would
+				// read as the caller's whole budget being gone when in fact the
+				// mutate half of it is still intact and untouched.
+				if fetchCtx.Err() != nil && ctx.Err() == nil {
+					return nil, fmt.Errorf("google-ads creative image fetching used its share of the deadline after %d of %d image(s) — nothing was created; use faster image hosts or fewer images", len(out), total)
+				}
 				return nil, err
 			}
 			fetched += len(data)
@@ -798,8 +831,15 @@ func (c *Client) createDemandGenAd(ctx context.Context, adGroupResource, adGroup
 	// operation per image means a short response leaves images unaccounted for, and
 	// an extra result is a response that does not describe what was sent. Both are
 	// unconfirmed rather than failed — the assets may exist.
-	if uErr := json.Unmarshal(assetResp, &assetResults); uErr != nil || len(assetResults.Results) != len(assetOps) {
-		return nil, "", fmt.Errorf("google-ads demand gen image asset creation UNCONFIRMED (ad group %s created; 2xx with a malformed/short mutate response for %d image(s) — assets may exist — verify in Google Ads before retrying)", adGroupID, len(assetOps))
+	if uErr := json.Unmarshal(assetResp, &assetResults); uErr != nil {
+		return nil, "", fmt.Errorf("google-ads demand gen image asset creation UNCONFIRMED (ad group %s created; 2xx with a malformed mutate response for %d image(s) — assets may exist — verify in Google Ads before retrying)", adGroupID, len(assetOps))
+	}
+	if len(assetResults.Results) != len(assetOps) {
+		// The body PARSED, so whatever ids it did carry are real — and they are the only
+		// handle an operator has on account-level assets that may already exist. They go
+		// back WITH the error rather than being dropped alongside it, the same way the
+		// malformed-resource-name arm below returns what it had got to.
+		return c.parsedAssetIDs(assetResults), "", fmt.Errorf("google-ads demand gen image asset creation UNCONFIRMED (ad group %s created; 2xx returned %d result(s) for %d image(s) — assets may exist — verify in Google Ads before retrying)", adGroupID, len(assetResults.Results), len(assetOps))
 	}
 
 	// Positional: result i is the asset for images[i], which carries its slot.
