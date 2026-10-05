@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -66,14 +67,33 @@ const NoActiveCampaignsReportID = "none"
 // (https://docs.x.com/x-ads-api/analytics, Asynchronous Analytics).
 const statsJobMaxEntities = 20
 
-// maxStatsJobsPerReport bounds how many stats jobs one submission creates (so 200 active
-// campaigns). The binding constraint is time, not X's 100-concurrent-jobs limit: every job POST
-// is paced on the client's 1 write/sec pacer (see SubmitAccountCampaignReport), and the whole
-// submission shares the monitor's 20s call budget with the campaign list. An account with more
-// active campaigns than this is refused with an error rather than given a report that silently
-// covers some of them — the caller treats a finished report as authoritative for the whole
-// account, so a partial one would read the uncovered campaigns as having served nothing.
+// maxStatsJobsPerReport bounds how many stats jobs one submission creates (so
+// MaxMonitorActiveCampaigns active campaigns). The binding constraint is time, not X's
+// 100-concurrent-jobs limit: every job POST is paced on the client's 1 write/sec pacer (see
+// SubmitAccountCampaignReport), and the whole submission shares the monitor's 20s call budget
+// with the campaign list. An account with more active campaigns than this is refused with
+// ErrTooManyActiveCampaigns rather than given a report that silently covers some of them — the
+// caller treats a finished report as authoritative for the whole account, so a partial one would
+// read the uncovered campaigns as having served nothing.
 const maxStatsJobsPerReport = 10
+
+// MaxMonitorActiveCampaigns is the most campaigns active in one window the account monitor
+// builds a report for: maxStatsJobsPerReport jobs of statsJobMaxEntities campaigns each.
+const MaxMonitorActiveCampaigns = maxStatsJobsPerReport * statsJobMaxEntities
+
+// ErrTooManyActiveCampaigns is returned by SubmitAccountCampaignReport, before any job is
+// created, when X reports more than MaxMonitorActiveCampaigns campaigns active in the window.
+// It is PERMANENT for as long as the account stays that busy: retrying cannot help, so the
+// caller surfaces it rather than retrying it as an upstream failure.
+var ErrTooManyActiveCampaigns = fmt.Errorf("twitter: the account has more than %d campaigns active in the report window", MaxMonitorActiveCampaigns)
+
+// ErrReportWindowNotWholeHours is returned by SubmitAccountCampaignReport, before any request,
+// when a local midnight bounding the report window is not a whole UTC hour — an account whose
+// timezone has a fractional-hour offset (Asia/Kolkata, Asia/Kathmandu, Australia/Adelaide, ...).
+// X accepts "whole hours only" for start_time/end_time, so such an account's calendar days cannot
+// be queried exactly, and querying a shifted window while reporting the account's own days would
+// misattribute up to 45 minutes of delivery to the wrong day. PERMANENT for the account's zone.
+var ErrReportWindowNotWholeHours = errors.New("twitter: the account's timezone does not put local midnight on a whole UTC hour, which X's report window requires")
 
 // maxStatsWindow is the longest window a stats job or an active_entities read accepts: "up to
 // 90 days" (https://docs.x.com/x-ads-api/analytics). A 90-day window that crosses a DST
@@ -169,14 +189,27 @@ type AccountCampaign struct {
 	DailyBudget       float64
 	TotalBudget       float64
 	BudgetUnparseable bool
-	// StartDate / EndDate are the campaign's flight as calendar dates (YYYY-MM-DD) in the ACCOUNT's
-	// timezone, derived from its line items: the earliest start_time and the latest end_time.
-	// EndDate is the last day the flight runs on (inclusive). StartDate is empty when the
-	// campaign has no line items; EndDate is empty then too, and whenever any line item is
-	// open-ended (no end_time). FlightUnparseable marks a line item whose times could not be read.
+	// StartDate / EndDate are the ENVELOPE of the campaign's flight as calendar dates
+	// (YYYY-MM-DD) in the ACCOUNT's timezone, derived from its line items: the earliest
+	// start_time and the latest end_time. EndDate is the last day the flight runs on (inclusive).
+	// StartDate is empty when the campaign has no line items; EndDate is empty then too, and
+	// whenever any line item is open-ended (no end_time). FlightUnparseable marks a line item
+	// whose times could not be read.
 	StartDate         string
 	EndDate           string
 	FlightUnparseable bool
+	// Flights is what the envelope cannot say: the days the campaign is actually scheduled on,
+	// as the union of its line items' flights — sorted, disjoint, non-adjacent ranges of local
+	// calendar days. Line items Sep 1–5 and Oct 1–5 give two ranges, so a window in the gap is
+	// not read as scheduled. Empty whenever StartDate is.
+	Flights []FlightRange
+}
+
+// FlightRange is one contiguous run of scheduled account-local days, StartDate through EndDate
+// inclusive (YYYY-MM-DD); EndDate is empty for an open-ended run, which is always the last.
+type FlightRange struct {
+	StartDate string
+	EndDate   string
 }
 
 // monitorCampaignElement is one row of GET accounts/:account_id/campaigns. The budgets are kept
@@ -327,12 +360,18 @@ func (c *Client) ListAccountCampaigns(ctx context.Context) ([]AccountCampaign, e
 	return out, nil
 }
 
-// flightAcc accumulates one campaign's flight across its line items.
+// flightAcc accumulates one campaign's flight across its line items: the envelope (earliest
+// start, latest end, open-ended if any line item is) and every line item's own interval, which
+// flightRanges unions.
 type flightAcc struct {
 	start, end time.Time
 	openEnded  bool
 	bad        bool
+	spans      []flightSpan
 }
+
+// flightSpan is one line item's [start, end) instants; end is zero when open-ended.
+type flightSpan struct{ start, end time.Time }
 
 // applyLineItemFlights reads the line items of every campaign in out, in batches, and sets each
 // campaign's StartDate/EndDate.
@@ -386,12 +425,68 @@ func (c *Client) applyLineItemFlights(ctx context.Context, out []AccountCampaign
 		if !f.openEnded && !f.end.IsZero() {
 			ac.EndDate = lastFlightDay(f.end, loc)
 		}
+		ac.Flights = flightRanges(f.spans, loc)
 	}
 	return nil
 }
 
-// foldLineItemFlight widens f by one line item: earliest start, latest end, open-ended if any
-// line item has no end_time. A start_time that is absent or unparseable marks the flight bad —
+// flightRanges unions line-item intervals into account-local day ranges: each interval becomes
+// [its start day, its last day] (lastFlightDay), and ranges that overlap or touch — the next one
+// starts on or before the day after the current one ends — merge. An open-ended interval absorbs
+// everything after its start. An interval that ends before its first day ran on no day and is
+// dropped. The days are compared as DATES, not instants, because "scheduled on day D" is what
+// the rule engine needs and two line items one serving the morning, one the evening of the same
+// day both schedule that day.
+func flightRanges(spans []flightSpan, loc *time.Location) []FlightRange {
+	type dayRange struct {
+		first, last time.Time // UTC-midnight dates; last zero = open-ended
+	}
+	day := func(t time.Time) time.Time {
+		l := t.In(loc)
+		return time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, time.UTC)
+	}
+	rs := make([]dayRange, 0, len(spans))
+	for _, sp := range spans {
+		r := dayRange{first: day(sp.start)}
+		if !sp.end.IsZero() {
+			r.last = day(sp.end.Add(-time.Nanosecond))
+			if r.last.Before(r.first) {
+				continue
+			}
+		}
+		rs = append(rs, r)
+	}
+	sort.Slice(rs, func(i, j int) bool { return rs[i].first.Before(rs[j].first) })
+	merged := make([]dayRange, 0, len(rs))
+	for _, r := range rs {
+		if n := len(merged); n > 0 {
+			cur := &merged[n-1]
+			if cur.last.IsZero() {
+				continue // open-ended: already covers every later day
+			}
+			if !r.first.After(cur.last.AddDate(0, 0, 1)) {
+				if r.last.IsZero() || r.last.After(cur.last) {
+					cur.last = r.last
+				}
+				continue
+			}
+		}
+		merged = append(merged, r)
+	}
+	out := make([]FlightRange, 0, len(merged))
+	for _, r := range merged {
+		fr := FlightRange{StartDate: r.first.Format(time.DateOnly)}
+		if !r.last.IsZero() {
+			fr.EndDate = r.last.Format(time.DateOnly)
+		}
+		out = append(out, fr)
+	}
+	return out
+}
+
+// foldLineItemFlight widens f by one line item — earliest start, latest end, open-ended if any
+// line item has no end_time — and records the line item's own interval, so the gaps between
+// line items survive into AccountCampaign.Flights. A start_time that is absent or unparseable marks the flight bad —
 // X requires start_time on a line item (the create path sends it as REQUIRED), so its absence
 // is not an "unscheduled" state this code can interpret.
 func foldLineItemFlight(f *flightAcc, el monitorLineItemElement) {
@@ -404,11 +499,12 @@ func foldLineItemFlight(f *flightAcc, el monitorLineItemElement) {
 		f.bad = true
 		return
 	}
-	if f.start.IsZero() || st.Before(f.start) {
-		f.start = st
-	}
 	if el.EndTime == nil || strings.TrimSpace(*el.EndTime) == "" {
+		if f.start.IsZero() || st.Before(f.start) {
+			f.start = st
+		}
 		f.openEnded = true
+		f.spans = append(f.spans, flightSpan{start: st})
 		return
 	}
 	et, err := time.Parse(time.RFC3339, strings.TrimSpace(*el.EndTime))
@@ -416,9 +512,13 @@ func foldLineItemFlight(f *flightAcc, el monitorLineItemElement) {
 		f.bad = true
 		return
 	}
+	if f.start.IsZero() || st.Before(f.start) {
+		f.start = st
+	}
 	if et.After(f.end) {
 		f.end = et
 	}
+	f.spans = append(f.spans, flightSpan{start: st, end: et})
 }
 
 // lastFlightDay returns the last calendar day (in loc) a flight ending at the INSTANT end still
@@ -484,32 +584,43 @@ func (c *Client) walkPages(ctx context.Context, path string, page func(json.RawM
 // accountReportWindow returns the stats window for the trailing `days` days, today inclusive,
 // in the account's timezone: [local midnight of today-(days-1), the local midnight after today).
 //
-// The bounds are sent as UTC instants. X requires "whole hours only" for start_time/end_time,
-// and DAY granularity additionally requires midnight in the account timezone
-// (https://docs.x.com/x-ads-api/analytics, Synchronous Analytics; the asynchronous section
-// points to the same parameters). The monitor asks for TOTAL, but aligning to account-midnight
-// anyway is what makes the window the account's own calendar days, the unit its daily budgets
-// reset on. UNVERIFIED for zones whose offset is not a whole hour (e.g. Asia/Kolkata): local
-// midnight is then not a whole UTC hour, so both bounds are floored to the hour, shifting the
-// window up to 45 minutes earlier rather than sending a value X documents it refuses.
+// The window QUERIED and the window REPORTED are always the same days: start/end are exactly the
+// local midnights of firstDay and of the day after lastDay. Nothing is shifted to make a window
+// fit, because the caller persists firstDay/lastDay and the rules pace on them — a query that
+// silently covered different hours than the persisted days would attribute delivery to days it
+// was not measured on. Instead:
+//
+//   - X requires "whole hours only" for start_time/end_time, and DAY granularity additionally
+//     requires midnight in the account timezone (https://docs.x.com/x-ads-api/analytics,
+//     Synchronous Analytics; the asynchronous section points to the same parameters). The
+//     monitor asks for TOTAL, but aligning to account-midnight is what makes the window the
+//     account's own calendar days, the unit its daily budgets reset on. When either local
+//     midnight is not a whole UTC hour — a fractional-offset zone such as Asia/Kolkata — the
+//     account's days cannot be queried exactly and the window is REFUSED with
+//     ErrReportWindowNotWholeHours (fail closed), rather than floored to the hour.
+//   - X caps a window at 90 days (maxStatsWindow). A 90-day window that crosses a DST fall-back
+//     is 90 days and an hour of wall time, so its EARLIEST day is dropped: the window becomes
+//     the trailing 89 whole local days, and firstDay says so. Shortening by a whole day keeps
+//     queried == reported; trimming one hour off the start (the earlier behaviour) queried a
+//     window that began an hour into the first reported day.
 //
 // The returned dates are the window's first and last local calendar days, as UTC-midnight
 // values (the convention model.AccountReportSubmission documents for report windows).
-func accountReportWindow(now time.Time, loc *time.Location, days int) (start, end time.Time, firstDay, lastDay time.Time) {
+func accountReportWindow(now time.Time, loc *time.Location, days int) (start, end time.Time, firstDay, lastDay time.Time, err error) {
 	local := now.In(loc)
 	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
 	startLocal := today.AddDate(0, 0, -(days - 1))
 	endLocal := today.AddDate(0, 0, 1)
-	start = startLocal.UTC().Truncate(time.Hour)
-	end = endLocal.UTC().Truncate(time.Hour)
-	if end.Sub(start) > maxStatsWindow {
-		// A 90-day window crossing a DST fall-back is 90 days and an hour long; X caps at 90
-		// days, so the extra hour comes off the start rather than risking a refused job.
-		start = end.Add(-maxStatsWindow)
+	if endLocal.Sub(startLocal) > maxStatsWindow {
+		startLocal = startLocal.AddDate(0, 0, 1)
+	}
+	start, end = startLocal.UTC(), endLocal.UTC()
+	if !start.Equal(start.Truncate(time.Hour)) || !end.Equal(end.Truncate(time.Hour)) {
+		return time.Time{}, time.Time{}, time.Time{}, time.Time{}, ErrReportWindowNotWholeHours
 	}
 	firstDay = time.Date(startLocal.Year(), startLocal.Month(), startLocal.Day(), 0, 0, 0, 0, time.UTC)
 	lastDay = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
-	return start, end, firstDay, lastDay
+	return start, end, firstDay, lastDay, nil
 }
 
 // statsTime renders an instant the way X's documented examples do: "2026-03-12T00:00:00Z".
@@ -562,6 +673,10 @@ type statsJobElement struct {
 // budget across the campaign list, the pending-report check and this submission, so the time
 // left here varies; a deadline that fired mid-loop would strand the jobs already created.
 //
+// Two refusals are PERMANENT and come before any job is created: ErrReportWindowNotWholeHours
+// (the account's timezone cannot be queried on its own days; see accountReportWindow) and
+// ErrTooManyActiveCampaigns (more than MaxMonitorActiveCampaigns active in the window).
+//
 // If a later job POST fails anyway, the jobs already created are abandoned: they finish on X's
 // side and expire uncollected. That costs job slots (X allows 100 concurrent per account), never
 // data.
@@ -576,7 +691,10 @@ func (c *Client) SubmitAccountCampaignReport(ctx context.Context, days int) (rep
 	if err != nil {
 		return "", time.Time{}, time.Time{}, err
 	}
-	start, end, firstDay, lastDay := accountReportWindow(c.timeFn(), loc, days)
+	start, end, firstDay, lastDay, err := accountReportWindow(c.timeFn(), loc, days)
+	if err != nil {
+		return "", time.Time{}, time.Time{}, err
+	}
 
 	ids, err := c.activeCampaignIDs(ctx, start, end)
 	if err != nil {
@@ -587,7 +705,7 @@ func (c *Client) SubmitAccountCampaignReport(ctx context.Context, days int) (rep
 	}
 	jobs := (len(ids) + statsJobMaxEntities - 1) / statsJobMaxEntities
 	if jobs > maxStatsJobsPerReport {
-		return "", time.Time{}, time.Time{}, fmt.Errorf("x account has %d active campaigns in the window; the monitor builds reports for at most %d", len(ids), maxStatsJobsPerReport*statsJobMaxEntities)
+		return "", time.Time{}, time.Time{}, fmt.Errorf("%w (%d active)", ErrTooManyActiveCampaigns, len(ids))
 	}
 	if err := c.statsJobsFitBudget(ctx, jobs); err != nil {
 		return "", time.Time{}, time.Time{}, err

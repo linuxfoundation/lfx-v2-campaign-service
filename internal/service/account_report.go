@@ -99,10 +99,16 @@ func (o *Orchestrator) accountReportStore() domain.AccountReportRepository {
 // short budget (accountReportMarkTimeout), because a report created on the platform but not
 // recorded here would never be collected.
 //
-// Steps 2 and 3 never fail the read. A platform or store error there is logged and the response
-// carries whatever metrics were already saved, with MetricsPending saying whether newer ones are
-// on the way. Failing the whole monitor because a background refresh hiccuped would hide a live
-// campaign list that was read successfully.
+// Steps 2 and 3 do not fail the read on a transient error. A platform or store error there is
+// logged and the response carries whatever metrics were already saved, with MetricsPending saying
+// whether newer ones are on the way. Failing the whole monitor because a background refresh
+// hiccuped would hide a live campaign list that was read successfully.
+//
+// The exception is a PERMANENT refusal to submit — domain.ErrAccountTooManyActiveCampaigns or
+// domain.ErrAccountTimezoneUnsupported (isPermanentReportRefusal). No later read can submit
+// either, so logging it would leave the account on its last saved metrics (or none) forever
+// while each read reported nothing wrong; the read fails with it instead, and the handler maps
+// it to a 409 the caller can act on.
 func (o *Orchestrator) ReadReportedAccountCampaigns(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.ReportedAccountRead, error) {
 	d, ok := o.dispatchers[platform]
 	if !ok {
@@ -150,7 +156,9 @@ func (o *Orchestrator) ReadReportedAccountCampaigns(ctx context.Context, project
 
 	now := time.Now()
 	o.collectPendingAccountReport(callCtx, ctx, reader, store, snap, now)
-	o.refreshAccountReport(callCtx, ctx, reader, store, snap, now)
+	if rerr := o.refreshAccountReport(callCtx, ctx, reader, store, snap, now); rerr != nil {
+		return nil, rerr
+	}
 
 	return mergeAccountReport(campaigns, snap), nil
 }
@@ -233,19 +241,26 @@ func (o *Orchestrator) collectPendingAccountReport(callCtx, ctx context.Context,
 	}
 }
 
+// isPermanentReportRefusal reports whether a submission error is one no later read can avoid —
+// see ReadReportedAccountCampaigns.
+func isPermanentReportRefusal(err error) bool {
+	return errors.Is(err, domain.ErrAccountTooManyActiveCampaigns) || errors.Is(err, domain.ErrAccountTimezoneUnsupported)
+}
+
 // refreshAccountReport is step 3: submit a new report when none is building and the last one is
-// missing or stale.
-func (o *Orchestrator) refreshAccountReport(callCtx, ctx context.Context, reader AccountReportReader, store domain.AccountReportRepository, snap *model.AccountReportSnapshot, now time.Time) {
+// missing or stale. It returns an error only for a permanent refusal (isPermanentReportRefusal);
+// every other outcome is logged and leaves the saved state for the next read.
+func (o *Orchestrator) refreshAccountReport(callCtx, ctx context.Context, reader AccountReportReader, store domain.AccountReportRepository, snap *model.AccountReportSnapshot, now time.Time) error {
 	if snap.Pending != nil {
-		return
+		return nil
 	}
 	if snap.Ready != nil && now.Sub(snap.Ready.AsOf) < accountReportFreshFor {
-		return
+		return nil
 	}
 	if callCtx.Err() != nil {
 		// The budget went on the list and the check. Submitting now would start a report this
 		// call cannot record, and an unrecorded report is one nobody will ever collect.
-		return
+		return nil
 	}
 	key := snap.Key
 	sub, serr := o.submitAccountReport(callCtx, ctx, reader, key)
@@ -253,15 +268,19 @@ func (o *Orchestrator) refreshAccountReport(callCtx, ctx context.Context, reader
 		// Declined before creating anything: the list and the check spent too much of the
 		// budget for the submission's paced writes to fit. Not an upstream failure.
 		slog.InfoContext(ctx, "account monitor: report submission skipped: not enough budget; will submit on a later read", "platform", key.Platform, "project_id", key.ProjectID, "error", serr)
-		return
+		return nil
+	}
+	if isPermanentReportRefusal(serr) {
+		slog.InfoContext(ctx, "account monitor: report submission refused for this account; failing the read", "platform", key.Platform, "project_id", key.ProjectID, "error", serr)
+		return fmt.Errorf("%s account monitor: %w", key.Platform, serr)
 	}
 	if serr != nil {
 		slog.WarnContext(ctx, "account monitor: report submission failed; will retry on a later read", "platform", key.Platform, "project_id", key.ProjectID, "error", serr)
-		return
+		return nil
 	}
 	if sub == nil || sub.ReportID == "" {
 		slog.WarnContext(ctx, "account monitor: report submission returned no report id", "platform", key.Platform, "project_id", key.ProjectID)
-		return
+		return nil
 	}
 	pending := model.PendingAccountReport{ReportID: sub.ReportID, WindowStart: sub.WindowStart, WindowEnd: sub.WindowEnd, SubmittedAt: now}
 	// Its own budget, not callCtx's remainder — see accountReportMarkTimeout.
@@ -272,7 +291,7 @@ func (o *Orchestrator) refreshAccountReport(callCtx, ctx context.Context, reader
 		// The report is building on the platform but nothing here remembers it, so it will
 		// never be collected; the next read submits again. Costly only in report builds.
 		slog.WarnContext(ctx, "account monitor: could not save a submitted report; it will not be collected", "platform", key.Platform, "project_id", key.ProjectID, "error", merr)
-		return
+		return nil
 	}
 	if !applied {
 		// A concurrent read marked its own submission first. Keeping that one (rather than
@@ -282,9 +301,10 @@ func (o *Orchestrator) refreshAccountReport(callCtx, ctx context.Context, reader
 		if latest, gerr := store.GetAccountReport(markCtx, key); gerr == nil && latest.Pending != nil {
 			snap.Pending = latest.Pending
 		}
-		return
+		return nil
 	}
 	snap.Pending = &pending
+	return nil
 }
 
 // mergeAccountReport fills each live campaign's metrics from the snapshot's finished report.

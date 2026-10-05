@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -154,8 +155,10 @@ func TestListAccountCampaigns_BudgetsAndFlightsInAccountTimezone(t *testing.T) {
 		t.Fatalf("ListAccountCampaigns: %v", err)
 	}
 	want := []AccountCampaign{
-		{ID: "c1", Name: "Daily", Status: "ACTIVE", DailyBudget: 50, StartDate: "2026-09-01", EndDate: "2026-10-15"},
-		{ID: "c2", Name: "Total", Status: "PAUSED", TotalBudget: 1000, StartDate: "2026-09-20", EndDate: ""},
+		{ID: "c1", Name: "Daily", Status: "ACTIVE", DailyBudget: 50, StartDate: "2026-09-01", EndDate: "2026-10-15",
+			Flights: []FlightRange{{StartDate: "2026-09-01", EndDate: "2026-10-15"}}},
+		{ID: "c2", Name: "Total", Status: "PAUSED", TotalBudget: 1000, StartDate: "2026-09-20", EndDate: "",
+			Flights: []FlightRange{{StartDate: "2026-09-20"}}},
 		{ID: "c3", Name: "Bad budget", Status: "ACTIVE", BudgetUnparseable: true},
 		{ID: "c4", Name: "No line items", Status: "ACTIVE", DailyBudget: 10},
 	}
@@ -163,7 +166,7 @@ func TestListAccountCampaigns_BudgetsAndFlightsInAccountTimezone(t *testing.T) {
 		t.Fatalf("got %d campaigns %+v, want %d", len(got), got, len(want))
 	}
 	for i := range want {
-		if got[i] != want[i] {
+		if !reflect.DeepEqual(got[i], want[i]) {
 			t.Errorf("campaign %d = %+v, want %+v", i, got[i], want[i])
 		}
 	}
@@ -193,6 +196,63 @@ func TestListAccountCampaigns_BudgetsAndFlightsInAccountTimezone(t *testing.T) {
 		if !strings.HasPrefix(r.auth, "OAuth ") {
 			t.Errorf("%s %s carried no OAuth header", r.method, r.path)
 		}
+	}
+}
+
+// The flight's scheduled days are the UNION of its line items, not the envelope: disjoint line
+// items stay separate ranges (a window in the gap is not scheduled), while overlapping ones and
+// ones that touch — the next starts the day after the previous ends, or the same instant — merge.
+func TestFlightRanges(t *testing.T) {
+	la, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("load zone: %v", err)
+	}
+	at := func(s string) time.Time {
+		v, perr := time.Parse(time.RFC3339, s)
+		if perr != nil {
+			t.Fatalf("parse %q: %v", s, perr)
+		}
+		return v
+	}
+	cases := []struct {
+		name  string
+		spans []flightSpan
+		want  []FlightRange
+	}{
+		{"disjoint stay separate", []flightSpan{
+			{at("2026-10-01T07:00:00Z"), at("2026-10-06T07:00:00Z")},
+			{at("2026-09-01T07:00:00Z"), at("2026-09-06T07:00:00Z")},
+		}, []FlightRange{{"2026-09-01", "2026-09-05"}, {"2026-10-01", "2026-10-05"}}},
+		{"overlapping merge", []flightSpan{
+			{at("2026-09-01T07:00:00Z"), at("2026-09-11T07:00:00Z")},
+			{at("2026-09-05T07:00:00Z"), at("2026-09-16T07:00:00Z")},
+		}, []FlightRange{{"2026-09-01", "2026-09-15"}}},
+		{"touching (next day) merge", []flightSpan{
+			{at("2026-09-01T07:00:00Z"), at("2026-09-06T07:00:00Z")},
+			{at("2026-09-06T07:00:00Z"), at("2026-09-11T07:00:00Z")},
+		}, []FlightRange{{"2026-09-01", "2026-09-10"}}},
+		{"one-day gap stays separate", []flightSpan{
+			{at("2026-09-01T07:00:00Z"), at("2026-09-06T07:00:00Z")},
+			{at("2026-09-07T07:00:00Z"), at("2026-09-11T07:00:00Z")},
+		}, []FlightRange{{"2026-09-01", "2026-09-05"}, {"2026-09-07", "2026-09-10"}}},
+		{"open-ended absorbs later", []flightSpan{
+			{at("2026-09-01T07:00:00Z"), time.Time{}},
+			{at("2026-10-01T07:00:00Z"), at("2026-10-06T07:00:00Z")},
+		}, []FlightRange{{"2026-09-01", ""}}},
+		{"open-ended after a gap", []flightSpan{
+			{at("2026-09-01T07:00:00Z"), at("2026-09-06T07:00:00Z")},
+			{at("2026-10-01T07:00:00Z"), time.Time{}},
+		}, []FlightRange{{"2026-09-01", "2026-09-05"}, {"2026-10-01", ""}}},
+		{"empty interval dropped", []flightSpan{
+			{at("2026-09-01T07:00:00Z"), at("2026-09-01T07:00:00Z")},
+		}, []FlightRange{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := flightRanges(tc.spans, la); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("flightRanges = %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -361,8 +421,12 @@ func TestSubmitAccountCampaignReport_Refusals(t *testing.T) {
 				"/12/accounts/account123":                       accountTZ("UTC"),
 				"/12/stats/accounts/account123/active_entities": jsonBody(body),
 			})
-			if _, _, _, err := monitorClient(srv.URL, time.Now()).SubmitAccountCampaignReport(context.Background(), 7); err == nil {
+			_, _, _, err := monitorClient(srv.URL, time.Now()).SubmitAccountCampaignReport(context.Background(), 7)
+			if err == nil {
 				t.Error("want an error")
+			}
+			if tooMany := name == "too many"; errors.Is(err, ErrTooManyActiveCampaigns) != tooMany {
+				t.Errorf("err = %v, want ErrTooManyActiveCampaigns=%v", err, tooMany)
 			}
 			if n := len(rec.byPath("/stats/jobs/accounts/account123")); n != 0 {
 				t.Errorf("%d job POSTs, want none", n)
@@ -372,34 +436,110 @@ func TestSubmitAccountCampaignReport_Refusals(t *testing.T) {
 	if _, _, _, err := monitorClient("http://127.0.0.1:1", time.Now()).SubmitAccountCampaignReport(context.Background(), 91); err == nil {
 		t.Error("days=91 accepted; X caps a job at 90 days")
 	}
+	t.Run("exactly the limit is accepted", func(t *testing.T) {
+		ids := make([]string, MaxMonitorActiveCampaigns)
+		for i := range ids {
+			ids[i] = fmt.Sprintf(`{"entity_id":"c%d"}`, i)
+		}
+		var mu sync.Mutex
+		jobN := 0
+		srv, rec := monitorServer(t, map[string]http.HandlerFunc{
+			"/12/accounts/account123":                       accountTZ("UTC"),
+			"/12/stats/accounts/account123/active_entities": jsonBody(`{"data":[` + strings.Join(ids, ",") + `]}`),
+			"/12/stats/jobs/accounts/account123": func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				jobN++
+				n := jobN
+				mu.Unlock()
+				jsonBody(fmt.Sprintf(`{"data":{"id_str":"%d","status":"PROCESSING"}}`, 1000+n))(w, r)
+			},
+		})
+		if _, _, _, err := monitorClient(srv.URL, time.Now()).SubmitAccountCampaignReport(context.Background(), 7); err != nil {
+			t.Fatalf("SubmitAccountCampaignReport: %v", err)
+		}
+		if n := len(rec.byPath("/stats/jobs/accounts/account123")); n != maxStatsJobsPerReport {
+			t.Errorf("%d job POSTs, want %d for exactly %d active campaigns", n, maxStatsJobsPerReport, MaxMonitorActiveCampaigns)
+		}
+	})
 }
 
+// A timezone whose local midnight is not a whole UTC hour is refused before any request beyond
+// the account read: X takes whole-hour bounds only, and a floored window would not be the days
+// the report claims to cover.
+func TestSubmitAccountCampaignReport_RefusesFractionalHourTimezone(t *testing.T) {
+	srv, rec := monitorServer(t, map[string]http.HandlerFunc{
+		"/12/accounts/account123": accountTZ("Asia/Kolkata"),
+	})
+	_, _, _, err := monitorClient(srv.URL, time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)).SubmitAccountCampaignReport(context.Background(), 7)
+	if !errors.Is(err, ErrReportWindowNotWholeHours) {
+		t.Fatalf("err = %v, want ErrReportWindowNotWholeHours", err)
+	}
+	if n := len(rec.byPath("/active_entities")); n != 0 {
+		t.Errorf("%d active_entities reads, want none", n)
+	}
+}
+
+// The window queried is exactly the days reported: start/end are the local midnights of firstDay
+// and of the day after lastDay, in every case — nothing is floored or trimmed by the hour.
 func TestAccountReportWindow_Boundaries(t *testing.T) {
 	ny, _ := time.LoadLocation("America/New_York")
-	kolkata, _ := time.LoadLocation("Asia/Kolkata")
+	la, _ := time.LoadLocation("America/Los_Angeles")
 	cases := []struct {
-		name       string
-		now        time.Time
-		loc        *time.Location
-		days       int
-		start, end string
+		name            string
+		now             time.Time
+		loc             *time.Location
+		days            int
+		start, end      string
+		firstDay, lastD string
 	}{
-		{"utc", time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC), time.UTC, 7, "2026-09-29T00:00:00Z", "2026-10-06T00:00:00Z"},
-		// 90 days across the November fall-back is 90d+1h of wall time; the hour comes off the start.
-		{"dst fall-back at 90 days", time.Date(2026, 11, 20, 17, 0, 0, 0, time.UTC), ny, 90, "2026-08-23T05:00:00Z", "2026-11-21T05:00:00Z"},
-		// A half-hour zone's midnight is floored to the whole UTC hour X requires.
-		{"half-hour zone", time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC), kolkata, 7, "2026-09-28T18:00:00Z", "2026-10-05T18:00:00Z"},
+		{"utc", time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC), time.UTC, 7,
+			"2026-09-29T00:00:00Z", "2026-10-06T00:00:00Z", "2026-09-29", "2026-10-05"},
+		// 90 days across the November fall-back is 90d+1h of wall time, over X's limit: the
+		// earliest local day is dropped, and firstDay says so — 89 whole local days.
+		{"dst fall-back at 90 days (NY)", time.Date(2026, 11, 20, 17, 0, 0, 0, time.UTC), ny, 90,
+			"2026-08-24T04:00:00Z", "2026-11-21T05:00:00Z", "2026-08-24", "2026-11-20"},
+		{"dst fall-back at 90 days (LA)", time.Date(2026, 11, 20, 20, 0, 0, 0, time.UTC), la, 90,
+			"2026-08-24T07:00:00Z", "2026-11-21T08:00:00Z", "2026-08-24", "2026-11-20"},
+		// Across the fall-back with fewer days the whole window fits: no day is dropped, and the
+		// bounds sit on each side's own offset (PDT start, PST end).
+		{"dst fall-back at 30 days (LA)", time.Date(2026, 11, 20, 20, 0, 0, 0, time.UTC), la, 30,
+			"2026-10-22T07:00:00Z", "2026-11-21T08:00:00Z", "2026-10-22", "2026-11-20"},
+		// Across the spring-forward a 90-day window is 90d-1h: it fits whole.
+		{"dst spring-forward at 90 days (LA)", time.Date(2027, 4, 20, 20, 0, 0, 0, time.UTC), la, 90,
+			"2027-01-21T08:00:00Z", "2027-04-21T07:00:00Z", "2027-01-21", "2027-04-20"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s, e, _, _ := accountReportWindow(tc.now, tc.loc, tc.days)
+			s, e, first, last, err := accountReportWindow(tc.now, tc.loc, tc.days)
+			if err != nil {
+				t.Fatalf("accountReportWindow: %v", err)
+			}
 			if statsTime(s) != tc.start || statsTime(e) != tc.end {
 				t.Errorf("window = [%s, %s), want [%s, %s)", statsTime(s), statsTime(e), tc.start, tc.end)
+			}
+			if first.Format(time.DateOnly) != tc.firstDay || last.Format(time.DateOnly) != tc.lastD {
+				t.Errorf("days = %s..%s, want %s..%s", first.Format(time.DateOnly), last.Format(time.DateOnly), tc.firstDay, tc.lastD)
+			}
+			// Queried == reported: the bounds ARE the local midnights of the reported days.
+			fl := time.Date(first.Year(), first.Month(), first.Day(), 0, 0, 0, 0, tc.loc)
+			ll := time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, tc.loc).AddDate(0, 0, 1)
+			if !s.Equal(fl) || !e.Equal(ll) {
+				t.Errorf("queried [%v, %v) is not the reported days' local midnights [%v, %v)", s, e, fl, ll)
 			}
 			if e.Sub(s) > maxStatsWindow {
 				t.Errorf("window %v exceeds X's 90 days", e.Sub(s))
 			}
 		})
+	}
+	// A fractional-hour zone cannot be queried on its own days: refused, never floored.
+	for _, tz := range []string{"Asia/Kolkata", "Asia/Kathmandu", "America/St_Johns"} {
+		loc, err := time.LoadLocation(tz)
+		if err != nil {
+			t.Fatalf("load %s: %v", tz, err)
+		}
+		if _, _, _, _, werr := accountReportWindow(time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC), loc, 7); !errors.Is(werr, ErrReportWindowNotWholeHours) {
+			t.Errorf("%s: err = %v, want ErrReportWindowNotWholeHours", tz, werr)
+		}
 	}
 }
 

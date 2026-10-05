@@ -12104,7 +12104,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-twitter-ads-account lfx-v2-campaign-service-connections
-            description: Read every live campaign on an X (Twitter) Ads account with pacing and action items derived by this service's rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is, and resolved from the project's OWN connection only. The campaign list (names, statuses, budgets, and flights from the line items) is read live; delivery metrics come from X's asynchronous stats jobs — X's synchronous stats are capped at 7 days per request — so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Conversions are never reported for X. Saved reports are cached platform data, not a record of anything this service did.
+            description: 'Read every live campaign on an X (Twitter) Ads account with pacing and action items derived by this service''s rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is, and resolved from the project''s OWN connection only. The campaign list (names, statuses, budgets, and flights from the line items) is read live; delivery metrics come from X''s asynchronous stats jobs — X''s synchronous stats are capped at 7 days per request — so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Conversions are never reported for X. Saved reports are cached platform data, not a record of anything this service did. Two account states are refused with 409 rather than served metrics that would be wrong: more than 200 campaigns active in the window (reason account_too_many_active_campaigns — one report covers at most ten X stats jobs of 20 campaigns), and an account timezone whose local midnight is not a whole UTC hour, such as Asia/Kolkata (reason account_timezone_unsupported — X accepts whole-hour window bounds only, so the account''s own days cannot be queried exactly). A 90-day window that crosses a DST fall-back covers the trailing 89 whole local days, because 90 such days are 90 days and an hour, over X''s 90-day limit.'
             operationId: lfx-v2-campaign-service-connections#monitor-twitter-ads-account
             parameters:
                 - name: account_id
@@ -12283,6 +12283,16 @@ paths:
                             example:
                                 code: "404"
                                 message: The connection was not found.
+                "409":
+                    description: 'Conflict: The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
                     content:
@@ -17295,6 +17305,8 @@ components:
                         - already_exists
                         - audience_provenance_immutable
                         - ab_test_unsupported_send_type
+                        - account_too_many_active_campaigns
+                        - account_timezone_unsupported
             example:
                 code: "409"
                 message: A connection for this provider already exists on the project.

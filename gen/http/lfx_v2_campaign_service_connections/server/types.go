@@ -4786,6 +4786,19 @@ type MonitorTwitterAdsAccountBadRequestResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// MonitorTwitterAdsAccountConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body for the "Conflict" error.
+type MonitorTwitterAdsAccountConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
 // MonitorTwitterAdsAccountServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
@@ -10173,6 +10186,18 @@ func NewMonitorTwitterAdsAccountBadRequestResponseBody(res *lfxv2campaignservice
 	body := &MonitorTwitterAdsAccountBadRequestResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorTwitterAdsAccountConflictResponseBody builds the HTTP response
+// body from the result of the "monitor-twitter-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorTwitterAdsAccountConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *MonitorTwitterAdsAccountConflictResponseBody {
+	body := &MonitorTwitterAdsAccountConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }

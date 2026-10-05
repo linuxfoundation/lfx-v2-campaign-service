@@ -374,7 +374,15 @@ type Service interface {
 	// read for an account and window therefore returns campaigns with
 	// fetch_failed=true and metrics_pending=true. Conversions are never reported
 	// for X. Saved reports are cached platform data, not a record of anything this
-	// service did.
+	// service did. Two account states are refused with 409 rather than served
+	// metrics that would be wrong: more than 200 campaigns active in the window
+	// (reason account_too_many_active_campaigns — one report covers at most ten X
+	// stats jobs of 20 campaigns), and an account timezone whose local midnight is
+	// not a whole UTC hour, such as Asia/Kolkata (reason
+	// account_timezone_unsupported — X accepts whole-hour window bounds only, so
+	// the account's own days cannot be queried exactly). A 90-day window that
+	// crosses a DST fall-back covers the trailing 89 whole local days, because 90
+	// such days are 90 days and an hour, over X's 90-day limit.
 	MonitorTwitterAdsAccount(context.Context, *MonitorTwitterAdsAccountPayload) (res *AccountMonitor, err error)
 }
 

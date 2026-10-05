@@ -682,6 +682,25 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		// refused before the handler — and this arm — ever run; this classification exists for
 		// non-HTTP callers, which bypass Goa entirely.
 		return &conn.BadRequestError{Code: "400", Message: "the account id is not valid for " + d.displayName}
+	case errors.Is(aerr, domain.ErrAccountTooManyActiveCampaigns):
+		// A permanent refusal of a report-backed monitor (the X monitor is the only producer,
+		// and monitor-twitter-ads-account the only method that declares this 409): the account
+		// is too busy for one report, retrying cannot help, and neither the connection nor the
+		// request is at fault — so neither 503 nor 400. The reason is the discriminator a
+		// caller keys on; the message is the sentinel's fixed text plus the limit.
+		return &conn.ConflictError{
+			Code:    "409",
+			Reason:  conflictReason("account_too_many_active_campaigns"),
+			Message: domain.ErrAccountTooManyActiveCampaigns.Error() + " (at most 200 campaigns active in the window for " + d.displayName + ")",
+		}
+	case errors.Is(aerr, domain.ErrAccountTimezoneUnsupported):
+		// Same shape as the arm above: permanent for the account's timezone, not a fault of the
+		// connection or the request. See domain.ErrAccountTimezoneUnsupported.
+		return &conn.ConflictError{
+			Code:    "409",
+			Reason:  conflictReason("account_timezone_unsupported"),
+			Message: domain.ErrAccountTimezoneUnsupported.Error(),
+		}
 	case errors.Is(aerr, domain.ErrMonitorDaysInvalid):
 		// A caller-supplied days window, not a stored connection — see
 		// domain.ErrMonitorDaysInvalid's doc comment for why the dispatchers re-check this

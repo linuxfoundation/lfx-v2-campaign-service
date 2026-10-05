@@ -24,11 +24,18 @@ a shared-budget campaign arrives `PacingUnknown` and is neither paced nor called
 placeholder budget). `monitor_twitter.go` (`EvaluateTwitterMonitor`) is the second
 written-here engine, for X's report-backed monitor. It paces a DAILY budget first —
 `BudgetDay` × the days of the saved report's window `[first day, the midnight after the last
-day)` the line-item flight covers, the convention the Reddit daily branch settled — and otherwise a
-TOTAL budget prorated over the flight (which then needs both flight bounds), else
-`unknownPacingRow`. Its rules reuse siblings' values under named constants (Google's
-placeholder budget ≤ 1/day, the shared 0.3%/1000 low-CTR pair), add a HIGH
-zero-delivery item gated on the flight overlapping the window, suppress the 0% underspend
+day)` a line item is scheduled on, the convention the Reddit daily branch settled — and otherwise a
+TOTAL budget prorated over the scheduled days (which then needs every range closed), else
+`unknownPacingRow`. "Scheduled" means `AccountCampaignMetrics.FlightRanges`, the union of the
+line items, whenever it is set (`twitterCoveredDays` / `twitterScheduledDays`), never the
+envelope `StartDate..EndDate`, which counts the gap between two line items as scheduled and so
+raised a false zero-delivery HIGH for a window inside it
+(`TestEvaluateTwitterMonitor_FlightRangesNotEnvelope`). Its rules reuse siblings' values under
+named constants (Google's placeholder budget ≤ 1/day, the shared 0.3%/1000 low-CTR pair), add
+a HIGH zero-delivery item gated on at least one scheduled day in the window, print amounts as
+"12.50 in account currency" with no currency symbol (X's figures are in the account's own
+currency, which the read does not learn) and a currency-neutral placeholder-budget remedy,
+suppress the 0% underspend
 item that would restate it (Reddit's rule), and carry no clicks-without-conversions rule —
 X conversions are never reported. It takes no `now`: the window is the saved report's own
 first and last day IN THE ACCOUNT'S TIMEZONE (`windowStart`/`windowEnd`, from
