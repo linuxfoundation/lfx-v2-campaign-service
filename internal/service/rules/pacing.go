@@ -46,7 +46,7 @@ type Thresholds = PacingLadder
 // implementations differed with no stated reason, which is drift rather than a platform
 // characteristic. If a platform genuinely needs different bands, add the override WITH the
 // reason — do not reintroduce a silent divergence.
-var DefaultThresholds = BriefViewLadder
+var DefaultThresholds = BriefViewLadder()
 
 // PacingLabel is the band a campaign's spend falls into.
 type PacingLabel string

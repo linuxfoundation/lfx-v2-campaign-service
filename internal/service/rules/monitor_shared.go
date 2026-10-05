@@ -46,7 +46,7 @@ func pacingLabelFor(pct float64) model.MonitorPacingLabel {
 	if math.IsNaN(pct) {
 		return model.MonitorPacingNormal
 	}
-	switch AccountMonitorLadder.Label(pct) {
+	switch AccountMonitorLadder().Label(pct) {
 	case PacingUnderspending:
 		return model.MonitorPacingUnderspending
 	case PacingConstrained:

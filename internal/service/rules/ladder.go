@@ -53,7 +53,12 @@ type PacingLadder struct {
 // decision (Monitor & Optimize brief, D2), not settled here. Switching a caller from one ladder
 // to the other moves operator-facing alert bands — do it only as that decision, on its own
 // ticket, never as a side effect of a refactor.
-var BriefViewLadder = PacingLadder{Underspending: 50, Constrained: 100, Overspending: 130}
+//
+// A function, not a var, so no code can reassign the bands at run time: every call returns a fresh
+// value built from literals.
+func BriefViewLadder() PacingLadder {
+	return PacingLadder{Underspending: 50, Constrained: 100, Overspending: 130}
+}
 
 // AccountMonitorLadder is the account-scoped /account-monitor ladder, shared by every
 // EvaluateXMonitor (pacingLabelFor): 50/90/100, so the healthy band tops out BELOW plan — a
@@ -64,10 +69,15 @@ var BriefViewLadder = PacingLadder{Underspending: 50, Constrained: 100, Overspen
 // (Monitor & Optimize brief, D2), not settled here. Switching a caller from one ladder to the
 // other moves operator-facing alert bands — do it only as that decision, on its own ticket,
 // never as a side effect of a refactor.
-var AccountMonitorLadder = PacingLadder{
-	Underspending: monitorPacingUnderspendingBelow,
-	Constrained:   monitorPacingHealthyTo,
-	Overspending:  monitorPacingOverspendingAbove,
+//
+// A function, not a var, so no code can reassign the bands at run time and move every platform's
+// alerts — or let them drift from the constants monitor_linkedin.go prints into action text.
+func AccountMonitorLadder() PacingLadder {
+	return PacingLadder{
+		Underspending: monitorPacingUnderspendingBelow,
+		Constrained:   monitorPacingHealthyTo,
+		Overspending:  monitorPacingOverspendingAbove,
+	}
 }
 
 // AccountMonitorLadder's boundaries as untyped integer constants, because monitor_linkedin.go
