@@ -831,7 +831,8 @@ Two further details belong to this layer specifically:
   eventually succeeds — 429-then-success still returns nil — but it does not make a later refusal
   speak for prior attempts. This covers the status toggle too, since it shares `putUpdate`.
 - **Classification of a failed write:** `IsOutcomeUnconfirmed` first (5xx, transport, mutating
-  redirect, exhausted 429, unanswered body, or ANY failure after a retried 429). Then, from a PartialError OR a definite 4xx's codes:
+  redirect, exhausted 429, unanswered body, or ANY failure after a retried 429). Then, from a
+  PartialError OR a definite 4xx's codes:
   `CampaignServiceCannotUpdateSharedBudget` (1159) → `ErrSharedBudget`;
   `CampaignServiceInvalidDailyBudget` (1106) or
   `CampaignServiceCampaignBudgetAmountIsLessThanSpendAmount` (1123) → an `ErrBudgetAmountInvalid`
