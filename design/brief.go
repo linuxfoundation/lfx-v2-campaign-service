@@ -1513,7 +1513,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"pacing in the ad platform, then set the amount here. " +
 			"The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor " +
 			"converts it. " +
-			"Google Ads, LinkedIn, Meta, Microsoft Advertising and Reddit today: a campaign on any other platform is refused with 400. " +
+			"Google Ads, LinkedIn, Meta, Microsoft Advertising, Reddit and X today: a campaign on any other platform is refused with 400. " +
 			"Budget writing is added per platform, because each platform's budget model is its own " +
 			"deliberate decision, and the refusals below are the union of what those models can refuse — " +
 			"a platform whose model has no analogue of a given refusal simply never raises it (LinkedIn " +
@@ -1524,6 +1524,14 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"A Reddit campaign's budget is its campaign-level spend goal (Campaign Budget Optimization on); " +
 			"one whose budget is governed per ad group (CBO off) is refused (409) rather than allocated, and " +
 			"Reddit has no shared-budget analogue. " +
+			"An X campaign's budget is written only as its own daily_budget_amount_local_micro, and only when " +
+			"X reports campaign budget optimization (budget_optimization CAMPAIGN). That this is the shape " +
+			"campaigns created here have is inferred from the create path (a daily budget on the campaign, " +
+			"no budget_optimization sent) and is unverified against a live account; X's current reference " +
+			"lists LINE_ITEM as the only value. A campaign reporting LINE_ITEM or omitting budget_optimization, " +
+			"one without a daily budget, or one that also carries a total cap is refused (409) before any write. " +
+			"A `lifetime` request for an X campaign is always refused (409): under campaign budget optimization " +
+			"X requires the daily budget, so the campaign is paced daily. X has no shared-budget analogue. " +
 			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: " +
 			"the campaign is unprovisioned (no platform campaign id); the campaign belongs to a different " +
 			"ad account than the project's connection now resolves to, or does not record which ad account " +

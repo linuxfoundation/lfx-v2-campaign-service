@@ -89,10 +89,14 @@ reaches), not project-scoped ones.
   (`pacingLabelFor`), one priority rank (`priorityRank`/`sortByPriority`),
   one unknown-pacing row. Each `EvaluateXMonitor` keeps its own guard for
   whether a campaign has a pacing figure worth placing at all, because the
-  platforms report budget differently. They are still **not** routed onto
-  `pacing.go`/`actions.go`, which run a different ladder (50/100/130) for
-  the single-campaign brief path; merging the two read paths would move
-  operator-facing alerting bands and remains its own decision.
+  platforms report budget differently. The ladder's arithmetic is now one
+  implementation for both read paths, `PacingLadder.Label` in
+  `internal/service/rules/ladder.go`: `pacingLabelFor` places on
+  `AccountMonitorLadder` (50/90/100), while `pacing.go`/`actions.go` place on
+  `BriefViewLadder` (50/100/130) for the single-campaign brief path. Which
+  ladder is correct is open product decision **D2**; switching a caller's
+  ladder would move operator-facing alerting bands and remains its own
+  decision.
 - `internal/service/connection_monitor.go`'s `monitorAccount` is the shared
   handler body: validate → resolve backend → `ReadAccountCampaignMetrics` →
   per-platform `evaluate` closure → `monitorTotals`, which sums the
@@ -598,8 +602,16 @@ So the read is split, and the state between requests is saved:
   the later moment it was collected, which would overstate freshness; absent before the first
   one finishes) and
   `metrics_pending` (a newer report is building; always set on Microsoft and X, omitted on
-  the live four). Before any report has finished, every row is `fetch_failed` and therefore
-  skipped by the rules — unavailable metrics never read as a campaign spending nothing.
+  the live four), and
+  `metrics_window_start` / `metrics_window_end` (`YYYY-MM-DD`, the first and last calendar day
+  the metrics cover, both inclusive, from the saved report's own window — not re-derived from
+  `days`, which is the request echoed and can differ: X covers 89 days of a 90-day request
+  across a DST fall-back). The days are in the timezone the report is built in: the account's
+  on X; on Microsoft the report's GMT (Europe/London) zone, named by the UTC dates sent as
+  `CustomDateRangeStart` / `CustomDateRangeEnd` (inclusive). Both are omitted before the first
+  report finishes and on the live four, which cover exactly the requested days. Before any
+  report has finished, every row is `fetch_failed` and therefore skipped by the rules —
+  unavailable metrics never read as a campaign spending nothing.
 - **Report scope.** The submission is scoped by `AccountIds` — the account-wide union the
   per-campaign read deliberately avoids is exactly what this read wants — so a campaign
   absent from a finished report served nothing (spend/impressions/clicks zero, conversions
@@ -622,7 +634,8 @@ So the read is split, and the state between requests is saved:
 
 X reuses the Microsoft machinery unchanged — `service.AccountReportReader`,
 `Orchestrator.ReadReportedAccountCampaigns`, `account_monitor_reports`, the same freshness
-(30m) and abandon (60m) timings, the same `metrics_as_of` / `metrics_pending` response fields —
+(30m) and abandon (60m) timings, the same `metrics_as_of` / `metrics_pending` /
+`metrics_window_start` / `metrics_window_end` response fields —
 with `TwitterDispatcher` as a second implementation. Nothing was forked.
 
 - **Why report-backed, for every `days`.** X's synchronous stats are capped at 7 days per
@@ -643,15 +656,18 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
 - **Submit.** `active_entities` for the window, then one stats job per ≤20 active campaigns
   (`entity=CAMPAIGN`, `granularity=TOTAL`, `placement=ALL_ON_TWITTER`,
   `metric_groups=ENGAGEMENT,BILLING`), paced on the client's write pacer and never retried on
-  a 429. The window is today-(days-1) 00:00 to the next midnight in the ACCOUNT's timezone,
-  and the window QUERIED is exactly the window SAVED — nothing is floored or trimmed. An
+  a 429. The window is today-(days-1) 00:00 to the next midnight in the ACCOUNT's timezone
+  (where a DST spring-forward skips a midnight — America/Santiago — that day starts at its first
+  existing instant, so the window is never dated a day early), and the window QUERIED is
+  exactly the window SAVED — nothing is floored or trimmed. An
   account whose local midnight is not a whole UTC hour (Asia/Kolkata, Asia/Kathmandu,
   America/St_Johns …) cannot be queried on its own days, since X takes whole-hour bounds only,
   so the submission is refused before any stats request (`twitter.ErrReportWindowNotWholeHours`
   → `domain.ErrAccountTimezoneUnsupported` → **409**, reason `account_timezone_unsupported`).
   A 90-day window across a DST fall-back is 90 days and an hour, over X's 90-day cap, so its
   earliest local day is dropped: it covers the trailing 89 whole days and its saved first day
-  says so (an earlier draft trimmed one hour off the start, querying a window that began an
+  says so — the response echoes `days: 90` (the request) and states the 89 covered days in
+  `metrics_window_start` / `metrics_window_end` (an earlier draft trimmed one hour off the start, querying a window that began an
   hour into the first saved day). Before the first job POST the time left on the call budget is
   checked against one pacer interval per job plus a 2s margin; if it cannot fit, the
   submission is declined whole (`twitter.ErrStatsJobBudget` → `domain.ErrAccountReportBudgetTooShort`)

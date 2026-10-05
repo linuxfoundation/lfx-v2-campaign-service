@@ -15,16 +15,14 @@
 // stated. An override with no stated reason is drift, not configuration.
 //
 // This unification covers only the single-campaign metrics path (Thresholds/ComputePacing/
-// Evaluate below). This package's four monitor_*.go siblings (monitor_google.go,
-// monitor_linkedin.go, monitor_meta.go, monitor_reddit.go) back the account-scoped
-// /account-monitor endpoints, which are a DIFFERENT read path with its own ladder — one shared
-// ladder, in monitor_shared.go, not four copies, but a different one from this file's.
+// Evaluate below). This package's monitor_*.go siblings back the account-scoped /account-monitor
+// endpoints, which are a DIFFERENT read path running a different ladder.
 //
-// The two differ on purpose and not by accident: this path's bands are 50/100/130 with
-// Constrained as an inclusive top, the monitor's are 50/90/100. Routing one through the other
-// would move operator-facing alerting bands as a side effect of a refactor, so merging them is
-// its own decision on its own ticket — see monitor_google.go's header and this package's entry
-// in docs/knowledge/code/internal-service-rules.md.
+// Both ladders are placed by ONE implementation, PacingLadder.Label in ladder.go, and differ only
+// in their numbers: BriefViewLadder (50/100/130) here, AccountMonitorLadder (50/90/100) there.
+// Which one is correct is an open product decision (D2); switching a caller's ladder would move
+// operator-facing alerting bands, so it is its own decision on its own ticket — see ladder.go and
+// this package's entry in docs/knowledge/code/internal-service-rules.md.
 package rules
 
 import (
@@ -32,37 +30,23 @@ import (
 	"time"
 )
 
-// Thresholds are the pacing boundaries, as a percentage of expected spend.
+// Thresholds is the brief view's name for a PacingLadder (ladder.go), kept as an alias so
+// ComputePacing's signature and every existing caller stay as they were.
 //
-// Values match `CAMPAIGN_PACING_THRESHOLDS` in lfx-self-serve's shared constants, which is the
-// set Meta already used and the one the other three should have. Deliberately NOT LinkedIn's
-// hardcoded 40/90/105: those were never written down anywhere shared, and treating the outlier
-// as the standard would silently move every other platform's alerting.
-// Two boundaries, not three. The shared constants carry a `normal` value (90) as well, but it
-// names the top of a band that labelFor derives from Constrained — the healthy band runs up TO
-// and including Constrained, so a third field would be a knob a caller could turn with no
-// effect, which is worse than not offering it.
-type Thresholds struct {
-	// Underspending is the floor: below this share of expected spend, the campaign is not
-	// delivering the budget it was given.
-	Underspending float64
-	// Constrained is the top of the healthy band, inclusive: a campaign exactly on plan sits
-	// here. Above it the campaign is outrunning its plan.
-	Constrained float64
-	// Overspending is the point above which overspend stops being a warning. ABSOLUTE, matching
-	// the shared constants' own `overspending: 130` — deriving it as a multiple of Constrained
-	// silently moves it whenever Constrained is overridden, which is the one thing a
-	// per-platform override must not do to a boundary nobody asked to change.
-	Overspending float64
-}
+// Two boundaries above the floor, not three. The shared constants carry a `normal` value (90) as
+// well, but it names the top of a band the ladder derives from Constrained — the healthy band
+// runs up TO and including Constrained, so a third field would be a knob a caller could turn with
+// no effect, which is worse than not offering it.
+type Thresholds = PacingLadder
 
-// DefaultThresholds is the shared set.
+// DefaultThresholds is the brief view's ladder, BriefViewLadder (50/100/130), under its original
+// name. See BriefViewLadder for why it is not AccountMonitorLadder (D2 is open).
 //
 // One set for every platform. Per-platform overrides are not implemented: the four UI
 // implementations differed with no stated reason, which is drift rather than a platform
-// characteristic. If a platform genuinely needs different bands, add the override here WITH the
+// characteristic. If a platform genuinely needs different bands, add the override WITH the
 // reason — do not reintroduce a silent divergence.
-var DefaultThresholds = Thresholds{Underspending: 50, Constrained: 100, Overspending: 130}
+var DefaultThresholds = BriefViewLadder()
 
 // PacingLabel is the band a campaign's spend falls into.
 type PacingLabel string
@@ -97,6 +81,17 @@ type Pacing struct {
 	// Computable records whether a pacing figure could be derived at all. When false, Pct is
 	// zero because nothing was measured — not because the campaign spent nothing.
 	Computable bool
+}
+
+// UnknownPacing is the brief view's one "no pacing figure" value: label unknown, not computable,
+// Pct left at zero because nothing was measured. Every incomputable return builds it here, so the
+// shape cannot drift between them.
+//
+// It is NOT unknownPacingRow (monitor_shared.go), and the two cannot be one builder: this path's
+// label enum has an unknown member, while the account-monitor contract has none and carries the
+// meaning in AccountCampaignMetrics.PacingUnknown beside a placeholder normal label.
+func UnknownPacing() Pacing {
+	return Pacing{Label: PacingUnknown}
 }
 
 // BudgetKind distinguishes a lifetime cap from a per-day allowance. The proration differs: a
@@ -143,14 +138,14 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 	// one. Computable exists to stop exactly this.
 	if budget <= 0 || math.IsNaN(budget) || math.IsInf(budget, 0) ||
 		math.IsNaN(spend) || math.IsInf(spend, 0) {
-		return Pacing{Label: PacingUnknown}
+		return UnknownPacing()
 	}
 	// spendDays is how many days of spend the `spend` figure actually covers. It exists
 	// because the only spend this service can read is WINDOW-scoped (last_7_days and
 	// friends), while a lifetime budget describes the whole flight. Without it the two
 	// arguments silently describe different periods.
 	if spendDays <= 0 || math.IsNaN(spendDays) || math.IsInf(spendDays, 0) {
-		return Pacing{Label: PacingUnknown}
+		return UnknownPacing()
 	}
 
 	// An absent start with a PRESENT end has no flight to prorate across. Defaulting start to
@@ -162,7 +157,7 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 	// This is the same defect as the future-dated flight below, arriving through the other
 	// door: the now.After(start) guard cannot catch it, because start was just set TO now.
 	if flight.Start == nil && flight.End != nil {
-		return Pacing{Label: PacingUnknown}
+		return UnknownPacing()
 	}
 	// The mirror case, and it is NOT symmetric — it applies to lifetime budgets only.
 	//
@@ -178,7 +173,7 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 	//
 	// end_date is nullable in the schema (migration 000002), so this is storable, not theoretical.
 	if kind == BudgetLifetime && flight.End == nil {
-		return Pacing{Label: PacingUnknown}
+		return UnknownPacing()
 	}
 	// An absent start is not an error: a campaign created without one begins when it begins.
 	// Without an end, the flight is open-ended and "expected by now" is measured to now — and
@@ -203,12 +198,12 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 	// no time to spend. A strict Before lets that boundary case through and reports a campaign
 	// that started this second as either overspending or underspending.
 	if !now.After(start) {
-		return Pacing{Label: PacingUnknown}
+		return UnknownPacing()
 	}
 	if !end.After(start) {
 		// A zero or inverted flight has no days to prorate across. Reporting 0% here would
 		// claim the campaign underspent; it means the schedule is unusable.
-		return Pacing{Label: PacingUnknown}
+		return UnknownPacing()
 	}
 
 	// Expected spend is computed over the SAME number of days the spend figure covers, not
@@ -233,7 +228,7 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 	// Unknown rather than a forced `normal`: nothing has been measured yet, and saying "on plan"
 	// would be the same substitution in the other direction.
 	if elapsed < minElapsedDaysForPacing {
-		return Pacing{Label: PacingUnknown}
+		return UnknownPacing()
 	}
 	// Always positive, so it needs no guard: daysBetween floors at 1 and spendDays > 0 is
 	// enforced above. The campaign-has-not-started case that would otherwise land here is
@@ -262,32 +257,9 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 	// `expected <= 0` test passes and the division overflows to +Inf. A non-finite percentage is
 	// not a measurement whatever produced it.
 	if math.IsNaN(pct) || math.IsInf(pct, 0) {
-		return Pacing{Label: PacingUnknown}
+		return UnknownPacing()
 	}
-	return Pacing{Pct: pct, Label: labelFor(pct, t), Computable: true}
-}
-
-// labelFor maps a percentage onto its band.
-//
-// Boundaries are half-open UPWARD: a value sitting exactly on a threshold lands in the healthier
-// band. That matches the shared constants' own comment ("pacingPct < 50 → underspending") and,
-// more importantly, makes exactly-on-plan mean on plan — 100% is a campaign spending precisely
-// what the flight expects by now, and labelling that `constrained` would raise a budget item
-// against the only campaign that needs none.
-//
-// Normal therefore extends THROUGH Constrained: the constrained band starts above it. An earlier
-// version used `pct <= t.Constrained` for constrained, which put exactly-100% there.
-func labelFor(pct float64, t Thresholds) PacingLabel {
-	switch {
-	case pct < t.Underspending:
-		return PacingUnderspending
-	case pct <= t.Constrained:
-		return PacingNormal
-	case pct <= t.Overspending:
-		return PacingConstrained
-	default:
-		return PacingOverspending
-	}
+	return Pacing{Pct: pct, Label: t.Label(pct), Computable: true}
 }
 
 // daysBetween counts partial days as whole ones, matching the UI's Math.ceil.

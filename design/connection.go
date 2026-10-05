@@ -1200,18 +1200,29 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 // metrics_as_of / metrics_pending are set by the report-backed platforms only — Microsoft Ads and
 // X. Their delivery metrics come from asynchronous reports (Microsoft's Reporting service, X's
 // stats jobs) that take minutes to build, so the service serves the last report that finished and
-// builds the next one between requests (model.ReportedAccountRead). The other four platforms read
-// their metrics live in the request, so for them the metrics are as of the read itself and both
-// fields are omitted rather than restating that.
+// builds the next one between requests (model.ReportedAccountRead). metrics_window_start /
+// metrics_window_end are set by the same platforms, from that report's own window: the days the
+// metrics actually cover, which `days` (the request, echoed) cannot always state. The other four
+// platforms read their metrics live in the request, so for them the metrics are as of the read
+// itself and over exactly the requested days, and all of these fields are omitted rather than
+// restating that.
 var AccountMonitor = Type("account-monitor", func() {
 	Attribute("account_id", String, "The account this read covers, echoed back from the request.", func() { Example("8666746580") })
-	Attribute("days", Int, "The trailing-days window this read covers, echoed back from the request.", func() { Example(30) })
+	Attribute("days", Int, "The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X's 90-day cap by an hour.", func() { Example(30) })
 	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "Every campaign visible on the account, with the rule engine's per-row pacing output attached.")
 	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the account's campaigns.")
 	Attribute("totals", AccountMonitorTotals)
 	Attribute("metrics_as_of", String, "Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.", func() {
 		Format(FormatDateTime)
 		Example("2026-10-05T14:30:00Z")
+	})
+	Attribute("metrics_window_start", String, "Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report's own window, in the timezone the platform's report is built in — the account's timezone on X; on Microsoft Ads the report's GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.", func() {
+		Format(FormatDate)
+		Example("2026-09-06")
+	})
+	Attribute("metrics_window_end", String, "Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.", func() {
+		Format(FormatDate)
+		Example("2026-10-05")
 	})
 	Attribute("metrics_pending", Boolean, "Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.", func() { Example(false) })
 	Required("account_id", "days", "campaigns", "action_items", "totals")
