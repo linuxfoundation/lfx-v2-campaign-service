@@ -1036,7 +1036,9 @@ and has one 250-requests-per-15-minutes budget shared by every foundation on the
 while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
 
 - **`ListAccountCampaigns`** — `AccountTimezone` (GET the account root, `timezone`, loaded as
-  an IANA zone; absent/unknown fails closed), then `campaigns?with_deleted=false&with_draft=false&count=1000`
+  an IANA zone; absent/unknown fails closed; a success is cached on the client for
+  `accountTimezoneCacheFor`, one minute, so list-then-submit in one read costs one account GET,
+  and failures are never cached), then `campaigns?with_deleted=false&with_draft=false&count=1000`
   and `line_items?campaign_ids=<≤200>&with_deleted=false&with_draft=false&count=1000`, both
   through `walkPages`: the STRICT cursor rule `ListAdAccounts` uses (only X's documented null
   `next_cursor` ends a walk; absent/empty cursor, a repeated cursor, absent/null `data` or the
@@ -1053,7 +1055,11 @@ while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
   fall-back. GET `stats/accounts/:id/active_entities?entity=CAMPAIGN`, then one POST
   `stats/jobs/accounts/:id` per ≤20 active campaigns (`entity=CAMPAIGN`, `granularity=TOTAL`,
   `placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`), each through the write
-  pacer and never retried on a 429. Returns ONE composite id — the jobs' `id_str`s
+  pacer and never retried on a 429. Before the first POST, `statsJobsFitBudget` compares the
+  context deadline's remaining time (wall-clock `time.Until`) with `jobs × writeDelay +
+  statsJobSubmitMargin` (2s) and returns `ErrStatsJobBudget` — no job created — when it cannot
+  fit, so a deadline cannot fire mid-loop and strand created jobs in X's concurrent-job slots
+  (the dispatcher wraps it as `domain.ErrAccountReportBudgetTooShort`). Returns ONE composite id — the jobs' `id_str`s
   comma-joined — or `NoActiveCampaignsReportID` (`"none"`) when nothing was active, which
   Check answers as a finished empty report without a request. More than
   `maxStatsJobsPerReport` (10 jobs = 200 active campaigns) is refused, not truncated.
@@ -1061,8 +1067,13 @@ while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
   `FAILED`/`FAILURE`/`CANCELLED` job, or a `SUCCESS` with no `url`, fails the report; any
   `QUEUED`/`PROCESSING` job, or one missing from X's answer, leaves it pending; an unknown
   status is an error. When all succeeded, each file is downloaded WITHOUT OAuth signing (X:
-  "requires no authentication"), only from an https URL or the client's own API origin,
-  capped at 8 MiB compressed / 32 MiB decompressed, gunzipped when it carries the gzip magic
+  "requires no authentication"), only from an https URL whose host is exactly
+  `statsFileHost` (`ton.twimg.com`, the host of X's documented job-result example — not a
+  `*.twimg.com` suffix) or the client's own API origin; any other host, userinfo, or a non-https
+  foreign URL is refused before a request. Capped at 8 MiB compressed / 32 MiB decompressed
+  (client fields defaulted from `defaultStatsFileCompressedCap` / `defaultStatsFileDecompressedCap`;
+  the unexported `withStatsFileHosts` / `withStatsFileCaps` options are test seams that let a TLS
+  httptest server stand in for the file host and lower the caps), gunzipped when it carries the gzip magic
   number, decoded with the synchronous stats types, and folded per campaign (impressions,
   clicks, `billed_charge_local_micro`); a URL never appears in an error. `Partial` is always
   true: X's billed charge is an estimate for days afterwards.

@@ -51,7 +51,14 @@ const xAmountPrefix = "$"
 func xMoney(v float64) string { return fmt.Sprintf("%s%.2f", xAmountPrefix, v) }
 
 // EvaluateTwitterMonitor computes each row's pacing percentage/label and the account's action
-// items for an X Ads account. now is the service's single snapshot time.
+// items for an X Ads account.
+//
+// windowStart / windowEnd are the calendar window the metrics were measured over: the saved
+// report's first and last day IN THE ACCOUNT'S TIMEZONE, as UTC-midnight dates
+// (model.ReportedAccountRead.MetricsWindowStart/End). The rules evaluate on those days, never on
+// a "today" derived from the service's clock: X's stats jobs and the line items' flight dates are
+// both in the account's timezone, so a UTC "today" would disagree with them by a day for part of
+// every day on any non-UTC account (see twitterWindow).
 //
 // Pacing (twitterPacingPct):
 //   - a DAILY budget is paced as BudgetDay × the days of the report window the flight covers;
@@ -60,46 +67,64 @@ func xMoney(v float64) string { return fmt.Sprintf("%s%.2f", xAmountPrefix, v) }
 //   - otherwise, or when either computation has nothing to measure against, the row is
 //     unknownPacingRow.
 //
+// With no window (nil or unusable bounds) the window-dependent judgements — pacing and the
+// zero-delivery rule — are skipped: every row is unknownPacingRow and only the window-free rules
+// run. In practice the orchestrator supplies a window whenever a finished report exists, and
+// without one every row is FetchFailed anyway.
+//
 // A FetchFailed row (unreadable budget or flight, or no finished report yet) is returned via
 // fetchFailedRow with no action items, as on every sibling.
-func EvaluateTwitterMonitor(rows []model.AccountCampaignMetrics, days int, now time.Time) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+func EvaluateTwitterMonitor(rows []model.AccountCampaignMetrics, windowStart, windowEnd *time.Time) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 	out := make([]model.AccountMonitorRow, 0, len(rows))
 	items := make([]model.AccountMonitorActionItem, 0)
+	win, hasWindow := twitterWindow(windowStart, windowEnd)
 
 	for _, m := range rows {
 		if m.FetchFailed {
 			out = append(out, fetchFailedRow(m))
 			continue
 		}
-		pacingPct, computable := twitterPacingPct(m, days, now)
+		var pacingPct float64
+		computable := false
+		if hasWindow {
+			pacingPct, computable = twitterPacingPct(m, win)
+		}
 		if !computable {
 			row := unknownPacingRow(m)
 			out = append(out, row)
-			items = append(items, twitterActionItems(m, 0, row.PacingLabel, days, now)...)
+			items = append(items, twitterActionItems(m, 0, row.PacingLabel, win, hasWindow)...)
 			continue
 		}
 		label := pacingLabelFor(pacingPct)
 		out = append(out, model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label})
-		items = append(items, twitterActionItems(m, pacingPct, label, days, now)...)
+		items = append(items, twitterActionItems(m, pacingPct, label, win, hasWindow)...)
 	}
 
 	sortByPriority(items)
 	return out, items
 }
 
-// twitterWindow is the report window as UTC instants: [UTC midnight of today-(days-1), the
-// EXCLUSIVE midnight after today) — the convention the Reddit monitor settled on, so a whole-
-// window daily-budget flight is BudgetDay × days exactly.
-//
-// The dispatcher's stats jobs align the same calendar days to the ACCOUNT's timezone, which the
-// rule engine does not know (AccountCampaignMetrics carries no zone). Near a day boundary the two
-// can therefore disagree by one day about where "today" is; for a flight wholly covering the
-// window the expected spend is identical, and otherwise the error is at most one day of budget
-// in the clip against the flight's first or last day.
-func twitterWindow(days int, now time.Time) (start, end time.Time) {
-	u := now.UTC()
-	start = time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(days - 1))
-	return start, start.AddDate(0, 0, days)
+// xWindow is a report window as UTC-midnight instants, [start, end) with end EXCLUSIVE — the
+// convention the Reddit monitor settled on, so a whole-window daily-budget flight is
+// BudgetDay × days exactly.
+type xWindow struct{ start, end time.Time }
+
+// twitterWindow turns the report's first and last calendar day (account-local days carried as
+// UTC-midnight dates) into [first day, the midnight after the last day). Because the flight
+// dates (twitterFlight) are account-local calendar days carried the same way, comparing the two
+// is a comparison of the account's own days — no timezone is needed here and none is guessed.
+// Reports false for a missing, zero or inverted window.
+func twitterWindow(firstDay, lastDay *time.Time) (xWindow, bool) {
+	if firstDay == nil || lastDay == nil || firstDay.IsZero() || lastDay.IsZero() {
+		return xWindow{}, false
+	}
+	f, l := firstDay.UTC(), lastDay.UTC()
+	start := time.Date(f.Year(), f.Month(), f.Day(), 0, 0, 0, 0, time.UTC)
+	last := time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, time.UTC)
+	if last.Before(start) {
+		return xWindow{}, false
+	}
+	return xWindow{start: start, end: last.AddDate(0, 0, 1)}, true
 }
 
 // twitterFlight returns the flight as UTC instants, [StartDate, the midnight after EndDate);
@@ -144,8 +169,8 @@ func windowFlightDays(ws, we, fs, fe time.Time) float64 {
 //
 // No overlap between the flight and the window means the campaign was not scheduled to spend in
 // it, so there is nothing to compare its spend against: not computable.
-func twitterPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (float64, bool) {
-	ws, we := twitterWindow(days, now)
+func twitterPacingPct(m model.AccountCampaignMetrics, w xWindow) (float64, bool) {
+	ws, we := w.start, w.end
 	fs, fe := twitterFlight(m)
 	switch {
 	case m.BudgetDay > 0:
@@ -173,16 +198,16 @@ func twitterPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (
 // an unknown start as "scheduled" (see twitterPacingPct) — the gate for the zero-delivery rule,
 // so a campaign whose flight ended before the window, or starts after it, is not reported as
 // failing to deliver.
-func twitterScheduledInWindow(m model.AccountCampaignMetrics, days int, now time.Time) bool {
-	ws, we := twitterWindow(days, now)
+func twitterScheduledInWindow(m model.AccountCampaignMetrics, w xWindow) bool {
 	fs, fe := twitterFlight(m)
-	return windowFlightDays(ws, we, fs, fe) > 0
+	return windowFlightDays(w.start, w.end, fs, fe) > 0
 }
 
 // twitterActionItems evaluates every rule independently for one row. label is a real verdict
 // only on the paced path; on the unknown path the caller passes the placeholder normal label, so
-// the pacing rules cannot fire.
-func twitterActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel, days int, now time.Time) []model.AccountMonitorActionItem {
+// the pacing rules cannot fire. hasWindow false skips the zero-delivery rule, which needs the
+// window to know whether the campaign was scheduled at all.
+func twitterActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel, w xWindow, hasWindow bool) []model.AccountMonitorActionItem {
 	var items []model.AccountMonitorActionItem
 	add := func(priority model.MonitorPriority, issue, action string) {
 		items = append(items, model.AccountMonitorActionItem{
@@ -194,7 +219,7 @@ func twitterActionItems(m model.AccountCampaignMetrics, pacingPct float64, label
 	zeroDelivery := m.Impressions == 0 && m.Clicks == 0
 
 	// HIGH
-	if active && zeroDelivery && twitterScheduledInWindow(m, days, now) {
+	if active && zeroDelivery && hasWindow && twitterScheduledInWindow(m, w) {
 		add(model.MonitorPriorityHigh,
 			"Campaign is active but delivered nothing in the window — 0 impressions and 0 clicks",
 			"Check the line items are active and scheduled, the promoted posts are approved, and the funding instrument has budget in X Ads Manager")

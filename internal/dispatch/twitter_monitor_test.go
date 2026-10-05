@@ -18,6 +18,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // twitterMonitorServer stubs the X Ads API for the monitor, counting every call so a refusal
@@ -70,6 +71,7 @@ var twitterMonitorRoutes = map[string]string{
 // A project with no X connection of its own must not be served from the LF system row, on any
 // of the three methods.
 func TestTwitterMonitor_RefusesSystemFallback(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
 	opts, calls, _ := twitterMonitorServer(t, twitterMonitorRoutes)
 	d := NewTwitterDispatcher(&scopedConnReader{
 		rows: map[string]*model.Connection{model.SystemProjectID: activeTwitterConn(goodTwitterCreds)},
@@ -104,6 +106,7 @@ func twitterMonitorCalls(d *TwitterDispatcher, accountID, reportID string) map[s
 // Every refusal arm stops before any upstream call, on ALL THREE methods — submit creates X
 // stats jobs and check downloads account data. The permitted arm reads the stored account.
 func TestTwitterMonitor_AccountScope(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
 	cases := []struct {
 		name      string
 		requested string
@@ -133,6 +136,7 @@ func TestTwitterMonitor_AccountScope(t *testing.T) {
 // The list maps budgets, flights and the unreadable-field flags onto the rule engine's inputs,
 // and every request addresses the connection's own account.
 func TestTwitterMonitor_ListMapsCampaigns(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
 	opts, _, seen := twitterMonitorServer(t, twitterMonitorRoutes)
 	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, opts...)
 	rows, err := d.ListAccountCampaigns(context.Background(), "cncf", model.ProviderTwitterAds, "acc1")
@@ -163,6 +167,7 @@ func TestTwitterMonitor_ListMapsCampaigns(t *testing.T) {
 // Submit returns the composite job id and the account-timezone calendar window; check maps X's
 // job states, and folds spend from micros. The sentinel is a finished empty report.
 func TestTwitterMonitor_SubmitAndCheck(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
 	opts, _, _ := twitterMonitorServer(t, twitterMonitorRoutes)
 	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, opts...)
 	sub, err := d.SubmitAccountReport(context.Background(), "cncf", model.ProviderTwitterAds, "acc1", 7)
@@ -195,6 +200,7 @@ func TestTwitterMonitor_SubmitAndCheck(t *testing.T) {
 }
 
 func TestTwitterMonitor_CheckMapsStatusesAndSpend(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
 	cases := []struct {
 		name   string
 		status string
@@ -240,4 +246,65 @@ func TestTwitterMonitor_CheckMapsStatusesAndSpend(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The monitor is gated behind TWITTER_METRICS_ENABLED while its stats-jobs contract is
+// unverified: off by default (and for anything but exactly "true"), all three methods answer
+// ErrAccountMetricsUnsupported — the 400 of a platform with no monitor — before any credential
+// is resolved or any request made.
+func TestTwitterMonitor_DisabledByDefault(t *testing.T) {
+	for _, v := range []string{"", "false", "TRUE", "1"} {
+		t.Run("value="+v, func(t *testing.T) {
+			t.Setenv(constants.EnvTwitterMetricsEnabled, v)
+			opts, calls, _ := twitterMonitorServer(t, twitterMonitorRoutes)
+			conns := &countingConnReader{inner: fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}}
+			d := NewTwitterDispatcher(conns, identityEncryptor{}, opts...)
+			for name, call := range twitterMonitorCalls(d, "acc1", "555") {
+				if err := call(); !errors.Is(err, domain.ErrAccountMetricsUnsupported) {
+					t.Errorf("%s: err = %v, want ErrAccountMetricsUnsupported", name, err)
+				}
+			}
+			if n := calls.Load(); n != 0 {
+				t.Errorf("%d upstream calls, want none", n)
+			}
+			if n := conns.n.Load(); n != 0 {
+				t.Errorf("%d connection lookups, want none before the gate", n)
+			}
+		})
+	}
+}
+
+// A submission X's client declines for lack of call budget reaches the orchestrator as
+// domain.ErrAccountReportBudgetTooShort, so it is logged as a skip rather than a failure.
+func TestTwitterMonitor_SubmitBudgetSkipIsTyped(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
+	opts, _, seen := twitterMonitorServer(t, twitterMonitorRoutes)
+	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, opts...)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second) // under statsJobSubmitMargin
+	defer cancel()
+	_, err := d.SubmitAccountReport(ctx, "cncf", model.ProviderTwitterAds, "acc1", 7)
+	if !errors.Is(err, domain.ErrAccountReportBudgetTooShort) || !errors.Is(err, twitter.ErrStatsJobBudget) {
+		t.Fatalf("err = %v, want ErrAccountReportBudgetTooShort wrapping twitter.ErrStatsJobBudget", err)
+	}
+	for _, p := range seen() {
+		if strings.HasPrefix(p, "/12/stats/jobs/") {
+			t.Errorf("a stats job was created (%s) although the submission was declined", p)
+		}
+	}
+}
+
+// countingConnReader counts connection lookups, so a gate test can prove none happened.
+type countingConnReader struct {
+	inner fakeConnReader
+	n     atomic.Int32
+}
+
+func (c *countingConnReader) Get(ctx context.Context, projectID string, p model.Provider) (*model.Connection, error) {
+	c.n.Add(1)
+	return c.inner.Get(ctx, projectID, p)
+}
+
+func (c *countingConnReader) Disconnected(ctx context.Context, projectID string, p model.Provider) (bool, error) {
+	c.n.Add(1)
+	return c.inner.Disconnected(ctx, projectID, p)
 }

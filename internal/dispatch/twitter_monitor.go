@@ -7,12 +7,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // The X account monitor is REPORT-BACKED, like Microsoft's (microsoft_monitor.go): it implements
@@ -27,10 +29,24 @@ import (
 // bound to (requireTwitterManagedAccount). See the Trust boundary section of
 // docs/knowledge/architecture/account-monitor-endpoints.md.
 //
-// There is no enable flag. Microsoft's monitor rides MICROSOFT_METRICS_ENABLED because its
-// per-campaign metrics read already did; X's per-campaign metrics read (ReadMetrics) has never
-// been gated, so there is no existing X flag to ride, and the monitor follows that precedent.
+// It is gated behind TWITTER_METRICS_ENABLED (twitterMonitorEnabled), default off, on the same
+// terms as Microsoft's and Reddit's: the stats-jobs contract — active_entities, job creation, the
+// job-status read and the results file — follows X's public documentation but has NOT been
+// exercised against a live X Ads account. The flag gates ONLY this monitor; X's per-campaign
+// metrics read (ReadMetrics), a different and long-standing synchronous endpoint, is unaffected.
 var _ service.AccountReportReader = (*TwitterDispatcher)(nil)
+
+// twitterMonitorEnabled gates the report-backed X monitor, mirroring microsoftMonitorEnabled:
+// only the exact value "true" enables it, read per call. Disabled, every AccountReportReader
+// method answers the same 400 as a platform with no monitor, before any credential is resolved
+// or any request made.
+func twitterMonitorEnabled() error {
+	if os.Getenv(constants.EnvTwitterMetricsEnabled) != "true" {
+		return fmt.Errorf("x account monitor is disabled (%s is not \"true\") while the stats-jobs contract is unverified: %w",
+			constants.EnvTwitterMetricsEnabled, domain.ErrAccountMetricsUnsupported)
+	}
+	return nil
+}
 
 // resolveTwitterMonitorClient validates the requested account id, resolves the project's own
 // connection, refuses any account it is not bound to, and returns the CACHED client for that
@@ -41,6 +57,9 @@ var _ service.AccountReportReader = (*TwitterDispatcher)(nil)
 // client's write pacer, and that pacer only bounds the account's write rate if every caller for
 // the connection shares it (see TwitterDispatcher.clients).
 func (d *TwitterDispatcher) resolveTwitterMonitorClient(ctx context.Context, projectID string, platform model.Provider, accountID string) (*twitter.Client, error) {
+	if err := twitterMonitorEnabled(); err != nil {
+		return nil, err
+	}
 	// STRICT shape check, mirroring the design layer's Pattern + MaxLength exactly (no trim) —
 	// the defense-in-depth every monitor dispatcher re-runs for a caller that bypasses Goa.
 	if err := twitter.ValidateMonitorAccountID(accountID); err != nil {
@@ -113,6 +132,10 @@ func (d *TwitterDispatcher) SubmitAccountReport(ctx context.Context, projectID s
 		return nil, err
 	}
 	reportID, start, end, err := client.SubmitAccountCampaignReport(ctx, days)
+	if errors.Is(err, twitter.ErrStatsJobBudget) {
+		// Declined before any job was created; the orchestrator logs it as a skip.
+		return nil, fmt.Errorf("submit x ads account report: %w: %w", domain.ErrAccountReportBudgetTooShort, err)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("submit x ads account report: %w", err)
 	}

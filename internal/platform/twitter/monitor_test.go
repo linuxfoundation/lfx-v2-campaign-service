@@ -521,7 +521,9 @@ func TestCheckAccountCampaignReport_DownloadFailures(t *testing.T) {
 		url  func(base string) string
 		file http.HandlerFunc
 	}{
-		"foreign http host": {func(string) string { return "http://evil.example/f.json.gz?" + secret }, nil},
+		"foreign http host":  {func(string) string { return "http://evil.example/f.json.gz?" + secret }, nil},
+		"foreign https host": {func(string) string { return "https://evil.example/f.json.gz?" + secret }, nil},
+		"twimg lookalike":    {func(string) string { return "https://ton.twimg.com.evil.example/f.json.gz?" + secret }, nil},
 		"userinfo": {func(base string) string {
 			return strings.Replace(base, "http://", "http://u:p@", 1) + "/files/f?" + secret
 		}, nil},
@@ -620,5 +622,211 @@ func TestSubmitAccountCampaignReport_PacedAndNotRetried(t *testing.T) {
 	}
 	if n := len(rec.byPath("/stats/jobs/accounts/account123")); n != 1 {
 		t.Errorf("%d job POSTs, want exactly 1 (no retry of a create)", n)
+	}
+}
+
+// Only X's documented results-file host is admitted over https, matched exactly; the client's
+// own API origin stays admitted (how most tests serve files). Everything else is refused.
+func TestStatsFileURLAllowed(t *testing.T) {
+	c := NewClient(Credentials{}, AccountConfig{AccountID: "account123"})
+	for raw, want := range map[string]bool{
+		"https://ton.twimg.com/advertiser-api-async-analytics/abc.json.gz": true,
+		"https://TON.twimg.com/advertiser-api-async-analytics/abc.json.gz": true,
+		"https://ads-api.x.com/files/abc.json.gz":                          true, // the API origin
+		"https://evil.example/abc.json.gz":                                 false,
+		"https://pbs.twimg.com/abc.json.gz":                                false,
+		"https://ton.twimg.com.evil.example/abc.json.gz":                   false,
+		"https://ton.twimg.com:8443/abc.json.gz":                           false,
+		"http://ton.twimg.com/abc.json.gz":                                 false,
+		"https://user:pw@ton.twimg.com/abc.json.gz":                        false,
+		"https:ton.twimg.com/abc.json.gz":                                  false,
+		"/relative/abc.json.gz":                                            false,
+	} {
+		if got := c.statsFileURLAllowed(raw); got != want {
+			t.Errorf("statsFileURLAllowed(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}
+
+// statsJobsServer serves one SUCCESS job whose file url is fileURL.
+func statsJobsServer(t *testing.T, fileURL string, extra map[string]http.HandlerFunc) (*httptest.Server, *monitorRecorder) {
+	t.Helper()
+	routes := map[string]http.HandlerFunc{
+		"/12/stats/jobs/accounts/account123": jsonBody(fmt.Sprintf(`{"data":[{"id_str":"11","status":"SUCCESS","url":%q}]}`, fileURL)),
+	}
+	for k, v := range extra {
+		routes[k] = v
+	}
+	return monitorServer(t, routes)
+}
+
+// A results file on a second origin — a TLS stand-in for ton.twimg.com, admitted through the
+// test-only host seam — is downloaded and folded, and is sent no Authorization header.
+func TestCheckAccountCampaignReport_DownloadsFromTheFileHostWithoutCredentials(t *testing.T) {
+	file := gz(t, statsFileBody)
+	var auth []string
+	var mu sync.Mutex
+	files := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		auth = append(auth, r.Header.Get("Authorization"))
+		mu.Unlock()
+		_, _ = w.Write(file)
+	}))
+	t.Cleanup(files.Close)
+	fileHost := strings.TrimPrefix(files.URL, "https://")
+
+	api, _ := statsJobsServer(t, files.URL+"/advertiser-api-async-analytics/a.json.gz", nil)
+	c := NewClient(
+		Credentials{ConsumerKey: "key", ConsumerSecret: "secret", AccessToken: "token", AccessTokenSecret: "token_secret"},
+		AccountConfig{AccountID: "account123"},
+		WithBaseURL(api.URL), WithWriteDelay(0), WithHTTPClient(files.Client()), withStatsFileHosts(fileHost),
+	)
+	res, err := c.CheckAccountCampaignReport(context.Background(), "11")
+	if err != nil {
+		t.Fatalf("CheckAccountCampaignReport: %v", err)
+	}
+	if res.Status != AccountReportStatusSuccess || len(res.Rows) != 2 {
+		t.Errorf("result = %+v, want success with the file's two campaigns", res)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(auth) != 1 || auth[0] != "" {
+		t.Errorf("file host saw Authorization %q over %d requests, want one request with none", auth, len(auth))
+	}
+}
+
+// A transport failure on an admitted host reports the failure without any part of the URL —
+// it carries the file's access signature.
+func TestCheckAccountCampaignReport_TransportFailureHidesTheURL(t *testing.T) {
+	dead := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL, deadHost, client := dead.URL, strings.TrimPrefix(dead.URL, "https://"), dead.Client()
+	dead.Close() // nothing listens any more: the download fails in transport
+
+	const secret = "Signature=TOPSECRETSIG"
+	api, _ := statsJobsServer(t, deadURL+"/advertiser-api-async-analytics/a.json.gz?"+secret, nil)
+	c := NewClient(
+		Credentials{ConsumerKey: "key", ConsumerSecret: "secret", AccessToken: "token", AccessTokenSecret: "token_secret"},
+		AccountConfig{AccountID: "account123"},
+		WithBaseURL(api.URL), WithWriteDelay(0), WithHTTPClient(client), withStatsFileHosts(deadHost),
+	)
+	_, err := c.CheckAccountCampaignReport(context.Background(), "11")
+	if err == nil {
+		t.Fatal("want a transport error")
+	}
+	for _, part := range []string{"TOPSECRETSIG", "Signature", "advertiser-api-async-analytics", deadHost, "127.0.0.1"} {
+		if strings.Contains(err.Error(), part) {
+			t.Errorf("error %q contains %q from the file url", err, part)
+		}
+	}
+}
+
+// Both download caps refuse one byte over: the compressed body, and the decompressed stream of a
+// small, high-ratio gzip of zeros. At exactly the cap the size check passes (the bytes then fail
+// to decode as stats, a different error).
+func TestCheckAccountCampaignReport_DownloadCaps(t *testing.T) {
+	const compressedCap, decompressedCap = 256, 4096
+	zeros := func(n int) []byte { return gz(t, string(make([]byte, n))) }
+	cases := []struct {
+		name     string
+		body     []byte
+		exceeded bool
+	}{
+		{"compressed cap+1", bytes.Repeat([]byte("x"), compressedCap+1), true},
+		{"compressed at cap", bytes.Repeat([]byte("x"), compressedCap), false},
+		{"decompressed cap+1", zeros(decompressedCap + 1), true},
+		{"decompressed at cap", zeros(decompressedCap), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if strings.HasPrefix(tc.name, "decompressed") && len(tc.body) > compressedCap {
+				t.Fatalf("precondition: the gzip of zeros is %d bytes; it must fit the compressed cap", len(tc.body))
+			}
+			var srvURL string
+			api, _ := monitorServer(t, map[string]http.HandlerFunc{
+				"/12/stats/jobs/accounts/account123": func(w http.ResponseWriter, r *http.Request) {
+					jsonBody(fmt.Sprintf(`{"data":[{"id_str":"11","status":"SUCCESS","url":"%s/files/f"}]}`, srvURL))(w, r)
+				},
+				"/files/f": func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(tc.body) },
+			})
+			srvURL = api.URL
+			c := NewClient(
+				Credentials{ConsumerKey: "key", ConsumerSecret: "secret", AccessToken: "token", AccessTokenSecret: "token_secret"},
+				AccountConfig{AccountID: "account123"},
+				WithBaseURL(api.URL), WithWriteDelay(0), withStatsFileCaps(compressedCap, decompressedCap),
+			)
+			_, err := c.CheckAccountCampaignReport(context.Background(), "11")
+			if err == nil {
+				t.Fatal("want an error (over the cap, or not a stats document)")
+			}
+			if got := strings.Contains(err.Error(), "exceeds"); got != tc.exceeded {
+				t.Errorf("err = %v; cap exceeded = %v, want %v", err, got, tc.exceeded)
+			}
+		})
+	}
+}
+
+// A submission refuses BEFORE creating any job when the deadline cannot fit the paced POSTs —
+// two jobs at 1s pacing plus the margin need about 4s — and proceeds when it can.
+func TestSubmitAccountCampaignReport_RefusesWhenTheBudgetCannotFitTheJobs(t *testing.T) {
+	ents := make([]string, 0, 21)
+	for i := 0; i < 21; i++ {
+		ents = append(ents, fmt.Sprintf(`{"entity_id":"c%d"}`, i))
+	}
+	srv, rec := monitorServer(t, map[string]http.HandlerFunc{
+		"/12/accounts/account123":                       accountTZ("UTC"),
+		"/12/stats/accounts/account123/active_entities": jsonBody(`{"data":[` + strings.Join(ents, ",") + `]}`),
+		"/12/stats/jobs/accounts/account123":            jsonBody(`{"data":{"id_str":"7","status":"QUEUED"}}`),
+	})
+	c := NewClient(
+		Credentials{ConsumerKey: "key", ConsumerSecret: "secret", AccessToken: "token", AccessTokenSecret: "token_secret"},
+		AccountConfig{AccountID: "account123"},
+		WithBaseURL(srv.URL), WithWriteDelay(time.Second),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _, _, err := c.SubmitAccountCampaignReport(ctx, 7)
+	if !errors.Is(err, ErrStatsJobBudget) {
+		t.Fatalf("err = %v, want ErrStatsJobBudget", err)
+	}
+	if n := len(rec.byPath("/stats/jobs/accounts/account123")); n != 0 {
+		t.Errorf("%d job POSTs, want none: a declined submission creates nothing", n)
+	}
+
+	// With room for both jobs the same submission goes ahead (the second POST waits out the
+	// pacer, ~1s).
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel2()
+	if _, _, _, err := c.SubmitAccountCampaignReport(ctx2, 7); err != nil {
+		t.Fatalf("with budget: %v", err)
+	}
+	if n := len(rec.byPath("/stats/jobs/accounts/account123")); n != 2 {
+		t.Errorf("%d job POSTs, want 2", n)
+	}
+}
+
+// One monitor read asks for the account timezone twice (list, then submit); the client reuses a
+// fresh answer instead of reading the account again, and re-reads once it is stale.
+func TestAccountTimezone_CachedBriefly(t *testing.T) {
+	srv, rec := monitorServer(t, map[string]http.HandlerFunc{"/12/accounts/account123": accountTZ("America/Los_Angeles")})
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	c := NewClient(
+		Credentials{ConsumerKey: "key", ConsumerSecret: "secret", AccessToken: "token", AccessTokenSecret: "token_secret"},
+		AccountConfig{AccountID: "account123"},
+		WithBaseURL(srv.URL), WithWriteDelay(0), WithClock(func() time.Time { return now }),
+	)
+	for i := 0; i < 2; i++ {
+		if loc, err := c.AccountTimezone(context.Background()); err != nil || loc.String() != "America/Los_Angeles" {
+			t.Fatalf("AccountTimezone #%d = %v, %v", i, loc, err)
+		}
+	}
+	if n := len(rec.byPath("/accounts/account123")); n != 1 {
+		t.Errorf("%d account reads, want 1 within the cache window", n)
+	}
+	now = now.Add(accountTimezoneCacheFor + time.Second)
+	if _, err := c.AccountTimezone(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(rec.byPath("/accounts/account123")); n != 2 {
+		t.Errorf("%d account reads, want a re-read once the cached zone is stale", n)
 	}
 }

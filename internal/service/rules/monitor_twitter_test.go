@@ -11,9 +11,22 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// The window for days=7 at this instant is [2026-09-29, 2026-10-06) — today inclusive, closed by
-// the exclusive midnight after today.
-var xNow = time.Date(2026, 10, 5, 15, 0, 0, 0, time.UTC)
+// The 7-day report window used throughout: first day 2026-09-29, last day 2026-10-05 (account-
+// local days carried as UTC-midnight dates), i.e. [2026-09-29, 2026-10-06) with the exclusive
+// midnight after the last day.
+var (
+	xFirstDay = time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC)
+	xLastDay  = time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+)
+
+func xTestWindow(t *testing.T) xWindow {
+	t.Helper()
+	w, ok := twitterWindow(&xFirstDay, &xLastDay)
+	if !ok {
+		t.Fatal("test window rejected")
+	}
+	return w
+}
 
 func xRow(mut func(*model.AccountCampaignMetrics)) model.AccountCampaignMetrics {
 	m := model.AccountCampaignMetrics{PlatformCampaignID: "c1", Name: "n", Status: "ACTIVE", Impressions: 500, Clicks: 10}
@@ -77,7 +90,7 @@ func TestTwitterPacing(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			pct, ok := twitterPacingPct(tc.row, 7, xNow)
+			pct, ok := twitterPacingPct(tc.row, xTestWindow(t))
 			if ok != tc.computable || pct != tc.pct {
 				t.Errorf("pacing = (%v, %v), want (%v, %v)", pct, ok, tc.pct, tc.computable)
 			}
@@ -85,23 +98,94 @@ func TestTwitterPacing(t *testing.T) {
 	}
 }
 
-// The window ends at the midnight after today, so the answer does not drift across the day:
-// identical spend reads the same at 00:00 and at 23:59.
-func TestTwitterPacing_StableAcrossTheDay(t *testing.T) {
-	row := xRow(func(m *model.AccountCampaignMetrics) { m.BudgetDay = 10; m.Spend = 70 })
-	for _, now := range []time.Time{
-		time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC),
-		time.Date(2026, 10, 5, 23, 59, 0, 0, time.UTC),
-	} {
-		if pct, ok := twitterPacingPct(row, 7, now); !ok || pct != 100 {
-			t.Errorf("at %v pacing = (%v, %v), want (100, true)", now, pct, ok)
+// The rules judge the account's own calendar days, carried in the report's window — not a
+// "today" from the service's UTC clock. At 17:00 US/Pacific on Oct 5 it is already 00:00 UTC on
+// Oct 6, but the stats job the platform submitted then covers the ACCOUNT's days, Sep 29..Oct 5
+// (twitter.accountReportWindow). A campaign whose line items start on the next local day
+// (StartDate 2026-10-06) has, correctly, no delivery in that report; a UTC-derived window
+// [Sep 30, Oct 7) would count it as scheduled and raise a false HIGH every evening.
+func TestEvaluateTwitterMonitor_EveningInAccountTimezone(t *testing.T) {
+	pacific, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("load zone: %v", err)
+	}
+	now := time.Date(2026, 10, 5, 17, 0, 0, 0, pacific)
+	if now.UTC().Day() != 6 {
+		t.Fatalf("precondition: %v should already be Oct 6 in UTC", now.UTC())
+	}
+	// The window the platform derives at that instant: the account's local days.
+	local := now.In(pacific)
+	last := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
+	first := last.AddDate(0, 0, -6)
+
+	t.Run("flight starting tomorrow local is not zero delivery", func(t *testing.T) {
+		_, items := EvaluateTwitterMonitor([]model.AccountCampaignMetrics{xRow(func(m *model.AccountCampaignMetrics) {
+			m.BudgetDay = 10
+			m.Impressions, m.Clicks = 0, 0
+			m.StartDate = "2026-10-06"
+		})}, &first, &last)
+		if hasItem(items, model.MonitorPriorityHigh, "delivered nothing") {
+			t.Errorf("items = %+v, want no zero-delivery HIGH for a flight that starts after the report's last local day", items)
 		}
+	})
+	t.Run("daily expected spend counts local days", func(t *testing.T) {
+		// Flight starts on the report's last local day (Oct 5): exactly one day of budget is
+		// expected. A UTC-derived window would have counted Oct 5 and Oct 6 — two days, 50%.
+		rows, _ := EvaluateTwitterMonitor([]model.AccountCampaignMetrics{xRow(func(m *model.AccountCampaignMetrics) {
+			m.BudgetDay = 10
+			m.Spend = 10
+			m.StartDate = "2026-10-05"
+		})}, &first, &last)
+		if rows[0].PacingPct != 100 || rows[0].Metrics.PacingUnknown {
+			t.Errorf("row = %+v, want 100%% of one local day's budget", rows[0])
+		}
+		// And a whole-window flight expects all seven local days.
+		rows, _ = EvaluateTwitterMonitor([]model.AccountCampaignMetrics{xRow(func(m *model.AccountCampaignMetrics) {
+			m.BudgetDay = 10
+			m.Spend = 70
+		})}, &first, &last)
+		if rows[0].PacingPct != 100 {
+			t.Errorf("row = %+v, want 100%% of seven local days", rows[0])
+		}
+	})
+}
+
+// Without a window the window-dependent judgements are skipped rather than guessed: pacing is
+// unknown and the zero-delivery rule stays silent, while the window-free rules still run.
+func TestEvaluateTwitterMonitor_NoWindowSkipsWindowRules(t *testing.T) {
+	inverted := xFirstDay.AddDate(0, 0, -1)
+	for name, bounds := range map[string][2]*time.Time{
+		"nil":      {nil, nil},
+		"no end":   {&xFirstDay, nil},
+		"inverted": {&xFirstDay, &inverted},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rows, items := EvaluateTwitterMonitor([]model.AccountCampaignMetrics{
+				xRow(func(m *model.AccountCampaignMetrics) { m.BudgetDay = 10; m.Impressions, m.Clicks = 0, 0 }),
+				xRow(func(m *model.AccountCampaignMetrics) {
+					m.PlatformCampaignID = "c2"
+					m.Status = "PAUSED"
+					m.BudgetDay = 10
+				}),
+			}, bounds[0], bounds[1])
+			for _, r := range rows {
+				if !r.Metrics.PacingUnknown {
+					t.Errorf("row %s paced without a window: %+v", r.Metrics.PlatformCampaignID, r)
+				}
+			}
+			if hasItem(items, model.MonitorPriorityHigh, "delivered nothing") {
+				t.Errorf("items = %+v, want no zero-delivery item without a window", items)
+			}
+			if !hasItem(items, model.MonitorPriorityMed, "paused") {
+				t.Errorf("items = %+v, want the window-free paused item", items)
+			}
+		})
 	}
 }
 
 func xItems(t *testing.T, rows ...model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 	t.Helper()
-	return EvaluateTwitterMonitor(rows, 7, xNow)
+	return EvaluateTwitterMonitor(rows, &xFirstDay, &xLastDay)
 }
 
 func hasItem(items []model.AccountMonitorActionItem, p model.MonitorPriority, substr string) bool {

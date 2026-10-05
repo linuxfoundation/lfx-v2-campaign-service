@@ -24,6 +24,29 @@ reported), `MonitorTwitterAdsAccount` with its own descriptor, the design method
 HTTPRoute/RuleSet/parity and drift-test rows. Twitter moved into the shared discovery+monitor
 branch of the HTTPRoute regex, which is now three branches.
 
-No enable flag: X's per-campaign metrics read has never had one to ride, unlike Microsoft's.
-The X contract is followed from docs.x.com and has not been exercised against a live account;
-the open points are marked UNVERIFIED in `monitor.go`.
+Gated behind a new `TWITTER_METRICS_ENABLED` (chart default `"false"`), mirroring
+`MICROSOFT_METRICS_ENABLED`: the X stats-jobs contract is followed from docs.x.com and has not
+been exercised against a live account (the open points are marked UNVERIFIED in `monitor.go`),
+so disabled, all three reader methods answer `ErrAccountMetricsUnsupported` before resolving a
+credential. The flag gates only the monitor, not X's per-campaign metrics read.
+
+Pre-PR review fixes, before the branch merged:
+
+- **Account-local window in the rules.** `EvaluateTwitterMonitor` first computed "today" in
+  UTC while the stats jobs and flight dates are account-local, so a US/Pacific account got a
+  false zero-delivery HIGH every evening for a flight starting the next local day. The rules
+  now evaluate on the saved report's own window, threaded as
+  `ReportedAccountRead.MetricsWindowStart/End`; without one, the window rules are skipped.
+  Microsoft's rules take no date and are unchanged.
+- **Budget for the paced job POSTs.** `SubmitAccountCampaignReport` declines up front
+  (`ErrStatsJobBudget` → `domain.ErrAccountReportBudgetTooShort`, logged as a skip) when the
+  deadline cannot fit one pacer interval per job plus 2s, and the shared orchestrator now
+  records a completed submission on its own 5s detached context, so a submission finishing at
+  the deadline is never left unrecorded and resubmitted forever. The account timezone is
+  cached on the client for a minute (one GET per read, not two).
+- **Results-file host.** Downloads are restricted to https on exactly `ton.twimg.com` (the
+  host of X's documented job-result example) or the client's own API origin; any other host is
+  refused without echoing the URL.
+- **Tests** for both download caps at cap+1, a transport failure hiding a signed URL, an
+  unsigned download from a second (TLS) origin, the budget refusal, the detached mark, the
+  timezone cache, the evening-Pacific window and the gate.

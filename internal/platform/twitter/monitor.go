@@ -82,11 +82,54 @@ const maxStatsWindow = 90 * 24 * time.Hour
 
 // Download caps for a stats-job results file. A TOTAL-granularity file for 20 campaigns is a
 // few KB; these exist so a hostile or broken file cannot exhaust memory, compressed or after
-// decompression (a gzip bomb).
+// decompression (a gzip bomb). They are the defaults of the client's statsFileCompressedCap /
+// statsFileDecompressedCap fields, which only tests lower.
 const (
-	statsFileCompressedCap   = 8 << 20
-	statsFileDecompressedCap = 32 << 20
+	defaultStatsFileCompressedCap   = 8 << 20
+	defaultStatsFileDecompressedCap = 32 << 20
 )
+
+// statsFileHost is the ONE host a stats-job results file is downloaded from. X's Asynchronous
+// Analytics documentation shows the finished job's url on X's static-content host —
+// "https://ton.twimg.com/advertiser-api-async-analytics/....json.gz" — and documents that the
+// file "requires no authentication once obtained" (https://docs.x.com/x-ads-api/analytics).
+// The url is upstream data, and fetching whatever host it names would let a compromised or
+// spoofed job answer point this service at an arbitrary https endpoint (an SSRF surface,
+// including internal hosts reachable from the cluster), so exactly this host is admitted — not
+// a *.twimg.com suffix, since the docs show no other host and a wider pattern would admit
+// hosts nobody has seen serve these files. If X moves the files, downloads fail closed with an
+// error and the constant is updated deliberately. Tests substitute a TLS stand-in through
+// withStatsFileHosts.
+const statsFileHost = "ton.twimg.com"
+
+// withStatsFileHosts replaces the hosts (host[:port], matched exactly) a results file may be
+// downloaded from over https. Unexported: a TEST seam, so a TLS httptest server can stand in for
+// statsFileHost. Never used in production.
+func withStatsFileHosts(hosts ...string) Option {
+	return func(c *Client) { c.statsFileHosts = append([]string(nil), hosts...) }
+}
+
+// withStatsFileCaps lowers the download caps. Unexported test seam, as withStatsFileHosts.
+func withStatsFileCaps(compressed, decompressed int64) Option {
+	return func(c *Client) { c.statsFileCompressedCap, c.statsFileDecompressedCap = compressed, decompressed }
+}
+
+// statsJobSubmitMargin is the time a stats-job submission keeps in hand beyond its pacer
+// intervals: the job POSTs' own round trips. See SubmitAccountCampaignReport's budget check.
+const statsJobSubmitMargin = 2 * time.Second
+
+// ErrStatsJobBudget is returned by SubmitAccountCampaignReport, before ANY job is created, when
+// the context's deadline leaves too little time for the paced job POSTs to complete. Creating
+// some jobs and running out mid-loop would abandon them uncollected (each holds one of X's 100
+// concurrent-job slots for the account until it expires), so the submission is declined whole
+// and the caller retries on a later read with a fresh budget.
+var ErrStatsJobBudget = errors.New("twitter: not enough time left to create the account report's stats jobs")
+
+// accountTimezoneCacheFor is how long a successfully read account timezone is reused by this
+// client. One monitor read asks for it twice (the campaign list and the report submission, both
+// on the shared cached client) inside a 20-second budget; a minute covers that read without
+// holding a changed account setting for long. Failures are never cached.
+const accountTimezoneCacheFor = time.Minute
 
 // maxStatsJobIDLen bounds one job id. X returns job ids as 64-bit integers with an id_str twin
 // (example "1120829647711653888", https://docs.x.com/x-ads-api/analytics); an unsigned 64-bit
@@ -173,10 +216,32 @@ type accountElementTZ struct {
 // (https://docs.x.com/x-ads-api/campaign-management, GET accounts/:account_id), which is why the
 // monitor's window and flight dates are computed in it rather than in UTC. An absent or unknown
 // zone is an error: guessing UTC would shift every day boundary for a non-UTC account.
+//
+// A successful read is reused for accountTimezoneCacheFor, so one monitor read — list, then
+// submit — costs one account GET rather than two.
 func (c *Client) AccountTimezone(ctx context.Context) (*time.Location, error) {
 	if err := ValidateMonitorAccountID(c.account.AccountID); err != nil {
 		return nil, err
 	}
+	c.tzMu.Lock()
+	if c.tzLoc != nil && c.timeFn().Sub(c.tzAt) < accountTimezoneCacheFor {
+		loc := c.tzLoc
+		c.tzMu.Unlock()
+		return loc, nil
+	}
+	c.tzMu.Unlock()
+	loc, err := c.readAccountTimezone(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.tzMu.Lock()
+	c.tzLoc, c.tzAt = loc, c.timeFn()
+	c.tzMu.Unlock()
+	return loc, nil
+}
+
+// readAccountTimezone is AccountTimezone's uncached read.
+func (c *Client) readAccountTimezone(ctx context.Context) (*time.Location, error) {
 	resp, err := c.request(ctx, http.MethodGet, "")
 	if err != nil {
 		return nil, fmt.Errorf("read x ads account: %w", err)
@@ -491,8 +556,15 @@ type statsJobElement struct {
 // caller can persist (account_monitor_reports.pending_report_id is TEXT; ten 20-digit ids plus
 // separators is ~210 bytes). With no active campaign it is NoActiveCampaignsReportID.
 //
-// If a later job POST fails, the jobs already created are abandoned: they finish on X's side and
-// expire uncollected. That costs job slots (X allows 100 concurrent per account), never data.
+// Before the first job POST the remaining time on ctx is compared with what the paced POSTs
+// need — one pacer interval per job plus statsJobSubmitMargin — and the submission is refused
+// with ErrStatsJobBudget, creating nothing, when it cannot fit. The caller shares one call
+// budget across the campaign list, the pending-report check and this submission, so the time
+// left here varies; a deadline that fired mid-loop would strand the jobs already created.
+//
+// If a later job POST fails anyway, the jobs already created are abandoned: they finish on X's
+// side and expire uncollected. That costs job slots (X allows 100 concurrent per account), never
+// data.
 func (c *Client) SubmitAccountCampaignReport(ctx context.Context, days int) (reportID string, windowStart, windowEnd time.Time, err error) {
 	if days < 1 || time.Duration(days)*24*time.Hour > maxStatsWindow {
 		return "", time.Time{}, time.Time{}, fmt.Errorf("x account report window must be 1..90 days, got %d", days)
@@ -517,6 +589,9 @@ func (c *Client) SubmitAccountCampaignReport(ctx context.Context, days int) (rep
 	if jobs > maxStatsJobsPerReport {
 		return "", time.Time{}, time.Time{}, fmt.Errorf("x account has %d active campaigns in the window; the monitor builds reports for at most %d", len(ids), maxStatsJobsPerReport*statsJobMaxEntities)
 	}
+	if err := c.statsJobsFitBudget(ctx, jobs); err != nil {
+		return "", time.Time{}, time.Time{}, err
+	}
 
 	jobIDs := make([]string, 0, jobs)
 	for i := 0; i < len(ids); i += statsJobMaxEntities {
@@ -528,6 +603,25 @@ func (c *Client) SubmitAccountCampaignReport(ctx context.Context, days int) (rep
 		jobIDs = append(jobIDs, id)
 	}
 	return strings.Join(jobIDs, ","), firstDay, lastDay, nil
+}
+
+// statsJobsFitBudget refuses (ErrStatsJobBudget) when ctx's deadline is closer than `jobs`
+// pacer intervals plus statsJobSubmitMargin. The deadline is wall-clock, so it is measured with
+// time.Until, not the injectable clock. With no deadline there is nothing to fit.
+func (c *Client) statsJobsFitBudget(ctx context.Context, jobs int) error {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return nil
+	}
+	pacing := time.Duration(0)
+	if c.writeDelay > 0 {
+		pacing = time.Duration(jobs) * c.writeDelay
+	}
+	need := pacing + statsJobSubmitMargin
+	if left := time.Until(deadline); left < need {
+		return fmt.Errorf("%w: %d jobs need about %s, %s left", ErrStatsJobBudget, jobs, need, left.Truncate(time.Millisecond))
+	}
+	return nil
 }
 
 // activeCampaignIDs reads the campaigns active in [start, end), deduplicated, in first-seen order.
@@ -757,12 +851,13 @@ func (c *Client) CheckAccountCampaignReport(ctx context.Context, reportID string
 // documents that it "requires no authentication once obtained"
 // (https://docs.x.com/x-ads-api/analytics, Asynchronous Analytics). So the request is NOT
 // OAuth-signed and carries no Authorization header: signing it would hand our credentials to a
-// host that neither needs nor checks them. The URL is upstream data, so it is held to https (or
-// to this client's own API origin, which is how the tests serve it), and it never appears in an
-// error — the same discipline microsoft's downloadReportRecords applies to its pre-signed URL.
+// host that neither needs nor checks them. The URL is upstream data, so it is held to https on
+// statsFileHost exactly (or to this client's own API origin, which is how most tests serve it),
+// and it never appears in an error — the same discipline microsoft's downloadReportRecords
+// applies to its pre-signed URL.
 func (c *Client) downloadStatsFile(ctx context.Context, rawURL string) ([]byte, error) {
 	if !c.statsFileURLAllowed(rawURL) {
-		return nil, errors.New("download x stats file: the job's file url is not an https url")
+		return nil, errors.New("download x stats file: the job's file url is not on an allowed host")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
@@ -779,18 +874,18 @@ func (c *Client) downloadStatsFile(ctx context.Context, rawURL string) ([]byte, 
 		return nil, errors.New("download x stats file: transport error")
 	}
 	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, statsFileCompressedCap))
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, c.statsFileCompressedCap))
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("download x stats file: unexpected status %d", resp.StatusCode)
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, statsFileCompressedCap+1))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, c.statsFileCompressedCap+1))
 	if err != nil {
 		return nil, errors.New("download x stats file: read failed")
 	}
-	if len(raw) > statsFileCompressedCap {
-		return nil, fmt.Errorf("download x stats file: file exceeds %d bytes", statsFileCompressedCap)
+	if int64(len(raw)) > c.statsFileCompressedCap {
+		return nil, fmt.Errorf("download x stats file: file exceeds %d bytes", c.statsFileCompressedCap)
 	}
 	// The file is gzip ("*.json.gz"). If a transport decompressed it on the way in (a server
 	// sending Content-Encoding: gzip makes net/http do so transparently), the bytes are already
@@ -803,25 +898,30 @@ func (c *Client) downloadStatsFile(ctx context.Context, rawURL string) ([]byte, 
 		return nil, errors.New("download x stats file: not a valid gzip file")
 	}
 	defer func() { _ = zr.Close() }()
-	data, err := io.ReadAll(io.LimitReader(zr, statsFileDecompressedCap+1))
+	data, err := io.ReadAll(io.LimitReader(zr, c.statsFileDecompressedCap+1))
 	if err != nil {
 		return nil, errors.New("download x stats file: gzip stream is corrupt")
 	}
-	if len(data) > statsFileDecompressedCap {
-		return nil, fmt.Errorf("download x stats file: decompressed file exceeds %d bytes", statsFileDecompressedCap)
+	if int64(len(data)) > c.statsFileDecompressedCap {
+		return nil, fmt.Errorf("download x stats file: decompressed file exceeds %d bytes", c.statsFileDecompressedCap)
 	}
 	return data, nil
 }
 
-// statsFileURLAllowed admits an https URL with no userinfo, or a URL on this client's own API
-// origin.
+// statsFileURLAllowed admits, with no userinfo, an https URL whose host is exactly one of the
+// client's statsFileHosts (statsFileHost in production), or a URL on this client's own API
+// origin. Everything else — any other https host included — is refused.
 func (c *Client) statsFileURLAllowed(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || u.User != nil || u.Host == "" {
 		return false
 	}
 	if strings.EqualFold(u.Scheme, "https") {
-		return true
+		for _, h := range c.statsFileHosts {
+			if strings.EqualFold(u.Host, h) {
+				return true
+			}
+		}
 	}
 	base, err := url.Parse(c.baseURL)
 	if err != nil {

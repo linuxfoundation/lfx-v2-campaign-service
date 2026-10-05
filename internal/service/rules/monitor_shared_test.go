@@ -102,7 +102,8 @@ func TestBudgetlessCampaignIsPacingUnknown_AllPlatforms(t *testing.T) {
 		// X, the second report-backed platform, paces a daily or a total budget; with neither
 		// there is nothing to pace.
 		{"x", "ACTIVE", func(r []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return EvaluateTwitterMonitor(r, 10, now)
+			first, last := now.AddDate(0, 0, -9), now
+			return EvaluateTwitterMonitor(r, &first, &last)
 		}},
 	}
 

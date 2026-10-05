@@ -236,6 +236,19 @@ openssl rand -base64 32
   only after the contract is verified against a live Microsoft ad
   account.
 
+- `TWITTER_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to the X (Twitter) Ads account monitor
+  (`GET /projects/{project_id}/connection-twitter-ads/account-monitor`).
+  Only the exact value `true` enables it; unset or any other value
+  fails closed and the endpoint answers 400 "not supported". Off by
+  default because the monitor's asynchronous stats-jobs contract
+  (active_entities, job create, job status, a downloaded gzip results
+  file) was implemented from X's published documentation and has NOT
+  been exercised against a live X Ads account. It gates only the
+  monitor — X's per-campaign metrics read is unaffected. The chart sets
+  it to `"false"` (`charts/lfx-v2-campaign-service/values.yaml`); flip
+  it only after the contract is verified against a live X ad account.
+
 - `LFX_FORCE_SYSTEM_ADS_ACCOUNT` (default unset, i.e. OFF) — makes the
   LF-owned system account (`system:linuxfoundation`) the PRIMARY
   credential source when a paid-ads campaign is CREATED, so every new

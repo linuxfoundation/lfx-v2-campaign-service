@@ -124,6 +124,14 @@ type ReportedAccountRead struct {
 	// MetricsAsOf is when the report the metrics came from was requested from the platform
 	// (ReadyAccountReport.AsOf); nil when no report has finished yet.
 	MetricsAsOf *time.Time
+	// MetricsWindowStart / MetricsWindowEnd are the calendar window that report covers
+	// (ReadyAccountReport.WindowStart/WindowEnd: its first and last day in the platform's
+	// reporting timezone, as UTC-midnight dates); nil when no report has finished yet. A rule
+	// engine that judges metrics against dates — X's, which compares the window with each
+	// campaign's account-local flight — must use this window, not one derived from the service's
+	// clock: the metrics describe these days, whatever "today" is where the service runs.
+	MetricsWindowStart *time.Time
+	MetricsWindowEnd   *time.Time
 	// MetricsPending is true while a report is building on the platform, so a later request
 	// will see newer (or first) metrics.
 	MetricsPending bool

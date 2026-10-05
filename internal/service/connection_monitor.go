@@ -264,7 +264,7 @@ func (s *ConnectionService) monitorReportedAccount(
 	days int,
 	platform model.Provider,
 	discovery accountDiscovery,
-	evaluate func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem),
+	evaluate func(read *model.ReportedAccountRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem),
 ) (*conn.AccountMonitor, error) {
 	if err := rejectSystemScope(projectID); err != nil {
 		return nil, err
@@ -280,7 +280,7 @@ func (s *ConnectionService) monitorReportedAccount(
 	if rerr != nil {
 		return nil, s.classifyDiscoveryError(ctx, projectID, discovery, rerr)
 	}
-	rows, actionItems := evaluate(read.Rows)
+	rows, actionItems := evaluate(read)
 	out := buildAccountMonitor(accountID, days, rows, actionItems)
 	if read.MetricsAsOf != nil {
 		asOf := read.MetricsAsOf.UTC().Format(time.RFC3339)
@@ -327,19 +327,23 @@ func (s *ConnectionService) MonitorMetaAdsAccount(ctx context.Context, p *conn.M
 // for why Microsoft cannot be read live like the other four.
 func (s *ConnectionService) MonitorMicrosoftAdsAccount(ctx context.Context, p *conn.MonitorMicrosoftAdsAccountPayload) (*conn.AccountMonitor, error) {
 	return s.monitorReportedAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderMicrosoftAds, microsoftAdsMonitorDiscovery,
-		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return rules.EvaluateMicrosoftMonitor(rows, p.Days)
+		func(read *model.ReportedAccountRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+			return rules.EvaluateMicrosoftMonitor(read.Rows, p.Days)
 		})
 }
 
 // MonitorTwitterAdsAccount reads every live campaign on an X Ads account, with metrics from the
 // last finished set of X stats jobs — report-backed for every `days` value, see
 // Orchestrator.ReadReportedAccountCampaigns and internal/platform/twitter/monitor.go for why.
+//
+// The rules are evaluated on the saved report's own window — the account-local calendar days X's
+// stats jobs covered — not on a "today" taken from this service's clock, which is UTC and would
+// disagree with the account's days (and with the line items' account-local flight dates) for
+// part of every day.
 func (s *ConnectionService) MonitorTwitterAdsAccount(ctx context.Context, p *conn.MonitorTwitterAdsAccountPayload) (*conn.AccountMonitor, error) {
-	now := time.Now()
 	return s.monitorReportedAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderTwitterAds, twitterAdsMonitorDiscovery,
-		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return rules.EvaluateTwitterMonitor(rows, p.Days, now)
+		func(read *model.ReportedAccountRead) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+			return rules.EvaluateTwitterMonitor(read.Rows, read.MetricsWindowStart, read.MetricsWindowEnd)
 		})
 }
 

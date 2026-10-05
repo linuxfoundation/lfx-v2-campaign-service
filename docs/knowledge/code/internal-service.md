@@ -1758,7 +1758,19 @@ building and the last finished report's as-of (its SUBMISSION time) is older tha
 rather than thrown away — and fills metrics from the last finished
 report — all inside ONE `accountsCallTimeout`, because three per-step timeouts could together
 outlast the 60s ingress. Only the live list can fail the call; a check, submit or save error
-is logged and the response serves whatever was saved. State lives in
+is logged and the response serves whatever was saved. The one write that does NOT share the
+call budget is recording a completed submission: `MarkAccountReportPending` (and the lost-race
+re-read after it) runs on `context.WithTimeout(context.WithoutCancel(ctx),
+accountReportMarkTimeout)` — 5s of its own — because a submission can finish with the shared
+budget spent (X's paced job creates take ~1s each), and a report built upstream but never
+recorded would be resubmitted on every read and never collected
+(`TestReadReported_MarkUsesItsOwnBudget`). A submission the dispatcher declines up front for
+lack of budget (`domain.ErrAccountReportBudgetTooShort`) is logged at info as a skip, not a
+failure. `mergeAccountReport` also carries the finished report's calendar window as
+`ReportedAccountRead.MetricsWindowStart/End`, and `monitorReportedAccount`'s evaluate callback
+now receives the whole read, so `MonitorTwitterAdsAccount` evaluates X's rules on the report's
+own account-local days rather than on `time.Now()`; Microsoft's callback still passes only the
+rows and `days`. State lives in
 `domain.AccountReportRepository` (`account_monitor_reports`), late-bound with
 `SetAccountReportStore` through `Container.newOrchestrator`'s parameter so neither
 construction path can forget it. `ConnectionService.monitorReportedAccount` is

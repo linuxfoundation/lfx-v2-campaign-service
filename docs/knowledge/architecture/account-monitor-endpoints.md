@@ -517,7 +517,12 @@ So the read is split, and the state between requests is saved:
   older than `accountReportFreshFor` (30m); fill each live campaign's metrics from the last
   finished report. The saved snapshot is read first, on the request context, so a slow list
   cannot turn the store read into a 503. A check, submit or save that fails is logged and
-  never fails the read. Checking BEFORE abandoning matters: an age-only abandon threw away
+  never fails the read. Recording a submission that completed (`MarkAccountReportPending`)
+  runs on its OWN short budget — `accountReportMarkTimeout` (5s) on a context detached from the
+  read's cancellation — not on the shared, possibly spent, call budget: a report built upstream
+  but not recorded would be resubmitted on every read and never collected. A submission the
+  dispatcher declines for lack of budget (`domain.ErrAccountReportBudgetTooShort`) is logged as
+  a skip and retried on a later read. Checking BEFORE abandoning matters: an age-only abandon threw away
   every report on an account viewed less than hourly, so it never showed metrics.
 - **Store.** `account_monitor_reports` (migration `000035`), one row per
   (project, platform, account, days) with a READY half (served, possibly stale) and a
@@ -572,7 +577,12 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
   (`entity=CAMPAIGN`, `granularity=TOTAL`, `placement=ALL_ON_TWITTER`,
   `metric_groups=ENGAGEMENT,BILLING`), paced on the client's write pacer and never retried on
   a 429. The window is today-(days-1) 00:00 to the next midnight in the ACCOUNT's timezone,
-  sent as whole UTC hours. The saved report id is ONE composite value — the jobs' `id_str`s
+  sent as whole UTC hours. Before the first job POST the time left on the call budget is
+  checked against one pacer interval per job plus a 2s margin; if it cannot fit, the
+  submission is declined whole (`twitter.ErrStatsJobBudget` → `domain.ErrAccountReportBudgetTooShort`)
+  rather than stranding half-created jobs in X's 100 concurrent-job slots. The account timezone
+  is cached on the shared client for a minute, so one read (list, then submit) reads the
+  account once. The saved report id is ONE composite value — the jobs' `id_str`s
   comma-joined (≤10 jobs, ~210 bytes in a TEXT column). No active campaign gives the sentinel
   `none`, which Check answers as a finished empty report without calling X. An account with
   more than 200 active campaigns is refused rather than half-reported.
@@ -580,7 +590,10 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
   (and so does a finished job whose file is gone); any job still building, or missing from
   X's answer, leaves it pending; otherwise every file is downloaded — unsigned, because X says
   the URL needs no authentication and our credentials must not go to a storage host — then
-  gunzipped, bounded, and folded per campaign. Spend is `billed_charge_local_micro` ÷ 1e6;
+  gunzipped, bounded, and folded per campaign. The file URL is upstream data, so it is fetched
+  only over https from exactly `ton.twimg.com`, the host X's documented job example serves
+  results from (or the client's own API origin); any other host is refused with an error that
+  does not echo the URL. Spend is `billed_charge_local_micro` ÷ 1e6;
   `Partial` is always true because X's billed charge settles over days.
 - **Absence.** A campaign absent from a finished report served nothing, exactly as on
   Microsoft — and here that rests on `active_entities` too: a campaign it did not list had no
@@ -589,15 +602,26 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
   monitor does not request, and reports nothing at all for an account with no conversion tag,
   which is indistinguishable from a measured zero. Every row's `conversions` is absent.
 - **Rules.** `rules.EvaluateTwitterMonitor`: a daily budget paced as `BudgetDay` × the window
-  days the flight covers (window closed by the exclusive midnight after today, as Reddit's
-  daily branch settled); otherwise a total budget prorated over the flight; otherwise unknown.
-  The rule window is in UTC days while the stats jobs use the account's timezone — at most
-  one day's budget of difference at a flight edge.
+  days the flight covers (window closed by the exclusive midnight after its last day, as
+  Reddit's daily branch settled); otherwise a total budget prorated over the flight; otherwise
+  unknown. The window is the SAVED REPORT's own — its first and last day in the account's
+  timezone, carried to the service as `ReportedAccountRead.MetricsWindowStart/End` — so the
+  rules, the stats jobs and the line items' flight dates all count the account's calendar
+  days. (An earlier draft derived "today" from the service's UTC clock: on a US/Pacific
+  account every evening it counted a flight starting the next local day as scheduled and
+  raised a false zero-delivery HIGH.) With no window the pacing and zero-delivery judgements
+  are skipped. Microsoft's rules take no date at all (daily budget × days), so they did not
+  have this flaw and are unchanged.
 - **Boundary.** `resolveOwned` only, the bound account only
   (`ErrAccountNotManagedByConnection`), and `account_id` checked by the design `Pattern`
   `^[A-Za-z0-9]+$` + `MaxLength(64)` and identically by `twitter.ValidateMonitorAccountID` —
   the connection's own rule, so every storable id can be monitored. Every refusal makes zero
-  upstream calls. There is no enable flag: X's per-campaign metrics read has never had one.
+  upstream calls.
+- **Gate.** Behind `TWITTER_METRICS_ENABLED` (chart default `"false"`), on the same terms as
+  Microsoft's and Reddit's gates: only exactly `"true"` enables it, and disabled, all three
+  `AccountReportReader` methods answer `ErrAccountMetricsUnsupported` — the same 400 as a
+  platform with no monitor — before any credential is resolved. It gates only the monitor; X's
+  per-campaign metrics read is a different endpoint and is not affected.
 - **Unverified.** The whole X contract here follows docs.x.com and has not been exercised
   against a live X account; the specific open points (half-hour timezones, the queued and
   failed status spellings, whether job creation counts as a write) are marked UNVERIFIED in

@@ -506,9 +506,12 @@ func TestMonitorTwitterAdsAccount_ServesSavedReport(t *testing.T) {
 		},
 		submitID: "111,222",
 	}
+	// The saved report's window is the account's local days Sep 29..Oct 5; X's rules pace on it.
 	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{
-		AsOf: asOf,
-		Rows: []model.AccountReportRow{{PlatformCampaignID: "c1", Spend: 70, Impressions: 1000, Clicks: 30}},
+		AsOf:        asOf,
+		WindowStart: time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC),
+		WindowEnd:   time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC),
+		Rows:        []model.AccountReportRow{{PlatformCampaignID: "c1", Spend: 70, Impressions: 1000, Clicks: 30}},
 	}}}
 	got, err := twitterMonitorService(reader, store).MonitorTwitterAdsAccount(context.Background(),
 		&conn.MonitorTwitterAdsAccountPayload{ProjectID: "p", AccountID: "a1", Days: 7})
@@ -523,6 +526,12 @@ func TestMonitorTwitterAdsAccount_ServesSavedReport(t *testing.T) {
 	}
 	if got.Totals.Spend != 70 || got.Totals.CampaignCount != 2 {
 		t.Errorf("totals = %+v, want spend 70 over both returned rows", got.Totals)
+	}
+	// c1: 70 spent against 10/day over the report's seven days — paced on the report's window.
+	for _, c := range got.Campaigns {
+		if c.PlatformCampaignID == "c1" && (c.PacingUnknown || c.PacingPct != 100) {
+			t.Errorf("c1 pacing = %v, want 100 over the report's seven days", c.PacingPct)
+		}
 	}
 	// c2 is absent from the finished report: a measured zero, and PAUSED — X's paused rule fires.
 	var paused bool
