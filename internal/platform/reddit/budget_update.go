@@ -45,6 +45,9 @@ type CampaignBudget struct {
 	// unreported flag is NOT "on": a caller must refuse rather than assume the budget is on the
 	// campaign.
 	CampaignBudgetOptimization *bool
+	// BidStrategy is the campaign's raw bid_strategy, "" when not reported. Read only by the bid
+	// write (bid_update.go), which needs the campaign-level strategy under CBO.
+	BidStrategy string
 }
 
 // ErrBudgetAmountInvalid marks every refusal BudgetMicros makes, so a caller can tell "this
@@ -125,6 +128,7 @@ type campaignBudgetWire struct {
 	GoalType    string          `json:"goal_type"`
 	GoalValue   json.RawMessage `json:"goal_value"`
 	CBO         *bool           `json:"is_campaign_budget_optimization"`
+	BidStrategy string          `json:"bid_strategy"`
 }
 
 // GetCampaignBudget reads one campaign's live budget state via
@@ -165,6 +169,7 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 		AdAccountID:                strings.TrimSpace(wire.AdAccountID),
 		GoalType:                   strings.TrimSpace(wire.GoalType),
 		CampaignBudgetOptimization: wire.CBO,
+		BidStrategy:                strings.TrimSpace(wire.BidStrategy),
 	}
 	out.GoalValueMicros, out.GoalValueUnparseable = parseGoalValue(wire.GoalValue)
 	return out, nil

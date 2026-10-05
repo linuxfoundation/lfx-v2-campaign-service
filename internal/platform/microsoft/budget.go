@@ -146,10 +146,17 @@ func (b *CampaignBudget) IsShared() bool { return b.SharedBudgetID != "" }
 // queryCampaignsByIDsRequest is the POST Campaigns/QueryByIds (GetCampaignsByIds) body.
 // CampaignType is sent explicitly even though Search is the documented default, so the read's
 // scope does not depend on a default that could change.
+//
+// ReturnAdditionalFields is sent only by the bid-strategy read (bid.go), which needs BidStrategyId:
+// Microsoft returns that element only when it is requested ("Request that the BidStrategyId
+// element be included within each returned Campaign object",
+// https://learn.microsoft.com/en-us/advertising/campaign-management-service/campaignadditionalfield).
+// omitempty keeps the budget read's body byte-for-byte what it was.
 type queryCampaignsByIDsRequest struct {
-	AccountId    json.Number   `json:"AccountId"`
-	CampaignIds  []json.Number `json:"CampaignIds"`
-	CampaignType string        `json:"CampaignType"`
+	AccountId              json.Number   `json:"AccountId"`
+	CampaignIds            []json.Number `json:"CampaignIds"`
+	CampaignType           string        `json:"CampaignType"`
+	ReturnAdditionalFields string        `json:"ReturnAdditionalFields,omitempty"`
 }
 
 // msCampaignBudgetRead is the subset of a returned Campaign the budget guards need. Every id is
@@ -186,7 +193,7 @@ type queryCampaignsByIDsResponse struct {
 // a PartialError of any other kind. None of those describes this campaign, and a budget guard
 // reasoning about a campaign it did not actually read is a guard in name only.
 func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*CampaignBudget, error) {
-	camp, id, err := c.queryCampaignByID(ctx, campaignID, "budget")
+	camp, id, err := c.queryCampaignByID(ctx, campaignID, "budget", "")
 	if err != nil || camp == nil {
 		return nil, err
 	}
@@ -224,15 +231,16 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 // Campaigns field, a null slot Microsoft did not explain, a slot for a DIFFERENT campaign id, or
 // a PartialError of any other kind — a guard reasoning about a campaign it did not actually read
 // is a guard in name only.
-func (c *Client) queryCampaignByID(ctx context.Context, campaignID, what string) (*msCampaignBudgetRead, string, error) {
+func (c *Client) queryCampaignByID(ctx context.Context, campaignID, what, additionalFields string) (*msCampaignBudgetRead, string, error) {
 	id := strings.TrimSpace(campaignID)
 	if !idRE.MatchString(id) {
 		return nil, id, fmt.Errorf("microsoft-ads: campaign id %q is not a numeric id", campaignID)
 	}
 	body, err := c.doRequest(ctx, http.MethodPost, "Campaigns/QueryByIds", queryCampaignsByIDsRequest{
-		AccountId:    json.Number(c.account.AccountID),
-		CampaignIds:  []json.Number{json.Number(id)},
-		CampaignType: campaignTypeSearch,
+		AccountId:              json.Number(c.account.AccountID),
+		CampaignIds:            []json.Number{json.Number(id)},
+		CampaignType:           campaignTypeSearch,
+		ReturnAdditionalFields: additionalFields,
 	}, true)
 	if err != nil {
 		// Microsoft may answer an unknown id with a fault rather than a 200 PartialError; the

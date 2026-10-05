@@ -112,6 +112,16 @@ type adGroupBidWire struct {
 	BidValue    json.RawMessage `json:"bid_value"`
 }
 
+// CheckAdGroupID refuses an ad group id that could not address a Reddit resource path, with
+// ErrInvalidAdGroupID — the same guard adGroupBidPath applies — so a caller can reject a corrupt
+// row before making any other request.
+func CheckAdGroupID(adGroupID string) error {
+	if id := strings.TrimSpace(adGroupID); id == "" || !accountIDRe.MatchString(id) {
+		return fmt.Errorf("reddit: ad group bid: %w", ErrInvalidAdGroupID)
+	}
+	return nil
+}
+
 // adGroupBidPath validates both interpolated ids and returns the ad group's resource path.
 func (c *Client) adGroupBidPath(adGroupID string) (string, string, error) {
 	accountID := strings.TrimSpace(c.account.AccountID)
@@ -172,11 +182,12 @@ func (c *Client) GetAdGroupBid(ctx context.Context, adGroupID string) (*AdGroupB
 //
 // micros must be the value BidMicros produced. The PATCH converges when repeated, so request()
 // retries a 429, as UpdateCampaignBudget does. A transport failure, 3xx, exhausted 429 or 5xx is
-// UNCONFIRMED (IsOutcomeUnconfirmed). A definite 400 whose body names bid_value is returned as a
-// bidAmountError with a generic client-safe sentence — Reddit's own text is never surfaced, and
-// Reddit's error shape is not documented field-by-field, so this is a best-effort match whose
-// miss is still truthful (a definite failure: the platform unchanged). A 2xx echo naming another
-// ad group or another bid_value is UNCONFIRMED.
+// UNCONFIRMED (IsOutcomeUnconfirmed). A definite 400 carrying a STRUCTURED field error on
+// bid_value (bidValueFieldError) is returned as a bidAmountError with a generic client-safe
+// sentence — Reddit's own text is never surfaced. Any other 400, including one that merely
+// mentions bid_value elsewhere in its body (a strategy-change race, a payload echo), stays a
+// definite refusal, which is still truthful: the platform is unchanged. A 2xx echo naming
+// another ad group or another bid_value is UNCONFIRMED.
 func (c *Client) UpdateAdGroupBid(ctx context.Context, adGroupID string, micros int64) error {
 	path, adGroupID, err := c.adGroupBidPath(adGroupID)
 	if err != nil {
@@ -189,7 +200,7 @@ func (c *Client) UpdateAdGroupBid(ctx context.Context, adGroupID string, micros 
 	resp, err := c.request(ctx, http.MethodPatch, path, body)
 	if err != nil {
 		var ae *apiError
-		if errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest && strings.Contains(ae.Body, "bid_value") {
+		if errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest && bidValueFieldError(ae.Body) {
 			return &bidAmountError{msg: fmt.Sprintf("Reddit refused a max CPC bid of %s for this ad group; it is outside the range Reddit accepts in the account's currency", formatBudgetAmount(float64(micros)/1_000_000))}
 		}
 		return fmt.Errorf("reddit: update ad group %s bid_value to %d: %w", adGroupID, micros, err)
@@ -208,4 +219,28 @@ func (c *Client) UpdateAdGroupBid(ctx context.Context, adGroupID string, micros 
 		return &transportError{Method: http.MethodPatch, Path: "ad group bid", Err: fmt.Errorf("bid update for ad group %s was acknowledged with a bid_value other than the %d micro-units sent", adGroupID, micros)}
 	}
 	return nil
+}
+
+// bidValueFieldError reports whether a 400 body is a structured field-validation error naming
+// bid_value: {"error":{"fields":[{"field":"bid_value", ...}]}}. Only that shape is an AMOUNT
+// refusal; a body that mentions bid_value anywhere else (a message string, an echoed payload) is
+// not, because classifying it as one would tell the caller to change an amount that may not be
+// what Reddit refused.
+func bidValueFieldError(body string) bool {
+	var parsed struct {
+		Error struct {
+			Fields []struct {
+				Field string `json:"field"`
+			} `json:"fields"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		return false
+	}
+	for _, f := range parsed.Error.Fields {
+		if strings.TrimSpace(f.Field) == "bid_value" {
+			return true
+		}
+	}
+	return false
 }

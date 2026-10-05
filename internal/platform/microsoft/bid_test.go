@@ -200,3 +200,29 @@ func TestUpdateAdGroupCpcBid_ClassifiesRefusals(t *testing.T) {
 		})
 	}
 }
+
+// BidStrategyId is a CampaignAdditionalField — Microsoft returns it only when asked — so the bid
+// read must request it, or the portfolio guard never sees a portfolio. The budget read must not.
+func TestGetCampaignBidStrategy_RequestsBidStrategyID(t *testing.T) {
+	rec := &budgetRecorder{}
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		rec.record(r)
+		_, _ = io.WriteString(w, `{"Campaigns":[{"Id":321,"BudgetType":"DailyBudgetStandard","BiddingScheme":{"Type":"EnhancedCpc"}}],"PartialErrors":[]}`)
+	})
+	if _, err := c.GetCampaignBidStrategy(context.Background(), "321"); err != nil {
+		t.Fatalf("GetCampaignBidStrategy: %v", err)
+	}
+	if _, err := c.GetCampaignBudget(context.Background(), "321"); err != nil {
+		t.Fatalf("GetCampaignBudget: %v", err)
+	}
+	reqs := rec.all()
+	if len(reqs) != 2 {
+		t.Fatalf("want two reads, got %+v", reqs)
+	}
+	if want := `{"AccountId":1234567,"CampaignIds":[321],"CampaignType":"Search","ReturnAdditionalFields":"BidStrategyId"}`; reqs[0].body != want {
+		t.Errorf("bid read body = %s, want %s", reqs[0].body, want)
+	}
+	if want := `{"AccountId":1234567,"CampaignIds":[321],"CampaignType":"Search"}`; reqs[1].body != want {
+		t.Errorf("budget read body = %s, want %s (unchanged)", reqs[1].body, want)
+	}
+}

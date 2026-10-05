@@ -864,7 +864,10 @@ manualcpcbiddingscheme, updateadgroups, operation-error-codes).
   validation as `GetCampaignBudget`, now shared through `queryCampaignByID`. `BiddingScheme` and
   `BidStrategyId` are decoded RAW in the shared struct, so an unexpected shape can fail only the
   bid guard, never the budget read. Both `EnhancedCpc` and `EnhancedCpcBiddingScheme` spellings
-  are recognized (Microsoft documents both). `UsesAdGroupBid()` is true only for the campaign's
+  are recognized (Microsoft documents both). `BidStrategyId` is a CampaignAdditionalField —
+  returned only when requested — so this read sends `ReturnAdditionalFields: "BidStrategyId"`
+  (the budget read's body is unchanged); once requested, an absent/null value is Microsoft's
+  documented "not using a portfolio bid strategy". `UsesAdGroupBid()` is true only for the campaign's
   OWN EnhancedCpc/ManualCpc — an absent scheme (Microsoft omits it for MaxConversionValue and
   TargetImpressionShare), an unreadable one, or any portfolio is false.
 - `ValidateMaxCPCBid(amount)` — the create path's `[minCpcBid, maxCpcBid]` (0.01–1000) with no

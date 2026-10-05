@@ -101,7 +101,9 @@ func TestUpdateAdGroupBid_OutcomeClassification(t *testing.T) {
 		amount      bool
 		unconfirmed bool
 	}{
-		{name: "400 naming bid_value", status: 400, body: `{"error":{"field":"bid_value"}}`, amount: true},
+		{name: "400 with a bid_value field error", status: 400, body: `{"error":{"fields":[{"field":"bid_value","message":"too low"}]}}`, amount: true},
+		{name: "400 mentioning bid_value outside fields[]", status: 400, body: `{"error":{"message":"bid_value is not allowed with BIDLESS","fields":[{"field":"bid_strategy"}]},"data":{"bid_value":2000000}}`},
+		{name: "400 whose field error is another field", status: 400, body: `{"error":{"fields":[{"field":"bid_type"}]}}`},
 		{name: "400 about something else", status: 400, body: `{"error":"nope"}`},
 		{name: "5xx", status: 502, body: `{}`, unconfirmed: true},
 		{name: "echo of another bid", status: 200, body: `{"data":{"id":"t5_ag","bid_value":7}}`, unconfirmed: true},
@@ -136,5 +138,17 @@ func TestUpdateAdGroupBid_RefusesANonPositiveMicroAmount(t *testing.T) {
 	}
 	if n := len(seen()); n != 0 {
 		t.Errorf("want no request, got %d", n)
+	}
+}
+
+// The campaign read also reports the campaign-level bid_strategy the bid write needs under CBO.
+func TestGetCampaignBudget_ReportsTheCampaignBidStrategy(t *testing.T) {
+	c, _ := budgetTestClient(t, http.StatusOK, `{"data":{"id":"t3_c","is_campaign_budget_optimization":true,"bid_strategy":"BIDLESS"}}`)
+	got, err := c.GetCampaignBudget(context.Background(), "t3_c")
+	if err != nil {
+		t.Fatalf("GetCampaignBudget: %v", err)
+	}
+	if got.BidStrategy != "BIDLESS" {
+		t.Errorf("BidStrategy = %q, want BIDLESS", got.BidStrategy)
 	}
 }

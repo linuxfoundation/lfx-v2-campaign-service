@@ -397,10 +397,15 @@ recognize.
   `ErrInvalidAdGroupID` before any request.
 - `UpdateAdGroupBid(ctx, adGroupID, micros)` — PATCH of the same path naming ONLY `bid_value`
   (never `bid_strategy`/`bid_type`), with `UpdateCampaignBudget`'s 429-retry and echo checks
-  (another ad group or another `bid_value` in a 2xx → UNCONFIRMED). A definite 400 whose body
-  names `bid_value` is a `bidAmountError` with this package's own sentence — Reddit's error
-  shape is not documented field-by-field, so this is a best-effort match whose miss is still a
-  truthful definite failure.
+  (another ad group or another `bid_value` in a 2xx → UNCONFIRMED). Only a definite 400 carrying
+  a STRUCTURED field error, `{"error":{"fields":[{"field":"bid_value"}]}}`
+  (`bidValueFieldError`), is a `bidAmountError` with this package's own sentence; a body that
+  mentions `bid_value` anywhere else (a strategy race, an echoed payload) stays a definite
+  refusal. Known gap shared with the budget write: a definite 4xx after a retried 429 is
+  classified definite rather than unconfirmed.
+- `CheckAdGroupID(id)` — the path guard alone, so the dispatcher refuses a corrupt recorded id
+  before its first request. `GetCampaignBudget` now also reports the campaign's `bid_strategy`
+  (`CampaignBudget.BidStrategy`), which the bid write needs under CBO.
 
 ## Metrics reads — contract from Reddit's public OpenAPI spec (LFXV2-3282)
 

@@ -38,7 +38,15 @@ import (
 //     MaxConversionValueBiddingScheme or TargetImpressionShareBiddingScheme" — so an ABSENT
 //     scheme is not "manual"; it is refused.
 //   - A campaign with BidStrategyId > 0 "is using a portfolio bid strategy" shared with other
-//     campaigns (same Campaign reference); it is refused rather than reasoned about.
+//     campaigns (same Campaign reference); it is refused rather than reasoned about. BidStrategyId
+//     is NOT returned by default: it is a CampaignAdditionalField ("Request that the BidStrategyId
+//     element be included within each returned Campaign object"), so this read sends
+//     ReturnAdditionalFields=BidStrategyId
+//     (https://learn.microsoft.com/en-us/advertising/campaign-management-service/campaignadditionalfield,
+//     https://learn.microsoft.com/en-us/advertising/campaign-management-service/getcampaignsbyids).
+//     Once requested, an absent/null value is Microsoft's documented "not using a portfolio bid
+//     strategy" ("If the field is empty, then the campaign is not using a portfolio bid
+//     strategy"); a present value that is neither 0 nor a positive id fails closed.
 //
 // The write is UpdateAdGroups (PUT AdGroups) naming ONLY Id and CpcBid — the same endpoint and
 // 200-with-PartialErrors contract the status toggle's ad-group PUT uses (putUpdate).
@@ -70,6 +78,11 @@ var (
 	bidNotSettable  = []string{"CampaignServiceCannotSetSearchBidOnAdGroup", "1229"}
 	adGroupInvalid  = []string{"AdGroupIdInvalid", "605", "CampaignServiceInvalidAdGroupId", "1201"}
 )
+
+// campaignFieldBidStrategyID is the CampaignAdditionalField that makes GetCampaignsByIds return
+// BidStrategyId. Without it the element is never populated and the portfolio guard would be a
+// guard in name only.
+const campaignFieldBidStrategyID = "BidStrategyId"
 
 // ErrBidAmountInvalid marks a bid refused because of the AMOUNT — by this client's own bounds or
 // by Microsoft's definite refusal. Read the client-safe sentence with BidAmountReason.
@@ -153,7 +166,7 @@ func normalizeBidSchemeType(t string) string {
 // same read and the same answer validation as GetCampaignBudget. It is a READ: every failure is
 // DEFINITE. (nil, nil) means Microsoft affirmatively reported no such campaign.
 func (c *Client) GetCampaignBidStrategy(ctx context.Context, campaignID string) (*CampaignBidStrategy, error) {
-	camp, id, err := c.queryCampaignByID(ctx, campaignID, "bid strategy")
+	camp, id, err := c.queryCampaignByID(ctx, campaignID, "bid strategy", campaignFieldBidStrategyID)
 	if err != nil || camp == nil {
 		return nil, err
 	}

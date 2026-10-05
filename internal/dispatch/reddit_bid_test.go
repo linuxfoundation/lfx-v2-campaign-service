@@ -7,9 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -23,6 +26,46 @@ const (
 	redditManualCPCAdGroup = `{"data":{"id":"t5_ag","campaign_id":"t3_c","bid_strategy":"MANUAL_BIDDING","bid_type":"CPC","bid_value":1500000}}`
 )
 
+// redditManualCBOCampaign is the campaign the bid write accepts: CBO on (as the create path
+// sets it) with the campaign's own MANUAL_BIDDING strategy.
+const redditManualCBOCampaign = `{"data":{"id":"t3_c","ad_account_id":"t2_acct","is_campaign_budget_optimization":true,"bid_strategy":"MANUAL_BIDDING"}}`
+
+// newRedditBidStub is newRedditBudgetStub with the two GETs answered separately: the CAMPAIGN
+// read (its bid strategy) with campaignBody, the AD GROUP read with adGroupStatus/adGroupBody.
+func newRedditBidStub(t *testing.T, campaignBody string, adGroupStatus int, adGroupBody string, patchStatus int, patchBody string) *redditBudgetStub {
+	t.Helper()
+	s := &redditBudgetStub{}
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		s.mu.Lock()
+		s.seen = append(s.seen, budgetRequest{Method: r.Method, Path: r.URL.Path, Body: string(body)})
+		s.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPatch:
+			w.WriteHeader(patchStatus)
+			_, _ = io.WriteString(w, patchBody)
+		case r.URL.Path == redditBudgetCampaignPath:
+			_, _ = io.WriteString(w, campaignBody)
+		default:
+			w.WriteHeader(adGroupStatus)
+			_, _ = io.WriteString(w, adGroupBody)
+		}
+	}))
+	t.Cleanup(api.Close)
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		s.tokens.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	t.Cleanup(tok.Close)
+	s.d = NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
+	)
+	return s
+}
+
 func redditAdGroup(strategy, bidType string) string {
 	return `{"data":{"id":"t5_ag","campaign_id":"t3_c","bid_strategy":"` + strategy + `","bid_type":"` + bidType + `","bid_value":1500000}}`
 }
@@ -32,14 +75,14 @@ func writeRedditBid(s *redditBudgetStub, c *model.Campaign, amount float64) erro
 }
 
 func TestReddit_WriteBid_ManualCPCPatchesBidValueOnTheAdGroupOnly(t *testing.T) {
-	s := newRedditBudgetStub(t, http.StatusOK, redditManualCPCAdGroup, http.StatusOK,
+	s := newRedditBidStub(t, redditManualCBOCampaign, http.StatusOK, redditManualCPCAdGroup, http.StatusOK,
 		`{"data":{"id":"t5_ag","bid_value":2350000}}`)
 	if err := writeRedditBid(s, redditBudgetCampaign(), 2.35); err != nil {
 		t.Fatalf("WriteBid: %v", err)
 	}
 	reqs := s.requests()
-	if len(reqs) != 2 || reqs[0].Method != http.MethodGet || reqs[0].Path != redditBidAdGroupPath {
-		t.Fatalf("want the ad group GET then one PATCH, got %+v", reqs)
+	if len(reqs) != 3 || reqs[0].Path != redditBudgetCampaignPath || reqs[1].Method != http.MethodGet || reqs[1].Path != redditBidAdGroupPath {
+		t.Fatalf("want the campaign GET, the ad group GET, then one PATCH, got %+v", reqs)
 	}
 	p := s.patches()
 	if len(p) != 1 || p[0].Path != redditBidAdGroupPath {
@@ -62,11 +105,13 @@ func TestReddit_WriteBid_AutomatedOrUnaddressableRefusedWithZeroWrites(t *testin
 		{"CPM ad group", redditAdGroup("MANUAL_BIDDING", "CPM")},
 		{"bid type not reported", `{"data":{"id":"t5_ag","campaign_id":"t3_c","bid_strategy":"MANUAL_BIDDING"}}`},
 		{"ad group of another campaign", `{"data":{"id":"t5_ag","campaign_id":"t3_other","bid_strategy":"MANUAL_BIDDING","bid_type":"CPC"}}`},
+		// An unreported owner is refused like a different one — never assumed to be this campaign.
+		{"campaign_id not reported", `{"data":{"id":"t5_ag","bid_strategy":"MANUAL_BIDDING","bid_type":"CPC","bid_value":1500000}}`},
 		{"unreadable bid_value", `{"data":{"id":"t5_ag","campaign_id":"t3_c","bid_strategy":"MANUAL_BIDDING","bid_type":"CPC","bid_value":"1.5"}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newRedditBudgetStub(t, http.StatusOK, tc.getBody, http.StatusOK, `{"data":{}}`)
+			s := newRedditBidStub(t, redditManualCBOCampaign, http.StatusOK, tc.getBody, http.StatusOK, `{"data":{}}`)
 			err := writeRedditBid(s, redditBudgetCampaign(), 2)
 			if !errors.Is(err, domain.ErrBidUnwritable) {
 				t.Fatalf("want ErrBidUnwritable, got %T: %v", err, err)
@@ -79,7 +124,7 @@ func TestReddit_WriteBid_AutomatedOrUnaddressableRefusedWithZeroWrites(t *testin
 // A deleted ad group is not a deleted campaign: it is an unaddressable bid (409), not the 404
 // that would tell the caller the whole campaign is gone.
 func TestReddit_WriteBid_AbsentAdGroupIsUnwritableNotAbsentCampaign(t *testing.T) {
-	s := newRedditBudgetStub(t, http.StatusNotFound, `{}`, http.StatusOK, `{"data":{}}`)
+	s := newRedditBidStub(t, redditManualCBOCampaign, http.StatusNotFound, `{}`, http.StatusOK, `{"data":{}}`)
 	err := writeRedditBid(s, redditBudgetCampaign(), 2)
 	if !errors.Is(err, domain.ErrBidUnwritable) || errors.Is(err, domain.ErrPlatformCampaignAbsent) {
 		t.Fatalf("want ErrBidUnwritable and not ErrPlatformCampaignAbsent, got %v", err)
@@ -108,7 +153,7 @@ func TestReddit_WriteBid_RowAndRequestRefusalsBeforeAnyCall(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newRedditBudgetStub(t, http.StatusOK, redditManualCPCAdGroup, http.StatusOK, `{"data":{}}`)
+			s := newRedditBidStub(t, redditManualCBOCampaign, http.StatusOK, redditManualCPCAdGroup, http.StatusOK, `{"data":{}}`)
 			c := redditBudgetCampaign()
 			tc.mutate(c)
 			err := writeRedditBid(s, c, tc.amount)
@@ -143,6 +188,9 @@ func TestReddit_WriteBid_MutateOutcomeClassification(t *testing.T) {
 	}{
 		{"definite 400 naming bid_value is an amount refusal", http.StatusBadRequest, `{"error":{"fields":[{"field":"bid_value","message":"too low"}]}}`, false, domain.ErrBidAmountRejected},
 		{"definite 400 about something else", http.StatusBadRequest, `{"error":"bad request"}`, false, nil},
+		// Mentions bid_value, but not as a structured field error: a strategy race or an echoed
+		// payload must not be reported to the caller as an amount problem.
+		{"definite 400 mentioning bid_value outside fields[]", http.StatusBadRequest, `{"error":{"message":"bid_value cannot be set while bid_strategy is BIDLESS"}}`, false, nil},
 		{"definite 403", http.StatusForbidden, `{}`, false, nil},
 		{"5xx is ambiguous", http.StatusBadGateway, `{}`, true, nil},
 		{"2xx echoing another ad group", http.StatusOK, `{"data":{"id":"t5_other","bid_value":2000000}}`, true, nil},
@@ -150,7 +198,7 @@ func TestReddit_WriteBid_MutateOutcomeClassification(t *testing.T) {
 		{"2xx whose data is not an object", http.StatusOK, `{"data":[1]}`, true, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newRedditBudgetStub(t, http.StatusOK, redditManualCPCAdGroup, tc.status, tc.body)
+			s := newRedditBidStub(t, redditManualCBOCampaign, http.StatusOK, redditManualCPCAdGroup, tc.status, tc.body)
 			err := writeRedditBid(s, redditBudgetCampaign(), 2)
 			if err == nil {
 				t.Fatal("expected an error")
@@ -188,4 +236,52 @@ func TestReddit_WriteBid_UnusableConnectionRefusedBeforeAnyCall(t *testing.T) {
 	if !errors.Is(err, domain.ErrConnectionNotUsable) {
 		t.Fatalf("want ErrConnectionNotUsable, got %v", err)
 	}
+}
+
+// The CAMPAIGN's strategy governs its ad groups under CBO (which the create path turns on), so a
+// campaign whose own strategy is not manual is refused even when the ad group reads as manual —
+// and nothing past the campaign read is requested.
+func TestReddit_WriteBid_CampaignStrategyMustAllowAManualAdGroupBid(t *testing.T) {
+	cases := []struct {
+		name, campaignBody string
+		want               error
+	}{
+		{"CBO on, BIDLESS campaign (what the create path sends)", `{"data":{"id":"t3_c","is_campaign_budget_optimization":true,"bid_strategy":"BIDLESS"}}`, domain.ErrBidUnwritable},
+		{"CBO on, campaign strategy not reported", `{"data":{"id":"t3_c","is_campaign_budget_optimization":true}}`, domain.ErrBidUnwritable},
+		{"CBO flag not reported", `{"data":{"id":"t3_c","bid_strategy":"MANUAL_BIDDING"}}`, domain.ErrBidUnwritable},
+		{"CBO off, automated campaign strategy", `{"data":{"id":"t3_c","is_campaign_budget_optimization":false,"bid_strategy":"MAXIMIZE_VOLUME"}}`, domain.ErrBidUnwritable},
+		{"campaign under another account", `{"data":{"id":"t3_c","ad_account_id":"t2_other","is_campaign_budget_optimization":true,"bid_strategy":"MANUAL_BIDDING"}}`, domain.ErrCampaignAccountMismatch},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newRedditBidStub(t, tc.campaignBody, http.StatusOK, redditManualCPCAdGroup, http.StatusOK, `{"data":{}}`)
+			err := writeRedditBid(s, redditBudgetCampaign(), 2)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("want %v, got %T: %v", tc.want, err, err)
+			}
+			s.assertNoPatch(t)
+			if n := len(s.requests()); n != 1 {
+				t.Errorf("want only the campaign read, got %d request(s)", n)
+			}
+		})
+	}
+}
+
+// With CBO OFF and no campaign-level strategy reported, the ad group governs its own bid.
+func TestReddit_WriteBid_CBOOffDefersToTheAdGroup(t *testing.T) {
+	s := newRedditBidStub(t, `{"data":{"id":"t3_c","is_campaign_budget_optimization":false}}`, http.StatusOK, redditManualCPCAdGroup, http.StatusOK, `{"data":{}}`)
+	if err := writeRedditBid(s, redditBudgetCampaign(), 2); err != nil {
+		t.Fatalf("WriteBid: %v", err)
+	}
+	if n := len(s.patches()); n != 1 {
+		t.Errorf("want one PATCH, got %d", n)
+	}
+}
+
+func TestReddit_WriteBid_CampaignAbsentIs404Sentinel(t *testing.T) {
+	s := newRedditBudgetStub(t, http.StatusNotFound, `{}`, http.StatusOK, `{"data":{}}`)
+	if err := writeRedditBid(s, redditBudgetCampaign(), 2); !errors.Is(err, domain.ErrPlatformCampaignAbsent) {
+		t.Fatalf("want ErrPlatformCampaignAbsent, got %v", err)
+	}
+	s.assertNoPatch(t)
 }

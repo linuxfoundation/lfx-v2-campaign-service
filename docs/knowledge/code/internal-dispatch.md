@@ -1172,14 +1172,24 @@ classified. Nothing is written until every guard has passed.
   floor/ceiling/invalid-bid codes → `ErrBidAmountRejected`; CannotSetSearchBidOnAdGroup or an
   invalid ad group id → `ErrBidUnwritable`; anything else definite → default 503 "not modified".
 - **Reddit** (`reddit_bid.go`): writes `bid_value` of the ad group recorded in the result blob
-  (`redditChildIDs`). Reads the ad group and requires: it belongs to this campaign (when
-  reported), `bid_strategy == MANUAL_BIDDING`, `bid_type == CPC`, a legible `bid_value`; else
-  `ErrBidUnwritable`. **Every Reddit campaign this service creates is `BIDLESS`**, so this leg
+  (`redditChildIDs`; its shape is checked with `reddit.CheckAdGroupID` before any request).
+  Reads the CAMPAIGN first (`GetCampaignBudget`, which now also reports `bid_strategy`): under
+  CBO the ad group's strategy must match the campaign's, and Reddit's reference could not be
+  fetched to confirm more, so CBO on requires the campaign's own `MANUAL_BIDDING`, an unreported
+  CBO flag is refused, and CBO off accepts only an absent or `MANUAL_BIDDING` campaign strategy;
+  an absent campaign → `ErrPlatformCampaignAbsent`, a campaign reported under another account →
+  `ErrCampaignAccountMismatch`. Then reads the ad group and requires: it belongs to this campaign
+  (an UNREPORTED `campaign_id` is refused like a different one), `bid_strategy == MANUAL_BIDDING`,
+  `bid_type == CPC`, a legible `bid_value`; else `ErrBidUnwritable`. **Every Reddit campaign this service creates is `BIDLESS`**, so this leg
   refuses them until an operator moves the ad group to manual bidding. A 404 on the ad group is
   `ErrBidUnwritable`, NOT `ErrPlatformCampaignAbsent` — the campaign may still exist. Amount via
   `reddit.BidMicros` (positive, ≤ 1,000,000, ≥ one micro). PATCH outcomes as the budget write's,
-  plus a definite 400 whose body names `bid_value` → `ErrBidAmountRejected` with this service's
-  own sentence (never Reddit's text).
+  plus a definite 400 carrying a STRUCTURED field error on `bid_value`
+  (`error.fields[].field == "bid_value"`) → `ErrBidAmountRejected` with this service's own
+  sentence (never Reddit's text); a 400 that merely mentions `bid_value` elsewhere stays a
+  definite refusal. **Known gap, inherited from the Reddit budget write:** a definite 4xx that
+  follows a retried 429 is classified DEFINITE, not unconfirmed (Microsoft's `putUpdate` treats
+  it as unconfirmed); the 429'd attempt may have applied.
 
 ## Metrics read (optional capability)
 

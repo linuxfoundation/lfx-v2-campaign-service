@@ -28,9 +28,11 @@ import (
 // its ad group to MANUAL_BIDDING in Reddit Ads Manager. Writing a bid_value under BIDLESS would
 // be ignored, or read as a request to switch strategy; this path never sends bid_strategy.
 //
-// READ-THEN-WRITE, and the read establishes four facts: the ad group belongs to this campaign;
-// its strategy is MANUAL_BIDDING; its bid_type is CPC (the unit the request names); and its
-// current bid_value is legible. Each unreported fact is refused, never assumed.
+// READ-THEN-WRITE. The CAMPAIGN read establishes that its own bid strategy is compatible with a
+// manual ad-group bid (under CBO the ad group's strategy must match the campaign's); the AD
+// GROUP read establishes four facts: it belongs to this campaign; its strategy is
+// MANUAL_BIDDING; its bid_type is CPC (the unit the request names); and its current bid_value
+// is legible. Each unreported fact is refused, never assumed.
 //
 // NOTHING IS MUTATED UNTIL EVERY GUARD HAS PASSED.
 func (d *RedditDispatcher) WriteBid(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, bid model.BidChange) error {
@@ -51,6 +53,12 @@ func (d *RedditDispatcher) WriteBid(ctx context.Context, projectID string, platf
 			campaign.PlatformCampaignID, domain.ErrBidUnwritable)
 	}
 
+	// A recorded ad group id that cannot address a path is a defect in the row, refused before
+	// any request — including the campaign read below.
+	if err := reddit.CheckAdGroupID(adGroupID); err != nil {
+		return fmt.Errorf("write reddit campaign bid: the campaign row's recorded ad group id cannot address a reddit request: %w: %w", err, domain.ErrBidUnwritable)
+	}
+
 	// AMOUNT — a pure function of the request, refused before any call (400).
 	micros, err := reddit.BidMicros(bid.Amount)
 	if err != nil {
@@ -63,6 +71,45 @@ func (d *RedditDispatcher) WriteBid(ctx context.Context, projectID string, platf
 	}
 	if err := verifyRedditAccountMatch("write reddit campaign bid", campaign, client); err != nil {
 		return err
+	}
+
+	// THE CAMPAIGN'S STRATEGY FIRST. Under Campaign Budget Optimization (which the create path
+	// turns on) the ad group's bid_strategy must MATCH the campaign's, so the campaign is what
+	// governs whether a manual bid is used. Reddit's reference could not be fetched to confirm
+	// how a campaign-level strategy governs its ad groups, so this reads it and refuses unless it
+	// is compatible with a manual ad-group bid: CBO on requires the campaign's own MANUAL_BIDDING;
+	// an unreported CBO flag is refused; CBO off accepts only an absent or MANUAL_BIDDING
+	// campaign strategy. The read is GetCampaignBudget's — the same path, the same validation.
+	camp, err := client.GetCampaignBudget(ctx, campaign.PlatformCampaignID)
+	if err != nil {
+		if errors.Is(err, reddit.ErrInvalidAccountID) {
+			return res.systemScoped(fmt.Errorf("%w: %w: write reddit campaign bid: the connection's ad account id cannot address a reddit request: %w",
+				domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, err))
+		}
+		if errors.Is(err, reddit.ErrInvalidCampaignID) {
+			return fmt.Errorf("write reddit campaign bid: the campaign row's platform campaign id cannot address a reddit request: %w: %w", err, domain.ErrBidUnwritable)
+		}
+		return fmt.Errorf("write reddit campaign bid: read campaign bid strategy: %w", err)
+	}
+	if camp == nil {
+		return fmt.Errorf("%w: reddit campaign %s", domain.ErrPlatformCampaignAbsent, campaign.PlatformCampaignID)
+	}
+	if camp.AdAccountID != "" && camp.AdAccountID != strings.TrimSpace(client.AccountID()) {
+		return fmt.Errorf("write reddit campaign bid: campaign %s is reported under ad account %s, not the connection's account %s: %w",
+			campaign.PlatformCampaignID, camp.AdAccountID, client.AccountID(), domain.ErrCampaignAccountMismatch)
+	}
+	switch {
+	case camp.CampaignBudgetOptimization == nil:
+		return fmt.Errorf("write reddit campaign bid: campaign %s did not report is_campaign_budget_optimization, so whether its own bid strategy governs its ad groups cannot be established: %w",
+			campaign.PlatformCampaignID, domain.ErrBidUnwritable)
+	case *camp.CampaignBudgetOptimization && camp.BidStrategy != reddit.BidStrategyManual,
+		!*camp.CampaignBudgetOptimization && camp.BidStrategy != "" && camp.BidStrategy != reddit.BidStrategyManual:
+		reported := camp.BidStrategy
+		if reported == "" {
+			reported = "no bid_strategy"
+		}
+		return fmt.Errorf("write reddit campaign bid: campaign %s reports %s, which governs its ad groups' bidding, so a manual ad group bid would be ignored; this endpoint never changes a bid strategy — switch the campaign to manual bidding in Reddit Ads Manager first: %w",
+			campaign.PlatformCampaignID, reported, domain.ErrBidUnwritable)
 	}
 
 	current, err := client.GetAdGroupBid(ctx, adGroupID)
@@ -85,8 +132,14 @@ func (d *RedditDispatcher) WriteBid(ctx context.Context, projectID string, platf
 			adGroupID, campaign.PlatformCampaignID, domain.ErrBidUnwritable)
 	}
 
-	// GUARD 1 — THE AD GROUP MUST BELONG TO THIS CAMPAIGN, when Reddit says which it belongs to.
-	if current.CampaignID != "" && current.CampaignID != strings.TrimSpace(campaign.PlatformCampaignID) {
+	// GUARD 1 — THE AD GROUP MUST BELONG TO THIS CAMPAIGN. An UNREPORTED campaign_id is refused
+	// like a different one: "we could not establish this ad group is the campaign's" and "it is
+	// the campaign's" are opposite facts, and only the second justifies a write.
+	if current.CampaignID == "" {
+		return fmt.Errorf("write reddit campaign bid: ad group %s did not report which campaign it belongs to, so it cannot be established that it is campaign %s's: %w",
+			adGroupID, campaign.PlatformCampaignID, domain.ErrBidUnwritable)
+	}
+	if current.CampaignID != strings.TrimSpace(campaign.PlatformCampaignID) {
 		return fmt.Errorf("write reddit campaign bid: ad group %s is reported under campaign %s, not %s: %w",
 			adGroupID, current.CampaignID, campaign.PlatformCampaignID, domain.ErrBidUnwritable)
 	}
