@@ -23,12 +23,18 @@ const (
 // Sending the Search shape here is rejected by the API, and adding pointers to
 // campaignCreate would make every Search create carry fields it must never omit.
 type demandGenCampaignCreate struct {
-	Name                           string         `json:"name"`
-	Status                         string         `json:"status"`
-	AdvertisingChannelType         string         `json:"advertisingChannelType"`
-	CampaignBudget                 string         `json:"campaignBudget"`
-	ContainsEuPoliticalAdvertising string         `json:"containsEuPoliticalAdvertising"`
-	TargetSpend                    map[string]any `json:"targetSpend"`
+	Name                           string `json:"name"`
+	Status                         string `json:"status"`
+	AdvertisingChannelType         string `json:"advertisingChannelType"`
+	CampaignBudget                 string `json:"campaignBudget"`
+	ContainsEuPoliticalAdvertising string `json:"containsEuPoliticalAdvertising"`
+	// biddingFields is embedded ANONYMOUSLY, exactly as on campaignCreate, so the
+	// oneof invariant has ONE definition rather than one per channel. It replaced a
+	// fixed `targetSpend` field. What is channel-specific is not the shape but which
+	// strategies may be sent, and that lives in validateBiddingPlan — which refuses
+	// everything except maximize clicks here, on recorded live-API evidence (see the
+	// note at the campaign create below).
+	biddingFields
 	// Carried even though this channel attaches its geo criteria at the AD GROUP level:
 	// geoTargetTypeSetting is a CAMPAIGN-level field in the Google Ads API and governs how
 	// location criteria are interpreted for the whole campaign, ad-group criteria included.
@@ -182,17 +188,21 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		// budget mutate on this channel exactly as it is on Search.
 		StartDateTime: pf.startDateTime,
 		EndDateTime:   pf.endDateTime,
-		// targetSpend, matching the legacy Express implementation's `target_spend: {}` —
-		// which is what serves this channel on app.lfx.dev today.
+		// Resolved by the SHARED preflight. On this channel the plan can only ever be
+		// maximize clicks, so this renders `targetSpend: {}` — matching the legacy
+		// Express implementation's `target_spend: {}`, which is what serves this channel
+		// on app.lfx.dev today.
 		//
 		// VERIFIED against the live API (2026-08-14): a validateOnly campaigns:mutate at
 		// v23 on a real account returned HTTP 200 for DEMAND_GEN + targetSpend. A review
 		// had flagged it as unsupported on this channel and proposed maximizeConversions
 		// instead; that payload returned HTTP 400
 		// BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET against the same budget.
-		// Do not "fix" this to a maximize-* strategy without re-running that check — the
-		// rejection lands AFTER the budget is created, which orphans it.
-		TargetSpend: map[string]any{},
+		// That recorded rejection is why demandGenBiddingStrategies holds exactly one
+		// entry: the rejection lands AFTER the budget is created, which orphans it, so
+		// widening the set is a live-API question and not a code-reading one. Re-run that
+		// validateOnly check before adding a strategy there.
+		biddingFields: pf.bidding.fields(),
 	}}}}
 	campaignResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), campaignReq, false)
 	if err != nil {

@@ -139,6 +139,35 @@ type CampaignInput struct {
 	// Demand Gen bids via targetSpend and rejects manualCpc outright. See
 	// validateCPCBid (adgroup_ad.go) for the accepted range.
 	CPCBid float64
+	// BiddingStrategy names the campaign's bidding strategy in the caller's
+	// vocabulary — the labels the Google Ads UI uses, lower-cased and hyphenated.
+	// See bidding.go for the accepted set, which channel takes which, and why
+	// `target-cpa`/`target-roas` are accepted alongside the `maximize-` spellings
+	// Google folded them into.
+	//
+	// Empty means the CHANNEL DEFAULT, which is the strategy this client hard-coded
+	// before the field existed — manual CPC on Search, maximize clicks on Demand Gen
+	// — so an existing caller's payload is unchanged to the byte.
+	BiddingStrategy string
+	// TargetCPA is the target cost per acquisition in whole units of the ad ACCOUNT's
+	// currency, carried only by the conversion-bidding strategies. 0 means UNSET:
+	// optional under `maximize-conversions`, REQUIRED under `target-cpa`, and
+	// REFUSED under any strategy that cannot bid to it rather than accepted and
+	// discarded.
+	TargetCPA float64
+	// TargetROAS is the target return on ad spend as a RATIO, not a percentage —
+	// 4.0 means four units of conversion value per unit spent. Same unset/required/
+	// refused rules as TargetCPA, against `maximize-conversion-value` and
+	// `target-roas`.
+	TargetROAS float64
+	// ConversionActions are the conversion actions this campaign optimizes toward,
+	// as bare numeric ids or full `customers/<id>/conversionActions/<id>` resource
+	// names. Empty means the campaign inherits the ACCOUNT's conversion goals, which
+	// is what every campaign created before this field existed does.
+	//
+	// SEARCH only, and REFUSED on Demand Gen rather than dropped — that channel does
+	// not take campaign.selective_optimization. See validateConversionActions.
+	ConversionActions []string
 	// StartDate / EndDate are the campaign's flight window as YYYY-MM-DD, matching
 	// the vocabulary the meta and reddit dispatch configs already use. Each is
 	// INDEPENDENTLY optional: empty means the field is not sent, so an empty
@@ -463,9 +492,11 @@ type campaignBudgetCreate struct {
 }
 
 // campaignCreate is the create payload for campaigns:mutate. Exactly one bidding
-// strategy is required; manualCpc{} is the dependency-free choice for a PAUSED
-// shell (maximizeConversions requires conversion tracking configured on the
-// account, which a generic broker can't assume).
+// strategy is required, and which one is now the caller's choice — see biddingFields
+// and validateBiddingPlan. manualCpc{} remains the DEFAULT because it is the
+// dependency-free choice for a PAUSED shell: every maximize-* strategy needs
+// conversion tracking configured on the account, which a generic broker cannot
+// assume, and it is also what this payload sent before the strategy was selectable.
 //
 // containsEuPoliticalAdvertising is REQUIRED on every v23 create: omitting it fails
 // with FieldError.REQUIRED, and since 2026-04-01 an account with any undeclared
@@ -489,7 +520,12 @@ type campaignCreate struct {
 	ContainsEuPoliticalAdvertising string               `json:"containsEuPoliticalAdvertising"`
 	NetworkSettings                networkSettings      `json:"networkSettings"`
 	GeoTargetTypeSetting           geoTargetTypeSetting `json:"geoTargetTypeSetting"`
-	ManualCPC                      json.RawMessage      `json:"manualCpc"`
+	// biddingFields is embedded ANONYMOUSLY so its keys flatten into the campaign
+	// object. It replaced a fixed `manualCpc` field: the strategy is a oneof, so the
+	// payload must be able to name a different one, and a struct that always sent
+	// manualCpc could only ever create a manually-bid campaign. Exactly one of its
+	// strategy pointers is non-nil — see biddingPlan.fields.
+	biddingFields
 	// StartDateTime/EndDateTime are campaign.start_date_time / campaign.end_date_time,
 	// formatted 'yyyy-MM-dd HH:mm:ss' and interpreted by Google in the ad ACCOUNT's
 	// timezone — NOT UTC and NOT the bare YYYY-MM-DD this service's config uses.
@@ -761,6 +797,13 @@ type campaignPreflight struct {
 	// fails before the budget mutate rather than after a paid campaign exists.
 	negativeKeywords []Keyword
 	cpcBidMicros     int64
+	// bidding is the resolved bidding strategy, its target if it takes one, and the
+	// conversion actions the campaign optimizes toward. Resolved here for the same
+	// reason everything else is: an unknown strategy name or a conversion action
+	// naming another account is rejected by Google AFTER the budget mutate, and a
+	// target silently dropped by the wrong strategy is never rejected at all. See
+	// validateBiddingPlan.
+	bidding biddingPlan
 	// startDateTime/endDateTime are the caller's YYYY-MM-DD flight window already
 	// rendered into the 'yyyy-MM-dd HH:mm:ss' form campaignCreate sends; empty means
 	// the corresponding field is omitted.
@@ -1049,6 +1092,14 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// AFTER validateCPCBid, because the bidding plan refuses a CPC bid under an
+	// automated strategy and the caller is better served by hearing that their bid is
+	// out of range than that it is incompatible with a strategy they would then fix
+	// only to meet the range error on the next attempt.
+	bidding, err := validateBiddingPlan(kind, c.account.CustomerID, in)
+	if err != nil {
+		return nil, err
+	}
 	startDateTime, endDateTime, err := validateFlightWindow(in.StartDate, in.EndDate)
 	if err != nil {
 		return nil, err
@@ -1085,6 +1136,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		adGroups:         adGroups,
 		negativeKeywords: negativeKeywords,
 		cpcBidMicros:     cpcBidMicros,
+		bidding:          bidding,
 		startDateTime:    startDateTime,
 		endDateTime:      endDateTime,
 	}, nil
@@ -1228,7 +1280,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// gains criteria later — by adoption, or by a human adding them in the Google Ads UI —
 		// then restricts by presence rather than silently reverting to the permissive default.
 		GeoTargetTypeSetting: geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
-		ManualCPC:            json.RawMessage(`{}`),
+		// Resolved in the preflight. With no BiddingStrategy supplied this is
+		// `manualCpc:{}` and nothing else — the exact payload this create sent before
+		// the strategy was selectable.
+		biddingFields: pf.bidding.fields(),
 		// Both omitempty: an empty string here is "the caller gave no such date", and the
 		// field disappears rather than being sent empty — which Google rejects outright.
 		StartDateTime: startDateTime,
@@ -1258,7 +1313,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := c.validateCampaignResource(campaignResource); err != nil {
 		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, manual CPC, %s)", campaignID, flightWindowStep(startDateTime, endDateTime)))
+	// The strategy is named from the PLAN, not from a literal: a step line that said
+	// "manual CPC" on a campaign created with maximize-conversions would be the only
+	// record of the bid an operator ever reads, and it would be wrong.
+	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, %s, %s)", campaignID, pf.bidding.describe(), flightWindowStep(startDateTime, endDateTime)))
+	if n := len(pf.bidding.conversionActions); n > 0 {
+		steps = append(steps, fmt.Sprintf("Conversion actions attached: %d (campaign optimizes toward these instead of the account goals)", n))
+	}
 
 	res := budgetPartial()
 	res.CampaignID = campaignID

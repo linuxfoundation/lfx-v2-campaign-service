@@ -533,7 +533,13 @@ type CampaignSettingsField struct {
 	// `start_date` and `end_date`. `budget_delivery_method`,
 	// `budget_explicitly_shared` and `bidding_strategy_type` are reported
 	// UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an
-	// `unknown` verdict, because nothing this service records expresses them.
+	// `unknown` verdict. For the two budget fields that is because nothing this
+	// service records expresses them. `bidding_strategy_type` IS recorded, and is
+	// left uncompared deliberately: the comparison would require mapping this
+	// service's caller vocabulary onto Google's OUTPUT_ONLY bidding-strategy enum,
+	// which is unverified exactly where it is ambiguous, and on an adopted
+	// campaign the recorded strategy was never pushed upstream, so a guessed
+	// mapping would report a false divergence on a campaign set exactly as asked.
 	// `status` is also reported with no `recorded` counterpart, but for a
 	// DIFFERENT reason: the campaign row DOES record a `status`, and it is
 	// deliberately never compared because the two are different axes. The column

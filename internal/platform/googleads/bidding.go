@@ -1,0 +1,449 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package googleads
+
+import (
+	"fmt"
+	"math"
+	"regexp"
+	"sort"
+	"strings"
+)
+
+// A Google Ads campaign carries EXACTLY ONE bidding strategy, as a oneof: the create
+// payload names one of `manualCpc`, `targetSpend`, `maximizeConversions`,
+// `maximizeConversionValue` (and others this client does not offer), and naming two is
+// rejected. Until this file existed the choice was hard-coded per channel — `manualCpc{}`
+// on Search, `targetSpend{}` on Demand Gen — which is why no campaign this service created
+// could ever bid toward a conversion.
+//
+// The names below are the CALLER's vocabulary, not Google's. They are the labels the Google
+// Ads UI uses, lower-cased and hyphenated, because the operator picking one is reading that
+// UI and not the proto. `target-cpa` and `target-roas` are the two places the two
+// vocabularies genuinely disagree: Google folded the standalone TargetCpa and TargetRoas
+// strategies into MaximizeConversions and MaximizeConversionValue with a target set, and the
+// UI still calls them by the old names. So both spellings are accepted and both resolve to
+// the surviving strategy — the difference being only that the target is REQUIRED when the
+// caller names the target-bearing label, and optional when they name the maximize- one.
+const (
+	biddingManualCPC               = "manual-cpc"
+	biddingMaximizeClicks          = "maximize-clicks"
+	biddingMaximizeConversions     = "maximize-conversions"
+	biddingTargetCPA               = "target-cpa"
+	biddingMaximizeConversionValue = "maximize-conversion-value"
+	biddingTargetROAS              = "target-roas"
+)
+
+const (
+	// minTargetCPA/maxTargetCPA bound a target cost per acquisition in whole units of
+	// the ad ACCOUNT's currency. The floor is the smallest amount that still rounds to a
+	// non-zero micros value under the same "0 means unset" convention validateCPCBid
+	// uses; the ceiling is this client's sanity bound, not a Google limit — a six-figure
+	// target CPA is a typo (a budget pasted into the wrong field) far more often than an
+	// intent.
+	minTargetCPA = 0.01
+	maxTargetCPA = 1_000_000.0
+
+	// minTargetROAS/maxTargetROAS are Google's own documented bounds for
+	// target_roas, which is a RATIO and not a percentage: 1.0 means "break even", 4.0
+	// means "four units of conversion value per unit spent".
+	//
+	// They are reproduced rather than widened or narrowed, and narrowing them to catch
+	// the percentage spelling would be the wrong trade. 400 meaning 400% is a plausible
+	// caller mistake, but 400 is also a value Google accepts, so refusing it would refuse
+	// a create upstream would have taken — the over-refusal this package's guards must
+	// never commit. The spelling is documented on CampaignInput.TargetROAS and named in
+	// the ceiling's own error message instead; only a value above 1000 can be refused on
+	// evidence rather than on suspicion.
+	minTargetROAS = 0.01
+	maxTargetROAS = 1000.0
+
+	// maxConversionActions caps the selective-optimization list. This client's bound, not
+	// Google's: the list is sent inline on the campaign create and an unbounded one turns
+	// a caller typo into a multi-megabyte payload. It is set far above any plausible
+	// account's conversion-action count so it never refuses a real intent.
+	maxConversionActions = 100
+)
+
+// conversionActionIDRE and conversionActionResourceRE pin the two spellings a caller may
+// use for a conversion action. Both are checked against the string BEFORE it reaches a
+// create payload, because a malformed resource name is rejected by Google AFTER the budget
+// mutate has committed — the orphan this package's whole preflight exists to avoid.
+var (
+	conversionActionIDRE       = regexp.MustCompile(`^\d+$`)
+	conversionActionResourceRE = regexp.MustCompile(`^customers/(\d+)/conversionActions/(\d+)$`)
+)
+
+// manualCPC is `campaign.manual_cpc`. It has fields in the proto (enhanced_cpc_enabled,
+// long deprecated) and this client sends none of them, so the type is deliberately empty
+// and marshals to `{}` — which is what names the strategy.
+type manualCPC struct{}
+
+// targetSpend is `campaign.target_spend`, the strategy the Google Ads UI calls Maximize
+// Clicks. Empty for the same reason manualCPC is: its only remaining field,
+// cpc_bid_ceiling_micros, is marked deprecated in the proto, and sending a deprecated field
+// risks a rejection that would land after the budget mutate.
+type targetSpend struct{}
+
+// maximizeConversions is `campaign.maximize_conversions`. A zero TargetCpaMicros is OMITTED
+// rather than sent as 0, and the two meanings must not collide: omitted means "bid for as
+// many conversions as the budget allows", while an explicit 0 would be a target of nothing.
+// omitempty is what keeps them apart, and minTargetCPA is what guarantees an accepted target
+// never rounds down into the unset zero.
+type maximizeConversions struct {
+	TargetCpaMicros int64 `json:"targetCpaMicros,omitempty"`
+}
+
+// maximizeConversionValue is `campaign.maximize_conversion_value`, with the same
+// omitted-versus-zero argument as maximizeConversions: no TargetRoas means "maximize value
+// within the budget", and minTargetROAS keeps an accepted target clear of the unset zero.
+type maximizeConversionValue struct {
+	TargetRoas float64 `json:"targetRoas,omitempty"`
+}
+
+// selectiveOptimization is `campaign.selective_optimization` — the set of conversion actions
+// THIS campaign optimizes toward, overriding the account-level conversion goals.
+//
+// It is the create-time field for conversion selection, which is why this client uses it
+// rather than `campaignConversionGoal`: that resource is update-only and addressed by a
+// name containing the campaign id, so attaching goals through it would need a second mutate
+// AFTER the campaign exists — a step that can fail and leave a campaign bidding toward the
+// account's goals rather than the ones the operator chose, with nothing in the result to say
+// so.
+type selectiveOptimization struct {
+	ConversionActions []string `json:"conversionActions"`
+}
+
+// biddingFields is the bidding half of a campaign create payload, embedded ANONYMOUSLY into
+// both channel payloads so its JSON keys flatten into the campaign object.
+//
+// It is one shared type rather than a copy per channel because the oneof invariant — at most
+// one of these four is ever non-nil — is a property of the Google Ads campaign resource, not
+// of a channel. Two copies would be two places to break it. The channels still disagree
+// about WHICH strategies they accept, and that disagreement lives in validateBiddingPlan
+// where it can be stated once with its reasons.
+type biddingFields struct {
+	ManualCPC               *manualCPC               `json:"manualCpc,omitempty"`
+	TargetSpend             *targetSpend             `json:"targetSpend,omitempty"`
+	MaximizeConversions     *maximizeConversions     `json:"maximizeConversions,omitempty"`
+	MaximizeConversionValue *maximizeConversionValue `json:"maximizeConversionValue,omitempty"`
+	SelectiveOptimization   *selectiveOptimization   `json:"selectiveOptimization,omitempty"`
+}
+
+// biddingPlan is the validated, resolved bidding intent: which strategy, its target if it
+// takes one, and the conversion actions the campaign optimizes toward. Resolved in the PURE
+// preflight with everything else, so an unknown strategy name, an out-of-range target or a
+// malformed conversion-action name fails before the budget mutate rather than after a paid
+// campaign exists.
+type biddingPlan struct {
+	// strategy is the normalized caller vocabulary, never empty after validation — the
+	// channel default is substituted when the caller names none. It is kept (rather than
+	// only the payload) because the cascade reports it in a step line, and
+	// `target-cpa` and `maximize-conversions` produce the same payload while meaning
+	// different things to the operator reading that line.
+	strategy        string
+	targetCPAMicros int64
+	targetROAS      float64
+	// conversionActions are fully-qualified resource names, deduplicated, in the order
+	// the caller gave them.
+	conversionActions []string
+}
+
+// fields renders the plan as the payload half of a campaign create. Exactly one strategy
+// pointer is set, which is the oneof invariant the Google Ads campaign resource requires.
+func (p biddingPlan) fields() biddingFields {
+	var f biddingFields
+	switch p.strategy {
+	case biddingManualCPC:
+		f.ManualCPC = &manualCPC{}
+	case biddingMaximizeClicks:
+		f.TargetSpend = &targetSpend{}
+	case biddingMaximizeConversions, biddingTargetCPA:
+		f.MaximizeConversions = &maximizeConversions{TargetCpaMicros: p.targetCPAMicros}
+	case biddingMaximizeConversionValue, biddingTargetROAS:
+		f.MaximizeConversionValue = &maximizeConversionValue{TargetRoas: p.targetROAS}
+	}
+	if len(p.conversionActions) > 0 {
+		f.SelectiveOptimization = &selectiveOptimization{ConversionActions: p.conversionActions}
+	}
+	return f
+}
+
+// describe is the operator-facing phrase for the cascade's step line, e.g.
+// "target CPA 25.00". It names what was actually sent, so a plan whose optional target was
+// omitted does not claim one.
+func (p biddingPlan) describe() string {
+	switch {
+	case p.targetCPAMicros != 0:
+		return fmt.Sprintf("%s, target CPA %.2f", p.strategy, float64(p.targetCPAMicros)/microsPerUnit)
+	case p.targetROAS != 0:
+		return fmt.Sprintf("%s, target ROAS %g", p.strategy, p.targetROAS)
+	default:
+		return p.strategy
+	}
+}
+
+// defaultBiddingStrategy is the strategy a channel gets when the caller names none.
+//
+// These are not house preferences — they are the strategies this client hard-coded before
+// the field existed, kept so that a create that omits BiddingStrategy produces a
+// BYTE-IDENTICAL payload to the one it produced before. Every campaign created by this
+// service to date was made with one of these two, and a new default would silently change
+// how an existing caller's campaigns bid.
+func defaultBiddingStrategy(kind string) string {
+	if kind == campaignKindDemandGen {
+		return biddingMaximizeClicks
+	}
+	return biddingManualCPC
+}
+
+// demandGenBiddingStrategies is the set this client will send on DEMAND_GEN.
+//
+// Only Maximize Clicks, and that is a fence built on recorded evidence rather than caution.
+// A validateOnly campaigns:mutate run against the live API at v23 (2026-08-14) returned HTTP
+// 400 BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET for DEMAND_GEN +
+// maximizeConversions, and HTTP 200 for DEMAND_GEN + targetSpend — see the long note in
+// demandgen.go. Refusing a payload we have observed Google reject is not over-refusal; it is
+// the preflight guarantee doing its job, because that rejection lands AFTER the budget
+// mutate and orphans the budget.
+//
+// Widening this set is a live-API question, not a code-reading one: re-run that validateOnly
+// check before adding a strategy here.
+var demandGenBiddingStrategies = map[string]bool{
+	biddingMaximizeClicks: true,
+}
+
+// searchBiddingStrategies is the set this client will send on SEARCH — every strategy it
+// offers. Search is the channel the manual and the automated strategies were both designed
+// for, and `manualCpc` is what this client has always sent there.
+var searchBiddingStrategies = map[string]bool{
+	biddingManualCPC:               true,
+	biddingMaximizeClicks:          true,
+	biddingMaximizeConversions:     true,
+	biddingTargetCPA:               true,
+	biddingMaximizeConversionValue: true,
+	biddingTargetROAS:              true,
+}
+
+// knownBiddingStrategies is every name this package recognizes, used only to tell an unknown
+// name apart from a name that is known but wrong for the channel. The two produce different
+// errors because they need different fixes: a typo is corrected in place, while a valid
+// strategy on the wrong channel means creating a different campaign.
+var knownBiddingStrategies = searchBiddingStrategies
+
+// sortedKeys renders a strategy set for an error message. Sorted, because map iteration
+// order is randomized and an error whose supported-values list reshuffles between two
+// identical calls reads as two different errors to anyone diffing logs — and to the golden
+// tests that pin these messages.
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// validateBiddingPlan resolves the caller's bidding intent for a given campaign KIND.
+//
+// Pure: no network, no clock. The customer id is passed in rather than read from a client so
+// this stays a free function alongside every other preflight validator; it is needed only to
+// qualify a bare conversion-action id into a resource name.
+//
+// Every refusal here is a refusal to SEND, not a refusal to validate: nothing in this
+// function talks to Google, so a plan that survives it has already decided the whole bidding
+// half of the payload before a single micro of budget is committed.
+func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan, error) {
+	strategy := strings.ToLower(strings.TrimSpace(in.BiddingStrategy))
+	if strategy == "" {
+		strategy = defaultBiddingStrategy(kind)
+	}
+	if !knownBiddingStrategies[strategy] {
+		return biddingPlan{}, fmt.Errorf("google-ads: unknown bidding strategy %q; supported: %s", in.BiddingStrategy, strings.Join(sortedKeys(knownBiddingStrategies), ", "))
+	}
+
+	allowed := searchBiddingStrategies
+	if kind == campaignKindDemandGen {
+		allowed = demandGenBiddingStrategies
+	}
+	if !allowed[strategy] {
+		return biddingPlan{}, fmt.Errorf("google-ads: bidding strategy %q is not supported on %s (this client sends only %s there, which is the only combination verified against the live API; the others were rejected AFTER the budget was created); omit BiddingStrategy for the channel default, or create a Search campaign", strategy, kind, strings.Join(sortedKeys(allowed), ", "))
+	}
+
+	// The two targets are validated against the strategy that can carry them, and REFUSED
+	// on one that cannot rather than dropped. A target CPA accepted and then discarded is
+	// the same defect LFXV2-3283 fixed for geo: the operator reads "campaign created" and
+	// believes Google is bidding to their number while it is bidding to nothing of the
+	// kind, and the one field whose entire purpose is to CAP what a conversion costs is
+	// the worst place in this payload to lose silently.
+	takesCPA := strategy == biddingMaximizeConversions || strategy == biddingTargetCPA
+	takesROAS := strategy == biddingMaximizeConversionValue || strategy == biddingTargetROAS
+	if in.TargetCPA != 0 && !takesCPA {
+		return biddingPlan{}, fmt.Errorf("google-ads: a target CPA is not supported by the %q bidding strategy (only %q and %q carry one); omit TargetCPA, or choose one of those strategies", strategy, biddingMaximizeConversions, biddingTargetCPA)
+	}
+	if in.TargetROAS != 0 && !takesROAS {
+		return biddingPlan{}, fmt.Errorf("google-ads: a target ROAS is not supported by the %q bidding strategy (only %q and %q carry one); omit TargetROAS, or choose one of those strategies", strategy, biddingMaximizeConversionValue, biddingTargetROAS)
+	}
+	// The target-bearing spellings REQUIRE their target. `target-cpa` with no CPA is not
+	// the same request as `maximize-conversions` — the caller named the label whose whole
+	// content is the number, so an absent number is a mistake, not a default.
+	if strategy == biddingTargetCPA && in.TargetCPA == 0 {
+		return biddingPlan{}, fmt.Errorf("google-ads: the %q bidding strategy requires a target CPA; supply TargetCPA, or use %q to bid for conversions with no target", biddingTargetCPA, biddingMaximizeConversions)
+	}
+	if strategy == biddingTargetROAS && in.TargetROAS == 0 {
+		return biddingPlan{}, fmt.Errorf("google-ads: the %q bidding strategy requires a target ROAS; supply TargetROAS, or use %q to bid for value with no target", biddingTargetROAS, biddingMaximizeConversionValue)
+	}
+
+	targetCPAMicros, err := validateTargetCPA(in.TargetCPA)
+	if err != nil {
+		return biddingPlan{}, err
+	}
+	targetROAS, err := validateTargetROAS(in.TargetROAS)
+	if err != nil {
+		return biddingPlan{}, err
+	}
+
+	// An ad-group CPC bid under an automated strategy is REFUSED, not carried.
+	//
+	// Google accepts it — cpc_bid_micros stays on the ad group and is simply never used
+	// while the campaign bids automatically — which is exactly why it must be refused
+	// here. A silent accept is worse than a loud one precisely because upstream is
+	// forgiving: the operator who set a 2.50 ceiling and then switched the campaign to
+	// Maximize Conversions gets no signal at all that their ceiling stopped applying, and
+	// the readback reports a bid the campaign does not honour. The refusal costs nothing —
+	// a caller who wants their bid honoured names manual-cpc, which is also the default.
+	if strategy != biddingManualCPC && (in.CPCBid != 0 || adGroupsCarryCPCBid(in.AdGroups)) {
+		return biddingPlan{}, fmt.Errorf("google-ads: a CPC bid is ignored by the %q bidding strategy (Google keeps the ad-group bid but never bids it while the campaign bids automatically); omit the CPC bid, or use %q", strategy, biddingManualCPC)
+	}
+
+	conversionActions, err := validateConversionActions(kind, customerID, in.ConversionActions)
+	if err != nil {
+		return biddingPlan{}, err
+	}
+
+	return biddingPlan{
+		strategy:          strategy,
+		targetCPAMicros:   targetCPAMicros,
+		targetROAS:        targetROAS,
+		conversionActions: conversionActions,
+	}, nil
+}
+
+// adGroupsCarryCPCBid reports whether any per-group override names a bid. The campaign-level
+// CPCBid is not the only way in: validateAdGroupPlans lets each group set its own, and a
+// strategy check that looked only at the campaign field would accept exactly the
+// multi-ad-group create whose per-group bids are the ones being silently ignored.
+func adGroupsCarryCPCBid(groups []AdGroupSpec) bool {
+	for _, g := range groups {
+		if g.CPCBid != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// validateTargetCPA converts a target cost per acquisition to micros under the same
+// conventions validateCPCBid uses: 0 is UNSET and returns (0, nil) with no default invented,
+// NaN/Inf are rejected before any ordered comparison (every comparison against NaN is false,
+// so a NaN would slip past both bounds and round to garbage), and the conversion ROUNDS
+// rather than truncating so 0.07 does not become one micro less than the caller asked for.
+//
+// Not routed through ValidateBudgetMicros for the reason validateCPCBid is not: that helper
+// treats 0 as an error, and 0 is this field's "the caller named no target".
+func validateTargetCPA(cpa float64) (int64, error) {
+	if cpa == 0 {
+		return 0, nil
+	}
+	if math.IsNaN(cpa) || math.IsInf(cpa, 0) {
+		return 0, fmt.Errorf("google-ads: target CPA must be a finite number, got %v", cpa)
+	}
+	if cpa < minTargetCPA {
+		return 0, fmt.Errorf("google-ads: target CPA must be at least %.2f in the account currency, got %.4f", minTargetCPA, cpa)
+	}
+	if cpa > maxTargetCPA {
+		return 0, fmt.Errorf("google-ads: target CPA %.2f exceeds the maximum %.0f in the account currency", cpa, maxTargetCPA)
+	}
+	return int64(math.Round(cpa * microsPerUnit)), nil
+}
+
+// validateTargetROAS bounds a target return on ad spend against Google's own documented
+// range. Unlike every other numeric field here it is NOT converted to micros — target_roas is
+// a proto double and Google takes the ratio as written — so the only work is rejecting the
+// values Google itself would reject, plus the non-finite ones that would slip past both
+// bounds.
+func validateTargetROAS(roas float64) (float64, error) {
+	if roas == 0 {
+		return 0, nil
+	}
+	if math.IsNaN(roas) || math.IsInf(roas, 0) {
+		return 0, fmt.Errorf("google-ads: target ROAS must be a finite number, got %v", roas)
+	}
+	if roas < minTargetROAS {
+		return 0, fmt.Errorf("google-ads: target ROAS must be at least %g, got %g", minTargetROAS, roas)
+	}
+	if roas > maxTargetROAS {
+		return 0, fmt.Errorf("google-ads: target ROAS %g exceeds the maximum %g — note this is a RATIO and not a percentage (4.0 means 400%%)", roas, maxTargetROAS)
+	}
+	return roas, nil
+}
+
+// validateConversionActions normalizes and checks the conversion actions a campaign should
+// optimize toward.
+//
+// Two spellings are accepted — a bare numeric id and a full
+// `customers/<cid>/conversionActions/<id>` resource name — because the id is what a human
+// reads off the Google Ads UI while the resource name is what a GAQL read returns, and
+// refusing either would push string assembly onto every caller. A resource name naming a
+// DIFFERENT customer is refused rather than rewritten: a conversion action belongs to the
+// account that owns it, and silently re-pointing one at this account would attach a
+// conversion that does not exist and fail after the budget mutate.
+//
+// Refused on Demand Gen. Not because conversions are meaningless there, but because
+// selective_optimization is the only create-time mechanism this client implements and
+// DEMAND_GEN does not take it — that channel carries its goals through
+// conversion_goal_campaign_config instead. Accepting the list here would validate every name
+// and then drop the lot, leaving the operator believing the campaign bids toward the
+// conversions they chose. This is the same refuse-don't-drop rule every other Search-only
+// input in this preflight follows.
+func validateConversionActions(kind, customerID string, actions []string) ([]string, error) {
+	if len(actions) == 0 {
+		return nil, nil
+	}
+	if kind == campaignKindDemandGen {
+		return nil, fmt.Errorf("google-ads: conversion actions are not supported on %s (this client attaches them through campaign.selective_optimization, which %s does not accept); omit ConversionActions, or create a Search campaign to optimize toward specific conversions", kind, kind)
+	}
+	if len(actions) > maxConversionActions {
+		return nil, fmt.Errorf("google-ads: %d conversion actions exceeds the maximum %d", len(actions), maxConversionActions)
+	}
+	out := make([]string, 0, len(actions))
+	seen := make(map[string]struct{}, len(actions))
+	for i, raw := range actions {
+		action := strings.TrimSpace(raw)
+		if action == "" {
+			return nil, fmt.Errorf("google-ads: conversion action %d is empty", i+1)
+		}
+		var resource string
+		switch {
+		case conversionActionIDRE.MatchString(action):
+			resource = "customers/" + customerID + "/conversionActions/" + action
+		case conversionActionResourceRE.MatchString(action):
+			owner := conversionActionResourceRE.FindStringSubmatch(action)[1]
+			if owner != customerID {
+				return nil, fmt.Errorf("google-ads: conversion action %q belongs to customer %s, not the campaign's account %s; a conversion action cannot be shared across accounts", action, owner, customerID)
+			}
+			resource = action
+		default:
+			return nil, fmt.Errorf("google-ads: conversion action %q is neither a numeric id nor a customers/<id>/conversionActions/<id> resource name", action)
+		}
+		// Deduplicated rather than refused: naming the same conversion twice is a
+		// harmless paste, and Google rejects a selective_optimization list containing a
+		// duplicate — after the budget mutate.
+		if _, dup := seen[resource]; dup {
+			continue
+		}
+		seen[resource] = struct{}{}
+		out = append(out, resource)
+	}
+	return out, nil
+}

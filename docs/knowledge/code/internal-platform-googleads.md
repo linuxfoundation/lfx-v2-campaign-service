@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067); and Search serving readiness — an optional manual CPC bid on the ad group (0 means unset, no default invented), an optional campaign flight window rendered into the v23 startDateTime/endDateTime request fields on both channels, and optional campaign-level negative keywords batched into one atomic campaignCriteria:mutate with negative:true, all three validated before the first paid mutate and each a no-op when absent; and Search campaign completeness — geo exclusions on both channels, raw geo target constant ids alongside country codes so a caller can target a city, region or postal code, Search-only proximity radius targeting, campaign-level language/ad-schedule/device/demographic criteria whose bid modifier is pointer-typed so an explicit 0 stays Google's -100% opt-out, sitelink/callout/structured-snippet extension assets linked by the resource name the create returned, and multiple themed ad groups each carrying multiple responsive search ads that inherit the campaign-level fields PER FIELD, every one of them optional, refused on Demand Gen where it is a Search capability, and validated before the first paid mutate (LFXV2-2665); and Demand Gen ad creation — an optional caller-supplied creative (marketing/square/portrait/tall-portrait/logo image URLs, 1-5 headlines and 1-5 descriptions refused rather than truncated, business name, call to action) whose locally-decidable half validates in the PURE preflight while its images are fetched by this service over a hardened credential-free transport (https only, no redirects, public-IP dial guard, 5 MiB cap, decoder-set format allowlist, geometry checked against the decoded image) and uploaded as base64 image assets still BEFORE the first budget mutate, then assembled into a PAUSED DemandGenMultiAssetAd whose asset ids are reported even when the ad create fails, refused on Search as the mirror of every Search-only field (LFXV2-2665)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067); and Search serving readiness — an optional manual CPC bid on the ad group (0 means unset, no default invented), an optional campaign flight window rendered into the v23 startDateTime/endDateTime request fields on both channels, and optional campaign-level negative keywords batched into one atomic campaignCriteria:mutate with negative:true, all three validated before the first paid mutate and each a no-op when absent; and Search campaign completeness — geo exclusions on both channels, raw geo target constant ids alongside country codes so a caller can target a city, region or postal code, Search-only proximity radius targeting, campaign-level language/ad-schedule/device/demographic criteria whose bid modifier is pointer-typed so an explicit 0 stays Google's -100% opt-out, sitelink/callout/structured-snippet extension assets linked by the resource name the create returned, and multiple themed ad groups each carrying multiple responsive search ads that inherit the campaign-level fields PER FIELD, every one of them optional, refused on Demand Gen where it is a Search capability, and validated before the first paid mutate (LFXV2-2665); and Demand Gen ad creation — an optional caller-supplied creative (marketing/square/portrait/tall-portrait/logo image URLs, 1-5 headlines and 1-5 descriptions refused rather than truncated, business name, call to action) whose locally-decidable half validates in the PURE preflight while its images are fetched by this service over a hardened credential-free transport (https only, no redirects, public-IP dial guard, 5 MiB cap, decoder-set format allowlist, geometry checked against the decoded image) and uploaded as base64 image assets still BEFORE the first budget mutate, then assembled into a PAUSED DemandGenMultiAssetAd whose asset ids are reported even when the ad create fails, refused on Search as the mirror of every Search-only field (LFXV2-2665); and selectable bidding with create-time conversion selection — one of six UI-vocabulary strategies (manual-cpc, maximize-clicks, maximize-conversions, target-cpa, maximize-conversion-value, target-roas) resolved in the pure preflight into a single proto oneof carried by an anonymously-embedded biddingFields on both channel payloads, defaulting byte-identically to the legacy per-channel payloads, with a target CPA in micros and a target ROAS as a RATIO inside Google's own documented bounds, a CPC bid refused under any automated strategy at campaign or ad-group level, Demand Gen fenced to maximize-clicks on recorded live-API evidence, and conversion actions attached at create time via campaign.selective_optimization (bare ids qualified to the campaign's account, foreign-account names refused, duplicates deduplicated) alongside a strictly read-only ListConversionActions for building a picker (LFXV2-2665)."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -315,8 +315,10 @@ be answering a database question with an ad-platform call.
 sequential `:mutate` calls: `campaignBudgets:mutate` (a non-shared `STANDARD`
 budget, `amountMicros` = budget × 1,000,000) then `campaigns:mutate` (status
 `PAUSED`, `advertisingChannelType` `SEARCH`, referencing the budget's
-`resourceName`, with a dependency-free `manualCpc {}` bidding strategy — a broker
-can't assume conversion tracking, which `maximizeConversions` requires). The
+`resourceName`, and a bidding strategy resolved in the preflight — `manualCpc {}`
+by default, because a broker can't assume conversion tracking, which
+`maximizeConversions` requires; see **Bidding strategies and conversion actions**
+below for the five other strategies a caller may name). The
 `CampaignInput.Budget` field is denominated in the ad ACCOUNT's currency, NOT USD —
 Google interprets the resulting `amountMicros` in the account's own currency and
 the client does no FX conversion, so a value of 50 is 50 of whatever the account is
@@ -1013,6 +1015,13 @@ reached a Google call that wanted it. The ad-group step string says what was set
 does NOT claim a serving consequence; whether a bid is what makes a given ad
 group eligible has not been verified live.
 
+**A bid is also refused under an automated strategy**, for the same
+refuse-don't-drop reason: Google keeps an ad-group bid under `maximizeConversions`
+and friends but never bids it, so accepting one would take an instruction and
+make it inert. The check covers a per-group `cpcBid` in `AdGroups` as well as the
+campaign-level field, because a campaign-field-only check would miss exactly the
+override a caller reaches for first.
+
 **Flight window (`campaign.go`, `demandgen.go`).** `StartDate`/`EndDate` are
 `YYYY-MM-DD` — spelled as the meta and reddit configs spell them —
 and `validateFlightWindow` renders them into the **v23** `startDateTime` /
@@ -1390,6 +1399,92 @@ returns a non-nil result carrying the asset ids, so a retry does not lose them
 (`TestCreateDemandGenCampaign_AdFailureStillReportsTheAssets`). `demandGenClosingStep`
 now has four branches over (geo, ad) rather than one, so the step text stops
 telling an operator to upload images for a campaign that already has an ad.
+
+
+## Bidding strategies and conversion actions (LFXV2-2665)
+
+`bidding.go` makes the bidding strategy selectable. Until it existed the choice
+was hard-coded per channel — `manualCpc {}` on Search, `targetSpend {}` on Demand
+Gen — which is why no campaign this service created could bid toward a
+conversion at all.
+
+**A campaign carries EXACTLY ONE strategy.** It is a proto `oneof`: the create
+names one of `manualCpc`, `targetSpend`, `maximizeConversions`,
+`maximizeConversionValue`, and naming two is rejected — AFTER the budget mutate,
+which is why the resolution happens in the pure preflight. `biddingFields` is one
+shared type embedded ANONYMOUSLY into both channel payloads so its keys flatten
+into the campaign object, rather than a copy per channel: the oneof is a property
+of the campaign resource, not of a channel, and two copies would be two places to
+break it. `biddingPlan.fields()` sets exactly one pointer, and
+`TestBiddingPlan_SendsExactlyOneStrategy` is what holds that.
+
+**The vocabulary is the Google Ads UI's, not the proto's** — `manual-cpc`,
+`maximize-clicks`, `maximize-conversions`, `target-cpa`,
+`maximize-conversion-value`, `target-roas` — because the operator choosing one is
+reading that UI. `target-cpa`/`target-roas` are where the two vocabularies
+genuinely disagree: Google folded the standalone TargetCpa and TargetRoas
+strategies into MaximizeConversions and MaximizeConversionValue with a target
+set, and the UI still uses the old names. Both spellings resolve to the surviving
+strategy; the only difference is that the target is REQUIRED under the
+target-bearing label and optional under the maximize- one.
+
+**The defaults are byte-identical to the legacy payloads.**
+`defaultBiddingStrategy(kind)` returns exactly what each channel hard-coded, and
+`TestBiddingPlan_DefaultsAreTheLegacyPayloads` pins the marshalled JSON strings
+(`{"manualCpc":{}}` / `{"targetSpend":{}}`). Every campaign this service has
+created bid by manual CPC, so a default that drifted would silently re-bid them
+all. `manualCPC` and `targetSpend` are deliberately EMPTY structs: their only
+remaining proto fields are deprecated, and sending a deprecated field risks a
+rejection landing after the budget mutate. That is also why `cpcBidCeiling` is
+not offered — `target_spend.cpc_bid_ceiling_micros` is marked deprecated.
+
+**Demand Gen is fenced to `maximize-clicks` alone**, on recorded evidence rather
+than caution: a live `validateOnly` check (2026-08-14, v23) had DEMAND_GEN accept
+`targetSpend` with HTTP 200 and reject `maximizeConversions` with HTTP 400
+`BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET`. Widening
+`demandGenBiddingStrategies` is a live-API question, not a reading of the proto.
+
+**Targets.** `validateTargetCPA` is micros like every other currency field here,
+bounded `0.01`..`1_000_000.0` — this client's sanity bound, not a Google limit.
+`validateTargetROAS` is the exception: `target_roas` is a proto double and Google
+takes the RATIO as written, so it is NOT converted to micros, and its
+`0.01`..`1000.0` window is Google's own documented one. `400` is accepted even
+though it is also how `400%` is commonly mis-typed — refusing it would refuse a
+target Google accepts, the over-refusal these guards exist to avoid — so the
+ratio spelling is documented on the field and named in the out-of-range error
+instead. Both treat `0` as UNSET and reject NaN/Inf first, since those pass every
+ordered comparison. A target the named strategy cannot carry is REFUSED rather
+than dropped.
+
+**Conversion actions attach at CREATE time via
+`campaign.selective_optimization`,** not through `campaignConversionGoal`. That
+resource is update-only and addressed by a name containing the campaign id, so
+attaching goals through it would need a second mutate AFTER the campaign exists —
+a step that can fail and leave a campaign bidding toward the account's goals
+rather than the ones the operator chose, with nothing in the result to say so.
+`validateConversionActions` takes either a bare numeric id or the full
+`customers/<cid>/conversionActions/<id>` name, qualifies the bare one with the
+campaign's own account, and refuses a full name owned by a DIFFERENT customer —
+a conversion action cannot be shared across accounts. Duplicates across the two
+spellings are deduplicated rather than refused, since naming the same action
+twice is a caller typo and not an instruction to do anything different.
+
+**Refused on Demand Gen**, as the mirror of every other Search-only field: that
+channel does not accept `selective_optimization`, and its own mechanism
+(`conversion_goal_campaign_config`) is NOT implemented, pending a live-API check.
+
+`conversions.go` is the read half and is strictly read-only:
+`ListConversionActions` is one GAQL search returning id, resource name, name,
+status, type, category and `primaryForGoal`, so a caller can build a picker
+instead of hand-copying an id out of the Google Ads UI. REMOVED actions are
+excluded in the WHERE clause rather than row-side — a removed action cannot be
+attached at all, so returning it would offer a choice guaranteed to fail — while
+PAUSED ones are kept, since a paused action is attachable. A row missing its id
+or resource name fails the WHOLE response: both are what the caller sends back on
+a create, and an absent id means the SELECT and the row struct have drifted,
+which is a fact about every row. **Creating** a conversion action is deliberately
+not offered: it is half a measurement setup, and one created without its site tag
+reports as configured while recording nothing.
 
 
 ## Scope

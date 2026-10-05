@@ -208,6 +208,34 @@ type googleAdsConfig struct {
 	// what every campaign created before this field existed did. See
 	// googleads.validateCPCBid for the accepted range.
 	CPCBid float64 `json:"cpcBid"`
+	// BiddingStrategy names how the campaign bids, in the labels the Google Ads UI
+	// uses: `manual-cpc`, `maximize-clicks`, `maximize-conversions`, `target-cpa`,
+	// `maximize-conversion-value`, `target-roas`.
+	//
+	// Absent or empty means the CHANNEL DEFAULT — manual CPC on Search, maximize
+	// clicks on Demand Gen — which is what this adapter has always sent, so a config
+	// that predates this field produces a byte-identical campaign payload. Demand Gen
+	// accepts ONLY `maximize-clicks`; see googleads.demandGenBiddingStrategies for the
+	// live-API evidence behind that fence.
+	BiddingStrategy string `json:"biddingStrategy"`
+	// TargetCPA is the target cost per acquisition in whole units of the ad ACCOUNT's
+	// currency (no FX conversion, same as Budget). Optional under
+	// `maximize-conversions`, required under `target-cpa`, refused under any other
+	// strategy rather than accepted and discarded.
+	TargetCPA float64 `json:"targetCpa"`
+	// TargetROAS is the target return on ad spend as a RATIO, not a percentage: 4.0
+	// means four units of conversion value per unit spent. Optional under
+	// `maximize-conversion-value`, required under `target-roas`, refused elsewhere.
+	TargetROAS float64 `json:"targetRoas"`
+	// ConversionActions are the conversion actions the campaign should optimize
+	// toward, as bare numeric ids or full `customers/<id>/conversionActions/<id>`
+	// resource names. Absent means the campaign inherits the ACCOUNT's conversion
+	// goals, which is what every Google campaign this service has created does.
+	//
+	// Search only — Demand Gen does not take campaign.selective_optimization and the
+	// client refuses the list there rather than dropping it. The ids come from the
+	// client's ListConversionActions read.
+	ConversionActions []string `json:"conversionActions"`
 	// StartDate/EndDate are the campaign's flight window as YYYY-MM-DD, spelled exactly
 	// as the meta and reddit configs spell them. Each is independently optional: an
 	// absent StartDate leaves Google's default (the campaign starts when enabled) and an
@@ -427,7 +455,16 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		GeoTargets:       cfg.GeoTargets,
 		CPCBid:           cfg.CPCBid,
 		StartDate:        cfg.StartDate,
-		EndDate:          cfg.EndDate,
+		// Passed through verbatim for the same reason the targeting inputs below are:
+		// which strategies a channel accepts, which targets a strategy carries, and
+		// whether a conversion action belongs to this account are all decided by the
+		// client's preflight BEFORE its first mutate, so re-stating any of it here
+		// would be a second copy of the rules that could drift from the first.
+		BiddingStrategy:   cfg.BiddingStrategy,
+		TargetCPA:         cfg.TargetCPA,
+		TargetROAS:        cfg.TargetROAS,
+		ConversionActions: cfg.ConversionActions,
+		EndDate:           cfg.EndDate,
 		// The LFXV2-2665 targeting/extension/ad-group inputs. Every one of these is
 		// passed through verbatim: the channel rules (proximity, languages, schedules,
 		// devices, demographics, extensions and ad groups are Search-only) are enforced
@@ -2089,9 +2126,10 @@ func googleAdsToggleTargets(campaign *model.Campaign) (targets []googleads.AdGro
 // ten names do happen to coincide with a campaigns column (budget_amount, budget_type,
 // campaign_name, status, start_date, end_date), but advertising_channel_type has no column
 // and is recovered from ConfigSnapshot, and budget_delivery_method,
-// budget_explicitly_shared and bidding_strategy_type have neither a column nor a recorded
-// side. Treating the set as column names would send a reader looking for persistence
-// fields that do not exist.
+// budget_explicitly_shared and bidding_strategy_type have no column (bidding_strategy_type
+// is now expressed in ConfigSnapshot but is still reported with an absent recorded side —
+// see settingsFieldBiddingStrategy below for why). Treating the set as column names would
+// send a reader looking for persistence fields that do not exist.
 // googleAdsDateTimeLayout is the shape Google returns campaign.start_date_time /
 // end_date_time in: 'yyyy-MM-dd HH:mm:ss', in the ad account's timezone. Parsing against it
 // in full is what stops a malformed value being silently truncated into a plausible date.
@@ -2105,8 +2143,27 @@ const (
 	settingsFieldStartDate    = "start_date"
 	settingsFieldEndDate      = "end_date"
 	// Budget delivery method, explicit budget sharing and bidding strategy are OBSERVED but
-	// never compared: nothing in a Google Ads dispatch config expresses them, so each is
-	// reported with an absent recorded side and therefore an `unknown` verdict. Status also
+	// never compared, so each is reported with an absent recorded side and therefore an
+	// `unknown` verdict.
+	//
+	// For the two budget fields the reason is simply that nothing in a Google Ads dispatch
+	// config expresses them. Bidding strategy is the one that now could be compared and
+	// deliberately is not: googleAdsConfig.BiddingStrategy records the caller's choice, but
+	// the comparison would have to map this client's UI vocabulary onto Google's OUTPUT_ONLY
+	// BiddingStrategyTypeEnum, and that mapping is not live-verified at exactly the point it
+	// is ambiguous — `target-cpa` and `maximize-conversions` are both sent as
+	// maximize_conversions (with and without a target), and which enum value Google reports
+	// back for the targeted one has not been observed. A mapping guessed wrong reports a
+	// false divergence, which sends an operator to investigate a campaign that is set
+	// exactly as asked. Reporting `unknown` under-informs; a false divergence misinforms,
+	// and only the second is a cost the operator pays. Comparing this field is a follow-up
+	// gated on a live readback of a targeted campaign, not on more reading of the proto.
+	//
+	// Adoption is a second reason to be careful here: on the adopt path the row records a
+	// BiddingStrategy that was never pushed upstream, so the two sides are EXPECTED to
+	// disagree and a comparison would flag every adopted campaign.
+	//
+	// Status also
 	// has an absent recorded side, but for an unrelated reason — the row records one, it is
 	// just a different axis from Google's delivery status — so do not fold it into this
 	// group's rationale. They are
