@@ -1555,7 +1555,7 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 	if status == StatusActive {
 		// DESCENDANTS FIRST, campaign gate LAST. Both child ids are guaranteed present above.
 		if err := c.putStatus(ctx, "AdGroups", adGroupReq, "ad group"); err != nil {
-			return err // nothing mutated yet — a definite rejection stays definite
+			return err // first stage: returned as classified — definite only if no retried 429 preceded it
 		}
 		if err := ctx.Err(); err != nil {
 			return &partialCascadeError{applied: "ad group", stage: "ad", err: err}
@@ -1588,7 +1588,7 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 
 	// PAUSE: campaign gate first — delivery stops now, even if a child call fails below.
 	if err := c.putStatus(ctx, "Campaigns", campaignReq, "campaign"); err != nil {
-		return err // nothing mutated yet
+		return err // first stage: returned as classified — definite only if no retried 429 preceded it
 	}
 	// applied tracks what ACTUALLY changed, so a later failure names only entities that were
 	// really touched — this text is what an operator reads to decide what to verify by hand.
