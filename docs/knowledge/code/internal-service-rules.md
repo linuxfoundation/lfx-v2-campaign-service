@@ -53,13 +53,45 @@ anything: the four now share **one** pacing ladder, `pacingLabelFor` in
 `monitor_shared.go`, and the deliberately-ported defects are being fixed under
 their own tickets instead of frozen.
 
-What remains separate is the **ladder itself**. The monitor path's bands are
-50/90/100; this package's are 50/100/130 with `Constrained` as an inclusive top.
-They are two different ladders for two different read paths, and routing one
-through the other would move operator-facing alerting bands as a side effect of
-a refactor — so merging the two is its own decision, tracked in
-[Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md), which
-is the concept file for that surface.
+What remains separate is the **ladder's numbers**, not its implementation.
+
+## One pacing ladder implementation, two named ladders (D2 open)
+
+Placing a percentage on a band lives in **one** place: `PacingLadder.Label` in
+`internal/service/rules/ladder.go`. Bands are half-open upward — `pct < Underspending`
+is underspending, up to and including `Constrained` is normal, up to and including
+`Overspending` is constrained, above that is overspending. Two named ladders feed it:
+
+| Ladder | Bands | Used by |
+|---|---|---|
+| `BriefViewLadder` (= `DefaultThresholds`; `Thresholds` is an alias of `PacingLadder`) | 50 / 100 / 130 — exactly on plan is normal | `ComputePacing` → `Evaluate`, the single-campaign brief view |
+| `AccountMonitorLadder` | 50 / 90 / 100 — 95% of plan is already constrained, exactly on plan is constrained | `pacingLabelFor` → every `EvaluateXMonitor` |
+
+**Which ladder is correct is open product decision D2** (Monitor & Optimize brief), and it is
+not made in code. Switching a caller from one ladder to the other moves operator-facing alert
+bands, so it is that decision on its own ticket — never a side effect of a refactor. Until
+then, do not write another band switch, priority rank or unknown-pacing builder: add a ladder
+value or call the existing helper.
+
+What stays per caller, deliberately:
+
+- **Rounding.** Google, Microsoft, Meta, Reddit and X `math.Round` the percentage before it
+  reaches the ladder; LinkedIn and the brief view do not. So the same raw 49.99% is
+  underspending on LinkedIn and on the brief view, and normal on Google.
+- **NaN.** `Label` places NaN in overspending (the brief view's historical switch, unreachable
+  there because `ComputePacing` refuses a non-finite percentage). The account monitor's
+  historical switch placed NaN in normal, and `pacingLabelFor` keeps that with an explicit
+  guard — a platform-reported NaN spend survives `math.Round` and reaches it.
+- **Unknown pacing.** Two contracts, so two builders, one each: `UnknownPacing()` for the brief
+  view (label `unknown`, not computable) and `unknownPacingRow` for the account monitor (the
+  enum has no unknown member, so a placeholder `normal` label with `PacingUnknown` set).
+- **Priority rank.** Only the account monitor sorts its items (`priorityRank`/`sortByPriority`
+  in `monitor_shared.go`); the brief view's `Evaluate` returns items in rule order.
+
+`ladder_pin_test.go` places every boundary (49.99/50/50.01, 89.99/90/90.01, 99.99/100/100.01,
+129.99/130/130.01, plus points either side of each rounding half-way mark), zero spend, no
+budget and a failed fetch through every caller's own entry point, and states each caller's own
+outcome.
 
 It exists because the UI carried four separate implementations of this logic — LinkedIn, Reddit,
 Meta and campaign-metrics — which disagreed three ways on the underspending floor, and Reddit
@@ -146,13 +178,14 @@ into a "pause losing campaigns" recommendation. `PacingUnknown` is a distinct la
 ## Band boundaries are half-open upward
 
 A value sitting exactly on a threshold lands in the **healthier** band. That matters most at
-100%: a campaign spending precisely what its flight expects by now is *on plan*, and labelling
-it `constrained` would raise a budget item against the only campaign that needs none.
+100% on the brief view: a campaign spending precisely what its flight expects by now is *on
+plan*, and labelling it `constrained` would raise a budget item against the only campaign that
+needs none.
 
-`Thresholds` therefore carries two boundaries, not three. The shared UI constants also define a
-`normal` value (90), but it names the top of a band that is derived from `Constrained` — the
-healthy band runs up to and including it. Carrying it as a field would offer a knob a caller
-could turn with no effect.
+`PacingLadder` therefore carries the floor and two tops, not a separate `normal` value. The
+shared UI constants also define `normal` (90), but on the brief view it names the top of a band
+derived from `Constrained` — the healthy band runs up to and including it. Carrying it as a
+field would offer a knob a caller could turn with no effect.
 
 ## Currency
 

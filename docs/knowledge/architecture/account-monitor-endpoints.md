@@ -89,10 +89,14 @@ reaches), not project-scoped ones.
   (`pacingLabelFor`), one priority rank (`priorityRank`/`sortByPriority`),
   one unknown-pacing row. Each `EvaluateXMonitor` keeps its own guard for
   whether a campaign has a pacing figure worth placing at all, because the
-  platforms report budget differently. They are still **not** routed onto
-  `pacing.go`/`actions.go`, which run a different ladder (50/100/130) for
-  the single-campaign brief path; merging the two read paths would move
-  operator-facing alerting bands and remains its own decision.
+  platforms report budget differently. The ladder's arithmetic is now one
+  implementation for both read paths, `PacingLadder.Label` in
+  `internal/service/rules/ladder.go`: `pacingLabelFor` places on
+  `AccountMonitorLadder` (50/90/100), while `pacing.go`/`actions.go` place on
+  `BriefViewLadder` (50/100/130) for the single-campaign brief path. Which
+  ladder is correct is open product decision **D2**; switching a caller's
+  ladder would move operator-facing alerting bands and remains its own
+  decision.
 - `internal/service/connection_monitor.go`'s `monitorAccount` is the shared
   handler body: validate → resolve backend → `ReadAccountCampaignMetrics` →
   per-platform `evaluate` closure → `monitorTotals`, which sums the
