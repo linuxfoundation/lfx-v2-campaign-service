@@ -34,7 +34,9 @@ const microsPerCurrencyUnit = 1_000_000.0
 // WHAT IS PERSISTED IS THE REQUESTED AMOUNT, NOT A READBACK OF THE APPLIED ONE. The dispatcher
 // confirms that the platform ACCEPTED the write; it does not re-read what the platform then
 // holds, and the two can differ by less than the platform's smallest settable unit — LinkedIn
-// settles on two decimal places, Meta on the account currency's minor unit, Google on a micro.
+// settles on two decimal places, Meta on the account currency's minor unit, Google on a micro,
+// and Microsoft on whatever its own validation of the account currency settles (the amount is
+// sent unrounded as a decimal, and an amount Microsoft refuses is answered 400).
 // That is the same meaning the column already carries (see the next paragraph), not a new
 // looseness: a readback compares live-against-requested, and a sub-unit rounding difference is
 // exactly the kind of drift that comparison is there to surface rather than to hide.
@@ -175,7 +177,8 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 			// holds NO per-platform floor — adding one would put an allowlist's worth of
 			// platform knowledge in the layer whose whole design is not to have it. So a
 			// LinkedIn $5 daily budget, a $50 lifetime budget, or a Meta amount below one
-			// minor unit of the account's currency can only be refused down in the adapter,
+			// minor unit of the account's currency, or a Microsoft daily budget below the account
+			// currency's minimum, can only be refused down in the adapter,
 			// and this arm is what keeps that refusal a 400 instead of falling to the default
 			// and being answered 503 — an "unconfirmed upstream" answer, with a retry
 			// invitation, to a request that can never succeed.
@@ -285,8 +288,8 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 				"platform", existing.Platform, "reason", unusableConnectionReason(werr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign budget could not be changed"}
 		case errors.Is(werr, domain.ErrAccountNotSelected):
-			// Above the general arm for the same reason, and on all three budget-writing
-			// platforms this sentinel is ALWAYS wrapped alongside ErrConnectionNotUsable — so
+			// Above the general arm for the same reason, and on every budget-writing
+			// platform this sentinel is ALWAYS wrapped alongside ErrConnectionNotUsable — so
 			// without this arm the generic message tells an operator to repair credentials that
 			// are perfectly fine when the actual remedy is choosing an ad account. The
 			// distinction rides in the message because ConflictError carries only code and

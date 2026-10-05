@@ -1505,12 +1505,14 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"pacing in the ad platform, then set the amount here. " +
 			"The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor " +
 			"converts it. " +
-			"Google Ads, LinkedIn and Meta today: a campaign on any other platform is refused with 400. " +
+			"Google Ads, LinkedIn, Meta and Microsoft Advertising today: a campaign on any other platform is refused with 400. " +
 			"Budget writing is added per platform, because each platform's budget model is its own " +
 			"deliberate decision, and the refusals below are the union of what those models can refuse — " +
 			"a platform whose model has no analogue of a given refusal simply never raises it (LinkedIn " +
 			"budgets are fields on the campaign and cannot be shared, so the shared-budget 409 is a " +
-			"Google and Meta answer; Meta's form of it is a campaign-level, ad-set-spanning budget). " +
+			"Google, Meta and Microsoft answer; Meta's form of it is a campaign-level, ad-set-spanning budget, " +
+			"Microsoft's a campaign attached to a shared Budget). Microsoft Search campaigns are paced DAILY only, " +
+			"so a lifetime request for one is the pacing refusal (409). " +
 			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: " +
 			"the campaign is unprovisioned (no platform campaign id); the campaign belongs to a different " +
 			"ad account than the project's connection now resolves to, or does not record which ad account " +

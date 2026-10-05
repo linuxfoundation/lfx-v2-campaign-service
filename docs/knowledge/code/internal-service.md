@@ -1428,7 +1428,8 @@ rollback this endpoint does not have.
 **What is persisted is the REQUESTED amount, not a readback of the applied one** — the dispatcher
 confirms acceptance and does not re-read, so the two can differ by less than the platform's
 smallest settable unit (LinkedIn settles on two decimals, Meta on the account currency's minor
-unit, Google on a micro). That is the same meaning the column already carries, and a sub-unit
+unit, Google on a micro, Microsoft on whatever its own validation of the account currency settles,
+since that amount is sent unrounded). That is the same meaning the column already carries, and a sub-unit
 drift is exactly what the settings readback exists to surface rather than to hide.
 Writing those columns does NOT breach the readback's "never write an observation back" rule: the
 budget columns record what a dispatch ASKED FOR, and a budget change is a new REQUEST, so the

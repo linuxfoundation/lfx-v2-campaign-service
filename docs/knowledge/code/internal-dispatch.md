@@ -799,23 +799,23 @@ against serving legacy rows at all.
 `BudgetWriter` — `WriteBudget(ctx, projectID, platform, campaign *model.Campaign, budget
 model.BudgetChange) error` — changes an existing campaign's budget ON THE AD PLATFORM.
 Discovered by the same type assertion as `StatusToggler` and `SettingsReader`; a dispatcher
-without it yields `ErrBudgetWriteUnsupported` -> 400. **Google Ads, LinkedIn and Meta implement
-it today**; every other platform still answers 400. It is the settings readback's mirror: the
+without it yields `ErrBudgetWriteUnsupported` -> 400. **Google Ads, LinkedIn, Meta and Microsoft
+Advertising implement it today**; Reddit and X still answer 400. It is the settings readback's mirror: the
 readback makes a budget divergence legible, and this is the only capability that can act on it.
 
 **Adding a platform is purely additive** — the service layer holds no allowlist, so a slice is
 the adapter plus its dispatcher method and nothing else. What is NOT shared between the slices
 is the refusal set: each platform's budget model decides which guards even have a subject, and
-the design's published refusal list is the UNION of the three (see [design.md](design.md)). The
+the design's published refusal list is the UNION of the four (see [design.md](design.md)). The
 three rules every implementation does obey, stated in `internal/service/orchestrator.go`, are:
 confirm before persisting, refuse a shared budget, and enforce the account-identity invariant at
 least as strictly as `ReadSettings` does.
 
-**All three enforce provenance more strictly than their own sibling paths do, and each says so
-in code.** `verifyLinkedInAccountMatch` returns `nil` when the campaign records no creating
-account; `verifyMetaAccountMatch` returns `nil` when EITHER the recorded account or the current
-one is absent — deliberately, because Meta's toggle and metrics address the campaign node by id
-and need no account at all. Both tolerances are correct for those callers and wrong for a budget
+**All four enforce provenance more strictly than their own sibling paths do, and each says so
+in code.** `verifyLinkedInAccountMatch` and `verifyMicrosoftAccountMatch` return `nil` when the
+campaign records no creating account; `verifyMetaAccountMatch` returns `nil` when EITHER the
+recorded account or the current one is absent — deliberately, because Meta's toggle and metrics
+address the campaign node by id and need no account at all. Those tolerances are correct for those callers and wrong for a budget
 write, so each budget dispatcher refuses the absence(s) itself BEFORE calling the shared helper,
 which is then still used for the mismatch case so the wording stays common. Reusing the helper
 alone would silently inherit a contract this path cannot accept.
@@ -988,6 +988,66 @@ scale is off by a factor of a hundred.
 `UpdateAdSetBudget` writes exactly one field, `daily_budget` or `lifetime_budget`, as a decimal
 STRING, and **sends no `end_time`**: it only ever writes `lifetime_budget` on an ad set that
 already reports one, which already has its end time set.
+
+### Microsoft — FIELDS ON THE CAMPAIGN, unless a shared Budget owns them
+
+`MicrosoftDispatcher.WriteBudget` (`internal/dispatch/microsoft_budget.go`). Microsoft's model
+sits between LinkedIn's and Google's: `DailyBudget` (a plain decimal in the AD ACCOUNT's currency
+— not micros, not minor units) and `BudgetType` are fields on the campaign, so the campaign id
+addresses the budget and there is no budget-id resolution — **unless `BudgetId` is set**, in
+which case the campaign draws on a SHARED `Budget` entity and both fields are read-only echoes of
+a pool other campaigns also spend from. So the shared-budget guard Google has, and LinkedIn
+deliberately lacks, reappears here, reached through `BudgetId`.
+
+**Daily only.** v13 Search campaigns take `DailyBudgetStandard` or `DailyBudgetAccelerated`;
+`LifetimeBudgetStandard` exists in the enum but is documented as Audience-only, and this service
+creates and reads Search campaigns only. A `lifetime` request is therefore the SAME pacing
+refusal every sibling makes — `ErrBudgetUnwritable` → **409**, not a 400 — and is raised locally
+before any credential is decrypted, because no Microsoft campaign this path can reach is paced
+that way. (409 rather than `ErrBudgetWriteUnsupported`'s 400 is deliberate: that sentinel's
+message says the PLATFORM has no budget writing, which is no longer true, and the design states
+a pacing mismatch as a 409.)
+
+Order, every refusal before the one mutate:
+
+1. **Provenance, failed closed.** A row recording no creating account is refused
+   (`ErrCampaignProvenanceUnknown` joined with `ErrCampaignAccountMismatch`) — stricter than
+   `ToggleStatus`, whose "unknown, proceed" is right for a pause and wrong for money.
+2. **Lifetime request** → `ErrBudgetUnwritable`, no call at all.
+3. **Id shape.** A recorded platform id that is not a positive integer is a fact about the row →
+   `ErrBudgetUnwritable`, no call at all.
+4. **Resolution and the mismatch guard** — the SAME `resolveMicrosoftClient` (`resolveExisting`
+   on the creation account) and `verifyMicrosoftAccountMatch` that `ToggleStatus` uses, so a
+   re-pointed connection is refused before Microsoft is contacted.
+5. **Read** `GetCampaignBudget` (`POST Campaigns/QueryByIds`). Its failure is DEFINITE and is
+   returned unclassified; Microsoft's `CampaignServiceInvalidCampaignId` → `ErrPlatformCampaignAbsent`
+   (404).
+6. **Experiment campaign** (`ExperimentId` set) → `ErrBudgetUnwritable`: its budget is inherited
+   from the base campaign and Microsoft documents it as not settable.
+7. **Shared budget** → `ErrBudgetShared` (409); an UNREADABLE `BudgetId` → `ErrBudgetUnwritable`,
+   never assumed private.
+8. **Budget type** must be one of the two daily types Microsoft REPORTED; unreported, lifetime or
+   unknown → `ErrBudgetUnwritable`. The reported type is what the write sends back, so an
+   Accelerated campaign stays Accelerated — defaulting to Standard would silently re-pace it.
+
+Then ONE `PUT Campaigns` (UpdateCampaigns), idempotent, body
+`{"AccountId":…,"Campaigns":[{"Id":…,"BudgetType":<reported>,"DailyBudget":<amount>}]}`. The
+mutate's outcome is classified: `microsoft.IsOutcomeUnconfirmed` (5xx, transport, redirect,
+exhausted 429, or a 200 that does not answer `PartialErrors`) → `unconfirmedBudgetWriteError`
+(503 "verify upstream"); Microsoft's `CampaignServiceCannotUpdateSharedBudget` (a budget attached
+between the read and the write) → `ErrBudgetShared`; `CampaignServiceInvalidDailyBudget` or a
+budget below spend → `rejectedBudgetAmountError` (**400** with the client's sentence); any other
+`PartialError` on the single operation, or a definite 4xx, is a definite failure (503 "not
+modified").
+
+**Precision.** The amount is sent UNROUNDED, as the shortest decimal that round-trips the float —
+the same as the create path sends `DailyBudget`. The siblings round to a unit they KNOW (LinkedIn
+two decimals, Meta the account currency's minor unit, Google a micro); this client does not know
+the account currency, and rounding to an assumed two decimals would silently change a JPY amount.
+Microsoft's own validation is the authority on the smallest settable amount, and its refusal is
+the 400 above rather than the default 503. Unlike LinkedIn and Meta, then, Microsoft's floor is
+stated only by its mutate — which is why its amount refusal is a DEFINITE refusal of that mutate,
+never a pre-write validation.
 
 ## Metrics read (optional capability)
 
