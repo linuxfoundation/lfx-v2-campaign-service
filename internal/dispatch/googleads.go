@@ -308,6 +308,15 @@ type googleAdsConfig struct {
 	// Keywords/AudienceSegments/CPCBid — so this field is purely additive and changes
 	// nothing for a caller that omits it.
 	AdGroups []googleAdsAdGroupConfig `json:"adGroups"`
+	// DemandGenCreative is the image-and-text creative for the Demand Gen ad. The
+	// mirror image of Sitelinks/Callouts/StructuredSnippets above: DEMAND GEN ONLY,
+	// refused on "search".
+	//
+	// Left empty the Demand Gen campaign is created without an ad, exactly as it was
+	// before this field existed — and that campaign CANNOT SERVE until someone builds
+	// an ad in the Google Ads UI. Absence is accepted rather than refused only because
+	// every caller predating the field omits it; it is not a sensible configuration.
+	DemandGenCreative *googleAdsDemandGenCreativeConfig `json:"demandGenCreative"`
 	// AdoptExisting opts THIS dispatch in to adopting a campaign that already carries the
 	// composed name instead of creating one. It defaults to FALSE, and the default is the
 	// safety property, not a convenience: ComposeName is deterministic in
@@ -436,6 +445,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		Callouts:           cfg.Callouts,
 		StructuredSnippets: googleAdsStructuredSnippets(cfg.StructuredSnippets),
 		AdGroups:           googleAdsAdGroups(cfg.AdGroups),
+		DemandGenCreative:  googleAdsDemandGenCreative(cfg.DemandGenCreative),
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
 		// with the same suffix is rejected by whichever family it reaches first —
@@ -711,6 +721,52 @@ func googleAdsStructuredSnippets(in []googleAdsStructuredSnippetConfig) []google
 	return out
 }
 
+// googleAdsDemandGenCreativeConfig is the wire shape of the Demand Gen creative.
+//
+// Images are URLs, matching reddit's and meta's imageUrl: a caller already hosts the
+// creative somewhere. Google is the one platform that will not fetch a URL itself —
+// ImageAsset takes raw bytes — so the campaign service downloads each one and uploads
+// the bytes. See internal/platform/googleads/demandgen_creative.go, which also carries
+// the hardening that server-side fetch requires.
+type googleAdsDemandGenCreativeConfig struct {
+	// Each list is one image shape with its own required aspect ratio and minimum
+	// size, enforced by the client's preflight against Google's documented rules.
+	// At least one of marketingImages or squareMarketingImages is required.
+	MarketingImages       []string `json:"marketingImages"`
+	SquareMarketingImages []string `json:"squareMarketingImages"`
+	PortraitImages        []string `json:"portraitImages"`
+	TallPortraitImages    []string `json:"tallPortraitImages"`
+	// LogoImages is required: 1-5 square images.
+	LogoImages []string `json:"logoImages"`
+	// Headlines and Descriptions are 1-5 each. NOT the Search ad's 15/4 — Demand Gen
+	// has its own counts, though the same display-width limits.
+	Headlines    []string `json:"headlines"`
+	Descriptions []string `json:"descriptions"`
+	// BusinessName is required by Google. CallToActionText is optional.
+	BusinessName     string `json:"businessName"`
+	CallToActionText string `json:"callToActionText"`
+}
+
+// googleAdsDemandGenCreative maps the creative config to the client input. A nil
+// pointer maps to the zero value, which the client treats as "no creative asked
+// for" — the pre-existing no-ad behaviour.
+func googleAdsDemandGenCreative(in *googleAdsDemandGenCreativeConfig) googleads.DemandGenCreative {
+	if in == nil {
+		return googleads.DemandGenCreative{}
+	}
+	return googleads.DemandGenCreative{
+		MarketingImages:       in.MarketingImages,
+		SquareMarketingImages: in.SquareMarketingImages,
+		PortraitImages:        in.PortraitImages,
+		TallPortraitImages:    in.TallPortraitImages,
+		LogoImages:            in.LogoImages,
+		Headlines:             in.Headlines,
+		Descriptions:          in.Descriptions,
+		BusinessName:          in.BusinessName,
+		CallToActionText:      in.CallToActionText,
+	}
+}
+
 // googleAdsAdGroups maps the per-theme ad group list, reusing googleAdsKeywords for
 // each group's keywords so a group's keyword vocabulary cannot drift from the
 // campaign-level one. An empty per-group list stays nil, which is what the client
@@ -757,18 +813,48 @@ func googleAdsAds(in []googleAdsAdConfig) []googleads.AdSpec {
 // destination in its own finalUrl field and the copy fields are short ad text. If a
 // link-bearing free-text field is ever added here, it needs that helper.
 func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
-	if len(cfg.Sitelinks) == 0 {
+	if len(cfg.Sitelinks) == 0 && cfg.DemandGenCreative == nil {
 		return cfg
 	}
 	snapshot := cfg
 	// Copy the slice before mutating: cfg is passed by value but Sitelinks shares its
 	// backing array with the caller's config, and the FULL url must still reach Google.
-	snapshot.Sitelinks = make([]googleAdsSitelinkConfig, len(cfg.Sitelinks))
-	copy(snapshot.Sitelinks, cfg.Sitelinks)
-	for i := range snapshot.Sitelinks {
-		snapshot.Sitelinks[i].FinalURL = sanitizeSnapshotURL(snapshot.Sitelinks[i].FinalURL)
+	if len(cfg.Sitelinks) > 0 {
+		snapshot.Sitelinks = make([]googleAdsSitelinkConfig, len(cfg.Sitelinks))
+		copy(snapshot.Sitelinks, cfg.Sitelinks)
+		for i := range snapshot.Sitelinks {
+			snapshot.Sitelinks[i].FinalURL = sanitizeSnapshotURL(snapshot.Sitelinks[i].FinalURL)
+		}
+	}
+	// Every creative image URL is sanitized for the same reason the sitelink URL and
+	// reddit's/meta's ImageURL are: config_snapshot is persisted UNENCRYPTED, and a
+	// creative URL can carry a signed query string that is itself the credential for
+	// fetching the asset. The FULL url must still reach the client, which is why this
+	// works on a copy — and the copy has to be deep, because the pointer and both
+	// string slices are shared with the caller's config.
+	if cfg.DemandGenCreative != nil {
+		creative := *cfg.DemandGenCreative
+		creative.MarketingImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.MarketingImages)
+		creative.SquareMarketingImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.SquareMarketingImages)
+		creative.PortraitImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.PortraitImages)
+		creative.TallPortraitImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.TallPortraitImages)
+		creative.LogoImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.LogoImages)
+		snapshot.DemandGenCreative = &creative
 	}
 	return snapshot
+}
+
+// sanitizeSnapshotURLs is sanitizeSnapshotURL over a list, returning a NEW slice so
+// the caller's backing array is never written through.
+func sanitizeSnapshotURLs(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	for i, u := range in {
+		out[i] = sanitizeSnapshotURL(u)
+	}
+	return out
 }
 
 // campaignFromGoogleAds maps the client result to the persistence model. The

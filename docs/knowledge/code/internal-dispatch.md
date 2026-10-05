@@ -289,6 +289,20 @@ load-bearing half: the config is passed by value but its slice shares a backing 
 the caller's, so sanitizing in place would redact the URL the create path is about to send to
 Google and break the sitelink — a worse defect than the one being fixed.
 
+**The Demand Gen creative's five image lists are sanitized the same way.**
+`sanitizeSnapshotURLs` applies `sanitizeSnapshotURL` across a list, returning nil for an
+empty one so an absent list stays absent in the row, and `googleAdsSnapshotConfig`
+deep-copies the whole `demandGenCreative` block before reducing all five. Creative URLs
+are the case the signed-URL risk is sharpest: a CDN asset link often carries its
+credential IN the query string, so the unencrypted row would otherwise hold a working
+key to the asset. Each list is asserted individually in
+`TestGoogleAdsSnapshotConfig_SanitizesEveryCreativeURLList` rather than in aggregate —
+a helper applied to four of five lists passes any "no secrets anywhere" check as long as
+the fifth happens to be empty in the fixture, which is exactly how the fifth list gets
+missed. The deep copy matters here more than for sitelinks: the fetch that downloads
+these images runs AFTER the snapshot is taken, so sanitizing in place would leave the
+create path trying to download a URL with its credentials stripped.
+
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a
 credential-SHAPED parameter because the text is about to be PUBLISHED, and it is a
 denylist that cannot name every credential parameter a registration page might use, and it
@@ -733,6 +747,16 @@ reads as "inherit the campaign-level value", so the distinction is not cosmetic.
 `adSchedules[].bidModifier` is a POINTER on the wire type as well as in the client, because an
 explicit `0` is Google's -100% opt-out: a value-typed hop would make an absent modifier
 indistinguishable from an instruction to stop serving in that interval.
+
+`demandGenCreative` follows the same pattern one level deeper: a `*googleAdsDemandGenCreativeConfig`
+POINTER on the config, so absent and present-but-empty stay distinguishable, mapped by
+`googleAdsDemandGenCreative` which answers the zero `googleads.DemandGenCreative` for nil —
+the value the platform layer reads as "no creative asked for", which is the pre-existing
+no-ad behaviour every Demand Gen campaign created before this feature relies on. Its test
+asserts each of the seven lists lands in its OWN slot rather than counting images: a mapper
+that crossed `portraitImages` with `tallPortraitImages` would satisfy any count-based check
+— both lists non-empty, totals matching — and build the campaign with 4:5 images where
+Google wants 9:16.
 
 One thing this layer does decide for itself is the post-create "NO geo targeting" warning,
 which is the operator's only signal that a campaign will spend wherever the ad account

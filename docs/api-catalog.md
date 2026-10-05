@@ -558,7 +558,7 @@ USD — the service does no FX conversion (mirroring `metaConfig`).
 Every field below is OPTIONAL except `budget`, and every one of them is additive: a config
 that names none of them produces exactly the single-ad-group, single-ad campaign this
 service created before they existed. Additive does NOT mean channel-independent — the
-entries below marked SEARCH ONLY are REFUSED, not ignored, when `campaignType` is
+entries below marked SEARCH ONLY are REFUSED, not ignored, when `channel` is
 `demand-gen`. Each is validated BEFORE the first budget mutate, so a
 refused value cannot strand a paid campaign — and the same validation runs on the
 `adoptExisting` path, so a config is refused identically whether it creates or adopts.
@@ -706,7 +706,7 @@ negativeKeywords?:              — OPTIONAL Search keyword EXCLUSIONS, attached
                                   in both. An empty text or unsupported matchType fails the job BEFORE
                                   any Google Ads request is made.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored when `campaignType` is
+                                  SEARCH ONLY, and REFUSED rather than ignored when `channel` is
                                   `demand-gen` — unlike `keywords`, which IS ignored there. The
                                   difference is deliberate: Demand Gen creates no ad and no keyword
                                   criteria, so a positive keyword has nothing to attach to, but an
@@ -899,6 +899,45 @@ adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-26
                                   the field existed. The groups are created in the order listed, and a
                                   failure partway through leaves the groups before it in place — the
                                   error names which group of how many failed and how many were created.
+demandGenCreative?:             — OPTIONAL Demand Gen ad (LFXV2-2665). DEMAND GEN ONLY, and REFUSED on
+  {marketingImages?: string[],    Search — the mirror of every SEARCH ONLY entry above. Supplying it is
+   squareMarketingImages?:        what turns a Demand Gen campaign from a shell into one that can serve:
+     string[],                    omitted, the campaign is still created with NO AD, exactly as before
+   portraitImages?: string[],     this field existed, and a human must add creative in the Google Ads UI.
+   tallPortraitImages?: string[],
+   logoImages?: string[],         Images are given as https URLs that THIS SERVICE fetches and uploads as
+   headlines?: string[],          Google Ads image assets; Google is never handed the URL. The fetch is
+   descriptions?: string[],       anonymous (no credentials are sent), follows no redirects, refuses any
+   businessName?: string,         address that is not a public IP, caps each body at 5 MiB, and accepts
+   callToActionText?: string}     only PNG, JPEG and GIF. Every image is fetched and checked BEFORE the
+                                  first budget mutate, so a bad URL cannot strand a paid campaign.
+
+                                  Each list has its own shape, checked against the decoded image:
+                                    marketingImages          1.91:1, min 600x314
+                                    squareMarketingImages    1:1,    min 300x300
+                                    portraitImages           4:5,    min 480x600
+                                    tallPortraitImages       9:16,   min 600x1067
+                                    logoImages               1:1,    min 128x128
+                                  Aspect ratios are allowed Google's documented +-1%. A URL must be
+                                  https with a host, and may not repeat within its list.
+
+                                  At most 20 marketing images COMBINED across the four marketing lists
+                                  (not 20 each), and at least one `marketingImages` OR one
+                                  `squareMarketingImages` — Google requires each when the other is
+                                  absent, so neither alone is mandatory and the pair is. Logos are
+                                  counted separately: 1-5, at least one REQUIRED.
+
+                                  `headlines` 1-5 (<=30 weighted chars) and `descriptions` 1-5 (<=90).
+                                  These are NOT the RSA counts above (3-15 / 2-4) even though the width
+                                  limits coincide. `businessName` is REQUIRED, <=25 weighted chars;
+                                  `callToActionText` is optional, <=30 runes. Over-long copy is
+                                  REFUSED, not truncated — unlike the RSA `headlines`/`descriptions`
+                                  above, because a Demand Gen ad is created from exactly what you named.
+
+                                  The ad is created PAUSED, like every other resource this service
+                                  creates. The result carries `creativeAssetIds` and `adId`; a failure
+                                  after the assets upload still reports the asset ids, so a retry does
+                                  not lose them. The same validation runs on the `adoptExisting` path.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of

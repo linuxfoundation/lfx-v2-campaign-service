@@ -426,7 +426,7 @@ func TestUpdateAdGroupAndAdStatus(t *testing.T) {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
-			_, _ = io.WriteString(w, `{"results":[{"resourceName":"ok"}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/111"}]}`)
 		}))
 		t.Cleanup(apiSrv.Close)
 		c := NewClient(testCreds(), testAccount(),
@@ -465,7 +465,14 @@ func TestUpdateAdGroupAndAdStatus(t *testing.T) {
 			mu.Lock()
 			paths = append(paths, r.URL.Path)
 			mu.Unlock()
-			_, _ = io.WriteString(w, `{"results":[{"resourceName":"ok"}]}`)
+			// Echo the resource name the client actually addressed:
+			// checkStatusMutateResults matches results to operations by NAME, so a
+			// placeholder would read as the operation going unaccounted for.
+			name := "customers/1234567890/adGroups/111"
+			if strings.HasSuffix(r.URL.Path, "adGroupAds:mutate") {
+				name = "customers/1234567890/adGroupAds/111~222"
+			}
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"`+name+`"}]}`)
 		}))
 		t.Cleanup(apiSrv.Close)
 		c := NewClient(testCreds(), testAccount(),
@@ -663,9 +670,19 @@ func TestUpdateAdGroupsAndAdsStatus(t *testing.T) {
 	t.Run("extra results do not fail a correct toggle", func(t *testing.T) {
 		tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
 		t.Cleanup(tokenSrv.Close)
-		apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"results":[{"resourceName":"a"},{"resourceName":"b"},{"resourceName":"c"}]}`)
+			// The resource this client asked for IS accounted for; the other two
+			// results are work it never asked about — one a well-formed name from
+			// this account, one not a resource name at all. Neither is evidence that
+			// the requested operation went undone.
+			name := "customers/1234567890/adGroups/111"
+			extra := "customers/1234567890/adGroups/999"
+			if strings.HasSuffix(r.URL.Path, "adGroupAds:mutate") {
+				name = "customers/1234567890/adGroupAds/111~222"
+				extra = "customers/1234567890/adGroupAds/111~999"
+			}
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"`+name+`"},{"resourceName":"`+extra+`"},{"resourceName":"c"}]}`)
 		}))
 		t.Cleanup(apiSrv.Close)
 		c := NewClient(testCreds(), testAccount(),

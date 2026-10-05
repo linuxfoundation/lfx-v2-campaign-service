@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067); and Search serving readiness — an optional manual CPC bid on the ad group (0 means unset, no default invented), an optional campaign flight window rendered into the v23 startDateTime/endDateTime request fields on both channels, and optional campaign-level negative keywords batched into one atomic campaignCriteria:mutate with negative:true, all three validated before the first paid mutate and each a no-op when absent; and Search campaign completeness — geo exclusions on both channels, raw geo target constant ids alongside country codes so a caller can target a city, region or postal code, Search-only proximity radius targeting, campaign-level language/ad-schedule/device/demographic criteria whose bid modifier is pointer-typed so an explicit 0 stays Google's -100% opt-out, sitelink/callout/structured-snippet extension assets linked by the resource name the create returned, and multiple themed ad groups each carrying multiple responsive search ads that inherit the campaign-level fields PER FIELD, every one of them optional, refused on Demand Gen where it is a Search capability, and validated before the first paid mutate (LFXV2-2665)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067); and Search serving readiness — an optional manual CPC bid on the ad group (0 means unset, no default invented), an optional campaign flight window rendered into the v23 startDateTime/endDateTime request fields on both channels, and optional campaign-level negative keywords batched into one atomic campaignCriteria:mutate with negative:true, all three validated before the first paid mutate and each a no-op when absent; and Search campaign completeness — geo exclusions on both channels, raw geo target constant ids alongside country codes so a caller can target a city, region or postal code, Search-only proximity radius targeting, campaign-level language/ad-schedule/device/demographic criteria whose bid modifier is pointer-typed so an explicit 0 stays Google's -100% opt-out, sitelink/callout/structured-snippet extension assets linked by the resource name the create returned, and multiple themed ad groups each carrying multiple responsive search ads that inherit the campaign-level fields PER FIELD, every one of them optional, refused on Demand Gen where it is a Search capability, and validated before the first paid mutate (LFXV2-2665); and Demand Gen ad creation — an optional caller-supplied creative (marketing/square/portrait/tall-portrait/logo image URLs, 1-5 headlines and 1-5 descriptions refused rather than truncated, business name, call to action) whose locally-decidable half validates in the PURE preflight while its images are fetched by this service over a hardened credential-free transport (https only, no redirects, public-IP dial guard, 5 MiB cap, decoder-set format allowlist, geometry checked against the decoded image) and uploaded as base64 image assets still BEFORE the first budget mutate, then assembled into a PAUSED DemandGenMultiAssetAd whose asset ids are reported even when the ad create fails, refused on Search as the mirror of every Search-only field (LFXV2-2665)."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -1301,6 +1301,96 @@ The groups are created in order, and because every one of them is created after
 the campaign exists, the partial-result contract covers them: a failure at group
 N returns the error alongside the non-nil result, and says which group of how many
 failed with how many were created before it.
+
+## Demand Gen ad creation (LFXV2-2665)
+
+`demandgen_creative.go`. Before this, a Demand Gen campaign was a shell: budget,
+campaign, ad group, geo — and no ad, so it could not serve even once a human
+enabled it. `DemandGenCreative` on `CampaignInput` closes that, and is the
+**mirror** of every Search-only field above: supplying it on a Search campaign is
+REFUSED, not ignored, exactly as extensions and proximity are refused on Demand
+Gen. Absent, the old no-ad shape is produced byte for byte, which is what every
+caller written before this field still sends.
+
+**The file is split along the preflight boundary, and that split is the point.**
+`preflightCampaignKind` is PURE — no network, no `ctx` — because the orphan
+guarantee depends on everything being decidable before the first budget mutate
+spends money. Image bytes cannot be validated without fetching them, so the
+locally-decidable half (`validateDemandGenCreative`, counts, copy widths, URL
+shape) runs in the preflight, and the fetch (`fetchDemandGenImages(ctx, plan)`)
+runs in the cascade but **still before the budget mutate**. A bad image therefore
+fails with `result == nil` and nothing created, which
+`TestCreateDemandGenCampaign_BadImageFailsBeforeAnyMutate` pins.
+
+**The service fetches the images; Google never sees the URL.** Google Ads takes
+image assets as base64 bytes, so a caller-supplied https URL is downloaded here
+and uploaded as an `imageAsset`. That makes this the one place the service
+fetches a caller-controlled address, and the transport is hardened accordingly:
+
+- **https only**, refused at validation. A plaintext fetch is one an on-path
+  attacker can replace with an image of their choosing, which then becomes a real
+  ad creative under the Foundation's account.
+- **No credentials.** The creative transport is separate from the API client and
+  sends no `Authorization`, `developer-token` or `login-customer-id`.
+  `TestFetchOneImage_SendsNoCredentials` asserts all three.
+- **No redirects**, so a validated public host cannot bounce the fetch to an
+  internal one.
+- **`checkPublicIP` on every dial.** Loopback, RFC1918, link-local (including
+  `169.254.169.254`, the cloud metadata address), CGNAT, multicast, ULA and their
+  IPv4-mapped IPv6 spellings are all refused. It is wired as the `Client`'s
+  `imageDialGuard` field, defaulting to the real guard, so a zero-value `Client`
+  is safe — `TestImageFetchClient_DefaultsToTheRealGuard`.
+- **5 MiB cap** via `io.LimitReader(body, max+1)`, which binds whether or not a
+  `Content-Length` was declared.
+- **The decoder set IS the format allowlist.** Only `image/png`, `image/jpeg` and
+  `image/gif` are imported, so `image.DecodeConfig` fails on anything else; there
+  is no separate list to drift.
+
+`imageTLSConfig` and `imageDialGuard` are both **unexported** `Client` fields with
+unexported options. Tests use them to trust one `httptest` TLS certificate and to
+allow loopback for that one server; no caller outside the package can reach them,
+so there is no way to weaken either in a running service.
+
+**Geometry is checked against the decoded image, not trusted from the caller.**
+`demandGenImageSlots` carries each slot's ratio and minimum as the two documented
+integers (1.91:1 min 600x314, square 1:1 min 300x300, portrait 4:5 min 480x600,
+tall portrait 9:16 min 600x1067, logo 1:1 min 128x128); `checkImageGeometry`
+divides once, here, so the documented value stays the value in the code, and
+allows Google's documented ±1%.
+
+**The counts are NOT the RSA counts, and the coincidence is a trap.** Demand Gen
+takes 1–5 headlines and 1–5 descriptions where an RSA takes 3–15 and 2–4, but the
+display-width limits are the same 30 and 90. A width-only test would therefore
+pass even if `maxHeadlines` had been wired in by mistake, so
+`TestValidateDemandGenCreative_CountsAreNotTheRSACounts` asserts the constants
+differ and then refuses six headlines. The weighting helper IS shared
+(`googleAdsCharWeight`, `maxHeadlineWeight`, `maxDescriptionWeight`) because that
+contract genuinely is the same.
+
+The marketing ceiling of 20 is **combined across the four marketing arrays**, not
+per array — four arrays of 19 is 76 images and satisfies every per-array reading.
+Logos sit outside it, 1–5 and at least one required. At least one of
+`marketingImages` or `squareMarketingImages` must be present: Google's wording is
+reciprocal (each required when the other is absent), so neither alone is
+mandatory and the pair is.
+
+**Over-long copy is REFUSED, not truncated**, which is the opposite of the RSA
+path's deliberate truncate-and-pad. An RSA composes copy the service generated; a
+Demand Gen ad is built from exactly what the caller named, and silently shortening
+a headline there publishes something nobody wrote.
+
+The ad is created **PAUSED**, like everything else this client creates — and for a
+concrete reason beyond symmetry: `googleAdsToggleTargets` falls back to the scalar
+`AdGroupID`/`AdID` when the result carries no `AdGroups`, so a paused ad is one the
+existing toggle cascade can enable without any further change.
+
+`CampaignResult` gained `CreativeAssetIDs` alongside `AdID`, and the partial-result
+contract covers both: an ad create that fails after the assets uploaded still
+returns a non-nil result carrying the asset ids, so a retry does not lose them
+(`TestCreateDemandGenCampaign_AdFailureStillReportsTheAssets`). `demandGenClosingStep`
+now has four branches over (geo, ad) rather than one, so the step text stops
+telling an operator to upload images for a campaign that already has an ad.
+
 
 ## Scope
 

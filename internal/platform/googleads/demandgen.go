@@ -70,11 +70,24 @@ type demandGenAdGroupCreate struct {
 // (`lfx-self-serve` `campaign-proxy.service.ts`'s `createDemandGenCampaign`), which
 // is what serves this channel today and is the behavioural reference.
 //
-// It deliberately creates NO AD and NO KEYWORDS. That is not an omission: Demand Gen
-// ads are image/video asset based, the assets are uploaded by a human in the Google
-// Ads UI, and the legacy path ends the same way with "upload images and publish in
-// Google Ads UI". Generating a text ad here would produce an ad the channel cannot
-// serve.
+// It creates NO KEYWORDS: Demand Gen has no keyword criteria, and the preflight
+// refuses them rather than dropping them.
+//
+// It DOES now create an ad, when the caller supplies CampaignInput.DemandGenCreative.
+// This reverses a rationale this file used to state — that creating no ad was
+// deliberate because "Demand Gen ads are image/video asset based, the assets are
+// uploaded by a human in the Google Ads UI". Half of that was right and half was a
+// non sequitur. The right half: a text ad would indeed be unservable here, so the
+// Search path's responsive search ad could not simply be reused. The non sequitur:
+// needing image assets is not a reason a human must supply them interactively. The
+// real obstacle was that ImageAsset.data is bytes and Google will not fetch a URL,
+// so the service has to download the images itself — which it now does, before the
+// budget mutate, in fetchDemandGenImages. See demandgen_creative.go.
+//
+// With no creative supplied the old behaviour stands unchanged: campaign, ad group
+// and geo, no ad, and a closing step that says the campaign cannot serve until an
+// ad is added. That is kept because campaigns created before the creative existed
+// are that shape, and ValidateCampaignInputKind must keep accepting them.
 //
 // The partial-result contract matches CreateCampaign exactly, and that is the part
 // the legacy TS does NOT have: every step that may have committed upstream returns a
@@ -83,6 +96,17 @@ type demandGenAdGroupCreate struct {
 // (nil, err) here would release the claim on a campaign that exists and spends.
 func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 	pf, err := c.preflightCampaignKind(campaignKindDemandGen, in)
+	if err != nil {
+		return nil, err // pre-create: nothing was sent
+	}
+
+	// The images are downloaded BEFORE the first mutate, with everything else that
+	// can fail for free. A 404, an over-sized file or an image that misses Google's
+	// aspect ratio therefore costs nothing — the same orphan-avoidance guarantee the
+	// pure validators in preflightCampaignKind give, extended over the one check that
+	// genuinely needs the network. Nothing has been created yet, so this returns
+	// (nil, err) like the preflight above and unlike every step after it.
+	images, err := c.fetchDemandGenImages(ctx, pf.creative)
 	if err != nil {
 		return nil, err // pre-create: nothing was sent
 	}
@@ -264,16 +288,47 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		res.Steps = steps
 	}
 
-	// No ad and no keywords, deliberately — see the doc comment.
+	// Step 5: the creative. Images first as account-level assets, then the ad that
+	// references them — two mutates, because Google has no call that does both.
 	//
-	// The closing step reports geo HONESTLY rather than with a fixed string: it used to
-	// say "no geo targeting set" unconditionally, which would now be a lie on every
-	// targeted create.
-	if len(res.GeoCriterionIDs) > 0 {
-		steps = append(steps, "Demand Gen campaign created — upload images and publish in the Google Ads UI")
-	} else {
-		steps = append(steps, "Demand Gen campaign created (no geo targeting set) — add targeting, upload images and publish in the Google Ads UI")
+	// Like the geo step, a failure is returned ALONGSIDE the non-nil res: the campaign
+	// and ad group exist either way, and the asset ids are carried even when the ad
+	// itself failed so the operator can find images created with nothing referencing
+	// them.
+	if pf.creative.present {
+		assetIDs, adID, adErr := c.createDemandGenAd(ctx, adGroupResource, adGroupID, pf.finalURL, pf.creative, images)
+		res.CreativeAssetIDs = assetIDs
+		if adErr != nil {
+			return res, adErr
+		}
+		res.AdID = adID
+		steps = append(steps, fmt.Sprintf("Demand Gen ad created: %s (PAUSED, %s)", adID, demandGenCreativeStep(pf.creative)))
+		res.Steps = steps
 	}
+
+	// The closing step reports what is actually true of this campaign rather than a
+	// fixed string. It used to say "no geo targeting set" unconditionally, which
+	// became a lie on every targeted create; the same correction now applies to the
+	// ad, which is no longer always absent.
+	steps = append(steps, demandGenClosingStep(len(res.GeoCriterionIDs) > 0, res.AdID != ""))
 	res.Steps = steps
 	return res, nil
+}
+
+// demandGenClosingStep states what still has to happen by hand before the campaign
+// can serve. Both halves are conditional because both can now go either way, and a
+// closing step that overstates what was done is the specific failure this wording
+// exists to avoid: an operator who reads "campaign created" and believes it is
+// ready will un-pause a campaign that cannot serve.
+func demandGenClosingStep(hasGeo, hasAd bool) string {
+	switch {
+	case hasGeo && hasAd:
+		return "Demand Gen campaign created — review the creative and launch in the Google Ads UI"
+	case hasAd:
+		return "Demand Gen campaign created (no geo targeting set) — add targeting, then review the creative and launch in the Google Ads UI"
+	case hasGeo:
+		return "Demand Gen campaign created with NO AD — it cannot serve until an ad is added; upload images and publish in the Google Ads UI"
+	default:
+		return "Demand Gen campaign created with NO AD (no geo targeting set) — it cannot serve until an ad is added; add targeting, upload images and publish in the Google Ads UI"
+	}
 }

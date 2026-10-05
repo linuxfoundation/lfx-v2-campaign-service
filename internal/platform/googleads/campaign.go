@@ -237,6 +237,16 @@ type CampaignInput struct {
 	// omits one. See adgroup_plan.go for why more than one group is worth having:
 	// Google scores Ad Rank per keyword against the ad that would serve for it.
 	AdGroups []AdGroupSpec
+	// DemandGenCreative is the image-and-text creative for the Demand Gen ad, and
+	// is the mirror image of the three fields above: optional and DEMAND GEN ONLY,
+	// refused at preflight on Search, which takes its creative as RSA copy plus
+	// campaign-level extension assets instead.
+	//
+	// Left empty the Demand Gen cascade creates no ad at all — the behaviour this
+	// client had before the creative existed, kept so that campaigns already in the
+	// database still validate. A Demand Gen campaign with no ad cannot serve; the
+	// closing steps say so. See demandgen_creative.go.
+	DemandGenCreative DemandGenCreative
 }
 
 // AdGroupResult is one ad group the cascade attempted, and everything created
@@ -355,8 +365,22 @@ type CampaignResult struct {
 	// ExtensionLinkIDs empty is exactly that case, and the returned error says so.
 	ExtensionAssetIDs []string `json:"extensionAssetIds,omitempty"`
 	ExtensionLinkIDs  []string `json:"extensionLinkIds,omitempty"`
-	GoogleAdsURL      string   `json:"googleAdsUrl"`
-	Steps             []string `json:"steps"`
+	// CreativeAssetIDs are the IMAGE assets created for a Demand Gen ad — marketing
+	// images, then logos, in the order demandGenImageSlots lists them.
+	//
+	// Kept separate from ExtensionAssetIDs rather than folded into it, even though
+	// both are account-level `assets` ids created by an `assets:mutate`: the two
+	// exist on different channels (extensions are Search-only, these Demand Gen-only)
+	// and are attached to different things — an extension is linked to the CAMPAIGN
+	// by a second mutate, an image is referenced by the AD itself. A reconciler
+	// chasing one would look in the wrong place for the other.
+	//
+	// Non-empty with AdID empty is the Demand Gen counterpart of the
+	// created-but-unlinked case ExtensionAssetIDs documents: the images exist
+	// account-wide and no ad references them. The returned error says so.
+	CreativeAssetIDs []string `json:"creativeAssetIds,omitempty"`
+	GoogleAdsURL     string   `json:"googleAdsUrl"`
+	Steps            []string `json:"steps"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
@@ -717,6 +741,13 @@ type campaignPreflight struct {
 	// callout or a sitelink with no destination must fail before anything is paid
 	// for. See validateAssetPlan.
 	assets assetPlan
+	// creative is the validated Demand Gen ad creative — image URLs, headlines,
+	// descriptions and business name. Everything LOCALLY decidable is resolved here
+	// with the rest; the image bytes themselves are fetched by the Demand Gen
+	// cascade in a separate step that still runs before the budget mutate, because
+	// whether a URL serves a 600x314 JPEG is not knowable from the string. See
+	// validateDemandGenCreative and fetchDemandGenImages.
+	creative demandGenCreativePlan
 	// adGroups are the ad groups the cascade will create, always at least one. When
 	// the caller asked for none, it holds exactly the single group the fields above
 	// describe, so the cascade has one shape to walk rather than two. A duplicate
@@ -971,6 +1002,16 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// The Demand Gen creative is the mirror of the extension assets above: refused
+	// on Search for the same capability reason they are refused on Demand Gen. Only
+	// its locally decidable half is settled here — counts, display widths, business
+	// name, URL shape — so ValidateCampaignInputKind refuses exactly what the create
+	// cascade refuses. The bytes are fetched by that cascade, still before the budget
+	// mutate. See demandgen_creative.go.
+	creative, err := validateDemandGenCreative(kind, in)
+	if err != nil {
+		return nil, err
+	}
 	// The three remaining inputs join the same pre-mutate block for the same
 	// orphan-avoidance reason: each is purely local, and each would otherwise be
 	// rejected by Google only at a mutate that runs after the budget and campaign have
@@ -1040,6 +1081,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		geo:              geo,
 		criteria:         criteria,
 		assets:           assets,
+		creative:         creative,
 		adGroups:         adGroups,
 		negativeKeywords: negativeKeywords,
 		cpcBidMicros:     cpcBidMicros,
@@ -1513,9 +1555,10 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 	// TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing, which primes the token
 	// cache so it exercises exactly the cached path this note describes.
 
+	campaignResource := "customers/" + c.account.CustomerID + "/campaigns/" + id
 	req := mutateRequest{Operations: []mutateOperation{{
 		Update: campaignStatusUpdate{
-			ResourceName: "customers/" + c.account.CustomerID + "/campaigns/" + id,
+			ResourceName: campaignResource,
 			Status:       status,
 		},
 		UpdateMask: "status",
@@ -1540,7 +1583,7 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 	// campaign flip taken as confirmed would send the children on from a state nobody
 	// verified. Wrapped in a dedicated type rather than partialCascadeError, which asserts
 	// the preceding stages succeeded — on PAUSE there are none, and the claim would be false.
-	if cErr := checkStatusMutateResults(resp, 1, "campaign"); cErr != nil {
+	if cErr := c.checkStatusMutateResults(resp, "campaigns", "campaign", []string{campaignResource}, true); cErr != nil {
 		return &unconfirmedCampaignStatusError{err: fmt.Errorf("google-ads campaign %s status update to %s: %w", id, status, cErr)}
 	}
 	return nil

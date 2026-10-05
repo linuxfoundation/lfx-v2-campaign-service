@@ -27,6 +27,7 @@ package googleads
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -147,6 +148,24 @@ type Client struct {
 	// retryBaseDelay const; tests shrink it (via withRetryBaseDelay) to keep runs
 	// fast.
 	retryBaseDelay time.Duration
+
+	// imageDialGuard decides whether the Demand Gen creative fetch may connect to a
+	// resolved address. Defaults to checkPublicIP, which refuses every non-public
+	// range; only tests override it (via withImageDialGuard), because httptest
+	// serves on 127.0.0.1 and the production guard rightly refuses loopback.
+	//
+	// Unexported with an unexported setter: there is deliberately NO way for a
+	// caller outside this package to relax the guard, which is the whole point of
+	// it. See demandgen_creative.go.
+	imageDialGuard func(net.IP) error
+
+	// imageTLSConfig overrides the TLS settings of the creative fetch transport.
+	// Nil in production, which is what gives it the standard system roots; only
+	// tests set it, so an httptest TLS server's self-signed certificate can be
+	// trusted for that one server without weakening anything else. Unexported for
+	// the same reason imageDialGuard is: no caller outside this package can reach
+	// it, so there is no way to turn verification off in a running service.
+	imageTLSConfig *tls.Config
 
 	// tokenMu guards the cached access token AND the inflight single-flight
 	// pointer. It is held only for the brief cache read/write and to publish or
@@ -275,6 +294,26 @@ func withRetryBaseDelay(d time.Duration) Option {
 	}
 }
 
+// withImageDialGuard overrides the creative fetch's destination-address policy.
+// Unexported: only tests use it, to reach an httptest server on loopback.
+func withImageDialGuard(guard func(net.IP) error) Option {
+	return func(c *Client) {
+		if guard != nil {
+			c.imageDialGuard = guard
+		}
+	}
+}
+
+// withImageTLSConfig overrides the creative fetch transport's TLS settings.
+// Unexported: only tests use it, to trust an httptest TLS server's certificate.
+func withImageTLSConfig(cfg *tls.Config) Option {
+	return func(c *Client) {
+		if cfg != nil {
+			c.imageTLSConfig = cfg
+		}
+	}
+}
+
 // NewClient builds a Google Ads client from injected credentials and account
 // config. Redirect following is force-disabled on whatever *http.Client is used,
 // including one supplied via WithHTTPClient (applied to a shallow copy so the
@@ -289,6 +328,7 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		httpClient:     &http.Client{Timeout: googleAdsRequestTimeout, CheckRedirect: noFollow},
 		now:            time.Now,
 		retryBaseDelay: retryBaseDelay,
+		imageDialGuard: checkPublicIP,
 	}
 	for _, o := range opts {
 		o(c)
