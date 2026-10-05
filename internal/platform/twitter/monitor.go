@@ -87,12 +87,12 @@ const MaxMonitorActiveCampaigns = maxStatsJobsPerReport * statsJobMaxEntities
 // caller surfaces it rather than retrying it as an upstream failure.
 var ErrTooManyActiveCampaigns = fmt.Errorf("twitter: the account has more than %d campaigns active in the report window", MaxMonitorActiveCampaigns)
 
-// ErrReportWindowNotWholeHours is returned by SubmitAccountCampaignReport when a local midnight
-// bounding the report window is not a whole UTC hour — an account whose timezone has a
-// fractional-hour offset (Asia/Kolkata, Asia/Kathmandu, Australia/Adelaide, ...). It comes
-// before any stats request or job creation, not before every request: the account timezone is
-// read first (an account GET when the cache is cold), and the caller has usually listed the
-// account's campaigns and line items already.
+// ErrReportWindowNotWholeHours is returned by SubmitAccountCampaignReport when a day start (local
+// midnight, or the first instant after a skipped one) bounding the report window is not a whole
+// UTC hour — an account whose timezone has a fractional-hour offset (Asia/Kolkata,
+// Asia/Kathmandu, Australia/Adelaide, ...). It comes before any stats request or job creation,
+// not before every request: the account timezone is read first (an account GET when the cache is
+// cold), and the caller has usually listed the account's campaigns and line items already.
 // X accepts "whole hours only" for start_time/end_time, so such an account's calendar days cannot
 // be queried exactly, and querying a shifted window while reporting the account's own days would
 // misattribute up to 45 minutes of delivery to the wrong day. PERMANENT for the account's zone.
@@ -587,10 +587,12 @@ func (c *Client) walkPages(ctx context.Context, path string, page func(json.RawM
 }
 
 // accountReportWindow returns the stats window for the trailing `days` days, today inclusive,
-// in the account's timezone: [local midnight of today-(days-1), the local midnight after today).
+// in the account's timezone: [start of today-(days-1), start of the day after today), where a
+// day's start is its local midnight — or, when a DST spring-forward skips that midnight, the
+// first instant that exists on the day (localDayStart).
 //
 // The window QUERIED and the window REPORTED are always the same days: start/end are exactly the
-// local midnights of firstDay and of the day after lastDay. Nothing is shifted to make a window
+// starts of firstDay and of the day after lastDay. Nothing is shifted to make a window
 // fit, because the caller persists firstDay/lastDay and the rules pace on them — a query that
 // silently covered different hours than the persisted days would attribute delivery to days it
 // was not measured on. Instead:
@@ -599,25 +601,27 @@ func (c *Client) walkPages(ctx context.Context, path string, page func(json.RawM
 //     requires midnight in the account timezone (https://docs.x.com/x-ads-api/analytics,
 //     Synchronous Analytics; the asynchronous section points to the same parameters). The
 //     monitor asks for TOTAL, but aligning to account-midnight is what makes the window the
-//     account's own calendar days, the unit its daily budgets reset on. When either local
-//     midnight is not a whole UTC hour — a fractional-offset zone such as Asia/Kolkata — the
+//     account's own calendar days, the unit its daily budgets reset on. When either day start
+//     is not a whole UTC hour — a fractional-offset zone such as Asia/Kolkata — the
 //     account's days cannot be queried exactly and the window is REFUSED with
 //     ErrReportWindowNotWholeHours (fail closed), rather than floored to the hour.
 //   - X caps a window at 90 days (maxStatsWindow). A 90-day window that crosses a DST fall-back
 //     is 90 days and an hour of wall time, so its EARLIEST day is dropped: the window becomes
-//     the trailing 89 whole local days, and firstDay says so. Shortening by a whole day keeps
-//     queried == reported; trimming one hour off the start (the earlier behaviour) queried a
-//     window that began an hour into the first reported day.
+//     the trailing 89 whole local days, and firstDay says so (the account monitor response
+//     exposes it as metrics_window_start, beside the requested `days`). Shortening by a whole
+//     day keeps queried == reported; trimming one hour off the start (the earlier behaviour)
+//     queried a window that began an hour into the first reported day.
 //
 // The returned dates are the window's first and last local calendar days, as UTC-midnight
 // values (the convention model.AccountReportSubmission documents for report windows).
 func accountReportWindow(now time.Time, loc *time.Location, days int) (start, end time.Time, firstDay, lastDay time.Time, err error) {
 	local := now.In(loc)
-	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
-	startLocal := today.AddDate(0, 0, -(days - 1))
-	endLocal := today.AddDate(0, 0, 1)
+	y, m, d := local.Date()
+	today := localDayStart(y, m, d, loc)
+	startLocal := localDayStart(y, m, d-(days-1), loc)
+	endLocal := localDayStart(y, m, d+1, loc)
 	if endLocal.Sub(startLocal) > maxStatsWindow {
-		startLocal = startLocal.AddDate(0, 0, 1)
+		startLocal = localDayStart(y, m, d-(days-2), loc)
 	}
 	start, end = startLocal.UTC(), endLocal.UTC()
 	if !start.Equal(start.Truncate(time.Hour)) || !end.Equal(end.Truncate(time.Hour)) {
@@ -626,6 +630,28 @@ func accountReportWindow(now time.Time, loc *time.Location, days int) (start, en
 	firstDay = time.Date(startLocal.Year(), startLocal.Month(), startLocal.Day(), 0, 0, 0, 0, time.UTC)
 	lastDay = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 	return start, end, firstDay, lastDay, nil
+}
+
+// localDayStart returns the first instant of the local calendar day y-m-d (d may be out of range;
+// it is normalized like time.Date). That is local midnight, except in a zone whose DST
+// spring-forward skips 00:00 (America/Santiago, America/Asuncion, …): there time.Date normalizes
+// the nonexistent midnight BACK to 23:00 of the previous day, which would put an hour of the
+// previous day into the window and date the window one day early. The day actually begins at the
+// first instant whose local date is y-m-d, one transition later, so the window starts there and
+// the queried days stay the reported days.
+func localDayStart(y int, m time.Month, d int, loc *time.Location) time.Time {
+	t := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	want := time.Date(y, m, d, 0, 0, 0, 0, time.UTC) // the intended calendar date, normalized
+	for i := 0; i < 4 && localDate(t).Before(want); i++ {
+		t = t.Add(time.Hour)
+	}
+	return t
+}
+
+// localDate is t's local calendar date as a UTC-midnight value.
+func localDate(t time.Time) time.Time {
+	y, m, d := t.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
 // statsTime renders an instant the way X's documented examples do: "2026-03-12T00:00:00Z".
