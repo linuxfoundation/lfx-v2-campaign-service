@@ -294,3 +294,90 @@ func TestPutStatus_RejectionTextUnchanged(t *testing.T) {
 		t.Fatalf("status rejection text changed: %v", err)
 	}
 }
+
+// A retried budget PUT must never report "platform unchanged". The loop retries only a 429, and
+// a mutating 429 is ambiguous under this package's contract, so a definite refusal on a LATER
+// attempt answers that attempt alone: the earlier one may already have applied the amount. Each
+// case answers the first attempt with a 429 and the second with a refusal that, unretried, would
+// map to a definite sentinel (see TestUpdateCampaignDailyBudget_Classification).
+func TestUpdateCampaignDailyBudget_RefusalAfter429IsUnconfirmed(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "shared budget PartialError", status: http.StatusOK, body: `{"PartialErrors":[{"Code":1159,"ErrorCode":"CampaignServiceCannotUpdateSharedBudget","Index":0}]}`},
+		{name: "shared budget 4xx", status: http.StatusBadRequest, body: `{"BatchErrors":[{"Code":1159,"Index":0}]}`},
+		{name: "invalid daily budget PartialError", status: http.StatusOK, body: `{"PartialErrors":[{"Code":1106,"ErrorCode":"CampaignServiceInvalidDailyBudget","Index":0}]}`},
+		{name: "plain 4xx", status: http.StatusBadRequest, body: `{"Errors":[{"Code":105,"ErrorCode":"InvalidCredentials"}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls int32
+			c := newAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				if atomic.AddInt32(&calls, 1) == 1 {
+					w.WriteHeader(http.StatusTooManyRequests)
+					return
+				}
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			})
+			err := c.UpdateCampaignDailyBudget(context.Background(), "321", 10, BudgetTypeDailyStandard)
+			if n := atomic.LoadInt32(&calls); n != 2 {
+				t.Fatalf("want the 429 retried once (2 calls), saw %d", n)
+			}
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			if !IsOutcomeUnconfirmed(err) {
+				t.Errorf("IsOutcomeUnconfirmed = false, want true: a refusal after a retried 429 cannot confirm the first attempt (%v)", err)
+			}
+			if errors.Is(err, ErrSharedBudget) || errors.Is(err, ErrBudgetAmountInvalid) {
+				t.Errorf("a retried PUT must not map to a platform-unchanged sentinel: %v", err)
+			}
+			if _, ok := BudgetAmountReason(err); ok {
+				t.Errorf("a retried PUT must not carry an amount refusal: %v", err)
+			}
+		})
+	}
+}
+
+// The other half of the invariant: absorbing a 429 is still the point of retrying the
+// idempotent PUT, so a 429 followed by success reports success.
+func TestUpdateCampaignDailyBudget_429ThenSuccessSucceeds(t *testing.T) {
+	var calls int32
+	c := newAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+	})
+	if err := c.UpdateCampaignDailyBudget(context.Background(), "321", 10, BudgetTypeDailyStandard); err != nil {
+		t.Fatalf("UpdateCampaignDailyBudget after a 429: %v", err)
+	}
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Errorf("want 2 calls, saw %d", n)
+	}
+}
+
+// The status toggle shares putUpdate, so the same rule holds for it: a status rejection after a
+// retried 429 is unconfirmed, while an unretried one keeps its definite text (pinned above).
+func TestPutStatus_RejectionAfter429IsUnconfirmed(t *testing.T) {
+	var calls int32
+	c := newAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = io.WriteString(w, `{"PartialErrors":[{"Code":1234,"Index":0}]}`)
+	})
+	err := c.putStatus(context.Background(), "Campaigns", struct{}{}, "campaign")
+	if err == nil || !IsOutcomeUnconfirmed(err) {
+		t.Fatalf("want an unconfirmed outcome after a retried 429, got %v", err)
+	}
+	var pe *partialUpdateError
+	if !errors.As(err, &pe) {
+		t.Errorf("the final refusal should stay reachable through Unwrap: %v", err)
+	}
+}
