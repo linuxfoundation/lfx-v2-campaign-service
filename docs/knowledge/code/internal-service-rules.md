@@ -14,14 +14,24 @@ resource: "internal/service"
 (what should an operator look at, and what should they do?).
 
 **This package (`pacing.go`/`actions.go`) is not the only rule engine in this
-directory.** The five `monitor_*.go` files (`monitor_google.go`,
+directory.** The six `monitor_*.go` files (`monitor_google.go`,
 `monitor_linkedin.go`, `monitor_meta.go`, `monitor_reddit.go`,
-`monitor_microsoft.go`) back the account-scoped `/account-monitor` endpoints. The
-first four were ported from the LFX One BFF's own four historically divergent rule
-engines; `monitor_microsoft.go` was written here, on the same shared helpers, for
-Microsoft's report-backed monitor (daily budgets only, so Google's daily pacing model;
+`monitor_microsoft.go`, `monitor_twitter.go`) back the account-scoped `/account-monitor`
+endpoints. The first four were ported from the LFX One BFF's own four historically
+divergent rule engines; `monitor_microsoft.go` was written here, on the same shared helpers,
+for Microsoft's report-backed monitor (daily budgets only, so Google's daily pacing model;
 a shared-budget campaign arrives `PacingUnknown` and is neither paced nor called a
-placeholder budget).
+placeholder budget). `monitor_twitter.go` (`EvaluateTwitterMonitor`) is the second
+written-here engine, for X's report-backed monitor. It paces a DAILY budget first —
+`BudgetDay` × the days of the window `[today-(days-1), the midnight after today)` the
+line-item flight covers, the convention the Reddit daily branch settled — and otherwise a
+TOTAL budget prorated over the flight (which then needs both flight bounds), else
+`unknownPacingRow`. Its rules reuse siblings' values under named constants (Google's
+placeholder budget ≤ 1/day, the shared 0.3%/1000 low-CTR pair), add a HIGH
+zero-delivery item gated on the flight overlapping the window, suppress the 0% underspend
+item that would restate it (Reddit's rule), and carry no clicks-without-conversions rule —
+X conversions are never reported. The window is in UTC days while X's stats jobs use the
+account's own timezone; the difference is at most one day's budget at a flight edge.
 
 They were originally kept unmerged, bug for bug, so an OLD-vs-NEW differential
 diff against the still-live BFF stayed a meaningful faithfulness check. That

@@ -16,9 +16,10 @@ import "time"
 // days): a request reads the campaign list live, serves metrics from the last report that
 // finished, and checks on (or submits) the next one without waiting for it.
 //
-// The types are platform-neutral on purpose. Nothing below is Microsoft-specific, so a second
-// platform with an asynchronous reporting surface (X is the likely one) reuses the same store
-// and the same orchestration rather than growing a parallel copy.
+// The types are platform-neutral on purpose. Nothing below is Microsoft-specific, and X is the
+// second platform on them: its monitor reads X's asynchronous stats jobs, saving the jobs' ids
+// as one composite ReportID, through the same store and the same orchestration rather than a
+// parallel copy.
 
 // AccountReportStatus is where a submitted account report stands on the platform.
 type AccountReportStatus string

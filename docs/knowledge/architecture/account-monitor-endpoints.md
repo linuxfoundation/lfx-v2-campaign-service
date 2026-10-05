@@ -1,17 +1,18 @@
 ---
 type: "Architecture Doc"
 title: "Account-Monitor Endpoints"
-description: "Five account-scoped monitor endpoints, one per ad platform: four ported from the LFX One BFF's rule engines and read live, and Microsoft Ads served from saved asynchronous reports because its metrics take minutes to build."
+description: "Six account-scoped monitor endpoints, one per ad platform: four ported from the LFX One BFF's rule engines and read live, and Microsoft Ads and X served from saved asynchronous reports because their metrics cannot be read inside one request."
 resource: "internal/service/connection_monitor.go"
 ---
 
 # Account-Monitor Endpoints
 
-`GET /projects/{project_id}/connection-{google,linkedin,meta,reddit,microsoft}-ads/account-monitor?account_id=&days=`
+`GET /projects/{project_id}/connection-{google,linkedin,meta,reddit,microsoft,twitter}-ads/account-monitor?account_id=&days=`
 
-Microsoft Ads joined later and is the one REPORT-BACKED monitor — see
-[Microsoft: a report-backed monitor](#microsoft-a-report-backed-monitor). Everything
-below that is not in that section describes the four live reads.
+Microsoft Ads and X joined later and are the two REPORT-BACKED monitors — see
+[Microsoft: a report-backed monitor](#microsoft-a-report-backed-monitor) and
+[X: a second report-backed monitor](#x-a-second-report-backed-monitor). Everything below
+that is not in those sections describes the four live reads.
 
 Ports the LFX One BFF's `/api/campaigns/monitor` family (Google, LinkedIn,
 Meta, Reddit — Meta ships with a pagination fix, not a verbatim port; see
@@ -522,7 +523,8 @@ So the read is split, and the state between requests is saved:
   (project, platform, account, days) with a READY half (served, possibly stale) and a
   PENDING half (building upstream). Completing or failing a report is a compare-and-set on
   its report id, so a request that collected an older report cannot clear a newer one's
-  pending marker. Platform-neutral on purpose: a second asynchronous platform reuses it.
+  pending marker. Platform-neutral on purpose, and now SHARED: X's monitor keeps its rows in
+  the same table under `platform = 'twitter-ads'`, with no schema change (see below).
 - **Response.** Same `AccountMonitor` type, plus two Microsoft-only fields:
   `metrics_as_of` (when the report was REQUESTED — the point in time the data describes, never
   the later moment it was collected, which would overstate freshness; absent before the first
@@ -547,3 +549,56 @@ So the read is split, and the state between requests is saved:
   `^[1-9][0-9]{0,17}$` and, identically, by `microsoft.ValidateMonitorAccountID` — not by the
   create path's `ValidateAccountID`, which trims and admits a 19th digit — and the drift test
   covers it, length included.
+
+## X: a second report-backed monitor
+
+X reuses the Microsoft machinery unchanged — `service.AccountReportReader`,
+`Orchestrator.ReadReportedAccountCampaigns`, `account_monitor_reports`, the same freshness
+(30m) and abandon (60m) timings, the same `metrics_as_of` / `metrics_pending` response fields —
+with `TwitterDispatcher` as a second implementation. Nothing was forked.
+
+- **Why report-backed, for every `days`.** X's synchronous stats are capped at 7 days per
+  request and share a 250-requests-per-15-minutes budget across every foundation on the shared
+  LF token; the asynchronous stats-jobs API covers up to 90 days per job and is limited by
+  concurrent jobs per account instead (https://docs.x.com/x-ads-api/analytics). One path for
+  every window, so a 7-day and a 30-day view never differ in how they were read.
+- **List (live).** `campaigns` and `line_items` (with_deleted=false, with_draft=false,
+  count=1000, line items filtered by ≤200 `campaign_ids`), on the strict cursor rule: anything
+  short of X's documented null `next_cursor` fails the read. Status is `entity_status`
+  verbatim; budgets are `*_local_micro` ÷ 1e6 in the account's currency (malformed →
+  `fetch_failed`); the flight is the line items' earliest start and latest end, as dates in
+  the ACCOUNT's timezone (read from the account resource), open-ended if any line item is.
+- **Submit.** `active_entities` for the window, then one stats job per ≤20 active campaigns
+  (`entity=CAMPAIGN`, `granularity=TOTAL`, `placement=ALL_ON_TWITTER`,
+  `metric_groups=ENGAGEMENT,BILLING`), paced on the client's write pacer and never retried on
+  a 429. The window is today-(days-1) 00:00 to the next midnight in the ACCOUNT's timezone,
+  sent as whole UTC hours. The saved report id is ONE composite value — the jobs' `id_str`s
+  comma-joined (≤10 jobs, ~210 bytes in a TEXT column). No active campaign gives the sentinel
+  `none`, which Check answers as a finished empty report without calling X. An account with
+  more than 200 active campaigns is refused rather than half-reported.
+- **Check.** ONE job-status read for every job. Any failed or cancelled job fails the report
+  (and so does a finished job whose file is gone); any job still building, or missing from
+  X's answer, leaves it pending; otherwise every file is downloaded — unsigned, because X says
+  the URL needs no authentication and our credentials must not go to a storage host — then
+  gunzipped, bounded, and folded per campaign. Spend is `billed_charge_local_micro` ÷ 1e6;
+  `Partial` is always true because X's billed charge settles over days.
+- **Absence.** A campaign absent from a finished report served nothing, exactly as on
+  Microsoft — and here that rests on `active_entities` too: a campaign it did not list had no
+  activity in the window.
+- **Conversions are never reported.** X splits them per event type under metric groups the
+  monitor does not request, and reports nothing at all for an account with no conversion tag,
+  which is indistinguishable from a measured zero. Every row's `conversions` is absent.
+- **Rules.** `rules.EvaluateTwitterMonitor`: a daily budget paced as `BudgetDay` × the window
+  days the flight covers (window closed by the exclusive midnight after today, as Reddit's
+  daily branch settled); otherwise a total budget prorated over the flight; otherwise unknown.
+  The rule window is in UTC days while the stats jobs use the account's timezone — at most
+  one day's budget of difference at a flight edge.
+- **Boundary.** `resolveOwned` only, the bound account only
+  (`ErrAccountNotManagedByConnection`), and `account_id` checked by the design `Pattern`
+  `^[A-Za-z0-9]+$` + `MaxLength(64)` and identically by `twitter.ValidateMonitorAccountID` —
+  the connection's own rule, so every storable id can be monitored. Every refusal makes zero
+  upstream calls. There is no enable flag: X's per-campaign metrics read has never had one.
+- **Unverified.** The whole X contract here follows docs.x.com and has not been exercised
+  against a live X account; the specific open points (half-hour timezones, the queued and
+  failed status spellings, whether job creation counts as a write) are marked UNVERIFIED in
+  `internal/platform/twitter/monitor.go`.

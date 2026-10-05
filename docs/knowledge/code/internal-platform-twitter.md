@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/twitter"
-description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, the campaign -> line_item -> promoted_tweet creation flow, and per-client write pacing toward X's 1-write/sec account limit."
+description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, the campaign -> line_item -> promoted_tweet creation flow, per-client write pacing toward X's 1-write/sec account limit, and the account monitor's asynchronous stats-job primitives."
 resource: "internal/platform/twitter"
 tags:
   - platform-client
@@ -1026,6 +1026,54 @@ PAUSE. An ACTIVATE with an unknown line-item id is refused as `ErrCampaignNotPro
 (a 409) before any call.
 
 See [internal/platform/twitter](../../../internal/platform/twitter).
+
+## Account monitor (`monitor.go`, LFXV2-2665)
+
+Stateless primitives for X's REPORT-BACKED account monitor, driven across requests by
+`service.Orchestrator.ReadReportedAccountCampaigns` exactly as Microsoft's are. Report-backed
+for every `days` value, because X's synchronous stats endpoint is capped at 7 days per request
+and has one 250-requests-per-15-minutes budget shared by every foundation on the LF token,
+while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
+
+- **`ListAccountCampaigns`** — `AccountTimezone` (GET the account root, `timezone`, loaded as
+  an IANA zone; absent/unknown fails closed), then `campaigns?with_deleted=false&with_draft=false&count=1000`
+  and `line_items?campaign_ids=<≤200>&with_deleted=false&with_draft=false&count=1000`, both
+  through `walkPages`: the STRICT cursor rule `ListAdAccounts` uses (only X's documented null
+  `next_cursor` ends a walk; absent/empty cursor, a repeated cursor, absent/null `data` or the
+  page cap are errors). Status is `entity_status` verbatim. Budgets are
+  `daily_budget_amount_local_micro` / `total_budget_amount_local_micro` ÷ 1e6, account
+  currency; null/absent is "no budget", anything but a non-negative JSON integer sets
+  `BudgetUnparseable`. The flight comes from the line items (v12 campaigns carry none):
+  earliest `start_time`, latest `end_time`, `EndDate` empty if any line item is open-ended,
+  dates in the ACCOUNT's timezone, `EndDate` the last day served (an end at local midnight
+  belongs to the previous day). An unreadable time sets `FlightUnparseable`.
+- **`SubmitAccountCampaignReport`** — window `[local midnight of today-(days-1), the local
+  midnight after today)` in the account's zone, sent as UTC instants floored to the whole
+  hour X requires (UNVERIFIED for half-hour zones), trimmed to 90 days across a DST
+  fall-back. GET `stats/accounts/:id/active_entities?entity=CAMPAIGN`, then one POST
+  `stats/jobs/accounts/:id` per ≤20 active campaigns (`entity=CAMPAIGN`, `granularity=TOTAL`,
+  `placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`), each through the write
+  pacer and never retried on a 429. Returns ONE composite id — the jobs' `id_str`s
+  comma-joined — or `NoActiveCampaignsReportID` (`"none"`) when nothing was active, which
+  Check answers as a finished empty report without a request. More than
+  `maxStatsJobsPerReport` (10 jobs = 200 active campaigns) is refused, not truncated.
+- **`CheckAccountCampaignReport`** — ONE GET `stats/jobs/accounts/:id?job_ids=<all>`. Any
+  `FAILED`/`FAILURE`/`CANCELLED` job, or a `SUCCESS` with no `url`, fails the report; any
+  `QUEUED`/`PROCESSING` job, or one missing from X's answer, leaves it pending; an unknown
+  status is an error. When all succeeded, each file is downloaded WITHOUT OAuth signing (X:
+  "requires no authentication"), only from an https URL or the client's own API origin,
+  capped at 8 MiB compressed / 32 MiB decompressed, gunzipped when it carries the gzip magic
+  number, decoded with the synchronous stats types, and folded per campaign (impressions,
+  clicks, `billed_charge_local_micro`); a URL never appears in an error. `Partial` is always
+  true: X's billed charge is an estimate for days afterwards.
+- **`ValidateMonitorAccountID`** — the connection's own `^[A-Za-z0-9]+$` + 64-character rule,
+  untrimmed, mirrored by the design `Pattern`/`MaxLength` and pinned by the drift test.
+- **`WithClock`** — new option setting the client's clock, which the window, OAuth timestamp
+  and pacer all read.
+- `time/tzdata` is embedded so `time.LoadLocation` works on the static base image.
+
+The whole file is UNVERIFIED CONTRACT against a live X account; each relied-on claim cites
+docs.x.com next to the code.
 
 ## Connection-probe predicates (LFXV2-2665)
 

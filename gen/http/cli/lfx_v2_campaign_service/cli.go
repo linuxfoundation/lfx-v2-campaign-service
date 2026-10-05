@@ -30,7 +30,7 @@ func UsageCommands() []string {
 		"lfx-v2-campaign-service-audiences (create-audience|get-audience|list-audiences|update-audience|build-audience)",
 		"lfx-v2-campaign-service-audience-builder (get-audience-builder-capabilities|discover-audience-lists|search-audience-lists|get-audience-suppression-lists|get-audience-last-sent|get-existing-audience-master-lists|preview-audience-count|compose-audience-master|attach-existing-audience|run-audience-qa)",
 		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|upload-creative-asset|create-campaigns|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|update-campaign-budget|apply-keyword-actions|delete-campaign|get-job|start-email-wizard-plan|plan-email-wizard|generate-wizard-content|update-wizard-sections|clone-wizard-email|set-wizard-send-list|chat-wizard-turn|get-wizard-session)",
-		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|resolve-google-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign|monitor-google-ads-account|monitor-linkedin-ads-account|monitor-meta-ads-account|monitor-reddit-ads-account|monitor-microsoft-ads-account)",
+		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|resolve-google-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign|monitor-google-ads-account|monitor-linkedin-ads-account|monitor-meta-ads-account|monitor-reddit-ads-account|monitor-microsoft-ads-account|monitor-twitter-ads-account)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
 	}
 }
@@ -604,6 +604,12 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountDaysFlag        = lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountFlags.String("days", "REQUIRED", "")
 		lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountBearerTokenFlag = lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountFlags.String("bearer-token", "", "")
 
+		lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountFlags           = flag.NewFlagSet("monitor-twitter-ads-account", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountProjectIDFlag   = lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountAccountIDFlag   = lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountFlags.String("account-id", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountDaysFlag        = lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountFlags.String("days", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountBearerTokenFlag = lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountFlags.String("bearer-token", "", "")
+
 		lfxV2CampaignServiceSvcFlags = flag.NewFlagSet("lfx-v2-campaign-service-svc", flag.ContinueOnError)
 
 		lfxV2CampaignServiceSvcReadyzFlags = flag.NewFlagSet("readyz", flag.ExitOnError)
@@ -719,6 +725,7 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountFlags.Usage = lfxV2CampaignServiceConnectionsMonitorMetaAdsAccountUsage
 	lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountFlags.Usage = lfxV2CampaignServiceConnectionsMonitorRedditAdsAccountUsage
 	lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountFlags.Usage = lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountUsage
+	lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountFlags.Usage = lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountUsage
 
 	lfxV2CampaignServiceSvcFlags.Usage = lfxV2CampaignServiceSvcUsage
 	lfxV2CampaignServiceSvcReadyzFlags.Usage = lfxV2CampaignServiceSvcReadyzUsage
@@ -1084,6 +1091,9 @@ func ParseEndpoint(
 			case "monitor-microsoft-ads-account":
 				epf = lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountFlags
 
+			case "monitor-twitter-ads-account":
+				epf = lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountFlags
+
 			}
 
 		case "lfx-v2-campaign-service-svc":
@@ -1437,6 +1447,9 @@ func ParseEndpoint(
 			case "monitor-microsoft-ads-account":
 				endpoint = c.MonitorMicrosoftAdsAccount()
 				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorMicrosoftAdsAccountPayload(*lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountProjectIDFlag, *lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountAccountIDFlag, *lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountDaysFlag, *lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountBearerTokenFlag)
+			case "monitor-twitter-ads-account":
+				endpoint = c.MonitorTwitterAdsAccount()
+				data, err = lfxv2campaignserviceconnectionsc.BuildMonitorTwitterAdsAccountPayload(*lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountProjectIDFlag, *lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountAccountIDFlag, *lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountDaysFlag, *lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountBearerTokenFlag)
 			}
 		case "lfx-v2-campaign-service-svc":
 			c := lfxv2campaignservicesvcc.NewClient(scheme, host, doer, enc, dec, restore)
@@ -2651,6 +2664,7 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    monitor-meta-ads-account: Read every campaign visible on a Meta Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
 	fmt.Fprintln(os.Stderr, `    monitor-reddit-ads-account: Read every campaign visible on a Reddit Ads account, live from the platform, with pacing and action items derived by this service's ported rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is. A pure read: nothing is persisted.`)
 	fmt.Fprintln(os.Stderr, `    monitor-microsoft-ads-account: Read every live campaign on a Microsoft Advertising account with pacing and action items derived by this service's rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is, and resolved from the project's OWN connection only. The campaign list (names, statuses, daily budgets) is read live; delivery metrics come from Microsoft's asynchronous Reporting service, which takes minutes to build a report, so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Saved reports are cached platform data, not a record of anything this service did.`)
+	fmt.Fprintln(os.Stderr, `    monitor-twitter-ads-account: Read every live campaign on an X (Twitter) Ads account with pacing and action items derived by this service's rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is, and resolved from the project's OWN connection only. The campaign list (names, statuses, budgets, and flights from the line items) is read live; delivery metrics come from X's asynchronous stats jobs — X's synchronous stats are capped at 7 days per request — so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Conversions are never reported for X. Saved reports are cached platform data, not a record of anything this service did.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-connections COMMAND --help\n", os.Args[0])
@@ -3901,6 +3915,30 @@ func lfxV2CampaignServiceConnectionsMonitorMicrosoftAdsAccountUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-microsoft-ads-account --project-id \"cncf\" --account-id \"187654321\" --days 30 --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections monitor-twitter-ads-account", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -account-id STRING")
+	fmt.Fprint(os.Stderr, " -days INT")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Read every live campaign on an X (Twitter) Ads account with pacing and action items derived by this service's rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is, and resolved from the project's OWN connection only. The campaign list (names, statuses, budgets, and flights from the line items) is read live; delivery metrics come from X's asynchronous stats jobs — X's synchronous stats are capped at 7 days per request — so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Conversions are never reported for X. Saved reports are cached platform data, not a record of anything this service did.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -account-id STRING: `)
+	fmt.Fprintln(os.Stderr, `    -days INT: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections monitor-twitter-ads-account --project-id \"cncf\" --account-id \"18ce54d4x5t\" --days 30 --bearer-token \"eyJhbGci...\"")
 }
 
 // lfxV2CampaignServiceSvcUsage displays the usage of the

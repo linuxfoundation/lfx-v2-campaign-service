@@ -73,11 +73,12 @@ type Client struct {
 	MonitorMetaAdsAccountEndpoint      goa.Endpoint
 	MonitorRedditAdsAccountEndpoint    goa.Endpoint
 	MonitorMicrosoftAdsAccountEndpoint goa.Endpoint
+	MonitorTwitterAdsAccountEndpoint   goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-connections" service client
 // given the endpoints.
-func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, resolveGoogleAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listHubspotEmails, searchHubspotCampaigns, createHubspotCampaign, monitorGoogleAdsAccount, monitorLinkedinAdsAccount, monitorMetaAdsAccount, monitorRedditAdsAccount, monitorMicrosoftAdsAccount goa.Endpoint) *Client {
+func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, resolveGoogleAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listHubspotEmails, searchHubspotCampaigns, createHubspotCampaign, monitorGoogleAdsAccount, monitorLinkedinAdsAccount, monitorMetaAdsAccount, monitorRedditAdsAccount, monitorMicrosoftAdsAccount, monitorTwitterAdsAccount goa.Endpoint) *Client {
 	return &Client{
 		CreateGoogleAdsEndpoint:            createGoogleAds,
 		GetGoogleAdsEndpoint:               getGoogleAds,
@@ -137,6 +138,7 @@ func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, 
 		MonitorMetaAdsAccountEndpoint:      monitorMetaAdsAccount,
 		MonitorRedditAdsAccountEndpoint:    monitorRedditAdsAccount,
 		MonitorMicrosoftAdsAccountEndpoint: monitorMicrosoftAdsAccount,
+		MonitorTwitterAdsAccountEndpoint:   monitorTwitterAdsAccount,
 	}
 }
 
@@ -1196,6 +1198,25 @@ func (c *Client) MonitorRedditAdsAccount(ctx context.Context, p *MonitorRedditAd
 func (c *Client) MonitorMicrosoftAdsAccount(ctx context.Context, p *MonitorMicrosoftAdsAccountPayload) (res *AccountMonitor, err error) {
 	var ires any
 	ires, err = c.MonitorMicrosoftAdsAccountEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*AccountMonitor), nil
+}
+
+// MonitorTwitterAdsAccount calls the "monitor-twitter-ads-account" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+// MonitorTwitterAdsAccount may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) MonitorTwitterAdsAccount(ctx context.Context, p *MonitorTwitterAdsAccountPayload) (res *AccountMonitor, err error) {
+	var ires any
+	ires, err = c.MonitorTwitterAdsAccountEndpoint(ctx, p)
 	if err != nil {
 		return
 	}

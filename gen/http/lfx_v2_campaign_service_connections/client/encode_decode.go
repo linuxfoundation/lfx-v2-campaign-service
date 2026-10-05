@@ -11476,6 +11476,201 @@ func DecodeMonitorMicrosoftAdsAccountResponse(decoder func(*http.Response) goaht
 	}
 }
 
+// BuildMonitorTwitterAdsAccountRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "monitor-twitter-ads-account" endpoint
+func (c *Client) BuildMonitorTwitterAdsAccountRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", "*lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: MonitorTwitterAdsAccountLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeMonitorTwitterAdsAccountRequest returns an encoder for requests sent
+// to the lfx-v2-campaign-service-connections monitor-twitter-ads-account
+// server.
+func EncodeMonitorTwitterAdsAccountRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", "*lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		values.Add("account_id", p.AccountID)
+		values.Add("days", fmt.Sprintf("%v", p.Days))
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeMonitorTwitterAdsAccountResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// monitor-twitter-ads-account endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeMonitorTwitterAdsAccountResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeMonitorTwitterAdsAccountResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body MonitorTwitterAdsAccountResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			res := NewMonitorTwitterAdsAccountAccountMonitorOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body MonitorTwitterAdsAccountBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body MonitorTwitterAdsAccountServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body MonitorTwitterAdsAccountInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body MonitorTwitterAdsAccountNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body MonitorTwitterAdsAccountPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body MonitorTwitterAdsAccountUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // marshalLfxv2campaignserviceconnectionsGoogleAdsConnectionConfigToGoogleAdsConnectionConfigRequestBody
 // builds a value of type *GoogleAdsConnectionConfigRequestBody from a value of
 // type *lfxv2campaignserviceconnections.GoogleAdsConnectionConfig.

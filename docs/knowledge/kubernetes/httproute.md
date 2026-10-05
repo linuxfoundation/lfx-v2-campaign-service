@@ -28,18 +28,19 @@ route, so those paths forward to a service that does not serve them. Recorded ra
 than removed because implementing the route and withdrawing the matchers are opposite
 decisions; see the Monitoring warning in `docs/api-catalog.md`.
 
-**The `connection-*` family is spelled out as FOUR alternation branches**, not one. All
+**The `connection-*` family is spelled out as THREE alternation branches**, not one. All
 seven providers share `/test` and `/set-credential`; what differs is the extra ruled
 sub-path each carries:
 
-- `connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads)` add **`/accounts`** —
-  ad-account discovery (google-ads under LFXV2-2023, meta-ads under LFXV2-3062,
-  linkedin-ads and microsoft-ads under LFXV2-3064) — and **`/account-monitor`** — the
-  per-account monitoring/pacing endpoint (LFXV2-2665). The first three implement it via the
-  orchestrator's optional `AccountMetricsReader` capability; microsoft-ads via the
-  report-backed `AccountReportReader`, because its metrics come from an asynchronous report.
-- `connection-twitter-ads` adds **`/accounts`** only (LFXV2-3319) — it implements no
-  monitor capability, so it carries no `/account-monitor`.
+- `connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads)` add
+  **`/accounts`** — ad-account discovery (google-ads under LFXV2-2023, meta-ads under
+  LFXV2-3062, linkedin-ads and microsoft-ads under LFXV2-3064, twitter-ads under
+  LFXV2-3319) — and **`/account-monitor`** — the per-account monitoring/pacing endpoint
+  (LFXV2-2665). The first three implement it via the orchestrator's optional
+  `AccountMetricsReader` capability; microsoft-ads and twitter-ads via the report-backed
+  `AccountReportReader`, because their metrics come from asynchronous platform reports
+  (Microsoft's Reporting service, X's stats jobs). twitter-ads joined this branch with its
+  monitor; until then it was a branch of its own carrying `/accounts` only.
 - `connection-hubspot` adds **`/emails`** — marketing-email search (LFXV2-3197) — and
   **`/campaigns`** — campaign UTM lookup and create (LFXV2-2641). NOT `/accounts`: a
   HubSpot connection is already scoped to the portal its token authenticates against, so
@@ -50,8 +51,8 @@ sub-path each carries:
   to back `AccountLister`, so ad-account discovery isn't served for Reddit even though
   monitoring is.
 
-Folding these together would admit `/accounts` for hubspot, `/emails` for google-ads, and
-`/account-monitor` for twitter-ads, none of which is served — and a path the
+Folding these together would admit `/accounts` for hubspot or reddit-ads, `/emails` for
+google-ads, and `/account-monitor` for hubspot, none of which is served — and a path the
 RuleSet does not rule is a route/rule parity violation, which is what `parity_test` exists
 to catch. It has both positive and negative rows for this reason: a widened alternation
 passes every positive test.

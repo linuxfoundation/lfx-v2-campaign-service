@@ -256,6 +256,19 @@ func WithHTTPClient(h *http.Client) Option {
 // per-request sleeps.
 func WithWriteDelay(d time.Duration) Option { return func(c *Client) { c.writeDelay = d } }
 
+// WithClock overrides the client's clock (default time.Now), matching the WithClock option the
+// googleads, linkedin, meta and microsoft clients expose. It drives everything this client
+// derives from "now": the OAuth timestamp, the 429 reset arithmetic, the write pacer's
+// reservations, the metrics windows and the account monitor's stats-job window (monitor.go).
+// A nil func is ignored so the option cannot produce a client that panics on its first call.
+func WithClock(now func() time.Time) Option {
+	return func(c *Client) {
+		if now != nil {
+			c.timeFn = now
+		}
+	}
+}
+
 // NewClient constructs a Client from injected credentials and account config.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	// Normalize the account identifiers once, on the way in, so every method uses

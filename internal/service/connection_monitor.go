@@ -69,6 +69,16 @@ var microsoftAdsMonitorDiscovery = accountDiscovery{
 	operation: "account monitor",
 }
 
+// twitterAdsMonitorDiscovery is this endpoint's own descriptor, for the same reason as the four
+// above; remedy text copied verbatim from twitterAdsAccountDiscovery (X's OAuth 1.0a four-tuple).
+var twitterAdsMonitorDiscovery = accountDiscovery{
+	provider:    model.ProviderTwitterAds,
+	displayName: "x/twitter ads",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with consumer_key, consumer_secret, access_token and access_token_secret set",
+	operation: "account monitor",
+}
+
 // validateMonitorDays enforces the 7..90 range the design layer also constrains with
 // Minimum/Maximum. Enforced here too for the same reason resolveInsightsWindow re-checks its
 // own enum: a runtime rejection with no matching design constraint (or the reverse) is the
@@ -319,6 +329,17 @@ func (s *ConnectionService) MonitorMicrosoftAdsAccount(ctx context.Context, p *c
 	return s.monitorReportedAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderMicrosoftAds, microsoftAdsMonitorDiscovery,
 		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return rules.EvaluateMicrosoftMonitor(rows, p.Days)
+		})
+}
+
+// MonitorTwitterAdsAccount reads every live campaign on an X Ads account, with metrics from the
+// last finished set of X stats jobs — report-backed for every `days` value, see
+// Orchestrator.ReadReportedAccountCampaigns and internal/platform/twitter/monitor.go for why.
+func (s *ConnectionService) MonitorTwitterAdsAccount(ctx context.Context, p *conn.MonitorTwitterAdsAccountPayload) (*conn.AccountMonitor, error) {
+	now := time.Now()
+	return s.monitorReportedAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderTwitterAds, twitterAdsMonitorDiscovery,
+		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+			return rules.EvaluateTwitterMonitor(rows, p.Days, now)
 		})
 }
 

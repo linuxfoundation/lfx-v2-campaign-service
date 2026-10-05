@@ -25,6 +25,11 @@ import (
 // into three short calls, and the orchestrator keeps the state between requests
 // (ReadReportedAccountCampaigns).
 //
+// X is the second implementation. Its synchronous stats endpoint does answer inside a request,
+// but only for windows of up to 7 days and on one rate budget shared by every foundation on the
+// LF token, while its asynchronous stats jobs cover the monitor's full 7–90-day range — so its
+// monitor is report-backed for every window (internal/platform/twitter/monitor.go).
+//
 // Every method resolves the project's OWN connection only and refuses an account the connection
 // is not bound to, exactly as AccountMetricsReader does — the trust boundary is the same, only
 // the timing differs.
