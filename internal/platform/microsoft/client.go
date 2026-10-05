@@ -989,7 +989,9 @@ func (c *Client) doCustomerRequest(ctx context.Context, method, path string, bod
 // data, so CustomerAccountId must be attached and validateAccountIDs must run. The account
 // id also reaches the request body, but via Scope.Campaigns[].AccountId — NOT via
 // Scope.AccountIds, which submitReport deliberately omits because that element is UNIONed
-// with Campaigns and would widen a campaign-scoped read to the whole account.
+// with Campaigns and would widen a campaign-scoped read to the whole account. (The account
+// monitor's SubmitAccountCampaignReport sends Scope.AccountIds on purpose — an account-wide
+// read is exactly what it wants; see monitor.go.)
 func (c *Client) doReportingRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err

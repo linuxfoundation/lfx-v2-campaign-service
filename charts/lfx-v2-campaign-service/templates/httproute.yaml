@@ -49,12 +49,13 @@ spec:
     # into the shared alternation would admit it for every provider, and a path the
     # RuleSet does not rule is a route/rule parity violation.
     #
-    # google-ads, linkedin-ads and meta-ads are split into their OWN sub-branch, further
-    # than that, because they alone also carry /account-monitor (the four account-scoped
-    # monitor endpoints, ported from the LFX One BFF's rule engines). microsoft-ads and
-    # twitter-ads have no monitor dispatcher and stay on /accounts only — folding
-    # /account-monitor into the shared five-provider alternation would admit it for them
-    # too, and neither has an AccountMetricsReader implementation to answer it.
+    # google-ads, linkedin-ads, meta-ads and microsoft-ads are split into their OWN
+    # sub-branch, further than that, because they also carry /account-monitor (the
+    # account-scoped monitor endpoints). microsoft-ads joined it with its report-backed
+    # monitor (AccountReportReader — its metrics come from an asynchronous Microsoft
+    # report, see the account-monitor architecture concept). twitter-ads has no monitor
+    # dispatcher and stays on /accounts only — folding /account-monitor into a shared
+    # alternation would admit it for twitter-ads too, with nothing to answer it.
     #
     # reddit-ads remains its own branch because its platform client has no
     # ListAdAccounts, so its dispatcher does not implement AccountLister and /accounts
@@ -84,7 +85,7 @@ spec:
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads)(/(test|set-credential|accounts|account-monitor))?|connection-(microsoft-ads|twitter-ads)(/(test|set-credential|accounts))?|connection-hubspot(/(test|set-credential|emails|campaigns))?|connection-reddit-ads(/(test|set-credential|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience|campaign-ref)|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads)(/(test|set-credential|accounts|account-monitor))?|connection-twitter-ads(/(test|set-credential|accounts))?|connection-hubspot(/(test|set-credential|emails|campaigns))?|connection-reddit-ads(/(test|set-credential|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience|campaign-ref)|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef

@@ -232,6 +232,42 @@ func TestOrchestratorDefaultsToNoopMetrics(t *testing.T) {
 // of the pre-platform guard instead.
 type upstreamCapableDispatcher struct{ err error }
 
+// upstreamReportReader returns the registered dispatcher as an AccountReportReader; the cases
+// above drive the report calls directly, so the orchestrator's own type assertion is not in
+// the path and this one must not silently fail.
+func upstreamReportReader(o *Orchestrator, p model.Provider) AccountReportReader {
+	r, ok := o.dispatchers[p].(AccountReportReader)
+	if !ok {
+		panic("upstreamCapableDispatcher must implement AccountReportReader")
+	}
+	return r
+}
+
+func reportKey(p model.Provider) model.AccountReportKey {
+	return model.AccountReportKey{ProjectID: "p1", Platform: p, AccountID: "acct-1", Days: 30}
+}
+
+func (d upstreamCapableDispatcher) ListAccountCampaigns(context.Context, string, model.Provider, string) ([]model.AccountCampaignMetrics, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return []model.AccountCampaignMetrics{}, nil
+}
+
+func (d upstreamCapableDispatcher) SubmitAccountReport(context.Context, string, model.Provider, string, int) (*model.AccountReportSubmission, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.AccountReportSubmission{ReportID: "r1"}, nil
+}
+
+func (d upstreamCapableDispatcher) CheckAccountReport(context.Context, string, model.Provider, string, string) (*model.AccountReportCheck, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.AccountReportCheck{Status: model.AccountReportPending}, nil
+}
+
 func (d upstreamCapableDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
 	return nil, errors.New("unused")
 }
@@ -480,6 +516,34 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opListAccountCampaignMetrics,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadAccountCampaignMetrics(ctx, "p1", platform, "acct-1", 30)
+				return err
+			},
+		},
+		// The report-backed account monitor's three calls, each driven through its own
+		// instrumented method: ReadReportedAccountCampaigns makes several of them in one read and
+		// absorbs check/submit errors by design, so it cannot satisfy this table's
+		// one-call-per-case contract (TestReadReported_* covers the sequencing).
+		{
+			name: "list account campaigns",
+			op:   opListAccountCampaigns,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.listAccountCampaigns(ctx, ctx, upstreamReportReader(o, platform), reportKey(platform))
+				return err
+			},
+		},
+		{
+			name: "check account report",
+			op:   opCheckAccountReport,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.checkAccountReport(ctx, ctx, upstreamReportReader(o, platform), reportKey(platform), "r1")
+				return err
+			},
+		},
+		{
+			name: "submit account report",
+			op:   opSubmitAccountReport,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.submitAccountReport(ctx, ctx, upstreamReportReader(o, platform), reportKey(platform))
 				return err
 			},
 		},

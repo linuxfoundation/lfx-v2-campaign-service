@@ -6720,6 +6720,8 @@ paths:
                                       status: ENABLED
                                       total_budget: 5000
                                 days: 30
+                                metrics_as_of: "2026-10-05T14:30:00Z"
+                                metrics_pending: false
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -8611,6 +8613,8 @@ paths:
                                       status: ENABLED
                                       total_budget: 5000
                                 days: 30
+                                metrics_as_of: "2026-10-05T14:30:00Z"
+                                metrics_pending: false
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -9523,6 +9527,8 @@ paths:
                                       status: ENABLED
                                       total_budget: 5000
                                 days: 30
+                                metrics_as_of: "2026-10-05T14:30:00Z"
+                                metrics_pending: false
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -10305,6 +10311,196 @@ paths:
                             example:
                                 code: "428"
                                 message: An If-Match header is required.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/connection-microsoft-ads/account-monitor:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: monitor-microsoft-ads-account lfx-v2-campaign-service-connections
+            description: Read every live campaign on a Microsoft Advertising account with pacing and action items derived by this service's rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is, and resolved from the project's OWN connection only. The campaign list (names, statuses, daily budgets) is read live; delivery metrics come from Microsoft's asynchronous Reporting service, which takes minutes to build a report, so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Saved reports are cached platform data, not a record of anything this service did.
+            operationId: lfx-v2-campaign-service-connections#monitor-microsoft-ads-account
+            parameters:
+                - name: account_id
+                  in: query
+                  description: The Microsoft Advertising account to read.
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: string
+                    description: The Microsoft Advertising account to read.
+                    example: "187654321"
+                    pattern: ^[1-9][0-9]{0,17}$
+                    maxLength: 18
+                  example: "187654321"
+                - name: days
+                  in: query
+                  description: Trailing days to read metrics over.
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: integer
+                    description: Trailing days to read metrics over.
+                    example: 30
+                    format: int64
+                    minimum: 7
+                    maximum: 90
+                  example: 30
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AccountMonitor'
+                            example:
+                                account_id: "8666746580"
+                                action_items:
+                                    - action: Increase daily budget or check for delivery limits
+                                      campaign_id: "24183781329"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      issue: 'Underspending: 42% of expected spend'
+                                      priority: MED
+                                    - action: Increase daily budget or check for delivery limits
+                                      campaign_id: "24183781329"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      issue: 'Underspending: 42% of expected spend'
+                                      priority: MED
+                                campaigns:
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: overspending
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: overspending
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: overspending
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
+                                days: 30
+                                metrics_as_of: "2026-10-05T14:30:00Z"
+                                metrics_pending: false
+                                totals:
+                                    campaign_count: 14
+                                    clicks: 11420
+                                    conversions: 212.5
+                                    impressions: 184200
+                                    spend: 1842.55
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError103'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -11181,6 +11377,8 @@ paths:
                                       status: ENABLED
                                       total_budget: 5000
                                 days: 30
+                                metrics_as_of: "2026-10-05T14:30:00Z"
+                                metrics_pending: false
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -12965,6 +13163,15 @@ components:
                     description: The trailing-days window this read covers, echoed back from the request.
                     example: 30
                     format: int64
+                metrics_as_of:
+                    type: string
+                    description: 'Microsoft Ads only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Microsoft reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                    example: "2026-10-05T14:30:00Z"
+                    format: date-time
+                metrics_pending:
+                    type: boolean
+                    description: 'Microsoft Ads only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                    example: false
                 totals:
                     $ref: '#/components/schemas/AccountMonitorTotals'
             example:
@@ -13023,6 +13230,8 @@ components:
                       status: ENABLED
                       total_budget: 5000
                 days: 30
+                metrics_as_of: "2026-10-05T14:30:00Z"
+                metrics_pending: false
                 totals:
                     campaign_count: 14
                     clicks: 11420
@@ -22849,6 +23058,24 @@ components:
                 - code
                 - message
         UnauthorizedError102:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "401"
+                message:
+                    type: string
+                    description: Error message
+                    example: Unauthorized.
+            description: Unauthorized
+            example:
+                code: "401"
+                message: Unauthorized.
+            required:
+                - code
+                - message
+        UnauthorizedError103:
             type: object
             properties:
                 code:

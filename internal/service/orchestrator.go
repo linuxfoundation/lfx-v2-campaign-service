@@ -694,6 +694,11 @@ type Orchestrator struct {
 	// later update happened to republish it. Never nil: defaults to Noop.
 	indexerMu sync.RWMutex
 	indexer   indexer.Publisher
+	// accountReportsMu guards accountReports, which SetAccountReportStore late-binds from the
+	// container exactly as SetIndexer does. nil means no store is wired, and the report-backed
+	// monitor read refuses rather than running without one.
+	accountReportsMu sync.RWMutex
+	accountReports   domain.AccountReportRepository
 	// indexingDisabled is a CONFIGURATION fact (NATS_URL empty), not an observation of the
 	// publisher — a Noop also appears when the broker is unreachable. See DisableIndexing.
 	indexingDisabled bool
@@ -774,6 +779,9 @@ const (
 	opKeywordActions             = "keyword_actions"
 	opVerifyAccountOrg           = "verify_account_org"
 	opProbeConnection            = "probe_connection"
+	opListAccountCampaigns       = "list_account_campaigns"
+	opSubmitAccountReport        = "submit_account_report"
+	opCheckAccountReport         = "check_account_report"
 )
 
 // recordUpstream times one upstream platform call. It is called ONLY after the

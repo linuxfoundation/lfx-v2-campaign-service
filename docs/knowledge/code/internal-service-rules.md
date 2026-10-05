@@ -14,10 +14,14 @@ resource: "internal/service"
 (what should an operator look at, and what should they do?).
 
 **This package (`pacing.go`/`actions.go`) is not the only rule engine in this
-directory.** The four `monitor_*.go` files (`monitor_google.go`,
-`monitor_linkedin.go`, `monitor_meta.go`, `monitor_reddit.go`) back the
-account-scoped `/account-monitor` endpoints, ported from the LFX One BFF's own
-four historically divergent rule engines.
+directory.** The five `monitor_*.go` files (`monitor_google.go`,
+`monitor_linkedin.go`, `monitor_meta.go`, `monitor_reddit.go`,
+`monitor_microsoft.go`) back the account-scoped `/account-monitor` endpoints. The
+first four were ported from the LFX One BFF's own four historically divergent rule
+engines; `monitor_microsoft.go` was written here, on the same shared helpers, for
+Microsoft's report-backed monitor (daily budgets only, so Google's daily pacing model;
+a shared-budget campaign arrives `PacingUnknown` and is neither paced nor called a
+placeholder budget).
 
 They were originally kept unmerged, bug for bug, so an OLD-vs-NEW differential
 diff against the still-live BFF stayed a meaningful faithfulness check. That
