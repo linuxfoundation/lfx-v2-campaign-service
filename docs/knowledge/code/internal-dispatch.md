@@ -302,28 +302,33 @@ guess, so it keeps nothing.
 - `googleads.go` — each sitelink's `finalUrl` (`googleAdsSnapshotConfig`); keyword and ad text
   are kept VERBATIM by design.
 - `twitter.go` — `tweetText` (`sanitizeSnapshotText`).
-- `microsoft.go` — `timeZone` only (`microsoftSnapshotConfig`, `sanitizeSnapshotText`).
+- `microsoft.go` — `timeZone` and every `keywords[].text`, both through `sanitizeSnapshotText`
+  (`microsoftSnapshotConfig`); the snapshot is a redacted record, not a verbatim one.
 - `hubspot.go` — snapshots only the provenance fields (`hubspotConfigProvenance`); subject and
   body HTML are never stored.
 - `linkedin.go` — passes the raw `linkedinConfig`; NOTHING is scrubbed. It has no dedicated URL
   field (the registration URL comes from the brief), but variant `introText`/`headline` are
   caller free text stored verbatim. Not changed here; LinkedIn is owned by another engineer.
 
-**Microsoft keeps keywords verbatim and scrubs only `timeZone`.** `campaignFromMicrosoft`
-used to pass the caller's `microsoftConfig` to `applyCampaignConfig` as-is. The struct carries
-no URL field: the ad's `FinalUrls` is the BRIEF's registration URL plus the client's `utm_*`
+**Microsoft scrubs `timeZone` and the links inside keywords.** `campaignFromMicrosoft` persists
+`microsoftSnapshotConfig(cfg)`, never the caller's raw `microsoftConfig`. The struct carries no
+URL field: the ad's `FinalUrls` is the BRIEF's registration URL plus the client's `utm_*`
 params and never reaches the snapshot. `timeZone` is meant to be an enum but is forwarded
-UNVALIDATED, so it is in practice caller free text, and `microsoftSnapshotConfig` runs it
-through `sanitizeSnapshotText` (every real enum value is a bare identifier and passes
-through unchanged). `keywords[].text` is deliberately kept verbatim, the same policy as
-`googleAdsSnapshotConfig`: `sanitizeSnapshotText` is for prose that routinely carries a pasted
-link, and its path-only pass would rewrite legitimate keywords — `k8s.io/docs tutorial` to
-`k8s.io tutorial`, `node.js/express` to `node.js`, `10.0.0.0/8` to `10.0.0.0` — so the
-snapshot would stop saying what was targeted. `budget`, `cpcBid`, `matchType` (only
-Exact/Phrase/Broad gets past the client before a snapshot can be written) and `geoTargets`
-(ISO-2 codes, shape-checked by the client) cannot carry a URL. The persisted `result`
-(`microsoft.CampaignResult`) needed no change: its `Steps` interpolate only ids, counts and
-geo codes, and its `microsoftAdsUrl` is a deep link the client composes from the account id.
+UNVALIDATED, so it is caller free text and goes through `sanitizeSnapshotText` (every real enum
+value is a bare identifier and passes through unchanged). `keywords[].text` is caller text too —
+`validateKeywords` only trims, length-checks and validates the match type, so
+`https://example.test/reset/SECRET?token=VALUE` and `example.org/reset/SECRET` are valid keywords
+— and goes through the same full `sanitizeSnapshotText`. A link's PATH can carry a token as
+readily as its query (knowledge base: `caller-url-must-be-redacted-before-errors-steps-and-snapshots`
+— "it kept the path" is a finding), so no keyword exemption is made: the snapshot is a REDACTED
+record, and a path-like targeting term is reduced too (`k8s.io/docs tutorial` is stored as
+`k8s.io tutorial`, `node.js/express` as `node.js`). Microsoft still receives every keyword exactly
+as written; only the stored copy changes. The keyword slice is reallocated first, so the config sent
+to Microsoft is untouched. `budget`, `cpcBid`, `matchType` (only Exact/Phrase/Broad gets past
+the client before a snapshot can be written) and `geoTargets` (ISO-2 codes, shape-checked by
+the client) cannot carry a URL. The persisted `result` (`microsoft.CampaignResult`) carries no
+caller URL: its `Steps` interpolate only ids, counts and geo codes, and its `microsoftAdsUrl`
+is a deep link the client composes from the account id.
 
 ## The claim contract (release vs retain)
 

@@ -730,8 +730,9 @@ The persisted `config_snapshot` is a copy built by `microsoftSnapshotConfig`: th
 has no URL field of its own — the ad's `FinalUrls` is the brief's registration URL plus the
 client's `utm_*` params and never enters the struct — and the one field reduced is `timeZone`,
 which the client forwards verbatim without validating it against the enum, so it goes through
-`sanitizeSnapshotText`. `keywords[].text` is stored VERBATIM, matching Google Ads' policy for
-keyword text (the prose redactor would rewrite legitimate keywords such as `node.js/express`).
+`sanitizeSnapshotText`, and so does every `keywords[].text`: a keyword is caller text, and a
+link's path can carry a token as readily as its query, so the snapshot is a redacted record
+(`k8s.io/docs tutorial` is stored as `k8s.io tutorial`) while Microsoft receives the exact keyword.
 The values sent to Microsoft are untouched. `CampaignResult` (the persisted `result`) carries
 no caller URL: names, ids, `Steps` (none of which interpolate a URL) and the service-composed
 `microsoftAdsUrl` deep link, whose `?aid=` is the account id.

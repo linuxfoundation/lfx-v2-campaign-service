@@ -256,23 +256,32 @@ func microsoftKeywords(in []microsoftKeywordConfig) []microsoft.Keyword {
 // tweetText uses — which reduces any link-shaped run to scheme+host. Every real enum value is
 // a bare identifier and passes through unchanged.
 //
-// Keywords[].Text is deliberately kept VERBATIM, matching googleAdsSnapshotConfig's policy for
-// keyword and ad text. sanitizeSnapshotText is for operator prose that routinely carries a
-// pasted link; a keyword is short targeting text whose exact value is the point of the
-// snapshot, and the prose redactor's path-only pass would rewrite legitimate keywords —
-// `k8s.io/docs tutorial` to `k8s.io tutorial`, `node.js/express` to `node.js`, a CIDR
-// `10.0.0.0/8` to `10.0.0.0` — so the snapshot would no longer say what was targeted.
+// Keywords[].Text goes through sanitizeSnapshotText too. A keyword is caller text bound for the
+// unencrypted snapshot — validateKeywords only trims, length-checks and validates the match
+// type, so `https://example.test/reset/SECRET?token=VALUE` or `example.org/reset/SECRET` is a
+// valid keyword — and a link's PATH can carry a token as readily as its query
+// (knowledge base: caller-url-must-be-redacted-before-errors-steps-and-snapshots). So the
+// snapshot is a REDACTED record, not a verbatim one: a path-like targeting term is reduced too
+// (`k8s.io/docs tutorial` is stored as `k8s.io tutorial`), while Microsoft still receives every
+// keyword exactly as written.
 //
 // Also kept verbatim, because they cannot carry a URL by construction: Budget and CpcBid
 // (numbers), Keywords[].MatchType (only Exact/Phrase/Broad gets past the client, and a
 // snapshot is only written once it has) and GeoTargets (ISO 3166-1 alpha-2 codes,
 // shape-checked by the client before anything is sent).
 //
-// cfg is passed by value and only a string field is rewritten, so the returned copy shares
-// nothing that is mutated: the config Dispatch sends to Microsoft is untouched.
+// cfg is passed by value and Keywords is REALLOCATED before any element is rewritten, so the
+// returned copy shares nothing that is mutated: the config Dispatch sends is untouched.
 func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 	snapshot := cfg
 	snapshot.TimeZone = sanitizeSnapshotText(cfg.TimeZone)
+	if cfg.Keywords != nil {
+		snapshot.Keywords = make([]microsoftKeywordConfig, len(cfg.Keywords))
+		copy(snapshot.Keywords, cfg.Keywords)
+		for i := range snapshot.Keywords {
+			snapshot.Keywords[i].Text = sanitizeSnapshotText(snapshot.Keywords[i].Text)
+		}
+	}
 	return snapshot
 }
 
