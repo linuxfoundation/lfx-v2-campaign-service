@@ -840,9 +840,12 @@ conversionActions?: string[]    — OPTIONAL the conversion actions THIS campaig
                                   goals after the campaign exists needs a second mutate that can fail
                                   and leave a campaign bidding toward the wrong goals.
 
-                                  `GET` the account's available actions to populate a picker — see
-                                  `ListConversionActions`, which reads id, name, status, type, category
-                                  and whether each is primary for the account goal. Creating a
+                                  To populate a picker, the account's available actions are read by
+                                  `googleads.ListConversionActions` — id, name, status, type, category
+                                  and whether each is primary for the account goal. It exists only as a
+                                  Go client method today: there is NO endpoint, no Goa method and no
+                                  mount, so a caller has no HTTP route to source these ids from yet.
+                                  Creating a
                                   conversion action is deliberately NOT offered: it is half a
                                   measurement setup (the other half is a site tag), and one created
                                   without its tag reports as configured while recording nothing.

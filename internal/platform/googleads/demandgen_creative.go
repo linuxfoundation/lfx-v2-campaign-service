@@ -632,7 +632,14 @@ func (c *Client) imageFetchClient() *http.Client {
 		Transport: transport,
 		Timeout:   demandGenImageFetchTimeout,
 		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-			return fmt.Errorf("refusing to follow a redirect to %s (creative image URLs must point directly at the image)", req.URL.Redacted())
+			// redactURLForError, not url.URL.Redacted(): Redacted() masks ONLY a password in
+			// userinfo and keeps the query verbatim, so a redirect to a signed CDN asset put
+			// its signature straight into this message — which net/http wraps into the
+			// *url.Error that becomes a persisted Steps entry. The caller's own URL is
+			// redacted at every one of the sites that render it; the redirect TARGET is the
+			// same class of secret, reached by one hop, and reads as already-redacted
+			// precisely because Redacted() is in its name.
+			return fmt.Errorf("refusing to follow a redirect to %s (creative image URLs must point directly at the image)", redactURLForError(req.URL.String()))
 		},
 	}
 }

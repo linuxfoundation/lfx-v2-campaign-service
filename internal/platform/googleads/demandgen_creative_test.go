@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -520,13 +521,16 @@ func TestFetchOneImage_SizeCapBindsOnAnUndeclaredLength(t *testing.T) {
 // Redirects are refused outright rather than followed: following one would re-open
 // every destination check against an address the original URL never named.
 func TestFetchOneImage_RefusesRedirects(t *testing.T) {
+	// Rendered on the TEST goroutine: pngOf ends in t.Fatalf, and FailNow from a handler
+	// does not stop the test — it can leave the server blocked while a deferred Close runs.
+	body := pngOf(t, 1200, 628)
 	var target string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/redirect.png" {
 			http.Redirect(w, r, target+"/real.png", http.StatusFound)
 			return
 		}
-		_, _ = w.Write(pngOf(t, 1200, 628))
+		_, _ = w.Write(body)
 	}))
 	t.Cleanup(srv.Close)
 	target = srv.URL
@@ -540,18 +544,29 @@ func TestFetchOneImage_RefusesRedirects(t *testing.T) {
 // caller chose, and leaking the account's bearer token or developer token to it
 // would be far worse than any image problem.
 func TestFetchOneImage_SendsNoCredentials(t *testing.T) {
-	var got http.Header
+	body := pngOf(t, 1200, 628)
+	// The captured headers ARE the assertion, and they cross from the handler goroutine to
+	// this one — so the handoff needs a happens-before edge, not just the fetch returning.
+	var (
+		mu  sync.Mutex
+		got http.Header
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		got = r.Header.Clone()
-		_, _ = w.Write(pngOf(t, 1200, 628))
+		mu.Unlock()
+		_, _ = w.Write(body)
 	}))
 	t.Cleanup(srv.Close)
 	c := imageFetchTestClient(t)
 	if _, err := c.fetchOneImage(context.Background(), demandGenImageSlots[0], srv.URL+"/m.png"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	mu.Lock()
+	hdr := got.Clone()
+	mu.Unlock()
 	for _, h := range []string{"Authorization", "Developer-Token", "Login-Customer-Id"} {
-		if v := got.Get(h); v != "" {
+		if v := hdr.Get(h); v != "" {
 			t.Errorf("creative fetch leaked %s: %q", h, v)
 		}
 	}
@@ -714,13 +729,14 @@ func TestCreateDemandGenCampaign_WithCreative(t *testing.T) {
 // guarantee this whole preflight exists for. A (nil, err) return is the proof:
 // anything past the campaign create returns a non-nil partial result.
 func TestCreateDemandGenCampaign_BadImageFailsBeforeAnyMutate(t *testing.T) {
+	tooSmall := pngOf(t, 100, 100) // too small for every slot
 	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, ":mutate") {
 			t.Errorf("a mutate was sent despite an unusable image: %s", r.URL.Path)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		_, _ = w.Write(pngOf(t, 100, 100)) // too small for every slot
+		_, _ = w.Write(tooSmall)
 	})
 	c := demandGenClient(t, srv)
 
@@ -901,5 +917,27 @@ func TestValidateImageURLs_ErrorsNeverEchoTheQueryString(t *testing.T) {
 				t.Errorf("the error echoes the signed query string: %v", err)
 			}
 		})
+	}
+}
+
+// The redirect TARGET is the same class of secret as the caller's own URL, reached by one
+// hop. url.URL.Redacted() reads as though it handles that and does not — it masks only a
+// password in userinfo and keeps the query, which for a signed CDN asset IS the credential.
+func TestFetchOneImage_RedirectRefusalDoesNotEchoTheTargetsQuery(t *testing.T) {
+	const secret = "SUPERSECRETSIGNATURE"
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://cdn.example.org/img.png?X-Amz-Signature="+secret, http.StatusFound)
+	})
+	c := demandGenClient(t, srv)
+
+	_, err := c.fetchOneImage(context.Background(), demandGenImageSlots[0], srv.URL+"/a.png?tok="+secret)
+	if err == nil {
+		t.Fatal("a redirect must be refused: a creative image URL has to point directly at the image")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("the refusal echoes a signed query string: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cdn.example.org") {
+		t.Errorf("the refusal must still name the host it refused to follow, for diagnosis: %v", err)
 	}
 }
