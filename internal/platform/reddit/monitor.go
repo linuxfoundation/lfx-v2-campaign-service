@@ -174,6 +174,19 @@ func (c *Client) nextPagePath(raw json.RawMessage) (string, error) {
 	if next.Scheme != base.Scheme || next.Host != base.Host {
 		return "", errors.New("pagination next_url points off the API origin; refusing to send credentials there")
 	}
+	// The containment check runs on the DECODED path, and refuses any dot segment. Checking the
+	// escaped form alone let `%2e%2e` through: ResolveReference only removes LITERAL dot
+	// segments, and request()'s per-segment decode-and-re-escape turns `%2e%2e` back into a
+	// literal `..` that the server resolves outside the API base. Same origin either way — the
+	// token cannot leave the host — but "under the API path" is the promise this makes.
+	for _, seg := range strings.Split(next.Path, "/") {
+		if seg == "." || seg == ".." {
+			return "", errors.New("pagination next_url contains a dot segment")
+		}
+	}
+	if !strings.HasPrefix(next.Path, strings.TrimRight(base.Path, "/")+"/") {
+		return "", errors.New("pagination next_url is outside the API base path")
+	}
 	basePath := strings.TrimRight(base.EscapedPath(), "/")
 	nextPath := next.EscapedPath()
 	if !strings.HasPrefix(nextPath, basePath+"/") {

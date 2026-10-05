@@ -90,9 +90,11 @@ func EvaluateRedditMonitor(rows []model.AccountCampaignMetrics, days int, now ti
 //     Needs a parseable start date; without one there is no flight to prorate against.
 //   - DAILY_SPEND (BudgetDay): expected = BudgetDay × the days of the report window the
 //     campaign was scheduled for — the window [today-(days-1), now], clipped to the flight
-//     where Reddit reported one (end date inclusive). This is LinkedIn's daily-budget branch
-//     (monitor_linkedin.go), and Google/Meta's BudgetDay × days whenever the flight covers the
-//     whole window. A flight that does not overlap the window at all has no expected spend,
+//     where Reddit reported one (end date inclusive). Whenever the flight covers the whole
+//     window this is Google/Meta's BudgetDay × days, and it matches this platform's own report
+//     window (which starts at today's midnight minus days-1). It is deliberately ONE DAY MORE
+//     than LinkedIn's daily branch (monitor_linkedin.go), which anchors its range at the current
+//     INSTANT minus days-1 and so counts days-1 full days for a whole-window flight. A flight that does not overlap the window at all has no expected spend,
 //     so pacing is not computable rather than measured against a day the campaign was not
 //     scheduled to run.
 //

@@ -800,6 +800,10 @@ func TestNextPagePath(t *testing.T) {
 		{"other host", `{"next_url":"https://evil.example/api/v3/x"}`, "", true},
 		{"downgraded scheme", `{"next_url":"http://ads-api.reddit.com/api/v3/x"}`, "", true},
 		{"outside base path", `{"next_url":"https://ads-api.reddit.com/api/v2/x"}`, "", true},
+		// Encoded dot segments survive ResolveReference and are decoded back to `..` by the
+		// request path sanitizer, so they must be refused on the decoded path.
+		{"encoded dot segments", `{"next_url":"https://ads-api.reddit.com/api/v3/ad_accounts/%2e%2e/%2e%2e/x"}`, "", true},
+		{"mixed-case encoded dots", `{"next_url":"https://ads-api.reddit.com/api/v3/%2E%2e/x"}`, "", true},
 		{"not an object", `[1]`, "", true},
 	}
 	for _, tt := range tests {

@@ -35,7 +35,9 @@ func TestRedditPacingPct_ScheduleBranch(t *testing.T) {
 // cap was prorated across the whole flight and a campaign spending exactly its cap read as
 // heavily overspending.
 func TestRedditPacingPct_DailyBudget(t *testing.T) {
-	// Mid-day, so the partial final day rounds up exactly as the other platforms' ceil does.
+	// Mid-day, so the partial final day counts as a whole day — matching Google/Meta's
+	// BudgetDay × days and the report window, and one day more than LinkedIn's instant-anchored
+	// range (see redditPacingPct).
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name           string
