@@ -34,3 +34,9 @@ service stated something about a window or an error that was not exactly true.
   every failure is unconfirmed; only errors not already unconfirmed are wrapped in
   `retriedUnconfirmedError`. The merged log entry is left as it was; this entry supersedes its
   wording.
+
+Review follow-up: `localDayStart` returns the first instant whose local date is ON OR AFTER the
+wanted day, stepping 15 minutes for up to 48 hours. A day skipped ENTIRELY (Pacific/Apia,
+2011-12-30) therefore starts the window at the next real day, and `firstDay` says so; a
+4-hour cap would have returned an instant in the previous day with no error. Pinned by an Apia
+case in `TestAccountReportWindow_Boundaries`.

@@ -524,6 +524,7 @@ func TestAccountReportWindow_Boundaries(t *testing.T) {
 	ny, _ := time.LoadLocation("America/New_York")
 	la, _ := time.LoadLocation("America/Los_Angeles")
 	scl, _ := time.LoadLocation("America/Santiago") // DST spring-forward skips 00:00 (2026-09-06)
+	apia, _ := time.LoadLocation("Pacific/Apia")    // skipped 2011-12-30 entirely (-10 → +14)
 	cases := []struct {
 		name            string
 		now             time.Time
@@ -554,6 +555,10 @@ func TestAccountReportWindow_Boundaries(t *testing.T) {
 		// ...and the window STARTS on the skipped day.
 		{"skipped midnight starts the window (Santiago)", time.Date(2026, 9, 12, 15, 0, 0, 0, time.UTC), scl, 7,
 			"2026-09-06T04:00:00Z", "2026-09-13T03:00:00Z", "2026-09-06", "2026-09-12"},
+		// A window whose first day was skipped ENTIRELY starts at the next real day, and firstDay
+		// says so (6 reported days, never a day that did not exist or part of the day before).
+		{"skipped day starts the window (Apia 2011-12-30)", time.Date(2012, 1, 4, 22, 0, 0, 0, time.UTC), apia, 7,
+			"2011-12-30T10:00:00Z", "2012-01-05T10:00:00Z", "2011-12-31", "2012-01-05"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

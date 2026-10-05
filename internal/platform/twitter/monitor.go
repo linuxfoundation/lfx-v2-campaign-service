@@ -632,18 +632,25 @@ func accountReportWindow(now time.Time, loc *time.Location, days int) (start, en
 	return start, end, firstDay, lastDay, nil
 }
 
-// localDayStart returns the first instant of the local calendar day y-m-d (d may be out of range;
-// it is normalized like time.Date). That is local midnight, except in a zone whose DST
-// spring-forward skips 00:00 (America/Santiago, America/Asuncion, …): there time.Date normalizes
-// the nonexistent midnight BACK to 23:00 of the previous day, which would put an hour of the
-// previous day into the window and date the window one day early. The day actually begins at the
-// first instant whose local date is y-m-d, one transition later, so the window starts there and
-// the queried days stay the reported days.
+// localDayStart returns the first instant whose local calendar date is ON OR AFTER y-m-d (d may be
+// out of range; it is normalized like time.Date). That is local midnight, except where a
+// transition removes it: time.Date normalizes a nonexistent local midnight BACKWARDS, into the
+// previous day, which would put part of that day into the window and date the window a day early.
+//
+//   - A DST spring-forward that skips 00:00 (America/Santiago, America/Asuncion, …): the day
+//     begins at the first instant after the gap (01:00 for a one-hour gap).
+//   - A day skipped ENTIRELY (Pacific/Apia jumped from 2011-12-29 to 2011-12-31): no instant has
+//     that date, so the result is the start of the next real day, and the caller's firstDay says
+//     so — the reported days stay the queried days.
+//
+// It walks forward in 15-minute steps (every offset in tzdata is a multiple of 15 minutes, so the
+// first step that crosses a gap lands exactly on its end) for at most 48 hours, which covers any
+// real transition including Apia's 24-hour jump.
 func localDayStart(y int, m time.Month, d int, loc *time.Location) time.Time {
 	t := time.Date(y, m, d, 0, 0, 0, 0, loc)
 	want := time.Date(y, m, d, 0, 0, 0, 0, time.UTC) // the intended calendar date, normalized
-	for i := 0; i < 4 && localDate(t).Before(want); i++ {
-		t = t.Add(time.Hour)
+	for i := 0; i < 48*4 && localDate(t).Before(want); i++ {
+		t = t.Add(15 * time.Minute)
 	}
 	return t
 }
