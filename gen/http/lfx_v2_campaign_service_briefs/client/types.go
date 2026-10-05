@@ -3162,7 +3162,11 @@ type CampaignCreateInputRequestBody struct {
 	// with none gets its first; a platform whose latest campaign is still in
 	// flight or needs reconciliation is reported exactly as a retry would be. The
 	// version is tracked by this service only and is never shown on the ad
-	// platform as a label.
+	// platform as a label. Supported on microsoft-ads only for now; any other
+	// platform in the request is refused with 400. Until the follow-up release
+	// removes the one-campaign-per-slot index, a request on a platform that
+	// already has a live campaign fails that platform with 'not available yet' and
+	// creates nothing.
 	NewVersion bool `form:"new_version" json:"new_version" xml:"new_version"`
 }
 

@@ -6,6 +6,7 @@ package dbtest_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -92,5 +93,55 @@ func TestLiveSlotVersionDuringExpandPhase(t *testing.T) {
 	}
 	if latest.ID != created.ID {
 		t.Fatalf("GetCampaignByPlatform = %s, want slot 1's campaign %s", latest.ID, created.ID)
+	}
+}
+
+// TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError pins the race the expand phase opened.
+// The claim names the four-column index as its arbiter, and Postgres pre-checks only the arbiter,
+// so concurrent slot-1 claims can all pass it; every loser then hits 23505 on 000022's legacy
+// index once the winner commits. That must read as a lost claim (the winner's row), not as
+// ErrSlotVersionUnavailable: a double-submitted first create is a skip or a reuse, never a
+// "not available yet" failure.
+func TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+
+	const n = 16
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		winners int
+		errs    []error
+		start   = make(chan struct{})
+	)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			claimed, row, err := repo.ClaimCampaignDispatch(ctx, project, briefID, model.ProviderMicrosoftAds,
+				model.VariantDefault, model.FirstSlotVersion, uuid.NewString(), nil)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err != nil:
+				errs = append(errs, err)
+			case claimed:
+				winners++
+			case row == nil || row.SlotVersion != model.FirstSlotVersion:
+				errs = append(errs, errors.New("lost claim returned no slot-1 row"))
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if winners != 1 {
+		t.Errorf("winners = %d, want exactly 1", winners)
+	}
+	if len(errs) > 0 {
+		t.Errorf("%d of %d concurrent slot-1 claims errored, want 0; first: %v", len(errs), n, errs[0])
 	}
 }

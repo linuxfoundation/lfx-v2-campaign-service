@@ -550,6 +550,27 @@ func TestBriefService_CreateCampaigns_RejectsDuplicatePlatforms(t *testing.T) {
 	}
 }
 
+// new_version is refused synchronously for any platform that is not on the slot-version
+// allowlist. Google, LinkedIn and X reuse campaigns by name, so a "new" campaign there would be
+// bound to the existing one upstream; the 400 must come before a job exists.
+func TestBriefService_CreateCampaigns_NewVersionRefusedOutsideTheAllowlist(t *testing.T) {
+	for _, pl := range []string{"google-ads", "linkedin-ads", "twitter-ads"} {
+		repo := newFakeBriefRepo()
+		repo.briefs[briefKey("cncf", "b1")] = &model.CampaignBrief{
+			ID: "b1", ProjectID: "cncf", Status: model.BriefApproved, DeliveryType: model.DeliveryPaidMarketing,
+		}
+		s := newTestBriefService(repo)
+		_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+			ProjectID: "cncf", BriefID: "b1",
+			Input: &briefs.CampaignCreateInput{Platforms: []string{"microsoft-ads", pl}, NewVersion: true},
+		})
+		var bad *briefs.BadRequestError
+		if !errors.As(err, &bad) || !strings.Contains(bad.Message, "new_version is not supported for "+pl) {
+			t.Errorf("%s: expected a 400 naming the platform, got %T (%v)", pl, err, err)
+		}
+	}
+}
+
 // Create/Get must round-trip the full brief content (event_details, copy,
 // keywords, targeting), not drop it from the response.
 func TestBriefService_ResponseIncludesBriefContent(t *testing.T) {

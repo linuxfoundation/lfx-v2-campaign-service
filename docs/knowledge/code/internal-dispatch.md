@@ -365,15 +365,22 @@ only one of the three that retrying can fix.
 
 ### Slot versions and unique upstream names
 
-Google and Microsoft compose a deterministic name with the brief id as its `NameSuffix`, and
-both treat a matching name as the SAME campaign — Google rejects it (`DUPLICATE_CAMPAIGN_NAME`)
-or, with `adoptExisting`, adopts it; Microsoft's find-first lookup reuses it. A deliberate second
-campaign on the same slot (see the service concept's `new_version`) would therefore be refused or
-bound to the first. Both dispatchers set `NameSuffix: model.SlotNameSuffix(brief.ID,
-model.DispatchSlotVersion(ctx))`: slot 1 is the bare brief id, so every existing name and every
-retry is byte-identical, and slot 2+ appends `-<n>`. It is an internal identifier in the place the
-brief id already sat, not a human-facing version label. The other providers do not dedupe on name
-and are unchanged.
+A deliberate second campaign on one slot (the service concept's `new_version`) must not
+compose the first campaign's upstream name on a provider that treats a matching name as the
+same campaign. Microsoft enforces case-insensitive name uniqueness and its find-first lookup
+REUSES a match, so `MicrosoftDispatcher` sets `NameSuffix: model.SlotNameSuffix(brief.ID,
+model.DispatchSlotVersion(ctx))`: slot 1 is the bare brief id (every existing name and retry is
+byte-identical) and slot 2+ appends `-<n>` — an internal identifier where the brief id already
+sat, not a version label.
+
+Every other provider still composes the same name for every slot, and most look campaigns up by
+it: Google (`FindCampaignByName`, `DUPLICATE_CAMPAIGN_NAME`), LinkedIn
+(`findCampaignByNameInGroup`, which would also push new creatives onto the live campaign), X and
+Meta (`findCampaignByName`); HubSpot clones under the same email name. So
+`model.ProviderSupportsSlotVersions` is an allowlist holding only Microsoft, and `create-campaigns`
+refuses `new_version` with a 400 for anything else. A provider joins it in the same change that
+makes its name unique per slot version. Google and LinkedIn are owned by the Google-readiness
+workstream (LFXV2-2665).
 
 ## Registration
 

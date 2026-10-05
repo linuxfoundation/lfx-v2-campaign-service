@@ -96,6 +96,10 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns
 // violation.
 const legacySlotUniqueIndex = "uq_campaigns_brief_platform_variant_live"
 
+// platformCampaignUniqueIndex is 000020's index: one live row per upstream campaign id. Its
+// violation is what ErrPlatformCampaignAlreadyBound means.
+const platformCampaignUniqueIndex = "uq_campaigns_platform_campaign_live"
+
 // ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
 // by inserting a placeholder 'pending' campaign row. The (brief_id, platform)
 // unique index makes the claim single-winner across all replicas without holding
@@ -141,10 +145,22 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 	tag, err := r.db.Exec(ctx, claimCampaignDispatchQuery, projectID, briefID, jobID, string(platform), variant, createdBy, slotVersion)
 	if err != nil {
 		if isUniqueViolationOn(err, legacySlotUniqueIndex) {
-			// Only a slot_version above 1 can reach here: slot 1 conflicts on the arbiter
-			// first and is swallowed by DO NOTHING. The statement failed, so no row exists
-			// and there is nothing to roll back.
-			return false, nil, fmt.Errorf("claim campaign dispatch: %w", domain.ErrSlotVersionUnavailable)
+			// The statement failed, so no row of ours exists and there is nothing to roll back.
+			//
+			// Above slot 1 this is the expand phase refusing a second live campaign on the slot.
+			if slotVersion > model.FirstSlotVersion {
+				return false, nil, fmt.Errorf("claim campaign dispatch: %w", domain.ErrSlotVersionUnavailable)
+			}
+			// At slot 1 it is a lost RACE, not a refusal. Postgres pre-checks only the arbiter,
+			// so two concurrent slot-1 claims can both pass it; the loser then waits on the
+			// winner's entry in the legacy index and gets 23505 there once the winner commits,
+			// instead of the arbiter conflict DO NOTHING would have swallowed. Answer it the way
+			// the arbiter conflict is answered: not claimed, here is the winner's row.
+			row, gerr := r.getCampaignBySlot(ctx, projectID, briefID, platform, variant, slotVersion)
+			if gerr != nil {
+				return false, nil, fmt.Errorf("read campaign after lost claim: %w", gerr)
+			}
+			return false, row, nil
 		}
 		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
 	}
@@ -769,7 +785,15 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 		// behaviour and it must be classified separately: the DO NOTHING conflict means "this
 		// BRIEF is taken", the unique violation means "this upstream CAMPAIGN is taken", and
 		// reporting the second as the first sends the caller to look at the wrong brief.
-		if isUniqueViolation(err) {
+		// Classified by INDEX, not by "any 23505": since 000036 this INSERT names the
+		// four-column slot index as its arbiter, so a race with a concurrent claim on the same
+		// slot can also raise 23505 — on 000022's legacy slot index, while it exists. That is
+		// "this brief is taken" (ErrConflict), and reporting it as an upstream campaign bound
+		// elsewhere would send the caller to look for a binding that does not exist.
+		if isUniqueViolationOn(err, legacySlotUniqueIndex) {
+			return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
+		}
+		if isUniqueViolationOn(err, platformCampaignUniqueIndex) {
 			// The other brief is deliberately not named, and neither is its project. The
 			// index is global (000020), so the conflicting row may belong to a project this
 			// caller cannot see — Google Ads is one shared upstream account across every

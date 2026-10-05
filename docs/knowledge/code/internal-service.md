@@ -137,7 +137,10 @@ claim targets its own slot version and gets the skip / reconciliation-required a
 gets, because a second campaign beside an unresolved one would spend twice. The slot version
 reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). While `000022`'s
 three-column index still exists, the claim returns `domain.ErrSlotVersionUnavailable` and the
-platform result is a plain "not available yet" refusal; nothing is created.
+platform result is a plain "not available yet" refusal; nothing is created. `CreateCampaigns`
+refuses `new_version` synchronously (400, before a job exists) for any platform outside
+`model.ProviderSupportsSlotVersions` — today Microsoft only, because the other providers reuse
+campaigns by a name that does not yet vary by slot version (see the dispatch concept).
 
 Dispatch is durable (LFXV2-2665): single-flight per (brief, platform) is
 enforced by an atomic claim — `ClaimCampaignDispatch` does INSERT ... ON CONFLICT

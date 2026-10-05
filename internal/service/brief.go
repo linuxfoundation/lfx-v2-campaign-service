@@ -707,6 +707,17 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 		seen[prov] = struct{}{}
 		platforms = append(platforms, prov)
 	}
+	if p.Input.NewVersion {
+		// Refused for the whole request, before a job exists, rather than per platform after
+		// the 202: a provider that reuses campaigns by name would bind the "new" campaign to the
+		// existing one upstream, and that is only knowable here as a property of the provider.
+		for _, prov := range platforms {
+			if !model.ProviderSupportsSlotVersions(prov) {
+				return nil, &briefs.BadRequestError{Code: "400", Message: fmt.Sprintf(
+					"new_version is not supported for %s yet; omit new_version to retry the existing campaign", prov)}
+			}
+		}
+	}
 	config := marshalAny(p.Input.Config)
 	// Refuse a request that can never produce what it asks for BEFORE the job exists. Dispatch
 	// runs after the 202 and reports every failure as one opaque job error, so a request shape

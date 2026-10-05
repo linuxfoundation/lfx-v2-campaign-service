@@ -444,13 +444,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// errCodeDuplicateBudgetName / errCodeDuplicateCampaignName). Either is reported
 		// UNCONFIRMED-already-exists rather than creating a second paid campaign — a
 		// poor-man's idempotency key until LFXV2-2665 lands provider idempotency keys.
-		//
-		// The slot version extends the suffix for a deliberate SECOND campaign on the same
-		// slot (model.SlotNameSuffix): slot 1 keeps the bare brief id, so every existing
-		// campaign's name — and every retry of one — is unchanged, while slot 2 gets a name
-		// the first campaign does not hold. Without it the second campaign would compose the
-		// first one's name and be refused as a duplicate or matched to the first by name.
-		NameSuffix: model.SlotNameSuffix(brief.ID, model.DispatchSlotVersion(ctx)),
+		NameSuffix: brief.ID,
 	}
 
 	// login_customer_id is the OPTIONAL manager (MCC) account the ad account is accessed

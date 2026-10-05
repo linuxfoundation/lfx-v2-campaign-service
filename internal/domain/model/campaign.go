@@ -136,6 +136,19 @@ func SlotNameSuffix(base string, slotVersion int) string {
 	return base
 }
 
+// ProviderSupportsSlotVersions reports whether a deliberate second campaign on one slot
+// (new_version) is safe to dispatch on p.
+//
+// It is an ALLOWLIST because the hazard is per provider and silent: Google, LinkedIn and X
+// find-or-reuse a campaign by its composed name, and their names do not yet vary by slot
+// version, so slot 2 would be bound to slot 1's live campaign (on LinkedIn, with new creatives
+// pushed onto it); Meta also looks campaigns up by name; HubSpot clones an email under the same
+// name. Microsoft folds the slot version into its name suffix (SlotNameSuffix). A provider is
+// added here in the same change that makes its upstream name unique per slot version.
+func ProviderSupportsSlotVersions(p Provider) bool {
+	return p == ProviderMicrosoftAds
+}
+
 type dispatchSlotVersionKey struct{}
 
 // WithDispatchSlotVersion returns ctx carrying the slot version one platform dispatch is
