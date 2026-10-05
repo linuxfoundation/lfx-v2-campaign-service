@@ -225,11 +225,47 @@ func TestValidateDeviceBidModifiers_RejectsBadInput(t *testing.T) {
 		// Two criteria for one device is a conflict Google rejects after the campaign
 		// exists, and the caller plainly meant one of the two values.
 		"duplicate device": {{Device: "MOBILE", BidModifier: 1.5}, {Device: "mobile", BidModifier: 2}},
+		// Google supports TV screens only on Display and Video campaigns, and every
+		// criterion in this file is refused on Demand Gen — so Search is the only kind
+		// that reaches the vocabulary, and Search is not a type it works on. Accepting
+		// it offered a knob that is inert at best and rejects the criteria mutate at
+		// worst, after the budget and campaign are committed.
+		"connected TV":            {{Device: "CONNECTED_TV", BidModifier: 1.5}},
+		"connected TV lowercased": {{Device: " connected_tv ", BidModifier: 1.5}},
+		// OTHER is a reporting bucket, not something a campaign bids on.
+		"other": {{Device: "OTHER", BidModifier: 1.5}},
 	}
 	for name, devices := range bad {
 		if _, _, err := validateDeviceBidModifiers(devices); err == nil {
 			t.Errorf("%s must be rejected", name)
 		}
+	}
+}
+
+// maxDeviceBidModifiers claims that a longer list "is necessarily a duplicate".
+// That claim holds only while the cap equals the size of the accepted vocabulary,
+// so it is asserted rather than left to whoever next edits either one — dropping a
+// device without dropping the cap would silently turn it back into a bare bound.
+func TestMaxDeviceBidModifiers_MatchesTheAcceptedVocabulary(t *testing.T) {
+	if maxDeviceBidModifiers != len(deviceTypes) {
+		t.Fatalf("maxDeviceBidModifiers = %d, but deviceTypes accepts %d devices — the cap must equal the vocabulary for the duplicate argument to hold", maxDeviceBidModifiers, len(deviceTypes))
+	}
+}
+
+// The over-refusal guard for the TV-screen removal: the three devices Google DOES
+// support on Search must all still be accepted in one list, and that list must be
+// exactly as long as the cap allows.
+func TestValidateDeviceBidModifiers_EverySupportedDeviceFitsInOneList(t *testing.T) {
+	devices, _, err := validateDeviceBidModifiers([]DeviceBidModifier{
+		{Device: "MOBILE", BidModifier: 1.2},
+		{Device: "DESKTOP", BidModifier: 0.9},
+		{Device: "TABLET", BidModifier: 1},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(devices) != maxDeviceBidModifiers {
+		t.Fatalf("got %d devices, want %d — every supported device must fit in one list", len(devices), maxDeviceBidModifiers)
 	}
 }
 

@@ -805,10 +805,15 @@ adSchedules?:                   — OPTIONAL dayparting (LFXV2-2665): the interv
                                   SEARCH ONLY, and REFUSED rather than ignored on Demand Gen; see
                                   `languages` for why.
 deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2665). `device` is one of
-  {device, bidModifier}[]         MOBILE, DESKTOP, TABLET, CONNECTED_TV (case-insensitive); at most 4
-                                  entries and a device may appear only ONCE — two criteria for the same
-                                  device are a conflict Google rejects after the campaign exists, and
-                                  the caller plainly meant one of the two values.
+  {device, bidModifier}[]         MOBILE, DESKTOP, TABLET (case-insensitive); at most 3 entries and a
+                                  device may appear only ONCE — two criteria for the same device are a
+                                  conflict Google rejects after the campaign exists, and the caller
+                                  plainly meant one of the two values.
+
+                                  There is NO TV-screen value. Google supports that device only on
+                                  Display and Video campaigns, and these criteria are Search-only here,
+                                  so a TV-screen entry could at best do nothing and at worst be rejected
+                                  at the criteria mutate, after the campaign is paid for.
 
                                   `bidModifier` is REQUIRED here (unlike on `adSchedules`, where the
                                   absent case means "listed but unadjusted"; a device entry with no

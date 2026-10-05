@@ -1221,6 +1221,20 @@ still collapses; NaN cannot reach it, because `validateBidModifier` runs
 earlier in the same loop iteration. `DeviceBidModifiers` refuse a repeated
 device, which Google rejects as a criterion conflict only after the campaign
 exists.
+
+The accepted device vocabulary is MOBILE, DESKTOP and TABLET. `OTHER` is absent
+because it is a reporting bucket rather than something a campaign bids on, and
+TV screens are absent because Google supports that device only on Display and
+Video campaigns — and since every criterion in this group is refused outright on
+Demand Gen, Search is the only kind that reaches the map. Offering it meant a
+knob whose best case was silently inert and whose worst case was a rejected
+`campaignCriteria:mutate` after the budget and campaign were committed. That is
+not the over-refusal this package guards against: over-refusal is failing a
+create Google would have accepted and MEANT, and a device Google documents as
+unsupported on this campaign type has no such create behind it.
+`maxDeviceBidModifiers` tracks the size of that vocabulary rather than Google's
+enum, and a test asserts the two agree — the cap's claim is "a longer list must
+contain a duplicate", which stops being true the moment the two drift.
 `ExcludedAgeRanges`/`ExcludedGenders` are exclusions by construction, because
 Google targets demographics by excluding the buckets you do not want.
 

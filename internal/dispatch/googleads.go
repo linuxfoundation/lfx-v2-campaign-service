@@ -270,9 +270,13 @@ type googleAdsConfig struct {
 	// optionally carrying its own bid modifier. Left empty the campaign runs around the
 	// clock.
 	AdSchedules []googleAdsAdScheduleConfig `json:"adSchedules"`
-	// DeviceBidModifiers adjust the bid per device ("MOBILE", "DESKTOP", "TABLET",
-	// "CONNECTED_TV"), or exclude a device outright with a modifier of 0. Left empty,
-	// every device bids the campaign's own bid.
+	// DeviceBidModifiers adjust the bid per device ("MOBILE", "DESKTOP", "TABLET"), or
+	// exclude a device outright with a modifier of 0. Left empty, every device bids the
+	// campaign's own bid.
+	//
+	// There is no TV-screen entry: Google supports that device only on Display and Video
+	// campaigns, and these criteria are refused outright on Demand Gen, so Search is the
+	// only channel that reaches them. See deviceTypes in the googleads package.
 	//
 	// bidModifier is REQUIRED on every entry — it is a *float64 so that an OMITTED one
 	// is refused rather than decoded as 0, which is the -100% opt-out and would switch
