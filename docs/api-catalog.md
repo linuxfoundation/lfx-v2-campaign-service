@@ -1074,7 +1074,7 @@ performanceMaxCreative?:        — OPTIONAL Performance Max ASSET GROUP (LFXV2-
    longHeadlines?: string[],      states (anonymous, no redirects, public IPs only, 5 MiB cap, PNG/JPEG/
    descriptions?: string[],       GIF only, every image fetched and checked BEFORE the first budget
    businessName?: string,         mutate). Google is never handed the URL.
-   youTubeVideoIds?: string[],
+   youtubeVideoIds?: string[],
    assetGroupName?: string,       Each list has its own shape, checked against the decoded image:
    path1?: string,                  marketingImages          1.91:1, min 600x314
    path2?: string}                  squareMarketingImages    1:1,    min 300x300
@@ -1097,7 +1097,7 @@ performanceMaxCreative?:        — OPTIONAL Performance Max ASSET GROUP (LFXV2-
                                   entry, not the first. `businessName` is REQUIRED, ≤25 weighted chars.
                                   Over-long copy is REFUSED, not truncated.
 
-                                  `youTubeVideoIds` are optional, at most 5, and are IDs — a YouTube
+                                  `youtubeVideoIds` are optional, at most 5, and are IDs — a YouTube
                                   URL is refused rather than parsed, because guessing which part of a
                                   URL is the id is how the wrong video gets attached. `assetGroupName`
                                   defaults to `<eventName> - Asset Group`. `path1`/`path2` are the
