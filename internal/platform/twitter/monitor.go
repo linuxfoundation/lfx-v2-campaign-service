@@ -485,10 +485,10 @@ func flightRanges(spans []flightSpan, loc *time.Location) []FlightRange {
 }
 
 // foldLineItemFlight widens f by one line item — earliest start, latest end, open-ended if any
-// line item has no end_time — and records the line item's own interval, so the gaps between
-// line items survive into AccountCampaign.Flights. A start_time that is absent or unparseable marks the flight bad —
-// X requires start_time on a line item (the create path sends it as REQUIRED), so its absence
-// is not an "unscheduled" state this code can interpret.
+// line item has no end_time — and records the line item's own interval, so the gaps between line
+// items survive into AccountCampaign.Flights. A start_time that is absent or unparseable marks the
+// flight bad — X requires start_time on a line item (the create path sends it as REQUIRED), so its
+// absence is not an "unscheduled" state this code can interpret.
 func foldLineItemFlight(f *flightAcc, el monitorLineItemElement) {
 	if el.StartTime == nil {
 		f.bad = true
