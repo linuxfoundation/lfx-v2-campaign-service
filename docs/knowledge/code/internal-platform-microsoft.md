@@ -732,7 +732,8 @@ client's `utm_*` params and never enters the struct — and the one field reduce
 which the client forwards verbatim without validating it against the enum, so it goes through
 `sanitizeSnapshotText`, and so does every `keywords[].text`: a keyword is caller text, and a
 link's path can carry a token as readily as its query, so the snapshot is a redacted record
-(`k8s.io/docs tutorial` is stored as `k8s.io tutorial`) while Microsoft receives the exact keyword.
+(`k8s.io/docs tutorial` is stored as `k8s.io tutorial`), while what Microsoft receives is not
+snapshot-redacted (only the client's own trim / match-type / de-duplication validation applies).
 The values sent to Microsoft are untouched. `CampaignResult` (the persisted `result`) carries
 no caller URL: names, ids, `Steps` (none of which interpolate a URL) and the service-composed
 `microsoftAdsUrl` deep link, whose `?aid=` is the account id.

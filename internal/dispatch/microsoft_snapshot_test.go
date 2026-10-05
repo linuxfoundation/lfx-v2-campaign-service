@@ -78,7 +78,7 @@ func msSnapshotServers(t *testing.T) ([]microsoft.Option, *msSnapshotCapture) {
 }
 
 // msSnapKeywords look link-ish. The snapshot stores each through sanitizeSnapshotText (a redacted
-// record), while the platform receives every one exactly as written.
+// record); what the platform receives is not snapshot-redacted.
 var msSnapKeywords = []microsoftKeywordConfig{
 	{Text: "k8s.io/docs tutorial", MatchType: "Exact"},
 	{Text: "node.js/express", MatchType: "Phrase"},
@@ -104,7 +104,7 @@ func msSnapshotConfig(t *testing.T) json.RawMessage {
 	return raw
 }
 
-func TestMicrosoft_ConfigSnapshotScrubsTimeZoneKeepsKeywordsVerbatim(t *testing.T) {
+func TestMicrosoft_ConfigSnapshotScrubsTimeZoneAndKeywords(t *testing.T) {
 	opts, cap := msSnapshotServers(t)
 	d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{}, opts...)
 	brief := testBrief()
@@ -151,7 +151,7 @@ func TestMicrosoft_ConfigSnapshotScrubsTimeZoneKeepsKeywordsVerbatim(t *testing.
 		t.Errorf("snapshot budget = %v, want 50 (non-text fields are kept verbatim)", snap.Budget)
 	}
 
-	// The platform still receives every value exactly as written: only the STORED copy is
+	// The platform still receives every value un-redacted: only the STORED copy is
 	// scrubbed. Bodies are decoded rather than substring-matched, since encoding/json escapes
 	// '+' nowhere but does escape '&', '<' and '>'.
 	cap.mu.Lock()

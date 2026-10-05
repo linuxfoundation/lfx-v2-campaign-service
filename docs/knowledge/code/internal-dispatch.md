@@ -322,8 +322,9 @@ value is a bare identifier and passes through unchanged). `keywords[].text` is c
 readily as its query (knowledge base: `caller-url-must-be-redacted-before-errors-steps-and-snapshots`
 — "it kept the path" is a finding), so no keyword exemption is made: the snapshot is a REDACTED
 record, and a path-like targeting term is reduced too (`k8s.io/docs tutorial` is stored as
-`k8s.io tutorial`, `node.js/express` as `node.js`). Microsoft still receives every keyword exactly
-as written; only the stored copy changes. The keyword slice is reallocated first, so the config sent
+`k8s.io tutorial`, `node.js/express` as `node.js`). What Microsoft receives is not
+snapshot-redacted — only the client's own validation applies (trim, canonical match type,
+case-insensitive de-duplication); only the stored copy is redacted. The keyword slice is reallocated first, so the config sent
 to Microsoft is untouched. `budget`, `cpcBid`, `matchType` (only Exact/Phrase/Broad gets past
 the client before a snapshot can be written) and `geoTargets` (ISO-2 codes, shape-checked by
 the client) cannot carry a URL. The persisted `result` (`microsoft.CampaignResult`) carries no
