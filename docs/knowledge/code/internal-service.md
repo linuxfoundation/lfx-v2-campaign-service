@@ -797,12 +797,12 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
 - `ErrMonitorDaysInvalid` → **400** — a caller-supplied `days` window, not a stored connection, is
   outside the inclusive `domain.MonitorDaysMin`..`domain.MonitorDaysMax` bound. The service layer's
   own `validateMonitorDays` already rejects this for an HTTP caller before any dispatcher runs, and
-  each of the four account-monitor dispatchers re-checks it themselves too — same defense-in-depth
+  each of the six account-monitor dispatchers re-checks it themselves too — same defense-in-depth
   rationale as `ErrAccountIDMalformed` above, for a non-HTTP caller that bypasses Goa. See
   `domain.ErrMonitorDaysInvalid`'s doc comment.
 - `ErrAccountNotManagedByConnection` → **400** — a caller-supplied account id is well-formed but
   names an account the project's own resolved connection does not manage (answerable by the
-  Reddit, LinkedIn, Meta and Microsoft monitor reads, since a connection is bound to exactly
+  Reddit, LinkedIn, Meta, Microsoft and X monitor reads, since a connection is bound to exactly
   one ad account; Reddit checked it first, and Google Ads is the remaining deliberate gap). Checked before `ErrConnectionNotUsable`
   below: the stored connection is fine here, the REQUEST named the wrong account, so
   `ErrConnectionNotUsable`'s "check that the stored credential is active and valid" message
@@ -1772,8 +1772,11 @@ See [internal/service](../../../internal/service).
 ## Report-backed account monitor (`account_report.go`)
 
 `AccountReportReader` is the optional dispatcher capability for a platform whose monitor
-metrics come from an ASYNCHRONOUS report — today Microsoft, whose Reporting service takes
-minutes against a 20s call budget. `Orchestrator.ReadReportedAccountCampaigns` lists the
+metrics come from an ASYNCHRONOUS report — Microsoft, whose Reporting service takes
+minutes against a 20s call budget, and X, whose synchronous stats are capped at 7 days per
+request and share one rate budget across every foundation, so its monitor reads asynchronous
+stats jobs for every window. Both share the one orchestration and the one store below; nothing
+in either is platform-specific. `Orchestrator.ReadReportedAccountCampaigns` lists the
 account's campaigns live, checks a pending report once, submits a new one when nothing is
 building and the last finished report's as-of (its SUBMISSION time) is older than
 `accountReportFreshFor` (30m), abandons one still pending or uncheckable past
@@ -1781,10 +1784,26 @@ building and the last finished report's as-of (its SUBMISSION time) is older tha
 rather than thrown away — and fills metrics from the last finished
 report — all inside ONE `accountsCallTimeout`, because three per-step timeouts could together
 outlast the 60s ingress. Only the live list can fail the call; a check, submit or save error
-is logged and the response serves whatever was saved. State lives in
+is logged and the response serves whatever was saved. The one write that does NOT share the
+call budget is recording a completed submission: `MarkAccountReportPending` (and the lost-race
+re-read after it) runs on `context.WithTimeout(context.WithoutCancel(ctx),
+accountReportMarkTimeout)` — 5s of its own — because a submission can finish with the shared
+budget spent (X's paced job creates take ~1s each), and a report built upstream but never
+recorded would be resubmitted on every read and never collected
+(`TestReadReported_MarkUsesItsOwnBudget`). A submission the dispatcher declines up front for
+lack of budget (`domain.ErrAccountReportBudgetTooShort`) is logged at info as a skip, not a
+failure. `mergeAccountReport` also carries the finished report's calendar window as
+`ReportedAccountRead.MetricsWindowStart/End`, and `monitorReportedAccount`'s evaluate callback
+now receives the whole read, so `MonitorTwitterAdsAccount` evaluates X's rules on the report's
+own account-local days rather than on `time.Now()`; Microsoft's callback still passes only the
+rows and `days`. State lives in
 `domain.AccountReportRepository` (`account_monitor_reports`), late-bound with
 `SetAccountReportStore` through `Container.newOrchestrator`'s parameter so neither
 construction path can forget it. `ConnectionService.monitorReportedAccount` is
 `monitorAccount`'s twin for these platforms — same guards, classification, rules and totals
-(`buildAccountMonitor`) — and adds `metrics_as_of` / `metrics_pending` to the response. See
+(`buildAccountMonitor`) — and adds `metrics_as_of` / `metrics_pending` to the response.
+`MonitorMicrosoftAdsAccount` and `MonitorTwitterAdsAccount` are its two callers, each with its
+own `operation: "account monitor"` descriptor (`microsoftAdsMonitorDiscovery`,
+`twitterAdsMonitorDiscovery`). No new upstream-call operation tokens: X's three calls record as
+`list_account_campaigns` / `submit_account_report` / `check_account_report` like Microsoft's. See
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md#microsoft-a-report-backed-monitor).

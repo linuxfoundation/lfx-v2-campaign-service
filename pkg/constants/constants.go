@@ -94,6 +94,19 @@ const (
 	// default flips and this constant goes away.
 	EnvMicrosoftMetricsEnabled = "MICROSOFT_METRICS_ENABLED"
 
+	// EnvTwitterMetricsEnabled opts a deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
+	// (GET /projects/{project_id}/connection-twitter-ads/account-monitor). Only the exact value "true" enables it;
+	// unset or any other value fails closed and the endpoint answers 400 "not supported", the
+	// same shape as Reddit and Microsoft above.
+	//
+	// The monitor reads X's asynchronous stats-jobs API (active_entities, job create, job
+	// status, a downloaded gzip results file), implemented from X's published documentation
+	// and NOT exercised against a live X Ads account: no credentials were available. It gates
+	// only the monitor — X's per-campaign metrics read is a different, synchronous endpoint and
+	// is not affected. Once the contract is verified the default flips and this constant goes
+	// away.
+	EnvTwitterMetricsEnabled = "TWITTER_METRICS_ENABLED"
+
 	// EnvForceSystemAdsAccount, when exactly "true", makes the LF-owned system account
 	// (model.SystemProjectID) the PRIMARY credential source for every paid-ads dispatch,
 	// so every campaign authenticates as the marketing-ops account regardless of any

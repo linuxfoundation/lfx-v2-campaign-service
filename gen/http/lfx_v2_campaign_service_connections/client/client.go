@@ -250,6 +250,10 @@ type Client struct {
 	// the monitor-microsoft-ads-account endpoint.
 	MonitorMicrosoftAdsAccountDoer goahttp.Doer
 
+	// MonitorTwitterAdsAccount Doer is the HTTP client used to make requests to
+	// the monitor-twitter-ads-account endpoint.
+	MonitorTwitterAdsAccountDoer goahttp.Doer
+
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -329,6 +333,7 @@ func NewClient(
 		MonitorMetaAdsAccountDoer:      doer,
 		MonitorRedditAdsAccountDoer:    doer,
 		MonitorMicrosoftAdsAccountDoer: doer,
+		MonitorTwitterAdsAccountDoer:   doer,
 		RestoreResponseBody:            restoreBody,
 		scheme:                         scheme,
 		host:                           host,
@@ -1734,6 +1739,31 @@ func (c *Client) MonitorMicrosoftAdsAccount() goa.Endpoint {
 		resp, err := c.MonitorMicrosoftAdsAccountDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "monitor-microsoft-ads-account", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// MonitorTwitterAdsAccount returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service monitor-twitter-ads-account
+// server.
+func (c *Client) MonitorTwitterAdsAccount() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeMonitorTwitterAdsAccountRequest(c.encoder)
+		decodeResponse = DecodeMonitorTwitterAdsAccountResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildMonitorTwitterAdsAccountRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.MonitorTwitterAdsAccountDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
 		}
 		return decodeResponse(resp)
 	}

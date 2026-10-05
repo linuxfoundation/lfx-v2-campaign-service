@@ -1194,25 +1194,26 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 	Required("spend", "impressions", "clicks", "campaign_count")
 })
 
-// AccountMonitor is the account-scoped monitor read result, shared across all five
+// AccountMonitor is the account-scoped monitor read result, shared across all six
 // monitor-*-ads-account methods below.
 //
-// metrics_as_of / metrics_pending are set by Microsoft only. Its delivery metrics come from an
-// asynchronous report that takes minutes to build, so the service serves the last report that
-// finished and builds the next one between requests (model.ReportedAccountRead). The other four
-// platforms read their metrics live in the request, so for them the metrics are as of the read
-// itself and both fields are omitted rather than restating that.
+// metrics_as_of / metrics_pending are set by the report-backed platforms only — Microsoft Ads and
+// X. Their delivery metrics come from asynchronous reports (Microsoft's Reporting service, X's
+// stats jobs) that take minutes to build, so the service serves the last report that finished and
+// builds the next one between requests (model.ReportedAccountRead). The other four platforms read
+// their metrics live in the request, so for them the metrics are as of the read itself and both
+// fields are omitted rather than restating that.
 var AccountMonitor = Type("account-monitor", func() {
 	Attribute("account_id", String, "The account this read covers, echoed back from the request.", func() { Example("8666746580") })
 	Attribute("days", Int, "The trailing-days window this read covers, echoed back from the request.", func() { Example(30) })
 	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "Every campaign visible on the account, with the rule engine's per-row pacing output attached.")
 	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the account's campaigns.")
 	Attribute("totals", AccountMonitorTotals)
-	Attribute("metrics_as_of", String, "Microsoft Ads only: the point in time these campaigns' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Microsoft reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.", func() {
+	Attribute("metrics_as_of", String, "Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.", func() {
 		Format(FormatDateTime)
 		Example("2026-10-05T14:30:00Z")
 	})
-	Attribute("metrics_pending", Boolean, "Microsoft Ads only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.", func() { Example(false) })
+	Attribute("metrics_pending", Boolean, "Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.", func() { Example(false) })
 	Required("account_id", "days", "campaigns", "action_items", "totals")
 })
 
@@ -1982,6 +1983,52 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/connection-microsoft-ads/account-monitor")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("account_id")
+			Param("days")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+	Method("monitor-twitter-ads-account", func() {
+		Description("Read every live campaign on an X (Twitter) Ads account with pacing and action items " +
+			"derived by this service's rule engine. Account-scoped, not project-scoped, the same way " +
+			"monitor-google-ads-account is, and resolved from the project's OWN connection only. The " +
+			"campaign list (names, statuses, budgets, and flights from the line items) is read live; " +
+			"delivery metrics come from X's asynchronous stats jobs — X's synchronous stats are capped at " +
+			"7 days per request — so they are served from the last report that finished — see " +
+			"metrics_as_of and metrics_pending — while the next one builds. The first read for an account " +
+			"and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. " +
+			"Conversions are never reported for X. Saved reports are cached platform data, not a record " +
+			"of anything this service did.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			// Same shape as TwitterAdsConnectionConfig.account_id above, so every account id a
+			// connection can store can be monitored; twitter.ValidateMonitorAccountID enforces
+			// the identical rule for a non-HTTP caller.
+			Attribute("account_id", String, "The X Ads account to read (alphanumeric handle).", func() {
+				Pattern(`^[A-Za-z0-9]+$`)
+				MaxLength(64)
+				Example("18ce54d4x5t")
+			})
+			Attribute("days", Int, "Trailing days to read metrics over.", func() {
+				Minimum(monitorDaysMin)
+				Maximum(monitorDaysMax)
+				Example(30)
+			})
+			Required("project_id", "account_id", "days")
+		})
+		Result(AccountMonitor)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-twitter-ads/account-monitor")
 			Header("bearer_token:Authorization")
 			connectionAuthErrorResponses()
 			Param("account_id")

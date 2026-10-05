@@ -366,18 +366,20 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// providers.
 		{"/projects/p1/connection-hubspot/emails", true},
 		// Account-scoped monitor reads (LFX One BFF /api/campaigns/*/monitor port):
-		// ruled for exactly the five providers with a monitor dispatcher —
+		// ruled for exactly the six providers with a monitor dispatcher —
 		// google-ads, linkedin-ads, meta-ads and reddit-ads (AccountMetricsReader) and
-		// microsoft-ads (AccountReportReader, report-backed). reddit-ads gets this
-		// despite having no /accounts row above (no AccountLister, but it does have a
-		// monitor dispatcher). The twitter-ads rejected row further down pins that it
-		// has no monitor dispatcher and the alternation was not widened to it by
-		// accident.
+		// microsoft-ads and twitter-ads (AccountReportReader, report-backed). reddit-ads
+		// gets this despite having no /accounts row above (no AccountLister, but it does
+		// have a monitor dispatcher). The hubspot rejected row further down pins that the
+		// alternation was not widened to every connection provider by accident.
 		{"/projects/p1/connection-google-ads/account-monitor", true},
 		{"/projects/p1/connection-linkedin-ads/account-monitor", true},
 		{"/projects/p1/connection-meta-ads/account-monitor", true},
 		{"/projects/p1/connection-reddit-ads/account-monitor", true},
 		{"/projects/p1/connection-microsoft-ads/account-monitor", true},
+		// X joined with its report-backed monitor (LFXV2-2665): stats jobs, served from a
+		// saved copy. This row is what fails if only one chart side is edited.
+		{"/projects/p1/connection-twitter-ads/account-monitor", true},
 		{"/projects/abc-123/connection-linkedin-ads", true},
 		{"/projects/p1/connection-meta-ads/test", true},
 		{"/projects/p1/connection-reddit-ads/set-credential", true},
@@ -471,10 +473,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/connection-reddit-ads/accounts", false},
 		{"/projects/p1/connection-hubspot/accounts", false},
 		{"/projects/p1/connection-google-ads/emails", false},
-		// twitter-ads has no monitor dispatcher (no rule engine, and no confirmed X Ads
-		// account-analytics read) — account-monitor must not be admitted for it even
-		// though it has the /accounts discovery path.
-		{"/projects/p1/connection-twitter-ads/account-monitor", false},
+		// hubspot has no ad account and no monitor dispatcher — account-monitor must not
+		// be admitted for it now that the monitor branch spans every ad provider with
+		// discovery.
+		{"/projects/p1/connection-hubspot/account-monitor", false},
 		// --- rejected: metrics/keywords on the wrong provider ---
 		{"/projects/p1/meta-ads/keywords", false},
 		{"/projects/p1/linkedin-ads/audience", false},
