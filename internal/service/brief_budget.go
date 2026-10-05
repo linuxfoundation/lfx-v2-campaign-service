@@ -26,7 +26,9 @@ const maxCampaignBudget = 1_000_000_000.0
 // in micros, LinkedIn in whole cents, Meta in its account currency's minor unit. Platforms do
 // NOT all bill in micros — one micro is simply the finest unit any of them accepts, so it is the
 // only floor this contract can state for every platform at once (matching the design's Minimum
-// and its comment). Each adapter enforces its own, stricter floor and its platform's minimums.
+// and its comment). LinkedIn and Meta enforce their own, stricter floors on top (whole cents with
+// $10/$100 minimums; one minor unit); Google's floor IS this one — its bounds are the service's
+// own (see googleads_budget.go), so for Google nothing below this check can refuse the amount.
 // It is here for the same reason maxCampaignBudget is: the smallest settable amount is part of
 // the API contract (answered 400, and declared as the design's Minimum), not a platform
 // conversion detail.
@@ -95,7 +97,7 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 	// The comparison is against the rounded value, not a literal floor, so it stays in step
 	// with the adapter's own math.Round rather than drifting from it.
 	if math.Round(budget*microsPerCurrencyUnit) < 1 {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "budget is too small to set; the smallest amount an ad platform accepts is 0.000001 of the account's currency"}
+		return nil, &briefs.BadRequestError{Code: "400", Message: "budget is too small to set; no ad platform accepts an amount below 0.000001 of the account's currency"}
 	}
 	budgetType := model.BudgetType(p.BudgetType)
 	if budgetType != model.BudgetDaily && budgetType != model.BudgetLifetime {

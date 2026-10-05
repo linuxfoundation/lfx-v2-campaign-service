@@ -1504,7 +1504,9 @@ zero and the ceiling. Not every platform bills in micros — Google Ads does, Li
 whole cents, Meta on the account currency's minor unit — but one micro is the LOOSEST floor any
 of them has, so it is the only floor the contract can state for every platform at once (the
 design's `Minimum` says the same). An amount under 0.000001 of the account's currency rounds to
-nothing on every platform, and the adapter would refuse it with a bare error
+nothing on every platform. LinkedIn and Meta already map their own (stricter) floors to a 400 with
+the adapter's reason; Google does not — its bounds ARE the service's own, so its adapter would
+refuse such an amount with a bare error
 the switch below can classify only as 503 — an "unconfirmed upstream outcome" answer to a
 request that was never going to succeed, inviting a retry that cannot. The check compares the
 ROUNDED value rather than a literal floor so it stays in step with the adapter's own
