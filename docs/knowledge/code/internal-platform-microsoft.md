@@ -819,8 +819,19 @@ Two further details belong to this layer specifically:
   and the budget write share ONE reading of the UpdateCampaigns envelope (unanswered
   `PartialErrors` → unconfirmed; `[null]`/`[{}]` → unconfirmed; a coded PartialError → a definite
   `*partialUpdateError`). `putStatus`'s error texts are unchanged and pinned by a test.
+- **A RETRIED PUT never reports a definite refusal.** The loop (`doCounted`) retries ONLY a 429
+  (including a 429 whose body was unreadable or oversized) — never a 5xx, 3xx, timeout or transport
+  failure, which are returned on the attempt that produced them. But a mutating 429 is itself
+  ambiguous under this package's contract (`createOutcomeAmbiguous`), so a definite 4xx,
+  PartialError, pre-send failure or token failure on a LATER attempt answers that attempt alone
+  and cannot confirm the earlier one changed nothing. `putUpdate` therefore calls
+  `doRequestCounted`, which also returns how many attempts were retried, and wraps every
+  non-success after at least one retry in `retriedUnconfirmedError` (`Unconfirmed()` true, the
+  final refusal still reachable through `Unwrap`). Idempotence makes a retry converge when it
+  eventually succeeds — 429-then-success still returns nil — but it does not make a later refusal
+  speak for prior attempts. This covers the status toggle too, since it shares `putUpdate`.
 - **Classification of a failed write:** `IsOutcomeUnconfirmed` first (5xx, transport, mutating
-  redirect, exhausted 429, unanswered body). Then, from a PartialError OR a definite 4xx's codes:
+  redirect, exhausted 429, unanswered body, or ANY failure after a retried 429). Then, from a PartialError OR a definite 4xx's codes:
   `CampaignServiceCannotUpdateSharedBudget` (1159) → `ErrSharedBudget`;
   `CampaignServiceInvalidDailyBudget` (1106) or
   `CampaignServiceCampaignBudgetAmountIsLessThanSpendAmount` (1123) → an `ErrBudgetAmountInvalid`

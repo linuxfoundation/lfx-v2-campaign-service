@@ -1362,8 +1362,46 @@ func (c *Client) putStatus(ctx context.Context, path string, req any, entity str
 //
 // A per-entity rejection comes back as a *partialUpdateError so a caller that needs to tell one
 // rejection code from another (the budget path does) can read the codes without parsing text.
+//
+// A RETRIED PUT never reports a definite refusal. The loop retries only a 429, but a mutating
+// 429 is AMBIGUOUS under this package's contract (createOutcomeAmbiguous) — so once any attempt
+// was retried, a later definite 4xx, PartialError or pre-send failure answers only the LAST
+// attempt and cannot confirm that the earlier one changed nothing. Idempotence makes a retry
+// converge when it eventually succeeds; it does not make a later refusal speak for prior
+// attempts. Every non-success after a retry is therefore wrapped as retriedUnconfirmedError, so
+// IsOutcomeUnconfirmed holds and no caller maps it to a "platform unchanged" sentinel
+// (ErrSharedBudget, ErrBudgetAmountInvalid).
 func (c *Client) putUpdate(ctx context.Context, path string, req any, what string) error {
-	body, err := c.doRequest(ctx, http.MethodPut, path, req, true)
+	body, retries, err := c.doRequestCounted(ctx, http.MethodPut, path, req, true)
+	err = putUpdateOutcome(body, err, path, what)
+	if err != nil && retries > 0 && !IsOutcomeUnconfirmed(err) {
+		return &retriedUnconfirmedError{what: what, retries: retries, err: err}
+	}
+	return err
+}
+
+// retriedUnconfirmedError marks a partial-update PUT whose FINAL attempt failed definitely after
+// at least one earlier attempt was answered with an (ambiguous) 429 and retried. The final
+// refusal is kept reachable through Unwrap for logging, but Unconfirmed() makes
+// IsOutcomeUnconfirmed report true, which every caller checks before any definite-refusal
+// mapping.
+type retriedUnconfirmedError struct {
+	what    string
+	retries int
+	err     error
+}
+
+func (e *retriedUnconfirmedError) Error() string {
+	return fmt.Sprintf("microsoft-ads %s update unconfirmed: %d earlier attempt(s) were rate-limited with an unknown outcome before this failure: %s", e.what, e.retries, e.err.Error())
+}
+func (e *retriedUnconfirmedError) Unwrap() error { return e.err }
+
+// Unconfirmed marks the outcome as ambiguous-applied for IsOutcomeUnconfirmed.
+func (e *retriedUnconfirmedError) Unconfirmed() bool { return true }
+
+// putUpdateOutcome classifies the final attempt of a partial-update PUT: doRequest's error as
+// is, or the 200 body under Microsoft's PartialErrors contract.
+func putUpdateOutcome(body []byte, err error, path, what string) error {
 	if err != nil {
 		return err
 	}

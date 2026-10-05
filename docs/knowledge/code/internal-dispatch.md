@@ -1059,7 +1059,8 @@ Order, every refusal before the one mutate:
 Then ONE `PUT Campaigns` (UpdateCampaigns), idempotent, body
 `{"AccountId":…,"Campaigns":[{"Id":…,"BudgetType":<reported>,"DailyBudget":<amount>}]}`. The
 mutate's outcome is classified: `microsoft.IsOutcomeUnconfirmed` (5xx, transport, redirect,
-exhausted 429, or a 200 that does not answer `PartialErrors`) → `unconfirmedBudgetWriteError`
+exhausted 429, a 200 that does not answer `PartialErrors`, or any failure after the client
+retried a 429 — that refusal answers only the last attempt) → `unconfirmedBudgetWriteError`
 (503 "verify upstream"); Microsoft's `CampaignServiceCannotUpdateSharedBudget` (a budget attached
 between the read and the write) → `ErrBudgetShared`; `CampaignServiceInvalidDailyBudget` or a
 budget below spend → `rejectedBudgetAmountError` (**400** with the client's sentence). Those two

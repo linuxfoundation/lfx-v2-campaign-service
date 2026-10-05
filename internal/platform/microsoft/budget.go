@@ -275,7 +275,8 @@ type msCampaignBudgetUpdate struct {
 // The PUT is IDEMPOTENT (setting the same amount twice converges), so a 429 is retried. The
 // outcome classification is putUpdate's: a 5xx, transport failure, redirect, exhausted 429 or a
 // success body that does not answer is UNCONFIRMED (IsOutcomeUnconfirmed); a definite 4xx or a
-// PartialError is a definite refusal. Two refusals are given their own identity because the
+// PartialError is a definite refusal ONLY when no earlier attempt was retried — after a retried
+// 429 every failure is unconfirmed, because the refusal answers the last attempt, not the first. Two refusals are given their own identity because the
 // caller answers them differently from a generic failure:
 //
 //   - CampaignServiceCannotUpdateSharedBudget → ErrSharedBudget.
