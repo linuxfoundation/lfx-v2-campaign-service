@@ -278,6 +278,26 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 	if asked > 0 && kind == campaignKindDemandGen {
 		return criteriaPlan{}, fmt.Errorf("google-ads: language, ad schedule, device and demographic criteria are not supported on %s (Demand Gen attaches targeting at the ad group level, where this client has not verified these criteria); create a Search campaign for them", kind)
 	}
+	// Performance Max SPLITS this set rather than refusing it whole, which is why the
+	// Demand Gen check above could not simply be widened to every non-Search channel.
+	// Google documents LANGUAGE, LOCATION and AD_SCHEDULE as campaign criteria on
+	// Performance Max, so refusing a language there would be the over-refusal these
+	// guards exist to avoid — it would reject a campaign Google creates happily.
+	//
+	// Device BID MODIFIERS and campaign-level demographic exclusions are the half that
+	// is genuinely absent: Performance Max sets no device bid adjustments (the
+	// automated strategy owns the bid entirely) and excludes demographics through
+	// asset-group signals rather than campaign criteria. Both are refused, not dropped,
+	// so an operator never reads "campaign created" while an exclusion they asked for
+	// is nowhere upstream.
+	if kind == campaignKindPerformanceMax {
+		if len(in.DeviceBidModifiers) > 0 {
+			return criteriaPlan{}, fmt.Errorf("google-ads: device bid modifiers are not supported on %s (its automated bidding owns the bid and sets no device adjustment); omit DeviceBidModifiers, or create a Search campaign to bid by device", kind)
+		}
+		if len(in.ExcludedAgeRanges)+len(in.ExcludedGenders) > 0 {
+			return criteriaPlan{}, fmt.Errorf("google-ads: campaign-level demographic exclusions are not supported on %s (it takes demographics as asset-group signals, which this client does not create); omit ExcludedAgeRanges and ExcludedGenders, or create a Search campaign to exclude demographics", kind)
+		}
+	}
 
 	var plan criteriaPlan
 

@@ -749,3 +749,75 @@ func TestValidateCPCBid_CeilingClearsLowUnitCurrencies(t *testing.T) {
 		t.Error("a micros-shaped bid must still be refused — that is what the ceiling is for")
 	}
 }
+
+// ---- the non-Search refuse-don't-drop fences --------------------------------
+
+// TestPreflightRefusesSearchOnlyTargetingOffSearch pins the three campaign-level
+// fences that refuse rather than drop: negative keywords, the CPC bid, and the
+// positive keyword/audience criteria. All three are attached only on the Search
+// cascade, so every other channel would have validated them and thrown them away.
+//
+// Written as one table over both non-Search kinds on purpose: the fences are
+// spelled `!= campaignKindSearch` precisely so the next channel added inherits
+// them, and a test naming only Demand Gen would not have noticed a fence that
+// silently admitted Performance Max.
+func TestPreflightRefusesSearchOnlyTargetingOffSearch(t *testing.T) {
+	c := &Client{account: AccountConfig{CustomerID: "1234567890"}}
+
+	cases := map[string]struct {
+		mutate  func(*CampaignInput)
+		wantSub string
+	}{
+		"negative keywords": {
+			mutate:  func(in *CampaignInput) { in.NegativeKeywords = []Keyword{{Text: "free", MatchType: MatchTypeExact}} },
+			wantSub: "campaign-level negative keywords are not supported",
+		},
+		"cpc bid": {
+			mutate:  func(in *CampaignInput) { in.CPCBid = 2.5 },
+			wantSub: "a CPC bid is not supported",
+		},
+		"keywords": {
+			mutate:  func(in *CampaignInput) { in.Keywords = []Keyword{{Text: "kubernetes", MatchType: MatchTypeExact}} },
+			wantSub: "ad-group keywords are not supported",
+		},
+		"audience segments": {
+			mutate:  func(in *CampaignInput) { in.AudienceSegments = []string{"customers/1234567890/userLists/123"} },
+			wantSub: "audience segments are not supported",
+		},
+	}
+
+	for _, kind := range []string{campaignKindDemandGen, campaignKindPerformanceMax} {
+		for name, tc := range cases {
+			t.Run(kind+"/"+name, func(t *testing.T) {
+				in := demandGenInput()
+				if kind == campaignKindPerformanceMax {
+					in.PerformanceMaxCreative = fullPMaxCreative()
+				}
+				tc.mutate(&in)
+				_, err := c.preflightCampaignKind(kind, in)
+				if err == nil {
+					t.Fatalf("preflight(%s) accepted %s; it must refuse rather than drop", kind, name)
+				}
+				if !strings.Contains(err.Error(), tc.wantSub) {
+					t.Errorf("error = %q, want it to contain %q", err, tc.wantSub)
+				}
+				if !strings.Contains(err.Error(), kind) {
+					t.Errorf("error = %q, want it to name the channel %q", err, kind)
+				}
+			})
+		}
+
+		// The same input with none of those fields set must still pass, so the
+		// fences above are refusals of what was asked for and not a channel that
+		// cannot preflight at all.
+		t.Run(kind+"/clean input still passes", func(t *testing.T) {
+			in := demandGenInput()
+			if kind == campaignKindPerformanceMax {
+				in.PerformanceMaxCreative = fullPMaxCreative()
+			}
+			if _, err := c.preflightCampaignKind(kind, in); err != nil {
+				t.Fatalf("preflight(%s) on clean input: %v", kind, err)
+			}
+		})
+	}
+}

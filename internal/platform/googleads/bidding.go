@@ -191,11 +191,18 @@ func (p biddingPlan) describe() string {
 // BYTE-IDENTICAL payload to the one it produced before. Every campaign created by this
 // service to date was made with one of these two, and a new default would silently change
 // how an existing caller's campaigns bid.
+// Performance Max is the one channel whose default was never a hard-coded literal to
+// preserve — nothing has been created on it — so its default is simply the strategy the
+// channel is built around and the one Google's own create flow starts from.
 func defaultBiddingStrategy(kind string) string {
-	if kind == campaignKindDemandGen {
+	switch kind {
+	case campaignKindDemandGen:
 		return biddingMaximizeClicks
+	case campaignKindPerformanceMax:
+		return biddingMaximizeConversions
+	default:
+		return biddingManualCPC
 	}
-	return biddingManualCPC
 }
 
 // demandGenBiddingStrategies is the set this client will send on DEMAND_GEN.
@@ -217,6 +224,20 @@ var demandGenBiddingStrategies = map[string]bool{
 // searchBiddingStrategies is the set this client will send on SEARCH — every strategy it
 // offers. Search is the channel the manual and the automated strategies were both designed
 // for, and `manualCpc` is what this client has always sent there.
+// performanceMaxBiddingStrategies is the set this client will send on PERFORMANCE_MAX.
+//
+// The four CONVERSION-based strategies and nothing else, which is Google's own rule
+// rather than a fence this client chose: Performance Max has no manual bidding and no
+// maximize-clicks — the campaign exists to buy conversions, and the API rejects the
+// other two outright. Refusing them here moves a rejection that would land after the
+// budget mutate to before it.
+var performanceMaxBiddingStrategies = map[string]bool{
+	biddingMaximizeConversions:     true,
+	biddingTargetCPA:               true,
+	biddingMaximizeConversionValue: true,
+	biddingTargetROAS:              true,
+}
+
 var searchBiddingStrategies = map[string]bool{
 	biddingManualCPC:               true,
 	biddingMaximizeClicks:          true,
@@ -263,9 +284,19 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 		return biddingPlan{}, fmt.Errorf("google-ads: unknown bidding strategy %q; supported: %s", in.BiddingStrategy, strings.Join(sortedKeys(knownBiddingStrategies), ", "))
 	}
 
-	allowed := searchBiddingStrategies
-	if kind == campaignKindDemandGen {
+	// A SWITCH, not a Demand Gen test with a Search fallback. The earlier shape gave
+	// any channel added later the un-restricted Search set by default — including
+	// manual CPC on a channel that has no manual bidding — and the rejection would land
+	// after the budget mutate, which is the one outcome this whole preflight exists to
+	// prevent. Every kind now names its own set.
+	var allowed map[string]bool
+	switch kind {
+	case campaignKindDemandGen:
 		allowed = demandGenBiddingStrategies
+	case campaignKindPerformanceMax:
+		allowed = performanceMaxBiddingStrategies
+	default:
+		allowed = searchBiddingStrategies
 	}
 	if !allowed[strategy] {
 		return biddingPlan{}, fmt.Errorf("google-ads: bidding strategy %q is not supported on %s (this client sends only %s there, which is the only combination verified against the live API; the others were rejected AFTER the budget was created); omit BiddingStrategy for the channel default, or create a Search campaign", strategy, kind, strings.Join(sortedKeys(allowed), ", "))
@@ -410,7 +441,15 @@ func validateConversionActions(kind, customerID string, actions []string) ([]str
 	if len(actions) == 0 {
 		return nil, nil
 	}
-	if kind == campaignKindDemandGen {
+	// Refused on Performance Max as well, and for a reason worth distinguishing from
+	// Demand Gen's: selective_optimization exists for Display, Video and App campaigns,
+	// and Performance Max selects its conversions through CAMPAIGN CONVERSION GOALS
+	// instead — a separate resource addressed by a name containing the campaign id, so
+	// it needs a mutate after the campaign exists. That is the same known gap Demand
+	// Gen's goals are, refused rather than dropped for the same reason: a campaign that
+	// silently bid toward the account's default goals while the operator believed it
+	// was bidding toward the ones they named is worse than one that would not create.
+	if kind != campaignKindSearch {
 		return nil, fmt.Errorf("google-ads: conversion actions are not supported on %s (this client attaches them through campaign.selective_optimization, which %s does not accept); omit ConversionActions, or create a Search campaign to optimize toward specific conversions", kind, kind)
 	}
 	if len(actions) > maxConversionActions {

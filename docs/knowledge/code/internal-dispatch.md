@@ -303,6 +303,17 @@ missed. The deep copy matters here more than for sitelinks: the fetch that downl
 these images runs AFTER the snapshot is taken, so sanitizing in place would leave the
 create path trying to download a URL with its credentials stripped.
 
+**The Performance Max asset group has five URL lists of its own, and they are not the
+same five.** `portraitImages` is shared, `tallPortraitImages` does not exist on an asset
+group and `landscapeLogoImages` does not exist on a Demand Gen ad, so
+`googleAdsSnapshotConfig` sanitizes its own block rather than reusing the Demand Gen
+one, and `TestGoogleAdsSnapshotConfig_SanitizesEveryPerformanceMaxURLList` asserts all
+five individually for the reason the Demand Gen test gives. The early return that skips
+the whole copy names THREE fields now — sitelinks, the Demand Gen creative and the asset
+group — and `TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone` pins the third,
+because a config carrying only an asset group taking that return is precisely the bug
+the condition was added to prevent.
+
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a
 credential-SHAPED parameter because the text is about to be PUBLISHED, and it is a
 denylist that cannot name every credential parameter a registration page might use, and it
@@ -568,7 +579,7 @@ whose recorded side comes from `config_snapshot` rather than from a column.
 on both the create and the adoption path, so the row DOES record which channel was asked for.
 `googleAdsRecordedChannelType` decodes it and expresses it in Google's own vocabulary —
 `search` and an ABSENT channel both map to `SEARCH` (absence has meant Search since before the
-field existed), `demand-gen` maps to `DEMAND_GEN`. A campaign recorded as demand-gen and
+field existed), `demand-gen` maps to `DEMAND_GEN` and `performance-max` to `PERFORMANCE_MAX`. A campaign recorded as demand-gen and
 running upstream as `SEARCH` is a real misconfiguration, and passing `nil` for the recorded
 side made it permanently `unknown` — the finding could not be produced at all. The recorded
 side is still nil, and the verdict still `unknown`, where nothing interpretable was recorded:
@@ -767,6 +778,20 @@ asserts each of the seven lists lands in its OWN slot rather than counting image
 that crossed `portraitImages` with `tallPortraitImages` would satisfy any count-based check
 — both lists non-empty, totals matching — and build the campaign with 4:5 images where
 Google wants 9:16.
+
+`performanceMaxCreative` is the same shape again — a pointer on the config, a mapper that
+validates nothing, the zero value for nil — and its test asserts nine lists into nine
+slots plus four scalars. The trap there is the three TEXT lists rather than the images:
+headlines, longHeadlines and descriptions are three distinct Google asset field types, so
+a mapper that merged any two would still produce a campaign Google creates, with the
+wrong field type on assets it renders differently. `googleads_pmax_wiring_test.go` proves
+the wire config actually reaches the client without exercising the asset-group mutates —
+reaching those needs real image bytes, and the creative fetch's dial guard and TLS roots
+are relaxable only from inside the googleads package, which is the one hole that must not
+be opened for a test. It asserts instead that `channel: "performance-max"` reaches the
+campaign shell (`PERFORMANCE_MAX`, `maximizeConversions`, no ad group and no ad) and that
+a complete asset group gets past every bound and into the fetch, with each list omitted in
+turn producing that list's own refusal.
 
 One thing this layer does decide for itself is the post-create "NO geo targeting" warning,
 which is the operator's only signal that a campaign will spend wherever the ad account

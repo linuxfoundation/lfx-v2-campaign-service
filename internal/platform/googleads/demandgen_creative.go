@@ -184,12 +184,18 @@ type imageSlot struct {
 // demandGenImageSlots is every image slot, in the order the ad payload lists them.
 // Minimums and ratios are Google's own, from DemandGenMultiAssetAdInfo in
 // google/ads/googleads/v23/common/ad_type_infos.proto.
+// Each label NAMES ITS CHANNEL. The slot validators below are shared with Performance
+// Max, whose slots carry different ratios and minimums under three of the same names, so
+// an error reading only "marketing image" would not tell an operator which creative they
+// got wrong. Carrying the channel in the label rather than threading it through every
+// validator signature keeps one definition of each rule and renders exactly the message
+// this channel has always produced.
 var demandGenImageSlots = []imageSlot{
-	{label: "marketing image", jsonKey: "marketingImages", ratioW: 191, ratioH: 100, minW: 600, minH: 314},
-	{label: "square marketing image", jsonKey: "squareMarketingImages", ratioW: 1, ratioH: 1, minW: 300, minH: 300},
-	{label: "portrait marketing image", jsonKey: "portraitMarketingImages", ratioW: 4, ratioH: 5, minW: 480, minH: 600},
-	{label: "tall portrait marketing image", jsonKey: "tallPortraitMarketingImages", ratioW: 9, ratioH: 16, minW: 600, minH: 1067},
-	{label: "logo image", jsonKey: "logoImages", ratioW: 1, ratioH: 1, minW: 128, minH: 128},
+	{label: "Demand Gen marketing image", jsonKey: "marketingImages", ratioW: 191, ratioH: 100, minW: 600, minH: 314},
+	{label: "Demand Gen square marketing image", jsonKey: "squareMarketingImages", ratioW: 1, ratioH: 1, minW: 300, minH: 300},
+	{label: "Demand Gen portrait marketing image", jsonKey: "portraitMarketingImages", ratioW: 4, ratioH: 5, minW: 480, minH: 600},
+	{label: "Demand Gen tall portrait marketing image", jsonKey: "tallPortraitMarketingImages", ratioW: 9, ratioH: 16, minW: 600, minH: 1067},
+	{label: "Demand Gen logo image", jsonKey: "logoImages", ratioW: 1, ratioH: 1, minW: 128, minH: 128},
 }
 
 // logoSlotIndex is the position of the logo slot in demandGenImageSlots. Logos are
@@ -276,13 +282,13 @@ func validateDemandGenCreative(kind string, in CampaignInput) (demandGenCreative
 		return demandGenCreativePlan{}, fmt.Errorf("google-ads Demand Gen ad accepts at most %d logo images, got %d", maxDemandGenLogos, n)
 	}
 
-	headlines, err := validateDemandGenText("headline", d.Headlines, minDemandGenHeadlines, maxDemandGenHeadlines, maxHeadlineWeight)
+	headlines, err := validateCreativeText("Demand Gen ad", "headline", d.Headlines, minDemandGenHeadlines, maxDemandGenHeadlines, maxHeadlineWeight)
 	if err != nil {
 		return demandGenCreativePlan{}, err
 	}
 	plan.headlines = headlines
 
-	descriptions, err := validateDemandGenText("description", d.Descriptions, minDemandGenDescriptions, maxDemandGenDescriptions, maxDescriptionWeight)
+	descriptions, err := validateCreativeText("Demand Gen ad", "description", d.Descriptions, minDemandGenDescriptions, maxDemandGenDescriptions, maxDescriptionWeight)
 	if err != nil {
 		return demandGenCreativePlan{}, err
 	}
@@ -306,7 +312,7 @@ func validateDemandGenCreative(kind string, in CampaignInput) (demandGenCreative
 	return plan, nil
 }
 
-// validateDemandGenText checks one text list against its count bounds and display
+// validateCreativeText checks one text list against its count bounds and display
 // weight, and de-duplicates case-insensitively.
 //
 // It REFUSES over-long text rather than truncating it, which is the opposite of
@@ -315,16 +321,16 @@ func validateDemandGenCreative(kind string, in CampaignInput) (demandGenCreative
 // copy and pads from defaults, so a cut line is a cut line of its own making.
 // Demand Gen copy is written by a human for a reason, and silently shipping a
 // headline cut mid-word is worse than refusing it while nothing has been paid for.
-func validateDemandGenText(label string, in []string, min, max, maxWeight int) ([]string, error) {
+func validateCreativeText(channel, label string, in []string, min, max, maxWeight int) ([]string, error) {
 	out := make([]string, 0, len(in))
 	seen := make(map[string]struct{}, len(in))
 	for i, rawText := range in {
 		text := strings.TrimSpace(rawText)
 		if text == "" {
-			return nil, fmt.Errorf("google-ads Demand Gen %s %d is empty", label, i)
+			return nil, fmt.Errorf("google-ads %s %s %d is empty", channel, label, i)
 		}
 		if w := textWeight(text); w > maxWeight {
-			return nil, fmt.Errorf("google-ads Demand Gen %s %q has a display width of %d, exceeding the %d limit", label, text, w, maxWeight)
+			return nil, fmt.Errorf("google-ads %s %s %q has a display width of %d, exceeding the %d limit", channel, label, text, w, maxWeight)
 		}
 		// Google refuses a duplicate asset within one ad, and a caller who wrote
 		// the same headline twice meant one — the same judgement validateCallouts
@@ -332,16 +338,16 @@ func validateDemandGenText(label string, in []string, min, max, maxWeight int) (
 		// changes how many assets the ad has, and the count carries a minimum.
 		key := strings.ToLower(text)
 		if _, dup := seen[key]; dup {
-			return nil, fmt.Errorf("google-ads Demand Gen %s %q is listed more than once", label, text)
+			return nil, fmt.Errorf("google-ads %s %s %q is listed more than once", channel, label, text)
 		}
 		seen[key] = struct{}{}
 		out = append(out, text)
 	}
 	if len(out) < min {
-		return nil, fmt.Errorf("google-ads Demand Gen ad needs at least %d %s, got %d", min, label, len(out))
+		return nil, fmt.Errorf("google-ads %s needs at least %d %s, got %d", channel, min, label, len(out))
 	}
 	if len(out) > max {
-		return nil, fmt.Errorf("google-ads Demand Gen ad accepts at most %d %ss, got %d", max, label, len(out))
+		return nil, fmt.Errorf("google-ads %s accepts at most %d %ss, got %d", channel, max, label, len(out))
 	}
 	return out, nil
 }
@@ -368,26 +374,26 @@ func validateImageURLs(slot imageSlot, in []string) ([]string, error) {
 	for i, rawURL := range in {
 		raw := strings.TrimSpace(rawURL)
 		if raw == "" {
-			return nil, fmt.Errorf("google-ads Demand Gen %s %d has no URL", slot.label, i)
+			return nil, fmt.Errorf("google-ads %s %d has no URL", slot.label, i)
 		}
 		u, err := url.Parse(raw)
 		if err != nil {
-			return nil, fmt.Errorf("google-ads Demand Gen %s %d has an unparseable URL %q: %w", slot.label, i, raw, err)
+			return nil, fmt.Errorf("google-ads %s %d has an unparseable URL %q: %w", slot.label, i, raw, err)
 		}
 		// HTTPS only, and not as a style preference: the bytes are fetched by this
 		// service from a caller-supplied address, and a plaintext fetch is one an
 		// on-path attacker can replace with an image of their choosing that then
 		// becomes a real ad creative under the Foundation's account.
 		if !strings.EqualFold(u.Scheme, "https") {
-			return nil, fmt.Errorf("google-ads Demand Gen %s %d must be an https URL, got scheme %q", slot.label, i, u.Scheme)
+			return nil, fmt.Errorf("google-ads %s %d must be an https URL, got scheme %q", slot.label, i, u.Scheme)
 		}
 		if u.Host == "" {
-			return nil, fmt.Errorf("google-ads Demand Gen %s %d has no host: %q", slot.label, i, raw)
+			return nil, fmt.Errorf("google-ads %s %d has no host: %q", slot.label, i, raw)
 		}
 		// The same image uploaded twice is two assets on one ad, which Google
 		// refuses, and the duplicate consumes one of the slot's few places.
 		if _, dup := seen[raw]; dup {
-			return nil, fmt.Errorf("google-ads Demand Gen %s %q is listed more than once", slot.label, raw)
+			return nil, fmt.Errorf("google-ads %s %q is listed more than once", slot.label, raw)
 		}
 		seen[raw] = struct{}{}
 		out = append(out, raw)
@@ -423,10 +429,27 @@ func (c *Client) fetchDemandGenImages(ctx context.Context, plan demandGenCreativ
 	if !plan.present {
 		return nil, nil
 	}
-	out := make([]fetchedImage, 0, plan.imageCount())
-	for slotIdx, urls := range plan.urls {
-		slot := demandGenImageSlots[slotIdx]
-		for _, u := range urls {
+	return c.fetchSlotImages(ctx, demandGenImageSlots, plan.urls)
+}
+
+// fetchSlotImages is the channel-independent half of the fetch: given a slot table and a
+// positionally parallel set of URL lists, it downloads and shape-checks every image.
+//
+// It is shared with Performance Max rather than copied, because every property that makes
+// the fetch safe — the hardened client, the size cap, the decode-don't-sniff rule, the
+// sequential walk — is a property of fetching a caller-supplied URL and not of a channel.
+// A second copy would be a second place for one of those to lapse. What IS channel
+// specific is the slot table, which carries the ratios, the minimums and the labels, and
+// that is the parameter.
+func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls [][]string) ([]fetchedImage, error) {
+	total := 0
+	for _, u := range urls {
+		total += len(u)
+	}
+	out := make([]fetchedImage, 0, total)
+	for slotIdx, slotURLs := range urls {
+		slot := slots[slotIdx]
+		for _, u := range slotURLs {
 			data, err := c.fetchOneImage(ctx, slot, u)
 			if err != nil {
 				return nil, err
@@ -449,7 +472,7 @@ func (c *Client) fetchOneImage(ctx context.Context, slot imageSlot, rawURL strin
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("google-ads Demand Gen %s %q could not be requested: %w", slot.label, rawURL, err)
+		return nil, fmt.Errorf("google-ads %s %q could not be requested: %w", slot.label, rawURL, err)
 	}
 	// No Authorization header, no developer token, nothing from the Google client:
 	// this request goes to an address the caller chose.
@@ -457,12 +480,12 @@ func (c *Client) fetchOneImage(ctx context.Context, slot imageSlot, rawURL strin
 
 	resp, err := c.imageFetchClient().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("google-ads Demand Gen %s %q could not be downloaded: %w", slot.label, rawURL, err)
+		return nil, fmt.Errorf("google-ads %s %q could not be downloaded: %w", slot.label, rawURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("google-ads Demand Gen %s %q returned HTTP %d", slot.label, rawURL, resp.StatusCode)
+		return nil, fmt.Errorf("google-ads %s %q returned HTTP %d", slot.label, rawURL, resp.StatusCode)
 	}
 
 	// LimitReader with one byte of headroom: reading exactly the cap cannot
@@ -472,13 +495,13 @@ func (c *Client) fetchOneImage(ctx context.Context, slot imageSlot, rawURL strin
 	// that is serving the bytes.
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDemandGenImageBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("google-ads Demand Gen %s %q could not be read: %w", slot.label, rawURL, err)
+		return nil, fmt.Errorf("google-ads %s %q could not be read: %w", slot.label, rawURL, err)
 	}
 	if len(data) > maxDemandGenImageBytes {
-		return nil, fmt.Errorf("google-ads Demand Gen %s %q is larger than the %d byte limit", slot.label, rawURL, maxDemandGenImageBytes)
+		return nil, fmt.Errorf("google-ads %s %q is larger than the %d byte limit", slot.label, rawURL, maxDemandGenImageBytes)
 	}
 	if len(data) == 0 {
-		return nil, fmt.Errorf("google-ads Demand Gen %s %q returned an empty body", slot.label, rawURL)
+		return nil, fmt.Errorf("google-ads %s %q returned an empty body", slot.label, rawURL)
 	}
 
 	// Decoded rather than sniffed by Content-Type: the header is the serving host's
@@ -486,7 +509,7 @@ func (c *Client) fetchOneImage(ctx context.Context, slot imageSlot, rawURL strin
 	// decoders — GIF, JPEG, PNG — are the formats Google accepts here.
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("google-ads Demand Gen %s %q is not a usable GIF, JPEG or PNG: %w", slot.label, rawURL, err)
+		return nil, fmt.Errorf("google-ads %s %q is not a usable GIF, JPEG or PNG: %w", slot.label, rawURL, err)
 	}
 	if err := checkImageGeometry(slot, rawURL, format, cfg.Width, cfg.Height); err != nil {
 		return nil, err
@@ -501,10 +524,10 @@ func (c *Client) fetchOneImage(ctx context.Context, slot imageSlot, rawURL strin
 // budget, campaign and ad group are committed, to before any of them exist.
 func checkImageGeometry(slot imageSlot, rawURL, format string, w, h int) error {
 	if w <= 0 || h <= 0 {
-		return fmt.Errorf("google-ads Demand Gen %s %q reports a %dx%d image, which is not usable", slot.label, rawURL, w, h)
+		return fmt.Errorf("google-ads %s %q reports a %dx%d image, which is not usable", slot.label, rawURL, w, h)
 	}
 	if w < slot.minW || h < slot.minH {
-		return fmt.Errorf("google-ads Demand Gen %s %q is %dx%d (%s), below the %dx%d minimum", slot.label, rawURL, w, h, format, slot.minW, slot.minH)
+		return fmt.Errorf("google-ads %s %q is %dx%d (%s), below the %dx%d minimum", slot.label, rawURL, w, h, format, slot.minW, slot.minH)
 	}
 	// Compared as a ratio of float64s against Google's documented +-1%. The target
 	// is built from the two integers so the documented value stays the value in the
@@ -512,7 +535,7 @@ func checkImageGeometry(slot imageSlot, rawURL, format string, w, h int) error {
 	want := float64(slot.ratioW) / float64(slot.ratioH)
 	got := float64(w) / float64(h)
 	if diff := (got - want) / want; diff > demandGenAspectTolerance || diff < -demandGenAspectTolerance {
-		return fmt.Errorf("google-ads Demand Gen %s %q is %dx%d, an aspect ratio of %.4f — Google requires %d:%d (%.4f) within %.0f%%", slot.label, rawURL, w, h, got, slot.ratioW, slot.ratioH, want, demandGenAspectTolerance*100)
+		return fmt.Errorf("google-ads %s %q is %dx%d, an aspect ratio of %.4f — Google requires %d:%d (%.4f) within %.0f%%", slot.label, rawURL, w, h, got, slot.ratioW, slot.ratioH, want, demandGenAspectTolerance*100)
 	}
 	return nil
 }

@@ -301,6 +301,7 @@ The program type determines the AI brief generation strategy (copy tone, targeti
 |------|-------------|
 | `search` | Search (RSA, responsive search ads) |
 | `demand-gen` | Display (YouTube, Discover, Gmail) |
+| `performance-max` | Performance Max (every Google inventory from one asset group) |
 
 ### Campaign Goals
 
@@ -549,17 +550,23 @@ config — not this campaign config.
 
 #### GoogleAdsConfig (the `googleAdsConfig` object)
 
-Google Ads per-platform config. The dispatcher creates a PAUSED search campaign with an ad
-group + a Responsive Search Ad (GA-3), then attaches keyword/audience targeting to that ad
-group (GA-4) — without it, the ad group has zero criteria and the campaign can never serve,
-even once a human enables it. **Budget is in whole units of the ad ACCOUNT's currency**, not
-USD — the service does no FX conversion (mirroring `metaConfig`).
+Google Ads per-platform config. Which campaign is created depends on `channel`. The default
+(`search`) is a PAUSED search campaign with an ad group + a Responsive Search Ad (GA-3), then
+keyword/audience targeting attached to that ad group (GA-4) — without it, the ad group has zero
+criteria and the campaign can never serve, even once a human enables it. `demand-gen` creates a
+Demand Gen campaign with an ad group and (given `demandGenCreative`) one ad; `performance-max`
+creates a Performance Max campaign with NO ad group and NO ad at all — its creative is an ASSET
+GROUP built from `performanceMaxCreative`. **Budget is in whole units of the ad ACCOUNT's
+currency**, not USD — the service does no FX conversion (mirroring `metaConfig`).
 
 Every field below is OPTIONAL except `budget`, and every one of them is additive: a config
 that names none of them produces exactly the single-ad-group, single-ad campaign this
 service created before they existed. Additive does NOT mean channel-independent — the
-entries below marked SEARCH ONLY are REFUSED, not ignored, when `channel` is
-`demand-gen`. Each is validated BEFORE the first budget mutate, so a
+entries below marked SEARCH ONLY are REFUSED, not ignored, on any other `channel`. Each
+entry states which channels accept it, because the channels do not refuse the same set:
+`performance-max` takes languages, ad schedules and proximity that `demand-gen` refuses, and
+refuses device bid modifiers and demographic exclusions alongside it. Each is validated
+BEFORE the first budget mutate, so a
 refused value cannot strand a paid campaign — and the same validation runs on the
 `adoptExisting` path, so a config is refused identically whether it creates or adopts.
 
@@ -570,6 +577,12 @@ budget: number                  — Whole units of the account currency (e.g. 25
                                   during dispatch (a pre-create job failure, since CreateCampaigns is
                                   async). Omitting it leaves the shell with no budget, which fails the
                                   platform job asynchronously — supply it explicitly.
+channel?: string                — OPTIONAL which Google Ads campaign type to create: `search` (the
+                                  default), `demand-gen` or `performance-max`. ABSENT MEANS `search`,
+                                  deliberately: every caller predating this field omits it and means
+                                  Search, so absence must not repoint them. An unrecognised value is
+                                  REFUSED, never defaulted — defaulting a typo'd `demandgen` to Search
+                                  would spend the Demand Gen budget on Search ads and report success.
 headlines?: string[]            — Optional Responsive Search Ad headlines (≤30 WEIGHTED chars
                                   each, 3-15 after padding). Trimmed, truncated, and de-duplicated;
                                   caller-supplied entries are accepted up to 15 (later entries
@@ -594,6 +607,12 @@ keywords?: {text, matchType}[]  — OPTIONAL positive Search keyword criteria (G
                                   unsupported matchType fails the job BEFORE any Google Ads request is
                                   made. Left empty/omitted, the ad group has no criteria and can never
                                   serve — supply at least one for a campaign that should actually run.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored on every other
+                                  `channel`: keyword criteria are attached only on the Search cascade,
+                                  Demand Gen's ad group takes no criteria at all, and Performance Max
+                                  has no ad group to hang them on. Accepting them elsewhere would
+                                  validate every term and then discard the lot.
 audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTING audiences to attach
                                   to the ad group (GA-4) as observation-only criteria — bid/report on
                                   the segment without narrowing delivery to it. This client does not
@@ -607,6 +626,12 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   `targetingSetting.targetRestrictions` (AUDIENCE, bidOnly) on the ad group
                                   create so these segments stay observation-only rather than Google's
                                   default of restricting delivery to the audience alone.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored on every other
+                                  `channel`, for the same reason `keywords` is: audience criteria are
+                                  attached only on the Search cascade, so an audience named on any
+                                  other channel would be validated and then dropped, leaving a campaign
+                                  that reads as targeted and is not.
 geoTargets?: string[]           — OPTIONAL locations the campaign should serve in (LFXV2-3283). Each
                                   entry is EITHER an ISO 3166-1 alpha-2 country code, spelled as in
                                   `metaConfig`/`redditConfig`, OR a raw numeric geo target constant id
@@ -618,8 +643,8 @@ geoTargets?: string[]           — OPTIONAL locations the campaign should serve
 
                                   Each is resolved to Google's numeric geo target constant and attached
                                   as a location criterion at the level the CHANNEL requires: campaign
-                                  level for Search, AD GROUP level for Demand Gen (which rejects
-                                  campaign-level location criteria). Case/whitespace-insensitive and
+                                  level for Search and Performance Max, AD GROUP level for Demand Gen
+                                  (which rejects campaign-level location criteria). Case/whitespace-insensitive and
                                   de-duplicated by the RESOLVED id — "US" and "2840" are one criterion;
                                   at most 60 entries.
 
@@ -693,11 +718,12 @@ proximityTargets?:              — OPTIONAL radius targeting: "everyone within 
                                   entries cannot disagree about anything. Units are NOT converted — 10
                                   MILES and 16.09 KILOMETERS stay two criteria.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen: that
-                                  channel takes location criteria on the ad group, where this client
-                                  has not verified proximity against a real account. Dropping it
-                                  silently would create a campaign serving nationwide when the caller
-                                  asked for a 25-mile radius.
+                                  REFUSED rather than ignored on `demand-gen` ALONE: that channel takes
+                                  location criteria on the ad group, where this client has not verified
+                                  proximity against a real account. Dropping it silently would create a
+                                  campaign serving nationwide when the caller asked for a 25-mile
+                                  radius. `performance-max` takes campaign-level geo exactly as Search
+                                  does, so radius targets are accepted there.
 negativeKeywords?:              — OPTIONAL Search keyword EXCLUSIONS, attached at CAMPAIGN level (not
   {text, matchType}[]             ad group), so they keep applying to any ad group a human adds later.
                                   Same `text`/`matchType` rules as `keywords` above (≤80 runes; EXACT,
@@ -706,12 +732,10 @@ negativeKeywords?:              — OPTIONAL Search keyword EXCLUSIONS, attached
                                   in both. An empty text or unsupported matchType fails the job BEFORE
                                   any Google Ads request is made.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored when `channel` is
-                                  `demand-gen` — unlike `keywords`, which IS ignored there. The
-                                  difference is deliberate: Demand Gen creates no ad and no keyword
-                                  criteria, so a positive keyword has nothing to attach to, but an
-                                  exclusion exists to STOP spend and dropping it quietly would leave the
-                                  campaign paying for exactly the queries you named. Omitted/empty, no
+                                  SEARCH ONLY, and REFUSED rather than ignored on every other
+                                  `channel`, as `keywords` and `audienceSegments` now are. An
+                                  exclusion exists to STOP spend, so dropping it quietly would leave
+                                  the campaign paying for exactly the queries you named. Omitted/empty, no
                                   exclusions are attached and the campaign is eligible for every query
                                   its positive keywords match.
 cpcBid?: number                 — OPTIONAL manual CPC bid for the ad group, in whole units of the ad
@@ -726,10 +750,11 @@ cpcBid?: number                 — OPTIONAL manual CPC bid for the ad group, in
                                   0 (or omitted) means UNSET: no bid field is sent and the ad group
                                   inherits whatever Google derives, which is what every campaign
                                   created before this field existed did. An explicit 0 is NOT sent as
-                                  a zero bid. SEARCH only — Demand Gen bids via targetSpend and
-                                  rejects manualCpc — and a non-zero bid on that channel is REFUSED
-                                  before anything is created, not dropped: Demand Gen's ad group has
-                                  no bid field at all, so accepting it would discard it silently.
+                                  a zero bid. SEARCH only — no other channel here has a manual bidding
+                                  strategy, and a non-zero bid on one of them is REFUSED before
+                                  anything is created, not dropped: their ad-group payloads carry no
+                                  bid field at all (Performance Max has no ad group whatsoever), so
+                                  accepting it would discard it silently.
 
                                   Also REFUSED under any `biddingStrategy` other than `manual-cpc`:
                                   an automated strategy sets the bids itself, so a CPC bid supplied
@@ -754,8 +779,9 @@ biddingStrategy?: string        — OPTIONAL how the campaign bids. Named with t
 
                                   Omitted, the channel default is used and the payload is byte-identical
                                   to what this service sent before the strategy was selectable:
-                                  `manual-cpc` on Search, `maximize-clicks` on Demand Gen. An unknown
-                                  name is refused and the error lists the supported set.
+                                  `manual-cpc` on Search, `maximize-clicks` on Demand Gen,
+                                  `maximize-conversions` on Performance Max. An unknown name is refused
+                                  and the error lists the supported set.
 
                                   On `demand-gen` ONLY `maximize-clicks` is accepted. That is not a
                                   Google limit but the limit of what this client has verified: a
@@ -764,6 +790,12 @@ biddingStrategy?: string        — OPTIONAL how the campaign bids. Named with t
                                   BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET — AFTER the
                                   budget was created. Anything else on that channel is refused before
                                   the budget mutate rather than risking that orphan.
+
+                                  On `performance-max` the accepted set is the four conversion-oriented
+                                  strategies — `maximize-conversions`, `target-cpa`,
+                                  `maximize-conversion-value`, `target-roas`. Performance Max has no
+                                  manual form at all, so `manual-cpc` and `maximize-clicks` are refused
+                                  there before the budget mutate.
 targetCpa?: number              — OPTIONAL target cost per conversion, in whole units of the ad ACCOUNT's
                                   currency (same no-FX caveat as `budget`). Accepted range
                                   0.01..1000000.0; 0 or omitted means UNSET and no target is sent.
@@ -794,10 +826,14 @@ conversionActions?: string[]    — OPTIONAL the conversion actions THIS campaig
                                   account's own conversion goals, which is what every campaign created
                                   before this field existed did.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored on `demand-gen`: this
-                                  client attaches them through `campaign.selective_optimization`, which
-                                  Demand Gen does not accept. Demand Gen conversion goals
-                                  (`conversion_goal_campaign_config`) are NOT implemented.
+                                  SEARCH ONLY, and REFUSED rather than ignored on every other
+                                  `channel`: this client attaches them through
+                                  `campaign.selective_optimization`, which only Search accepts. Demand
+                                  Gen conversion goals (`conversion_goal_campaign_config`) and
+                                  Performance Max campaign conversion goals are NOT implemented — both
+                                  need a second mutate after the campaign exists. A Performance Max
+                                  campaign therefore inherits the ACCOUNT's conversion goals, which is
+                                  what Google applies when none are named.
 
                                   Sent at CREATE time via `campaign.selective_optimization` rather than
                                   through `campaignConversionGoal`, which is update-only: attaching
@@ -846,13 +882,18 @@ languages?: string[]            — OPTIONAL languages the campaign targets (LFX
                                   eligible in every language, which is what every campaign created
                                   before this field existed did.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen — as are
-                                  `adSchedules`, `deviceBidModifiers`, `excludedAgeRanges` and
-                                  `excludedGenders`, which the same guard refuses together. Demand Gen
-                                  attaches this targeting at the AD GROUP level, where this client has
-                                  not verified it against a real account; accepting the field and
-                                  dropping it would create a campaign with none of the targeting the
-                                  caller asked for.
+                                  REFUSED rather than ignored on `demand-gen` — as are `adSchedules`,
+                                  `deviceBidModifiers`, `excludedAgeRanges` and `excludedGenders`,
+                                  which one guard refuses together there. Demand Gen attaches this
+                                  targeting at the AD GROUP level, where this client has not verified
+                                  it against a real account; accepting the field and dropping it would
+                                  create a campaign with none of the targeting the caller asked for.
+
+                                  ACCEPTED on `performance-max`, which Google documents as taking
+                                  LANGUAGE, LOCATION and AD_SCHEDULE campaign criteria. Only
+                                  `deviceBidModifiers`, `excludedAgeRanges` and `excludedGenders` are
+                                  refused there; refusing languages too would be an over-refusal of
+                                  something Google accepts.
 adSchedules?:                   — OPTIONAL dayparting (LFXV2-2665): the intervals in the ad ACCOUNT's
   {dayOfWeek, startHour,          timezone during which the campaign may serve. `dayOfWeek` is
    startMinute, endHour,          MONDAY..SUNDAY (case-insensitive). `startHour` is 0..23 and `endHour`
@@ -882,8 +923,8 @@ adSchedules?:                   — OPTIONAL dayparting (LFXV2-2665): the interv
                                   campaign to the intervals listed — Google treats the set as
                                   exhaustive, so a single Monday interval means a Monday-only campaign.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen; see
-                                  `languages` for why.
+                                  REFUSED rather than ignored on `demand-gen`, accepted on
+                                  `performance-max`; see `languages` for why.
 deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2665). `device` is one of
   {device, bidModifier}[]         MOBILE, DESKTOP, TABLET (case-insensitive); at most 3 entries and a
                                   device may appear only ONCE — two criteria for the same device are a
@@ -904,8 +945,8 @@ deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2
                                   Omitted/empty, no device criteria are created and the campaign bids
                                   equally on every device.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen; see
-                                  `languages` for why.
+                                  SEARCH ONLY, and REFUSED rather than ignored on `demand-gen` AND on
+                                  `performance-max`; see `languages` for why.
 excludedAgeRanges?: string[]    — OPTIONAL demographic EXCLUSIONS (LFXV2-2665), attached as negative
 excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34, 35-44, 45-54, 55-64,
                                   65+ or UNDETERMINED (Google's own AGE_RANGE_* enum names are accepted
@@ -921,8 +962,8 @@ excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34
                                   Omitted/empty, no demographic criteria are created and the campaign
                                   is eligible for every bucket.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen; see
-                                  `languages` for why.
+                                  SEARCH ONLY, and REFUSED rather than ignored on `demand-gen` AND on
+                                  `performance-max`; see `languages` for why.
 sitelinks?:                     — OPTIONAL sitelink extensions (LFXV2-2665): extra links shown under the
   {text, description1?,           ad. `text` ≤25 runes, required and unique within the list.
    description2?, finalUrl}       `description1`/`description2` are ≤35 runes each and ALL-OR-NOTHING —
@@ -954,9 +995,9 @@ structuredSnippets?:            — OPTIONAL structured-snippet extensions (LFXV
                                   ad serves with no extensions — the pre-LFXV2-2665 behaviour.
 adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-2665), each with its own
   {name, cpcBid?, keywords?,      keywords and up to 3 Responsive Search Ads. SEARCH ONLY and REFUSED on
-   audienceSegments?,             Demand Gen, which creates its own single ad group and no ad. At most
-   ads?: {headlines?,             20 groups, at most 3 ads per group.
-          descriptions?}[]}[]
+   audienceSegments?,             every other `channel`: Demand Gen creates its own single ad group,
+   ads?: {headlines?,             and Performance Max has no ad groups at all. At most 20 groups, at
+          descriptions?}[]}[]     most 3 ads per group.
                                   `name` is REQUIRED per group and is a THEME LABEL, not the full name:
                                   the created ad group is named `<composed campaign name> | <label>`.
                                   Names must be distinct case-insensitively — Google rejects duplicates
@@ -1018,6 +1059,55 @@ demandGenCreative?:             — OPTIONAL Demand Gen ad (LFXV2-2665). DEMAND 
                                   creates. The result carries `creativeAssetIds` and `adId`; a failure
                                   after the assets upload still reports the asset ids, so a retry does
                                   not lose them. The same validation runs on the `adoptExisting` path.
+performanceMaxCreative?:        — OPTIONAL Performance Max ASSET GROUP (LFXV2-2665). PERFORMANCE MAX
+  {marketingImages?: string[],    ONLY, and REFUSED on every other `channel`. Performance Max has no ad
+   squareMarketingImages?:        groups and no ads: this field IS its creative. Omitted, the campaign
+     string[],                    is still created, with no asset group — reconcilable in the Google Ads
+   portraitImages?: string[],     UI, and the same shape `adoptExisting` needs for a campaign whose asset
+   logoImages?: string[],         group was built by hand.
+   landscapeLogoImages?:
+     string[],                    Images are given as https URLs that THIS SERVICE fetches and uploads as
+   headlines?: string[],          Google Ads image assets, under exactly the rules `demandGenCreative`
+   longHeadlines?: string[],      states (anonymous, no redirects, public IPs only, 5 MiB cap, PNG/JPEG/
+   descriptions?: string[],       GIF only, every image fetched and checked BEFORE the first budget
+   businessName?: string,         mutate). Google is never handed the URL.
+   youTubeVideoIds?: string[],
+   assetGroupName?: string,       Each list has its own shape, checked against the decoded image:
+   path1?: string,                  marketingImages          1.91:1, min 600x314
+   path2?: string}                  squareMarketingImages    1:1,    min 300x300
+                                    portraitImages           4:5,    min 480x600
+                                    logoImages               1:1,    min 128x128
+                                    landscapeLogoImages      4:1,    min 512x128
+                                  Ratios are allowed Google's documented ±1%.
+
+                                  BOTH a `marketingImages` and a `squareMarketingImages` entry are
+                                  REQUIRED — unlike Demand Gen, where either satisfies the other. At
+                                  most 20 marketing images COMBINED across the three marketing shapes.
+                                  `logoImages` 1-5, at least one REQUIRED; `landscapeLogoImages`
+                                  optional, at most 5.
+
+                                  The text counts are Performance Max's OWN and are NOT Demand Gen's:
+                                  `headlines` 3-15 (≤30 weighted chars) against Demand Gen's 1-5,
+                                  `longHeadlines` 1-5 (≤90) as a SEPARATE field type, `descriptions`
+                                  2-5 (≤90) of which at least ONE must fit ≤60 weighted chars for the
+                                  short slot Google renders on constrained surfaces — checked as ANY
+                                  entry, not the first. `businessName` is REQUIRED, ≤25 weighted chars.
+                                  Over-long copy is REFUSED, not truncated.
+
+                                  `youTubeVideoIds` are optional, at most 5, and are IDs — a YouTube
+                                  URL is refused rather than parsed, because guessing which part of a
+                                  URL is the id is how the wrong video gets attached. `assetGroupName`
+                                  defaults to `<eventName> - Asset Group`. `path1`/`path2` are the
+                                  display-path segments rendered after the domain, ≤15 runes each;
+                                  `path2` without `path1` is REFUSED rather than promoted or dropped.
+
+                                  The asset group is created PAUSED, matching the campaign. It takes
+                                  THREE mutates — assets, then the group, then the links that carry
+                                  each asset's field type — because Google has no call that does more;
+                                  the links use the resource names Google RETURNED, never rebuilt ones.
+                                  The result carries `creativeAssetIds` and `assetGroupId`, so a
+                                  failure after the assets upload does not lose them. The same
+                                  validation runs on the `adoptExisting` path.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of
@@ -1582,7 +1672,11 @@ pacingLabel: string             — underspending | normal | constrained | overs
 ### Google Ads
 - Budget is in micros: on **write**, multiply currency → micros (× 1,000,000); on **read**, divide micros → currency (÷ 1,000,000)
 - No `campaign.start_date` / `campaign.end_date` in GAQL for API v23+
-- Demand Gen campaigns use ad group level geo targeting (not campaign level)
+- Demand Gen campaigns use ad group level geo targeting (not campaign level); Search and
+  Performance Max use campaign level
+- Performance Max has no ad groups and no ads: its creative is an asset group, created as
+  assets → asset group → asset-group links, three mutates because Google has no call that
+  does more
 - Duplicate campaign names cause creation failure; retry adds timestamp suffix
 - RSA ads pin top 3 headlines for consistency
 

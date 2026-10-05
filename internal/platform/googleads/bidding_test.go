@@ -264,6 +264,52 @@ func TestBiddingPlan_DemandGenAcceptsOnlyMaximizeClicks(t *testing.T) {
 	}
 }
 
+// Performance Max is the mirror image of Demand Gen: the four CONVERSION-based
+// strategies are accepted and manual CPC is refused, because the channel has no
+// manual bidding at all. Written as its own test rather than a shared table, for
+// the reason the Demand Gen one gives — a shared table that drifted would make the
+// two channels' sets look like one rule, and they are two.
+func TestBiddingPlan_PerformanceMaxRefusesManualBidding(t *testing.T) {
+	for strategy := range searchBiddingStrategies {
+		in := CampaignInput{BiddingStrategy: strategy}
+		switch strategy {
+		case biddingTargetCPA:
+			in.TargetCPA = 20
+		case biddingTargetROAS:
+			in.TargetROAS = 4
+		}
+		_, err := validateBiddingPlan(campaignKindPerformanceMax, biddingTestCustomer, in)
+		if strategy == biddingManualCPC || strategy == biddingMaximizeClicks {
+			if err == nil {
+				t.Errorf("%s accepted on Performance Max; the channel bids only toward conversions", strategy)
+				continue
+			}
+			if !strings.Contains(err.Error(), "not supported on") {
+				t.Errorf("%s: error %v reads as a typo rather than a channel mismatch", strategy, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s refused on Performance Max, but it is one of the four conversion strategies: %v", strategy, err)
+		}
+	}
+}
+
+// The DEFAULT differs per channel and is the thing most likely to be copied wrong:
+// Demand Gen bids to clicks (the live API rejected maximizeConversions there with a
+// shared budget), Performance Max to conversions, Search manually.
+func TestBiddingPlan_DefaultsAreChannelSpecific(t *testing.T) {
+	for kind, want := range map[string]string{
+		campaignKindSearch:         biddingManualCPC,
+		campaignKindDemandGen:      biddingMaximizeClicks,
+		campaignKindPerformanceMax: biddingMaximizeConversions,
+	} {
+		if got := defaultBiddingStrategy(kind); got != want {
+			t.Errorf("defaultBiddingStrategy(%s) = %q, want %q", kind, got, want)
+		}
+	}
+}
+
 // An unknown name lists what IS supported, sorted. Sorted because map iteration order is
 // randomized, and a supported-values list that reshuffles between two identical calls reads
 // as two different errors to anyone diffing logs.

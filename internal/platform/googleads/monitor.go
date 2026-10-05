@@ -84,17 +84,26 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 	start := end.AddDate(0, 0, -(days - 1))
 	startDate := start.Format("2006-01-02")
 	endDate := end.Format("2006-01-02")
-	// The WHERE clause mirrors getMonitorData's GAQL query verbatim (campaign-metrics.service.ts)
+	// The WHERE clause mirrors getMonitorData's GAQL query (campaign-metrics.service.ts)
 	// beyond the date window: channel type, status, and impressions>0 are load-bearing filters
 	// on the OLD path, not incidental — dropping any of them widens this read to every campaign
 	// the account has ever run (including years of REMOVED history), which both produces a
 	// non-empty differential diff against the BFF and defeats CampaignCount/campaigns-array
 	// agreement downstream.
+	//
+	// The channel-type list is the ONE deliberate divergence from that mirror, and it tracks
+	// the create paths rather than the BFF: this service now creates PERFORMANCE_MAX campaigns,
+	// and a channel missing from this list is a campaign this service created that monitoring
+	// reports as not existing — spend accruing against a campaign the operator is never shown.
+	// A differential diff against the BFF is therefore expected to differ by exactly the
+	// Performance Max rows, and only for an account that has one serving; that is the fix
+	// being visible, not a port defect. Every future create path must add its type here in
+	// the same commit.
 	query := fmt.Sprintf(
 		"SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, "+
 			"campaign_budget.amount_micros, metrics.impressions, metrics.clicks, metrics.cost_micros, "+
 			"metrics.conversions FROM campaign WHERE segments.date BETWEEN '%s' AND '%s' "+
-			"AND campaign.advertising_channel_type IN ('SEARCH', 'DEMAND_GEN') "+
+			"AND campaign.advertising_channel_type IN ('SEARCH', 'DEMAND_GEN', 'PERFORMANCE_MAX') "+
 			"AND campaign.status IN ('ENABLED', 'PAUSED') "+
 			"AND metrics.impressions > 0",
 		startDate, endDate,
