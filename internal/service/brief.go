@@ -2543,10 +2543,10 @@ func pacingFor(r *briefMetricsRow, now time.Time) rules.Pacing {
 	// are kept so that a future fan-out path which leaves a row unassigned degrades to "no
 	// pacing" instead of panicking a request. Reverting them fails no test, by construction.
 	if r.status != "ok" || r.metrics == nil || r.campaign == nil {
-		return rules.Pacing{Label: rules.PacingUnknown}
+		return rules.UnknownPacing()
 	}
 	if r.campaign.BudgetAmount == nil || r.campaign.BudgetType == nil {
-		return rules.Pacing{Label: rules.PacingUnknown}
+		return rules.UnknownPacing()
 	}
 	kind := rules.BudgetLifetime
 	if *r.campaign.BudgetType == model.BudgetDaily {

@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/twitter"
-description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, the campaign -> line_item -> promoted_tweet creation flow, per-client write pacing toward X's 1-write/sec account limit, and the account monitor's asynchronous stats-job primitives."
+description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, the campaign -> line_item -> promoted_tweet creation flow, per-client write pacing toward X's 1-write/sec account limit, the account monitor's asynchronous stats-job primitives, and a campaign budget read+write (GET then one paced, classified PUT of the daily *_local_micro amount) for the budget writer (LFXV2-2665)."
 resource: "internal/platform/twitter"
 tags:
   - platform-client
@@ -835,6 +835,42 @@ nothing, so a definite 4xx stays definite. The exported `IsOutcomeUnconfirmed` f
 together with `createOutcomeAmbiguous` for callers across the package boundary (the
 dispatcher), mirroring the reddit client's helper of the same name.
 
+## Campaign budget read + write (`budget.go`, LFXV2-2665)
+
+The platform half of `TwitterDispatcher.WriteBudget` (see
+[internal/dispatch](internal-dispatch.md#x--the-campaigns-daily-_local_micro-only-under-a-reported-campaign-budget-optimization)).
+
+- `GetCampaignBudget(ctx, campaignID)` — `GET accounts/:account_id/campaigns/:campaign_id`
+  ([reference](https://docs.x.com/x-ads-api/campaign-management/reference), "Campaigns"). A pure
+  read returning `budget_optimization` and the two amounts as integer micro-units, each with an
+  "unparseable" flag (string, fraction, negative, overflow — never read as "not set"). A 404 or
+  `deleted: true` is `(nil, nil)`; an answer about another campaign id is an error. X's campaign
+  object carries no `account_id`, so the account-scoped path is the account check.
+- `UpdateCampaignBudget(ctx, campaignID, micros)` — `PUT` of exactly
+  `daily_budget_amount_local_micro` (the total is read, never written), in the query string and
+  OAuth-signed like every v12 write, after a slot on the shared write pacer. Idempotent, so a 429
+  is retried; the retry loop now counts retries (`doRequestAbsCounted`, a caller-owned counter —
+  never state on the shared client), and a definite failure AFTER a retried 429 is returned as
+  `retriedUnconfirmedError` (Unconfirmed), mirroring the Microsoft client's PR #255 fix — a
+  pre-send dial failure on the retry included, since it proves only that the RETRY never left. The 2xx
+  echo is checked: another campaign id or another amount is an UNCONFIRMED `transportError`.
+- `BudgetMicros` shares the create path's bound (`maxBudgetUsd`) and rounding
+  (`toMicroCurrency`); its refusals wrap `ErrBudgetAmountInvalid` with a client-safe sentence
+  (`BudgetAmountReason`). X publishes no per-currency minimum or maximum for these fields — only
+  that the daily amount should not exceed the total.
+- Ids are validated before any request: the connection's account id with `accountIDRe` and
+  `maxAccountIDLen` (`ErrInvalidAccountID`), the row's campaign id with `campaignIDRe`
+  (`ErrInvalidCampaignID`).
+
+**Budget model.** `BudgetOptimizationCampaign` (`CAMPAIGN`) is the shape `CreateCampaign` is
+INFERRED to produce — inferred from its sending no `budget_optimization` and putting the daily
+amount on the campaign, not observed on a live account. X's v11
+announcement makes `CAMPAIGN` the default and the two models exclusive (under `LINE_ITEM` the
+daily budget must be on the line item and absent from the campaign); the current reference page
+instead lists `LINE_ITEM` as the only value and default. The dispatcher therefore writes only on a
+reported `CAMPAIGN` and refuses a campaign reporting `LINE_ITEM` or omitting the field (409)
+before any write.
+
 ## Metrics reads
 
 `GetCampaignMetrics(ctx, campaignID, window)` reads impressions, clicks, and spend metrics for
@@ -1056,14 +1092,20 @@ while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
   and so does a line item whose `end_time` is not after its `start_time` (inverted or
   zero-length): it is rejected before the envelope or the union changes, never recorded as a
   scheduled day and never silently dropped.
-- **`SubmitAccountCampaignReport`** — window `[local midnight of today-(days-1), the local
-  midnight after today)` in the account's zone (`accountReportWindow`), sent as UTC instants,
-  and always EXACTLY the days returned as the report's first/last day. A local midnight that
-  is not a whole UTC hour (X takes whole hours only) is refused with
+- **`SubmitAccountCampaignReport`** — window `[start of today-(days-1), start of the day after
+  today)` in the account's zone (`accountReportWindow`), sent as UTC instants, and always
+  EXACTLY the days returned as the report's first/last day. A day's start is its local
+  midnight, or — when a DST spring-forward skips 00:00 (America/Santiago on 2026-09-06,
+  America/Asuncion …) — the first instant that exists on that day (`localDayStart`): plain
+  `time.Date` normalizes the nonexistent midnight BACK to 23:00 of the previous day, which put
+  an hour of the previous day into the window and dated the saved first/last day one day early.
+  A day start that is not a whole UTC hour (X takes whole hours only) is refused with
   `ErrReportWindowNotWholeHours`, never floored — before any stats request or job is created,
-  though the account timezone has been read by then (an account GET when the cache is cold); a 90-day window over a DST fall-back (90 days
-  and an hour) drops its earliest local day instead of trimming an hour, so it covers 89 whole
-  days and says so. GET `stats/accounts/:id/active_entities?entity=CAMPAIGN`, then one POST
+  though the account timezone has been read by then (an account GET when the cache is cold); a
+  90-day window over a DST fall-back (90 days and an hour) drops its earliest local day instead
+  of trimming an hour, so it covers 89 whole days and says so — the account monitor response
+  exposes those days as `metrics_window_start` / `metrics_window_end` beside the requested
+  `days`. GET `stats/accounts/:id/active_entities?entity=CAMPAIGN`, then one POST
   `stats/jobs/accounts/:id` per ≤20 active campaigns (`entity=CAMPAIGN`, `granularity=TOTAL`,
   `placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`), each through the write
   pacer and never retried on a 429. Before the first POST, `statsJobsFitBudget` compares the

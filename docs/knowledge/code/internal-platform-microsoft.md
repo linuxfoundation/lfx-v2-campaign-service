@@ -726,6 +726,18 @@ ad also both pre-existed). A non-nil result accompanied
 by an error is a separate UNCONFIRMED partial (claim retained); (nil, err) means nothing
 was created (claim released).
 
+The persisted `config_snapshot` is a copy built by `microsoftSnapshotConfig`: the config
+has no URL field of its own — the ad's `FinalUrls` is the brief's registration URL plus the
+client's `utm_*` params and never enters the struct — and the one field reduced is `timeZone`,
+which the client forwards verbatim without validating it against the enum, so it goes through
+`sanitizeSnapshotText`, and so does every `keywords[].text`: a keyword is caller text, and a
+link's path can carry a token as readily as its query, so the snapshot is a redacted record
+(`k8s.io/docs tutorial` is stored as `k8s.io tutorial`), while what Microsoft receives is not
+snapshot-redacted (only the client's own trim / match-type / de-duplication validation applies).
+The values sent to Microsoft are untouched. `CampaignResult` (the persisted `result`) carries
+no caller URL: names, ids, `Steps` (none of which interpolate a URL) and the service-composed
+`microsoftAdsUrl` deep link, whose `?aid=` is the account id.
+
 It has a creation dispatcher; its status-TOGGLE capability is described next.
 
 ## Status toggle
@@ -825,11 +837,13 @@ Two further details belong to this layer specifically:
   ambiguous under this package's contract (`createOutcomeAmbiguous`), so a definite 4xx,
   PartialError, pre-send failure or token failure on a LATER attempt answers that attempt alone
   and cannot confirm the earlier one changed nothing. `putUpdate` therefore calls
-  `doRequestCounted`, which also returns how many attempts were retried, and wraps every
-  non-success after at least one retry in `retriedUnconfirmedError` (`Unconfirmed()` true, the
-  final refusal still reachable through `Unwrap`). Idempotence makes a retry converge when it
-  eventually succeeds — 429-then-success still returns nil — but it does not make a later refusal
-  speak for prior attempts. This covers the status toggle too, since it shares `putUpdate`.
+  `doRequestCounted`, which also returns how many attempts were retried. After a retried 429
+  every failure is unconfirmed: only errors not already unconfirmed are wrapped in
+  `retriedUnconfirmedError` (`Unconfirmed()` true, the final refusal still reachable through
+  `Unwrap`); one already unconfirmed (an exhausted 429, a 5xx, a transport failure) is returned
+  as it is. Idempotence makes a retry converge when it eventually succeeds — 429-then-success
+  still returns nil — but it does not make a later refusal speak for prior attempts. This covers
+  the status toggle too, since it shares `putUpdate`.
 - **Classification of a failed write:** `IsOutcomeUnconfirmed` first (5xx, transport, mutating
   redirect, exhausted 429, unanswered body, or ANY failure after a retried 429). Then, from a
   PartialError OR a definite 4xx's codes:

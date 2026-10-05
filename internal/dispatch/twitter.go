@@ -395,13 +395,22 @@ func validateTwitterConnection(projectID string, res *resolved) (creds twitterCr
 // project's, or the LF system one when the forced-system flag governed its creation.
 // verifyTwitterAccountMatch would refuse a campaign addressed under any other account.
 func (d *TwitterDispatcher) resolveTwitterClient(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*twitter.Client, error) {
+	client, _, err := d.resolveTwitterClientWithRes(ctx, projectID, platform, campaign)
+	return client, err
+}
+
+// resolveTwitterClientWithRes is resolveTwitterClient that also hands back the resolved
+// connection, for the one caller (WriteBudget) that must attribute a defect it discovers AFTER
+// resolution — a connection account id the client cannot address — to the row that served it
+// (res.systemScoped), exactly as resolveRedditClientWithCreds lets the Reddit budget writer do.
+func (d *TwitterDispatcher) resolveTwitterClientWithRes(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*twitter.Client, *resolved, error) {
 	res, err := d.creds.resolveExisting(ctx, projectID, platform, twitterCreationAccountID(campaign))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	creds, accountID, err := validateTwitterConnection(projectID, res)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// FundingInstrumentID is populated for consistency with the create path, but is INERT
 	// on the toggle path: UpdateCampaignAndChildrenStatus only PUTs entity_status on
@@ -413,7 +422,7 @@ func (d *TwitterDispatcher) resolveTwitterClient(ctx context.Context, projectID 
 	// the same AccountConfig, so a toggle and a dispatch for one connection reuse ONE client
 	// and one write pacer rather than pacing independently against the same account budget.
 	return d.cachedTwitterClient(projectID, platform, res, creds, accountID,
-		strings.TrimSpace(res.providerConfig["funding_instrument_id"])), nil
+		strings.TrimSpace(res.providerConfig["funding_instrument_id"])), res, nil
 }
 
 // twitterRunStatus maps the service's run-state vocabulary to X's entity_status.
