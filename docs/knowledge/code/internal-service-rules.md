@@ -14,14 +14,30 @@ resource: "internal/service"
 (what should an operator look at, and what should they do?).
 
 **This package (`pacing.go`/`actions.go`) is not the only rule engine in this
-directory.** The five `monitor_*.go` files (`monitor_google.go`,
+directory.** The six `monitor_*.go` files (`monitor_google.go`,
 `monitor_linkedin.go`, `monitor_meta.go`, `monitor_reddit.go`,
-`monitor_microsoft.go`) back the account-scoped `/account-monitor` endpoints. The
-first four were ported from the LFX One BFF's own four historically divergent rule
-engines; `monitor_microsoft.go` was written here, on the same shared helpers, for
-Microsoft's report-backed monitor (daily budgets only, so Google's daily pacing model;
+`monitor_microsoft.go`, `monitor_twitter.go`) back the account-scoped `/account-monitor`
+endpoints. The first four were ported from the LFX One BFF's own four historically
+divergent rule engines; `monitor_microsoft.go` was written here, on the same shared helpers,
+for Microsoft's report-backed monitor (daily budgets only, so Google's daily pacing model;
 a shared-budget campaign arrives `PacingUnknown` and is neither paced nor called a
-placeholder budget).
+placeholder budget). `monitor_twitter.go` (`EvaluateTwitterMonitor`) is the second
+written-here engine, for X's report-backed monitor. It paces a DAILY budget first —
+`BudgetDay` × the days of the saved report's window `[first day, the midnight after the last
+day)` the line-item flight covers, the convention the Reddit daily branch settled — and otherwise a
+TOTAL budget prorated over the flight (which then needs both flight bounds), else
+`unknownPacingRow`. Its rules reuse siblings' values under named constants (Google's
+placeholder budget ≤ 1/day, the shared 0.3%/1000 low-CTR pair), add a HIGH
+zero-delivery item gated on the flight overlapping the window, suppress the 0% underspend
+item that would restate it (Reddit's rule), and carry no clicks-without-conversions rule —
+X conversions are never reported. It takes no `now`: the window is the saved report's own
+first and last day IN THE ACCOUNT'S TIMEZONE (`windowStart`/`windowEnd`, from
+`ReportedAccountRead.MetricsWindowStart/End`), the same calendar the stats jobs and the
+line items' flight dates use. A UTC-clock "today" disagreed with them for part of every day —
+on a US/Pacific account each evening it counted a flight starting the next local day as
+scheduled and raised a false zero-delivery HIGH (`TestEvaluateTwitterMonitor_EveningInAccountTimezone`).
+With no window, pacing and the zero-delivery rule are skipped; the window-free rules still run.
+Microsoft's engine takes no date (daily budget × days, no flights), so it is unaffected.
 
 They were originally kept unmerged, bug for bug, so an OLD-vs-NEW differential
 diff against the still-live BFF stayed a meaningful faithfulness check. That

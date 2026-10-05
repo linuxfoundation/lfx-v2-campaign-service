@@ -210,6 +210,18 @@ type Client struct {
 	// sleep is asserting on a race it can lose silently. Firing here makes the same
 	// window an ordinary synchronous callback. Never set in production.
 	onPaceWait func(context.Context, time.Duration)
+
+	// Account monitor state (monitor.go). statsFileHosts is the https host allowlist for
+	// stats-job result files and the two caps bound a download; NewClient sets the production
+	// values, and only in-package tests change them (withStatsFileHosts, withStatsFileCaps).
+	statsFileHosts           []string
+	statsFileCompressedCap   int64
+	statsFileDecompressedCap int64
+
+	// tzMu guards the account timezone AccountTimezone caches for accountTimezoneCacheFor.
+	tzMu  sync.Mutex
+	tzLoc *time.Location
+	tzAt  time.Time
 }
 
 // Option customizes a Client at construction time.
@@ -256,6 +268,19 @@ func WithHTTPClient(h *http.Client) Option {
 // per-request sleeps.
 func WithWriteDelay(d time.Duration) Option { return func(c *Client) { c.writeDelay = d } }
 
+// WithClock overrides the client's clock (default time.Now), matching the WithClock option the
+// googleads, linkedin, meta and microsoft clients expose. It drives everything this client
+// derives from "now": the OAuth timestamp, the 429 reset arithmetic, the write pacer's
+// reservations, the metrics windows and the account monitor's stats-job window (monitor.go).
+// A nil func is ignored so the option cannot produce a client that panics on its first call.
+func WithClock(now func() time.Time) Option {
+	return func(c *Client) {
+		if now != nil {
+			c.timeFn = now
+		}
+	}
+}
+
 // NewClient constructs a Client from injected credentials and account config.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	// Normalize the account identifiers once, on the way in, so every method uses
@@ -275,6 +300,10 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		nonceFn:    defaultNonce,
 		timeFn:     time.Now,
 		writeDelay: writeDelay,
+
+		statsFileHosts:           []string{statsFileHost},
+		statsFileCompressedCap:   defaultStatsFileCompressedCap,
+		statsFileDecompressedCap: defaultStatsFileDecompressedCap,
 	}
 	for _, o := range opts {
 		o(c)

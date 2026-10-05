@@ -16,9 +16,10 @@ import "time"
 // days): a request reads the campaign list live, serves metrics from the last report that
 // finished, and checks on (or submits) the next one without waiting for it.
 //
-// The types are platform-neutral on purpose. Nothing below is Microsoft-specific, so a second
-// platform with an asynchronous reporting surface (X is the likely one) reuses the same store
-// and the same orchestration rather than growing a parallel copy.
+// The types are platform-neutral on purpose. Nothing below is Microsoft-specific, and X is the
+// second platform on them: its monitor reads X's asynchronous stats jobs, saving the jobs' ids
+// as one composite ReportID, through the same store and the same orchestration rather than a
+// parallel copy.
 
 // AccountReportStatus is where a submitted account report stands on the platform.
 type AccountReportStatus string
@@ -123,6 +124,14 @@ type ReportedAccountRead struct {
 	// MetricsAsOf is when the report the metrics came from was requested from the platform
 	// (ReadyAccountReport.AsOf); nil when no report has finished yet.
 	MetricsAsOf *time.Time
+	// MetricsWindowStart / MetricsWindowEnd are the calendar window that report covers
+	// (ReadyAccountReport.WindowStart/WindowEnd: its first and last day in the platform's
+	// reporting timezone, as UTC-midnight dates); nil when no report has finished yet. A rule
+	// engine that judges metrics against dates — X's, which compares the window with each
+	// campaign's account-local flight — must use this window, not one derived from the service's
+	// clock: the metrics describe these days, whatever "today" is where the service runs.
+	MetricsWindowStart *time.Time
+	MetricsWindowEnd   *time.Time
 	// MetricsPending is true while a report is building on the platform, so a later request
 	// will see newer (or first) metrics.
 	MetricsPending bool

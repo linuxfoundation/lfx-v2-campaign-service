@@ -342,6 +342,14 @@ var (
 	// even if it does not occur among the four platforms this was added for).
 	ErrAccountMetricsUnsupported = errors.New("account campaign metrics are not supported for this platform")
 
+	// ErrAccountReportBudgetTooShort indicates a report-backed account monitor declined to
+	// submit a report because the time left in the read's call budget cannot fit the
+	// submission's paced writes. Nothing was created on the platform. Not a failure of the read:
+	// the orchestrator logs it as a skipped submission and the next read submits with a fresh
+	// budget. Returned (wrapped) by AccountReportReader.SubmitAccountReport; X's stats-job
+	// submission is the producer, since its job creates are paced at one per second.
+	ErrAccountReportBudgetTooShort = errors.New("account report submission skipped: not enough call budget left for its paced writes")
+
 	// ErrKeywordInsightsUnsupported indicates the platform has no keyword/audience-insight
 	// capability wired. The platform is never contacted.
 	//

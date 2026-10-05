@@ -81,6 +81,11 @@ func TestMonitorAccount_RejectsTheReservedSystemScope(t *testing.T) {
 				&conn.MonitorMicrosoftAdsAccountPayload{ProjectID: model.SystemProjectID, AccountID: "1", Days: 30})
 			return err
 		}},
+		{"x ads", func(s *ConnectionService) error {
+			_, err := s.MonitorTwitterAdsAccount(context.Background(),
+				&conn.MonitorTwitterAdsAccountPayload{ProjectID: model.SystemProjectID, AccountID: "a1", Days: 30})
+			return err
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -477,5 +482,65 @@ func TestMonitorMicrosoftAdsAccount_ClassifiesListErrors(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// twitterMonitorService wires a ConnectionService whose orchestrator answers X's report-backed
+// monitor from the given reader and store — the same orchestration as Microsoft's, keyed on X.
+func twitterMonitorService(reader *fakeReportReader, store domain.AccountReportRepository) *ConnectionService {
+	o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderTwitterAds: reader})
+	o.SetAccountReportStore(store)
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(o)
+	return svc
+}
+
+// X is served through the shared report-backed path: freshness fields set, rows filled from the
+// saved report, evaluated by X's own rule engine and totalled from the returned rows.
+func TestMonitorTwitterAdsAccount_ServesSavedReport(t *testing.T) {
+	asOf := time.Date(2026, 10, 5, 14, 30, 0, 0, time.UTC)
+	reader := &fakeReportReader{
+		campaigns: []model.AccountCampaignMetrics{
+			{PlatformCampaignID: "c1", Name: "a", Status: "ACTIVE", BudgetDay: 10},
+			{PlatformCampaignID: "c2", Name: "b", Status: "PAUSED", BudgetDay: 20},
+		},
+		submitID: "111,222",
+	}
+	// The saved report's window is the account's local days Sep 29..Oct 5; X's rules pace on it.
+	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{
+		AsOf:        asOf,
+		WindowStart: time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC),
+		WindowEnd:   time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC),
+		Rows:        []model.AccountReportRow{{PlatformCampaignID: "c1", Spend: 70, Impressions: 1000, Clicks: 30}},
+	}}}
+	got, err := twitterMonitorService(reader, store).MonitorTwitterAdsAccount(context.Background(),
+		&conn.MonitorTwitterAdsAccountPayload{ProjectID: "p", AccountID: "a1", Days: 7})
+	if err != nil {
+		t.Fatalf("MonitorTwitterAdsAccount: %v", err)
+	}
+	if got.MetricsAsOf == nil || *got.MetricsAsOf != "2026-10-05T14:30:00Z" {
+		t.Errorf("metrics_as_of = %v, want the report's as-of in RFC 3339", got.MetricsAsOf)
+	}
+	if got.MetricsPending == nil {
+		t.Errorf("metrics_pending absent, want it set on a report-backed platform")
+	}
+	if got.Totals.Spend != 70 || got.Totals.CampaignCount != 2 {
+		t.Errorf("totals = %+v, want spend 70 over both returned rows", got.Totals)
+	}
+	// c1: 70 spent against 10/day over the report's seven days — paced on the report's window.
+	for _, c := range got.Campaigns {
+		if c.PlatformCampaignID == "c1" && (c.PacingUnknown || c.PacingPct != 100) {
+			t.Errorf("c1 pacing = %v, want 100 over the report's seven days", c.PacingPct)
+		}
+	}
+	// c2 is absent from the finished report: a measured zero, and PAUSED — X's paused rule fires.
+	var paused bool
+	for _, it := range got.ActionItems {
+		if it.CampaignID != nil && *it.CampaignID == "c2" && strings.Contains(it.Issue, "paused") {
+			paused = true
+		}
+	}
+	if !paused {
+		t.Errorf("action_items = %+v, want X's paused-campaign item for c2", got.ActionItems)
 	}
 }

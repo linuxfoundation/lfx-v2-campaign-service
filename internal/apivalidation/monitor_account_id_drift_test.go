@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	connsrv "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
@@ -17,6 +18,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 	goahttp "goa.design/goa/v3/http"
 )
 
@@ -114,6 +116,22 @@ func TestMonitorAccountIDPatterns_MatchPlatformValidators(t *testing.T) {
 			}
 		}
 	})
+	// X is the second platform whose cases cross the length bound: its Pattern and MaxLength(64)
+	// mirror twitter-ads-connection-config.account_id, and twitter.ValidateMonitorAccountID
+	// enforces both, so the 64- and 65-character cases pin length as well as charset.
+	t.Run("x ads", func(t *testing.T) {
+		decodeOK := monitorDecoderChecker(t, "/connection-twitter-ads/account-monitor",
+			connsrv.MountMonitorTwitterAdsAccountHandler, connsrv.DecodeMonitorTwitterAdsAccountRequest)
+		cases := []string{"18ce54d4x5t", "8r7gb", "ABC123", "", " 18ce54d4x5t", "18ce54d4x5t ", "\t8r7gb",
+			"18ce_54d4", "18ce-54d4", "acc/1", "acc?1", strings.Repeat("a", 64), strings.Repeat("a", 65)}
+		for _, id := range cases {
+			designOK := decodeOK(id)
+			platformOK := twitter.ValidateMonitorAccountID(id) == nil
+			if designOK != platformOK {
+				t.Errorf("account_id %q: design decoder accepts=%v, twitter.ValidateMonitorAccountID accepts=%v — the two shape checks have drifted apart", id, designOK, platformOK)
+			}
+		}
+	})
 }
 
 // TestMonitorDaysBound_MatchesDomainConstants guards the `days` sibling of the account_id
@@ -178,6 +196,18 @@ func TestMonitorDaysBound_MatchesDomainConstants(t *testing.T) {
 	t.Run("microsoft", func(t *testing.T) {
 		decodeOK := monitorDaysDecoderChecker(t, "/connection-microsoft-ads/account-monitor",
 			connsrv.MountMonitorMicrosoftAdsAccountHandler, connsrv.DecodeMonitorMicrosoftAdsAccountRequest)
+		for _, days := range cases {
+			designOK := decodeOK(days)
+			runtimeOK := days >= domain.MonitorDaysMin && days <= domain.MonitorDaysMax
+			if designOK != runtimeOK {
+				t.Errorf("days %d: design decoder accepts=%v, domain.MonitorDaysMin/Max bound accepts=%v — the two bounds have drifted apart", days, designOK, runtimeOK)
+			}
+		}
+	})
+
+	t.Run("x ads", func(t *testing.T) {
+		decodeOK := monitorDaysDecoderChecker(t, "/connection-twitter-ads/account-monitor",
+			connsrv.MountMonitorTwitterAdsAccountHandler, connsrv.DecodeMonitorTwitterAdsAccountRequest)
 		for _, days := range cases {
 			designOK := decodeOK(days)
 			runtimeOK := days >= domain.MonitorDaysMin && days <= domain.MonitorDaysMax

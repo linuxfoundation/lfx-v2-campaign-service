@@ -70,6 +70,14 @@ platform's: an asynchronous submit/poll/download returning a zipped CSV rather t
 one synchronous JSON GET. With the gate off, a Microsoft metrics read returns the
 same 400 as Reddit's.
 
+`TWITTER_METRICS_ENABLED` is the third gate of this kind, defaulting to `"false"`, and it
+covers only the X Ads ACCOUNT MONITOR (LFXV2-2665): its asynchronous stats-jobs contract
+(`active_entities`, job create, job status, a downloaded gzip results file) follows X's
+published documentation and has NOT been exercised against a live X Ads account. Only exactly
+`"true"` enables it, read per call (`twitterMonitorEnabled` in
+`internal/dispatch/twitter_monitor.go`); off, the monitor answers the same 400 as a platform
+with no monitor. X's per-campaign metrics read is not behind it.
+
 The pod template carries the Prometheus scrape annotations by default (LFXV2-3221):
 `prometheus.io/scrape` and `prometheus.io/path` come from `values.yaml`, while
 `prometheus.io/port` is rendered from `service.port` in the TEMPLATE rather than

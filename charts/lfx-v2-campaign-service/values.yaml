@@ -271,6 +271,19 @@ app:
     MICROSOFT_METRICS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
+    # (/projects/{project_id}/connection-twitter-ads/account-monitor). Default
+    # off for the same reason as MICROSOFT_METRICS_ENABLED above: the monitor
+    # reads X's asynchronous stats-jobs API (active_entities, job create, job
+    # status, a downloaded gzip results file), implemented from X's published
+    # documentation and NOT exercised against a live X Ads account. It gates
+    # only the monitor; X's per-campaign metrics read is unaffected. Any value
+    # other than "true" is treated as off, so a typo fails closed.
+    # Flip to "true" only after the contract is verified against a live X ad
+    # account; at that point the gate is removed and this key goes away.
+    TWITTER_METRICS_ENABLED:
+      value: "false"
+
     # Makes the LF-owned SYSTEM marketing-ops connection the PRIMARY credential for
     # every paid-ads provider, instead of the per-project connection. Default off.
     #

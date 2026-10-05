@@ -363,6 +363,19 @@ type Service interface {
 	// metrics_pending=true. Saved reports are cached platform data, not a record
 	// of anything this service did.
 	MonitorMicrosoftAdsAccount(context.Context, *MonitorMicrosoftAdsAccountPayload) (res *AccountMonitor, err error)
+	// Read every live campaign on an X (Twitter) Ads account with pacing and
+	// action items derived by this service's rule engine. Account-scoped, not
+	// project-scoped, the same way monitor-google-ads-account is, and resolved
+	// from the project's OWN connection only. The campaign list (names, statuses,
+	// budgets, and flights from the line items) is read live; delivery metrics
+	// come from X's asynchronous stats jobs — X's synchronous stats are capped at
+	// 7 days per request — so they are served from the last report that finished —
+	// see metrics_as_of and metrics_pending — while the next one builds. The first
+	// read for an account and window therefore returns campaigns with
+	// fetch_failed=true and metrics_pending=true. Conversions are never reported
+	// for X. Saved reports are cached platform data, not a record of anything this
+	// service did.
+	MonitorTwitterAdsAccount(context.Context, *MonitorTwitterAdsAccountPayload) (res *AccountMonitor, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -385,7 +398,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [58]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "resolve-google-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account"}
+var MethodNames = [59]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "resolve-google-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -414,17 +427,19 @@ type AccountMonitor struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItem
 	Totals      *AccountMonitorTotals
-	// Microsoft Ads only: the point in time these campaigns' metrics describe —
-	// when the platform report they come from was requested (not when it was
-	// collected, which can be later). Microsoft reports take minutes, so the
-	// service serves the last finished report and builds the next one between
-	// requests. Absent when no report has finished yet; in that case every
-	// campaign has fetch_failed=true and is excluded from pacing and action items.
-	// Omitted on every other platform, whose metrics are read live in the request.
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
 	MetricsAsOf *string
-	// Microsoft Ads only: true while a newer report is building on the platform,
-	// so a later read will return newer metrics (or the first ones, when
-	// metrics_as_of is absent). Omitted on every other platform.
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
 	MetricsPending *bool
 }
 
@@ -1317,6 +1332,20 @@ type MonitorRedditAdsAccountPayload struct {
 	// Project UUID or slug that scopes the connection
 	ProjectID string
 	// The Reddit advertiser account to read.
+	AccountID string
+	// Trailing days to read metrics over.
+	Days int
+}
+
+// MonitorTwitterAdsAccountPayload is the payload type of the
+// lfx-v2-campaign-service-connections service monitor-twitter-ads-account
+// method.
+type MonitorTwitterAdsAccountPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The X Ads account to read (alphanumeric handle).
 	AccountID string
 	// Trailing days to read metrics over.
 	Days int
