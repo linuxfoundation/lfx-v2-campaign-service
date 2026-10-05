@@ -70,7 +70,7 @@ const (
 
 	// budgetTypeDailyStandard spends the DailyBudget evenly across the day. Mirrors the
 	// google-ads STANDARD delivery choice for a conservative PAUSED shell.
-	budgetTypeDailyStandard = "DailyBudgetStandard"
+	budgetTypeDailyStandard = BudgetTypeDailyStandard
 
 	// campaignStatusPaused creates the campaign PAUSED so nothing serves until a human
 	// enables it. Microsoft's Campaign.Status enum uses "Paused".
@@ -1351,6 +1351,18 @@ func (e *partialCascadeError) Unconfirmed() bool { return true }
 // which is a strictly worse outcome than letting the client absorb the 429. Matches the sibling
 // Reddit status setter (internal/platform/reddit/client.go, updateEntityStatus).
 func (c *Client) putStatus(ctx context.Context, path string, req any, entity string) error {
+	return c.putUpdate(ctx, path, req, entity+" status")
+}
+
+// putUpdate issues one IDEMPOTENT partial-update PUT and folds Microsoft's 200-with-PartialErrors
+// contract into an ordinary error. It is the body of putStatus, extracted so the campaign BUDGET
+// update (budget.go) answers its PUT under exactly the same rules rather than a copy of them —
+// the response shape is the same UpdateCampaigns envelope either way. `what` names the update in
+// every message ("campaign status", "campaign budget").
+//
+// A per-entity rejection comes back as a *partialUpdateError so a caller that needs to tell one
+// rejection code from another (the budget path does) can read the codes without parsing text.
+func (c *Client) putUpdate(ctx context.Context, path string, req any, what string) error {
 	body, err := c.doRequest(ctx, http.MethodPut, path, req, true)
 	if err != nil {
 		return err
@@ -1360,27 +1372,50 @@ func (c *Client) putStatus(ctx context.Context, path string, req any, entity str
 		// A malformed 200 leaves the outcome UNKNOWN: the update MAY have applied, so do not
 		// report success. transportError reports Unconfirmed, matching the create path's
 		// treatment of an undecodable success body.
-		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s status response: %w", entity, uerr)}
+		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s response: %w", what, uerr)}
 	}
 	// A syntactically valid body that OMITS PartialErrors (`{}`, or a top-level `null`) decodes
 	// without error and leaves the field zero, which partialErrorsHaveAny reads as "no rejection".
-	// That would report success for a status Microsoft never confirmed. The field's ABSENCE is
+	// That would report success for an update Microsoft never confirmed. The field's ABSENCE is
 	// therefore treated as an unconfirmed outcome; its valid empty forms (`null`, `[]`) are still
 	// accepted, since those are how Microsoft says "no per-entity failures".
 	if !resp.sawPartialErrors {
-		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s status response: response omitted PartialErrors", entity)}
+		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s response: response omitted PartialErrors", what)}
 	}
 	// A present but malformed PartialErrors array such as `[null]` or `[{}]` decodes without
 	// error but contains no valid error codes — partialErrorsHaveAny returns false, which would
-	// report success for a status Microsoft never confirmed. Reject any non-empty list that
+	// report success for an update Microsoft never confirmed. Reject any non-empty list that
 	// yields no valid codes (mirroring the create path's handling of null-only error responses).
 	if len(resp.PartialErrors.Items) > 0 && !partialErrorsHaveAny(resp.PartialErrors.Items) {
-		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s status response: PartialErrors present but contains no valid error codes", entity)}
+		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s response: PartialErrors present but contains no valid error codes", what)}
 	}
 	if partialErrorsHaveAny(resp.PartialErrors.Items) {
-		return fmt.Errorf("microsoft-ads rejected the %s status update: %s", entity, partialErrorCodes(resp.PartialErrors.Items))
+		return &partialUpdateError{what: what, items: resp.PartialErrors.Items}
 	}
 	return nil
+}
+
+// partialUpdateError is a DEFINITE per-entity rejection of a partial-update PUT: Microsoft
+// answered 200 and named, in PartialErrors, why the single entity was not changed. It carries
+// the items so a caller can classify by code (hasCode); its text renders only the codes, never
+// Message/Details, matching the apiError contract.
+type partialUpdateError struct {
+	what  string
+	items []msErrorItem
+}
+
+func (e *partialUpdateError) Error() string {
+	return fmt.Sprintf("microsoft-ads rejected the %s update: %s", e.what, partialErrorCodes(e.items))
+}
+
+// hasCode reports whether any PartialError carries one of codes (symbolic or numeric spelling).
+func (e *partialUpdateError) hasCode(codes ...string) bool {
+	for _, code := range codes {
+		if partialErrorsHaveCode(e.items, code) {
+			return true
+		}
+	}
+	return false
 }
 
 // UpdateCampaignAndChildrenStatus toggles a Microsoft campaign and its ad group, ad and
