@@ -5209,9 +5209,15 @@ func unmarshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaign
 	res := &lfxv2campaignservicebriefs.CampaignCreateInput{
 		Config: v.Config,
 	}
+	if v.NewVersion != nil {
+		res.NewVersion = *v.NewVersion
+	}
 	res.Platforms = make([]string, len(v.Platforms))
 	for i, val := range v.Platforms {
 		res.Platforms[i] = val
+	}
+	if v.NewVersion == nil {
+		res.NewVersion = false
 	}
 
 	return res

@@ -62,10 +62,18 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 
 // claimCampaignDispatchQuery inserts the placeholder 'pending' claim row.
 //
-// The conflict target names (brief_id, platform, VARIANT) since 000022 widened the
-// slot key so one brief can hold a Search AND a Demand Gen campaign on google-ads
-// (see that migration). The three columns and the predicate must match the index
-// EXACTLY -- Postgres infers the arbiter by matching both.
+// The conflict target names (brief_id, platform, variant, SLOT_VERSION): 000022 added
+// variant so one brief can hold a Search AND a Demand Gen campaign on google-ads, and
+// 000036 added slot_version so a slot can hold a deliberate second campaign. The four
+// columns and the predicate must match the index EXACTLY -- Postgres infers the arbiter
+// by matching both.
+//
+// Naming the four-column index as the arbiter is also what keeps the expand phase loud.
+// While 000022's three-column index still exists, a slot_version 2 claim does not conflict
+// on the arbiter, so DO NOTHING does not apply; it violates the OTHER unique index and
+// raises 23505, which ClaimCampaignDispatch classifies as ErrSlotVersionUnavailable. A
+// retry of an existing slot version conflicts on the arbiter itself and is swallowed as
+// before.
 //
 // The conflict target carries the partial index's predicate (`WHERE status <>
 // 'deleted'`) because 000013/000014 replaced the full UNIQUE (brief_id, platform)
@@ -78,9 +86,15 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // INSERT wins the claim cleanly. Pinned by
 // TestCampaignRepo_OnConflictCarriesLivePredicate.
 const claimCampaignDispatchQuery = `INSERT INTO campaigns
-	(project_id, brief_id, job_id, platform, variant, campaign_name, status, created_by, updated_by)
-	VALUES ($1, $2, $3, $4, $5, '', 'pending', $6, $6)
-	ON CONFLICT (brief_id, platform, variant) WHERE status <> 'deleted' DO NOTHING`
+	(project_id, brief_id, job_id, platform, variant, slot_version, campaign_name, status, created_by, updated_by)
+	VALUES ($1, $2, $3, $4, $5, $7, '', 'pending', $6, $6)
+	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO NOTHING`
+
+// legacySlotUniqueIndex is 000022's three-column slot index. It stays in place for one
+// release after 000036 (expand/contract) and, while it does, is the index a slot_version
+// above 1 collides with. Named so the claim can tell that collision from any other unique
+// violation.
+const legacySlotUniqueIndex = "uq_campaigns_brief_platform_variant_live"
 
 // ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
 // by inserting a placeholder 'pending' campaign row. The (brief_id, platform)
@@ -117,19 +131,28 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns
 // after logging a warning — when the request carries no authenticated principal. NULL then
 // means "not recorded", which is the honest value; inventing a placeholder actor would make
 // the audit trail claim a principal that never acted.
-func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
 	variant = model.NormalizeVariant(variant)
+	slotVersion = model.NormalizeSlotVersion(slotVersion)
 	createdBy, err := marshalActor(by)
 	if err != nil {
 		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
 	}
-	tag, err := r.db.Exec(ctx, claimCampaignDispatchQuery, projectID, briefID, jobID, string(platform), variant, createdBy)
+	tag, err := r.db.Exec(ctx, claimCampaignDispatchQuery, projectID, briefID, jobID, string(platform), variant, createdBy, slotVersion)
 	if err != nil {
+		if isUniqueViolationOn(err, legacySlotUniqueIndex) {
+			// Only a slot_version above 1 can reach here: slot 1 conflicts on the arbiter
+			// first and is swallowed by DO NOTHING. The statement failed, so no row exists
+			// and there is nothing to roll back.
+			return false, nil, fmt.Errorf("claim campaign dispatch: %w", domain.ErrSlotVersionUnavailable)
+		}
 		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
 	}
 	claimed := tag.RowsAffected() == 1
 
-	row, gerr := r.GetCampaignByPlatform(ctx, projectID, briefID, platform, variant)
+	// Read back THIS slot version, not the latest: the row that won (ours or the
+	// conflicting one) is the one at slotVersion.
+	row, gerr := r.getCampaignBySlot(ctx, projectID, briefID, platform, variant, slotVersion)
 	if gerr != nil {
 		// The row must exist now (we or someone else just wrote it); a read failure
 		// here is a genuine error. If WE just inserted the pending row, roll it back
@@ -141,7 +164,7 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 			// BECAUSE ctx was cancelled, and reusing it for the DELETE would fail
 			// too, leaking the just-committed placeholder.
 			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimRollbackTimeout)
-			if derr := r.DeleteDispatchClaim(rbCtx, briefID, platform, variant); derr != nil {
+			if derr := r.DeleteDispatchClaim(rbCtx, briefID, platform, variant, slotVersion); derr != nil {
 				cancel()
 				// Double failure: both the post-insert read AND the rollback delete
 				// failed, so a 'pending' placeholder is orphaned and will block every
@@ -232,15 +255,18 @@ func (r *CampaignRepo) StuckDispatchClaims(ctx context.Context, limit int) ([]*m
 // DeleteDispatchClaim removes a still-'pending' claim row so a failed dispatch
 // doesn't permanently block the (brief, platform) pair. The status guard means
 // it can only ever delete a placeholder claim, never a created campaign.
-func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider, variant string) error {
-	q := `DELETE FROM campaigns WHERE brief_id=$1 AND platform=$2 AND variant=$3 AND status='pending'`
-	if _, err := r.db.Exec(ctx, q, briefID, string(platform), model.NormalizeVariant(variant)); err != nil {
+//
+// slot_version is in the WHERE clause so releasing a failed claim for a second campaign can
+// never touch the first campaign's row on the same slot, even if that one is still pending.
+func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider, variant string, slotVersion int) error {
+	q := `DELETE FROM campaigns WHERE brief_id=$1 AND platform=$2 AND variant=$3 AND slot_version=$4 AND status='pending'`
+	if _, err := r.db.Exec(ctx, q, briefID, string(platform), model.NormalizeVariant(variant), model.NormalizeSlotVersion(slotVersion)); err != nil {
 		return fmt.Errorf("delete dispatch claim: %w", err)
 	}
 	return nil
 }
 
-const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, variant, platform_campaign_id, campaign_name,
+const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, variant, slot_version, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
 	created_by, updated_by, ran_on_system_account, created_at, updated_at`
 
@@ -254,10 +280,24 @@ const getCampaignQuery = `SELECT ` + campaignCols + ` FROM campaigns
 // (brief, platform) pair has ALREADY been dispatched. A deleted campaign's slot is
 // free by design, so it must read as "not dispatched" — otherwise the idempotency
 // check would see the deleted row and refuse the re-dispatch that deleting the
-// campaign exists to enable. At most one LIVE row can match (the partial unique
-// index), so this still returns at most one row.
+// campaign exists to enable.
+//
+// Since 000036 a slot can hold several live rows, one per slot_version, so this returns the
+// LATEST: that is the campaign a retry is retrying, and the one a new-version request builds
+// on. slot_version is unique among a slot's live rows (the partial unique index), so the
+// ORDER BY is total and LIMIT 1 is deterministic.
 const getCampaignByPlatformQuery = `SELECT ` + campaignCols + ` FROM campaigns
-	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND status <> 'deleted'`
+	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND status <> 'deleted'
+	ORDER BY slot_version DESC
+	LIMIT 1`
+
+// getCampaignBySlotQuery reads ONE slot version's live row. It is what the claim reads back:
+// the row that won (ours, or the one we conflicted with) is the one at that slot version,
+// which is not necessarily the latest. At most one live row matches
+// (uq_campaigns_brief_platform_variant_slot_version_live).
+const getCampaignBySlotQuery = `SELECT ` + campaignCols + ` FROM campaigns
+	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND slot_version=$5
+	  AND status <> 'deleted'`
 
 // listCampaignsForBriefQuery excludes soft-deleted rows for the same reason
 // getCampaignQuery does: a deleted campaign is invisible to reads.
@@ -267,15 +307,16 @@ const getCampaignByPlatformQuery = `SELECT ` + campaignCols + ` FROM campaigns
 // same rows in a different sequence between two reads and the table would reshuffle under
 // the operator.
 //
-// (platform, variant) is total here because uq_campaigns_brief_platform_variant_live
-// (migration 000022) is UNIQUE on (brief_id, platform, variant) WHERE status <> 'deleted' —
-// the SAME predicate this query filters on — so no id tie-break is needed.
+// (platform, variant, slot_version) is total here because
+// uq_campaigns_brief_platform_variant_slot_version_live (migration 000036) is UNIQUE on
+// (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' — the SAME predicate
+// this query filters on — so no id tie-break is needed.
 //
 // created_at would NOT be total: rows dispatched in one job share a transaction timestamp,
 // because now() is TRANSACTION-start time.
 const listCampaignsForBriefQuery = `SELECT ` + campaignCols + ` FROM campaigns
 	WHERE brief_id=$1 AND project_id=$2 AND status <> 'deleted'
-	ORDER BY platform ASC, variant ASC`
+	ORDER BY platform ASC, variant ASC, slot_version ASC`
 
 // ListCampaignsForBrief returns every live campaign under a brief.
 func (r *CampaignRepo) ListCampaignsForBrief(ctx context.Context, projectID, briefID string) ([]*model.Campaign, error) {
@@ -423,8 +464,8 @@ func (r *CampaignRepo) GetCampaign(ctx context.Context, projectID, briefID, id s
 	return c, nil
 }
 
-// GetCampaignByPlatform returns the campaign for a (brief, platform) pair. The
-// (brief_id, platform) pair is unique, so at most one row matches. It is scoped by
+// GetCampaignByPlatform returns the LATEST live campaign for a (brief, platform, variant)
+// slot — see getCampaignByPlatformQuery. It is scoped by
 // project_id for tenant isolation (defense-in-depth), matching GetCampaign and
 // ClaimCampaignDispatch — brief_id is a globally-unique UUID, so this guards a
 // future direct caller from reading across tenants with an attacker-influenced
@@ -440,6 +481,19 @@ func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, bri
 	return c, nil
 }
 
+// getCampaignBySlot returns the live campaign at one slot version, or ErrNotFound.
+func (r *CampaignRepo) getCampaignBySlot(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int) (*model.Campaign, error) {
+	c, err := scanCampaign(r.db.QueryRow(ctx, getCampaignBySlotQuery, briefID, string(platform), projectID,
+		model.NormalizeVariant(variant), model.NormalizeSlotVersion(slotVersion)))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("get campaign by slot: %w", err)
+	}
+	return c, nil
+}
+
 // upsertCampaignQuery's conflict target carries the partial index's predicate — see
 // claimCampaignDispatchQuery for why it is mandatory. A soft-deleted row sits outside
 // the index, so an upsert after a delete INSERTs a fresh campaign rather than
@@ -448,9 +502,9 @@ func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, bri
 const upsertCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, job_id, platform, variant, platform_campaign_id, campaign_name, status,
 	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by,
-	 ran_on_system_account)
-	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17)
-	ON CONFLICT (brief_id, platform, variant) WHERE status <> 'deleted' DO UPDATE SET
+	 ran_on_system_account, slot_version)
+	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18)
+	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO UPDATE SET
 		job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
 		campaign_name=EXCLUDED.campaign_name, status=EXCLUDED.status,
 		budget_amount=EXCLUDED.budget_amount, budget_type=EXCLUDED.budget_type,
@@ -589,6 +643,9 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		// does — the claim already INSERTed the row — where a write-once IS NULL guard stamps
 		// it if and only if the stored value is still unrecorded. See upsertCampaignQuery.
 		c.RanOnSystemAccount,
+		// The slot version the claim took. It is part of the conflict target, so a wrong
+		// value here would land the result on a different campaign of the same slot.
+		model.NormalizeSlotVersion(c.SlotVersion),
 	)
 	upserted, err := scanCampaign(row)
 	if err != nil {
@@ -616,6 +673,12 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 //
 // A soft-deleted row sits outside the partial index, so a pair whose campaign was deleted
 // can be adopted afresh, exactly as it can be re-dispatched.
+//
+// slot_version is omitted, so the column default makes every adoption the slot's FIRST
+// campaign; the conflict target names it because the four-column index is the arbiter this
+// release writes through (000036). Adoption only ever binds an EMPTY slot — the service
+// refuses with 409 when GetCampaignByPlatform finds any live row — so slot 1 is the right
+// answer, not a simplification.
 // The variant is BOUND ($4), not the literal 'default' it used to be. Adoption establishes
 // the slot from what the platform reports the campaign actually is, and hardcoding 'default'
 // here silently discarded that: an adopted Demand Gen campaign landed in the Search slot,
@@ -638,7 +701,7 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 const adoptCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, platform, variant, platform_campaign_id, campaign_name, status, result, created_by, updated_by)
 	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
-	ON CONFLICT (brief_id, platform, variant) WHERE status <> 'deleted' DO NOTHING
+	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO NOTHING
 	RETURNING ` + campaignCols
 
 // lockAdoptBriefQuery re-reads the brief's CURRENT committed state under a row-level exclusive
@@ -1580,7 +1643,7 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		updatedBy  []byte
 	)
 	err := row.Scan(
-		&c.ID, &c.ProjectID, &c.BriefID, &c.JobID, &platform, &c.Variant, &pcID, &c.CampaignName,
+		&c.ID, &c.ProjectID, &c.BriefID, &c.JobID, &platform, &c.Variant, &c.SlotVersion, &pcID, &c.CampaignName,
 		&c.Status, &c.BudgetAmount, &budgetType, &c.StartDate, &c.EndDate,
 		&c.ConfigSnapshot, &c.Result, &c.Version, &createdBy, &updatedBy, &c.RanOnSystemAccount,
 		&c.CreatedAt, &c.UpdatedAt,

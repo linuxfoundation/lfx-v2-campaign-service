@@ -363,6 +363,18 @@ not be read", a RETRYABLE 503, from a verdict on the connection; see
 a settled fact) and from `ErrConnectionNotUsable` (the row was read and is unusable), and is the
 only one of the three that retrying can fix.
 
+### Slot versions and unique upstream names
+
+Google and Microsoft compose a deterministic name with the brief id as its `NameSuffix`, and
+both treat a matching name as the SAME campaign — Google rejects it (`DUPLICATE_CAMPAIGN_NAME`)
+or, with `adoptExisting`, adopts it; Microsoft's find-first lookup reuses it. A deliberate second
+campaign on the same slot (see the service concept's `new_version`) would therefore be refused or
+bound to the first. Both dispatchers set `NameSuffix: model.SlotNameSuffix(brief.ID,
+model.DispatchSlotVersion(ctx))`: slot 1 is the bare brief id, so every existing name and every
+retry is byte-identical, and slot 2+ appends `-<n>`. It is an internal identifier in the place the
+brief id already sat, not a human-facing version label. The other providers do not dedupe on name
+and are unchanged.
+
 ## Registration
 
 Adapters are registered in `internal/container` (`registerDispatchers`), called from

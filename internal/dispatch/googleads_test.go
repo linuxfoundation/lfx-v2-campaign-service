@@ -3059,3 +3059,36 @@ func TestGoogleAds_DispatchWiresFlightWindow(t *testing.T) {
 		t.Errorf("campaign row end_date = %v, want 2026-06-20", camp.EndDate)
 	}
 }
+
+// A deliberate second campaign on the same slot must not compose the first one's name.
+// Google rejects a duplicate campaign name in an account (DUPLICATE_CAMPAIGN_NAME), and the
+// opt-in adopt-on-create path matches by name, so a shared name would either fail the second
+// campaign or bind it to the first. Slot 1 keeps the bare brief id so existing campaigns and
+// their retries are byte-identical to before slot versions existed.
+func TestGoogleAds_SlotVersionExtendsTheNameSuffix(t *testing.T) {
+	for _, tc := range []struct {
+		slot int
+		want string
+	}{
+		{model.FirstSlotVersion, "| brief-1"},
+		{2, "| brief-1-2"},
+	} {
+		opts, _ := googleAdsServers(t,
+			func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+			},
+			func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+			},
+		)
+		d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+		ctx := model.WithDispatchSlotVersion(context.Background(), tc.slot)
+		camp, err := d.Dispatch(ctx, testBrief(), model.ProviderGoogleAds, json.RawMessage(`{"googleAdsConfig":{"budget":50}}`))
+		if err != nil {
+			t.Fatalf("slot %d: Dispatch: %v", tc.slot, err)
+		}
+		if !strings.HasSuffix(camp.CampaignName, tc.want) {
+			t.Errorf("slot %d: campaign name %q, want it to end %q", tc.slot, camp.CampaignName, tc.want)
+		}
+	}
+}

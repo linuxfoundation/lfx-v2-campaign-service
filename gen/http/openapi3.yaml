@@ -3137,6 +3137,7 @@ paths:
                                             - kubernetes
                                         variants:
                                             - headline: Join us
+                                new_version: false
                                 platforms:
                                     - reddit-ads
                                     - meta-ads
@@ -3426,6 +3427,7 @@ paths:
                                 platform: Quia sed eum ad sunt impedit sint.
                                 platform_campaign_id: Iusto aspernatur fugit et facere eligendi.
                                 project_id: Est voluptatum nobis ipsam blanditiis.
+                                slot_version: 1
                                 status: Harum nisi illo quia.
                                 version: 3925257924313425571
                 "400":
@@ -3580,6 +3582,7 @@ paths:
                                 platform: Quos est eum tenetur impedit sequi.
                                 platform_campaign_id: Est dolore delectus odio nostrum molestiae.
                                 project_id: Et quo vitae alias nesciunt dolor.
+                                slot_version: 1
                                 status: Tenetur tenetur cum maiores et.
                                 version: 497171543030165729
                 "400":
@@ -3751,6 +3754,7 @@ paths:
                                 platform: In vero.
                                 platform_campaign_id: Rerum dolor.
                                 project_id: Labore temporibus ut sint ipsam impedit.
+                                slot_version: 1
                                 status: Iure voluptas voluptatem impedit est similique.
                                 version: 8909692114394228722
                 "400":
@@ -4372,6 +4376,7 @@ paths:
                                 platform: Amet voluptatem adipisci.
                                 platform_campaign_id: Ipsam consequuntur.
                                 project_id: Quia quibusdam adipisci rerum harum facilis est.
+                                slot_version: 1
                                 status: Tenetur enim sed architecto perspiciatis dolorem voluptas.
                                 version: 1051231997937712301
                 "400":
@@ -4526,6 +4531,7 @@ paths:
                                 platform: Enim corrupti.
                                 platform_campaign_id: Qui voluptas culpa.
                                 project_id: Expedita nihil molestiae soluta consequuntur sapiente.
+                                slot_version: 1
                                 status: Delectus non aut ipsum.
                                 version: 1315230394652948056
                 "400":
@@ -16033,6 +16039,12 @@ components:
                     type: string
                     description: Owning project
                     example: Sint at ipsum rerum et.
+                slot_version:
+                    type: integer
+                    description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                    example: 1
+                    format: int64
+                    minimum: 1
                 status:
                     type: string
                     description: Campaign status
@@ -16050,6 +16062,7 @@ components:
                 platform: Nihil id eius.
                 platform_campaign_id: Assumenda consequatur repellat vitae laboriosam qui.
                 project_id: Necessitatibus voluptatem ut dolore itaque soluta deserunt.
+                slot_version: 1
                 status: Illo molestiae ut sed.
                 version: 593220271754621541
             required:
@@ -16059,6 +16072,7 @@ components:
                 - platform
                 - campaign_name
                 - status
+                - slot_version
                 - version
         Campaign2:
             type: object
@@ -16087,6 +16101,12 @@ components:
                     type: string
                     description: Owning project
                     example: Minima veritatis impedit quia perspiciatis.
+                slot_version:
+                    type: integer
+                    description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                    example: 1
+                    format: int64
+                    minimum: 1
                 status:
                     type: string
                     description: Campaign status
@@ -16103,6 +16123,7 @@ components:
                 platform: Occaecati molestias ea et nostrum officia quo.
                 platform_campaign_id: Alias minima soluta vitae et in ab.
                 project_id: Recusandae omnis.
+                slot_version: 1
                 status: Esse facilis eaque explicabo molestiae ab tenetur.
                 version: 3019486667174714
             required:
@@ -16112,6 +16133,7 @@ components:
                 - platform
                 - campaign_name
                 - status
+                - slot_version
                 - version
         Campaign3:
             type: object
@@ -16140,6 +16162,12 @@ components:
                     type: string
                     description: Owning project
                     example: Totam voluptates delectus fugit.
+                slot_version:
+                    type: integer
+                    description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                    example: 1
+                    format: int64
+                    minimum: 1
                 status:
                     type: string
                     description: Campaign status
@@ -16156,6 +16184,7 @@ components:
                 platform: Vitae deserunt debitis minima.
                 platform_campaign_id: Molestiae et veritatis amet fuga repudiandae enim.
                 project_id: Omnis animi omnis ut tempora incidunt.
+                slot_version: 1
                 status: Pariatur corporis eos ut.
                 version: 469702199722590689
             required:
@@ -16165,6 +16194,7 @@ components:
                 - platform
                 - campaign_name
                 - status
+                - slot_version
                 - version
         Campaign4:
             type: object
@@ -16193,6 +16223,12 @@ components:
                     type: string
                     description: Owning project
                     example: Dolor non.
+                slot_version:
+                    type: integer
+                    description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                    example: 1
+                    format: int64
+                    minimum: 1
                 status:
                     type: string
                     description: Campaign status
@@ -16209,6 +16245,7 @@ components:
                 platform: Asperiores perspiciatis doloribus iure.
                 platform_campaign_id: Mollitia totam officiis repellat.
                 project_id: Fugit repudiandae dolore alias provident.
+                slot_version: 1
                 status: Voluptas assumenda reiciendis.
                 version: 3524274000852413512
             required:
@@ -16218,6 +16255,7 @@ components:
                 - platform
                 - campaign_name
                 - status
+                - slot_version
                 - version
         Campaign5:
             type: object
@@ -16246,6 +16284,12 @@ components:
                     type: string
                     description: Owning project
                     example: Amet numquam sit qui cum.
+                slot_version:
+                    type: integer
+                    description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                    example: 1
+                    format: int64
+                    minimum: 1
                 status:
                     type: string
                     description: Campaign status
@@ -16262,6 +16306,7 @@ components:
                 platform: Quo sunt in suscipit.
                 platform_campaign_id: Ut error.
                 project_id: Reiciendis dicta culpa dolore.
+                slot_version: 1
                 status: Et perspiciatis amet qui et doloremque nemo.
                 version: 6416569196866466769
             required:
@@ -16271,6 +16316,7 @@ components:
                 - platform
                 - campaign_name
                 - status
+                - slot_version
                 - version
         Campaign6:
             type: object
@@ -16299,6 +16345,12 @@ components:
                     type: string
                     description: Owning project
                     example: Saepe distinctio dolorem vel a animi veniam.
+                slot_version:
+                    type: integer
+                    description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                    example: 1
+                    format: int64
+                    minimum: 1
                 status:
                     type: string
                     description: Campaign status
@@ -16315,6 +16367,7 @@ components:
                 platform: Sunt laboriosam.
                 platform_campaign_id: Dicta quae magni dicta odio quo esse.
                 project_id: Necessitatibus veritatis ullam nemo sed omnis.
+                slot_version: 1
                 status: A delectus natus cupiditate dolorem fuga quia.
                 version: 8585318525416244582
             required:
@@ -16324,6 +16377,7 @@ components:
                 - platform
                 - campaign_name
                 - status
+                - slot_version
                 - version
         CampaignActionItem:
             type: object
@@ -16402,6 +16456,11 @@ components:
                                 - kubernetes
                             variants:
                                 - headline: Join us
+                new_version:
+                    type: boolean
+                    description: Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label.
+                    default: false
+                    example: false
                 platforms:
                     type: array
                     items:
@@ -16443,6 +16502,7 @@ components:
                             - kubernetes
                         variants:
                             - headline: Join us
+                new_version: false
                 platforms:
                     - reddit-ads
                     - meta-ads
@@ -16921,6 +16981,7 @@ components:
                                 - kubernetes
                             variants:
                                 - headline: Join us
+                    new_version: false
                     platforms:
                         - reddit-ads
                         - meta-ads

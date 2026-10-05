@@ -6428,7 +6428,8 @@ func marshalBriefInputRequestBodyToLfxv2campaignservicebriefsBriefInput(v *Brief
 // *lfxv2campaignservicebriefs.CampaignCreateInput.
 func marshalLfxv2campaignservicebriefsCampaignCreateInputToCampaignCreateInputRequestBody(v *lfxv2campaignservicebriefs.CampaignCreateInput) *CampaignCreateInputRequestBody {
 	res := &CampaignCreateInputRequestBody{
-		Config: v.Config,
+		Config:     v.Config,
+		NewVersion: v.NewVersion,
 	}
 	if v.Platforms != nil {
 		res.Platforms = make([]string, len(v.Platforms))
@@ -6437,6 +6438,12 @@ func marshalLfxv2campaignservicebriefsCampaignCreateInputToCampaignCreateInputRe
 		}
 	} else {
 		res.Platforms = []string{}
+	}
+	{
+		var zero bool
+		if res.NewVersion == zero {
+			res.NewVersion = false
+		}
 	}
 
 	return res
@@ -6447,7 +6454,8 @@ func marshalLfxv2campaignservicebriefsCampaignCreateInputToCampaignCreateInputRe
 // a value of type *CampaignCreateInputRequestBody.
 func marshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaignCreateInput(v *CampaignCreateInputRequestBody) *lfxv2campaignservicebriefs.CampaignCreateInput {
 	res := &lfxv2campaignservicebriefs.CampaignCreateInput{
-		Config: v.Config,
+		Config:     v.Config,
+		NewVersion: v.NewVersion,
 	}
 	if v.Platforms != nil {
 		res.Platforms = make([]string, len(v.Platforms))
@@ -6456,6 +6464,12 @@ func marshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaignCr
 		}
 	} else {
 		res.Platforms = []string{}
+	}
+	{
+		var zero bool
+		if res.NewVersion == zero {
+			res.NewVersion = false
+		}
 	}
 
 	return res

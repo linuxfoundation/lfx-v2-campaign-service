@@ -476,6 +476,10 @@ type AdoptCampaignResponseBody struct {
 	CampaignName string `form:"campaign_name" json:"campaign_name" xml:"campaign_name"`
 	// Campaign status
 	Status string `form:"status" json:"status" xml:"status"`
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -497,6 +501,10 @@ type GetCampaignResponseBody struct {
 	CampaignName string `form:"campaign_name" json:"campaign_name" xml:"campaign_name"`
 	// Campaign status
 	Status string `form:"status" json:"status" xml:"status"`
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -634,6 +642,10 @@ type UpdateCampaignResponseBody struct {
 	CampaignName string `form:"campaign_name" json:"campaign_name" xml:"campaign_name"`
 	// Campaign status
 	Status string `form:"status" json:"status" xml:"status"`
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -656,6 +668,10 @@ type ToggleCampaignStatusResponseBody struct {
 	CampaignName string `form:"campaign_name" json:"campaign_name" xml:"campaign_name"`
 	// Campaign status
 	Status string `form:"status" json:"status" xml:"status"`
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -678,6 +694,10 @@ type UpdateCampaignBudgetResponseBody struct {
 	CampaignName string `form:"campaign_name" json:"campaign_name" xml:"campaign_name"`
 	// Campaign status
 	Status string `form:"status" json:"status" xml:"status"`
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -3354,6 +3374,15 @@ type CampaignCreateInputRequestBody struct {
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
 	// Per-platform campaign configuration
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+	// Create ANOTHER campaign on each selected platform instead of retrying.
+	// Without it, repeating a create for a platform that already has a completed
+	// campaign returns that campaign (idempotent retry). With it, a platform whose
+	// latest campaign is complete gets a new campaign alongside it; a platform
+	// with none gets its first; a platform whose latest campaign is still in
+	// flight or needs reconciliation is reported exactly as a retry would be. The
+	// version is tracked by this service only and is never shown on the ad
+	// platform as a label.
+	NewVersion *bool `form:"new_version,omitempty" json:"new_version,omitempty" xml:"new_version,omitempty"`
 }
 
 // CampaignUpdateInputRequestBody is used to define fields on request body
@@ -3595,6 +3624,7 @@ func NewAdoptCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *Ado
 		PlatformCampaignID: res.PlatformCampaignID,
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
+		SlotVersion:        res.SlotVersion,
 		Version:            res.Version,
 	}
 	return body
@@ -3611,6 +3641,7 @@ func NewGetCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *GetCa
 		PlatformCampaignID: res.PlatformCampaignID,
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
+		SlotVersion:        res.SlotVersion,
 		Version:            res.Version,
 	}
 	return body
@@ -3734,6 +3765,7 @@ func NewUpdateCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *Up
 		PlatformCampaignID: res.PlatformCampaignID,
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
+		SlotVersion:        res.SlotVersion,
 		Version:            res.Version,
 	}
 	return body
@@ -3751,6 +3783,7 @@ func NewToggleCampaignStatusResponseBody(res *lfxv2campaignservicebriefs.Campaig
 		PlatformCampaignID: res.PlatformCampaignID,
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
+		SlotVersion:        res.SlotVersion,
 		Version:            res.Version,
 	}
 	return body
@@ -3768,6 +3801,7 @@ func NewUpdateCampaignBudgetResponseBody(res *lfxv2campaignservicebriefs.Campaig
 		PlatformCampaignID: res.PlatformCampaignID,
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
+		SlotVersion:        res.SlotVersion,
 		Version:            res.Version,
 	}
 	return body

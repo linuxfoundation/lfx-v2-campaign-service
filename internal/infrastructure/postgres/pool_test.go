@@ -415,3 +415,26 @@ func TestExecutableSQL(t *testing.T) {
 		"000009 executes no unconditional CREATE INDEX; every one it contains is prose or "+
 			"inside the DO block")
 }
+
+// TestRequiredIndexes_CoversTheSlotVersionUniqueIndex pins 000036's index into the boot check.
+// Since this release, claim, upsert and adopt all name it as their ON CONFLICT arbiter, so its
+// absence would fail every dispatch at runtime; and once the three-column index is dropped it
+// is the only thing keeping a retry from creating a duplicate paid campaign.
+func TestRequiredIndexes_CoversTheSlotVersionUniqueIndex(t *testing.T) {
+	const slotUnique = "uq_campaigns_brief_platform_variant_slot_version_live"
+
+	var got *requiredIndex
+	for i, ri := range requiredIndexes {
+		if ri.name == slotUnique {
+			got = &requiredIndexes[i]
+		}
+	}
+	require.NotNilf(t, got, "%s is not in requiredIndexes", slotUnique)
+
+	assert.Equal(t, "campaigns", got.table)
+	assert.True(t, got.unique)
+	// slot_version, NOT version: version is the optimistic-concurrency counter every write
+	// bumps, so an index on it would give one campaign a new slot identity per write.
+	assert.Equal(t, []string{"brief_id", "platform", "variant", "slot_version"}, got.keys)
+	assert.Equal(t, "(status <> 'deleted'::text)", got.predicate)
+}

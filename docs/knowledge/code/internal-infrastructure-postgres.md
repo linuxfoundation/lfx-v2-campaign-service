@@ -169,6 +169,19 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   writes `'default'`, and every pre-`000021` row was backfilled to it, so the invariant
   is unchanged for them — one live campaign per pair, now spelled with a third column.
 
+  `slot_version` (added by `000035`, indexed by `000036`) counts DELIBERATE campaigns on one
+  `(brief_id, platform, variant)` slot, so a second create the caller asked for
+  (`new_version`) is no longer indistinguishable from a retry of the first. It is a NEW
+  column, not `version`: `version` has been the optimistic-concurrency counter since `000002`
+  and every upsert/replace bumps it. Claim, upsert and adopt all name the four-column
+  `uq_campaigns_brief_platform_variant_slot_version_live` as their `ON CONFLICT` arbiter;
+  `GetCampaignByPlatform` returns the slot's LATEST live row (`ORDER BY slot_version DESC
+  LIMIT 1`), and the claim reads back its own slot version. `000022`'s three-column index
+  stays for one release (expand/contract), and while it does a claim for `slot_version` 2
+  violates it — not the arbiter, so `DO NOTHING` does not apply — and `ClaimCampaignDispatch`
+  classifies that `23505` as `domain.ErrSlotVersionUnavailable`. Both indexes are in
+  `requiredIndexes` until the follow-up release drops the narrower one.
+
   **Authoring rule — expand/contract, one release apart.** The general form of the
   constraint `000013`/`000014` had to break: *a migration that removes or narrows something
   the N-1 release's SQL depends on ships one release AFTER the code change that stopped

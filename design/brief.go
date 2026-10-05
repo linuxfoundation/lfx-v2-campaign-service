@@ -199,6 +199,10 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 			},
 		})
 	})
+	Attribute("new_version", Boolean, "Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label.", func() {
+		Default(false)
+		Example(false)
+	})
 	Required("platforms")
 })
 
@@ -244,9 +248,13 @@ var Campaign = Type("campaign", func() {
 	Attribute("platform_campaign_id", String, "ID returned by the ad platform")
 	Attribute("campaign_name", String, "Campaign name")
 	Attribute("status", String, "Campaign status")
+	Attribute("slot_version", Int, "Which campaign this is among the brief's campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.", func() {
+		Minimum(1)
+		Example(1)
+	})
 	Attribute("version", Int64, "Optimistic-concurrency version")
 	Attribute("etag", String, "ETag header value (mirrors version)")
-	Required("id", "project_id", "brief_id", "platform", "campaign_name", "status", "version")
+	Required("id", "project_id", "brief_id", "platform", "campaign_name", "status", "slot_version", "version")
 })
 
 // CampaignMetrics is the live-read performance snapshot for one campaign over one window.
