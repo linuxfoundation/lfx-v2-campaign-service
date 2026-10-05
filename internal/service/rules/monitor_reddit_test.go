@@ -329,3 +329,21 @@ func TestEvaluateRedditMonitor_EmptyStartDate_SetsPacingUnknown(t *testing.T) {
 		t.Errorf("action item priority = %q, want %q", items[0].Priority, model.MonitorPriorityHigh)
 	}
 }
+
+// At exactly UTC midnight the daily window still covers the same calendar days as the report
+// (today inclusive): identical bounds and spend must pace identically at 00:00 and at noon, and a
+// flight starting today is computable rather than empty.
+func TestRedditPacingPct_DailyBudgetAtMidnight(t *testing.T) {
+	midnight := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	noon := midnight.Add(12 * time.Hour)
+	whole := model.AccountCampaignMetrics{BudgetDay: 10, Spend: 63}
+	atMidnight, ok1 := redditPacingPct(whole, 7, midnight)
+	atNoon, ok2 := redditPacingPct(whole, 7, noon)
+	if !ok1 || !ok2 || atMidnight != 90 || atNoon != 90 {
+		t.Errorf("whole window: midnight=%v(%v) noon=%v(%v), want 90 at both", atMidnight, ok1, atNoon, ok2)
+	}
+	today := model.AccountCampaignMetrics{BudgetDay: 10, Spend: 10, StartDate: "2026-06-15"}
+	if pct, ok := redditPacingPct(today, 7, midnight); !ok || pct != 100 {
+		t.Errorf("flight starting today at midnight = %v (computable=%v), want 100 computable", pct, ok)
+	}
+}

@@ -151,7 +151,14 @@ type paginationEnvelope struct {
 // So it must resolve to the SAME scheme and host as the configured API base and sit under
 // its path; anything else is refused rather than followed. No part of the URL is echoed in
 // an error: it can carry the ad account id, and these errors reach the service log.
-func (c *Client) nextPagePath(raw json.RawMessage) (string, error) {
+//
+// It must also name the SAME RESOURCE as the request being paged (reqPath, relative to the
+// base, query ignored): only the query may change between pages. Same origin alone is not
+// enough — a next_url naming another ad account on the same host would be fetched with this
+// project's token and its campaigns listed under the requested account, bypassing the
+// dispatcher's account binding; a report walk could likewise re-POST its body to another
+// resource.
+func (c *Client) nextPagePath(raw json.RawMessage, reqPath string) (string, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return "", nil
 	}
@@ -193,6 +200,10 @@ func (c *Client) nextPagePath(raw json.RawMessage) (string, error) {
 		return "", errors.New("pagination next_url is outside the API base path")
 	}
 	rel := strings.TrimPrefix(nextPath, basePath)
+	wantPath, _, _ := strings.Cut(reqPath, "?")
+	if rel != wantPath {
+		return "", errors.New("pagination next_url names a different resource than the request being paged")
+	}
 	if next.RawQuery != "" {
 		rel += "?" + next.RawQuery
 	}
@@ -220,7 +231,7 @@ func (c *Client) walkPages(ctx context.Context, method, path string, body any, v
 		if err := visit(page, resp); err != nil {
 			return err
 		}
-		next, err := c.nextPagePath(resp.Pagination)
+		next, err := c.nextPagePath(resp.Pagination, path)
 		if err != nil {
 			return fmt.Errorf("page %d: %w", page, err)
 		}

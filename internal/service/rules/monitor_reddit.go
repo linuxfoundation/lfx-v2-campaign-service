@@ -89,7 +89,7 @@ func EvaluateRedditMonitor(rows []model.AccountCampaignMetrics, days int, now ti
 //     total prorated across the flight, expected = TotalBudget / flightDays × elapsedDays.
 //     Needs a parseable start date; without one there is no flight to prorate against.
 //   - DAILY_SPEND (BudgetDay): expected = BudgetDay × the days of the report window the
-//     campaign was scheduled for — the window [today-(days-1), now], clipped to the flight
+//     campaign was scheduled for — the window [today-(days-1), the midnight after today), clipped to the flight
 //     where Reddit reported one (end date inclusive). Whenever the flight covers the whole
 //     window this is Google/Meta's BudgetDay × days, and it matches this platform's own report
 //     window (which starts at today's midnight minus days-1). It is deliberately ONE DAY MORE
@@ -134,7 +134,11 @@ func redditPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (f
 		if start.After(effectiveStart) {
 			effectiveStart = start
 		}
-		effectiveEnd := utcNow
+		// The window's end is the EXCLUSIVE midnight after today — the same calendar days the
+		// report covers (reportRange: today inclusive). Using `now` instead under-counted by a
+		// day at exactly midnight, so identical report bounds and spend read 105% at 00:00 and
+		// 90% later that day, and a flight starting today read as not computable.
+		effectiveEnd := windowStart.AddDate(0, 0, days)
 		// EndDate is a calendar day the flight still runs on, so the flight ends when that
 		// day does.
 		if !end.IsZero() && end.AddDate(0, 0, 1).Before(effectiveEnd) {

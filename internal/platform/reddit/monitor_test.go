@@ -804,11 +804,16 @@ func TestNextPagePath(t *testing.T) {
 		// request path sanitizer, so they must be refused on the decoded path.
 		{"encoded dot segments", `{"next_url":"https://ads-api.reddit.com/api/v3/ad_accounts/%2e%2e/%2e%2e/x"}`, "", true},
 		{"mixed-case encoded dots", `{"next_url":"https://ads-api.reddit.com/api/v3/%2E%2e/x"}`, "", true},
+		// Same origin, but another account's resource: following it would list that account's
+		// campaigns under this one with this project's token, bypassing the account binding.
+		{"cross-account same origin", `{"next_url":"https://ads-api.reddit.com/api/v3/ad_accounts/other/campaigns?page.token=x"}`, "", true},
+		// Same account, different operation: a report walk must not re-POST to another resource.
+		{"cross-operation same account", `{"next_url":"https://ads-api.reddit.com/api/v3/ad_accounts/a/reports?page.token=x"}`, "", true},
 		{"not an object", `[1]`, "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := c.nextPagePath(json.RawMessage(tt.raw))
+			got, err := c.nextPagePath(json.RawMessage(tt.raw), "/ad_accounts/a/campaigns")
 			if (err != nil) != tt.wantErr || got != tt.want {
 				t.Errorf("nextPagePath(%s) = %q, %v; want %q, err=%v", tt.raw, got, err, tt.want, tt.wantErr)
 			}
