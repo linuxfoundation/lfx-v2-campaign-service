@@ -175,6 +175,9 @@ spec:
           # Maps a Google Ads campaign id to this service's campaign + brief, so a caller
           # holding keyword rows can address the brief-scoped mutation routes.
           - path: /projects/:projectId/google-ads/campaign-ref
+          # Microsoft keyword read (LFXV2-2665): the Google read's row shape, served from a
+          # saved asynchronous Microsoft report. A campaign_manager read like its Google sibling.
+          - path: /projects/:projectId/microsoft-ads/keywords
           # HubSpot UTM (portal-wide; projectId gates permission AND selects the
           # connection, hence which portal is visible). ** covers
           # /hubspot/utm and any deeper path; the bare /hubspot is kept explicitly.

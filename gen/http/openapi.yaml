@@ -9532,6 +9532,105 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/microsoft-ads/keywords:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-microsoft-ads-keywords lfx-v2-campaign-service-connections
+            description: Read Microsoft Advertising keyword performance for this project's own campaigns, in the same row shape as get-google-ads-keywords. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, and read from the project's OWN connection only (never the LF system account). Microsoft serves keyword performance only through its asynchronous Reporting service, which takes minutes, so rows come from the last finished report — see metrics_as_of and metrics_pending — while the next one builds; the first read returns no rows with metrics_pending=true. A report is served only while it covers every campaign the project owns. Saved reports are cached platform data. Off (400, not supported) unless MICROSOFT_METRICS_ENABLED is true. Audience demographics are not offered for Microsoft.
+            operationId: lfx-v2-campaign-service-connections#get-microsoft-ads-keywords
+            parameters:
+                - name: window
+                  in: query
+                  description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Microsoft.
+                  required: false
+                  type: string
+                  enum:
+                    - today
+                    - last_7_days
+                    - last_30_days
+                    - this_month
+                    - last_month
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/MicrosoftAdsKeywords'
+                        required:
+                            - window
+                            - rows
+                            - row_count
+                            - truncated
+                            - metrics_pending
+                            - conversions_complete
+                            - data_incomplete
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "409":
+                    description: Conflict response.
+                    schema:
+                        $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
 definitions:
     AccessibleAccount:
         title: AccessibleAccount
@@ -9574,48 +9673,17 @@ definitions:
                       campaign_name: KubeCon NA 2026 - Search
                       issue: 'Underspending: 42% of expected spend'
                       priority: MED
+                    - action: Increase daily budget or check for delivery limits
+                      campaign_id: "24183781329"
+                      campaign_name: KubeCon NA 2026 - Search
+                      issue: 'Underspending: 42% of expected spend'
+                      priority: MED
             campaigns:
                 type: array
                 items:
                     $ref: '#/definitions/AccountMonitorCampaign'
                 description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
                 example:
-                    - budget_day: 150
-                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                      clicks: 3110
-                      conversions: 12.5
-                      ctr: 6.45
-                      end_date: "2026-11-30"
-                      fetch_failed: false
-                      impressions: 48200
-                      is_search_channel: true
-                      name: KubeCon NA 2026 - Search
-                      pacing_label: overspending
-                      pacing_pct: 87
-                      pacing_unknown: false
-                      platform_campaign_id: "24183781329"
-                      spend: 482.13
-                      start_date: "2026-08-01"
-                      status: ENABLED
-                      total_budget: 5000
-                    - budget_day: 150
-                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                      clicks: 3110
-                      conversions: 12.5
-                      ctr: 6.45
-                      end_date: "2026-11-30"
-                      fetch_failed: false
-                      impressions: 48200
-                      is_search_channel: true
-                      name: KubeCon NA 2026 - Search
-                      pacing_label: overspending
-                      pacing_pct: 87
-                      pacing_unknown: false
-                      platform_campaign_id: "24183781329"
-                      spend: 482.13
-                      start_date: "2026-08-01"
-                      status: ENABLED
-                      total_budget: 5000
                     - budget_day: 150
                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
                       clicks: 3110
@@ -9696,12 +9764,25 @@ definitions:
                   campaign_name: KubeCon NA 2026 - Search
                   issue: 'Underspending: 42% of expected spend'
                   priority: MED
-                - action: Increase daily budget or check for delivery limits
-                  campaign_id: "24183781329"
-                  campaign_name: KubeCon NA 2026 - Search
-                  issue: 'Underspending: 42% of expected spend'
-                  priority: MED
             campaigns:
+                - budget_day: 150
+                  campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                  clicks: 3110
+                  conversions: 12.5
+                  ctr: 6.45
+                  end_date: "2026-11-30"
+                  fetch_failed: false
+                  impressions: 48200
+                  is_search_channel: true
+                  name: KubeCon NA 2026 - Search
+                  pacing_label: overspending
+                  pacing_pct: 87
+                  pacing_unknown: false
+                  platform_campaign_id: "24183781329"
+                  spend: 482.13
+                  start_date: "2026-08-01"
+                  status: ENABLED
+                  total_budget: 5000
                 - budget_day: 150
                   campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
                   clicks: 3110
@@ -9796,7 +9877,7 @@ definitions:
             priority:
                 type: string
                 description: The rule engine's priority band for this item.
-                example: MED
+                example: HIGH
                 enum:
                     - HIGH
                     - MED
@@ -9806,7 +9887,7 @@ definitions:
             campaign_id: "24183781329"
             campaign_name: KubeCon NA 2026 - Search
             issue: 'Underspending: 42% of expected spend'
-            priority: MED
+            priority: LOW
         required:
             - priority
             - issue
@@ -9863,7 +9944,7 @@ definitions:
             pacing_label:
                 type: string
                 description: The pacing classification derived from pacing_pct. Meaningless when pacing_unknown is true — a fetch-failed row keeps the placeholder value "normal" rather than carrying no label at all, since the enum has no unknown member.
-                example: normal
+                example: underspending
                 enum:
                     - normal
                     - underspending
@@ -9911,7 +9992,7 @@ definitions:
             impressions: 48200
             is_search_channel: true
             name: KubeCon NA 2026 - Search
-            pacing_label: underspending
+            pacing_label: overspending
             pacing_pct: 87
             pacing_unknown: false
             platform_campaign_id: "24183781329"
@@ -13920,15 +14001,15 @@ definitions:
                 $ref: '#/definitions/AudienceInput'
         example:
             audience:
-                inclusion_summary: Occaecati veritatis.
+                inclusion_summary: Aut architecto aliquam mollitia labore sapiente.
                 platform: hubspot
-                platform_master_list_id: Quo atque.
-                status: building
+                platform_master_list_id: Reprehenderit error eligendi incidunt accusamus.
+                status: failed
                 suppression_list_ids:
-                    - Eligendi incidunt accusamus excepturi.
                     - Qui est ut voluptas quod minima dolor.
                     - Molestiae id aut debitis iure.
                     - Dolore est dolorem quod enim pariatur.
+                    - Occaecati veritatis.
         required:
             - audience
     LfxV2CampaignServiceAudiencesListAudiencesResponseBody:
@@ -14740,16 +14821,16 @@ definitions:
                       name: KubeCon NA 2026
                       start_date: "2026-11-01"
                       utm: kubecon-na-2026
+                    - id: "112233445566"
+                      name: KubeCon NA 2026
+                      start_date: "2026-11-01"
+                      utm: kubecon-na-2026
             capped:
                 type: boolean
                 description: 'True when the search could NOT be shown to be complete. That covers the case HubSpot reported more matches than it returned, and equally the cases where completeness is simply unknown: an absent `total`, or one that contradicts the rows (negative, or fewer than were returned). All of them fail CLOSED, because "we cannot tell" must not be reported as the proven absence a caller acts on by creating a campaign. While it is true, absence from `campaigns` is NOT proof the campaign does not exist, and a caller must not offer an unqualified create on an empty result — it would duplicate a campaign in a namespace shared by everyone on that HubSpot portal. Narrow the search term instead.'
                 example: true
         example:
             campaigns:
-                - id: "112233445566"
-                  name: KubeCon NA 2026
-                  start_date: "2026-11-01"
-                  utm: kubecon-na-2026
                 - id: "112233445566"
                   name: KubeCon NA 2026
                   start_date: "2026-11-01"
@@ -15074,25 +15155,25 @@ definitions:
             name:
                 type: string
                 description: Internal email name, as it appears in the HubSpot email list
-                example: Aut ut non.
+                example: Quae reprehenderit sed voluptas quia sed.
             state:
                 type: string
                 description: HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED). Archived emails are not returned at all — archival is a separate flag in HubSpot, not a state.
-                example: Id hic aut sit.
+                example: Id voluptatem vel.
             subject:
                 type: string
                 description: Subject line
-                example: Quae reprehenderit sed voluptas quia sed.
+                example: Id hic aut sit.
             updated_at:
                 type: string
                 description: Last-modified timestamp (ISO-8601)
-                example: Id voluptatem vel.
+                example: Quis occaecati et quia ratione repellendus asperiores.
         example:
             id: "112233445566"
-            name: Quis occaecati et quia ratione repellendus asperiores.
-            state: Placeat qui consectetur magnam aut.
-            subject: Dolor ad soluta excepturi.
-            updated_at: Eum at qui quia.
+            name: Dolor ad soluta excepturi.
+            state: Eum at qui quia.
+            subject: Placeat qui consectetur magnam aut.
+            updated_at: Quia eum eum blanditiis alias omnis.
         required:
             - id
     MetaAdsConnection:
@@ -15323,6 +15404,183 @@ definitions:
             - client_secret
             - refresh_token
             - developer_token
+    MicrosoftAdsKeywords:
+        title: MicrosoftAdsKeywords
+        type: object
+        properties:
+            conversions_complete:
+                type: boolean
+                description: False when Microsoft reported no conversion count (a blank ConversionsQualified cell — typically an account without Universal Event Tracking) for at least one returned row; those rows carry conversions 0, which then is NOT a measurement. Do not compute CPA from them.
+                example: true
+            data_incomplete:
+                type: boolean
+                description: 'True when Microsoft flagged the served report''s data as potentially incomplete ("Potential Incomplete Data" — the window''s last day, usually today, may still be aggregating): its counters may still rise. False when no report is served.'
+                example: true
+            metrics_as_of:
+                type: string
+                description: When the Microsoft report these rows come from was requested (not when it was collected, which can be later). Microsoft builds keyword reports asynchronously in minutes, so the service serves the last finished report and builds the next one between requests. ABSENT when no finished report covers every campaign this project now owns — the first read, or the first after a campaign was added — and `rows` is then empty rather than a partial picture.
+                example: "2026-10-05T14:30:00Z"
+                format: date-time
+            metrics_pending:
+                type: boolean
+                description: True while a newer Microsoft report is building, so a later read will return newer rows (or the first ones, when metrics_as_of is absent).
+                example: false
+            row_count:
+                type: integer
+                description: How many rows are in `rows`.
+                example: 50
+                format: int64
+            rows:
+                type: array
+                items:
+                    $ref: '#/definitions/GoogleAdsKeyword'
+                description: Keyword rows from the last finished Microsoft keyword report that covers every campaign this project owns, ordered by impressions descending and capped — see `truncated`. criterion_id is the Microsoft KeywordId and ad_group_id its AdGroupId. cost_micros is Microsoft's Spend (account currency, no FX) times 10^6; ctr is clicks/impressions. Empty while no such report has finished (metrics_as_of absent).
+                example:
+                    - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
+                      campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
+                      clicks: 311
+                      conversions: 12.5
+                      cost_micros: 1284000
+                      criterion_id: "305729261"
+                      ctr: 0.0645
+                      impressions: 4820
+                      match_type: BROAD
+                      quality_score: 7
+                      status: PAUSED
+                      text: kubernetes training
+                    - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
+                      campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
+                      clicks: 311
+                      conversions: 12.5
+                      cost_micros: 1284000
+                      criterion_id: "305729261"
+                      ctr: 0.0645
+                      impressions: 4820
+                      match_type: BROAD
+                      quality_score: 7
+                      status: PAUSED
+                      text: kubernetes training
+                    - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
+                      campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
+                      clicks: 311
+                      conversions: 12.5
+                      cost_micros: 1284000
+                      criterion_id: "305729261"
+                      ctr: 0.0645
+                      impressions: 4820
+                      match_type: BROAD
+                      quality_score: 7
+                      status: PAUSED
+                      text: kubernetes training
+                    - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
+                      campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
+                      clicks: 311
+                      conversions: 12.5
+                      cost_micros: 1284000
+                      criterion_id: "305729261"
+                      ctr: 0.0645
+                      impressions: 4820
+                      match_type: BROAD
+                      quality_score: 7
+                      status: PAUSED
+                      text: kubernetes training
+            truncated:
+                type: boolean
+                description: True when this project's campaigns have more keywords than were returned. The rows are the TOP ones by impressions, not the project's full keyword set.
+                example: false
+            window:
+                type: string
+                description: The reporting window these counters cover
+                example: this_month
+                enum:
+                    - today
+                    - yesterday
+                    - last_7_days
+                    - last_14_days
+                    - last_30_days
+                    - this_month
+                    - last_month
+        example:
+            conversions_complete: true
+            data_incomplete: true
+            metrics_as_of: "2026-10-05T14:30:00Z"
+            metrics_pending: false
+            row_count: 50
+            rows:
+                - ad_group_id: "176216228"
+                  ad_group_name: Registration - Exact
+                  campaign_id: "21234567890"
+                  campaign_name: KubeCon NA 2026 - Search
+                  clicks: 311
+                  conversions: 12.5
+                  cost_micros: 1284000
+                  criterion_id: "305729261"
+                  ctr: 0.0645
+                  impressions: 4820
+                  match_type: BROAD
+                  quality_score: 7
+                  status: PAUSED
+                  text: kubernetes training
+                - ad_group_id: "176216228"
+                  ad_group_name: Registration - Exact
+                  campaign_id: "21234567890"
+                  campaign_name: KubeCon NA 2026 - Search
+                  clicks: 311
+                  conversions: 12.5
+                  cost_micros: 1284000
+                  criterion_id: "305729261"
+                  ctr: 0.0645
+                  impressions: 4820
+                  match_type: BROAD
+                  quality_score: 7
+                  status: PAUSED
+                  text: kubernetes training
+                - ad_group_id: "176216228"
+                  ad_group_name: Registration - Exact
+                  campaign_id: "21234567890"
+                  campaign_name: KubeCon NA 2026 - Search
+                  clicks: 311
+                  conversions: 12.5
+                  cost_micros: 1284000
+                  criterion_id: "305729261"
+                  ctr: 0.0645
+                  impressions: 4820
+                  match_type: BROAD
+                  quality_score: 7
+                  status: PAUSED
+                  text: kubernetes training
+                - ad_group_id: "176216228"
+                  ad_group_name: Registration - Exact
+                  campaign_id: "21234567890"
+                  campaign_name: KubeCon NA 2026 - Search
+                  clicks: 311
+                  conversions: 12.5
+                  cost_micros: 1284000
+                  criterion_id: "305729261"
+                  ctr: 0.0645
+                  impressions: 4820
+                  match_type: BROAD
+                  quality_score: 7
+                  status: PAUSED
+                  text: kubernetes training
+            truncated: false
+            window: last_month
+        required:
+            - window
+            - rows
+            - row_count
+            - truncated
+            - metrics_pending
+            - conversions_complete
+            - data_incomplete
     NotFoundError:
         title: NotFoundError
         type: object
