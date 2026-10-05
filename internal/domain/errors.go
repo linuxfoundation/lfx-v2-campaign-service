@@ -131,7 +131,7 @@ var (
 	// ErrToggleUnsupported: a platform dispatcher can return it directly without
 	// importing the orchestration layer.
 	//
-	// Google Ads, LinkedIn and Meta implement the capability today; every other platform
+	// Google Ads, LinkedIn, Meta and Reddit implement the capability today; every other platform
 	// still answers 400. Budget writing is added per platform, and each addition is a
 	// separate deliberate decision about that platform's budget model — not a gap to be
 	// closed mechanically. The service layer holds NO allowlist, so what a platform
