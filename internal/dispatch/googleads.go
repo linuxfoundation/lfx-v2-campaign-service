@@ -55,6 +55,92 @@ type googleAdsKeywordConfig struct {
 	MatchType string `json:"matchType"`
 }
 
+// The wire shapes for the targeting, extension and ad-group inputs the Search path
+// gained with LFXV2-2665. Each maps 1:1 to its googleads counterpart and is kept as
+// its own JSON-tagged type for the same reason googleAdsKeywordConfig is: the wire
+// vocabulary and the platform client's Go type are named independently, so one can
+// change without silently changing the other. Every field is validated by the client
+// before anything is sent — nothing here re-implements a check.
+
+// googleAdsProximityConfig is one radius target: a point and how far around it to
+// serve. RadiusUnit has deliberately no default (see googleads.ProximityTarget).
+type googleAdsProximityConfig struct {
+	Latitude   float64 `json:"latitude"`
+	Longitude  float64 `json:"longitude"`
+	Radius     float64 `json:"radius"`
+	RadiusUnit string  `json:"radiusUnit"` // "MILES" or "KILOMETERS"
+}
+
+// googleAdsAdScheduleConfig is one day-of-week serving interval.
+//
+// BidModifier is a POINTER on the wire as well as in the client, and for the same
+// reason: 0 is the -100% opt-out, so it cannot double as "unset". An absent
+// "bidModifier" restricts WHEN the campaign serves without changing what it bids.
+type googleAdsAdScheduleConfig struct {
+	DayOfWeek   string   `json:"dayOfWeek"`
+	StartHour   int      `json:"startHour"`
+	StartMinute int      `json:"startMinute"`
+	EndHour     int      `json:"endHour"`
+	EndMinute   int      `json:"endMinute"`
+	BidModifier *float64 `json:"bidModifier"`
+}
+
+// googleAdsDeviceBidModifierConfig adjusts the bid for one device, or excludes that
+// device outright with a modifier of 0.
+//
+// BidModifier is a POINTER here while googleads.DeviceBidModifier's is a plain
+// float64, and the asymmetry is deliberate. A Go caller constructing the client type
+// writes the field it means; a JSON caller can simply OMIT it, and a plain float64
+// would decode that absence to 0 — which is not "no adjustment" but the -100%
+// opt-out, so `{"device":"TABLET"}` would stop the campaign serving on tablets with
+// no error anywhere. The pointer keeps absent distinguishable from zero at the only
+// boundary where the two can be confused; googleAdsDeviceBidModifiers refuses nil.
+// Same reasoning as googleAdsAdScheduleConfig.BidModifier.
+type googleAdsDeviceBidModifierConfig struct {
+	Device      string   `json:"device"`
+	BidModifier *float64 `json:"bidModifier"`
+}
+
+// googleAdsSitelinkConfig is one sitelink extension. The two description lines are
+// all-or-nothing: Google rejects an asset carrying only one.
+type googleAdsSitelinkConfig struct {
+	Text         string `json:"text"`
+	Description1 string `json:"description1"`
+	Description2 string `json:"description2"`
+	FinalURL     string `json:"finalUrl"`
+}
+
+// googleAdsStructuredSnippetConfig is one structured-snippet extension. Header must be
+// one of Google's predefined headers FOR THE CAMPAIGN'S LANGUAGE, so the client checks
+// its shape rather than its membership in an English list.
+type googleAdsStructuredSnippetConfig struct {
+	Header string   `json:"header"`
+	Values []string `json:"values"`
+}
+
+// googleAdsAdConfig is one responsive search ad inside an ad group. Both lists are
+// optional in exactly the way the campaign-level headlines/descriptions are — the
+// client pads missing slots to Google's minimums.
+type googleAdsAdConfig struct {
+	Headlines    []string `json:"headlines"`
+	Descriptions []string `json:"descriptions"`
+}
+
+// googleAdsAdGroupConfig is one ad group: a theme, the keywords that express it, and
+// the ads written for it.
+//
+// Every field except Name falls back to the campaign-level equivalent when it is
+// empty, and that fallback is PER FIELD — a group may override only its bid. cpcBid 0
+// means "inherit", not "no bid"; a campaign-level 0 is what means that, and it is
+// inherited as such.
+type googleAdsAdGroupConfig struct {
+	Name             string                   `json:"name"`
+	CPCBid           float64                  `json:"cpcBid"`
+	Keywords         []googleAdsKeywordConfig `json:"keywords"`
+	AudienceSegments []string                 `json:"audienceSegments"`
+	Ads              []googleAdsAdConfig      `json:"ads"`
+}
+
 const (
 	// The accepted `channel` values. Lower-case and hyphenated to match the campaignTypes
 	// vocabulary the UI already uses ("search" / "demand-gen"), so callers do not have to
@@ -106,6 +192,39 @@ type googleAdsConfig struct {
 	// not created by this dispatcher. See googleads.validateAudienceSegments for the
 	// accepted shapes.
 	AudienceSegments []string `json:"audienceSegments"`
+	// NegativeKeywords are optional CAMPAIGN-level keyword exclusions — queries the
+	// campaign must never pay for, however broadly Keywords match. SEARCH ONLY, and
+	// REFUSED on Demand Gen rather than ignored — unlike Keywords, which is ignored
+	// there. See googleads.CampaignInput.NegativeKeywords for why the two differ.
+	//
+	// Left empty, no exclusions are created, which is the behaviour of every caller
+	// that predates this field.
+	NegativeKeywords []googleAdsKeywordConfig `json:"negativeKeywords"`
+	// CPCBid is an optional manual CPC bid for the ad group, in whole units of the ad
+	// ACCOUNT's currency (no FX conversion, same as Budget). Search only — Demand Gen
+	// bids with targetSpend and rejects manualCpc outright.
+	//
+	// 0 or absent means no bid is sent and Google's own derivation stands, which is
+	// what every campaign created before this field existed did. See
+	// googleads.validateCPCBid for the accepted range.
+	CPCBid float64 `json:"cpcBid"`
+	// StartDate/EndDate are the campaign's flight window as YYYY-MM-DD, spelled exactly
+	// as the meta and reddit configs spell them. Each is independently optional: an
+	// absent StartDate leaves Google's default (the campaign starts when enabled) and an
+	// absent EndDate leaves it running until someone stops it.
+	//
+	// Google interprets both in the ad ACCOUNT's timezone, not UTC — which is also why
+	// a past start date is not refused here; see googleads.validateFlightWindow. These
+	// apply to BOTH channels.
+	//
+	// They are also what applyCampaignConfig records in the campaigns table's
+	// start_date/end_date columns: before this field existed Google passed "" for both,
+	// so those columns stayed NULL for every Google campaign and the settings readback
+	// had nothing to compare its upstream dates against. Microsoft still passes "" for
+	// both (internal/dispatch/microsoft.go), so Google is not the last adapter without a
+	// window — only the one whose readback made the absence visible.
+	StartDate string `json:"startDate"` // YYYY-MM-DD
+	EndDate   string `json:"endDate"`   // YYYY-MM-DD
 	// GeoTargets are ISO 3166-1 alpha-2 country codes the campaign should serve in
 	// (LFXV2-3283), spelled exactly as the meta and reddit configs spell them so a
 	// caller does not have to learn a third vocabulary for the same idea. The client
@@ -119,27 +238,76 @@ type googleAdsConfig struct {
 	// caller predating this field omits it, and failing their creates outright would
 	// break dispatches that work today. An untargeted create is instead made VISIBLE —
 	// see the warning log in Dispatch — rather than silently accepted or refused.
+	// GeoTargets also accepts RAW Google geo target constant ids (the numeric strings
+	// Google's geo target constant table publishes), which is how a caller targets a
+	// city, region or postal code — a metro-level event campaign cannot be expressed in
+	// country codes. The two spellings mix freely in one list.
 	GeoTargets []string `json:"geoTargets"`
-
-	// StartDate and EndDate are the campaign's flight window as YYYY-MM-DD, the same
-	// shape and json names meta/reddit/linkedin/twitter already use so one caller does
-	// not have to remember a per-platform spelling.
+	// ExcludedGeoTargets are locations the campaign must NEVER serve in, in exactly the
+	// vocabulary GeoTargets uses (country codes and/or raw constant ids). Applies to
+	// BOTH channels.
 	//
-	// Google passed "" for both to applyCampaignConfig, so the campaigns table's
-	// start_date/end_date columns stayed NULL for every Google campaign and the settings
-	// readback had nothing to compare its upstream dates against. The columns, the parser
-	// and the drift comparison all existed already -- only the config field and these two
-	// call sites were missing.
+	// Left empty, nothing is excluded. A location listed in both lists is REFUSED rather
+	// than resolved: Google lets the exclusion win, so the campaign would silently not
+	// serve where the caller plainly asked it to.
+	ExcludedGeoTargets []string `json:"excludedGeoTargets"`
+	// ProximityTargets are radius targets — serve within N miles/kilometres of a point.
+	// Search only: refused on "demand-gen", which attaches location criteria at the ad
+	// group level where this client has not verified proximity.
 	//
-	// Microsoft still passes "" for both (internal/dispatch/microsoft.go), so this is not
-	// the last adapter without a window -- only the one whose readback made the absence
-	// visible.
+	// Left empty, no radius criteria are created and the lists above stand alone.
+	ProximityTargets []googleAdsProximityConfig `json:"proximityTargets"`
+	// Languages are the languages the campaign serves in, as ISO 639-1 codes (EN, DE,
+	// JA) or raw numeric language constant ids. Search only, like every field below it
+	// up to Sitelinks: all FIVE slices — Languages, AdSchedules, DeviceBidModifiers,
+	// ExcludedAgeRanges and ExcludedGenders — are campaign-level criteria one guard
+	// refuses together on "demand-gen" rather than silently dropping.
 	//
-	// Both optional. Blank means the field is omitted from the Google payload entirely
-	// (see googleads.CampaignInput), which is the pre-existing behaviour: a campaign with
-	// no window runs from creation until someone pauses it.
-	StartDate string `json:"startDate"`
-	EndDate   string `json:"endDate"`
+	// Left empty the campaign serves in EVERY language, which is Google's default and
+	// rarely what an event campaign wants.
+	Languages []string `json:"languages"`
+	// AdSchedules restrict WHEN the campaign serves, one interval per day of week, each
+	// optionally carrying its own bid modifier. Left empty the campaign runs around the
+	// clock.
+	AdSchedules []googleAdsAdScheduleConfig `json:"adSchedules"`
+	// DeviceBidModifiers adjust the bid per device ("MOBILE", "DESKTOP", "TABLET"), or
+	// exclude a device outright with a modifier of 0. Left empty, every device bids the
+	// campaign's own bid.
+	//
+	// There is no TV-screen entry: Google supports that device only on Display and Video
+	// campaigns, and these criteria are refused outright on Demand Gen, so Search is the
+	// only channel that reaches them. See deviceTypes in the googleads package.
+	//
+	// bidModifier is REQUIRED on every entry — it is a *float64 so that an OMITTED one
+	// is refused rather than decoded as 0, which is the -100% opt-out and would switch
+	// the device off while reporting a successful create. This is the opposite polarity
+	// from adSchedules, where an absent modifier legitimately means "listed but
+	// unadjusted"; a device entry with no modifier would say nothing at all.
+	DeviceBidModifiers []googleAdsDeviceBidModifierConfig `json:"deviceBidModifiers"`
+	// ExcludedAgeRanges and ExcludedGenders are demographic EXCLUSIONS ("18-24",
+	// "MALE", …). Exclusion-only is Google's own shape at campaign level, not a
+	// narrowing this adapter chose: there is no "target only these" form here. Left
+	// empty, no demographic is excluded.
+	ExcludedAgeRanges []string `json:"excludedAgeRanges"`
+	ExcludedGenders   []string `json:"excludedGenders"`
+	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions. All
+	// Search only (refused on "demand-gen", which has no text ad to extend), and all
+	// created as account-level assets that are then linked to the campaign.
+	//
+	// Left empty the ad serves as a bare headline+description, which costs more per
+	// click than the same bid with extensions attached — but it is the behaviour of
+	// every caller predating these fields, so absence is accepted, not refused.
+	Sitelinks          []googleAdsSitelinkConfig          `json:"sitelinks"`
+	Callouts           []string                           `json:"callouts"`
+	StructuredSnippets []googleAdsStructuredSnippetConfig `json:"structuredSnippets"`
+	// AdGroups splits the campaign into one ad group per theme, each with its own
+	// keywords and up to three responsive search ads. Search only.
+	//
+	// Left empty the client creates exactly the single ad group with the single ad it
+	// created before this field existed, from the campaign-level Headlines/Descriptions/
+	// Keywords/AudienceSegments/CPCBid — so this field is purely additive and changes
+	// nothing for a caller that omits it.
+	AdGroups []googleAdsAdGroupConfig `json:"adGroups"`
 	// AdoptExisting opts THIS dispatch in to adopting a campaign that already carries the
 	// composed name instead of creating one. It defaults to FALSE, and the default is the
 	// safety property, not a convenience: ComposeName is deterministic in
@@ -224,6 +392,13 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err != nil {
 		return nil, notCreated(err)
 	}
+	// The one config check the client cannot make for itself — see
+	// googleAdsDeviceBidModifiers. Deliberately before the channel switch, so a
+	// malformed entry is refused identically on both channels and on the adoption path.
+	deviceBidModifiers, err := googleAdsDeviceBidModifiers(cfg.DeviceBidModifiers)
+	if err != nil {
+		return nil, notCreated(err)
+	}
 
 	in := googleads.CampaignInput{
 		EventName: bf.EventName,
@@ -238,12 +413,29 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		Headlines:        cfg.Headlines,
 		Descriptions:     cfg.Descriptions,
 		Keywords:         googleAdsKeywords(cfg.Keywords),
+		NegativeKeywords: googleAdsKeywords(cfg.NegativeKeywords),
 		AudienceSegments: cfg.AudienceSegments,
 		GeoTargets:       cfg.GeoTargets,
-		// Passed through as the caller's YYYY-MM-DD; the client renders Google's
-		// "yyyy-MM-dd HH:mm:ss" and validates the pair before the budget mutate.
-		StartDate: cfg.StartDate,
-		EndDate:   cfg.EndDate,
+		CPCBid:           cfg.CPCBid,
+		StartDate:        cfg.StartDate,
+		EndDate:          cfg.EndDate,
+		// The LFXV2-2665 targeting/extension/ad-group inputs. Every one of these is
+		// passed through verbatim: the channel rules (proximity, languages, schedules,
+		// devices, demographics, extensions and ad groups are Search-only) are enforced
+		// by the client's preflight, BEFORE its first mutate, so they are refused in one
+		// place for both the create path and the ValidateCampaignInput call below rather
+		// than re-stated here where the two could drift.
+		ExcludedGeoTargets: cfg.ExcludedGeoTargets,
+		ProximityTargets:   googleAdsProximityTargets(cfg.ProximityTargets),
+		Languages:          cfg.Languages,
+		AdSchedules:        googleAdsAdSchedules(cfg.AdSchedules),
+		DeviceBidModifiers: deviceBidModifiers,
+		ExcludedAgeRanges:  cfg.ExcludedAgeRanges,
+		ExcludedGenders:    cfg.ExcludedGenders,
+		Sitelinks:          googleAdsSitelinks(cfg.Sitelinks),
+		Callouts:           cfg.Callouts,
+		StructuredSnippets: googleAdsStructuredSnippets(cfg.StructuredSnippets),
+		AdGroups:           googleAdsAdGroups(cfg.AdGroups),
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
 		// with the same suffix is rejected by whichever family it reaches first —
@@ -273,20 +465,9 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		d.opts...,
 	)
 
-	// Validate the input FIRST, and note this is not merely tidy ordering. Adoption
-	// returns before CreateCampaign runs its preflight, so without this call the same
-	// request would be rejected when no campaign exists and accepted when one does — a
-	// NaN budget or a malformed registration URL would fail on the first dispatch and
-	// silently succeed on the retry. Whether a request is well-formed cannot depend on
-	// what happens to be sitting in the ad account. Validating unconditionally (rather
-	// than only on the adoption branch) also keeps the two paths' acceptance identical
-	// whichever way cfg.AdoptExisting is set.
-	if err := client.ValidateCampaignInput(in); err != nil {
-		return nil, notCreated(err)
-	}
-	// Resolve the channel BEFORE the name is composed, before adoption looks anything up, and
-	// before any create. Every step below depends on which campaign type this is, and doing it
-	// last meant all of them ran assuming Search:
+	// Resolve the channel BEFORE validation, before the name is composed, before adoption
+	// looks anything up, and before any create. Every step below depends on which campaign
+	// type this is, and doing it last meant all of them ran assuming Search:
 	//   - the name was hardcoded "Search Campaign", so a Demand Gen dispatch with
 	//     adoptExisting:true searched for the SEARCH campaign's name — adopting a Search
 	//     campaign into the demand-gen slot, or missing the real "DemandGen Campaign".
@@ -304,6 +485,25 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		campaignKind = googleads.CampaignKindDemandGen
 	default:
 		return nil, notCreated(fmt.Errorf("google ads: unsupported channel %q (want %q or %q)", cfg.Channel, googleAdsChannelSearch, googleAdsChannelDemandGen))
+	}
+	// Validate the input BEFORE adoption, and note this is not merely tidy ordering.
+	// Adoption returns before CreateCampaign runs its preflight, so without this call the
+	// same request would be rejected when no campaign exists and accepted when one does —
+	// a NaN budget or a malformed registration URL would fail on the first dispatch and
+	// silently succeed on the retry. Whether a request is well-formed cannot depend on
+	// what happens to be sitting in the ad account. Validating unconditionally (rather
+	// than only on the adoption branch) also keeps the two paths' acceptance identical
+	// whichever way cfg.AdoptExisting is set.
+	//
+	// Validate for the RESOLVED kind, which is why the channel switch above now runs
+	// first. The client's preflight gates its Search-only refusals on the kind, so
+	// validating everything as Search let a Demand Gen request carrying proximity,
+	// criteria, extensions, ad groups or a CPC bid pass here and be adopted — reinstating
+	// for those fields the exact accepted-if-it-exists asymmetry this call prevents for
+	// every other field. The switch is pure-local and contacts nothing, so moving it
+	// above this keeps the no-upstream-call guarantee intact.
+	if err := client.ValidateCampaignInputKind(campaignKind, in); err != nil {
+		return nil, notCreated(err)
 	}
 	campaignName := googleads.ComposeName(campaignKind, in)
 	// Adoption is OPT-IN (see googleAdsConfig.AdoptExisting for why the default must be
@@ -372,7 +572,16 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// existing campaign that may already carry targeting — so it claimed a worldwide spend for
 	// campaigns that were never created. The `result != nil` condition includes the partial
 	// post-campaign failures, where a campaign does exist upstream and the warning is warranted.
-	if len(cfg.GeoTargets) == 0 && result != nil && result.CampaignID != "" {
+	//
+	// Both POSITIVE shapes count. proximityTargets is the second way to restrict where a
+	// campaign serves, and a radius criterion restricts spend exactly as a location
+	// criterion does — so a proximity-only campaign that warned about having "no geo
+	// targeting" would be reporting a worldwide spend that the criteria it carries
+	// prevent. ExcludedGeoTargets is deliberately NOT counted: an exclusion narrows an
+	// otherwise-unbounded campaign without bounding it, so a campaign carrying only
+	// exclusions still serves wherever the account allows minus a few places, which is
+	// what this warning exists to say out loud.
+	if len(cfg.GeoTargets) == 0 && len(cfg.ProximityTargets) == 0 && result != nil && result.CampaignID != "" {
 		slog.WarnContext(ctx, "google ads campaign created with NO geo targeting (it will serve wherever the ad account allows once enabled)",
 			"brief_id", brief.ID,
 			"channel", channel,
@@ -410,6 +619,158 @@ func googleAdsKeywords(in []googleAdsKeywordConfig) []googleads.Keyword {
 	return out
 }
 
+// The LFXV2-2665 wire→client mappers. Each follows googleAdsKeywords exactly: a nil
+// return for an empty input, so an omitted field stays nil end-to-end instead of
+// becoming an empty-but-non-nil slice, and a straight field copy with no validation —
+// every value is checked by the client's preflight before anything is sent.
+
+func googleAdsProximityTargets(in []googleAdsProximityConfig) []googleads.ProximityTarget {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.ProximityTarget, len(in))
+	for i, p := range in {
+		out[i] = googleads.ProximityTarget{
+			Latitude:   p.Latitude,
+			Longitude:  p.Longitude,
+			Radius:     p.Radius,
+			RadiusUnit: p.RadiusUnit,
+		}
+	}
+	return out
+}
+
+// googleAdsAdSchedules carries BidModifier across as the pointer it is on both sides.
+// Copying the value would make an absent modifier indistinguishable from an explicit
+// 0, which is the -100% opt-out — the interval would stop serving entirely.
+func googleAdsAdSchedules(in []googleAdsAdScheduleConfig) []googleads.AdSchedule {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.AdSchedule, len(in))
+	for i, s := range in {
+		out[i] = googleads.AdSchedule{
+			DayOfWeek:   s.DayOfWeek,
+			StartHour:   s.StartHour,
+			StartMinute: s.StartMinute,
+			EndHour:     s.EndHour,
+			EndMinute:   s.EndMinute,
+			BidModifier: s.BidModifier,
+		}
+	}
+	return out
+}
+
+// googleAdsDeviceBidModifiers maps the wire entries onto the client type, REFUSING an
+// entry that omitted bidModifier rather than letting it decode to the -100% opt-out.
+// See googleAdsDeviceBidModifierConfig for why the wire field is a pointer and the
+// client field is not.
+//
+// This cannot live in the client's preflight: by the time the client sees the entry the
+// pointer has already been flattened, so absent and 0 are the same value there. It is
+// the one validation in this family the dispatcher has to own, and it runs before the
+// channel is resolved so the create and adoption paths refuse it identically.
+func googleAdsDeviceBidModifiers(in []googleAdsDeviceBidModifierConfig) ([]googleads.DeviceBidModifier, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make([]googleads.DeviceBidModifier, len(in))
+	for i, d := range in {
+		if d.BidModifier == nil {
+			return nil, fmt.Errorf("google ads: deviceBidModifiers[%d] (device %q) omits bidModifier; supply it explicitly — 0 is not \"no adjustment\" but a -100%% modifier, which stops the campaign serving on that device", i, d.Device)
+		}
+		out[i] = googleads.DeviceBidModifier{Device: d.Device, BidModifier: *d.BidModifier}
+	}
+	return out, nil
+}
+
+func googleAdsSitelinks(in []googleAdsSitelinkConfig) []googleads.Sitelink {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.Sitelink, len(in))
+	for i, s := range in {
+		out[i] = googleads.Sitelink{
+			Text:         s.Text,
+			Description1: s.Description1,
+			Description2: s.Description2,
+			FinalURL:     s.FinalURL,
+		}
+	}
+	return out
+}
+
+func googleAdsStructuredSnippets(in []googleAdsStructuredSnippetConfig) []googleads.StructuredSnippet {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.StructuredSnippet, len(in))
+	for i, s := range in {
+		out[i] = googleads.StructuredSnippet{Header: s.Header, Values: s.Values}
+	}
+	return out
+}
+
+// googleAdsAdGroups maps the per-theme ad group list, reusing googleAdsKeywords for
+// each group's keywords so a group's keyword vocabulary cannot drift from the
+// campaign-level one. An empty per-group list stays nil, which is what the client
+// reads as "inherit the campaign-level value" — distinct from an empty-but-present
+// list, which would mean the group overrides with nothing.
+func googleAdsAdGroups(in []googleAdsAdGroupConfig) []googleads.AdGroupSpec {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.AdGroupSpec, len(in))
+	for i, g := range in {
+		out[i] = googleads.AdGroupSpec{
+			Name:             g.Name,
+			CPCBid:           g.CPCBid,
+			Keywords:         googleAdsKeywords(g.Keywords),
+			AudienceSegments: g.AudienceSegments,
+			Ads:              googleAdsAds(g.Ads),
+		}
+	}
+	return out
+}
+
+func googleAdsAds(in []googleAdsAdConfig) []googleads.AdSpec {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.AdSpec, len(in))
+	for i, a := range in {
+		out[i] = googleads.AdSpec{Headlines: a.Headlines, Descriptions: a.Descriptions}
+	}
+	return out
+}
+
+// googleAdsSnapshotConfig returns cfg with every caller-supplied URL reduced to
+// scheme+host, for storage in config_snapshot — which is persisted UNENCRYPTED in
+// Postgres. Same reason and same helper as campaignFromMeta's ImageURL and
+// campaignFromReddit's PostURL: a caller-supplied URL can carry a credential in its
+// path, query or fragment, and the snapshot is the copy that persists.
+//
+// A sitelink's finalUrl is the only URL this config carries. The ad copy beside it —
+// headlines, descriptions, callouts, snippet values, sitelink text — is deliberately
+// NOT run through sanitizeSnapshotText: that helper exists for operator-authored prose
+// that routinely carries a pasted link (X's tweetText), whereas Google keeps the
+// destination in its own finalUrl field and the copy fields are short ad text. If a
+// link-bearing free-text field is ever added here, it needs that helper.
+func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
+	if len(cfg.Sitelinks) == 0 {
+		return cfg
+	}
+	snapshot := cfg
+	// Copy the slice before mutating: cfg is passed by value but Sitelinks shares its
+	// backing array with the caller's config, and the FULL url must still reach Google.
+	snapshot.Sitelinks = make([]googleAdsSitelinkConfig, len(cfg.Sitelinks))
+	copy(snapshot.Sitelinks, cfg.Sitelinks)
+	for i := range snapshot.Sitelinks {
+		snapshot.Sitelinks[i].FinalURL = sanitizeSnapshotURL(snapshot.Sitelinks[i].FinalURL)
+	}
+	return snapshot
+}
+
 // campaignFromGoogleAds maps the client result to the persistence model. The
 // orchestrator fills project/brief/job/platform (and, for a retained ambiguous orphan,
 // status); this sets what only the dispatcher knows — upstream id, name, the persisted
@@ -422,11 +783,9 @@ func campaignFromGoogleAds(ctx context.Context, r *googleads.CampaignResult, cfg
 	}
 	// Persist the caller-supplied budget + validated config, mirroring the sibling adapters
 	// (a NULL budget/type/config_snapshot row otherwise loses the campaign's configuration).
-	// GA's shell uses a DAILY budget (no lifetime flag). The flight window is OPTIONAL and
-	// persists whatever the config supplied -- nil columns mean the caller sent none, not
-	// that this path cannot record them. ConfigSnapshot captures the validated config
-	// regardless.
-	applyCampaignConfig(ctx, c, cfg.Budget, false, cfg.StartDate, cfg.EndDate, cfg)
+	// GA's shell uses a DAILY budget (no lifetime flag) and sets no flight dates here — those
+	// land with GA-3+; ConfigSnapshot captures the validated config regardless.
+	applyCampaignConfig(ctx, c, cfg.Budget, false, cfg.StartDate, cfg.EndDate, googleAdsSnapshotConfig(cfg))
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT
 		// swallow it: Result is the sole carrier of the reconcile-by-name payload (the
@@ -489,7 +848,7 @@ func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName
 	// written over them would destroy the only record of the request. Divergence is
 	// surfaced for an operator to act on, on demand; nothing polls, and no status is
 	// stored.
-	applyCampaignConfig(ctx, c, cfg.Budget, false, cfg.StartDate, cfg.EndDate, cfg)
+	applyCampaignConfig(ctx, c, cfg.Budget, false, cfg.StartDate, cfg.EndDate, googleAdsSnapshotConfig(cfg))
 	// The blob must carry CustomerID: googleAdsCreationCustomerID reads it as this row's
 	// provenance, and what an ABSENT one costs is per-operation, not one rule (see that
 	// helper's comment). Comparison-only callers — the account-mismatch check on read and
@@ -1137,21 +1496,29 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 	// Checked below via the persisted KeywordCriteriaIDs in the Result blob — empty means
 	// keyword targeting was never attempted or failed before any criterion resource name
 	// could be parsed.
-	adGroupID, adID := googleAdsChildIDs(campaign)
+	targets, keywordsProvisioned, incompleteGroups := googleAdsToggleTargets(campaign)
 	if gaStatus == googleads.StatusEnabled {
-		// Refuse ACTIVATE if the ad group/ad were never fully provisioned: a duplicate-name
-		// orphan or unconfirmed create (see createAdGroupAndAd) leaves no id to cascade to, so
+		// Refuse ACTIVATE if no ad group was fully provisioned: a duplicate-name orphan or
+		// unconfirmed create (see createAdGroupAndAd) leaves no id to cascade to, so
 		// enabling just the campaign would report success while nothing can serve.
-		if strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "" {
+		if len(targets) == 0 {
 			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its ad group/ad were not fully provisioned", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
-		var result googleads.CampaignResult
-		if campaign.Result != nil {
-			_ = json.Unmarshal(campaign.Result, &result)
-		}
-		if len(result.KeywordCriteriaIDs) == 0 {
+		if !keywordsProvisioned {
 			return fmt.Errorf("%w: google ads campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword criterion is required)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
+	}
+	// A group recorded but not toggleable is reported, never silently skipped. The toggle
+	// below still applies to every group that CAN take it — refusing the whole campaign
+	// because one group's create failed would strand a campaign that is otherwise ready —
+	// but the operator needs to know the campaign's state is not uniform.
+	if len(incompleteGroups) > 0 {
+		slog.WarnContext(ctx, "google ads campaign has ad groups that were never fully created; the status toggle cannot reach them",
+			"campaign_id", campaign.ID,
+			"platform_campaign_id", campaign.PlatformCampaignID,
+			"status", status,
+			"incomplete_ad_groups", strings.Join(incompleteGroups, ", "),
+			"toggled_ad_groups", len(targets))
 	}
 	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform, campaign)
 	if err != nil {
@@ -1182,12 +1549,12 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 		if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {
 			return wrapUnconfirmed(uerr)
 		}
-		// If the ad group/ad ids are absent (e.g. a campaign shell with no fully-created
+		// If no ad group/ad ids were recorded (e.g. a campaign shell with no fully-created
 		// children), there is nothing to pause downstream — only the campaign is toggled.
-		if strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "" {
+		if len(targets) == 0 {
 			return nil
 		}
-		if uerr := client.UpdateAdGroupAndAdStatus(ctx, adGroupID, adID, gaStatus); uerr != nil {
+		if uerr := client.UpdateAdGroupsAndAdsStatus(ctx, targets, gaStatus); uerr != nil {
 			// After the campaign status succeeds, a child failure (even a definite 4xx) is a
 			// partial cascade: the parent changed but the child's outcome is unknown. Wrap it
 			// as Unconfirmed so the caller knows to verify the state before retry.
@@ -1196,14 +1563,15 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 		return nil
 	}
 
-	// ACTIVATE: children first (both ids are confirmed present, and keyword targeting is
-	// confirmed provisioned, by the guard above), campaign last — so the campaign only
-	// reports ENABLED once its ad group/ad already do.
-	if uerr := client.UpdateAdGroupAndAdStatus(ctx, adGroupID, adID, gaStatus); uerr != nil {
-		// UpdateAdGroupAndAdStatus tries ad group first, then ad (children-first ordering).
-		// A definite first-child failure (4xx from adGroups:mutate) is NOT a partial cascade
-		// (nothing changed). A definite second-child failure (4xx from adGroupAds:mutate after
-		// adGroups succeeded) IS a partial cascade and returns partialCascadeError, which
+	// ACTIVATE: children first (at least one group is confirmed fully provisioned, and
+	// keyword targeting is confirmed provisioned, by the guard above), campaign last — so
+	// the campaign only reports ENABLED once its ad groups/ads already do.
+	if uerr := client.UpdateAdGroupsAndAdsStatus(ctx, targets, gaStatus); uerr != nil {
+		// UpdateAdGroupsAndAdsStatus flips every ad group first, then every ad
+		// (children-first ordering). A definite first-stage failure (4xx from
+		// adGroups:mutate) is NOT a partial cascade (nothing changed). A definite
+		// second-stage failure (4xx from adGroupAds:mutate after adGroups succeeded) IS a
+		// partial cascade and returns partialCascadeError, which
 		// wrapUnconfirmed correctly classifies as unconfirmed. Ambiguous outcomes (5xx/timeout)
 		// are also wrapped as unconfirmed.
 		return wrapUnconfirmed(uerr)
@@ -1474,7 +1842,7 @@ func googleAdsRecordedChannelType(ctx context.Context, campaign *model.Campaign)
 }
 
 // googleAdsCreationCustomerID recovers the ad account the campaign was CREATED under from
-// the persisted googleads.CampaignResult blob, mirroring googleAdsChildIDs.
+// the persisted googleads.CampaignResult blob, mirroring googleAdsToggleTargets.
 //
 // Rows written before CampaignResult carried customerId have no such field, so it falls back
 // to the ocid query parameter of the stored googleAdsUrl — the create path builds that URL as
@@ -1516,21 +1884,109 @@ func googleAdsCreationCustomerID(campaign *model.Campaign) string {
 	return u.Query().Get("ocid")
 }
 
-// googleAdsChildIDs pulls the ad group + ad ids the create path stored in the persisted
-// CampaignResult blob (googleads.CampaignResult's AdGroupId/AdId), mirroring
-// redditChildIDs. A missing/unparseable blob yields empty ids.
-func googleAdsChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
+// googleAdsCampaignAdGroupIDs is the set of ad group ids this campaign records creating —
+// what bounds a keyword action to the campaign the caller addressed.
+//
+// Deliberately NOT googleAdsToggleTargets' list. That one answers "which groups can take a
+// status toggle", so it drops a group whose ads never got created; this one answers "which
+// groups are this campaign's", and a group that exists with keyword criteria but no ad is
+// still this campaign's — its keywords are real, serving nothing, and pausing or removing
+// them is a legitimate thing to ask for. Narrowing the membership test to the toggleable
+// groups would refuse that, which is over-refusal, not safety.
+//
+// Falls back to the scalar AdGroupID for rows written before AdGroups existed.
+func googleAdsCampaignAdGroupIDs(campaign *model.Campaign) map[string]bool {
 	if campaign == nil || len(campaign.Result) == 0 {
-		return "", ""
+		return nil
 	}
-	var blob struct {
-		AdGroupID string `json:"adGroupId"`
-		AdID      string `json:"adId"`
+	var result googleads.CampaignResult
+	if err := json.Unmarshal(campaign.Result, &result); err != nil {
+		return nil
 	}
-	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
-		return "", ""
+	ids := make(map[string]bool, len(result.AdGroups)+1)
+	// The scalar is a copy of the first entry, so it is added alongside rather than instead:
+	// a map makes the overlap free, and including it keeps a legacy row — which has the
+	// scalar and no AdGroups — working through the same code path.
+	if id := strings.TrimSpace(result.AdGroupID); id != "" {
+		ids[id] = true
 	}
-	return blob.AdGroupID, blob.AdID
+	for _, g := range result.AdGroups {
+		if id := strings.TrimSpace(g.ID); id != "" {
+			ids[id] = true
+		}
+	}
+	return ids
+}
+
+// googleAdsToggleTargets recovers EVERY ad group of a campaign, with its own ads, from
+// the persisted CampaignResult blob — the set a status toggle has to cascade over.
+//
+// The scalar AdGroupID/AdID pair the blob also carries is a copy of the FIRST group's, and
+// was the whole story while a campaign could only have one. Since
+// multiple ad groups and multiple responsive search ads landed, cascading over that pair
+// alone enables group 1's first ad and leaves every other group and ad PAUSED while the
+// campaign reports ENABLED — a campaign that says it is running and mostly is not.
+//
+// The three returns:
+//
+//   - targets: the groups that can actually be toggled, in the order they were created.
+//   - keywordsProvisioned: whether ANY group has a keyword criterion. Campaign-wide on
+//     purpose. The activation gate asks whether the campaign can deliver, and a campaign
+//     delivers if one of its groups has keywords; asking only about the first group
+//     refuses a campaign that would have served, which is the over-refusal this gate
+//     must not commit.
+//   - incomplete: groups recorded in the blob that cannot be toggled because their create
+//     did not finish — present with an empty id, or with no ad. The create path appends an
+//     entry BEFORE the group's mutate precisely so a failed group leaves a trace, and the
+//     caller reports these rather than silently acting on a subset.
+//
+// Falls back to the scalar pair when AdGroups is absent: rows written before that field
+// existed are single-group by construction, so the pair IS the whole campaign there.
+func googleAdsToggleTargets(campaign *model.Campaign) (targets []googleads.AdGroupStatusTarget, keywordsProvisioned bool, incomplete []string) {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return nil, false, nil
+	}
+	var result googleads.CampaignResult
+	if err := json.Unmarshal(campaign.Result, &result); err != nil {
+		return nil, false, nil
+	}
+	if len(result.AdGroups) == 0 {
+		adGroupID, adID := strings.TrimSpace(result.AdGroupID), strings.TrimSpace(result.AdID)
+		if adGroupID == "" || adID == "" {
+			return nil, len(result.KeywordCriteriaIDs) > 0, nil
+		}
+		return []googleads.AdGroupStatusTarget{{AdGroupID: adGroupID, AdIDs: []string{adID}}},
+			len(result.KeywordCriteriaIDs) > 0, nil
+	}
+	for i, g := range result.AdGroups {
+		if len(g.KeywordCriteriaIDs) > 0 {
+			keywordsProvisioned = true
+		}
+		adGroupID := strings.TrimSpace(g.ID)
+		adIDs := make([]string, 0, len(g.AdIDs))
+		for _, adID := range g.AdIDs {
+			if adID = strings.TrimSpace(adID); adID != "" {
+				adIDs = append(adIDs, adID)
+			}
+		}
+		if adGroupID == "" || len(adIDs) == 0 {
+			// Named by what the operator will recognise in the Google Ads UI, falling back
+			// to the position when the name is empty too.
+			name := strings.TrimSpace(g.Name)
+			if name == "" {
+				name = fmt.Sprintf("#%d", i+1)
+			}
+			incomplete = append(incomplete, name)
+			continue
+		}
+		targets = append(targets, googleads.AdGroupStatusTarget{AdGroupID: adGroupID, AdIDs: adIDs})
+	}
+	// The scalar pair is a copy of the first entry, so it adds nothing when AdGroups is
+	// populated — EXCEPT when that first entry is one of the incomplete ones, which would
+	// mean the two disagree. They cannot: the scalars are written from the same values in
+	// the same step. Nothing to merge, and merging would only risk reintroducing the
+	// first group twice.
+	return targets, keywordsProvisioned, incomplete
 }
 
 // ---------------------------------------------------------------------------
@@ -1921,20 +2377,19 @@ func (d *GoogleAdsDispatcher) ReadSettings(ctx context.Context, projectID string
 		recordedName = strPtr(campaign.CampaignName)
 	}
 
-	// Flight dates. This comparison was written against a config that carried NO dates,
-	// so the recorded side was always nil and every Google campaign reported `unknown`.
-	// The comment then said a future config populating them "must start diverging without
-	// anyone having to remember to wire the comparison" — this is that future: the config
-	// now carries StartDate/EndDate and applyCampaignConfig persists them, so a recorded
-	// side exists and a real divergence is now reportable.
+	// Flight dates. The RECORDED side is now populated whenever the caller supplied one:
+	// googleAdsConfig carries startDate/endDate and applyCampaignConfig writes them to the
+	// columns on both the create and the adoption path. It is still nil for the two cases
+	// that leave the columns NULL — a campaign created before those config fields existed,
+	// and a caller that omits them — and those report `unknown` rather than a divergence,
+	// which is correct: no date was ever requested, so there is nothing for upstream to
+	// diverge FROM.
 	//
-	// A nil recorded side remains ordinary rather than a defect: the window is optional, and
-	// campaigns created before it existed have NULL columns. Adoption is NOT automatically
-	// in that set -- it persists whatever window the adopting request supplied, and the
-	// campaign it binds may well be one a prior partial attempt of ours created. What is
-	// true of adoption is narrower: the recorded side reflects the ADOPTING request, not
-	// whatever created the campaign upstream, so the two can disagree for a reason the
-	// comparison is right to surface. Both sides are formatted to the row's
+	// Adoption is NOT automatically in that set — it persists whatever window the adopting
+	// request supplied, and the campaign it binds may well be one a prior partial attempt of
+	// ours created. What is true of adoption is narrower: the recorded side reflects the
+	// ADOPTING request, not whatever created the campaign upstream, so the two can disagree
+	// for a reason this comparison is right to surface. Both sides are formatted to the row's
 	// YYYY-MM-DD, never compared as raw strings: Google returns 'yyyy-MM-dd HH:mm:ss' in
 	// the ad account's timezone, so a raw comparison would report a divergence for every
 	// campaign that agrees.
@@ -2221,17 +2676,23 @@ func (d *GoogleAdsDispatcher) ApplyKeywordActions(ctx context.Context, projectID
 	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
 		return nil, fmt.Errorf("%w: google ads campaign has no platform campaign id, so it has no keywords to act on", domain.ErrCampaignNotProvisioned)
 	}
-	adGroupID, _ := googleAdsChildIDs(campaign)
-	if strings.TrimSpace(adGroupID) == "" {
+	adGroupIDs := googleAdsCampaignAdGroupIDs(campaign)
+	if len(adGroupIDs) == 0 {
 		return nil, fmt.Errorf("%w: google ads campaign %s has no provisioned ad group, so it has no keyword criteria to act on", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
-	// Every criterion must belong to THIS campaign's ad group. Without this a caller holding
-	// a criterion id from any campaign in the shared account could pause or remove it through
-	// a campaign they do own — the path is permission-evaluated on the campaign, so the
-	// campaign is what bounds it. The keywords read returns ad_group_id precisely so a caller
-	// can satisfy this.
+	// Every criterion must belong to one of THIS campaign's ad groups. Without this a caller
+	// holding a criterion id from any campaign in the shared account could pause or remove it
+	// through a campaign they do own — the path is permission-evaluated on the campaign, so
+	// the campaign is what bounds it. The keywords read returns ad_group_id precisely so a
+	// caller can satisfy this.
+	//
+	// The bound is the campaign's FULL set of ad groups, not just the first. Checking against
+	// the scalar AdGroupID refused every action naming group 2 or later — fail-closed, so
+	// never unsafe, but it made keyword actions unusable on exactly the multi-group campaigns
+	// the feature was added for. The guard itself is unchanged in strength: an ad group this
+	// campaign does not record is still refused, locally, before Google is contacted.
 	for i, a := range validated {
-		if a.AdGroupID != adGroupID {
+		if !adGroupIDs[a.AdGroupID] {
 			return nil, fmt.Errorf("%w: keyword action %d names ad group %s, which does not belong to campaign %s",
 				domain.ErrKeywordActionInvalid, i, a.AdGroupID, campaign.PlatformCampaignID)
 		}

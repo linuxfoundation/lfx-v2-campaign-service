@@ -1412,31 +1412,6 @@ func TestGoogleAdsCreationCustomerID(t *testing.T) {
 	}
 }
 
-// ---- googleAdsChildIDs ------------------------------------------------------
-
-func TestGoogleAdsChildIDs(t *testing.T) {
-	cases := []struct {
-		name        string
-		campaign    *model.Campaign
-		wantAdGroup string
-		wantAd      string
-	}{
-		{"nil campaign", nil, "", ""},
-		{"empty result", &model.Campaign{}, "", ""},
-		{"unparseable json", &model.Campaign{Result: json.RawMessage(`not json`)}, "", ""},
-		{"valid ids present", &model.Campaign{Result: json.RawMessage(`{"adGroupId":"333","adId":"444"}`)}, "333", "444"},
-		{"valid json without ids", &model.Campaign{Result: json.RawMessage(`{"resourceName":"customers/1/campaigns/777"}`)}, "", ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			gotAdGroup, gotAd := googleAdsChildIDs(tc.campaign)
-			if gotAdGroup != tc.wantAdGroup || gotAd != tc.wantAd {
-				t.Errorf("googleAdsChildIDs(%v) = (%q, %q), want (%q, %q)", tc.campaign, gotAdGroup, gotAd, tc.wantAdGroup, tc.wantAd)
-			}
-		})
-	}
-}
-
 // TestGoogleAds_ToggleStatus_ForeignAccountIs409AndNeverMutates is the mutation-side twin of
 // TestGoogleAds_ReadMetrics_ForeignAccountIs409AndNeverQueries, and the sharper of the two: a
 // read against the wrong customer returns another account's numbers, but a MUTATE against the
