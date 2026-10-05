@@ -1444,7 +1444,8 @@ rollback this endpoint does not have.
 **What is persisted is the REQUESTED amount, not a readback of the applied one** — the dispatcher
 confirms acceptance and does not re-read, so the two can differ by less than the platform's
 smallest settable unit (LinkedIn settles on two decimals, Meta on the account currency's minor
-unit, Google on a micro). That is the same meaning the column already carries, and a sub-unit
+unit, Google on a micro, Microsoft on whatever its own validation of the account currency settles,
+since that amount is sent unrounded). That is the same meaning the column already carries, and a sub-unit
 drift is exactly what the settings readback exists to surface rather than to hide.
 Writing those columns does NOT breach the readback's "never write an observation back" rule: the
 budget columns record what a dispatch ASKED FOR, and a budget change is a new REQUEST, so the
@@ -1505,7 +1506,9 @@ a different category of data from the resource ids these logs carry.
 
 **The `ErrBudgetAmountRejected` arm is the one that returns a SPECIFIC message, and it is
 specific by construction rather than by string-handling.** A platform's own floor — LinkedIn's
-`$10` daily / `$100` lifetime, Meta's one minor unit — has no equivalent at this layer, which
+`$10` daily / `$100` lifetime, Meta's one minor unit, Microsoft's minimum in the account currency
+(stated only by Microsoft's own definite refusal of the mutate, so the platform is still
+unchanged) — has no equivalent at this layer, which
 validates only what is true for every platform at once (finite, `> 0`, `<= 1e9`, `>= half a
 micro`) and deliberately holds no per-platform floor. Without this arm such a refusal fell to the
 default 503, inviting a retry of a request that can never succeed. The adapter therefore hands

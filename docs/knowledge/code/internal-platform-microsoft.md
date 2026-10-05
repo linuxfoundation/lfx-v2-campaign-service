@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/microsoft"
-description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), campaign-level GEO targeting that resolves ISO-2 codes to Microsoft LocationIds through the ingested, cached geographical-locations file and fails closed before any mutating call rather than creating an untargeted campaign that spends everywhere (LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260)."
+description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), campaign-level GEO targeting that resolves ISO-2 codes to Microsoft LocationIds through the ingested, cached geographical-locations file and fails closed before any mutating call rather than creating an untargeted campaign that spends everywhere (LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260), and a campaign DAILY-budget read+write (GetCampaignsByIds then UpdateCampaigns) that reports shared, experiment and budget-type facts for the dispatcher to refuse on before the one idempotent PUT (LFXV2-2665)."
 resource: "internal/platform/microsoft"
 tags:
   - platform-client
@@ -701,7 +701,9 @@ CpcBid (`targeting.go`), which is what makes a created campaign able to serve at
 **status toggle** (LFXV2-2810) adds `UpdateCampaignAndChildrenStatus` on top: a cascade whose
 ordering, child-id guard and outcome classification are described under Status toggle below. **Ad-account discovery**
 (LFXV2-3064) adds `ListAdAccounts` against the separate Customer Management service, the
-one call in this package that is NOT account-scoped.
+one call in this package that is NOT account-scoped. The **budget write** (LFXV2-2665) adds
+`GetCampaignBudget` + `UpdateCampaignDailyBudget` (`budget.go`), described under Campaign budget
+below.
 
 ## Dispatch adapter (internal/dispatch)
 
@@ -782,6 +784,60 @@ Two further details belong to this layer specifically:
   PRESENCE separately and reports absence as unconfirmed — otherwise a proxy error page that happens
   to parse would let the service persist a status Microsoft never confirmed. The valid empty forms
   (`null`, `[]`) are still accepted.
+
+## Campaign budget read + write (LFXV2-2665)
+
+`budget.go` serves `MicrosoftDispatcher.WriteBudget` (see [internal/dispatch](internal-dispatch.md),
+"Microsoft — FIELDS ON THE CAMPAIGN"). The client reports facts; the dispatcher decides refusals.
+
+- **Read: `GetCampaignBudget(ctx, campaignID) (*CampaignBudget, error)`** — GetCampaignsByIds as
+  `POST CampaignManagement/v13/Campaigns/QueryByIds`, body
+  `{"AccountId":…,"CampaignIds":[<id>],"CampaignType":"Search"}` (CampaignType sent explicitly
+  rather than relying on the documented Search default). Idempotent, so a 429 is retried; every
+  failure is DEFINITE. It reports `SharedBudgetID` (a `BudgetId` > 0; `null`/absent/`0` are
+  Microsoft's documented "own budget" forms), `BudgetIDUnreadable` (present but neither — never
+  read as "not shared"), the reported `BudgetType` (`""` when unreported) and `ExperimentID`.
+  `(nil, nil)` ONLY for `CampaignServiceInvalidCampaignId` (1100), as a 200 PartialError or a 4xx
+  fault. An omitted `Campaigns`, an unexplained null slot, any other PartialError, or a slot whose
+  `Id` is not the one requested is an error: a guard reasoning about a campaign it did not read is
+  a guard in name only.
+- **Write: `UpdateCampaignDailyBudget(ctx, campaignID, amount, budgetType) error`** —
+  UpdateCampaigns as `PUT CampaignManagement/v13/Campaigns`, body
+  `{"AccountId":…,"Campaigns":[{"Id":…,"BudgetType":…,"DailyBudget":…}]}`. Only Id plus the two
+  budget fields are sent ("If no value is set for the update, this setting is not changed").
+  `budgetType` must be `DailyBudgetStandard` — the only daily type a Search campaign can have,
+  since Microsoft's BudgetLimitType reference documents `DailyBudgetAccelerated` as available only
+  to Audience campaigns — and is the one the read reported, so the PUT changes the amount and
+  nothing else. Any other value is refused before a request is made. `BudgetTypeDailyAccelerated`
+  stays named so the dispatcher can recognize, and refuse, a Search campaign reporting it. The amount is validated by `ValidateDailyBudget` (finite,
+  > 0, ≤ `maxBudget` — the create path's bounds) and sent UNROUNDED: this client does not know
+  the account currency, so rounding to an assumed two decimals would change a JPY amount; Microsoft's
+  own validation decides the smallest settable amount. Its over-maximum refusal names the amount
+  and the maximum through the same plain-decimal `formatBudgetAmount` as the mutate's refusals —
+  never `%.2f`, which would state a rounded figure for an amount that is never rounded.
+- **The PUT goes through `putUpdate`** — the body of `putStatus`, extracted so the status toggle
+  and the budget write share ONE reading of the UpdateCampaigns envelope (unanswered
+  `PartialErrors` → unconfirmed; `[null]`/`[{}]` → unconfirmed; a coded PartialError → a definite
+  `*partialUpdateError`). `putStatus`'s error texts are unchanged and pinned by a test.
+- **Classification of a failed write:** `IsOutcomeUnconfirmed` first (5xx, transport, mutating
+  redirect, exhausted 429, unanswered body). Then, from a PartialError OR a definite 4xx's codes:
+  `CampaignServiceCannotUpdateSharedBudget` (1159) → `ErrSharedBudget`;
+  `CampaignServiceInvalidDailyBudget` (1106) or
+  `CampaignServiceCampaignBudgetAmountIsLessThanSpendAmount` (1123) → an `ErrBudgetAmountInvalid`
+  whose client-safe sentence `BudgetAmountReason` returns. That sentence renders the amount as a
+  plain decimal (`strconv.FormatFloat(amount, 'f', -1, 64)`), never `%g`'s exponent form —
+  seven-figure daily budgets are ordinary in JPY, KRW, IDR and VND, and `1.5e+06` is not a figure
+  to hand a caller. Both are DEFINITE refusals of a PUT that was sent: Microsoft confirmed nothing
+  was applied, which is what lets the dispatcher map them to the "platform unchanged"
+  `ErrBudgetShared` / `ErrBudgetAmountRejected`. Anything else is returned as the definite failure
+  it is.
+
+The endpoint names, field names and error codes come from Microsoft's published v13 reference
+(GetCampaignsByIds, UpdateCampaigns, the Campaign object, the operation error-code list). The
+numeric `Code` matched beside each symbolic name (1100, 1106, 1123, 1159) was checked against
+that error-code list on 2026-10-05 and is cited in `budget.go`; a wrong number would misclassify
+a refusal (1100 as "deleted upstream", 1159 as the shared-budget 409). None has been exercised against a live Microsoft Advertising account; the transport (PUT `Campaigns`,
+the `PartialErrors` envelope) is the one the status toggle already uses.
 
 ## Account monitor (report-backed, default-OFF)
 

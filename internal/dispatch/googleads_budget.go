@@ -130,12 +130,16 @@ func (d *GoogleAdsDispatcher) WriteBudget(ctx context.Context, projectID string,
 	// Converted through the SAME validation the create path uses (one extracted helper), so
 	// an amount this service would refuse to create with cannot be reached by editing.
 	//
-	// NO rejectedBudgetAmountError MAPPING HERE, where the LinkedIn and Meta paths both have
-	// one, and the asymmetry is a fact about the platforms rather than an omission. Those two
-	// enforce floors the service layer cannot know — LinkedIn's $10 daily / $100 lifetime, and
-	// Meta's one minor unit in an account currency only Meta can report — so an amount the
+	// NO rejectedBudgetAmountError MAPPING HERE, where the LinkedIn, Meta and Microsoft paths
+	// each have one, and the asymmetry is a fact about the platforms rather than an omission.
+	// Those three enforce floors the service layer cannot know — LinkedIn's $10 daily / $100
+	// lifetime, Meta's one minor unit in an account currency only Meta can report, and
+	// Microsoft's per-currency daily minimum, which only Microsoft's own validation states (it
+	// refuses with CampaignServiceInvalidDailyBudget) — so an amount the
 	// service accepted can still be refused by the adapter, and without the mapping that
-	// refusal falls to the default 503 and invites a retry that can never succeed.
+	// refusal falls to the default 503 and invites a retry that can never succeed. Reddit maps
+	// one too, although its bounds are likewise the service's own: there it is defense in
+	// depth for a non-HTTP caller, not a floor the service layer cannot know.
 	//
 	// Google's bounds are the service's OWN bounds. ValidateBudgetMicros fails three ways and
 	// the service layer has already closed all three ahead of the claim: budget > maxBudget is
@@ -185,8 +189,9 @@ func (e *unconfirmedBudgetWriteError) Unconfirmed() bool { return true }
 
 // rejectedBudgetAmountError marks a budget write refused because the REQUESTED AMOUNT is
 // outside what the platform accepts — LinkedIn's $10 daily / $100 lifetime minimums, Meta's
-// one-minor-unit floor in the account's currency — and carries the one sentence that is safe
-// and useful to hand back to the caller.
+// one-minor-unit floor in the account's currency, Microsoft's refusal of a daily budget as not
+// valid for the account — and carries the one sentence that is safe and useful to hand back to
+// the caller.
 //
 // It carries `reason` separately rather than letting the service render the error chain,
 // because the chain is not a client message: it accumulates the dispatcher's own prefix and
@@ -196,8 +201,10 @@ func (e *unconfirmedBudgetWriteError) Unconfirmed() bool { return true }
 //
 // It satisfies the same errors.Is/errors.As split the unconfirmed wrapper does: Unwrap reaches
 // domain.ErrBudgetAmountRejected so the service's switch arm matches, while the reason comes
-// back through a behavioral interface. Nothing has been written when this is returned — every
-// amount validation happens before the first mutating call.
+// back through a behavioral interface. The platform is unchanged when this is returned — every
+// adapter-side amount validation happens before the first mutating call, and Microsoft's, the
+// one platform whose floor is stated only by its own mutate, is a DEFINITE refusal of that
+// mutate (a PartialError on a 200, or a 4xx), never an ambiguous outcome.
 type rejectedBudgetAmountError struct {
 	reason string
 	err    error

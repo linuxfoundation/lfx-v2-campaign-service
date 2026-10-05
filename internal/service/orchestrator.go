@@ -294,8 +294,12 @@ type SettingsReader interface {
 //   - REFUSE A SHARED BUDGET. Where a platform's budget can be attached to more than one
 //     campaign, writing it through ONE campaign silently changes the others — including
 //     campaigns this service does not own and the caller cannot see. That must be refused
-//     before the mutate with ErrBudgetShared, never written. See that sentinel for why an
-//     adopted campaign is the case this guard exists for.
+//     with ErrBudgetShared, never written: from the adapter's own read before any mutate is
+//     issued, or — where the platform enforces it too (Microsoft) — because the platform
+//     DEFINITELY refused the mutate, confirming nothing was applied. Either way the sentinel
+//     means "the platform is unchanged"; an outcome the platform did not confirm is never
+//     ErrBudgetShared. See that sentinel for why an adopted campaign is the case this guard
+//     exists for.
 //
 //   - ENFORCE THE ACCOUNT-IDENTITY INVARIANT AT LEAST AS STRICTLY AS ReadSettings DOES.
 //     A platform campaign id is typically unique only within the account it was created
@@ -607,8 +611,10 @@ var (
 	ErrBudgetShared = domain.ErrBudgetShared
 	// ErrBudgetUnwritable: the campaign's upstream budget could not be addressed for a write.
 	ErrBudgetUnwritable = domain.ErrBudgetUnwritable
-	// ErrBudgetAmountRejected: the requested amount was refused by the platform adapter's own
-	// validator, before anything was written — a permanent request fault, answered 400.
+	// ErrBudgetAmountRejected: the requested amount was refused and the platform confirmed NO
+	// change — by the platform adapter's own validator before any mutate, or (Microsoft) by the
+	// platform's definite refusal of the mutate. A permanent request fault, answered 400; an
+	// unconfirmed outcome is never this sentinel.
 	ErrBudgetAmountRejected = domain.ErrBudgetAmountRejected
 
 	// ErrAccountsUnsupported: the platform has no account-listing capability wired.
@@ -2176,10 +2182,14 @@ func (o *Orchestrator) WriteCampaignBudget(ctx context.Context, projectID string
 	// groups ToggleCampaignStatus documents at length above, classified identically,
 	// because this path resolves credentials through the very same credsSource.
 	//
-	// TWO further sentinels are reachable only here, and both are refusals raised BEFORE
-	// any mutate is issued, so nothing upstream has changed when a caller sees either:
+	// TWO further sentinels are reachable only here, and both mean the platform confirmed
+	// NO change, so nothing upstream has changed when a caller sees either:
 	// ErrBudgetShared (the budget is attached to campaigns this request never named) and
-	// ErrBudgetUnwritable (the budget could not be addressed at all). Both are permanent
+	// ErrBudgetUnwritable (the budget could not be addressed at all). Usually they are raised
+	// before any mutate is issued; ErrBudgetShared may also follow a mutate that was SENT and
+	// DEFINITELY refused (Microsoft's CampaignServiceCannotUpdateSharedBudget, for a budget
+	// attached between the read and the write), which applied nothing either. An outcome the
+	// platform did not confirm is never one of them — that is UNCONFIRMED. Both are permanent
 	// properties of how that budget is set up, which is why the caller answers them 409
 	// rather than 503 — there is no retry that improves them.
 	//

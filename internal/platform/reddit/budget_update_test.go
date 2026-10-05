@@ -137,8 +137,22 @@ func TestCampaignBudget_InvalidCampaignIDRefusedBeforeAnyRequest(t *testing.T) {
 			t.Errorf("UpdateCampaignBudget(%q) = %v, want ErrInvalidCampaignID", id, err)
 		}
 	}
-	if err := c.UpdateCampaignBudget(context.Background(), "t3_camp", 0); err == nil {
+	err := c.UpdateCampaignBudget(context.Background(), "t3_camp", 0)
+	if err == nil {
 		t.Error("a non-positive micro amount must be refused before any request")
+	} else {
+		// The refusal is CLIENT-SAFE: it reaches the caller through BudgetAmountReason, so it
+		// must state the constraint and never name the helper that should have produced the value.
+		reason, ok := BudgetAmountReason(err)
+		if !ok {
+			t.Errorf("BudgetAmountReason(%v) reported no reason; a non-positive amount must classify as an amount refusal", err)
+		}
+		if !strings.Contains(reason, "positive number of micro-units") {
+			t.Errorf("reason = %q, want it to state the positive-micro-units constraint", reason)
+		}
+		if strings.Contains(reason, "BudgetMicros") {
+			t.Errorf("reason = %q names an internal helper; it reaches the caller and must not", reason)
+		}
 	}
 	if n := len(seen()); n != 0 {
 		t.Errorf("an invalid input must reach no endpoint, got %d request(s)", n)
