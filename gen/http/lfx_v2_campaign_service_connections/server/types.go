@@ -937,6 +937,17 @@ type MonitorGoogleAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Microsoft Ads only: when the platform report these campaigns' metrics come
+	// from finished building. Microsoft reports take minutes, so the service
+	// serves the last finished report and builds the next one between requests.
+	// Absent when no report has finished yet; in that case every campaign has
+	// fetch_failed=true and is excluded from pacing and action items. Omitted on
+	// every other platform, whose metrics are read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Microsoft Ads only: true while a newer report is building on the platform,
+	// so a later read will return newer metrics (or the first ones, when
+	// metrics_as_of is absent). Omitted on every other platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
 // MonitorLinkedinAdsAccountResponseBody is the type of the
@@ -953,6 +964,17 @@ type MonitorLinkedinAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Microsoft Ads only: when the platform report these campaigns' metrics come
+	// from finished building. Microsoft reports take minutes, so the service
+	// serves the last finished report and builds the next one between requests.
+	// Absent when no report has finished yet; in that case every campaign has
+	// fetch_failed=true and is excluded from pacing and action items. Omitted on
+	// every other platform, whose metrics are read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Microsoft Ads only: true while a newer report is building on the platform,
+	// so a later read will return newer metrics (or the first ones, when
+	// metrics_as_of is absent). Omitted on every other platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
 // MonitorMetaAdsAccountResponseBody is the type of the
@@ -969,6 +991,17 @@ type MonitorMetaAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Microsoft Ads only: when the platform report these campaigns' metrics come
+	// from finished building. Microsoft reports take minutes, so the service
+	// serves the last finished report and builds the next one between requests.
+	// Absent when no report has finished yet; in that case every campaign has
+	// fetch_failed=true and is excluded from pacing and action items. Omitted on
+	// every other platform, whose metrics are read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Microsoft Ads only: true while a newer report is building on the platform,
+	// so a later read will return newer metrics (or the first ones, when
+	// metrics_as_of is absent). Omitted on every other platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
 // MonitorRedditAdsAccountResponseBody is the type of the
@@ -985,6 +1018,44 @@ type MonitorRedditAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Microsoft Ads only: when the platform report these campaigns' metrics come
+	// from finished building. Microsoft reports take minutes, so the service
+	// serves the last finished report and builds the next one between requests.
+	// Absent when no report has finished yet; in that case every campaign has
+	// fetch_failed=true and is excluded from pacing and action items. Omitted on
+	// every other platform, whose metrics are read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Microsoft Ads only: true while a newer report is building on the platform,
+	// so a later read will return newer metrics (or the first ones, when
+	// metrics_as_of is absent). Omitted on every other platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// MonitorMicrosoftAdsAccountResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "monitor-microsoft-ads-account" endpoint HTTP response body.
+type MonitorMicrosoftAdsAccountResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The trailing-days window this read covers, echoed back from the request.
+	Days int `form:"days" json:"days" xml:"days"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Microsoft Ads only: when the platform report these campaigns' metrics come
+	// from finished building. Microsoft reports take minutes, so the service
+	// serves the last finished report and builds the next one between requests.
+	// Absent when no report has finished yet; in that case every campaign has
+	// fetch_failed=true and is excluded from pacing and action items. Omitted on
+	// every other platform, whose metrics are read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Microsoft Ads only: true while a newer report is building on the platform,
+	// so a later read will return newer metrics (or the first ones, when
+	// metrics_as_of is absent). Omitted on every other platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
 // CreateGoogleAdsBadRequestResponseBody is the type of the
@@ -4594,6 +4665,72 @@ type MonitorRedditAdsAccountUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// MonitorMicrosoftAdsAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "monitor-microsoft-ads-account" endpoint HTTP response body for the
+// "BadRequest" error.
+type MonitorMicrosoftAdsAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// MonitorMicrosoftAdsAccountServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "monitor-microsoft-ads-account" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type MonitorMicrosoftAdsAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// MonitorMicrosoftAdsAccountInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "monitor-microsoft-ads-account" endpoint HTTP response body for the
+// "InternalServerError" error.
+type MonitorMicrosoftAdsAccountInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// MonitorMicrosoftAdsAccountNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "monitor-microsoft-ads-account" endpoint HTTP response body for the
+// "NotFound" error.
+type MonitorMicrosoftAdsAccountNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// MonitorMicrosoftAdsAccountPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "monitor-microsoft-ads-account" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type MonitorMicrosoftAdsAccountPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// MonitorMicrosoftAdsAccountUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "monitor-microsoft-ads-account" endpoint HTTP response body for the
+// "Unauthorized" error.
+type MonitorMicrosoftAdsAccountUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // AccessibleAccountResponseBody is used to define fields on response body
 // types.
 type AccessibleAccountResponseBody struct {
@@ -5676,8 +5813,10 @@ func NewCreateHubspotCampaignResponseBody(res *lfxv2campaignserviceconnections.H
 // "lfx-v2-campaign-service-connections" service.
 func NewMonitorGoogleAdsAccountResponseBody(res *lfxv2campaignserviceconnections.AccountMonitor) *MonitorGoogleAdsAccountResponseBody {
 	body := &MonitorGoogleAdsAccountResponseBody{
-		AccountID: res.AccountID,
-		Days:      res.Days,
+		AccountID:      res.AccountID,
+		Days:           res.Days,
+		MetricsAsOf:    res.MetricsAsOf,
+		MetricsPending: res.MetricsPending,
 	}
 	if res.Campaigns != nil {
 		body.Campaigns = make([]*AccountMonitorCampaignResponseBody, len(res.Campaigns))
@@ -5714,8 +5853,10 @@ func NewMonitorGoogleAdsAccountResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewMonitorLinkedinAdsAccountResponseBody(res *lfxv2campaignserviceconnections.AccountMonitor) *MonitorLinkedinAdsAccountResponseBody {
 	body := &MonitorLinkedinAdsAccountResponseBody{
-		AccountID: res.AccountID,
-		Days:      res.Days,
+		AccountID:      res.AccountID,
+		Days:           res.Days,
+		MetricsAsOf:    res.MetricsAsOf,
+		MetricsPending: res.MetricsPending,
 	}
 	if res.Campaigns != nil {
 		body.Campaigns = make([]*AccountMonitorCampaignResponseBody, len(res.Campaigns))
@@ -5752,8 +5893,10 @@ func NewMonitorLinkedinAdsAccountResponseBody(res *lfxv2campaignserviceconnectio
 // "lfx-v2-campaign-service-connections" service.
 func NewMonitorMetaAdsAccountResponseBody(res *lfxv2campaignserviceconnections.AccountMonitor) *MonitorMetaAdsAccountResponseBody {
 	body := &MonitorMetaAdsAccountResponseBody{
-		AccountID: res.AccountID,
-		Days:      res.Days,
+		AccountID:      res.AccountID,
+		Days:           res.Days,
+		MetricsAsOf:    res.MetricsAsOf,
+		MetricsPending: res.MetricsPending,
 	}
 	if res.Campaigns != nil {
 		body.Campaigns = make([]*AccountMonitorCampaignResponseBody, len(res.Campaigns))
@@ -5790,8 +5933,50 @@ func NewMonitorMetaAdsAccountResponseBody(res *lfxv2campaignserviceconnections.A
 // "lfx-v2-campaign-service-connections" service.
 func NewMonitorRedditAdsAccountResponseBody(res *lfxv2campaignserviceconnections.AccountMonitor) *MonitorRedditAdsAccountResponseBody {
 	body := &MonitorRedditAdsAccountResponseBody{
-		AccountID: res.AccountID,
-		Days:      res.Days,
+		AccountID:      res.AccountID,
+		Days:           res.Days,
+		MetricsAsOf:    res.MetricsAsOf,
+		MetricsPending: res.MetricsPending,
+	}
+	if res.Campaigns != nil {
+		body.Campaigns = make([]*AccountMonitorCampaignResponseBody, len(res.Campaigns))
+		for i, val := range res.Campaigns {
+			if val == nil {
+				body.Campaigns[i] = nil
+				continue
+			}
+			body.Campaigns[i] = marshalLfxv2campaignserviceconnectionsAccountMonitorCampaignToAccountMonitorCampaignResponseBody(val)
+		}
+	} else {
+		body.Campaigns = []*AccountMonitorCampaignResponseBody{}
+	}
+	if res.ActionItems != nil {
+		body.ActionItems = make([]*AccountMonitorActionItemResponseBody, len(res.ActionItems))
+		for i, val := range res.ActionItems {
+			if val == nil {
+				body.ActionItems[i] = nil
+				continue
+			}
+			body.ActionItems[i] = marshalLfxv2campaignserviceconnectionsAccountMonitorActionItemToAccountMonitorActionItemResponseBody(val)
+		}
+	} else {
+		body.ActionItems = []*AccountMonitorActionItemResponseBody{}
+	}
+	if res.Totals != nil {
+		body.Totals = marshalLfxv2campaignserviceconnectionsAccountMonitorTotalsToAccountMonitorTotalsResponseBody(res.Totals)
+	}
+	return body
+}
+
+// NewMonitorMicrosoftAdsAccountResponseBody builds the HTTP response body from
+// the result of the "monitor-microsoft-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorMicrosoftAdsAccountResponseBody(res *lfxv2campaignserviceconnections.AccountMonitor) *MonitorMicrosoftAdsAccountResponseBody {
+	body := &MonitorMicrosoftAdsAccountResponseBody{
+		AccountID:      res.AccountID,
+		Days:           res.Days,
+		MetricsAsOf:    res.MetricsAsOf,
+		MetricsPending: res.MetricsPending,
 	}
 	if res.Campaigns != nil {
 		body.Campaigns = make([]*AccountMonitorCampaignResponseBody, len(res.Campaigns))
@@ -9770,6 +9955,72 @@ func NewMonitorRedditAdsAccountUnauthorizedResponseBody(res *lfxv2campaignservic
 	return body
 }
 
+// NewMonitorMicrosoftAdsAccountBadRequestResponseBody builds the HTTP response
+// body from the result of the "monitor-microsoft-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorMicrosoftAdsAccountBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *MonitorMicrosoftAdsAccountBadRequestResponseBody {
+	body := &MonitorMicrosoftAdsAccountBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorMicrosoftAdsAccountServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "monitor-microsoft-ads-account"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewMonitorMicrosoftAdsAccountServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *MonitorMicrosoftAdsAccountServiceUnavailableResponseBody {
+	body := &MonitorMicrosoftAdsAccountServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorMicrosoftAdsAccountInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "monitor-microsoft-ads-account"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewMonitorMicrosoftAdsAccountInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *MonitorMicrosoftAdsAccountInternalServerErrorResponseBody {
+	body := &MonitorMicrosoftAdsAccountInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorMicrosoftAdsAccountNotFoundResponseBody builds the HTTP response
+// body from the result of the "monitor-microsoft-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorMicrosoftAdsAccountNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *MonitorMicrosoftAdsAccountNotFoundResponseBody {
+	body := &MonitorMicrosoftAdsAccountNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorMicrosoftAdsAccountPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "monitor-microsoft-ads-account"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewMonitorMicrosoftAdsAccountPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *MonitorMicrosoftAdsAccountPayloadTooLargeResponseBody {
+	body := &MonitorMicrosoftAdsAccountPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorMicrosoftAdsAccountUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "monitor-microsoft-ads-account"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewMonitorMicrosoftAdsAccountUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *MonitorMicrosoftAdsAccountUnauthorizedResponseBody {
+	body := &MonitorMicrosoftAdsAccountUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateGoogleAdsPayload builds a lfx-v2-campaign-service-connections
 // service create-google-ads endpoint payload.
 func NewCreateGoogleAdsPayload(body *CreateGoogleAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.CreateGoogleAdsPayload {
@@ -10395,6 +10646,19 @@ func NewMonitorMetaAdsAccountPayload(projectID string, accountID string, days in
 // endpoint payload.
 func NewMonitorRedditAdsAccountPayload(projectID string, accountID string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorRedditAdsAccountPayload {
 	v := &lfxv2campaignserviceconnections.MonitorRedditAdsAccountPayload{}
+	v.ProjectID = projectID
+	v.AccountID = accountID
+	v.Days = days
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewMonitorMicrosoftAdsAccountPayload builds a
+// lfx-v2-campaign-service-connections service monitor-microsoft-ads-account
+// endpoint payload.
+func NewMonitorMicrosoftAdsAccountPayload(projectID string, accountID string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorMicrosoftAdsAccountPayload {
+	v := &lfxv2campaignserviceconnections.MonitorMicrosoftAdsAccountPayload{}
 	v.ProjectID = projectID
 	v.AccountID = accountID
 	v.Days = days

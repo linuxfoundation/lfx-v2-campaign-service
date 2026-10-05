@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -73,6 +74,11 @@ func TestMonitorAccount_RejectsTheReservedSystemScope(t *testing.T) {
 		{"reddit ads", func(s *ConnectionService) error {
 			_, err := s.MonitorRedditAdsAccount(context.Background(),
 				&conn.MonitorRedditAdsAccountPayload{ProjectID: model.SystemProjectID, AccountID: "a", Days: 30})
+			return err
+		}},
+		{"microsoft ads", func(s *ConnectionService) error {
+			_, err := s.MonitorMicrosoftAdsAccount(context.Background(),
+				&conn.MonitorMicrosoftAdsAccountPayload{ProjectID: model.SystemProjectID, AccountID: "1", Days: 30})
 			return err
 		}},
 	}
@@ -370,5 +376,106 @@ func TestToConnAccountMonitorCampaign_CampaignURL(t *testing.T) {
 	})
 	if withoutURL.CampaignURL != nil {
 		t.Errorf("CampaignURL = %v, want nil for a platform row with no campaign_url", *withoutURL.CampaignURL)
+	}
+}
+
+// microsoftMonitorService wires a ConnectionService whose orchestrator answers Microsoft's
+// report-backed monitor from the given reader and store.
+func microsoftMonitorService(reader *fakeReportReader, store domain.AccountReportRepository) *ConnectionService {
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(reportOrch(reader, store))
+	return svc
+}
+
+// The report-backed response says how old its metrics are and whether newer ones are building,
+// and still evaluates and totals exactly the rows it returns.
+func TestMonitorMicrosoftAdsAccount_ReportsMetricsFreshness(t *testing.T) {
+	completed := time.Date(2026, 10, 5, 14, 30, 0, 0, time.UTC)
+	reader := &fakeReportReader{campaigns: twoCampaigns()}
+	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{
+		CompletedAt: completed,
+		Rows: []model.AccountReportRow{
+			{PlatformCampaignID: "1", Spend: 70, Impressions: 1000, Clicks: 30},
+			{PlatformCampaignID: "2", Spend: 10, Impressions: 500, Clicks: 5},
+		},
+	}}}
+	// The saved report is older than accountReportFreshFor relative to the wall clock, so the
+	// read also submits; the fake accepts it and the response reports it as building.
+	reader.submitID = "r-next"
+
+	got, err := microsoftMonitorService(reader, store).MonitorMicrosoftAdsAccount(context.Background(),
+		&conn.MonitorMicrosoftAdsAccountPayload{ProjectID: "p", AccountID: "123", Days: 7})
+	if err != nil {
+		t.Fatalf("MonitorMicrosoftAdsAccount: %v", err)
+	}
+	if got.MetricsAsOf == nil || *got.MetricsAsOf != "2026-10-05T14:30:00Z" {
+		t.Errorf("metrics_as_of = %v, want the report's completion time in RFC 3339", got.MetricsAsOf)
+	}
+	if got.MetricsPending == nil || !*got.MetricsPending {
+		t.Errorf("metrics_pending = %v, want true", got.MetricsPending)
+	}
+	if got.Totals.Spend != 80 || got.Totals.CampaignCount != 2 {
+		t.Errorf("totals = %+v, want the sum of the two returned rows", got.Totals)
+	}
+}
+
+// With nothing finished yet, metrics_as_of is absent, metrics_pending is true, and no row is
+// evaluated: unavailable metrics must not read as a campaign spending nothing.
+func TestMonitorMicrosoftAdsAccount_FirstReadHasNoFindings(t *testing.T) {
+	reader := &fakeReportReader{campaigns: twoCampaigns(), submitID: "r1"}
+	got, err := microsoftMonitorService(reader, &fakeReportStore{}).MonitorMicrosoftAdsAccount(context.Background(),
+		&conn.MonitorMicrosoftAdsAccountPayload{ProjectID: "p", AccountID: "123", Days: 7})
+	if err != nil {
+		t.Fatalf("MonitorMicrosoftAdsAccount: %v", err)
+	}
+	if got.MetricsAsOf != nil {
+		t.Errorf("metrics_as_of = %v, want absent", *got.MetricsAsOf)
+	}
+	if got.MetricsPending == nil || !*got.MetricsPending {
+		t.Errorf("metrics_pending = %v, want true", got.MetricsPending)
+	}
+	if len(got.ActionItems) != 0 {
+		t.Errorf("action_items = %+v, want none while metrics are unavailable", got.ActionItems)
+	}
+	for _, c := range got.Campaigns {
+		if !c.FetchFailed {
+			t.Errorf("campaign %s fetch_failed = false, want true", c.PlatformCampaignID)
+		}
+	}
+}
+
+// The list's errors are classified like every other monitor's: a mismatched account is 400 and
+// an unclassified failure is the 503 naming the account monitor.
+func TestMonitorMicrosoftAdsAccount_ClassifiesListErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"account not managed", domain.ErrAccountNotManagedByConnection, "400"},
+		{"no own connection", domain.ErrNotFound, "404"},
+		{"disabled monitor", domain.ErrAccountMetricsUnsupported, "400"},
+		{"upstream failure", errors.New("boom"), "503"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := microsoftMonitorService(&fakeReportReader{listErr: tc.err}, &fakeReportStore{}).MonitorMicrosoftAdsAccount(
+				context.Background(), &conn.MonitorMicrosoftAdsAccountPayload{ProjectID: "p", AccountID: "123", Days: 7})
+			switch tc.want {
+			case "400":
+				if _, ok := err.(*conn.BadRequestError); !ok {
+					t.Fatalf("got %T: %v, want 400", err, err)
+				}
+			case "404":
+				if _, ok := err.(*conn.NotFoundError); !ok {
+					t.Fatalf("got %T: %v, want 404", err, err)
+				}
+			case "503":
+				su, ok := err.(*conn.ConnServiceUnavailableError)
+				if !ok || !strings.Contains(su.Message, "account monitor") {
+					t.Fatalf("got %T: %v, want a 503 naming the account monitor", err, err)
+				}
+			}
+		})
 	}
 }

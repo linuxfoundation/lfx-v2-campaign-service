@@ -15,6 +15,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 	goahttp "goa.design/goa/v3/http"
 )
@@ -96,6 +97,23 @@ func TestMonitorAccountIDPatterns_MatchPlatformValidators(t *testing.T) {
 			}
 		}
 	})
+	// Microsoft is the one platform whose cases DO cross the length bound: its Pattern caps the
+	// id at 18 digits and microsoft.ValidateMonitorAccountID enforces the same cap, so length is
+	// part of the shape both layers check — unlike the four above, where MaxLength(64) has no
+	// runtime counterpart (see this test's doc comment). The 18- and 19-digit cases pin that.
+	t.Run("microsoft", func(t *testing.T) {
+		decodeOK := monitorDecoderChecker(t, "/connection-microsoft-ads/account-monitor",
+			connsrv.MountMonitorMicrosoftAdsAccountHandler, connsrv.DecodeMonitorMicrosoftAdsAccountRequest)
+		cases := []string{"187654321", "1", "0", "01", "", "12a", " 187654321", "187654321 ", "\t187654321",
+			"999999999999999999", "1234567890123456789", "-187654321"}
+		for _, id := range cases {
+			designOK := decodeOK(id)
+			platformOK := microsoft.ValidateMonitorAccountID(id) == nil
+			if designOK != platformOK {
+				t.Errorf("account_id %q: design decoder accepts=%v, microsoft.ValidateMonitorAccountID accepts=%v — the two shape checks have drifted apart", id, designOK, platformOK)
+			}
+		}
+	})
 }
 
 // TestMonitorDaysBound_MatchesDomainConstants guards the `days` sibling of the account_id
@@ -148,6 +166,18 @@ func TestMonitorDaysBound_MatchesDomainConstants(t *testing.T) {
 	t.Run("reddit", func(t *testing.T) {
 		decodeOK := monitorDaysDecoderChecker(t, "/connection-reddit-ads/account-monitor",
 			connsrv.MountMonitorRedditAdsAccountHandler, connsrv.DecodeMonitorRedditAdsAccountRequest)
+		for _, days := range cases {
+			designOK := decodeOK(days)
+			runtimeOK := days >= domain.MonitorDaysMin && days <= domain.MonitorDaysMax
+			if designOK != runtimeOK {
+				t.Errorf("days %d: design decoder accepts=%v, domain.MonitorDaysMin/Max bound accepts=%v — the two bounds have drifted apart", days, designOK, runtimeOK)
+			}
+		}
+	})
+
+	t.Run("microsoft", func(t *testing.T) {
+		decodeOK := monitorDaysDecoderChecker(t, "/connection-microsoft-ads/account-monitor",
+			connsrv.MountMonitorMicrosoftAdsAccountHandler, connsrv.DecodeMonitorMicrosoftAdsAccountRequest)
 		for _, days := range cases {
 			designOK := decodeOK(days)
 			runtimeOK := days >= domain.MonitorDaysMin && days <= domain.MonitorDaysMax

@@ -786,8 +786,8 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
   `domain.ErrMonitorDaysInvalid`'s doc comment.
 - `ErrAccountNotManagedByConnection` → **400** — a caller-supplied account id is well-formed but
   names an account the project's own resolved connection does not manage (answerable by the
-  Reddit, LinkedIn and Meta monitor reads, since a connection is bound to exactly one ad
-  account; Reddit checked it first, and Google Ads is the remaining deliberate gap). Checked before `ErrConnectionNotUsable`
+  Reddit, LinkedIn, Meta and Microsoft monitor reads, since a connection is bound to exactly
+  one ad account; Reddit checked it first, and Google Ads is the remaining deliberate gap). Checked before `ErrConnectionNotUsable`
   below: the stored connection is fine here, the REQUEST named the wrong account, so
   `ErrConnectionNotUsable`'s "check that the stored credential is active and valid" message
   would point at the wrong remedy (round-18 review). See `domain.ErrAccountNotManagedByConnection`'s
@@ -1742,3 +1742,21 @@ There is no streaming variant: Goa v3 has no SSE encoding, so `discover` is a sy
 here and any progress feel is the caller's own concern.
 
 See [internal/service](../../../internal/service).
+
+## Report-backed account monitor (`account_report.go`)
+
+`AccountReportReader` is the optional dispatcher capability for a platform whose monitor
+metrics come from an ASYNCHRONOUS report — today Microsoft, whose Reporting service takes
+minutes against a 20s call budget. `Orchestrator.ReadReportedAccountCampaigns` lists the
+account's campaigns live, checks a pending report once, submits a new one when nothing is
+building and the last finished report is older than `accountReportFreshFor` (30m), abandons
+one pending past `accountReportAbandonAfter` (60m), and fills metrics from the last finished
+report — all inside ONE `accountsCallTimeout`, because three per-step timeouts could together
+outlast the 60s ingress. Only the live list can fail the call; a check, submit or save error
+is logged and the response serves whatever was saved. State lives in
+`domain.AccountReportRepository` (`account_monitor_reports`), late-bound with
+`SetAccountReportStore` through `Container.newOrchestrator`'s parameter so neither
+construction path can forget it. `ConnectionService.monitorReportedAccount` is
+`monitorAccount`'s twin for these platforms — same guards, classification, rules and totals
+(`buildAccountMonitor`) — and adds `metrics_as_of` / `metrics_pending` to the response. See
+[Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md#microsoft-a-report-backed-monitor).
