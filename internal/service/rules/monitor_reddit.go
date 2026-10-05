@@ -94,9 +94,10 @@ func EvaluateRedditMonitor(rows []model.AccountCampaignMetrics, days int, now ti
 //     window this is Google/Meta's BudgetDay × days, and it matches this platform's own report
 //     window (which starts at today's midnight minus days-1). It is deliberately ONE DAY MORE
 //     than LinkedIn's daily branch (monitor_linkedin.go), which anchors its range at the current
-//     INSTANT minus days-1 and so counts days-1 full days for a whole-window flight. A flight that does not overlap the window at all has no expected spend,
-//     so pacing is not computable rather than measured against a day the campaign was not
-//     scheduled to run.
+//     INSTANT minus days-1 and so counts days-1 full days for a whole-window flight.
+//     A flight that does not overlap the window at all has no expected spend, so pacing is
+//     not computable rather than measured against a day the campaign was not scheduled to
+//     run.
 //
 // The BFF had a dailyBudget × days branch too, but it was dead: reddit-ads.service.ts
 // hardcoded dailyBudget to 0 and read goal_value as a lifetime total whatever goal_type said,
