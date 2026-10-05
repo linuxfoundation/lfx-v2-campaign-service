@@ -162,12 +162,16 @@ func TestCreatePerformanceMaxCampaign_CampaignShape(t *testing.T) {
 	groupH, _ := okPMaxGroup()
 	linkH, _ := okPMaxLinks()
 
+	// Built on the TEST goroutine: pmaxImages renders through pngOf, which ends in
+	// t.Fatalf, and FailNow from a handler does not stop the test — it can leave the
+	// server blocked while a deferred Close runs.
+	cascade := pmaxCascade(t, pmaxImages(t), assetH, groupH, linkH)
 	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "campaigns:mutate") {
 			campaignH(w, r)
 			return
 		}
-		pmaxCascade(t, pmaxImages(t), assetH, groupH, linkH)(w, r)
+		cascade(w, r)
 	})
 	c := demandGenClient(t, srv)
 	in := demandGenInput()
@@ -197,10 +201,10 @@ func TestCreatePerformanceMaxCampaign_CampaignShape(t *testing.T) {
 }
 
 func TestCreatePerformanceMaxCampaign_BadImageRefusesBeforeAnyMutate(t *testing.T) {
+	tooSmall := pngOf(t, 100, 52) // under Google's minimum for the marketing slot
 	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, ".png") {
-			// Under Google's minimum for the marketing slot.
-			_, _ = w.Write(pngOf(t, 100, 52))
+			_, _ = w.Write(tooSmall)
 			return
 		}
 		t.Errorf("a mutate was sent despite an unusable image: %s", r.URL.Path)

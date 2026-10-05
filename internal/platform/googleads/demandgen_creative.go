@@ -405,7 +405,12 @@ func validateImageURLs(slot imageSlot, in []string) ([]string, error) {
 		// on-path attacker can replace with an image of their choosing that then
 		// becomes a real ad creative under the Foundation's account.
 		if !strings.EqualFold(u.Scheme, "https") {
-			return nil, fmt.Errorf("google-ads %s %d must be an https URL, got scheme %q", slot.label, i, u.Scheme)
+			// The caller's scheme is NOT echoed. At this point the code has established
+			// only that it is not https — nothing about what it actually is — and a bare
+			// token parses as a scheme all on its own ("sk-secret:foo" has scheme
+			// "sk-secret"). Naming the required scheme from our own constant loses nothing:
+			// the caller already knows what they sent.
+			return nil, fmt.Errorf("google-ads %s %d must be an https URL", slot.label, i)
 		}
 		if u.Host == "" {
 			return nil, fmt.Errorf("google-ads %s %d has no host: %q", slot.label, i, redactURLForError(raw))

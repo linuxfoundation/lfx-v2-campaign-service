@@ -1032,9 +1032,12 @@ demandGenCreative?:             — OPTIONAL Demand Gen ad (LFXV2-2665). DEMAND 
    logoImages?: string[],         Images are given as https URLs that THIS SERVICE fetches and uploads as
    headlines?: string[],          Google Ads image assets; Google is never handed the URL. The fetch is
    descriptions?: string[],       anonymous (no credentials are sent), follows no redirects, refuses any
-   businessName?: string,         address that is not a public IP, caps each body at 5 MiB, and accepts
-   callToActionText?: string}     only PNG, JPEG and GIF. Every image is fetched and checked BEFORE the
-                                  first budget mutate, so a bad URL cannot strand a paid campaign.
+   businessName?: string,         address that is not a public IP, caps each body at 5 MiB AND the sum
+   callToActionText?: string}     of every image in one creative at 64 MiB, and accepts only PNG, JPEG
+                                  and GIF. Every image is fetched and checked BEFORE the first budget
+                                  mutate, so a bad URL cannot strand a paid campaign. The 64 MiB total
+                                  is a separate refusal from the per-image cap: images that each pass
+                                  5 MiB and every count and shape bound can still be refused on the sum.
 
                                   Each list has its own shape, checked against the decoded image:
                                     marketingImages          1.91:1, min 600x314
@@ -1071,9 +1074,10 @@ performanceMaxCreative?:        — OPTIONAL Performance Max ASSET GROUP (LFXV2-
    landscapeLogoImages?:
      string[],                    Images are given as https URLs that THIS SERVICE fetches and uploads as
    headlines?: string[],          Google Ads image assets, under exactly the rules `demandGenCreative`
-   longHeadlines?: string[],      states (anonymous, no redirects, public IPs only, 5 MiB cap, PNG/JPEG/
-   descriptions?: string[],       GIF only, every image fetched and checked BEFORE the first budget
-   businessName?: string,         mutate). Google is never handed the URL.
+   longHeadlines?: string[],      states (anonymous, no redirects, public IPs only, 5 MiB per image and
+   descriptions?: string[],       64 MiB across the whole creative, PNG/JPEG/GIF only, every image
+   businessName?: string,         fetched and checked BEFORE the first budget mutate). Google is never
+                                  handed the URL.
    youtubeVideoIds?: string[],
    assetGroupName?: string,       Each list has its own shape, checked against the decoded image:
    path1?: string,                  marketingImages          1.91:1, min 600x314

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -939,5 +940,76 @@ func TestFetchOneImage_RedirectRefusalDoesNotEchoTheTargetsQuery(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cdn.example.org") {
 		t.Errorf("the refusal must still name the host it refused to follow, for diagnosis: %v", err)
+	}
+}
+
+// The aggregate cap is the only bound in the creative path that is STATEFUL across
+// iterations: geometry, ratio, the per-image cap and the count bounds are each a pure
+// function of one input and are covered by the table tests above. A running total is
+// the kind of check that survives a refactor syntactically and dies semantically —
+// reset per slot, scoped to the wrong block, or summed over the wrong value — while
+// every other test still passes. Hence a direct test, and one that spans TWO slots, so
+// the total is pinned as being across the whole creative rather than per slot.
+func TestFetchSlotImages_TotalBytesCapIsAcrossEverySlot(t *testing.T) {
+	// Padding after IEND: the decoder stops there, so these stay valid images while
+	// carrying a known byte size. Each one is comfortably under the per-image cap, so
+	// nothing but the SUM can refuse them.
+	const each = 3 << 20
+	if each > maxDemandGenImageBytes {
+		t.Fatalf("fixture is wrong: a %d byte image is already over the per-image cap", each)
+	}
+	pad := bytes.Repeat([]byte{0}, each)
+	wide := append(pngOf(t, 1200, 628), pad...)  // Demand Gen marketing image, 1.91:1
+	square := append(pngOf(t, 600, 600), pad...) // Demand Gen square marketing image, 1:1
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		if strings.HasPrefix(r.URL.Path, "/square") {
+			_, _ = w.Write(square)
+			return
+		}
+		_, _ = w.Write(wide)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := imageFetchTestClient(t)
+	slots := demandGenImageSlots[:2]
+
+	// Split across the two slots so a per-slot accumulator would not trip while the
+	// creative-wide one must.
+	over := maxCreativeTotalImageBytes/each + 2
+	urls := make([][]string, 2)
+	for i := range over {
+		if i%2 == 0 {
+			urls[0] = append(urls[0], fmt.Sprintf("%s/wide%d.png", srv.URL, i))
+		} else {
+			urls[1] = append(urls[1], fmt.Sprintf("%s/square%d.png", srv.URL, i))
+		}
+	}
+	if len(urls[0]) == 0 || len(urls[1]) == 0 {
+		t.Fatalf("fixture is wrong: the %d images must span both slots", over)
+	}
+
+	if _, err := c.fetchSlotImages(context.Background(), slots, urls); err == nil {
+		t.Errorf("%d images of %d bytes total more than the %d byte cap and must be refused", over, each, maxCreativeTotalImageBytes)
+	} else if !strings.Contains(err.Error(), "across all slots") {
+		t.Errorf("expected the creative-wide total refusal, got: %v", err)
+	}
+
+	// And the same rig one image short of the sum is accepted, so the refusal above is
+	// the total firing rather than any per-image rule.
+	under := [][]string{urls[0], urls[1]}
+	if len(under[1]) > 0 {
+		under[1] = under[1][:len(under[1])-1]
+	}
+	for len(under[0])+len(under[1]) > maxCreativeTotalImageBytes/each {
+		under[0] = under[0][:len(under[0])-1]
+	}
+	got, err := c.fetchSlotImages(context.Background(), slots, under)
+	if err != nil {
+		t.Fatalf("%d images of %d bytes stay under the %d byte cap and must be accepted: %v", len(under[0])+len(under[1]), each, maxCreativeTotalImageBytes, err)
+	}
+	if len(got) != len(under[0])+len(under[1]) {
+		t.Errorf("fetched %d images, want %d", len(got), len(under[0])+len(under[1]))
 	}
 }
