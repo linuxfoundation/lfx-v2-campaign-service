@@ -809,7 +809,9 @@ Two further details belong to this layer specifically:
   changes the amount and nothing else. The amount is validated by `ValidateDailyBudget` (finite,
   > 0, ≤ `maxBudget` — the create path's bounds) and sent UNROUNDED: this client does not know
   the account currency, so rounding to an assumed two decimals would change a JPY amount; Microsoft's
-  own validation decides the smallest settable amount.
+  own validation decides the smallest settable amount. Its over-maximum refusal names the amount
+  and the maximum through the same plain-decimal `formatBudgetAmount` as the mutate's refusals —
+  never `%.2f`, which would state a rounded figure for an amount that is never rounded.
 - **The PUT goes through `putUpdate`** — the body of `putStatus`, extracted so the status toggle
   and the budget write share ONE reading of the UpdateCampaigns envelope (unanswered
   `PartialErrors` → unconfirmed; `[null]`/`[{}]` → unconfirmed; a coded PartialError → a definite

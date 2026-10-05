@@ -254,6 +254,33 @@ func TestUpdateCampaignDailyBudget_AmountReasonIsPlainDecimal(t *testing.T) {
 	}
 }
 
+// ValidateDailyBudget's over-maximum refusal is handed back to the caller too, so it must name
+// the amount exactly as given: %.2f rounded it (1000000000.005 read as "1000000000.01"), which
+// misstates an amount this client deliberately never rounds, and %g would have used exponent
+// form for a whole amount. Both figures use the same plain-decimal formatter as the mutate's
+// refusals.
+func TestValidateDailyBudget_OverMaxReasonIsPlainDecimal(t *testing.T) {
+	cases := []struct {
+		name   string
+		amount float64
+		want   string
+	}{
+		{name: "fractional amount is not rounded", amount: 1000000000.005, want: "the Microsoft Advertising daily budget 1000000000.005 exceeds the maximum 1000000000"},
+		{name: "whole amount has no exponent", amount: 1.5e9, want: "the Microsoft Advertising daily budget 1500000000 exceeds the maximum 1000000000"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reason, ok := BudgetAmountReason(ValidateDailyBudget(tc.amount))
+			if !ok {
+				t.Fatalf("want an amount refusal for %v", tc.amount)
+			}
+			if reason != tc.want {
+				t.Errorf("reason = %q, want %q", reason, tc.want)
+			}
+		})
+	}
+}
+
 // The extracted putUpdate must leave the status toggle's error text exactly as it was, since
 // an operator reads that text to decide what to verify by hand.
 func TestPutStatus_RejectionTextUnchanged(t *testing.T) {

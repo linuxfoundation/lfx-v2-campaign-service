@@ -113,7 +113,7 @@ func ValidateDailyBudget(amount float64) error {
 	case amount <= 0:
 		return &budgetAmountError{msg: "the Microsoft Advertising daily budget must be greater than zero"}
 	case amount > maxBudget:
-		return &budgetAmountError{msg: fmt.Sprintf("the Microsoft Advertising daily budget %.2f exceeds the maximum %.0f", amount, maxBudget)}
+		return &budgetAmountError{msg: "the Microsoft Advertising daily budget " + formatBudgetAmount(amount) + " exceeds the maximum " + formatBudgetAmount(maxBudget)}
 	}
 	return nil
 }
