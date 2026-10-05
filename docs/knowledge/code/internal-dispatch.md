@@ -1016,7 +1016,12 @@ Order, all before the one PATCH:
    resolution and connection-defect tagging as `ToggleStatus` and `ReadMetrics`.
 4. **Read** (`GetCampaignBudget`, a pure read — its failure is definite, never unconfirmed). A 404
    is `ErrPlatformCampaignAbsent`; an answer naming a different campaign id is refused; an
-   answer naming a different `ad_account_id` is `ErrCampaignAccountMismatch`.
+   answer naming a different `ad_account_id` is `ErrCampaignAccountMismatch`. The two ids the
+   client refuses before building a request are classified by their owner: an unaddressable
+   ACCOUNT id is the connection's (`client.AccountID()`), so it is `ErrConnectionNotUsable` +
+   `ErrProviderConfigInvalid` (system-scoped on the LF fallback row) → 409 "repair the
+   connection"; an unaddressable CAMPAIGN id is the persisted row's, so it is
+   `ErrBudgetUnwritable` → 409.
 5. **The budget must be on the campaign.** `is_campaign_budget_optimization` false means spend is
    governed per AD GROUP; following Meta's precedent this service **refuses rather than choose an
    allocation** across ad groups (`ErrBudgetUnwritable`). An UNREPORTED flag is refused too, the

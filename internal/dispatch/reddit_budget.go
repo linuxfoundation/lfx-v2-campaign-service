@@ -75,7 +75,7 @@ func (d *RedditDispatcher) WriteBudget(ctx context.Context, projectID string, pl
 	// The SAME resolution ToggleStatus and ReadMetrics use: the connection for the account the
 	// campaign was CREATED under, with every connection-state defect tagged (and system-scoped)
 	// by resolveRedditClient.
-	client, err := d.resolveRedditClient(ctx, projectID, platform, d.creds.existingResolver(created))
+	client, res, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.existingResolver(created))
 	if err != nil {
 		return err
 	}
@@ -86,9 +86,23 @@ func (d *RedditDispatcher) WriteBudget(ctx context.Context, projectID string, pl
 	current, err := client.GetCampaignBudget(ctx, campaign.PlatformCampaignID)
 	if err != nil {
 		// A PURE READ. Its failure is DEFINITE — no mutate was built — so it is returned
-		// unclassified. An invalid id is a defect in the persisted row, not an upstream fault.
-		if errors.Is(err, reddit.ErrInvalidCampaignID) || errors.Is(err, reddit.ErrInvalidAccountID) {
-			return fmt.Errorf("write reddit campaign budget: %w: %w", err, domain.ErrBudgetUnwritable)
+		// unclassified, except for the two ids the client refuses before building any request,
+		// whose owners differ and so whose remedies differ:
+		//
+		//   - The ACCOUNT id is the CONNECTION's (client.AccountID(), from the connection row
+		//     resolveRedditClientWithCreds read), not the campaign row's. One the client cannot
+		//     address is a stored-connection defect, tagged the way that resolution tags every
+		//     other one — ErrConnectionNotUsable with its reason token, system-scoped when the
+		//     LF fallback row served it — so the caller is sent to repair the connection.
+		//   - The CAMPAIGN id is the persisted row's. One the client cannot address is a defect
+		//     in that row: the budget cannot be addressed, and no retry or connection edit
+		//     changes that.
+		if errors.Is(err, reddit.ErrInvalidAccountID) {
+			return res.systemScoped(fmt.Errorf("%w: %w: write reddit campaign budget: the connection's ad account id cannot address a reddit request: %w",
+				domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, err))
+		}
+		if errors.Is(err, reddit.ErrInvalidCampaignID) {
+			return fmt.Errorf("write reddit campaign budget: the campaign row's platform campaign id cannot address a reddit request: %w: %w", err, domain.ErrBudgetUnwritable)
 		}
 		return fmt.Errorf("write reddit campaign budget: read current budget: %w", err)
 	}

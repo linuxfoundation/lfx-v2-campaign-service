@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // budgetTestClient wires a client against an Ads API stub that answers every request with
@@ -79,6 +80,24 @@ func TestBudgetMicros_SharesTheCreatePathsBoundsAndRounding(t *testing.T) {
 		}
 		if reason, ok := BudgetAmountReason(err); !ok || reason == "" {
 			t.Errorf("BudgetMicros(%g) refusal must carry a client-safe reason", tc.amount)
+		}
+	}
+}
+
+// The reason is shown to a caller, so an amount must read as the number they sent — never in %g's
+// exponent form ("2e+09", "1e-07").
+func TestBudgetMicros_ReasonRendersAmountsInPlainDecimal(t *testing.T) {
+	for _, tc := range []struct {
+		amount float64
+		want   string
+	}{
+		{2_000_000_000, "the budget 2000000000 exceeds the largest amount this service sets on Reddit (1000000000)"},
+		{0.0000001, "the budget 0.0000001 rounds to zero micro-units; Reddit budgets are set in micro-units, so the smallest settable amount is 0.000001"},
+	} {
+		_, err := BudgetMicros(tc.amount)
+		reason, ok := BudgetAmountReason(err)
+		if !ok || reason != tc.want {
+			t.Errorf("BudgetMicros(%v) reason = %q, want %q", tc.amount, reason, tc.want)
 		}
 	}
 }
@@ -179,9 +198,19 @@ func TestUpdateCampaignBudget_OutcomeClassification(t *testing.T) {
 		{"404 is a definite refusal", http.StatusNotFound, `{}`, true, false},
 		{"500 is ambiguous", http.StatusInternalServerError, `{}`, true, true},
 		{"503 is ambiguous", http.StatusServiceUnavailable, `{}`, true, true},
+		// The client never follows a redirect, and a 3xx on a MUTATING method may have applied.
+		{"302 on the PATCH is ambiguous", http.StatusFound, ``, true, true},
+		{"307 on the PATCH is ambiguous", http.StatusTemporaryRedirect, ``, true, true},
+		// No response at all: the request was sent and the attempt timed out waiting.
+		{"transport timeout is ambiguous", 0, ``, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c, _ := budgetTestClient(t, tc.status, tc.body)
+			var c *Client
+			if tc.status == 0 {
+				c = budgetTimeoutClient(t)
+			} else {
+				c, _ = budgetTestClient(t, tc.status, tc.body)
+			}
 			err := c.UpdateCampaignBudget(context.Background(), "t3_camp", 1_000_000)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
@@ -191,4 +220,29 @@ func TestUpdateCampaignBudget_OutcomeClassification(t *testing.T) {
 			}
 		})
 	}
+}
+
+// budgetTimeoutClient wires a client whose every Ads API request reaches the server and is never
+// answered: the handler holds the request past the client's short Timeout, so the failure is a
+// mid-flight timeout, not a pre-send dial error. The handler never calls t.Fatal. It is released
+// at cleanup BEFORE the server closes (cleanups run last-registered-first), because the server
+// does not reliably observe the client's abandoned connection and Close waits for handlers.
+func budgetTimeoutClient(t *testing.T) *Client {
+	t.Helper()
+	release := make(chan struct{})
+	api := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(api.Close)
+	t.Cleanup(func() { close(release) })
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	t.Cleanup(tok.Close)
+	return NewClient(testCreds, testAccount, WithBaseURL(api.URL+"/api/v3"), WithTokenURL(tok.URL),
+		WithNowFunc(fixedRedditClock()), withRetryBaseDelay(tinyBackoff),
+		WithHTTPClient(&http.Client{Timeout: 50 * time.Millisecond}))
 }

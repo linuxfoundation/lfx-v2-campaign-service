@@ -80,13 +80,20 @@ func BudgetMicros(amount float64) (int64, error) {
 	case math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0:
 		return 0, &budgetAmountError{msg: "the budget must be a finite number greater than zero"}
 	case amount > redditMaxBudgetUSD:
-		return 0, &budgetAmountError{msg: fmt.Sprintf("the budget %g exceeds the largest amount this service sets on Reddit (%.0f)", amount, redditMaxBudgetUSD)}
+		return 0, &budgetAmountError{msg: fmt.Sprintf("the budget %s exceeds the largest amount this service sets on Reddit (%s)", formatBudgetAmount(amount), formatBudgetAmount(redditMaxBudgetUSD))}
 	}
 	micros := toMicrodollars(amount)
 	if micros <= 0 {
-		return 0, &budgetAmountError{msg: fmt.Sprintf("the budget %g rounds to zero micro-units; Reddit budgets are set in micro-units, so the smallest settable amount is 0.000001", amount)}
+		return 0, &budgetAmountError{msg: fmt.Sprintf("the budget %s rounds to zero micro-units; Reddit budgets are set in micro-units, so the smallest settable amount is 0.000001", formatBudgetAmount(amount))}
 	}
 	return micros, nil
+}
+
+// formatBudgetAmount renders an amount for a client-facing reason in plain decimal notation —
+// never %g's exponent form, which turns 2e9 into "2e+09" and 1e-7 into "1e-07" in a sentence
+// a caller reads to correct their request. -1 precision is the shortest exact representation.
+func formatBudgetAmount(amount float64) string {
+	return strconv.FormatFloat(amount, 'f', -1, 64)
 }
 
 // campaignBudgetPath validates both interpolated ids with the letters/digits/underscores guard

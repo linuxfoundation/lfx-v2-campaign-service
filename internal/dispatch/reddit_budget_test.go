@@ -352,3 +352,47 @@ func TestReddit_WriteBudget_UnusableConnectionRefusedBeforeAnyCall(t *testing.T)
 		t.Fatalf("want ErrConnectionNotUsable, got %v", err)
 	}
 }
+
+// The two ids the client refuses before any request have different owners, so they are
+// classified differently. The ACCOUNT id comes from the CONNECTION, so one the client cannot
+// address is a connection defect (ErrConnectionNotUsable, the remedy "repair the connection") —
+// never ErrBudgetUnwritable, whose message blames the platform's reporting. The CAMPAIGN id comes
+// from the persisted row, so one the client cannot address stays ErrBudgetUnwritable.
+func TestReddit_WriteBudget_InvalidIDsClassifiedByTheirOwner(t *testing.T) {
+	t.Run("connection account id is a connection defect", func(t *testing.T) {
+		conn := activeRedditConn(goodRedditCreds)
+		conn.AccountID = "t2-bad"
+		// The row records the same account, so the provenance and account-match guards pass and
+		// the client's own id guard is what refuses.
+		campaign := redditBudgetCampaign()
+		campaign.Result = json.RawMessage(`{"accountId":"t2-bad"}`)
+		d := NewRedditDispatcher(fakeConnReader{conn: conn}, identityEncryptor{},
+			reddit.WithBaseURL("http://127.0.0.1:0/api/v3"), reddit.WithTokenURL("http://127.0.0.1:0/token"))
+		err := d.WriteBudget(context.Background(), "proj", model.ProviderRedditAds, campaign,
+			model.BudgetChange{Amount: 50, Type: model.BudgetLifetime})
+		if !errors.Is(err, domain.ErrConnectionNotUsable) || !errors.Is(err, domain.ErrProviderConfigInvalid) {
+			t.Fatalf("want ErrConnectionNotUsable + ErrProviderConfigInvalid, got %v", err)
+		}
+		if !errors.Is(err, reddit.ErrInvalidAccountID) {
+			t.Errorf("the client's own sentinel must stay in the chain: %v", err)
+		}
+		if errors.Is(err, domain.ErrBudgetUnwritable) {
+			t.Errorf("a connection defect must not be reported as an unaddressable budget: %v", err)
+		}
+	})
+	t.Run("row campaign id is a row defect", func(t *testing.T) {
+		s := newRedditBudgetStub(t, http.StatusOK, redditLifetimeCampaign, http.StatusOK, `{"data":{}}`)
+		campaign := redditBudgetCampaign()
+		campaign.PlatformCampaignID = "t3/../x"
+		err := writeRedditBudget(s, campaign, 50, model.BudgetLifetime)
+		if !errors.Is(err, domain.ErrBudgetUnwritable) || !errors.Is(err, reddit.ErrInvalidCampaignID) {
+			t.Fatalf("want ErrBudgetUnwritable wrapping ErrInvalidCampaignID, got %v", err)
+		}
+		if errors.Is(err, domain.ErrConnectionNotUsable) {
+			t.Errorf("a row defect must not send the caller to repair the connection: %v", err)
+		}
+		if n := len(s.requests()); n != 0 {
+			t.Errorf("an invalid id must reach no endpoint, got %d request(s)", n)
+		}
+	})
+}
