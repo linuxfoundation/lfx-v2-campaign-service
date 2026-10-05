@@ -939,9 +939,15 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 // HTTP helper
 // ---------------------------------------------------------------------------
 
-// apiResponse is the common Reddit Ads API envelope: {"data": ...}.
+// apiResponse is the common Reddit Ads API envelope: {"data": ..., "pagination": {...}}.
+//
+// Pagination is kept raw and read only by the callers that walk pages (the account
+// monitor's campaign list and report reads — see monitor.go's nextPagePath). It used to be
+// dropped here entirely, so a list read could not tell its last page from its first. A
+// response without the key leaves it nil, which every reader treats as "single page".
 type apiResponse struct {
-	Data json.RawMessage `json:"data"`
+	Data       json.RawMessage `json:"data"`
+	Pagination json.RawMessage `json:"pagination"`
 }
 
 // apiError is returned by request() for a non-2xx Reddit Ads API response. It

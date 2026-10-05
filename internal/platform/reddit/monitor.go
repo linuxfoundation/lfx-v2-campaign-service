@@ -6,8 +6,10 @@ package reddit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -20,6 +22,24 @@ import (
 // several campaigns even when each individual request is healthy. Mirrors the ported BFF's
 // own batch size (reddit-ads.service.ts).
 const monitorReportConcurrency = 5
+
+// monitorMaxPages caps every page walk the monitor read makes — the campaign list, and each
+// campaign's report. A walk that still has a next page at the cap FAILS rather than returning
+// what it has: a truncated campaign list silently drops campaigns from the monitor view, and a
+// truncated report silently under-counts spend, and both look exactly like a complete answer.
+// Mirrors the page-capped walks Meta's and LinkedIn's monitor reads make for the same reason.
+const monitorMaxPages = 50
+
+// Reddit's campaign goal_type values this read knows how to pace. LIFETIME_SPEND is the
+// literal this client's own create path sends (client.go), so it is the one value proven to
+// exist on campaigns this service creates; DAILY_SPEND is Reddit's per-day counterpart. Any
+// other value (or none) means this read cannot tell what goal_value is a budget FOR, so the
+// row carries neither budget and is reported as pacing-unknown rather than paced against a
+// guess. Named for the monitor so they cannot collide with any write-path constant.
+const (
+	monitorGoalTypeLifetimeSpend = "LIFETIME_SPEND"
+	monitorGoalTypeDailySpend    = "DAILY_SPEND"
+)
 
 // AccountCampaignRow is one campaign read live from an ad account for the account-monitor
 // endpoint, ported from lfx-self-serve's reddit-ads.service.ts (getRedditAnalytics).
@@ -38,50 +58,59 @@ type AccountCampaignRow struct {
 	Clicks      int64
 	Ctr         float64
 	SpendUSD    float64
-	// TotalBudget is goal_value/1_000_000 (reddit-ads.service.ts:266). DailyBudget is not a
-	// field here: the BFF hardcodes it to the literal 0 (reddit-ads.service.ts:267, "dead
-	// branch" per the pacing rule engine's own comment), so there is nothing to carry.
+	// TotalBudget and DailyBudget are goal_value/1_000_000, routed by goal_type:
+	// LIFETIME_SPEND sets TotalBudget, DAILY_SPEND sets DailyBudget, and anything else —
+	// including an absent goal_type — sets neither, so the rule engine reports pacing as
+	// unknown. DIVERGES from the BFF, which read goal_value as a lifetime budget whatever
+	// goal_type said and hardcoded dailyBudget to 0 (reddit-ads.service.ts:266-267): a
+	// DAILY_SPEND campaign's per-day cap was then prorated across its whole flight as if it
+	// were the lifetime total, reporting a campaign spending exactly its daily cap as
+	// heavily overspending.
 	TotalBudget float64
+	DailyBudget float64
 	StartDate   string
 	EndDate     string
-	// FetchFailed is set when this campaign's own /reports call failed. DIVERGES from the
-	// BFF's own behavior on purpose: reddit-ads.service.ts substitutes a fabricated
-	// {impressions:0,clicks:0,spend:0} on a Promise.allSettled rejection and only logs a
-	// warning (reddit-ads.service.ts:243-251) — indistinguishable, downstream, from a
-	// campaign that genuinely had zero activity. model.AccountCampaignMetrics.FetchFailed's
-	// own doc comment names this exact case as one of the reasons the field exists, so this
-	// port sets it instead of fabricating the zero. This is a disclosed, deliberate
-	// divergence, not a preserved bug.
+	// FetchFailed is set when this campaign's own report read failed or could not be
+	// believed (a row attributed to another campaign, a missing field, a page walk past
+	// monitorMaxPages). DIVERGES from the BFF's own behavior on purpose: reddit-ads.service.ts
+	// substitutes a fabricated {impressions:0,clicks:0,spend:0} on a Promise.allSettled
+	// rejection and only logs a warning (reddit-ads.service.ts:243-251) — indistinguishable,
+	// downstream, from a campaign that genuinely had zero activity.
+	// model.AccountCampaignMetrics.FetchFailed's own doc comment names this exact case as one
+	// of the reasons the field exists, so this port sets it instead of fabricating the zero.
+	// This is a disclosed, deliberate divergence, not a preserved bug.
 	FetchFailed bool
 }
 
 // campaignElement is one entry of the campaign-list response, per the fields
 // getRedditAnalytics reads off RedditCampaignElement.
 type campaignElement struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	ConfiguredStatus string `json:"configured_status"`
-	GoalValue        *int64 `json:"goal_value"`
-	StartTime        string `json:"start_time"`
-	EndTime          string `json:"end_time"`
+	ID               string  `json:"id"`
+	Name             string  `json:"name"`
+	ConfiguredStatus string  `json:"configured_status"`
+	GoalValue        *int64  `json:"goal_value"`
+	GoalType         *string `json:"goal_type"`
+	StartTime        string  `json:"start_time"`
+	EndTime          string  `json:"end_time"`
 }
 
 // campaignListResponse tolerates the same three response shapes fetchCampaigns does
 // (reddit-ads.service.ts:191-203): resp.data as a bare array, resp.data.campaigns as an
 // array, or (defensively) resp.data itself treated as the array in the fallback arm. Ported
-// faithfully rather than simplified, because a live Reddit account's actual shape has never
-// been exercised against this client (see the UNVERIFIED-CONTRACT banner on
-// GetCampaignMetrics) — narrowing to one shape here could silently return zero campaigns
-// against a real account that uses either of the other two.
+// faithfully rather than simplified: the campaign-list operation (GET
+// /ad_accounts/{id}/campaigns) is NOT among the operations LFXV2-3282 checked against Reddit's
+// published OpenAPI spec — that check covered only POST /ad_accounts/{id}/reports — and no
+// live Reddit account has exercised this client, so narrowing to one shape here could silently
+// return zero campaigns against a real account that uses either of the other two.
 //
 // decodeCampaignList reports ok=false when data matches NEITHER known shape — that is a
 // malformed/unrecognized response, not a legitimately empty account, and its caller must not
 // treat the two the same way. DIVERGES from the BFF here (round-30+ review): fetchCampaigns
 // swallows a shape mismatch into an empty list, indistinguishable downstream from "this
-// account really has zero campaigns" — the same false-empty-result failure mode
-// fetchMonitorReport's own malformed-JSON branch already refuses to reproduce (see its
-// comment). An absent/empty body (len(data)==0) is still a legitimate empty account: Reddit's
-// own API returns that for "no campaigns," not for a decode failure.
+// account really has zero campaigns" — the same false-empty-result failure mode the report
+// read's own strict decode (decodeReportRows) refuses to reproduce. An absent/empty body
+// (len(data)==0) is still a legitimate empty account: Reddit's own API returns that for "no
+// campaigns," not for a decode failure.
 func decodeCampaignList(data json.RawMessage) (elements []campaignElement, ok bool) {
 	if len(data) == 0 {
 		return nil, true
@@ -102,70 +131,183 @@ func decodeCampaignList(data json.RawMessage) (elements []campaignElement, ok bo
 	return nil, false
 }
 
-// monitorReportRow is one entry of a monitor report's "metrics" array. Unlike
-// metrics.go's reportRow (used by the verified single-campaign GetCampaignMetrics path),
-// this does NOT require every field present and does NOT validate a campaign id: the BFF's
-// fetchAccountMetrics/fetchCampaignMetrics read each field with `?? 0` and perform no
-// validation at all (reddit-ads.service.ts:147-153, 166-172). Faithfully porting that means
-// an absent/null field here is read as 0, not refused — a DIFFERENT, looser contract than
-// GetCampaignMetrics' deliberately-strict one, and that difference is intentional: this is
-// the monitor read's own literal behavior, not a relaxation of the verified path.
-type monitorReportRow struct {
-	Impressions *int64 `json:"impressions"`
-	Clicks      *int64 `json:"clicks"`
-	Spend       *int64 `json:"spend"`
+// paginationEnvelope is the top-level "pagination" object of a Reddit Ads v3 response.
+//
+// VERIFICATION LEVEL: LFXV2-3282 verified against the published spec that the report
+// response carries a "pagination" object beside "data", but this repository does not record
+// that object's fields. next_url — an absolute URL for the following page, absent or null on
+// the last one — is Reddit's documented v3 list-pagination convention, NOT checked against
+// the spec by this repository and never exercised against a live account. A response without
+// the key is read as a single page, which is exactly the pre-pagination behaviour, so a wrong
+// field name here regresses to the old truncation rather than to a new wrong answer.
+type paginationEnvelope struct {
+	NextURL *string `json:"next_url"`
 }
 
-type monitorReportEnvelope struct {
-	Metrics []monitorReportRow `json:"metrics"`
+// nextPagePath turns a response's raw "pagination" object into the request path (relative
+// to c.baseURL, query included) of the next page, or "" when there is none.
+//
+// The next URL is upstream content, and following it sends this project's bearer token.
+// So it must resolve to the SAME scheme and host as the configured API base and sit under
+// its path; anything else is refused rather than followed. No part of the URL is echoed in
+// an error: it can carry the ad account id, and these errors reach the service log.
+func (c *Client) nextPagePath(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	var p paginationEnvelope
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return "", fmt.Errorf("pagination is not an object (%d bytes)", len(raw))
+	}
+	if p.NextURL == nil || strings.TrimSpace(*p.NextURL) == "" {
+		return "", nil
+	}
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "", errors.New("api base URL does not parse")
+	}
+	ref, err := url.Parse(strings.TrimSpace(*p.NextURL))
+	if err != nil {
+		return "", errors.New("pagination next_url is not a URL")
+	}
+	next := base.ResolveReference(ref)
+	if next.Scheme != base.Scheme || next.Host != base.Host {
+		return "", errors.New("pagination next_url points off the API origin; refusing to send credentials there")
+	}
+	basePath := strings.TrimRight(base.EscapedPath(), "/")
+	nextPath := next.EscapedPath()
+	if !strings.HasPrefix(nextPath, basePath+"/") {
+		return "", errors.New("pagination next_url is outside the API base path")
+	}
+	rel := strings.TrimPrefix(nextPath, basePath)
+	if next.RawQuery != "" {
+		rel += "?" + next.RawQuery
+	}
+	return rel, nil
 }
 
-// fetchMonitorReport POSTs a report request to path and returns the first metrics row's
-// impressions/clicks/spend (spend converted from microcurrency to whole units), all
-// defaulting to 0 exactly as fetchAccountMetrics/fetchCampaignMetrics do. path is either the
-// account-wide reports endpoint or a single campaign's nested reports endpoint — both use the
-// identical request body shape (reddit-ads.service.ts:138-144, 157-163).
-func (c *Client) fetchMonitorReport(ctx context.Context, path, startDate, endDate string) (impressions, clicks int64, spendUSD float64, err error) {
+// errPageCapReached is returned by walkPages when a walk still has a next page at
+// monitorMaxPages.
+var errPageCapReached = fmt.Errorf("response still had more pages after %d; refusing to return a truncated result", monitorMaxPages)
+
+// walkPages issues method/path (with body re-sent on every page), hands each page's response
+// to visit, and follows nextPagePath until there is no next page. It fails — never truncates
+// — on a cap overrun, a repeated page, or an unfollowable next link.
+//
+// For a POST report the same body is re-sent to the next page's URL. That is the natural
+// reading of a next_url that carries its own page token, but like next_url itself it is not
+// verified (see paginationEnvelope).
+func (c *Client) walkPages(ctx context.Context, method, path string, body any, visit func(page int, resp *apiResponse) error) error {
+	seen := map[string]struct{}{path: {}}
+	for page := 1; ; page++ {
+		resp, err := c.request(ctx, method, path, body)
+		if err != nil {
+			return err
+		}
+		if err := visit(page, resp); err != nil {
+			return err
+		}
+		next, err := c.nextPagePath(resp.Pagination)
+		if err != nil {
+			return fmt.Errorf("page %d: %w", page, err)
+		}
+		if next == "" {
+			return nil
+		}
+		if page >= monitorMaxPages {
+			return errPageCapReached
+		}
+		if _, dup := seen[next]; dup {
+			return fmt.Errorf("page %d: pagination repeated an earlier page", page)
+		}
+		seen[next] = struct{}{}
+		path = next
+	}
+}
+
+// listMonitorCampaigns reads every page of the account's campaign list.
+//
+// It used to read one page: apiResponse dropped the pagination envelope, so an account with
+// more campaigns than Reddit's default page size silently lost the rest from the monitor view
+// — the same data-completeness defect the account-monitor doc records Meta's BFF read having,
+// fixed here the same way (follow every page; fail loudly at a cap).
+//
+// A campaign id seen twice across pages fails the read: one campaign would otherwise appear
+// as two rows, and the account totals (a row sum) would count its spend twice.
+func (c *Client) listMonitorCampaigns(ctx context.Context, accountID string) ([]campaignElement, error) {
+	var all []campaignElement
+	ids := map[string]struct{}{}
+	err := c.walkPages(ctx, http.MethodGet, "/ad_accounts/"+accountID+"/campaigns", nil, func(page int, resp *apiResponse) error {
+		elements, ok := decodeCampaignList(resp.Data)
+		if !ok {
+			return fmt.Errorf("page %d: malformed campaign-list response (%d bytes)", page, len(resp.Data))
+		}
+		for _, e := range elements {
+			if e.ID != "" {
+				if _, dup := ids[e.ID]; dup {
+					return fmt.Errorf("page %d: campaign list returned the same campaign twice", page)
+				}
+				ids[e.ID] = struct{}{}
+			}
+			all = append(all, e)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return all, nil
+}
+
+// fetchMonitorCampaignReport reads one campaign's impressions/clicks/spend over
+// [startsAt, endsAt] from the ONE reporting operation this repository has verified against
+// Reddit's published OpenAPI spec: POST /ad_accounts/{id}/reports (LFXV2-3282, see
+// GetCampaignMetrics). The request body is GetCampaignMetrics' own — UPPERCASE field enums,
+// CAMPAIGN_ID requested as a FIELD so every row carries the id it is attributed to, the
+// campaign scoped by the `filter` DSL, no `breakdowns` — and the rows go through the same
+// sumReportRows, so the monitor and the single-campaign read cannot disagree about which rows
+// they believe.
+//
+// It used to POST to the per-campaign nested path /ad_accounts/{id}/campaigns/{cid}/reports,
+// copied from the BFF; nothing in this repository verifies that operation exists. It also
+// read only metrics[0] — any further row was dropped, under-counting a report Reddit split —
+// and checked no campaign id, so a row for another campaign would have been reported as this
+// one's.
+//
+// Why per-campaign calls rather than ONE account report broken down by CAMPAIGN_ID: the
+// spec's `breakdowns` enum does include CAMPAIGN_ID, but a broken-down account report returns
+// one row per campaign and so depends on report pagination for completeness, and this
+// repository has not verified that envelope's fields (see paginationEnvelope). A campaign
+// missing from an unfollowed next page would read as a legitimate zero. A per-campaign
+// aggregate is one row in the expected case, so an unverified pagination field cannot
+// silently drop a campaign's numbers; and a per-campaign failure keeps its own FetchFailed
+// rather than failing every row. Pagination is still followed, page-capped, in case Reddit
+// does split the result.
+//
+// An empty metrics array is real zero activity, exactly as GetCampaignMetrics treats it; a
+// missing or null metrics array is an error (decodeReportRows).
+func (c *Client) fetchMonitorCampaignReport(ctx context.Context, accountID, campaignID, startsAt, endsAt string) (impressions, clicks, spendMicros int64, err error) {
 	reqBody := map[string]any{
 		"data": map[string]any{
-			"starts_at": startDate + "T00:00:00Z",
-			"ends_at":   endDate + "T00:00:00Z",
-			"fields":    []string{"IMPRESSIONS", "CLICKS", "SPEND"},
+			"starts_at": startsAt,
+			"ends_at":   endsAt,
+			"fields":    []string{"CAMPAIGN_ID", "IMPRESSIONS", "CLICKS", "SPEND"},
+			"filter":    "campaign:id==" + campaignID,
 		},
 	}
-	resp, rerr := c.request(ctx, http.MethodPost, path, reqBody)
-	if rerr != nil {
-		return 0, 0, 0, rerr
+	var rows []reportRow
+	werr := c.walkPages(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/reports", reqBody, func(_ int, resp *apiResponse) error {
+		pageRows, derr := decodeReportRows(resp.Data)
+		if derr != nil {
+			return derr
+		}
+		rows = append(rows, pageRows...)
+		return nil
+	})
+	if werr != nil {
+		return 0, 0, 0, werr
 	}
-	if len(resp.Data) == 0 {
-		return 0, 0, 0, nil
-	}
-	var env monitorReportEnvelope
-	if derr := json.Unmarshal(resp.Data, &env); derr != nil {
-		// DIVERGES from the BFF here (round-21 review): the BFF's optional-chaining
-		// `?.metrics ?? []` also reads a malformed body as "no data" (0s), but that silently
-		// converts an upstream-data failure into a legitimate-looking zero-delivery
-		// measurement, indistinguishable from a campaign that genuinely had no activity. The
-		// caller (ListAccountCampaigns) already turns any non-nil error from this function
-		// into FetchFailed=true on that row rather than aborting the whole account read, so
-		// returning an error here — instead of a fabricated zero — costs nothing and fixes
-		// the false zero-delivery alert this could otherwise trigger.
-		return 0, 0, 0, fmt.Errorf("decode monitor report: malformed JSON (%d bytes)", len(resp.Data))
-	}
-	if len(env.Metrics) == 0 {
-		return 0, 0, 0, nil
-	}
-	row := env.Metrics[0]
-	if row.Impressions != nil {
-		impressions = *row.Impressions
-	}
-	if row.Clicks != nil {
-		clicks = *row.Clicks
-	}
-	if row.Spend != nil {
-		spendUSD = float64(*row.Spend) / 1_000_000
-	}
-	return impressions, clicks, spendUSD, nil
+	return sumReportRows(rows, campaignID)
 }
 
 // ValidateAccountID checks accountID against the same charset restriction
@@ -180,9 +322,15 @@ func ValidateAccountID(accountID string) error {
 }
 
 // ListAccountCampaigns ports getRedditAnalytics: every ACTIVE/PAUSED campaign visible on
-// accountID, each with its own per-campaign report over the trailing `days` days, ported
-// verbatim including the pacing inputs (goal_value/1e6 as TotalBudget, start_time/end_time as
-// the flight window) the rules.EvaluateRedditMonitor rule engine consumes.
+// accountID (every page of the campaign list), each with its own report over the trailing
+// `days` days, plus the pacing inputs (goal_value/1e6 routed by goal_type, start_time/end_time
+// as the flight window) the rules.EvaluateRedditMonitor rule engine consumes.
+//
+// The window is days-1 days before today through today, INCLUSIVE of today — the house
+// convention every account-monitor read follows (see the account-monitor architecture doc).
+// It is rendered through reportRange, the same renderer GetCampaignMetrics uses, so the final
+// day runs to its 23:00 hour. The BFF rendered ends_at as today's T00:00:00Z, which stops the
+// range as today BEGINS: a days=N read covered N-1 days while claiming N.
 //
 // The BFF's separate account-wide totals call (fetchAccountMetrics) has no counterpart here:
 // this service sums the rows it returns, on every platform — see
@@ -191,24 +339,24 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 	if err := ValidateAccountID(accountID); err != nil {
 		return nil, fmt.Errorf("list account campaigns: %w", err)
 	}
+	if days < 1 {
+		// The dispatcher validates days first (validateMonitorDays); this keeps a direct
+		// caller from rendering a range whose start is after its end.
+		return nil, fmt.Errorf("list account campaigns: days must be at least 1, got %d", days)
+	}
 
 	end := c.now().UTC()
-	start := end.AddDate(0, 0, -(days - 1))
-	startDate := start.Format("2006-01-02")
-	endDate := end.Format("2006-01-02")
+	startsAt, endsAt := reportRange(end.AddDate(0, 0, -(days-1)), end)
 
-	resp, err := c.request(ctx, http.MethodGet, "/ad_accounts/"+accountID+"/campaigns", nil)
+	elements, err := c.listMonitorCampaigns(ctx, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("list account campaigns: %w", redactReportPath(err, accountID))
-	}
-	elements, ok := decodeCampaignList(resp.Data)
-	if !ok {
-		return nil, fmt.Errorf("list account campaigns: malformed campaign-list response (%d bytes)", len(resp.Data))
 	}
 
 	// activeCampaigns: filter to configured_status ACTIVE or PAUSED, matching
 	// reddit-ads.service.ts:219 exactly (every other configured_status, e.g. ARCHIVED or
-	// DELETED, is dropped from the monitor view).
+	// DELETED, is dropped from the monitor view). This is the read's only scope filter, and
+	// the scope audit (LFXV2-2665, Track M3) found it matches the BFF.
 	active := make([]campaignElement, 0, len(elements))
 	for _, e := range elements {
 		if e.ConfiguredStatus == StatusActive || e.ConfiguredStatus == StatusPaused {
@@ -234,8 +382,14 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 				// signals "no known flight" to EvaluateRedditMonitor, which sets PacingUnknown
 				// instead of computing a pacing verdict against it.
 			}
-			if e.GoalValue != nil {
-				row.TotalBudget = float64(*e.GoalValue) / 1_000_000
+			if e.GoalValue != nil && e.GoalType != nil {
+				switch *e.GoalType {
+				case monitorGoalTypeLifetimeSpend:
+					row.TotalBudget = float64(*e.GoalValue) / 1_000_000
+				case monitorGoalTypeDailySpend:
+					row.DailyBudget = float64(*e.GoalValue) / 1_000_000
+				}
+				// Any other goal_type: neither budget — see AccountCampaignRow.TotalBudget.
 			}
 			if strings.TrimSpace(e.StartTime) != "" {
 				if t, perr := time.Parse(time.RFC3339, e.StartTime); perr == nil {
@@ -251,25 +405,23 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 			// e.ID is Reddit's own campaign id, returned by the account-level campaign-list
 			// call above — not the caller-supplied account_id, which is already validated by
 			// this method's own caller. round-23 review: every sibling path that interpolates a
-			// Reddit-supplied id into a request path (updateEntityStatus, GetCampaignMetrics)
-			// rejects one that fails accountIDRe first; this fan-out was the one path that
-			// skipped that guard, letting a malformed upstream id retarget this project's live
-			// bearer token at an arbitrary Reddit path.
+			// Reddit-supplied id into a request rejects one that fails accountIDRe first. Here
+			// the id is interpolated into the report's `filter` DSL, where a comma would split
+			// one filter term into two and silently widen the report to another campaign.
 			if !accountIDRe.MatchString(e.ID) {
 				row.FetchFailed = true
 				rows[i] = row
 				return nil
 			}
 
-			impressions, clicks, spendUSD, ferr := c.fetchMonitorReport(gctx,
-				"/ad_accounts/"+accountID+"/campaigns/"+e.ID+"/reports", startDate, endDate)
+			impressions, clicks, spendMicros, ferr := c.fetchMonitorCampaignReport(gctx, accountID, e.ID, startsAt, endsAt)
 			if ferr != nil {
 				// DIVERGES from the BFF here — see AccountCampaignRow.FetchFailed's doc comment.
 				row.FetchFailed = true
 			} else {
 				row.Impressions = impressions
 				row.Clicks = clicks
-				row.SpendUSD = spendUSD
+				row.SpendUSD = float64(spendMicros) / 1_000_000
 				if impressions > 0 {
 					row.Ctr = float64(clicks) / float64(impressions) * 100
 				}

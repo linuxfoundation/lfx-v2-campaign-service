@@ -11,7 +11,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// TestRedditPacingPct_ScheduleBranch pins the only implemented branch of redditPacingPct: a
+// TestRedditPacingPct_ScheduleBranch pins the LIFETIME_SPEND branch of redditPacingPct: a
 // TotalBudget/StartDate schedule prorated across the flight, capped at the flight length.
 func TestRedditPacingPct_ScheduleBranch(t *testing.T) {
 	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
@@ -28,20 +28,112 @@ func TestRedditPacingPct_ScheduleBranch(t *testing.T) {
 	}
 }
 
-// TestRedditPacingPct_NoDailyBudgetBranch pins that redditPacingPct has NO BudgetDay*days
-// fallback at all: Reddit campaigns always carry BudgetDay==0 upstream (the plan's own note
-// that dailyBudget is hardcoded to 0), and the ported function returns 0 rather than
-// evaluating a dead branch, matching reddit-ads.service.ts exactly. A row with BudgetDay set
-// but no TotalBudget/StartDate schedule must still pace at 0, not at spend/(BudgetDay*days).
-func TestRedditPacingPct_NoDailyBudgetBranch(t *testing.T) {
-	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
-	m := model.AccountCampaignMetrics{BudgetDay: 10, Spend: 45} // no TotalBudget/StartDate
-	pct, computable := redditPacingPct(m, 5, now)
-	if pct != 0 || computable {
-		t.Errorf("pct, computable = %v, %v; want 0, false — redditPacingPct has no "+
-			"BudgetDay*days branch, it is dead code omitted from this port, not merely "+
-			"unreached here, and a daily budget alone gives nothing to pace against", pct, computable)
+// TestRedditPacingPct_DailyBudget pins the DAILY_SPEND branch: expected spend is BudgetDay ×
+// the days of the report window the campaign was scheduled for, the window being
+// [today-(days-1), now] clipped to the flight (end date inclusive). It used to be absent — the
+// BFF hardcoded dailyBudget to 0 and paced every goal_value as a lifetime total, so a daily
+// cap was prorated across the whole flight and a campaign spending exactly its cap read as
+// heavily overspending.
+func TestRedditPacingPct_DailyBudget(t *testing.T) {
+	// Mid-day, so the partial final day rounds up exactly as the other platforms' ceil does.
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name           string
+		m              model.AccountCampaignMetrics
+		days           int
+		wantPct        float64
+		wantComputable bool
+	}{
+		{
+			// Window 06-09 00:00 .. 06-15 12:00 = 6.5 days -> 7; expected 70; 63/70 = 90%.
+			name: "no flight paces against the whole window",
+			m:    model.AccountCampaignMetrics{BudgetDay: 10, Spend: 63},
+			days: 7, wantPct: 90, wantComputable: true,
+		},
+		{
+			// Flight starts 06-13: 06-13 00:00 .. 06-15 12:00 = 2.5 days -> 3; expected 30.
+			name: "flight starting inside the window clips its start",
+			m:    model.AccountCampaignMetrics{BudgetDay: 10, Spend: 30, StartDate: "2026-06-13"},
+			days: 7, wantPct: 100, wantComputable: true,
+		},
+		{
+			// Flight ends 06-10 (inclusive -> 06-11 00:00): 06-09 .. 06-11 = 2 days; expected 20.
+			name: "flight ending inside the window clips its end, end day inclusive",
+			m:    model.AccountCampaignMetrics{BudgetDay: 10, Spend: 10, StartDate: "2026-05-01", EndDate: "2026-06-10"},
+			days: 7, wantPct: 50, wantComputable: true,
+		},
+		{
+			name: "flight entirely before the window has nothing to pace",
+			m:    model.AccountCampaignMetrics{BudgetDay: 10, Spend: 0, StartDate: "2026-05-01", EndDate: "2026-06-01"},
+			days: 7, wantPct: 0, wantComputable: false,
+		},
+		{
+			name: "flight starting after now has nothing to pace",
+			m:    model.AccountCampaignMetrics{BudgetDay: 10, Spend: 0, StartDate: "2026-06-20"},
+			days: 7, wantPct: 0, wantComputable: false,
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pct, computable := redditPacingPct(tt.m, tt.days, now)
+			if pct != tt.wantPct || computable != tt.wantComputable {
+				t.Errorf("pct, computable = %v, %v; want %v, %v", pct, computable, tt.wantPct, tt.wantComputable)
+			}
+		})
+	}
+}
+
+// TestEvaluateRedditMonitor_DailyBudgetAtItsCapIsNotOverspending pins the user-visible half of
+// the goal_type fix: a DAILY_SPEND campaign spending its daily cap every day of the window is on
+// plan, where pacing the same goal_value as a lifetime total over a 30-day flight called it
+// overspending several times over.
+func TestEvaluateRedditMonitor_DailyBudgetAtItsCapIsNotOverspending(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	rows := []model.AccountCampaignMetrics{{
+		PlatformCampaignID: "1", Name: "daily", Status: "ACTIVE",
+		BudgetDay: 10, StartDate: "2026-06-01", EndDate: "2026-06-30",
+		Spend: 63, Impressions: 5000, Clicks: 50,
+	}}
+	out, _ := EvaluateRedditMonitor(rows, 7, now)
+	if len(out) != 1 {
+		t.Fatalf("got %d rows, want 1", len(out))
+	}
+	if out[0].Metrics.PacingUnknown || out[0].PacingPct != 90 || out[0].PacingLabel != model.MonitorPacingNormal {
+		t.Errorf("row = %+v; want pacing 90%% normal against 7 days of a $10/day cap", out[0])
+	}
+}
+
+// TestRedditUnderspend_NotDuplicatedAtZeroDelivery pins the underspend item's zero-delivery
+// guard. An ACTIVE campaign that served nothing paces at 0% and already gets the HIGH
+// zero-delivery item; the #3021 fix (underspend keyed off the label) made it fire a second HIGH
+// "Underspending at 0%" item for the same condition. The BFF's `pacingPct > 0` guard prevented
+// that but also silenced a CPC campaign with impressions, no clicks and so no spend, which the
+// zero-delivery item does not cover either — that case must still alert.
+func TestRedditUnderspend_NotDuplicatedAtZeroDelivery(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	base := model.AccountCampaignMetrics{
+		PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
+		TotalBudget: 100, StartDate: "2026-06-01", EndDate: "2026-06-30",
+	}
+
+	t.Run("zero delivery fires one HIGH item, not two", func(t *testing.T) {
+		out, items := EvaluateRedditMonitor([]model.AccountCampaignMetrics{base}, 7, now)
+		if out[0].PacingPct != 0 || out[0].PacingLabel != model.MonitorPacingUnderspending {
+			t.Fatalf("row = %+v; setup expected 0%% underspending", out[0])
+		}
+		mustContainIssue(t, items, "zero impressions and zero clicks", model.MonitorPriorityHigh)
+		for _, it := range items {
+			if strings.Contains(it.Issue, "Underspending") {
+				t.Errorf("emitted %q beside the zero-delivery item for the same condition", it.Issue)
+			}
+		}
+	})
+	t.Run("impressions with no spend still alerts as underspending", func(t *testing.T) {
+		m := base
+		m.Impressions = 500
+		_, items := EvaluateRedditMonitor([]model.AccountCampaignMetrics{m}, 7, now)
+		mustContainIssue(t, items, "Underspending at 0%", model.MonitorPriorityHigh)
+	})
 }
 
 // TestRedditUnderspend_AlertMatchesTheLabel is the regression test for
