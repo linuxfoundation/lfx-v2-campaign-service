@@ -113,6 +113,12 @@ func (c *Client) campaignBudgetPath(campaignID string) (string, string, error) {
 
 // campaignBudgetWire is the subset of a Reddit campaign this path reads. goal_value is kept raw
 // so a present-but-unreadable value is distinguishable from an absent one.
+//
+// Keep every field a string, json.RawMessage or *bool. With only those kinds, json.Unmarshal can
+// fail only with an UnmarshalTypeError naming a JSON kind and this struct's own field path, never
+// an upstream value, which is what lets UpdateCampaignBudget wrap that error. A numeric field
+// (an out-of-range or fractional number is echoed as "number <literal>"), a `,string` tag or a
+// type with its own text parser (time.Time) would put response content in the error chain.
 type campaignBudgetWire struct {
 	ID          string          `json:"id"`
 	AdAccountID string          `json:"ad_account_id"`
@@ -215,7 +221,9 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID string, mi
 		// A budgetAmountError, so a caller can classify it with ErrBudgetAmountInvalid exactly as
 		// it classifies BudgetMicros's own refusals — a permanent amount rejection, never an
 		// upstream failure.
-		return &budgetAmountError{msg: fmt.Sprintf("budget %d micro-units is not a valid amount; it must come from BudgetMicros", micros)}
+		// Client-safe: this text can reach the caller through BudgetAmountReason, so it states the
+		// constraint, not which helper should have produced the value.
+		return &budgetAmountError{msg: fmt.Sprintf("budget %d micro-units is not a valid amount; it must be a positive number of micro-units", micros)}
 	}
 	body := map[string]any{"data": map[string]any{"goal_value": micros}}
 	resp, err := c.request(ctx, http.MethodPatch, path, body)
@@ -228,7 +236,9 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID string, mi
 	var echo campaignBudgetWire
 	if jerr := json.Unmarshal(resp.Data, &echo); jerr != nil {
 		// A 2xx whose data is not a campaign object says nothing about what was applied.
-		return &transportError{Method: http.MethodPatch, Path: "campaign budget", Err: fmt.Errorf("decode 2xx budget update response for campaign %s: not a campaign object", campaignID)}
+		// The decode error is kept in the chain for diagnosis. It carries no upstream value only
+		// because of campaignBudgetWire's field kinds; see that type before adding a field.
+		return &transportError{Method: http.MethodPatch, Path: "campaign budget", Err: fmt.Errorf("decode 2xx budget update response for campaign %s: not a campaign object: %w", campaignID, jerr)}
 	}
 	if got := strings.TrimSpace(echo.ID); got != "" && got != campaignID {
 		return &transportError{Method: http.MethodPatch, Path: "campaign budget", Err: fmt.Errorf("budget update for campaign %s was acknowledged for campaign %s", campaignID, got)}

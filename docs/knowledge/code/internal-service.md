@@ -1529,10 +1529,11 @@ cutoff is half a micro, because it compares the ROUNDED value — `math.Round(bu
 [0.0000005, 0.000001) into one micro, which Google accepts. Only an amount that rounds to ZERO
 micros reaches this refusal, and only a direct (non-HTTP) caller can send one below the contract
 floor at all; its 400 wording is therefore seen by Go callers, not by the HTTP API, which answers
-with Goa's validation error instead. LinkedIn and Meta already map their own (stricter) floors to a 400 with
-the adapter's reason; Google does not — its bounds ARE the service's own, so its adapter would
-refuse such an amount with a bare error that the switch below can classify only as 503 — an "unconfirmed upstream outcome" answer to a
-request that was never going to succeed, inviting a retry that cannot. The check compares the
+with Goa's validation error instead. LinkedIn and Meta already map their own (stricter) floors
+to a 400 with the adapter's reason; Google does not. Its bounds ARE the service's own, so its
+adapter would refuse such an amount with a bare error that the switch below can classify only as
+503. That is an "unconfirmed upstream outcome" answer to a request that was never going to
+succeed, inviting a retry that cannot. The check compares the
 ROUNDED value rather than a literal floor so it stays in step with the adapter's own
 `math.Round`, and it sits with the other validations, ahead of the load, the claim and the live
 settings read: a doomed request must not take the write lock. This floor is also what the
