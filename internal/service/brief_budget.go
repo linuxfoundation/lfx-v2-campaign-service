@@ -22,9 +22,20 @@ import (
 // guard, and a platform whose real ceiling is lower will still refuse below this one.
 const maxCampaignBudget = 1_000_000_000.0
 
-// microsPerCurrencyUnit is the scale every supported ad platform bills in. It is here for the
-// same reason maxCampaignBudget is: the smallest settable amount is part of the API contract
-// (answered 400, and declared as the design's Minimum), not a platform conversion detail.
+// microsPerCurrencyUnit sets the LOOSEST floor any supported ad platform has: Google Ads bills
+// in micros, LinkedIn in whole cents, Meta in its account currency's minor unit. Platforms do
+// NOT all bill in micros — one micro is simply the finest unit any of them accepts, so it is the
+// only floor this contract can state for every platform at once (matching the design's Minimum
+// and its comment). LinkedIn and Meta enforce their own, stricter floors on top (whole cents with
+// $10/$100 minimums; one minor unit); Google's (and Reddit's, which also bills in micros) floor IS
+// this one, so for them nothing below this check can refuse the amount.
+//
+// Two bounds use this constant and they are not the same number. The CONTRACT floor is one micro
+// (0.000001, the design's Minimum, enforced by Goa's decoder before this service runs). The
+// RUNTIME check below compares the ROUNDED value, math.Round(budget*microsPerCurrencyUnit) < 1, so
+// its cutoff is half a micro: [0.0000005, 0.000001) rounds up to one micro and is accepted, which
+// only a direct (non-HTTP) caller can reach. It is here for the same reason maxCampaignBudget is:
+// the smallest settable amount is part of the API contract, not a platform conversion detail.
 const microsPerCurrencyUnit = 1_000_000.0
 
 // UpdateCampaignBudget changes how much a campaign may spend ON THE AD PLATFORM, then persists
@@ -90,7 +101,7 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 	// The comparison is against the rounded value, not a literal floor, so it stays in step
 	// with the adapter's own math.Round rather than drifting from it.
 	if math.Round(budget*microsPerCurrencyUnit) < 1 {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "budget is too small to set; the smallest amount an ad platform accepts is 0.000001 of the account's currency"}
+		return nil, &briefs.BadRequestError{Code: "400", Message: "budget is too small to set; it rounds to zero micros (one micro is 0.000001 of the account's currency, and this amount is under half of one), which no ad platform accepts"}
 	}
 	budgetType := model.BudgetType(p.BudgetType)
 	if budgetType != model.BudgetDaily && budgetType != model.BudgetLifetime {
