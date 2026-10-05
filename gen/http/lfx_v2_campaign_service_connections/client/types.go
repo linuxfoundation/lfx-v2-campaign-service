@@ -830,6 +830,42 @@ type GetGoogleAdsAudienceResponseBody struct {
 	BucketCount *int `form:"bucket_count,omitempty" json:"bucket_count,omitempty" xml:"bucket_count,omitempty"`
 }
 
+// GetMicrosoftAdsKeywordsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body.
+type GetMicrosoftAdsKeywordsResponseBody struct {
+	// The reporting window these counters cover
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// Keyword rows from the last finished Microsoft keyword report that covers
+	// every campaign this project owns, ordered by impressions descending and
+	// capped — see `truncated`. criterion_id is the Microsoft KeywordId and
+	// ad_group_id its AdGroupId. cost_micros is Microsoft's Spend (account
+	// currency, no FX) times 10^6; ctr is clicks/impressions. Empty while no such
+	// report has finished (metrics_as_of absent).
+	Rows []*GoogleAdsKeywordResponseBody `form:"rows,omitempty" json:"rows,omitempty" xml:"rows,omitempty"`
+	// How many rows are in `rows`.
+	RowCount *int `form:"row_count,omitempty" json:"row_count,omitempty" xml:"row_count,omitempty"`
+	// True when this project's campaigns have more keywords than were returned.
+	// The rows are the TOP ones by impressions, not the project's full keyword set.
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
+	// When the Microsoft report these rows come from was requested (not when it
+	// was collected, which can be later). Microsoft builds keyword reports
+	// asynchronously in minutes, so the service serves the last finished report
+	// and builds the next one between requests. ABSENT when no finished report
+	// covers every campaign this project now owns — the first read, or the first
+	// after a campaign was added — and `rows` is then empty rather than a partial
+	// picture.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// True while a newer Microsoft report is building, so a later read will return
+	// newer rows (or the first ones, when metrics_as_of is absent).
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// False when Microsoft reported no conversion count (a blank
+	// ConversionsQualified cell — typically an account without Universal Event
+	// Tracking) for at least one returned row; those rows carry conversions 0,
+	// which then is NOT a measurement. Do not compute CPA from them.
+	ConversionsComplete *bool `form:"conversions_complete,omitempty" json:"conversions_complete,omitempty" xml:"conversions_complete,omitempty"`
+}
+
 // ResolveGoogleAdsCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body.
@@ -3984,6 +4020,79 @@ type GetGoogleAdsAudiencePayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-google-ads-audience"
 // endpoint HTTP response body for the "Unauthorized" error.
 type GetGoogleAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsKeywordsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetMicrosoftAdsKeywordsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsKeywordsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "Conflict" error.
+type GetMicrosoftAdsKeywordsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetMicrosoftAdsKeywordsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetMicrosoftAdsKeywordsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsKeywordsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetMicrosoftAdsKeywordsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsKeywordsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "NotFound" error.
+type GetMicrosoftAdsKeywordsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsKeywordsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetMicrosoftAdsKeywordsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsKeywordsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetMicrosoftAdsKeywordsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -9434,6 +9543,116 @@ func NewGetGoogleAdsAudienceUnauthorized(body *GetGoogleAdsAudienceUnauthorizedR
 	return v
 }
 
+// NewGetMicrosoftAdsKeywordsMicrosoftAdsKeywordsOK builds a
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint result from a HTTP "OK" response.
+func NewGetMicrosoftAdsKeywordsMicrosoftAdsKeywordsOK(body *GetMicrosoftAdsKeywordsResponseBody) *lfxv2campaignserviceconnections.MicrosoftAdsKeywords {
+	v := &lfxv2campaignserviceconnections.MicrosoftAdsKeywords{
+		Window:              *body.Window,
+		RowCount:            *body.RowCount,
+		Truncated:           *body.Truncated,
+		MetricsAsOf:         body.MetricsAsOf,
+		MetricsPending:      *body.MetricsPending,
+		ConversionsComplete: *body.ConversionsComplete,
+	}
+	v.Rows = make([]*lfxv2campaignserviceconnections.GoogleAdsKeyword, len(body.Rows))
+	for i, val := range body.Rows {
+		if val == nil {
+			v.Rows[i] = nil
+			continue
+		}
+		v.Rows[i] = unmarshalGoogleAdsKeywordResponseBodyToLfxv2campaignserviceconnectionsGoogleAdsKeyword(val)
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsKeywordsBadRequest builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
+// endpoint BadRequest error.
+func NewGetMicrosoftAdsKeywordsBadRequest(body *GetMicrosoftAdsKeywordsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsKeywordsConflict builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
+// endpoint Conflict error.
+func NewGetMicrosoftAdsKeywordsConflict(body *GetMicrosoftAdsKeywordsConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsKeywordsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
+// endpoint ServiceUnavailable error.
+func NewGetMicrosoftAdsKeywordsServiceUnavailable(body *GetMicrosoftAdsKeywordsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsKeywordsInternalServerError builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
+// endpoint InternalServerError error.
+func NewGetMicrosoftAdsKeywordsInternalServerError(body *GetMicrosoftAdsKeywordsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsKeywordsNotFound builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
+// endpoint NotFound error.
+func NewGetMicrosoftAdsKeywordsNotFound(body *GetMicrosoftAdsKeywordsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsKeywordsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
+// endpoint PayloadTooLarge error.
+func NewGetMicrosoftAdsKeywordsPayloadTooLarge(body *GetMicrosoftAdsKeywordsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsKeywordsUnauthorized builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
+// endpoint Unauthorized error.
+func NewGetMicrosoftAdsKeywordsUnauthorized(body *GetMicrosoftAdsKeywordsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewResolveGoogleAdsCampaignPlatformCampaignResolutionOK builds a
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint result from a HTTP "OK" response.
@@ -11530,6 +11749,45 @@ func ValidateGetGoogleAdsAudienceResponseBody(body *GetGoogleAdsAudienceResponse
 				err = goa.MergeErrors(err, err2)
 			}
 		}
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsKeywordsResponseBody runs the validations defined on
+// Get-Microsoft-Ads-KeywordsResponseBody
+func ValidateGetMicrosoftAdsKeywordsResponseBody(body *GetMicrosoftAdsKeywordsResponseBody) (err error) {
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Rows == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("rows", "body"))
+	}
+	if body.RowCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("row_count", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	if body.MetricsPending == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("metrics_pending", "body"))
+	}
+	if body.ConversionsComplete == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("conversions_complete", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	for _, e := range body.Rows {
+		if e != nil {
+			if err2 := ValidateGoogleAdsKeywordResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
 	}
 	return
 }
@@ -15420,6 +15678,98 @@ func ValidateGetGoogleAdsAudiencePayloadTooLargeResponseBody(body *GetGoogleAdsA
 // ValidateGetGoogleAdsAudienceUnauthorizedResponseBody runs the validations
 // defined on get-google-ads-audience_Unauthorized_response_body
 func ValidateGetGoogleAdsAudienceUnauthorizedResponseBody(body *GetGoogleAdsAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody runs the validations
+// defined on get-microsoft-ads-keywords_BadRequest_response_body
+func ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody(body *GetMicrosoftAdsKeywordsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsKeywordsConflictResponseBody runs the validations
+// defined on get-microsoft-ads-keywords_Conflict_response_body
+func ValidateGetMicrosoftAdsKeywordsConflictResponseBody(body *GetMicrosoftAdsKeywordsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		}
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsKeywordsServiceUnavailableResponseBody runs the
+// validations defined on
+// get-microsoft-ads-keywords_ServiceUnavailable_response_body
+func ValidateGetMicrosoftAdsKeywordsServiceUnavailableResponseBody(body *GetMicrosoftAdsKeywordsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsKeywordsInternalServerErrorResponseBody runs the
+// validations defined on
+// get-microsoft-ads-keywords_InternalServerError_response_body
+func ValidateGetMicrosoftAdsKeywordsInternalServerErrorResponseBody(body *GetMicrosoftAdsKeywordsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsKeywordsNotFoundResponseBody runs the validations
+// defined on get-microsoft-ads-keywords_NotFound_response_body
+func ValidateGetMicrosoftAdsKeywordsNotFoundResponseBody(body *GetMicrosoftAdsKeywordsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsKeywordsPayloadTooLargeResponseBody runs the
+// validations defined on
+// get-microsoft-ads-keywords_PayloadTooLarge_response_body
+func ValidateGetMicrosoftAdsKeywordsPayloadTooLargeResponseBody(body *GetMicrosoftAdsKeywordsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsKeywordsUnauthorizedResponseBody runs the validations
+// defined on get-microsoft-ads-keywords_Unauthorized_response_body
+func ValidateGetMicrosoftAdsKeywordsUnauthorizedResponseBody(body *GetMicrosoftAdsKeywordsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

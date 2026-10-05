@@ -161,6 +161,19 @@ type Service interface {
 	// than dropped: they are real unattributed traffic, and hiding them would make
 	// the buckets silently under-sum.
 	GetGoogleAdsAudience(context.Context, *GetGoogleAdsAudiencePayload) (res *GoogleAdsAudience, err error)
+	// Read Microsoft Advertising keyword performance for this project's own
+	// campaigns, in the same row shape as get-google-ads-keywords. Scoped to the
+	// campaigns this service holds for the project, NOT to the connected ad
+	// account, and read from the project's OWN connection only (never the LF
+	// system account). Microsoft serves keyword performance only through its
+	// asynchronous Reporting service, which takes minutes, so rows come from the
+	// last finished report — see metrics_as_of and metrics_pending — while the
+	// next one builds; the first read returns no rows with metrics_pending=true. A
+	// report is served only while it covers every campaign the project owns. Saved
+	// reports are cached platform data. Off (400, not supported) unless
+	// MICROSOFT_METRICS_ENABLED is true. Audience demographics are not offered for
+	// Microsoft.
+	GetMicrosoftAdsKeywords(context.Context, *GetMicrosoftAdsKeywordsPayload) (res *MicrosoftAdsKeywords, err error)
 	// Resolve one Google Ads campaign id to this service's own campaign and brief.
 	// A caller holding a keyword row has the PLATFORM's numeric campaign id; every
 	// mutation route here is keyed by this service's campaign UUID under its
@@ -406,7 +419,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [59]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "resolve-google-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account"}
+var MethodNames = [60]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-microsoft-ads-keywords", "resolve-google-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -771,6 +784,19 @@ type GetMetaAdsPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
+}
+
+// GetMicrosoftAdsKeywordsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
+// method.
+type GetMicrosoftAdsKeywordsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Reporting window; defaults to last_30_days when omitted. yesterday and
+	// last_14_days are not available on Microsoft.
+	Window *string
 }
 
 // GetMicrosoftAdsPayload is the payload type of the
@@ -1274,6 +1300,42 @@ type MicrosoftAdsCredentials struct {
 	RefreshToken string
 	// Microsoft Advertising developer token
 	DeveloperToken string
+}
+
+// MicrosoftAdsKeywords is the result type of the
+// lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
+// method.
+type MicrosoftAdsKeywords struct {
+	// The reporting window these counters cover
+	Window string
+	// Keyword rows from the last finished Microsoft keyword report that covers
+	// every campaign this project owns, ordered by impressions descending and
+	// capped — see `truncated`. criterion_id is the Microsoft KeywordId and
+	// ad_group_id its AdGroupId. cost_micros is Microsoft's Spend (account
+	// currency, no FX) times 10^6; ctr is clicks/impressions. Empty while no such
+	// report has finished (metrics_as_of absent).
+	Rows []*GoogleAdsKeyword
+	// How many rows are in `rows`.
+	RowCount int
+	// True when this project's campaigns have more keywords than were returned.
+	// The rows are the TOP ones by impressions, not the project's full keyword set.
+	Truncated bool
+	// When the Microsoft report these rows come from was requested (not when it
+	// was collected, which can be later). Microsoft builds keyword reports
+	// asynchronously in minutes, so the service serves the last finished report
+	// and builds the next one between requests. ABSENT when no finished report
+	// covers every campaign this project now owns — the first read, or the first
+	// after a campaign was added — and `rows` is then empty rather than a partial
+	// picture.
+	MetricsAsOf *string
+	// True while a newer Microsoft report is building, so a later read will return
+	// newer rows (or the first ones, when metrics_as_of is absent).
+	MetricsPending bool
+	// False when Microsoft reported no conversion count (a blank
+	// ConversionsQualified cell — typically an account without Universal Event
+	// Tracking) for at least one returned row; those rows carry conversions 0,
+	// which then is NOT a measurement. Do not compute CPA from them.
+	ConversionsComplete bool
 }
 
 // MonitorGoogleAdsAccountPayload is the payload type of the

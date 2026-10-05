@@ -58,6 +58,13 @@ func resolveInsightsWindow(window *string) (model.MetricsWindow, error) {
 // identical, and a second copy is where one of those judgements quietly diverges. Only the
 // two sentinels discovery has no notion of are handled here first.
 func (s *ConnectionService) classifyInsightsError(ctx context.Context, projectID string, err error) error {
+	return s.classifyInsightsErrorFor(ctx, projectID, googleAdsKeywordInsights, err)
+}
+
+// classifyInsightsErrorFor is classifyInsightsError for any provider: d names the provider in
+// the connection-state arms it delegates to classifyDiscoveryError. The Microsoft keyword read
+// (connection_keyword_report.go) passes its own descriptor; every arm is otherwise shared.
+func (s *ConnectionService) classifyInsightsErrorFor(ctx context.Context, projectID string, d accountDiscovery, err error) error {
 	switch {
 	case errors.Is(err, domain.ErrKeywordInsightsUnsupported):
 		return &conn.BadRequestError{Code: "400", Message: "keyword and audience insights are not supported for this platform"}
@@ -88,8 +95,13 @@ func (s *ConnectionService) classifyInsightsError(ctx context.Context, projectID
 		slog.WarnContext(ctx, "keyword insights blocked: at least one campaign in scope belongs to a different ad account than the current connection",
 			"project_id", projectID, "error", safeErrSummary(err))
 		return &conn.ConflictError{Code: "409", Message: "some of this project's campaigns were created under a different ad account than its current connection — re-dispatch or reconcile those campaigns onto the connected account to read their keywords, or reconnect the account that owns all of them"}
+	case errors.Is(err, domain.ErrKeywordReportScopeTooLarge):
+		// Report-backed platforms only (Microsoft): refused before any upstream call, and
+		// permanent while the project owns that many campaigns, so a 409 rather than the 503
+		// default. The sentinel's text is fixed and client-safe.
+		return &conn.ConflictError{Code: "409", Message: domain.ErrKeywordReportScopeTooLarge.Error()}
 	default:
-		return s.classifyDiscoveryError(ctx, projectID, googleAdsKeywordInsights, err)
+		return s.classifyDiscoveryError(ctx, projectID, d, err)
 	}
 }
 

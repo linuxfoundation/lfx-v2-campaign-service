@@ -830,6 +830,42 @@ type GetGoogleAdsAudienceResponseBody struct {
 	BucketCount int `form:"bucket_count" json:"bucket_count" xml:"bucket_count"`
 }
 
+// GetMicrosoftAdsKeywordsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body.
+type GetMicrosoftAdsKeywordsResponseBody struct {
+	// The reporting window these counters cover
+	Window string `form:"window" json:"window" xml:"window"`
+	// Keyword rows from the last finished Microsoft keyword report that covers
+	// every campaign this project owns, ordered by impressions descending and
+	// capped — see `truncated`. criterion_id is the Microsoft KeywordId and
+	// ad_group_id its AdGroupId. cost_micros is Microsoft's Spend (account
+	// currency, no FX) times 10^6; ctr is clicks/impressions. Empty while no such
+	// report has finished (metrics_as_of absent).
+	Rows []*GoogleAdsKeywordResponseBody `form:"rows" json:"rows" xml:"rows"`
+	// How many rows are in `rows`.
+	RowCount int `form:"row_count" json:"row_count" xml:"row_count"`
+	// True when this project's campaigns have more keywords than were returned.
+	// The rows are the TOP ones by impressions, not the project's full keyword set.
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
+	// When the Microsoft report these rows come from was requested (not when it
+	// was collected, which can be later). Microsoft builds keyword reports
+	// asynchronously in minutes, so the service serves the last finished report
+	// and builds the next one between requests. ABSENT when no finished report
+	// covers every campaign this project now owns — the first read, or the first
+	// after a campaign was added — and `rows` is then empty rather than a partial
+	// picture.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// True while a newer Microsoft report is building, so a later read will return
+	// newer rows (or the first ones, when metrics_as_of is absent).
+	MetricsPending bool `form:"metrics_pending" json:"metrics_pending" xml:"metrics_pending"`
+	// False when Microsoft reported no conversion count (a blank
+	// ConversionsQualified cell — typically an account without Universal Event
+	// Tracking) for at least one returned row; those rows carry conversions 0,
+	// which then is NOT a measurement. Do not compute CPA from them.
+	ConversionsComplete bool `form:"conversions_complete" json:"conversions_complete" xml:"conversions_complete"`
+}
+
 // ResolveGoogleAdsCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body.
@@ -3990,6 +4026,79 @@ type GetGoogleAdsAudienceUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetMicrosoftAdsKeywordsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetMicrosoftAdsKeywordsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsKeywordsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "Conflict" error.
+type GetMicrosoftAdsKeywordsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetMicrosoftAdsKeywordsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetMicrosoftAdsKeywordsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsKeywordsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetMicrosoftAdsKeywordsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsKeywordsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "NotFound" error.
+type GetMicrosoftAdsKeywordsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsKeywordsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetMicrosoftAdsKeywordsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsKeywordsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetMicrosoftAdsKeywordsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ResolveGoogleAdsCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -5764,6 +5873,33 @@ func NewGetGoogleAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.Go
 		}
 	} else {
 		body.Buckets = []*GoogleAdsAudienceBucketResponseBody{}
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsKeywordsResponseBody builds the HTTP response body from
+// the result of the "get-microsoft-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsKeywordsResponseBody(res *lfxv2campaignserviceconnections.MicrosoftAdsKeywords) *GetMicrosoftAdsKeywordsResponseBody {
+	body := &GetMicrosoftAdsKeywordsResponseBody{
+		Window:              res.Window,
+		RowCount:            res.RowCount,
+		Truncated:           res.Truncated,
+		MetricsAsOf:         res.MetricsAsOf,
+		MetricsPending:      res.MetricsPending,
+		ConversionsComplete: res.ConversionsComplete,
+	}
+	if res.Rows != nil {
+		body.Rows = make([]*GoogleAdsKeywordResponseBody, len(res.Rows))
+		for i, val := range res.Rows {
+			if val == nil {
+				body.Rows[i] = nil
+				continue
+			}
+			body.Rows[i] = marshalLfxv2campaignserviceconnectionsGoogleAdsKeywordToGoogleAdsKeywordResponseBody(val)
+		}
+	} else {
+		body.Rows = []*GoogleAdsKeywordResponseBody{}
 	}
 	return body
 }
@@ -9321,6 +9457,84 @@ func NewGetGoogleAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceco
 	return body
 }
 
+// NewGetMicrosoftAdsKeywordsBadRequestResponseBody builds the HTTP response
+// body from the result of the "get-microsoft-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsKeywordsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *GetMicrosoftAdsKeywordsBadRequestResponseBody {
+	body := &GetMicrosoftAdsKeywordsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsKeywordsConflictResponseBody builds the HTTP response body
+// from the result of the "get-microsoft-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsKeywordsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *GetMicrosoftAdsKeywordsConflictResponseBody {
+	body := &GetMicrosoftAdsKeywordsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsKeywordsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "get-microsoft-ads-keywords" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsKeywordsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetMicrosoftAdsKeywordsServiceUnavailableResponseBody {
+	body := &GetMicrosoftAdsKeywordsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsKeywordsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "get-microsoft-ads-keywords" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsKeywordsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetMicrosoftAdsKeywordsInternalServerErrorResponseBody {
+	body := &GetMicrosoftAdsKeywordsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsKeywordsNotFoundResponseBody builds the HTTP response body
+// from the result of the "get-microsoft-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsKeywordsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetMicrosoftAdsKeywordsNotFoundResponseBody {
+	body := &GetMicrosoftAdsKeywordsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsKeywordsPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "get-microsoft-ads-keywords" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsKeywordsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetMicrosoftAdsKeywordsPayloadTooLargeResponseBody {
+	body := &GetMicrosoftAdsKeywordsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsKeywordsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "get-microsoft-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsKeywordsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetMicrosoftAdsKeywordsUnauthorizedResponseBody {
+	body := &GetMicrosoftAdsKeywordsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewResolveGoogleAdsCampaignBadRequestResponseBody builds the HTTP response
 // body from the result of the "resolve-google-ads-campaign" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -10742,6 +10956,18 @@ func NewGetGoogleAdsKeywordsPayload(projectID string, window *string, bearerToke
 // service get-google-ads-audience endpoint payload.
 func NewGetGoogleAdsAudiencePayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload {
 	v := &lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetMicrosoftAdsKeywordsPayload builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
+// endpoint payload.
+func NewGetMicrosoftAdsKeywordsPayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetMicrosoftAdsKeywordsPayload {
+	v := &lfxv2campaignserviceconnections.GetMicrosoftAdsKeywordsPayload{}
 	v.ProjectID = projectID
 	v.Window = window
 	v.BearerToken = bearerToken

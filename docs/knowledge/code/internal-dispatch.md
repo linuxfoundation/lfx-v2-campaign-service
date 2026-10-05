@@ -1549,6 +1549,35 @@ The token is `TrimSpace`d ONCE inside the helper and the trimmed value is
 what reaches `hubspot.NewClient`, so the incomplete-credential check is made against the value
 the client will actually use.
 
+## Report-backed keyword read (Microsoft, LFXV2-2665)
+
+`microsoft_keyword_report.go` makes `MicrosoftDispatcher` a `service.KeywordReportReader` — the
+report-backed stand-in for `KeywordInsightsReader.ReadKeywordPerformance`, as
+`AccountReportReader` stands in for `AccountMetricsReader`. It does NOT implement
+`KeywordInsightsReader`, so the audience read stays `ErrKeywordInsightsUnsupported` (400) for
+Microsoft: `AgeGenderAudienceReportRequest` has age and gender but no device dimension, so the
+three-dimension answer would need a second report and could be half-finished.
+
+- `KeywordReportAccount` — makes NO upstream call. Gate (`MICROSOFT_METRICS_ENABLED`, off →
+  `ErrKeywordInsightsUnsupported`), window (`ErrMetricsWindowUnsupported`), scope ceiling (more
+  than 300 campaigns → `domain.ErrKeywordReportScopeTooLarge`), then `resolveOwned` (the
+  project's OWN connection; no LF fallback), the strict stored-account check, and the provenance
+  filter `microsoftKeywordScope`: ANY scope entry whose recorded creation account
+  (`microsoftCreationAccountID`) is not the bound account refuses the whole read with
+  `ErrCampaignAccountMismatch` — `googleAdsScopeForCustomer`'s rule; an unrecorded account is
+  "unknown, proceed". Returns the bound account, which keys the saved report.
+- `SubmitKeywordReport` — re-runs the window, connection, bound-account
+  (`requireMicrosoftManagedAccount`) and scope checks, then submits for exactly the scope's
+  campaign ids, which it returns so the orchestrator records what the report covers.
+- `CheckKeywordReport` — same connection and account checks, one poll; rows normalised onto the
+  published enums (`BidMatchType` → `EXACT`/`PHRASE`/`BROAD`/`UNKNOWN`, `KeywordStatus` →
+  `ENABLED`/`PAUSED`/`UNKNOWN`) with `KeywordId` + `AdGroupId` kept as the action handle; a spend
+  whose micros would overflow int64 is refused.
+
+Tests (`microsoft_keyword_report_test.go`): gate off on all three methods, every refusal arm with
+zero upstream calls, the provenance filter, the system-fallback refusal, the submitted scope
+(Campaigns only, no `AccountIds`), and the poll states.
+
 ## Account discovery (optional capability)
 
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`
@@ -2450,7 +2479,7 @@ overlay flip like the cutover flags; the branch stays dormant until an operator 
 | --- | --- | --- |
 | `resolve` | `Dispatch` (creation) and the discovery/`ListAccounts` helpers | system when the flag is on, else project-then-fallback |
 | `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` | **the account the campaign RECORDS being created under** |
-| `resolveOwned` | adoption, and every provider's account-monitor read (`ListAccountCampaignMetrics`, and Microsoft's and X's report-backed `ListAccountCampaigns`/`SubmitAccountReport`/`CheckAccountReport` in `microsoft_monitor.go` and `twitter_monitor.go`; round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
+| `resolveOwned` | adoption, and every provider's account-monitor read (`ListAccountCampaignMetrics`, Microsoft's and X's report-backed `ListAccountCampaigns`/`SubmitAccountReport`/`CheckAccountReport` in `microsoft_monitor.go` and `twitter_monitor.go`, and Microsoft's report-backed keyword read in `microsoft_keyword_report.go`; round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
 
 The rule for an existing campaign is NOT "never forced". It is "follow the recorded creation
 account", and the difference is the whole point: those two agree for a campaign created before the

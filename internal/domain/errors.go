@@ -391,6 +391,14 @@ var (
 	// layer.
 	ErrKeywordInsightsUnsupported = errors.New("keyword and audience insights are not supported for this platform")
 
+	// ErrKeywordReportScopeTooLarge indicates a report-backed keyword read refused because the
+	// project owns more campaigns on the platform than one report can be scoped to (Microsoft's
+	// AccountThroughAdGroupReportScope holds up to 300). Refused before any upstream call, and
+	// PERMANENT while the project stays that large: widening the scope to the account would read
+	// other projects' keywords, and serving a subset would present part of the project as all of
+	// it. The message is fixed, client-safe text: it reaches the HTTP body.
+	ErrKeywordReportScopeTooLarge = errors.New("this project has more campaigns on the platform than one keyword report can be scoped to")
+
 	// ErrKeywordActionsUnsupported indicates the platform cannot pause or remove keywords.
 	// The platform is never contacted.
 	//
