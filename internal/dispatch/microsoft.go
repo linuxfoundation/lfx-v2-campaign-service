@@ -245,6 +245,46 @@ func microsoftKeywords(in []microsoftKeywordConfig) []microsoft.Keyword {
 	return out
 }
 
+// microsoftSnapshotConfig returns the copy of cfg that is persisted to config_snapshot
+// (stored UNENCRYPTED and indexed), with every caller-written free-text field passed through
+// sanitizeSnapshotText — the same helper twitter.go applies to tweetText, so the reduction
+// (scheme+host only; query, fragment, path and userinfo gone; unreducible links dropped) is
+// identical across adapters.
+//
+// microsoftConfig carries NO dedicated URL field: the ad's destination (FinalUrls) is the
+// BRIEF's registration URL plus the service-composed utm_* params, and is never part of this
+// struct, so it never reaches the snapshot. What a caller CAN put a link into is free text the
+// client sends verbatim:
+//
+//   - Keywords[].Text — up to 100 runes of arbitrary text; a pasted link (with whatever query
+//     the operator's browser session put on it) is a shape a keyword can have, and Microsoft
+//     accepts URL-like keywords. Sanitized. Ordinary keyword text has no URL-shaped run and is
+//     stored exactly as written.
+//   - TimeZone — meant to be a Microsoft enum value but NOT validated by the client (it is
+//     forwarded as-is), so it is effectively free text. Sanitized; every real enum value is a
+//     bare identifier and passes through unchanged.
+//
+// Kept verbatim, because they cannot carry a URL by construction: Budget and CpcBid (numbers),
+// Keywords[].MatchType (any value reaching here passed the client's Exact/Phrase/Broad check —
+// a snapshot is only written when the client got past validation), and GeoTargets (ISO
+// 3166-1 alpha-2 codes, shape-checked by the client before anything is sent).
+//
+// cfg is passed by value but Keywords shares its backing array with the config Dispatch sends
+// to Microsoft, so the slice is COPIED before it is rewritten: the platform must still receive
+// the full keyword text.
+func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
+	snapshot := cfg
+	snapshot.TimeZone = sanitizeSnapshotText(cfg.TimeZone)
+	if len(cfg.Keywords) > 0 {
+		snapshot.Keywords = make([]microsoftKeywordConfig, len(cfg.Keywords))
+		copy(snapshot.Keywords, cfg.Keywords)
+		for i := range snapshot.Keywords {
+			snapshot.Keywords[i].Text = sanitizeSnapshotText(snapshot.Keywords[i].Text)
+		}
+	}
+	return snapshot
+}
+
 // campaignFromMicrosoft maps the client result to the persistence model.
 func campaignFromMicrosoft(ctx context.Context, r *microsoft.CampaignResult, cfg microsoftConfig) *model.Campaign {
 	c := &model.Campaign{
@@ -254,8 +294,11 @@ func campaignFromMicrosoft(ctx context.Context, r *microsoft.CampaignResult, cfg
 	}
 	// Persist the budget/type/config the caller supplied (Microsoft uses a DAILY budget).
 	// ConfigSnapshot captures the validated config; parity with the sibling adapters (a NULL
-	// budget/type/config_snapshot row would lose the configuration).
-	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", cfg)
+	// budget/type/config_snapshot row would lose the configuration). It is built from a
+	// SANITIZED COPY (microsoftSnapshotConfig), never cfg itself: config_snapshot is stored
+	// UNENCRYPTED, and the free-text fields a caller writes verbatim are scrubbed of any URL
+	// they carry before they get there.
+	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", microsoftSnapshotConfig(cfg))
 	if raw, err := json.Marshal(r); err != nil {
 		// Near-impossible for this plain struct, but do NOT swallow it: on an ambiguous-orphan
 		// path Result is the sole carrier of the reconcile-by-name payload (campaign/ad-group/ad

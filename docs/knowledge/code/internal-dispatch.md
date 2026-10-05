@@ -295,6 +295,22 @@ denylist that cannot name every credential parameter a registration page might u
 does not apply at all to rows written before it existed. The snapshot does not have to
 guess, so it keeps nothing.
 
+**Microsoft's snapshot is sanitized too, though its config has no URL field.**
+`campaignFromMicrosoft` used to pass the caller's `microsoftConfig` to `applyCampaignConfig`
+as-is. The struct carries no destination — the ad's `FinalUrls` is the BRIEF's registration
+URL plus the client's `utm_*` params, so it never reaches the snapshot — but two fields are
+caller free text forwarded verbatim: `keywords[].text` (up to 100 runes, and a pasted link
+is a shape a keyword can take) and `timeZone` (meant to be an enum, but not validated, so in
+practice free text). `microsoftSnapshotConfig` runs both through `sanitizeSnapshotText`,
+the same helper `tweetText` uses, on a COPY whose `Keywords` slice is reallocated first so
+the text sent to Microsoft is untouched. Ordinary keyword text and every real time-zone enum
+value contain no link-shaped run and are stored exactly as written. `budget`, `cpcBid`,
+`matchType` (only Exact/Phrase/Broad gets past the client before a snapshot can be written)
+and `geoTargets` (ISO-2 codes, shape-checked by the client) cannot carry a URL and are kept
+verbatim. The persisted `result` (`microsoft.CampaignResult`) needed no change: its `Steps`
+interpolate only ids, counts and geo codes, and its `microsoftAdsUrl` is a deep link the
+client composes from the account id.
+
 ## The claim contract (release vs retain)
 
 The claim is PERMANENT until released — deliberately NOT auto-reclaimed on a timer. `pending`
