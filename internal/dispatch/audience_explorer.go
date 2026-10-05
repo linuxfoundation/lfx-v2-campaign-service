@@ -1698,7 +1698,7 @@ func (x *AudienceExplorer) createList(ctx context.Context, projectID, name strin
 //
 // It creates and changes nothing, and its verdict is evidence for a human decision
 // rather than a gate — see internal/audience/builder_qa.go.
-func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef string, targetsEU, targetsCA bool) (outcome *audience.QaOutcome, err error) {
+func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool) (outcome *audience.QaOutcome, err error) {
 	client, fromSystem, err := x.builder.client(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -1767,14 +1767,26 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef string,
 
 	exclusionNames := x.exclusionNames(ctx, client, cache, filters, nameByID)
 
+	// The names this list INCLUDES, for check 4. One hop is not needed here, unlike the
+	// exclusions: ComposeMaster wraps exclusions in a single Combined-Suppression list whose
+	// own name says nothing, whereas inclusions are referenced directly.
+	inclusionNames := make([]string, 0, 4)
+	for _, id := range audience.ReferencedListIDs(filters, "IN_LIST") {
+		if name := nameByID[id]; name != "" {
+			inclusionNames = append(inclusionNames, name)
+		}
+	}
+
 	signalMapping := audience.CheckSignalMapping(filters, nameByID)
 	suppression := audience.CheckSuppression(exclusionNames, targetsEU, targetsCA)
 	completeness := audience.CheckExclusionCompleteness(filters)
+	currentRegistrants := audience.CheckCurrentRegistrants(eventName, inclusionNames)
 
-	findings := make([]audience.Finding, 0, 6)
+	findings := make([]audience.Finding, 0, 7)
 	findings = append(findings, signalMapping.Findings...)
 	findings = append(findings, suppression.Findings...)
 	findings = append(findings, completeness.Findings...)
+	findings = append(findings, currentRegistrants.Findings...)
 	findings = audience.OrderFindings(findings)
 
 	return &audience.QaOutcome{
@@ -1785,9 +1797,10 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef string,
 			SignalMapping:         signalMapping,
 			Suppression:           suppression,
 			ExclusionCompleteness: completeness,
+			CurrentRegistrants:    currentRegistrants,
 		},
 		Findings: findings,
-		Overall:  audience.CombineVerdicts(signalMapping.Verdict, suppression.Verdict, completeness.Verdict),
+		Overall:  audience.CombineVerdicts(signalMapping.Verdict, suppression.Verdict, completeness.Verdict, currentRegistrants.Verdict),
 	}, nil
 }
 

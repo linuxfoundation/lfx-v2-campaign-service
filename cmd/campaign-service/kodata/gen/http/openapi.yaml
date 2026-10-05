@@ -746,7 +746,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-audience-builder
             summary: run-audience-qa lfx-v2-campaign-service-audience-builder
-            description: 'Audit a composed master list''s filters: signal mapping, regulatory suppression, and exclusion completeness. Creates nothing.'
+            description: 'Audit a composed master list''s filters: signal mapping, regulatory suppression, exclusion completeness, and whether this edition''s own registrants are included. Creates nothing.'
             operationId: lfx-v2-campaign-service-audience-builder#run-audience-qa
             parameters:
                 - name: project_id
@@ -10734,6 +10734,8 @@ definitions:
         title: AudienceQaChecks
         type: object
         properties:
+            current_registrants:
+                $ref: '#/definitions/AudienceQaCheck'
             exclusion_completeness:
                 $ref: '#/definitions/AudienceQaExclusionCheck'
             signal_mapping:
@@ -10741,6 +10743,21 @@ definitions:
             suppression:
                 $ref: '#/definitions/AudienceQaSuppressionCheck'
         example:
+            current_registrants:
+                findings:
+                    - fix: Dolor molestiae quia voluptatem deserunt libero.
+                      message: Sed minima nihil voluptatem quaerat ipsa voluptatem.
+                      severity: HIGH
+                    - fix: Dolor molestiae quia voluptatem deserunt libero.
+                      message: Sed minima nihil voluptatem quaerat ipsa voluptatem.
+                      severity: HIGH
+                    - fix: Dolor molestiae quia voluptatem deserunt libero.
+                      message: Sed minima nihil voluptatem quaerat ipsa voluptatem.
+                      severity: HIGH
+                    - fix: Dolor molestiae quia voluptatem deserunt libero.
+                      message: Sed minima nihil voluptatem quaerat ipsa voluptatem.
+                      severity: HIGH
+                verdict: FAIL
             exclusion_completeness:
                 exclusion_count: 7396157524892640779
                 findings:
@@ -10868,14 +10885,14 @@ definitions:
                     $ref: '#/definitions/AudienceQaCandidate'
                 description: Matches to choose between; set only when needs_disambiguation is true
                 example:
-                    - list_id: Soluta non vel pariatur quo veritatis nisi.
-                      name: Distinctio animi fugit provident rerum et.
+                    - list_id: Vel pariatur quo veritatis nisi velit distinctio.
+                      name: Fugit provident rerum et.
                       size: 6503538155577912372
-                    - list_id: Soluta non vel pariatur quo veritatis nisi.
-                      name: Distinctio animi fugit provident rerum et.
+                    - list_id: Vel pariatur quo veritatis nisi velit distinctio.
+                      name: Fugit provident rerum et.
                       size: 6503538155577912372
-                    - list_id: Soluta non vel pariatur quo veritatis nisi.
-                      name: Distinctio animi fugit provident rerum et.
+                    - list_id: Vel pariatur quo veritatis nisi velit distinctio.
+                      name: Fugit provident rerum et.
                       size: 6503538155577912372
             checks:
                 $ref: '#/definitions/AudienceQaChecks'
@@ -10923,13 +10940,28 @@ definitions:
                     - FAIL
         example:
             candidates:
-                - list_id: Soluta non vel pariatur quo veritatis nisi.
-                  name: Distinctio animi fugit provident rerum et.
+                - list_id: Vel pariatur quo veritatis nisi velit distinctio.
+                  name: Fugit provident rerum et.
                   size: 6503538155577912372
-                - list_id: Soluta non vel pariatur quo veritatis nisi.
-                  name: Distinctio animi fugit provident rerum et.
+                - list_id: Vel pariatur quo veritatis nisi velit distinctio.
+                  name: Fugit provident rerum et.
                   size: 6503538155577912372
             checks:
+                current_registrants:
+                    findings:
+                        - fix: Dolor molestiae quia voluptatem deserunt libero.
+                          message: Sed minima nihil voluptatem quaerat ipsa voluptatem.
+                          severity: HIGH
+                        - fix: Dolor molestiae quia voluptatem deserunt libero.
+                          message: Sed minima nihil voluptatem quaerat ipsa voluptatem.
+                          severity: HIGH
+                        - fix: Dolor molestiae quia voluptatem deserunt libero.
+                          message: Sed minima nihil voluptatem quaerat ipsa voluptatem.
+                          severity: HIGH
+                        - fix: Dolor molestiae quia voluptatem deserunt libero.
+                          message: Sed minima nihil voluptatem quaerat ipsa voluptatem.
+                          severity: HIGH
+                    verdict: FAIL
                 exclusion_completeness:
                     exclusion_count: 7396157524892640779
                     findings:
@@ -11177,11 +11209,11 @@ definitions:
             event_slug:
                 type: string
                 description: 'Event/course slug. Part of a brief''s composite identity, not unique on its own: see delivery_type and stage.'
-                example: Saepe rerum praesentium est quaerat.
+                example: Est quaerat.
             id:
                 type: string
                 description: Brief UUID
-                example: Delectus quis quidem sint harum architecto.
+                example: Fugit inventore repellendus impedit.
             keywords:
                 description: Keyword list
                 example: Voluptas aliquid vitae.
@@ -11198,7 +11230,7 @@ definitions:
             program_type:
                 type: string
                 description: Funnel context
-                example: membership
+                example: education
                 enum:
                     - events
                     - education
@@ -11206,7 +11238,7 @@ definitions:
             project_id:
                 type: string
                 description: Owning project
-                example: Fugit inventore repellendus impedit.
+                example: Culpa saepe.
             stage:
                 type: string
                 description: Stage within an email series. Empty for paid, which has no series.
@@ -13613,6 +13645,11 @@ definitions:
         title: LfxV2CampaignServiceAudienceBuilderRunAudienceQaRequestBody
         type: object
         properties:
+            event_name:
+                type: string
+                description: This edition's event name, so an included registration list for THIS event can be told from another event's
+                example: aag
+                minLength: 1
             list_ref:
                 type: string
                 description: List id or name to audit
@@ -13627,7 +13664,8 @@ definitions:
                 description: The send targets the EU, so a GDPR suppression is expected
                 example: true
         example:
-            list_ref: aag
+            event_name: nb
+            list_ref: lkv
             targets_ca: false
             targets_eu: true
         required:

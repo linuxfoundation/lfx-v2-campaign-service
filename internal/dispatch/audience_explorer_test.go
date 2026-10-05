@@ -445,6 +445,70 @@ func TestComposeMaster_MasterCreateUnconfirmed_ReturnsPartialWithMasterName(t *t
 		"the suppression list DID confirm-create, so its real id must still be reported alongside the unconfirmed master")
 }
 
+// TestRunQA_CheckFourRunsOnlyWhenTheEventIsNamed pins the present/omitted contract end to end,
+// which is where the contradiction it replaced went unnoticed.
+//
+// Check 4 needs an event name to tell this edition from a past one or a sibling. Absent, it must
+// not run AT ALL -- not run and report NEEDS VERIFY. Every caller today supplies no event name
+// (the UI is not wired), so a verdict there would flip every existing audit's Overall and append
+// a finding to audits the check has nothing to say about.
+func TestRunQA_CheckFourRunsOnlyWhenTheEventIsNamed(t *testing.T) {
+	// A master that INCLUDES this edition's own registration list: the A-02 defect.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case "/crm/v3/lists/111":
+			// `filterType":"IN_LIST"` is what this service itself writes (`MasterListFilter` in
+			// `internal/audience/filters.go`), and
+			// what `ReferencedListIDs` keys on. A `LIST_BRANCH` spelling is read by the
+			// suppression check but is invisible to the inclusion walk.
+			_, _ = io.WriteString(w, `{"list":{"listId":"111","name":"AGNTCon NA 2026 - Master",`+
+				`"objectTypeId":"0-1","size":42,"filterBranch":{"filterBranchType":"OR",`+
+				`"filterBranches":[{"filterBranchType":"AND","filters":[{"filterType":"IN_LIST",`+
+				`"operator":"IN_LIST","listId":222}]}]}}}`)
+		case "/crm/v3/lists/222":
+			_, _ = io.WriteString(w, `{"list":{"listId":"222",`+
+				`"name":"26Q2 AGNTCon + MCPCon North America 2026 Event Registration",`+
+				`"objectTypeId":"0-1","size":1346}}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, nil, nil, nil)
+
+	t.Run("no event name: check 4 does not run and the roll-up is untouched", func(t *testing.T) {
+		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "", false, false)
+		require.NoError(t, err)
+
+		assert.Empty(t, outcome.Checks.CurrentRegistrants.Verdict,
+			"a caller that named no event did not ask this question, so there is nothing to report")
+		assert.Empty(t, outcome.Checks.CurrentRegistrants.Findings)
+		// Overall is NOT asserted here: this fixture has no suppressions at all, so the
+		// suppression check legitimately fails it. What matters is that check 4 contributes
+		// NOTHING -- asserted on its own verdict and findings above, and on the roll-up being
+		// unchanged by it in builder_qa_test.go.
+	})
+
+	t.Run("event named: check 4 catches the included registration list", func(t *testing.T) {
+		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "AGNTCon + MCPCon North America 2026", false, false)
+		require.NoError(t, err)
+
+		assert.Equal(t, audience.VerdictFail, outcome.Checks.CurrentRegistrants.Verdict,
+			"this edition's own registration list is INCLUDED, which is the A-02 defect")
+		require.NotEmpty(t, outcome.Checks.CurrentRegistrants.Findings)
+		assert.Equal(t, audience.SeverityCritical, outcome.Checks.CurrentRegistrants.Findings[0].Severity)
+		assert.Equal(t, audience.VerdictFail, outcome.Overall,
+			"a CRITICAL in check 4 must reach the overall verdict")
+	})
+}
+
 // TestComposeMaster_Recording_ResolvesThePortalBeforeCreatingAnything pins the
 // ordering that makes the recorded provenance TRUE rather than merely plausible.
 //
@@ -589,7 +653,7 @@ func TestRunQA_ByName_FetchesRealFiltersRatherThanCachedSearchHit(t *testing.T) 
 	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
 	x := NewAudienceExplorer(builder, nil, nil, nil)
 
-	outcome, err := x.RunQA(context.Background(), "proj-1", "KubeCon NA 2026 - master", false, false)
+	outcome, err := x.RunQA(context.Background(), "proj-1", "KubeCon NA 2026 - master", "", false, false)
 	require.NoError(t, err)
 	require.False(t, outcome.NeedsDisambiguation)
 

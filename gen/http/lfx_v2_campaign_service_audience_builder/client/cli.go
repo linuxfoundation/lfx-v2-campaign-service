@@ -382,10 +382,15 @@ func BuildRunAudienceQaPayload(lfxV2CampaignServiceAudienceBuilderRunAudienceQaB
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderRunAudienceQaBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ref\": \"ux\",\n      \"targets_ca\": false,\n      \"targets_eu\": false\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"event_name\": \"q\",\n      \"list_ref\": \"ux\",\n      \"targets_ca\": false,\n      \"targets_eu\": false\n   }'")
 		}
 		if utf8.RuneCountInString(body.ListRef) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ref", body.ListRef, utf8.RuneCountInString(body.ListRef), 1, true))
+		}
+		if body.EventName != nil {
+			if utf8.RuneCountInString(*body.EventName) < 1 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_name", *body.EventName, utf8.RuneCountInString(*body.EventName), 1, true))
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -405,6 +410,7 @@ func BuildRunAudienceQaPayload(lfxV2CampaignServiceAudienceBuilderRunAudienceQaB
 		ListRef:   body.ListRef,
 		TargetsEu: body.TargetsEu,
 		TargetsCa: body.TargetsCa,
+		EventName: body.EventName,
 	}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken

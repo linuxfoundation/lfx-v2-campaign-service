@@ -410,6 +410,10 @@ var AudienceQaChecks = Type("audience-qa-checks", func() {
 	Attribute("signal_mapping", AudienceQaCheck, "Do the referenced lists map to recognisable signals?")
 	Attribute("suppression", AudienceQaSuppressionCheck, "Are the expected regulatory suppressions applied?")
 	Attribute("exclusion_completeness", AudienceQaExclusionCheck, "Are the exclusions present and well-formed?")
+	// OPTIONAL in the result, because it is only produced when `event_name` was supplied.
+	// Absent means the audit could not run, which is NOT the same as a pass -- a required
+	// field carrying a zero-valued verdict would read as one.
+	Attribute("current_registrants", AudienceQaCheck, "Is this edition's own registration list suppressed rather than included?")
 	Required("signal_mapping", "suppression", "exclusion_completeness")
 })
 
@@ -654,13 +658,26 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 	})
 
 	Method("run-audience-qa", func() {
-		Description("Audit a composed master list's filters: signal mapping, regulatory suppression, and exclusion completeness. Creates nothing.")
+		Description("Audit a composed master list's filters: signal mapping, regulatory suppression, exclusion completeness, and whether this edition's own registrants are included. Creates nothing.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
 			Attribute("list_ref", String, "List id or name to audit", func() { MinLength(1) })
 			Attribute("targets_eu", Boolean, "The send targets the EU, so a GDPR suppression is expected")
 			Attribute("targets_ca", Boolean, "The send targets Canada, so a CASL opt-out suppression is expected")
+			// OPTIONAL, and the check it enables is OMITTED without it rather than guessed.
+			//
+			// A registration list names its own edition ("26Q2 AGNTCon + MCPCon North America
+			// 2026 Event Registration"), so deciding whether an INCLUDED registration list is
+			// THIS event's needs the event's name. Absent, `current_registrants` is omitted
+			// entirely and `overall` is unaffected -- see the godoc on the result attribute.
+			// Reporting NEEDS VERIFY instead, which this comment used to describe, flipped every
+			// existing caller's audit: no client sends `event_name` yet, so every previously
+			// PASSing audit would have become NEEDS VERIFY and trained operators to ignore the
+			// verdict.
+			Attribute("event_name", String, "This edition's event name, so an included registration list for THIS event can be told from another event's", func() {
+				MinLength(1)
+			})
 			Required("project_id", "list_ref")
 		})
 		Result(AudienceQaResult)

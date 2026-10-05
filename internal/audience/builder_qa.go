@@ -4,9 +4,15 @@
 package audience
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
+
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
+	"unicode"
 )
 
 // ---------------------------------------------------------------------------
@@ -334,6 +340,363 @@ func CheckSuppression(exclusionNames []string, targetsEU, targetsCA bool) Suppre
 	}
 }
 
+// eventYearFromName is the four-digit year an event name declares, or "" when it declares
+// none. The LAST match: "AGNTCon 2026" has one, and a name that mentions two takes the
+// later, which is the edition being sent.
+func eventYearFromName(eventName string) string {
+	matches := yearRE.FindAllString(eventName, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(matches[len(matches)-1])
+}
+
+// namesTheEdition reports whether a list name carries `year`, in EITHER spelling this
+// portfolio uses.
+//
+// A raw `strings.Contains(name, "2026")` missed this service's OWN naming convention and so
+// PASSED on the lists it creates itself. `MasterListName` writes a two-digit QUARTER code --
+// `builder_master_test.go` pins "26Q1 - CNCF - KubeCon Europe - Master" -- with no four-digit
+// year anywhere in it. Measured before fixing: "26Q1 - CNCF - KubeCon Europe - Registrants"
+// returned PASS while the same name with "2026" spliced in returned FAIL, so the check was keyed
+// on an accident of one list's name rather than on the edition.
+//
+// The four-digit form is matched as a standalone year, not a substring: a list id or a contact
+// count that happens to read "2026" cannot satisfy it on its own.
+func namesTheEdition(name, year string) bool {
+	if len(year) != 4 {
+		return false
+	}
+	for _, found := range yearRE.FindAllString(name, -1) {
+		if found == year {
+			return true
+		}
+	}
+	// The `YYQN` spelling, compared on the captured two digits rather than by substring, so
+	// "26Q1" matches 2026 and "25Q4" does not. `quarterCodeRE` is builder_master.go's, the same
+	// pattern `MasterListName` writes with.
+	for _, m := range quarterCodeRE.FindAllStringSubmatch(name, -1) {
+		if m[1] == year[2:] {
+			return true
+		}
+	}
+	return false
+}
+
+// registrantNaming is how a list name mentions registration, for CheckCurrentRegistrants.
+type registrantNaming int
+
+const (
+	// registrantNamingNone: the name does not mention registration at all.
+	registrantNamingNone registrantNaming = iota
+	// registrantNamingPlain: at least one registration term appears un-negated.
+	registrantNamingPlain
+	// registrantNamingNegated: every registration term in the name is negated or qualified.
+	registrantNamingNegated
+)
+
+// namesRegistrants reports how name mentions registration.
+//
+// `strings.Contains(name, "registered")` -- the first version of this -- could not tell this
+// event's registrants from the people who have NOT registered, because "unregistered" contains
+// "registered". That made "Unregistered Prospects" fail QA as CRITICAL: the one list a
+// registration-push send most obviously SHOULD include, reported as the list it must exclude.
+//
+// The second version matched the term together with an adjacent negation using one regex, and
+// three separate holes came out of a review of it -- each a case where the pattern judged the RAW
+// string and the raw string did not carry the structure the pattern assumed:
+//
+//   - "Not Yet Registered" and "Haven't Registered" read as PLAIN, because the negation was
+//     required to sit immediately before the term. Any intervening word reopened the false
+//     CRITICAL this predicate exists to close.
+//   - "Co-Registrants" read as PLAIN through an optional `\b?` that could match empty, so a bare
+//     stem matched mid-word. "xregistrants" and "bioregistration" matched too.
+//   - "Ünregistered" read as PLAIN because Go's `\b` is ASCII-only: there is no boundary between
+//     "Ü" and "n", so the `un` prefix never matched. "REGİSTRANTS" went the other way and read as
+//     NO mention at all, missing a real registrant list.
+//
+// So this judges TOKENS of a normalised form rather than substrings of the raw name, and asks the
+// three questions separately rather than encoding them in one pattern:
+//
+//  1. Accents are folded and case lowered first, so "Ünregistered" and "REGİSTRANTS" reduce to
+//     forms the token rules below can read. A list name is operator-typed and arrives from a
+//     HubSpot portal, so it carries whatever the operator pasted.
+//  2. A name is split into PHRASES on separators that end a thought -- a spaced dash, a comma,
+//     brackets, a pipe, a slash. A negation reaches only to the end of its own phrase, which is
+//     what keeps "Not Interested - Registration List" and "Registration - No Discount" plain:
+//     both carry a negating word negating something else, in a different phrase.
+//  3. Within a phrase a hyphen and an apostrophe JOIN rather than separate, so "Pre-registration"
+//     and "Haven't" survive as single tokens. A fused prefix (`un`, `de`, `pre`, `re`, `mis`,
+//     `anti`, `co`) is itself the qualification and needs no separate negating word.
+//
+// A name counts as PLAIN when any phrase carries an un-negated term, not when the first one does:
+// "Not Registered - Event Registration List" names both, and the un-negated mention is the one
+// that decides it -- the list does hold registrants.
+func namesRegistrants(name string) registrantNaming {
+	anyTerm, anyPlain := false, false
+	for _, phrase := range registrantPhraseSplitRE.Split(foldForNaming(name), -1) {
+		negated := false
+		for _, word := range registrantWords(phrase) {
+			switch {
+			case registrantNegationWords[word]:
+				negated = true
+			case registrantFusedTermRE.MatchString(word):
+				// A fused prefix carries its own qualification, so the term is never plain here.
+				anyTerm = true
+			case registrantTermRE.MatchString(word):
+				anyTerm = true
+				if !negated {
+					anyPlain = true
+				}
+			}
+		}
+	}
+	switch {
+	case !anyTerm:
+		return registrantNamingNone
+	case anyPlain:
+		return registrantNamingPlain
+	default:
+		return registrantNamingNegated
+	}
+}
+
+// registrantNameFold strips accents so a decorated spelling reduces to the ASCII form the token
+// rules read. `unicode.Mn` is the nonspacing-mark category NFD decomposition produces.
+var registrantNameFold = transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+
+// foldForNaming lower-cases and de-accents. On a transform error it still lower-cases, so the
+// ASCII majority of a malformed name is read rather than the whole name being skipped.
+func foldForNaming(name string) string {
+	folded, _, err := transform.String(registrantNameFold, name)
+	if err != nil {
+		return strings.ToLower(name)
+	}
+	return strings.ToLower(folded)
+}
+
+// registrantPhraseSplitRE splits on separators that END a thought, so a negation cannot reach
+// across one. A SPACED dash only: "Pre-registration" must stay one token.
+var registrantPhraseSplitRE = regexp.MustCompile(`\s+[-\x{2013}\x{2014}]\s+|[,()\[\]|/]+`)
+
+// registrantWords splits a phrase into words, keeping internal `-` and `'` so a fused prefix
+// ("pre-registration") and a contraction ("haven't") survive as one token each.
+func registrantWords(phrase string) []string {
+	return strings.FieldsFunc(phrase, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' && r != '\''
+	})
+}
+
+// registrantTermRE matches a bare registration term, anchored so it cannot match mid-word.
+var registrantTermRE = regexp.MustCompile(`^(?:registrant|registration|registered|attendee|attended)s?$`)
+
+// registrantFusedTermRE matches a registration term carrying a prefix that qualifies it.
+// `co` and `re` are here with the negations because neither names THIS edition's own registrant
+// set either -- a co-registrant or a re-registration is not the population the check judges.
+var registrantFusedTermRE = regexp.MustCompile(`^(?:un|non|de|pre|re|mis|anti|co)-?(?:registrant|registration|registered|attendee|attended)s?$`)
+
+// registrantNegationWords are the words that negate a registration term later in their phrase.
+// Both the apostrophe and bare spellings, because an operator types either.
+var registrantNegationWords = map[string]bool{
+	"not": true, "non": true, "never": true, "without": true, "excluding": true, "exclude": true,
+	"no":      true,
+	"haven't": true, "hasn't": true, "didn't": true, "don't": true, "won't": true,
+	"havent": true, "hasnt": true, "didnt": true, "dont": true, "wont": true,
+}
+
+// CheckCurrentRegistrants asks whether THIS edition's own registration list is being
+// included rather than suppressed.
+//
+// The whole point of a registration-push send is reaching people who have NOT registered.
+// An event's own registration list belongs in the suppressions; included, every invitation
+// goes to someone who already holds a ticket. Verified on AGNTCon + MCPCon North America
+// (2026-09-30): the edition's registration list, 1,346 contacts, was offered as an INCLUDE,
+// ticking it raised nothing, and QA passed -- the three existing checks all look at consent
+// suppression or filter shape, and none of them reads the audience's own INTENT.
+//
+// SCOPED TO A REGISTRATION-ORIENTED SEND, and the contract cannot yet say so. `Post-Event`
+// is a real stage (`internal/service/emailstage/stage.go`), and for one this edition's own
+// attendees are the intended audience -- so this finding would be wrong there. The QA payload
+// carries no stage today, so there is nothing to gate on.
+//
+// That is safe only because the check is DORMANT: `event_name` is optional and no client sends
+// it, so check 4 is omitted from every audit in production. The gate belongs in the same change
+// that wires `event_name` through from the UI, where the stage is known -- adding a stage
+// attribute to the contract now would be guessing at a shape before there is a caller to fit.
+// Until then this must not be enabled for a `Post-Event` send -- tracked as #244.
+//
+// Keyed on the registration SIGNAL plus the event's own name, not on the name alone. A
+// portfolio contains many registration lists and including a PAST edition's is the correct
+// and common case -- that is the strongest evidence available for a first-edition send. Only
+// THIS edition's is wrong, so a check that fired on any registration list would be wrong far
+// more often than right, and would be switched off.
+//
+// `eventName` empty is NEEDS VERIFY, never a pass. The caller may legitimately not know the
+// event (QA can be run on a bare list id), and an audit that silently skipped would be
+// indistinguishable from one that looked and found nothing.
+func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
+	// NO event name means the check DID NOT RUN, which is the zero Check -- an empty verdict and
+	// no findings.
+	//
+	// NEEDS VERIFY would be wrong here, and wrongly in the direction that gets a check removed.
+	// Every caller today supplies no event name (the UI is not wired yet), so returning a
+	// verdict would flip EVERY existing audit's `Overall` to NEEDS VERIFY and append a finding
+	// to it -- a check that cannot run making every unrelated audit look worse.
+	//
+	// The distinction that matters: a caller who gave no event name did not ask this question,
+	// so there is nothing to report. A caller who gave one this check cannot DECIDE -- a
+	// year-less name, an all-generic name -- did ask, and gets NEEDS VERIFY naming what to
+	// confirm by hand. The empty Check is what `currentRegistrantsResult` omits from the wire.
+	if strings.TrimSpace(eventName) == "" {
+		return Check{}
+	}
+
+	// The event's tokens AND its year, both required.
+	//
+	// `NewLastSentTerms` STRIPS the year on purpose -- it exists to find PAST editions -- so
+	// matching on its terms alone fired on exactly the lists that are correct to include. A
+	// past edition's registrants are the strongest evidence a first-edition send has, and a
+	// sibling region ("AGNTCon Japan 2026") is a different event entirely. Measured before
+	// fixing: terms-only flagged both as FAIL.
+	//
+	// The year is what separates THIS edition from its own history, and the tokens are what
+	// separate it from a sibling. Requiring both is the only pair that leaves all three
+	// correct cases passing.
+	terms := NewLastSentTerms(eventName, "")
+	// `isOtherEdition` is what separates a sibling region, not the token count.
+	//
+	// The token rule this replaced was a SUBSET test: a sibling's list is a strict token
+	// superset, so whenever the event name omitted a region -- the common portfolio shape --
+	// the sibling was flagged. Measured: event "KubeCon 2026" FAILed
+	// "26Q1 KubeCon Europe 2026 Event Registration", and "PyTorch Conference 2026" FAILed the
+	// Japan edition. Four successive token rules each produced a false positive on a list an
+	// operator legitimately chose, because the question is about REGIONS and tokens cannot ask
+	// it: `editionRegions` carries the alias table and the latin/south disambiguation.
+	eventRegions := editionRegions(eventName)
+	// An event name made ENTIRELY of portfolio-common words has an EMPTY distinctive tier, and
+	// with no region named either there is nothing left to judge on. Measured on
+	// "Open Source Summit 2026": the edition's own list and "Open Source Summit Japan 2026"
+	// BOTH score overlap=3 against the same 3 generic tokens.
+	//
+	// Reported as NEEDS VERIFY rather than guessed in either direction. Flagging would hit a
+	// sibling's list, which is correct to include; passing would miss this edition's own, which
+	// is the defect the check exists for. Neither is defensible, so the operator is asked.
+	if len(terms.Event) == 0 && len(eventRegions) == 0 {
+		return Check{
+			Verdict: VerdictNeedsVerify,
+			Findings: []Finding{{
+				Severity: SeverityMedium,
+				Message:  fmt.Sprintf("Could not check whether this event's own registrants are suppressed: every word in %q is common across the portfolio, so this edition cannot be told from a sibling region's.", eventName),
+				Fix:      "Confirm by hand that the registration list among the inclusions is an EARLIER edition's, and that this edition's own registrants are excluded.",
+			}},
+		}
+	}
+	year := eventYearFromName(eventName)
+	if year == "" {
+		// A name with no year cannot be told from its own past editions, and guessing the
+		// current year would flag a list the operator may have chosen deliberately.
+		return Check{
+			Verdict: VerdictNeedsVerify,
+			Findings: []Finding{{
+				Severity: SeverityMedium,
+				Message:  fmt.Sprintf("Could not check whether this event's own registrants are suppressed: %q carries no year, so this edition cannot be told from an earlier one.", eventName),
+				Fix:      "Confirm by hand that this edition's registration list is excluded rather than included.",
+			}},
+		}
+	}
+	findings := make([]Finding, 0, 1)
+	// Set when a registration list could not be judged because the event names no region and
+	// the list does. Reported only if nothing else FAILED -- a real hit is the more useful
+	// answer, and NEEDS VERIFY alongside a CRITICAL would read as the lesser finding.
+	undecidable := false
+	// Set when a name mentions registration only in a negated form. Tracked separately from
+	// `undecidable` because the two have different causes and the operator is told which: the
+	// existing message names the region question, which has nothing to do with this.
+	negatedName := ""
+
+	for _, name := range includedNames {
+		naming := namesRegistrants(name)
+		if naming == registrantNamingNone {
+			continue
+		}
+		if !namesTheEdition(name, year) {
+			continue
+		}
+		// A DIFFERENT region is a different event, however many tokens it shares.
+		if isOtherEdition(name, eventRegions) {
+			continue
+		}
+		// And the reverse, which `isOtherEdition` cannot answer: the LIST names a region while
+		// the EVENT names none. "KubeCon 2026" against "26Q1 KubeCon Europe 2026 Event
+		// Registration" -- the list may be this event's regional edition or a sibling's, and
+		// the event name carries nothing to decide it. `isOtherEdition` returns false here by
+		// design (it has no event region to compare), which reads as "same edition" and is how
+		// four successive token rules each produced a false positive on a list an operator
+		// legitimately chose.
+		//
+		// Skipped rather than flagged: a sibling's registration list is correct to include, so
+		// flagging it is the error that gets the check switched off. The caller is told below
+		// that the audit was incomplete.
+		if len(eventRegions) == 0 && len(editionRegions(name)) > 0 {
+			undecidable = true
+			continue
+		}
+		// And it must still match the event itself. `MatchLastSent` admits on the distinctive
+		// tier, which is the right bar once the region question is settled separately.
+		if !MatchLastSent(name, "", terms).Matched {
+			continue
+		}
+		// The negation question is asked LAST, after every edition gate, because it only matters
+		// for a name already established as THIS edition's. Asked first -- as it was when this
+		// was introduced -- an unrelated event's negated list downgraded the whole audit:
+		// "PyTorch 2025 - Unregistered Prospects" turned an AGNTCon 2026 audit into NEEDS VERIFY
+		// for a list check 4 is not scoped to at all.
+		//
+		// A name that mentions registration only in a NEGATED form -- "Unregistered Prospects",
+		// "Not Registered", "Never Attended" -- is the audience this send is FOR, not the one it
+		// must exclude, so CRITICAL here would fail QA for exactly the right list.
+		// `strings.Contains` could not tell them apart: "unregistered" contains "registered".
+		//
+		// Reported as incomplete rather than skipped, because the opposite reading is also
+		// available: a list genuinely named for this edition's registrants could carry a negated
+		// word, and silently passing it would hide the very inclusion this check exists to catch.
+		// Undecidable is the honest answer, and it is already how this check reports a region it
+		// cannot resolve.
+		if naming == registrantNamingNegated {
+			if negatedName == "" {
+				negatedName = name
+			}
+			continue
+		}
+		findings = append(findings, Finding{
+			Severity: SeverityCritical,
+			Message:  fmt.Sprintf("%q looks like this event's own registration list and it is INCLUDED, so this send would invite people who have already registered.", name),
+			Fix:      "Move this list into the exclusions. A registration-push send reaches people who have not registered; this edition's registrants belong in the combined suppression.",
+		})
+		break
+	}
+
+	if len(findings) == 0 && (undecidable || negatedName != "") {
+		reported := make([]Finding, 0, 2)
+		if undecidable {
+			reported = append(reported, Finding{
+				Severity: SeverityMedium,
+				Message:  fmt.Sprintf("Could not check every included registration list: %q names no region, so a list naming one cannot be told from a sibling edition's.", eventName),
+				Fix:      "Confirm by hand that any regional registration list among the inclusions belongs to an EARLIER edition, and that this edition's own registrants are excluded.",
+			})
+		}
+		if negatedName != "" {
+			reported = append(reported, Finding{
+				Severity: SeverityMedium,
+				Message:  fmt.Sprintf("Could not check whether %q is this event's registrants or the people who have NOT registered: it names registration in a negated form.", negatedName),
+				Fix:      "Confirm by hand which it is. A list of people who have not registered belongs in the inclusions; this edition's registrants belong in the combined suppression.",
+			})
+		}
+		return Check{Verdict: VerdictNeedsVerify, Findings: reported}
+	}
+	return Check{Verdict: VerdictFromFindings(findings), Findings: findings}
+}
+
 // ExclusionCheck adds how many exclusion segments were found.
 type ExclusionCheck struct {
 	Check
@@ -390,6 +753,17 @@ func CombineVerdicts(verdicts ...Verdict) Verdict {
 			worst = VerdictNeedsVerify
 		case VerdictPass:
 			// Leaves `worst` as-is.
+		case "":
+			// A check that did NOT RUN, which check 4 is whenever no event name reached the
+			// audit. Stated rather than left to fall through: the empty verdict is now a
+			// routine input, and an unexhausted switch made "neither passes nor fails" true
+			// by accident of `worst`'s initial value rather than by intent.
+		default:
+			// An unrecognised verdict resolves to NEEDS VERIFY, never to PASS. This roll-up
+			// feeds a send decision, and `severityRank` already applies the same discipline
+			// one level down -- an unknown severity sorts last "so a future severity cannot
+			// silently outrank a CRITICAL".
+			worst = VerdictNeedsVerify
 		}
 	}
 	return worst
