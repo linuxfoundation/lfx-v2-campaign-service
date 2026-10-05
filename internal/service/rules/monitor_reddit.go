@@ -49,11 +49,13 @@ func EvaluateRedditMonitor(rows []model.AccountCampaignMetrics, days int, now ti
 			continue
 		}
 
-		// A Reddit campaign has a pacing percentage only when it has BOTH a total budget and a
-		// parseable flight to prorate it against. Either one missing and there is nothing to
-		// pace, so the row says so through unknownPacingRow rather than carrying redditPacingPct's
-		// 0 fallback into the ladder, where < 50 reads as "underspending" — a campaign reported as
-		// failing to spend a budget it does not have.
+		// A Reddit campaign has a pacing percentage only when it has a budget this read can pace:
+		// a lifetime (LIFETIME_SPEND) budget with a parseable flight to prorate it against, or a
+		// daily (DAILY_SPEND) budget scheduled for some part of the window. Anything else — no
+		// budget, an unrecognised goal_type, a lifetime budget with no start date — and there is
+		// nothing to pace, so the row says so through unknownPacingRow rather than carrying
+		// redditPacingPct's 0 fallback into the ladder, where < 50 reads as "underspending" — a
+		// campaign reported as failing to spend a budget it does not have.
 		//
 		// The empty-StartDate case (Reddit reported no parseable start_time — see
 		// internal/platform/reddit/monitor.go) used to be handled here on its own, which left the
@@ -80,18 +82,39 @@ func EvaluateRedditMonitor(rows []model.AccountCampaignMetrics, days int, now ti
 	return out, items
 }
 
-// redditPacingPct ports the schedule-based branch (totalBudget>0 && schedStart set) of
-// getRedditAnalytics; Reddit campaigns carry no daily budget (dailyBudget is hardcoded to 0
-// upstream — see the dispatcher), so the dailyBudget*days branch is DEAD CODE here exactly as
-// it is dead in reddit-ads.service.ts (dailyBudget is always 0 there too), and is omitted.
+// redditPacingPct computes a Reddit campaign's pacing percentage from whichever budget its
+// goal_type gave it (internal/platform/reddit's AccountCampaignRow.TotalBudget doc comment):
+//
+//   - LIFETIME_SPEND (TotalBudget): the BFF's schedule-based branch, ported as it was — the
+//     total prorated across the flight, expected = TotalBudget / flightDays × elapsedDays.
+//     Needs a parseable start date; without one there is no flight to prorate against.
+//   - DAILY_SPEND (BudgetDay): expected = BudgetDay × the days of the report window the
+//     campaign was scheduled for — the window [today-(days-1), the midnight after today), clipped to the flight
+//     where Reddit reported one (end date inclusive). Whenever the flight covers the whole
+//     window this is Google/Meta's BudgetDay × days, and it matches this platform's own report
+//     window (which starts at today's midnight minus days-1). It is deliberately ONE DAY MORE
+//     than LinkedIn's daily branch (monitor_linkedin.go), which anchors its range at the current
+//     INSTANT minus days-1 and so counts days-1 full days for a whole-window flight.
+//     A flight that does not overlap the window at all has no expected spend, so pacing is
+//     not computable rather than measured against a day the campaign was not scheduled to
+//     run.
+//
+// The BFF had a dailyBudget × days branch too, but it was dead: reddit-ads.service.ts
+// hardcoded dailyBudget to 0 and read goal_value as a lifetime total whatever goal_type said,
+// so a DAILY_SPEND campaign's per-day cap was prorated across its whole flight as if it were
+// the lifetime budget and a campaign spending exactly its cap read as heavily overspending.
 //
 // The second return is whether the percentage means anything. It is false when the campaign has
-// no total budget, or no parseable start date to prorate one against — see EvaluateRedditMonitor
-// for what the caller does with that. The BFF had no such signal and simply fell through to 0.
-func redditPacingPct(m model.AccountCampaignMetrics, _ int, now time.Time) (float64, bool) {
+// no budget this read can pace (absent or unrecognised goal_type included), or a lifetime budget
+// with no parseable start date — see EvaluateRedditMonitor for what the caller does with that.
+// The BFF had no such signal and simply fell through to 0.
+func redditPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (float64, bool) {
 	start := parseMonitorDate(m.StartDate)
 	end := parseMonitorDate(m.EndDate)
-	if m.TotalBudget > 0 && !start.IsZero() {
+	if m.TotalBudget > 0 {
+		if start.IsZero() {
+			return 0, false
+		}
 		flightEnd := now
 		if !end.IsZero() {
 			flightEnd = end
@@ -99,6 +122,33 @@ func redditPacingPct(m model.AccountCampaignMetrics, _ int, now time.Time) (floa
 		totalFlightDays := maxFloat(1, math.Ceil(flightEnd.Sub(start).Hours()/24))
 		elapsedDays := maxFloat(1, math.Ceil(now.Sub(start).Hours()/24))
 		expected := m.TotalBudget / totalFlightDays * math.Min(elapsedDays, totalFlightDays)
+		if expected > 0 {
+			return math.Round(m.Spend / expected * 100), true
+		}
+		return 0, false
+	}
+	if m.BudgetDay > 0 {
+		utcNow := now.UTC()
+		windowStart := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(days - 1))
+		effectiveStart := windowStart
+		if start.After(effectiveStart) {
+			effectiveStart = start
+		}
+		// The window's end is the EXCLUSIVE midnight after today — the same calendar days the
+		// report covers (reportRange: today inclusive). Using `now` instead under-counted by a
+		// day at exactly midnight, so identical report bounds and spend read 105% at 00:00 and
+		// 90% later that day, and a flight starting today read as not computable.
+		effectiveEnd := windowStart.AddDate(0, 0, days)
+		// EndDate is a calendar day the flight still runs on, so the flight ends when that
+		// day does.
+		if !end.IsZero() && end.AddDate(0, 0, 1).Before(effectiveEnd) {
+			effectiveEnd = end.AddDate(0, 0, 1)
+		}
+		if !effectiveEnd.After(effectiveStart) {
+			return 0, false
+		}
+		scheduledDays := maxFloat(1, math.Ceil(effectiveEnd.Sub(effectiveStart).Hours()/24))
+		expected := m.BudgetDay * scheduledDays
 		if expected > 0 {
 			return math.Round(m.Spend / expected * 100), true
 		}
@@ -120,7 +170,15 @@ func redditActionItems(m model.AccountCampaignMetrics, pacingPct float64, label 
 			fmt.Sprintf("Campaign %q has zero impressions and zero clicks — ads may not be delivering", m.Name),
 			"Check ad group targeting, bid amount, and creative approval status in Reddit Ads Manager")
 	}
-	if label == model.MonitorPacingUnderspending && m.Status == "ACTIVE" {
+	// The underspend item stays keyed off the label (#3021), but NOT when the zero-delivery
+	// item above has already fired for this row: a campaign that served nothing paces at 0%,
+	// and reporting that as a second HIGH item ("Underspending at 0%") says the same thing
+	// twice. The BFF avoided the duplicate with `pacingPct > 0`; this guard is narrower on
+	// purpose. A CPC campaign can serve impressions, take no clicks and so spend nothing —
+	// 0% pacing with delivery — and `pacingPct > 0` would leave that genuinely underspending
+	// campaign with no alert at all, since the zero-delivery item does not fire for it either.
+	zeroDelivery := m.Impressions == 0 && m.Clicks == 0
+	if label == model.MonitorPacingUnderspending && m.Status == "ACTIVE" && !(zeroDelivery && pacingPct == 0) {
 		add(model.MonitorPriorityHigh,
 			fmt.Sprintf("Underspending at %.0f%% of budget — $%.2f spent", pacingPct, m.Spend),
 			"Broaden targeting (add subreddits/interests), increase bid, or expand geographic targeting")
