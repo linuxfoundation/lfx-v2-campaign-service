@@ -288,3 +288,19 @@ func TestEvaluateMicrosoftMonitor_SortsHighBeforeMed(t *testing.T) {
 		t.Errorf("order = %v, want %v", got, want)
 	}
 }
+
+// A budget-paused campaign on a SHARED budget has no per-campaign amount, so its HIGH item names
+// the shared budget rather than reporting "$0.00/day" — an unknown allowance is not a measured
+// zero. An individually budgeted campaign keeps its amount in the message.
+func TestMicrosoftBudgetPausedSharedBudgetDoesNotClaimZero(t *testing.T) {
+	shared := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "s", Status: "BudgetPaused", PacingUnknown: true}
+	_, items := EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{shared}, 7)
+	if len(items) == 0 || !strings.Contains(items[0].Issue, "shared budget") || strings.Contains(items[0].Issue, "$0.00") {
+		t.Errorf("shared-budget items = %+v, want the shared budget named and no $0.00", items)
+	}
+	own := model.AccountCampaignMetrics{PlatformCampaignID: "2", Name: "o", Status: "BudgetPaused", BudgetDay: 25}
+	_, items = EvaluateMicrosoftMonitor([]model.AccountCampaignMetrics{own}, 7)
+	if len(items) == 0 || !strings.Contains(items[0].Issue, "$25.00/day") {
+		t.Errorf("own-budget items = %+v, want the daily amount named", items)
+	}
+}

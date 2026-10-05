@@ -146,12 +146,19 @@ func microsoftActionItems(m model.AccountCampaignMetrics, pacingPct float64, lab
 			"Review policy and billing status in Microsoft Advertising (Tools > Policy center, Billing) and resolve the suspension")
 	}
 	if status == msStatusBudgetPaused || status == msStatusBudgetAndManualPaused {
+		// A shared-budget campaign has no per-campaign amount (BudgetDay is 0 by construction),
+		// so naming "$0.00/day" would present an unknown allowance as a measured zero. Name the
+		// shared budget instead, and point the remedy at the pool rather than the campaign.
 		issue := fmt.Sprintf("Campaign paused by Microsoft — budget exhausted (%s/day)", msMoney(m.BudgetDay))
+		action := "Raise the daily budget, or check whether an account-level budget or monthly cap has been reached"
+		if m.PacingUnknown {
+			issue = "Campaign paused by Microsoft — its shared budget is exhausted"
+			action = "Raise the shared budget in Microsoft Advertising (Shared library > Budgets), or check whether an account-level budget or monthly cap has been reached"
+		}
 		if status == msStatusBudgetAndManualPaused {
 			issue += ", and also paused manually"
 		}
-		add(model.MonitorPriorityHigh, issue,
-			"Raise the daily budget, or check whether an account-level budget or monthly cap has been reached")
+		add(model.MonitorPriorityHigh, issue, action)
 	}
 	// Shared-budget rows carry BudgetDay 0 by construction; that is not a placeholder.
 	if !m.PacingUnknown && active && m.BudgetDay <= msPlaceholderBudgetMax {
