@@ -1121,6 +1121,20 @@ func drainAndClose(resp *http.Response) {
 // now surfaces for reconciliation instead of riding out the rate limit, which is the
 // correct trade when the alternative is a duplicate nobody was told about.
 func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath string, queryParams map[string]string, idempotent bool) (*apiResponse, error) {
+	return c.doRequestAbsCounted(ctx, method, reqURL, logPath, queryParams, idempotent, nil)
+}
+
+// doRequestAbsCounted is doRequestAbs with one addition: when retried is non-nil it is
+// incremented once for every 429 this loop answered by RETRYING (sleeping and re-issuing).
+//
+// It exists for the one caller that must know: a mutate whose final attempt failed DEFINITELY
+// after an earlier attempt was throttled. A 429 does not say the write was refused — the
+// throttle can be reported at or after the write is accepted — so a later 400 answers only the
+// LAST attempt and cannot confirm the earlier one changed nothing. UpdateCampaignBudget uses the
+// count to report such an outcome as UNCONFIRMED (retriedUnconfirmedError) rather than as a
+// definite refusal. The counter is caller-owned, never a field on the shared Client, because
+// the client is shared by every concurrent caller for the account (see Client).
+func (c *Client) doRequestAbsCounted(ctx context.Context, method, reqURL, logPath string, queryParams map[string]string, idempotent bool, retried *int) (*apiResponse, error) {
 	// Entry-time only — see errRequestContextAlreadyDone. Without it a caller that had
 	// already cancelled got the context error back out of http.Client.Do wrapped as a
 	// transportError, which ProbeNotSent does not recognise: the probe then charged X's
@@ -1240,6 +1254,9 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 						err:        perr,
 					}
 				}
+			}
+			if retried != nil {
+				*retried++
 			}
 			continue
 		}

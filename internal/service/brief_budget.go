@@ -303,7 +303,7 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 				"platform", existing.Platform, "reason", unusableConnectionReason(werr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign budget could not be changed"}
 		case errors.Is(werr, domain.ErrAccountNotSelected):
-			// Above the general arm for the same reason, and on all five budget-writing
+			// Above the general arm for the same reason, and on all six budget-writing
 			// platforms this sentinel is ALWAYS wrapped alongside ErrConnectionNotUsable — so
 			// without this arm the generic message tells an operator to repair credentials that
 			// are perfectly fine when the actual remedy is choosing an ad account. The
