@@ -734,7 +734,8 @@ which the client forwards verbatim without validating it against the enum, so it
 link's path can carry a token as readily as its query, so the snapshot is a redacted record
 (`k8s.io/docs tutorial` is stored as `k8s.io tutorial`), while what Microsoft receives is not
 snapshot-redacted (only the client's own trim / match-type / de-duplication validation applies).
-The values sent to Microsoft are untouched. `CampaignResult` (the persisted `result`) carries
+The snapshot redaction never reaches the values sent to Microsoft, which differ from the caller's
+only by that validation. `CampaignResult` (the persisted `result`) carries
 no caller URL: names, ids, `Steps` (none of which interpolate a URL) and the service-composed
 `microsoftAdsUrl` deep link, whose `?aid=` is the account id.
 
@@ -765,8 +766,9 @@ without one are refused, exactly as an orphan ad is.
   unconfirmed partial cascade. `ToggleStatus` reads `GetAdGroupKeywords` and passes only ids still
   present and not `Deleted`. On ACTIVATE a failed read refuses (definite — nothing changed yet) and
   an emptied set is `ErrCampaignNotProvisioned`; on PAUSE a failed read falls back to the recorded
-  ids, so stopping delivery never depends on a read. Known limit: ACTIVATE still re-enables a
-  keyword an operator PAUSED through keyword-actions — nothing records that pause.
+  ids, so stopping delivery never depends on a read. **⚠️ Known limitation (documented, not
+  fixed — see [internal/dispatch](internal-dispatch.md), "Microsoft keyword levers"): ACTIVATE
+  re-enables a keyword an operator PAUSED through keyword-actions — nothing records that pause.**
 - **Unknown children are SKIPPED, not guessed**, with direction-dependent rules. An ad can only be
   addressed when its parent ad-group id is also known. **ACTIVATE requires both child ids** — if
   either `adGroupId` or `adId` is missing, it is refused locally with `ErrCampaignNotProvisioned`
@@ -896,9 +898,11 @@ request layer, checked against Microsoft's reference on 2026-10-05:
   retains only 16 entries. An error with a null/absent/out-of-range `Index`, or a truncated
   array, makes every UN-named item `UNCONFIRMED` — an error that could be any item's means no
   un-named item can be called applied. `Index` is a pointer so "absent" is never read as item 0.
-- **PAUSE first, then REMOVE**, as two calls: the reversible half lands first. A later call is
-  not sent once the caller's context has ended; its items are `FAILED` with `error_code`
-  `NOT_SENT` (definitely not applied). One call answered and the other ambiguous yields a 200
+- **PAUSE first, then REMOVE**, as two calls: the reversible half lands first. The DELETE is
+  sent only when the PAUSE call was answered item by item and the caller's context is still live;
+  after a whole-call PAUSE failure (definite OR unconfirmed) its items are `FAILED` with
+  `error_code` `NOT_SENT` (definitely not applied), so a failure never leaves only the
+  irreversible half applied. One call answered and the other ambiguous yields a 200
   with the second call's items `UNCONFIRMED` — never a whole-request error hiding the pauses
   that did land.
 - **Update/Delete are IDEMPOTENT (429 retried); a refusal after a retry is UNCONFIRMED** — the
@@ -907,10 +911,14 @@ request layer, checked against Microsoft's reference on 2026-10-05:
   applied it. A 200 that omits `PartialErrors` or will not decode is UNCONFIRMED.
 - **The negative add is NOT retried on 429** (`idempotent=false`, the create rule): a 429, 5xx,
   transport failure or unreadable 200 is UNCONFIRMED. Per item: an id → `APPLIED` (with
-  `NegativeKeywordID`); `CampaignServiceNegativeKeywordAlreadyExists` / `4335` as the item's
-  ONLY error → `ALREADY_PRESENT` (the requested state holds); any other attributed error →
-  `FAILED`; neither → `UNCONFIRMED`. An ENTITY-level error on the collection (the campaign itself
-  refused) is a DEFINITE whole-call failure (`negativeKeywordEntityError`). 4335 was confirmed
+  `NegativeKeywordID`); an already-exists as the item's ONLY error → `ALREADY_PRESENT` (the
+  requested state holds) — matched strictly: a present symbolic `ErrorCode` must be
+  `CampaignServiceNegativeKeywordAlreadyExists`, and the numeric `4335` counts only when
+  `ErrorCode` is absent; any other attributed error → `FAILED`; neither → `UNCONFIRMED`. An
+  ENTITY-level error on the collection (the campaign itself refused) is a DEFINITE whole-call
+  failure (`negativeKeywordEntityError`) ONLY when no id came back at all: a zero or empty
+  collection `Code` is absent (the field is a non-nullable int), and an entity code alongside a real
+  id falls through to per-item attribution rather than discarding ids for negatives that exist. 4335 was confirmed
   from the operation-error-codes reference via search on 2026-10-05; the full table page did not
   render past code 2946 in the fetch tool, so the number is the least-verified constant here.
 - **Validation before any request.** `ValidateKeywordActions` mirrors the google-ads rules

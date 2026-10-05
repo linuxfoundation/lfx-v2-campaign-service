@@ -301,16 +301,6 @@ func (it indexedErrorItem) code() string {
 	return ""
 }
 
-// hasCode reports whether the item carries code in either spelling.
-func (it indexedErrorItem) hasCode(codes ...string) bool {
-	for _, c := range codes {
-		if strings.EqualFold(codeString(it.ErrorCode), c) || strings.EqualFold(codeString(it.Code), c) {
-			return true
-		}
-	}
-	return false
-}
-
 // isError reports whether the entry carries an actual code (a null placeholder does not).
 func (it indexedErrorItem) isError() bool {
 	return rawCodePresent(it.ErrorCode) || rawCodePresent(it.Code)
@@ -489,8 +479,9 @@ func (r *keywordMutateResponse) UnmarshalJSON(data []byte) error {
 //
 // PAUSE actions go in one UpdateKeywords call and REMOVE actions in one DeleteKeywords call —
 // two operations, because Microsoft has no single mutate covering both. PAUSE is sent FIRST:
-// it is the reversible one, so a failure between the two calls leaves the caller with the
-// recoverable half applied, never only the irreversible one.
+// it is the reversible one, and the DELETE is sent only when the PAUSE call was answered item
+// by item. A whole-call PAUSE failure (definite or unconfirmed) leaves the REMOVE items FAILED
+// with NOT_SENT, so a failure never leaves only the irreversible half applied.
 //
 // Both calls are sent as IDEMPOTENT, so a 429 is retried under the client's bounded backoff:
 // re-pausing converges, and re-deleting cannot delete twice. What a retry cannot do is make a
@@ -553,9 +544,13 @@ func (c *Client) ApplyKeywordActions(ctx context.Context, adGroupID string, acti
 			continue
 		}
 		if answered || len(wholeErrs) > 0 {
-			// A later call is only sent while the caller still waits for it. Not sending is
-			// DEFINITE: nothing in this group can have been applied.
-			if ctx.Err() != nil {
+			// A later call (the irreversible REMOVE) is sent only when the PAUSE call was
+			// answered item by item AND the caller still waits for it. A whole-call PAUSE failure
+			// — definite or unconfirmed — stops it: PAUSE goes first precisely so that a failure
+			// leaves at most the recoverable half applied, and sending the DELETE anyway would
+			// make the irreversible half the only one that landed. Not sending is DEFINITE:
+			// nothing in this group can have been applied.
+			if len(wholeErrs) > 0 || ctx.Err() != nil {
 				for _, i := range g.idx {
 					out[i].Outcome, out[i].ErrorCode = OutcomeFailed, errorCodeNotSent
 				}
@@ -737,28 +732,39 @@ func (c *Client) AddCampaignNegativeKeywords(ctx context.Context, campaignID str
 
 	n := len(validated)
 	var itemErrs indexedErrors
+	var ids []*json.Number
+	if len(resp.NegativeKeywordIds) > 0 {
+		ids = resp.NegativeKeywordIds[0].Ids
+	}
+	anyID := false
+	for _, id := range ids {
+		if numberID(id) != "" {
+			anyID = true
+			break
+		}
+	}
+	entityCode := ""
 	for _, coll := range resp.NestedPartialErrors {
-		if rawCodePresent(coll.ErrorCode) || rawCodePresent(coll.Code) {
-			code := codeString(coll.ErrorCode)
-			if code == "" {
-				code = codeString(coll.Code)
-			}
-			// The campaign itself was refused, so no keyword was attached to it.
-			return nil, &negativeKeywordEntityError{code: code}
+		if entityCode == "" {
+			entityCode = meaningfulCode(coll.ErrorCode, coll.Code)
 		}
 		itemErrs.Items = append(itemErrs.Items, coll.BatchErrors.Items...)
 		itemErrs.Truncated = itemErrs.Truncated || coll.BatchErrors.Truncated
 	}
+	// The campaign itself was refused — but that is a DEFINITE "nothing was added" only when
+	// Microsoft also returned no id at all. An entity-level code alongside a real id is a
+	// contradiction this client does not resolve in the error's favour: it falls through to
+	// per-item attribution, where an id is APPLIED and an item with neither id nor error is
+	// UNCONFIRMED. A definite error there would drop ids for negatives that DO exist.
+	if entityCode != "" && !anyID {
+		return nil, &negativeKeywordEntityError{code: entityCode}
+	}
 	att := attribute(itemErrs, n)
 	alreadyPresent := map[int]bool{}
 	for _, it := range itemErrs.Items {
-		if it.Index != nil && *it.Index >= 0 && *it.Index < n && it.hasCode(errCodeNegativeKeywordExists, errCodeNegativeKeywordExistsNumeric) {
+		if it.Index != nil && *it.Index >= 0 && *it.Index < n && it.isNegativeKeywordAlreadyExists() {
 			alreadyPresent[*it.Index] = true
 		}
-	}
-	var ids []*json.Number
-	if len(resp.NegativeKeywordIds) > 0 {
-		ids = resp.NegativeKeywordIds[0].Ids
 	}
 
 	out := make([]NegativeKeywordOutcome, n)
@@ -769,7 +775,7 @@ func (c *Client) AddCampaignNegativeKeywords(ctx context.Context, campaignID str
 			id = numberID(ids[i])
 		}
 		switch {
-		case att.errored[i] && alreadyPresent[i] && onlyCode(itemErrs.Items, i, errCodeNegativeKeywordExists, errCodeNegativeKeywordExistsNumeric):
+		case att.errored[i] && alreadyPresent[i] && onlyAlreadyExists(itemErrs.Items, i):
 			out[i].Outcome = OutcomeAlreadyPresent
 		case att.errored[i]:
 			out[i].Outcome, out[i].ErrorCode = OutcomeFailed, att.byIndex[i]
@@ -782,18 +788,41 @@ func (c *Client) AddCampaignNegativeKeywords(ctx context.Context, campaignID str
 	return out, nil
 }
 
-// onlyCode reports whether every error attributed to index i carries one of codes — so a
-// genuine rejection travelling alongside an already-exists for the same item stays FAILED.
-func onlyCode(items []indexedErrorItem, i int, codes ...string) bool {
+// onlyAlreadyExists reports whether every error attributed to index i is an already-exists —
+// so a genuine rejection travelling alongside one for the same item stays FAILED.
+func onlyAlreadyExists(items []indexedErrorItem, i int) bool {
 	for _, it := range items {
 		if it.Index == nil || *it.Index != i || !it.isError() {
 			continue
 		}
-		if !it.hasCode(codes...) {
+		if !it.isNegativeKeywordAlreadyExists() {
 			return false
 		}
 	}
 	return true
+}
+
+// isNegativeKeywordAlreadyExists matches CampaignServiceNegativeKeywordAlreadyExists STRICTLY:
+// when a symbolic ErrorCode is present it must be that name, and the numeric 4335 is consulted
+// only when ErrorCode is absent. A 4335 carrying a DIFFERENT symbolic name is a contradiction,
+// and reading it as "already present" would report success for a keyword that was refused.
+func (it indexedErrorItem) isNegativeKeywordAlreadyExists() bool {
+	if sym := codeString(it.ErrorCode); sym != "" {
+		return strings.EqualFold(sym, errCodeNegativeKeywordExists)
+	}
+	return codeString(it.Code) == errCodeNegativeKeywordExistsNumeric
+}
+
+// meaningfulCode returns the first non-empty, non-zero code. BatchErrorCollection.Code is a
+// non-nullable int on the wire, so a collection with no entity-level error may serialize it as
+// 0; zero and empty are therefore treated as ABSENT, never as a refusal.
+func meaningfulCode(raws ...json.RawMessage) string {
+	for _, raw := range raws {
+		if c := codeString(raw); c != "" && c != "0" && len(c) <= maxErrorCodeLen {
+			return c
+		}
+	}
+	return ""
 }
 
 // negativeKeywordEntityError is a DEFINITE whole-call refusal: Microsoft answered 200 but

@@ -324,8 +324,9 @@ readily as its query (knowledge base: `caller-url-must-be-redacted-before-errors
 record, and a path-like targeting term is reduced too (`k8s.io/docs tutorial` is stored as
 `k8s.io tutorial`, `node.js/express` as `node.js`). What Microsoft receives is not
 snapshot-redacted — only the client's own validation applies (trim, canonical match type,
-case-insensitive de-duplication); only the stored copy is redacted. The keyword slice is reallocated first, so the config sent
-to Microsoft is untouched. `budget`, `cpcBid`, `matchType` (only Exact/Phrase/Broad gets past
+case-insensitive de-duplication); only the stored copy is redacted. The keyword slice is
+reallocated first, so the snapshot redaction never reaches the config sent to Microsoft.
+`budget`, `cpcBid`, `matchType` (only Exact/Phrase/Broad gets past
 the client before a snapshot can be written) and `geoTargets` (ISO-2 codes, shape-checked by
 the client) cannot carry a URL. The persisted `result` (`microsoft.CampaignResult`) carries no
 caller URL: its `Steps` interpolate only ids, counts and geo codes, and its `microsoftAdsUrl`
@@ -3362,8 +3363,18 @@ implements the add can be asked to perform it, and every other platform answers
 **Interaction with the status cascade.** Nothing about a keyword action is persisted, so after a
 REMOVE the row's `keywordIds` still names the deleted keyword. `ToggleStatus` therefore narrows
 them to the live ones (`microsoftLiveKeywordIDs`) before the cascade — see
-[internal/platform/microsoft](internal-platform-microsoft.md), "Status toggle". It still
-re-enables, on ACTIVATE, a keyword an operator paused through keyword-actions.
+[internal/platform/microsoft](internal-platform-microsoft.md), "Status toggle".
+
+**⚠️ Known limitation, documented rather than fixed: ACTIVATE re-enables a keyword an operator
+PAUSED through keyword-actions.** The cascade enables every recorded, live keyword, and keywords
+are CREATED Paused, so a live status of Paused cannot tell "operator paused it" from "never
+enabled". Recording operator pauses in the row's JSON was considered and rejected: this endpoint
+takes no If-Match and persists nothing, so a write would have to bump the row version under the
+claim lock — silently staling every client's ETag and turning their next toggle or budget edit into
+a 412 — and with no ENABLE action the recorded set could only be cleared by a pause made or undone
+in the Bing UI, which this service never observes, so it would drift from Microsoft's state in
+both directions. The limitation is stated in the endpoint description, `docs/api-catalog.md` and
+here; the operator remedy is to pause the keyword again after activating.
 
 **Gating.** No `MICROSOFT_*` flag gates either lever: the existing flag
 (`MICROSOFT_METRICS_ENABLED`) gates only the unverified Reporting reads, and no Microsoft WRITE —

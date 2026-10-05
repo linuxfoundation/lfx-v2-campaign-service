@@ -71,7 +71,7 @@ func (s *BriefService) AddNegativeKeywords(ctx context.Context, p *briefs.AddNeg
 			NegativeKeywordID: optionalString(o.NegativeKeywordID),
 			ErrorCode:         optionalString(o.ErrorCode),
 		})
-		if outcome == model.KeywordOutcomeApplied || outcome == model.KeywordOutcomeAlreadyPresent {
+		if model.NegativeKeywordPresent(outcome) {
 			applied++
 		}
 	}

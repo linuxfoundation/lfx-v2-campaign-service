@@ -1696,6 +1696,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"200 then carries one result per action, in request order, each with its own outcome — APPLIED, " +
 			"FAILED or UNCONFIRMED — and applied_count counts only APPLIED. A Microsoft request answers 503 " +
 			"only when no call was answered item by item. " +
+			"KNOWN LIMITATION (Microsoft Advertising): a keyword PAUSED here is RE-ENABLED by the next " +
+			"activation of the campaign through the status endpoint, because that cascade enables every " +
+			"keyword the campaign was created with and this endpoint persists nothing that distinguishes an " +
+			"operator's pause from the Paused state keywords are created in. Pause it again after activating, " +
+			"or pause it in Microsoft Advertising. There is no ENABLE action: a paused keyword is un-paused by " +
+			"activating the campaign or in Microsoft Advertising. A REMOVED keyword is never re-created. " +
 			"REMOVE IS IRREVERSIBLE on both platforms — a removed keyword cannot be re-enabled, only " +
 			"re-created with a new id. " +
 			"Any other platform is refused with 400. " +

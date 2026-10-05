@@ -446,10 +446,19 @@ const (
 	KeywordOutcomeUnconfirmed    = "UNCONFIRMED"
 )
 
-// KeywordOutcomeTookEffect reports whether an outcome leaves the requested state in place:
-// applied (including the atomic batch's empty outcome) or already present.
-func KeywordOutcomeTookEffect(outcome string) bool {
-	return outcome == "" || outcome == KeywordOutcomeApplied || outcome == KeywordOutcomeAlreadyPresent
+// KeywordActionApplied reports whether a keyword ACTION outcome was applied: the empty outcome
+// an atomic batch (Google Ads) reports for every applied action, or APPLIED from a non-atomic
+// platform. This is what keyword actions' applied_count counts.
+func KeywordActionApplied(outcome string) bool {
+	return outcome == "" || outcome == KeywordOutcomeApplied
+}
+
+// NegativeKeywordPresent reports whether a NEGATIVE keyword outcome leaves the keyword on the
+// campaign: APPLIED (added now) or ALREADY_PRESENT. Every negative-keyword adapter names each
+// outcome, so the empty outcome is NOT counted. This is what add-negative-keywords'
+// applied_count counts.
+func NegativeKeywordPresent(outcome string) bool {
+	return outcome == KeywordOutcomeApplied || outcome == KeywordOutcomeAlreadyPresent
 }
 
 // NegativeKeyword is one requested campaign-level negative keyword. MatchType is the

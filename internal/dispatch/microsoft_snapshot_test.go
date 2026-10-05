@@ -18,10 +18,11 @@ import (
 )
 
 // config_snapshot is persisted UNENCRYPTED and indexed. microsoftConfig has no URL field of
-// its own; the one caller free-text field reduced in the snapshot is TimeZone (forwarded
-// unvalidated). Keyword text is kept VERBATIM, matching googleAdsSnapshotConfig: the prose
-// redactor would rewrite legitimate keywords. These tests pin both halves, and that the
-// platform still receives every value exactly as the caller wrote it.
+// its own; the caller free text reduced in the snapshot is TimeZone (forwarded unvalidated) and
+// every keyword's text, which is REDACTED in the stored copy (a link's path can carry a token as
+// readily as its query). What the platform receives is NOT snapshot-redacted: keywords reach
+// Microsoft through the client's own validateKeywords (trim, canonical match type,
+// case-insensitive de-duplication) and nothing else. These tests pin both halves.
 
 // msSnapshotCapture records the raw bodies the fake Microsoft API received.
 type msSnapshotCapture struct {

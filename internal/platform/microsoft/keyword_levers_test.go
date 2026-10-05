@@ -456,3 +456,86 @@ func TestKeywordLeverErrors_DefiniteHasNoUnconfirmedMarker(t *testing.T) {
 		t.Error("keywordMutationUnconfirmedError must be unconfirmed")
 	}
 }
+
+// ---- pre-PR review fixes ------------------------------------------------------
+
+// PAUSE goes first so a failure never leaves only the irreversible half applied: a whole-call
+// PAUSE failure — definite or unconfirmed — must stop the DELETE from being sent at all.
+func TestApplyKeywordActions_PauseCallFailsDeleteNotSent(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		status      int
+		wantPause   string
+		unconfirmed bool
+	}{
+		{"definite refusal", http.StatusBadRequest, OutcomeFailed, false},
+		{"5xx", http.StatusBadGateway, OutcomeUnconfirmed, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, calls := kwRecorder(t, func(method, _ string) (int, string) {
+				if method == http.MethodPut {
+					return tc.status, `{}`
+				}
+				return http.StatusOK, `{"PartialErrors":[]}`
+			})
+			_, err := c.ApplyKeywordActions(context.Background(), "654", []KeywordAction{
+				{AdGroupID: "654", KeywordID: "701", Action: "PAUSE"},
+				{AdGroupID: "654", KeywordID: "702", Action: "REMOVE"},
+			})
+			for _, call := range calls() {
+				if call.method == http.MethodDelete {
+					t.Fatalf("the DELETE was sent after the PAUSE call failed: %+v", calls())
+				}
+			}
+			// No call was answered item by item, so the request is a whole-call error.
+			if err == nil || IsOutcomeUnconfirmed(err) != tc.unconfirmed {
+				t.Fatalf("err = %v, want unconfirmed=%v", err, tc.unconfirmed)
+			}
+		})
+	}
+}
+
+// BatchErrorCollection.Code is a non-nullable int: "Code":0 is NOT an entity-level refusal.
+func TestAddCampaignNegativeKeywords_ZeroCollectionCodeIsAbsent(t *testing.T) {
+	c, _ := kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"NegativeKeywordIds":[{"Ids":[9001,null]}],"NestedPartialErrors":[{"BatchErrors":[{"Code":1005,"Index":1}],"Code":0,"ErrorCode":""}]}`
+	})
+	out, err := c.AddCampaignNegativeKeywords(context.Background(), "321", []NegativeKeyword{{Text: "free", MatchType: "Exact"}, {Text: "cheap", MatchType: "Exact"}})
+	if err != nil {
+		t.Fatalf("a zero collection code must not be a whole-call refusal: %v", err)
+	}
+	if negOutcomes(out) != "APPLIED,FAILED" || out[0].NegativeKeywordID != "9001" {
+		t.Fatalf("outcomes = %+v", out)
+	}
+}
+
+// An entity-level code alongside a REAL id is never a definite whole-call error: that would drop
+// the id of a negative that exists. It falls through to per-item attribution.
+func TestAddCampaignNegativeKeywords_EntityCodeWithAnIDFallsThrough(t *testing.T) {
+	c, _ := kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"NegativeKeywordIds":[{"Ids":[9001,null]}],"NestedPartialErrors":[{"BatchErrors":null,"Code":1100,"ErrorCode":"CampaignServiceInvalidCampaignId"}]}`
+	})
+	out, err := c.AddCampaignNegativeKeywords(context.Background(), "321", []NegativeKeyword{{Text: "free", MatchType: "Exact"}, {Text: "cheap", MatchType: "Exact"}})
+	if err != nil {
+		t.Fatalf("want per-item outcomes, got %v", err)
+	}
+	if negOutcomes(out) != "APPLIED,UNCONFIRMED" || out[0].NegativeKeywordID != "9001" {
+		t.Fatalf("outcomes = %+v", out)
+	}
+}
+
+// 4335 is "already exists" only when the symbolic code agrees (or is absent).
+func TestAddCampaignNegativeKeywords_AlreadyExistsIsMatchedStrictly(t *testing.T) {
+	c, _ := kwRecorder(t, func(string, string) (int, string) {
+		return http.StatusOK, `{"NegativeKeywordIds":[{"Ids":[null,null]}],"NestedPartialErrors":[{"BatchErrors":[` +
+			`{"Code":4335,"ErrorCode":"CampaignServiceInvalidNegativeKeyword","Index":0},` +
+			`{"Code":4335,"Index":1}]}]}`
+	})
+	out, err := c.AddCampaignNegativeKeywords(context.Background(), "321", []NegativeKeyword{{Text: "free", MatchType: "Exact"}, {Text: "cheap", MatchType: "Exact"}})
+	if err != nil {
+		t.Fatalf("AddCampaignNegativeKeywords: %v", err)
+	}
+	if negOutcomes(out) != "FAILED,ALREADY_PRESENT" {
+		t.Fatalf("outcomes = %s, want a 4335 with a different symbolic code to stay FAILED", negOutcomes(out))
+	}
+}

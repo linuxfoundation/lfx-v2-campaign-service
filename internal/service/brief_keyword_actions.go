@@ -91,7 +91,7 @@ func (s *BriefService) ApplyKeywordActions(ctx context.Context, p *briefs.ApplyK
 			Outcome:      optionalString(o.Outcome),
 			ErrorCode:    optionalString(o.ErrorCode),
 		})
-		if o.Outcome == "" || o.Outcome == model.KeywordOutcomeApplied {
+		if model.KeywordActionApplied(o.Outcome) {
 			applied++
 		}
 	}
