@@ -97,7 +97,7 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 	// The comparison is against the rounded value, not a literal floor, so it stays in step
 	// with the adapter's own math.Round rather than drifting from it.
 	if math.Round(budget*microsPerCurrencyUnit) < 1 {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "budget is too small to set; it rounds to less than 0.000001 of the account's currency, which no ad platform accepts"}
+		return nil, &briefs.BadRequestError{Code: "400", Message: "budget is too small to set; it rounds to zero micro-units (it is under 0.0000005 of the account's currency), which no ad platform accepts"}
 	}
 	budgetType := model.BudgetType(p.BudgetType)
 	if budgetType != model.BudgetDaily && budgetType != model.BudgetLifetime {

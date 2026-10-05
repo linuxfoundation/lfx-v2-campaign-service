@@ -1512,8 +1512,7 @@ micros reaches this refusal, and only a direct (non-HTTP) caller can send one be
 floor at all; its 400 wording is therefore seen by Go callers, not by the HTTP API, which answers
 with Goa's validation error instead. LinkedIn and Meta already map their own (stricter) floors to a 400 with
 the adapter's reason; Google does not — its bounds ARE the service's own, so its adapter would
-refuse such an amount with a bare error
-the switch below can classify only as 503 — an "unconfirmed upstream outcome" answer to a
+refuse such an amount with a bare error that the switch below can classify only as 503 — an "unconfirmed upstream outcome" answer to a
 request that was never going to succeed, inviting a retry that cannot. The check compares the
 ROUNDED value rather than a literal floor so it stays in step with the adapter's own
 `math.Round`, and it sits with the other validations, ahead of the load, the claim and the live
