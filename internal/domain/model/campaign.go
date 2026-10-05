@@ -107,7 +107,7 @@ func NormalizeVariant(v string) string {
 }
 
 // FirstSlotVersion is the SlotVersion of the first campaign on a slot, and the value every
-// row written before migration 000035 was backfilled to.
+// row written before migration 000036 was backfilled to.
 const FirstSlotVersion = 1
 
 // NormalizeSlotVersion maps a zero or negative slot version to FirstSlotVersion, for the
@@ -190,7 +190,7 @@ type Campaign struct {
 	// SlotVersion counts DELIBERATE campaigns on one (BriefID, Platform, Variant) slot:
 	// 1 for the first, 2 for the one an operator asked for on top of it, and so on. It is
 	// what lets a second create on a slot mean "another campaign" rather than "retry the
-	// first" (migration 000035). Assigned once, at claim time, and never changed.
+	// first" (migration 000036). Assigned once, at claim time, and never changed.
 	//
 	// NOT Version. Version is the optimistic-concurrency counter every write bumps; the
 	// two share a word and nothing else.

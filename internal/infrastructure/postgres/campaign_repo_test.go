@@ -30,7 +30,7 @@ const livePredicate = `status <> 'deleted'`
 // (brief_id, platform, variant, slot_version) slot, capturing whatever follows it up to the
 // action keyword (DO). The capture is what the assertions inspect for the predicate.
 //
-// slot_version joined the target in 000036. All three statements name the four-column index
+// slot_version joined the target in 000037. All three statements name the four-column index
 // as their arbiter, because the follow-up release drops the three-column one and a statement
 // still naming it would then fail at runtime with "no unique or exclusion constraint matching
 // the ON CONFLICT specification" — the same failure this test exists for.

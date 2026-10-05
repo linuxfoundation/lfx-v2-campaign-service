@@ -146,7 +146,7 @@ func TestOrchestrator_NewVersionDoesNotBuildOnAnUnfinishedCampaign(t *testing.T)
 }
 
 // While 000022's one-campaign-per-slot index is still in place (the release that ships
-// 000036), the second campaign cannot be claimed. That must surface as an explicit refusal —
+// 000037), the second campaign cannot be claimed. That must surface as an explicit refusal —
 // never as a reuse of the first campaign, which is the bug — and nothing may be dispatched.
 func TestOrchestrator_NewVersionIsRefusedDuringTheExpandPhase(t *testing.T) {
 	jobs := newFakeJobRepo()

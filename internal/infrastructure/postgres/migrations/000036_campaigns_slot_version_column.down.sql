@@ -4,7 +4,7 @@
 -- Reverting drops slot_version and its CHECK. It does NOT touch campaigns.version, which
 -- is the unrelated optimistic-concurrency counter from 000002.
 --
--- Run 000036's down first (golang-migrate does, descending): the four-column index reads
+-- Run 000037's down first (golang-migrate does, descending): the four-column index reads
 -- this column. Safe on its own while uq_campaigns_brief_platform_variant_live still exists,
 -- because that index has kept every slot at one live row. Once a later migration drops it
 -- and a slot holds a second live campaign, reverting this far would leave two live rows

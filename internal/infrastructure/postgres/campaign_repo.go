@@ -64,7 +64,7 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 //
 // The conflict target names (brief_id, platform, variant, SLOT_VERSION): 000022 added
 // variant so one brief can hold a Search AND a Demand Gen campaign on google-ads, and
-// 000036 added slot_version so a slot can hold a deliberate second campaign. The four
+// 000037 added slot_version so a slot can hold a deliberate second campaign. The four
 // columns and the predicate must match the index EXACTLY -- Postgres infers the arbiter
 // by matching both.
 //
@@ -91,7 +91,7 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO NOTHING`
 
 // legacySlotUniqueIndex is 000022's three-column slot index. It stays in place for one
-// release after 000036 (expand/contract) and, while it does, is the index a slot_version
+// release after 000037 (expand/contract) and, while it does, is the index a slot_version
 // above 1 collides with. Named so the claim can tell that collision from any other unique
 // violation.
 const legacySlotUniqueIndex = "uq_campaigns_brief_platform_variant_live"
@@ -298,7 +298,7 @@ const getCampaignQuery = `SELECT ` + campaignCols + ` FROM campaigns
 // check would see the deleted row and refuse the re-dispatch that deleting the
 // campaign exists to enable.
 //
-// Since 000036 a slot can hold several live rows, one per slot_version, so this returns the
+// Since 000037 a slot can hold several live rows, one per slot_version, so this returns the
 // LATEST: that is the campaign a retry is retrying, and the one a new-version request builds
 // on. slot_version is unique among a slot's live rows (the partial unique index), so the
 // ORDER BY is total and LIMIT 1 is deterministic.
@@ -324,7 +324,7 @@ const getCampaignBySlotQuery = `SELECT ` + campaignCols + ` FROM campaigns
 // the operator.
 //
 // (platform, variant, slot_version) is total here because
-// uq_campaigns_brief_platform_variant_slot_version_live (migration 000036) is UNIQUE on
+// uq_campaigns_brief_platform_variant_slot_version_live (migration 000037) is UNIQUE on
 // (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' — the SAME predicate
 // this query filters on — so no id tie-break is needed.
 //
@@ -692,7 +692,7 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 //
 // slot_version is omitted, so the column default makes every adoption the slot's FIRST
 // campaign; the conflict target names it because the four-column index is the arbiter this
-// release writes through (000036). Adoption only ever binds an EMPTY slot — the service
+// release writes through (000037). Adoption only ever binds an EMPTY slot — the service
 // refuses with 409 when GetCampaignByPlatform finds any live row — so slot 1 is the right
 // answer, not a simplification.
 // The variant is BOUND ($4), not the literal 'default' it used to be. Adoption establishes
@@ -785,7 +785,7 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 		// behaviour and it must be classified separately: the DO NOTHING conflict means "this
 		// BRIEF is taken", the unique violation means "this upstream CAMPAIGN is taken", and
 		// reporting the second as the first sends the caller to look at the wrong brief.
-		// Classified by INDEX, not by "any 23505": since 000036 this INSERT names the
+		// Classified by INDEX, not by "any 23505": since 000037 this INSERT names the
 		// four-column slot index as its arbiter, so a race with a concurrent claim on the same
 		// slot can also raise 23505 — on 000022's legacy slot index, while it exists. That is
 		// "this brief is taken" (ErrConflict), and reporting it as an upstream campaign bound

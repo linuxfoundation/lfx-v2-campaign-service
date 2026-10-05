@@ -350,7 +350,7 @@ var requiredIndexes = []requiredIndex{{
 	// Deparsed, and character-identical to the form 000023's guard compares against.
 	predicate: "(status <> 'deleted'::text)",
 }, {
-	// at most one live campaign per (brief, platform, variant, slot_version) — 000036. The
+	// at most one live campaign per (brief, platform, variant, slot_version) — 000037. The
 	// four-column successor to the entry above, widening the slot so a DELIBERATE second
 	// campaign on one slot is distinguishable from a RETRY of the first.
 	//

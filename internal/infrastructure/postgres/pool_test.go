@@ -416,7 +416,7 @@ func TestExecutableSQL(t *testing.T) {
 			"inside the DO block")
 }
 
-// TestRequiredIndexes_CoversTheSlotVersionUniqueIndex pins 000036's index into the boot check.
+// TestRequiredIndexes_CoversTheSlotVersionUniqueIndex pins 000037's index into the boot check.
 // Since this release, claim, upsert and adopt all name it as their ON CONFLICT arbiter, so its
 // absence would fail every dispatch at runtime; and once the three-column index is dropped it
 // is the only thing keeping a retry from creating a duplicate paid campaign.

@@ -197,7 +197,7 @@ type fakeCampaignRepo struct {
 	// slot version has been claimed on top of them. `existing` always holds the LATEST, which
 	// is what GetCampaignByPlatform returns, so the many single-campaign fixtures are unchanged.
 	superseded map[string]*model.Campaign
-	// legacySlotIndex simulates the expand phase of 000036, when 000022's three-column index
+	// legacySlotIndex simulates the expand phase of 000037, when 000022's three-column index
 	// still exists: a claim for a slot version above an existing live one fails with
 	// ErrSlotVersionUnavailable, exactly as the real INSERT's unique violation is classified.
 	legacySlotIndex bool

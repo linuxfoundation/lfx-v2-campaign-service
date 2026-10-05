@@ -27,7 +27,7 @@
 -- not know the column, omits it, and Postgres fills 1, which is what that binary's
 -- one-campaign-per-slot behaviour implies.
 --
--- EXPAND-only. The new slot index arrives in 000036 (CONCURRENTLY, which must stand alone
+-- EXPAND-only. The new slot index arrives in 000037 (CONCURRENTLY, which must stand alone
 -- in its own file), and the old index is dropped a release later per the expand/contract
 -- rule in README.md.
 

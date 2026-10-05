@@ -18,7 +18,7 @@ import (
 )
 
 // TestLiveSlotVersionDuringExpandPhase drives the real claim/upsert/read methods against the
-// schema this release ships: 000036's four-column index AND 000022's three-column one.
+// schema this release ships: 000037's four-column index AND 000022's three-column one.
 //
 // It pins the three things the expand phase promises:
 //   - a retry of slot 1 still conflicts on the four-column arbiter and is swallowed, exactly
@@ -26,7 +26,7 @@ import (
 //   - a claim for slot 2 is REFUSED as ErrSlotVersionUnavailable (the three-column index raises
 //     23505 because it is not the arbiter) and writes nothing;
 //   - slot_version is not the optimistic-concurrency `version`: the upsert bumps version and
-//     leaves slot_version alone. The two share a word, and an earlier draft of 000035 added
+//     leaves slot_version alone. The two share a word, and an earlier draft of 000036 added
 //     "version" with IF NOT EXISTS — a silent no-op on the existing counter.
 func TestLiveSlotVersionDuringExpandPhase(t *testing.T) {
 	ctx := context.Background()

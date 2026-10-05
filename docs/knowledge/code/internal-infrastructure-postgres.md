@@ -169,7 +169,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   writes `'default'`, and every pre-`000021` row was backfilled to it, so the invariant
   is unchanged for them — one live campaign per pair, now spelled with a third column.
 
-  `slot_version` (added by `000035`, indexed by `000036`) counts DELIBERATE campaigns on one
+  `slot_version` (added by `000036`, indexed by `000037`) counts DELIBERATE campaigns on one
   `(brief_id, platform, variant)` slot, so a second create the caller asked for
   (`new_version`) is no longer indistinguishable from a retry of the first. It is a NEW
   column, not `version`: `version` has been the optimistic-concurrency counter since `000002`
