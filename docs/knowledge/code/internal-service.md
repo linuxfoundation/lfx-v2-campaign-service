@@ -1519,9 +1519,19 @@ appended to the 400. **The rendered error chain is never interpolated into a cli
 wrapped chain would publish whatever an adapter or transport put in it.
 
 **A positive amount that rounds to zero micros is refused 400 here too**, alongside NaN, Inf,
-zero and the ceiling. Every supported platform bills in micros, so an amount under 0.000001 of
-the account's currency rounds to nothing upstream and the adapter refuses it with a bare error
-the switch below can classify only as 503 — an "unconfirmed upstream outcome" answer to a
+zero and the ceiling. Not every platform bills in micros — Google Ads does, LinkedIn settles on
+whole cents, Meta on the account currency's minor unit — but one micro is the LOOSEST floor any
+of them has, so it is the only floor the contract can state for every platform at once (the
+design's `Minimum` says the same). Two different bounds are in play and they are not the same
+number: the CONTRACT floor is 0.000001 (the design's `Minimum`, enforced by Goa's generated
+decoder, so an HTTP caller below it never reaches this method), while this method's RUNTIME
+cutoff is half a micro, because it compares the ROUNDED value — `math.Round(budget*1e6)` turns
+[0.0000005, 0.000001) into one micro, which Google accepts. Only an amount that rounds to ZERO
+micros reaches this refusal, and only a direct (non-HTTP) caller can send one below the contract
+floor at all; its 400 wording is therefore seen by Go callers, not by the HTTP API, which answers
+with Goa's validation error instead. LinkedIn and Meta already map their own (stricter) floors to a 400 with
+the adapter's reason; Google does not — its bounds ARE the service's own, so its adapter would
+refuse such an amount with a bare error that the switch below can classify only as 503 — an "unconfirmed upstream outcome" answer to a
 request that was never going to succeed, inviting a retry that cannot. The check compares the
 ROUNDED value rather than a literal floor so it stays in step with the adapter's own
 `math.Round`, and it sits with the other validations, ahead of the load, the claim and the live

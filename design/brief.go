@@ -1556,13 +1556,14 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// floor only from a 400. One micro is the LOOSEST floor any supported platform
 			// has — Google Ads bills in micros, LinkedIn in whole cents, Meta in its
 			// account currency's minor unit — so it is the only floor this contract can
-			// state for every platform at once. Each adapter enforces its own, stricter
-			// floor and its own platform minimums, which is where a 400 still comes from
-			// for an amount this range admits. Zero is not a budget — it is a request to
-			// stop spending, and pausing is what expresses that. NaN and Inf remain the
-			// only runtime rejections a Goa range cannot express, and the service checks
-			// them first. The maximum matches the platform adapter's own cap, so a figure
-			// this service would refuse to create with cannot be reached by editing.
+			// state for every platform at once. LinkedIn and Meta enforce their own,
+			// stricter floors and minimums, which is where a 400 still comes from for an
+			// amount this range admits; Google's floor is this one. Zero is not a budget —
+			// it is a request to stop spending, and pausing is what expresses that. NaN and
+			// Inf remain the only runtime rejections a Goa range cannot express, and the
+			// service checks them first. The maximum matches the platform adapter's own
+			// cap, so a figure this service would refuse to create with cannot be reached
+			// by editing.
 			//
 			// THIS PUBLISHED FLOOR IS MARGINALLY STRICTER THAN THE SERVICE'S OWN CHECK, and
 			// that direction is the safe one. The service refuses an amount whose ROUNDED
