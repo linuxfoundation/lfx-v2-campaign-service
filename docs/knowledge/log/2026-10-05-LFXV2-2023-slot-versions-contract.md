@@ -32,7 +32,9 @@ refusal.
 new live tests `TestLiveConcurrentNewVersionClaims` (same-version race: one winner, no error;
 distinct versions: all succeed), `TestLiveConcurrentClaimAndAdoptLeaveOneLiveRow`,
 `TestLiveAdoptRefusesASlotWhoseOnlyLiveCampaignIsALaterVersion` and
-`TestLiveClaimAndAdoptWaitForTheSlotLock` (deterministic: holds the lock with an uncommitted
-slot-2 row and asserts both adopt and claim wait). The dispatch-index live/unit tests and the
+`TestLiveClaimAndAdoptWaitForTheSlotLock` (deterministic: holds ONLY the slot lock — no row
+yet, so no FK lock on the brief that would block the adopt by itself — asserts both adopt and
+claim wait, then inserts slot 2 and commits, and the adopt answers 409; with the adopt's lock
+removed the test fails because the adopt inserts slot 1). The dispatch-index live/unit tests and the
 hand-written `ON CONFLICT` statements in `schema_live_test.go` / `campaign_variant_live_test.go`
 moved to the four-column target.

@@ -1451,10 +1451,11 @@ func dispatchOutcomeFor(res platformResult) string {
 
 // dispatchPlatform creates (or reuses) the campaign for a single platform.
 // Single-flight is enforced by an atomic claim row (ClaimCampaignDispatch:
-// INSERT ... ON CONFLICT (brief_id, platform) DO NOTHING) — no held connection,
-// no blocking lock — so two concurrent create-campaigns for the same pair cannot
-// both create an upstream campaign: exactly one wins the claim (the unique index
-// arbitrates); the other reuses the existing row or, if it's still pending, is
+// INSERT ... ON CONFLICT (brief_id, platform, variant, slot_version) ... DO NOTHING, in a
+// short transaction under the per-slot advisory lock, which waits only for local statements
+// on the same slot and holds nothing after commit) — so two concurrent create-campaigns for
+// the same slot version cannot both create an upstream campaign: exactly one wins the claim
+// (the unique index arbitrates); the other reuses the existing row or, if it's still pending, is
 // reported in-progress. campaign_id is always the upstream platform id, so the
 // field means the same on the reuse and create paths.
 
@@ -1644,9 +1645,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		return res
 	}
 
-	// Single-flight claim: atomically insert a 'pending' placeholder for (brief,
-	// platform). Exactly one worker across all replicas wins (the unique index
-	// arbitrates) — no held connection, no blocking lock.
+	// Single-flight claim: atomically insert a 'pending' placeholder for this slot version
+	// of (brief, platform, variant). Exactly one worker across all replicas wins (the unique
+	// index arbitrates). The INSERT runs in a short transaction under the per-slot advisory
+	// lock — it waits only for local statements on the same slot, and nothing is held once
+	// it commits, so no connection is held across the platform call below.
 	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, variant, slotVersion, jobID, by)
 	if err != nil {
 		slog.ErrorContext(ctx, "claim dispatch failed", "platform", p, "job_id", jobID, "error", err)

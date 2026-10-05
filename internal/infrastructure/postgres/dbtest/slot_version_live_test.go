@@ -343,11 +343,14 @@ func TestLiveAdoptRefusesASlotWhoseOnlyLiveCampaignIsALaterVersion(t *testing.T)
 // TestLiveClaimAndAdoptWaitForTheSlotLock pins the serialization itself, deterministically,
 // rather than hoping a race lands in the window.
 //
-// The test plays a claim of slot 2 that has inserted its row but not yet committed — holding
-// the slot lock, exactly as insertDispatchClaim does. An adopt started now must WAIT (without
-// the lock it would not see the uncommitted row, find the slot empty, and insert slot 1 beside
-// it), and once the "claim" commits it must see that row and answer 409. A real claim of the
-// same slot must wait for the lock too.
+// The test plays a claim of slot 2 that holds the slot lock, as insertDispatchClaim does, but
+// has NOT inserted anything yet. That ordering is the point: an INSERT would take FOR KEY SHARE
+// on the brief through the foreign key, which blocks the adopt's FOR UPDATE on its own and
+// would make the adopt wait even with no slot lock at all. With only the advisory lock held,
+// nothing but the slot lock can stop the adopt — without it the adopt finds the slot empty and
+// inserts slot 1 straight away, failing the "still blocked" assertion. Then the "claim"
+// inserts its slot-2 row and commits, and the adopt must see that row and answer 409. A real
+// claim of the same slot must wait for the lock too.
 func TestLiveClaimAndAdoptWaitForTheSlotLock(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.Pool(t)
@@ -362,11 +365,6 @@ func TestLiveClaimAndAdoptWaitForTheSlotLock(t *testing.T) {
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, liveSlotLockSQL, briefID, string(p), model.VariantDefault); err != nil {
 		t.Fatalf("take the slot lock: %v", err)
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO campaigns
-		(project_id, brief_id, platform, variant, slot_version, campaign_name, status)
-		VALUES ($1, $2, $3, $4, 2, '', 'pending')`, project, briefID, string(p), model.VariantDefault); err != nil {
-		t.Fatalf("insert the uncommitted slot-2 claim: %v", err)
 	}
 
 	adoptDone := make(chan error, 1)
@@ -392,6 +390,13 @@ func TestLiveClaimAndAdoptWaitForTheSlotLock(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 	}
 
+	// Only now does the "claim" write its row — the adopt and the real claim are parked on the
+	// slot lock, so this INSERT's FK lock on the brief contends with nobody.
+	if _, err := tx.Exec(ctx, `INSERT INTO campaigns
+		(project_id, brief_id, platform, variant, slot_version, campaign_name, status)
+		VALUES ($1, $2, $3, $4, 2, '', 'pending')`, project, briefID, string(p), model.VariantDefault); err != nil {
+		t.Fatalf("insert the slot-2 claim: %v", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit the slot-2 claim: %v", err)
 	}

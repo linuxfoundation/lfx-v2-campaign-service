@@ -700,11 +700,15 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	if err != nil {
 		return nil, fmt.Errorf("upsert campaign: %w", err)
 	}
-	// The per-slot lock, because the INSERT arm can create a live row for the slot: on the
-	// orchestrator's path only when the claim row is gone by the time the result is persisted
-	// (see ClaimCampaignDispatch), but a slot's live rows are only serialized against an adopt
-	// if EVERY statement that can create one takes it. On the usual conflict arm it costs one
-	// uncontended round-trip.
+	// The per-slot lock, because the INSERT arm can create a live row for the slot (on the
+	// orchestrator's path only when the claim row is gone by the time the result is
+	// persisted — see ClaimCampaignDispatch). What the lock buys is ORDERING against an adopt
+	// of the same slot, nothing more: an adopt that runs first is visible to this statement,
+	// and one that runs after sees this row and refuses. It does NOT stop the conflict arm
+	// from updating a row an adopt created at the same slot version — the upsert's DO UPDATE
+	// overwrites whatever live row holds that slot version, adopted or claimed. That is the
+	// pre-existing upsert contract (it finalizes the claim it follows), unchanged here. On the
+	// usual conflict arm the lock costs one uncontended round-trip.
 	if lerr := lockCampaignSlot(ctx, tx, c.BriefID, c.Platform, model.NormalizeVariant(c.Variant)); lerr != nil {
 		return nil, fmt.Errorf("upsert campaign: %w", lerr)
 	}

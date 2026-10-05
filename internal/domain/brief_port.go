@@ -166,11 +166,13 @@ type CampaignReader interface {
 	// Scoped by projectID, which is what stops it answering questions about another
 	// foundation's campaigns on the shared ad account.
 	ResolvePlatformCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) ([]model.LocalCampaignRef, error)
-	// ClaimCampaignDispatch atomically claims the right to dispatch (brief,
-	// platform) by inserting a placeholder campaign row (status 'pending') via
-	// INSERT ... ON CONFLICT (brief_id, platform) DO NOTHING. Exactly one worker
-	// wins across all replicas — the (brief_id, platform) unique index arbitrates,
-	// with no held connection and no blocking lock. It returns:
+	// ClaimCampaignDispatch atomically claims the right to dispatch one slot version of
+	// (brief, platform, variant) by inserting a placeholder campaign row (status 'pending')
+	// via INSERT ... ON CONFLICT (brief_id, platform, variant, slot_version) ... DO NOTHING.
+	// Exactly one worker wins across all replicas — the four-column unique index arbitrates.
+	// The INSERT runs in a short transaction under the per-slot advisory lock, so it waits
+	// only for local statements on the same slot (or one whose key hashes alike) and holds
+	// nothing once it commits. It returns:
 	//   - claimed=true, row=the pending row  → this worker owns the dispatch;
 	//   - claimed=false, row=the existing row → another worker already claimed or
 	//     completed it; the caller reuses that row instead of dispatching again.
