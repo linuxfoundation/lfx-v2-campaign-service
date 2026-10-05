@@ -136,18 +136,21 @@ type Service interface {
 	// period; its counterpart, CUSTOM_PERIOD, is a narrower thing). Change the
 	// pacing in the ad platform, then set the amount here. The amount is in the AD
 	// ACCOUNT's own currency, not USD, and this service neither knows nor converts
-	// it. Google Ads, LinkedIn, Meta and Microsoft Advertising today: a campaign
-	// on any other platform is refused with 400. Budget writing is added per
-	// platform, because each platform's budget model is its own deliberate
+	// it. Google Ads, LinkedIn, Meta, Microsoft Advertising and Reddit today: a
+	// campaign on any other platform is refused with 400. Budget writing is added
+	// per platform, because each platform's budget model is its own deliberate
 	// decision, and the refusals below are the union of what those models can
 	// refuse — a platform whose model has no analogue of a given refusal simply
 	// never raises it (LinkedIn budgets are fields on the campaign and cannot be
 	// shared, so the shared-budget 409 is a Google, Meta and Microsoft answer;
 	// Meta's form of it is a campaign-level, ad-set-spanning budget, Microsoft's a
 	// campaign attached to a shared Budget). Microsoft Search campaigns are paced
-	// DAILY only, so a lifetime request for one is the pacing refusal (409).
-	// **409** when the change is refused BEFORE the platform is written, so
-	// nothing has changed: the campaign is unprovisioned (no platform campaign
+	// DAILY only, so a lifetime request for one is the pacing refusal (409). A
+	// Reddit campaign's budget is its campaign-level spend goal (Campaign Budget
+	// Optimization on); one whose budget is governed per ad group (CBO off) is
+	// refused (409) rather than allocated, and Reddit has no shared-budget
+	// analogue. **409** when the change is refused BEFORE the platform is written,
+	// so nothing has changed: the campaign is unprovisioned (no platform campaign
 	// id); the campaign belongs to a different ad account than the project's
 	// connection now resolves to, or does not record which ad account it was
 	// created under; the campaign's budget is SHARED across campaigns, where
@@ -440,6 +443,10 @@ type Campaign struct {
 	CampaignName string
 	// Campaign status
 	Status string
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion int
 	// Optimistic-concurrency version
 	Version int64
 	// ETag header value (mirrors version)
@@ -466,6 +473,19 @@ type CampaignCreateInput struct {
 	Platforms []string
 	// Per-platform campaign configuration
 	Config any
+	// Create ANOTHER campaign on each selected platform instead of retrying.
+	// Without it, repeating a create for a platform that already has a completed
+	// campaign returns that campaign (idempotent retry). With it, a platform whose
+	// latest campaign is complete gets a new campaign alongside it; a platform
+	// with none gets its first; a platform whose latest campaign is still in
+	// flight or needs reconciliation is reported exactly as a retry would be. The
+	// version is tracked by this service only and is never shown on the ad
+	// platform as a label. Supported on microsoft-ads only for now; any other
+	// platform in the request is refused with 400. Until the follow-up release
+	// removes the one-campaign-per-slot index, a request on a platform that
+	// already has a live campaign fails that platform with 'not available yet' and
+	// creates nothing.
+	NewVersion bool
 }
 
 // CampaignMetrics is the result type of the lfx-v2-campaign-service-briefs

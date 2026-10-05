@@ -2229,6 +2229,7 @@ paths:
                             - platform
                             - campaign_name
                             - status
+                            - slot_version
                             - version
                     headers:
                         ETag:
@@ -2344,6 +2345,7 @@ paths:
                             - platform
                             - campaign_name
                             - status
+                            - slot_version
                             - version
                     headers:
                         ETag:
@@ -2533,7 +2535,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: update-campaign-budget lfx-v2-campaign-service-briefs
-            description: 'Change how much a campaign may spend, on its ad platform, then persist the new amount. A MUTATION on a live paid campaign, dispatched to the platform first. The invariant is ONE-WAY: the new amount is never persisted before the platform confirms it, so no refusal or platform failure can leave the row reporting an amount the platform was never given. The converse is not promised, because it cannot be — once the platform has confirmed, the row write can still fail, and that case answers 500 with the platform holding the new amount and the row still reporting the old one. It is logged as a divergence, the platform is authoritative, and re-applying the same amount reconciles it. Unlike update-campaign, which writes the DB row alone. AMOUNT ONLY — never the pacing model. `budget_type` must be the pacing the campaign ALREADY has upstream; a request naming the other one is refused (409) rather than translated. Switching a live campaign between daily pacing and a whole-flight cap reinterprets everything it has already spent against, and the platforms do not even name the same two ideas (Google has no LIFETIME period; its counterpart, CUSTOM_PERIOD, is a narrower thing). Change the pacing in the ad platform, then set the amount here. The amount is in the AD ACCOUNT''s own currency, not USD, and this service neither knows nor converts it. Google Ads, LinkedIn, Meta and Microsoft Advertising today: a campaign on any other platform is refused with 400. Budget writing is added per platform, because each platform''s budget model is its own deliberate decision, and the refusals below are the union of what those models can refuse — a platform whose model has no analogue of a given refusal simply never raises it (LinkedIn budgets are fields on the campaign and cannot be shared, so the shared-budget 409 is a Google, Meta and Microsoft answer; Meta''s form of it is a campaign-level, ad-set-spanning budget, Microsoft''s a campaign attached to a shared Budget). Microsoft Search campaigns are paced DAILY only, so a lifetime request for one is the pacing refusal (409). **409** when the change is refused BEFORE the platform is written, so nothing has changed: the campaign is unprovisioned (no platform campaign id); the campaign belongs to a different ad account than the project''s connection now resolves to, or does not record which ad account it was created under; the campaign''s budget is SHARED across campaigns, where changing the amount would change the spend of campaigns this request never named — including campaigns this service does not own and cannot see (give the campaign its own budget in the ad platform, or make the change there where its full effect is visible); or the budget could not be addressed at all — the platform did not report which budget resource is attached, did not report whether it is shared, did not report its pacing, or reports a pacing this service has no mapping for. An unreported fact is refused rather than assumed: ''we could not establish that this budget is private'' and ''this budget is private'' are opposite facts, and only one of them justifies a write that could move a stranger''s spend. None of the 409s is retryable — each needs a change in the ad platform or a re-dispatch. **400** for a request fault: a non-positive, non-finite or out-of-range amount, an unknown budget type, a platform with no budget-write capability wired, or an amount the campaign''s own platform refuses on its published minimums — the service validates only the bounds every platform shares, so a platform''s stricter floor is a permanent request fault and the response names what it was. **503** when the platform could not be reached or did not confirm; the row is unchanged, and re-applying the same amount converges on the same state, so a retry is safe.'
+            description: 'Change how much a campaign may spend, on its ad platform, then persist the new amount. A MUTATION on a live paid campaign, dispatched to the platform first. The invariant is ONE-WAY: the new amount is never persisted before the platform confirms it, so no refusal or platform failure can leave the row reporting an amount the platform was never given. The converse is not promised, because it cannot be — once the platform has confirmed, the row write can still fail, and that case answers 500 with the platform holding the new amount and the row still reporting the old one. It is logged as a divergence, the platform is authoritative, and re-applying the same amount reconciles it. Unlike update-campaign, which writes the DB row alone. AMOUNT ONLY — never the pacing model. `budget_type` must be the pacing the campaign ALREADY has upstream; a request naming the other one is refused (409) rather than translated. Switching a live campaign between daily pacing and a whole-flight cap reinterprets everything it has already spent against, and the platforms do not even name the same two ideas (Google has no LIFETIME period; its counterpart, CUSTOM_PERIOD, is a narrower thing). Change the pacing in the ad platform, then set the amount here. The amount is in the AD ACCOUNT''s own currency, not USD, and this service neither knows nor converts it. Google Ads, LinkedIn, Meta, Microsoft Advertising and Reddit today: a campaign on any other platform is refused with 400. Budget writing is added per platform, because each platform''s budget model is its own deliberate decision, and the refusals below are the union of what those models can refuse — a platform whose model has no analogue of a given refusal simply never raises it (LinkedIn budgets are fields on the campaign and cannot be shared, so the shared-budget 409 is a Google, Meta and Microsoft answer; Meta''s form of it is a campaign-level, ad-set-spanning budget, Microsoft''s a campaign attached to a shared Budget). Microsoft Search campaigns are paced DAILY only, so a lifetime request for one is the pacing refusal (409). A Reddit campaign''s budget is its campaign-level spend goal (Campaign Budget Optimization on); one whose budget is governed per ad group (CBO off) is refused (409) rather than allocated, and Reddit has no shared-budget analogue. **409** when the change is refused BEFORE the platform is written, so nothing has changed: the campaign is unprovisioned (no platform campaign id); the campaign belongs to a different ad account than the project''s connection now resolves to, or does not record which ad account it was created under; the campaign''s budget is SHARED across campaigns, where changing the amount would change the spend of campaigns this request never named — including campaigns this service does not own and cannot see (give the campaign its own budget in the ad platform, or make the change there where its full effect is visible); or the budget could not be addressed at all — the platform did not report which budget resource is attached, did not report whether it is shared, did not report its pacing, or reports a pacing this service has no mapping for. An unreported fact is refused rather than assumed: ''we could not establish that this budget is private'' and ''this budget is private'' are opposite facts, and only one of them justifies a write that could move a stranger''s spend. None of the 409s is retryable — each needs a change in the ad platform or a re-dispatch. **400** for a request fault: a non-positive, non-finite or out-of-range amount, an unknown budget type, a platform with no budget-write capability wired, or an amount the campaign''s own platform refuses on its published minimums — the service validates only the bounds every platform shares, so a platform''s stricter floor is a permanent request fault and the response names what it was. **503** when the platform could not be reached or did not confirm; the row is unchanged, and re-applying the same amount converges on the same state, so a retry is safe.'
             operationId: lfx-v2-campaign-service-briefs#update-campaign-budget
             parameters:
                 - name: project_id
@@ -2583,6 +2585,7 @@ paths:
                             - platform
                             - campaign_name
                             - status
+                            - slot_version
                             - version
                     headers:
                         ETag:
@@ -3029,6 +3032,7 @@ paths:
                             - platform
                             - campaign_name
                             - status
+                            - slot_version
                             - version
                     headers:
                         ETag:
@@ -3151,6 +3155,7 @@ paths:
                             - platform
                             - campaign_name
                             - status
+                            - slot_version
                             - version
                     headers:
                         ETag:
@@ -7461,6 +7466,99 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/connection-microsoft-ads/account-monitor:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: monitor-microsoft-ads-account lfx-v2-campaign-service-connections
+            description: Read every live campaign on a Microsoft Advertising account with pacing and action items derived by this service's rule engine. Account-scoped, not project-scoped, the same way monitor-google-ads-account is, and resolved from the project's OWN connection only. The campaign list (names, statuses, daily budgets) is read live; delivery metrics come from Microsoft's asynchronous Reporting service, which takes minutes to build a report, so they are served from the last report that finished — see metrics_as_of and metrics_pending — while the next one builds. The first read for an account and window therefore returns campaigns with fetch_failed=true and metrics_pending=true. Saved reports are cached platform data, not a record of anything this service did.
+            operationId: lfx-v2-campaign-service-connections#monitor-microsoft-ads-account
+            parameters:
+                - name: account_id
+                  in: query
+                  description: The Microsoft Advertising account to read.
+                  required: true
+                  type: string
+                  maxLength: 18
+                  pattern: ^[1-9][0-9]{0,17}$
+                - name: days
+                  in: query
+                  description: Trailing days to read metrics over.
+                  required: true
+                  type: integer
+                  maximum: 90
+                  minimum: 7
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/AccountMonitor'
+                        required:
+                            - account_id
+                            - days
+                            - campaigns
+                            - action_items
+                            - totals
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/connection-microsoft-ads/accounts:
         get:
             tags:
@@ -9459,6 +9557,15 @@ definitions:
                 description: The trailing-days window this read covers, echoed back from the request.
                 example: 30
                 format: int64
+            metrics_as_of:
+                type: string
+                description: 'Microsoft Ads only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Microsoft reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                example: "2026-10-05T14:30:00Z"
+                format: date-time
+            metrics_pending:
+                type: boolean
+                description: 'Microsoft Ads only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                example: false
             totals:
                 $ref: '#/definitions/AccountMonitorTotals'
         example:
@@ -9540,6 +9647,8 @@ definitions:
                   status: ENABLED
                   total_budget: 5000
             days: 30
+            metrics_as_of: "2026-10-05T14:30:00Z"
+            metrics_pending: false
             totals:
                 campaign_count: 14
                 clicks: 11420
@@ -9766,7 +9875,7 @@ definitions:
             id:
                 type: string
                 description: Audience UUID
-                example: Impedit modi quo aut quia.
+                example: Quo aut quia.
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
@@ -11657,6 +11766,12 @@ definitions:
                 type: string
                 description: Owning project
                 example: Dolor asperiores ut in perferendis blanditiis.
+            slot_version:
+                type: integer
+                description: 'Which campaign this is among the brief''s campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.'
+                example: 1
+                format: int64
+                minimum: 1
             status:
                 type: string
                 description: Campaign status
@@ -11673,6 +11788,7 @@ definitions:
             platform: Qui odio quas et ipsa est voluptatem.
             platform_campaign_id: Ut natus doloremque.
             project_id: Ut rerum.
+            slot_version: 1
             status: Error natus.
             version: 7647482016795851593
         required:
@@ -11682,6 +11798,7 @@ definitions:
             - platform
             - campaign_name
             - status
+            - slot_version
             - version
     CampaignActionItem:
         title: CampaignActionItem
@@ -11762,6 +11879,11 @@ definitions:
                             - kubernetes
                         variants:
                             - headline: Join us
+            new_version:
+                type: boolean
+                description: Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Until the follow-up release removes the one-campaign-per-slot index, a request on a platform that already has a live campaign fails that platform with 'not available yet' and creates nothing.
+                default: false
+                example: false
             platforms:
                 type: array
                 items:
@@ -11803,6 +11925,7 @@ definitions:
                         - kubernetes
                     variants:
                         - headline: Join us
+            new_version: false
             platforms:
                 - reddit-ads
                 - meta-ads
@@ -13996,6 +14119,7 @@ definitions:
                             - kubernetes
                         variants:
                             - headline: Join us
+                new_version: false
                 platforms:
                     - reddit-ads
                     - meta-ads

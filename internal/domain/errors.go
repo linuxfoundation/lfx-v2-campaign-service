@@ -131,8 +131,8 @@ var (
 	// ErrToggleUnsupported: a platform dispatcher can return it directly without
 	// importing the orchestration layer.
 	//
-	// Google Ads, LinkedIn, Meta and Microsoft Advertising implement the capability today;
-	// every other platform still answers 400. Budget writing is added per platform, and each addition is a
+	// Google Ads, LinkedIn, Meta, Microsoft Advertising and Reddit implement the capability
+	// today; every other platform still answers 400. Budget writing is added per platform, and each addition is a
 	// separate deliberate decision about that platform's budget model — not a gap to be
 	// closed mechanically. The service layer holds NO allowlist, so what a platform
 	// supports is decided solely by whether its dispatcher is a BudgetWriter.
@@ -140,7 +140,7 @@ var (
 
 	// ErrBudgetAmountRejected indicates the requested AMOUNT was refused and the platform
 	// was NOT changed: either the platform adapter's own validator refused it before the
-	// mutate (LinkedIn, Meta), or the platform itself DEFINITELY refused the mutate on the
+	// mutate (LinkedIn, Meta, Reddit), or the platform itself DEFINITELY refused the mutate on the
 	// amount (Microsoft: CampaignServiceInvalidDailyBudget, or a daily budget below what the
 	// campaign has already spent). The platform may have been read, but it was never
 	// changed. An outcome the platform did not confirm either way is never this sentinel.
@@ -152,7 +152,10 @@ var (
 	// platform (finite, > 0, <= the contract maximum, >= half a micro) but deliberately
 	// holds no per-platform floor, which is exactly the set of refusals this sentinel
 	// carries back. Google Ads needs it least: its adapter's floor is the one the service
-	// already mirrors, so its validator is unreachable through this endpoint.
+	// already mirrors, so its validator is unreachable through this endpoint. Reddit's
+	// bounds (reddit.BudgetMicros: the create path's maximum and a non-zero micro amount)
+	// are likewise the service's own, so its mapping is defense in depth for a non-HTTP
+	// caller.
 	//
 	// The adapter's own text is safe to return to the caller: it names the amount and
 	// the platform's published minimum or documented reason, never upstream account
@@ -183,7 +186,8 @@ var (
 	// several campaigns at once — Google's campaign_budget, Microsoft's shared Budget entity
 	// (the same shape: one Budget, named by BudgetId, drawn on by several campaigns). LinkedIn's
 	// budget is a pair of fields on the campaign itself, so there is nothing to share and
-	// the guard has no analogue. Meta's analogue is NOT absent but is a different shape —
+	// the guard has no analogue; nor does Reddit's, whose budget is the campaign's own
+	// goal_value and cannot be attached to another campaign. Meta's analogue is NOT absent but is a different shape —
 	// Campaign Budget Optimization, where the campaign holds one amount distributed across
 	// every ad set beneath it — and that adapter refuses it with ErrBudgetUnwritable rather
 	// than this sentinel, because it is a property of the ad set's addressability, not of a
@@ -989,6 +993,14 @@ var (
 	// one live campaign; the 409 message says so without identifying the other project, which
 	// the caller may not be able to see. Maps to 409.
 	ErrPlatformCampaignAlreadyBound = errors.New("this platform campaign is already bound to another brief")
+
+	// ErrSlotVersionUnavailable indicates a request for ANOTHER campaign on a slot that
+	// already has one could not be claimed because the schema still enforces one live
+	// campaign per (brief, platform, variant). Migration 000037 adds the per-slot-version
+	// index alongside the old one, and the old one is dropped a release later (expand/
+	// contract); until then this is the expected answer to new_version, not a fault.
+	// Nothing was created upstream.
+	ErrSlotVersionUnavailable = errors.New("another campaign on this platform cannot be created for this brief yet")
 
 	// ErrAdoptionRequiresOwnConnection indicates the project has no ad-platform connection of
 	// its own. Maps to 409.

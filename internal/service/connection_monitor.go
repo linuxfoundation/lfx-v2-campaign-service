@@ -59,6 +59,16 @@ var metaAdsMonitorDiscovery = accountDiscovery{
 	operation: "account monitor",
 }
 
+// microsoftAdsMonitorDiscovery is this endpoint's own descriptor, for the same reason as the
+// three above; remedy text copied verbatim from microsoftAdsAccountDiscovery.
+var microsoftAdsMonitorDiscovery = accountDiscovery{
+	provider:    model.ProviderMicrosoftAds,
+	displayName: "microsoft ads",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with client_id, client_secret, developer_token and refresh_token set",
+	operation: "account monitor",
+}
+
 // validateMonitorDays enforces the 7..90 range the design layer also constrains with
 // Minimum/Maximum. Enforced here too for the same reason resolveInsightsWindow re-checks its
 // own enum: a runtime rejection with no matching design constraint (or the reverse) is the
@@ -173,7 +183,7 @@ func toConnAccountMonitorTotals(t *model.AccountMonitorTotals) *conn.AccountMoni
 	}
 }
 
-// monitorAccount is the shared body of all four monitor-*-ads-account handlers: validate,
+// monitorAccount is the shared body of the four live-read monitor-*-ads-account handlers: validate,
 // fetch, evaluate, total, and assemble the response. evaluate is the one thing that cannot be
 // shared uniformly — Google's EvaluateGoogleMonitor takes no `now` (its pacing formula has no
 // current-time dependency: expected spend is budget_day*days, not derived from flight dates),
@@ -203,7 +213,13 @@ func (s *ConnectionService) monitorAccount(
 	}
 
 	rows, actionItems := evaluate(metricsRows)
+	return buildAccountMonitor(accountID, days, rows, actionItems), nil
+}
 
+// buildAccountMonitor assembles the response from the rule engine's output. Shared by the live
+// read (monitorAccount) and the report-backed one (monitorReportedAccount) so the totals rule —
+// sum of exactly the rows returned — has one implementation whichever way the rows were read.
+func buildAccountMonitor(accountID string, days int, rows []model.AccountMonitorRow, actionItems []model.AccountMonitorActionItem) *conn.AccountMonitor {
 	// Sum the post-rule-engine rows (rows), not the raw dispatcher read (metricsRows):
 	// EvaluateGoogleMonitor drops the operator's scratch campaigns before returning, and the
 	// totals must describe the campaigns array actually returned in this same response rather
@@ -225,7 +241,46 @@ func (s *ConnectionService) monitorAccount(
 		Campaigns:   connCampaigns,
 		ActionItems: toConnAccountMonitorActionItems(actionItems),
 		Totals:      toConnAccountMonitorTotals(totals),
-	}, nil
+	}
+}
+
+// monitorReportedAccount is monitorAccount for a platform whose metrics come from a saved
+// asynchronous report (Orchestrator.ReadReportedAccountCampaigns) rather than a live read. The
+// guards, error classification, rule evaluation and totals are the same; what differs is that
+// the response also says how old the metrics are and whether newer ones are building.
+func (s *ConnectionService) monitorReportedAccount(
+	ctx context.Context,
+	projectID, accountID string,
+	days int,
+	platform model.Provider,
+	discovery accountDiscovery,
+	evaluate func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem),
+) (*conn.AccountMonitor, error) {
+	if err := rejectSystemScope(projectID); err != nil {
+		return nil, err
+	}
+	if err := validateMonitorDays(days); err != nil {
+		return nil, err
+	}
+	_, _, orch, err := s.resolveBackendWithOrch(discovery.label())
+	if err != nil {
+		return nil, err
+	}
+	read, rerr := orch.ReadReportedAccountCampaigns(ctx, projectID, platform, accountID, days)
+	if rerr != nil {
+		return nil, s.classifyDiscoveryError(ctx, projectID, discovery, rerr)
+	}
+	rows, actionItems := evaluate(read.Rows)
+	out := buildAccountMonitor(accountID, days, rows, actionItems)
+	if read.MetricsAsOf != nil {
+		asOf := read.MetricsAsOf.UTC().Format(time.RFC3339)
+		out.MetricsAsOf = &asOf
+	}
+	// Always set for a report-backed platform, false included: the field's absence is how the
+	// live-read platforms say "not applicable", so leaving it off here would read the same way.
+	pending := read.MetricsPending
+	out.MetricsPending = &pending
+	return out, nil
 }
 
 // MonitorGoogleAdsAccount reads every campaign visible on a Google Ads account, live from the
@@ -254,6 +309,16 @@ func (s *ConnectionService) MonitorMetaAdsAccount(ctx context.Context, p *conn.M
 	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderMetaAds, metaAdsMonitorDiscovery,
 		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return rules.EvaluateMetaMonitor(rows, p.Days, now)
+		})
+}
+
+// MonitorMicrosoftAdsAccount reads every live campaign on a Microsoft Advertising account, with
+// metrics from the last finished Microsoft report — see Orchestrator.ReadReportedAccountCampaigns
+// for why Microsoft cannot be read live like the other four.
+func (s *ConnectionService) MonitorMicrosoftAdsAccount(ctx context.Context, p *conn.MonitorMicrosoftAdsAccountPayload) (*conn.AccountMonitor, error) {
+	return s.monitorReportedAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderMicrosoftAds, microsoftAdsMonitorDiscovery,
+		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+			return rules.EvaluateMicrosoftMonitor(rows, p.Days)
 		})
 }
 

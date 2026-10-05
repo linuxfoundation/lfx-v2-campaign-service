@@ -235,6 +235,7 @@ func campaignDoc(c *briefs.Campaign) indexer.CampaignDoc {
 		PlatformCampaignID: derefStr(c.PlatformCampaignID),
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
+		SlotVersion:        c.SlotVersion,
 		Version:            c.Version,
 	}
 }
@@ -707,6 +708,17 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 		seen[prov] = struct{}{}
 		platforms = append(platforms, prov)
 	}
+	if p.Input.NewVersion {
+		// Refused for the whole request, before a job exists, rather than per platform after
+		// the 202: a provider that reuses campaigns by name would bind the "new" campaign to the
+		// existing one upstream, and that is only knowable here as a property of the provider.
+		for _, prov := range platforms {
+			if !model.ProviderSupportsSlotVersions(prov) {
+				return nil, &briefs.BadRequestError{Code: "400", Message: fmt.Sprintf(
+					"new_version is not supported for %s yet; omit new_version to retry the existing campaign", prov)}
+			}
+		}
+	}
 	config := marshalAny(p.Input.Config)
 	// Refuse a request that can never produce what it asks for BEFORE the job exists. Dispatch
 	// runs after the 202 and reports every failure as one opaque job error, so a request shape
@@ -721,7 +733,10 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 	// (which resets it to draft, bumping version) or archive committing between this
 	// read and job creation makes Start fail (domain.ErrStaleApproval → 409) rather
 	// than launching paid campaigns from a stale "approved" snapshot.
-	jobID, err := orch.Start(ctx, brief, brief.Version, platforms, config)
+	//
+	// NewVersion is what separates "make another campaign" from "retry the one I asked for":
+	// without it a repeat create is idempotent and returns the campaign the slot already has.
+	jobID, err := orch.StartWithOptions(ctx, brief, brief.Version, platforms, config, StartOptions{NewVersion: p.Input.NewVersion})
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -1965,6 +1980,7 @@ func campaignResult(c *model.Campaign) *briefs.Campaign {
 		PlatformCampaignID: optStr(c.PlatformCampaignID),
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
+		SlotVersion:        model.NormalizeSlotVersion(c.SlotVersion),
 		Version:            c.Version,
 		Etag:               optStr(briefETag(c.Version)),
 	}

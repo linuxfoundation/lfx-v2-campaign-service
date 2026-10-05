@@ -137,7 +137,9 @@ func (d *GoogleAdsDispatcher) WriteBudget(ctx context.Context, projectID string,
 	// Microsoft's per-currency daily minimum, which only Microsoft's own validation states (it
 	// refuses with CampaignServiceInvalidDailyBudget) — so an amount the
 	// service accepted can still be refused by the adapter, and without the mapping that
-	// refusal falls to the default 503 and invites a retry that can never succeed.
+	// refusal falls to the default 503 and invites a retry that can never succeed. Reddit maps
+	// one too, although its bounds are likewise the service's own: there it is defense in
+	// depth for a non-HTTP caller, not a floor the service layer cannot know.
 	//
 	// Google's bounds are the service's OWN bounds. ValidateBudgetMicros fails three ways and
 	// the service layer has already closed all three ahead of the claim: budget > maxBudget is

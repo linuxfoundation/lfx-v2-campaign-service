@@ -476,6 +476,10 @@ type AdoptCampaignResponseBody struct {
 	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
 	// Campaign status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -497,6 +501,10 @@ type GetCampaignResponseBody struct {
 	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
 	// Campaign status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -634,6 +642,10 @@ type UpdateCampaignResponseBody struct {
 	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
 	// Campaign status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -656,6 +668,10 @@ type ToggleCampaignStatusResponseBody struct {
 	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
 	// Campaign status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -678,6 +694,10 @@ type UpdateCampaignBudgetResponseBody struct {
 	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
 	// Campaign status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -3135,6 +3155,19 @@ type CampaignCreateInputRequestBody struct {
 	Platforms []string `form:"platforms" json:"platforms" xml:"platforms"`
 	// Per-platform campaign configuration
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+	// Create ANOTHER campaign on each selected platform instead of retrying.
+	// Without it, repeating a create for a platform that already has a completed
+	// campaign returns that campaign (idempotent retry). With it, a platform whose
+	// latest campaign is complete gets a new campaign alongside it; a platform
+	// with none gets its first; a platform whose latest campaign is still in
+	// flight or needs reconciliation is reported exactly as a retry would be. The
+	// version is tracked by this service only and is never shown on the ad
+	// platform as a label. Supported on microsoft-ads only for now; any other
+	// platform in the request is refused with 400. Until the follow-up release
+	// removes the one-campaign-per-slot index, a request on a platform that
+	// already has a live campaign fails that platform with 'not available yet' and
+	// creates nothing.
+	NewVersion bool `form:"new_version" json:"new_version" xml:"new_version"`
 }
 
 // EmailMetricsResponseBody is used to define fields on response body types.
@@ -4583,6 +4616,7 @@ func NewAdoptCampaignCampaignCreated(body *AdoptCampaignResponseBody, etag *stri
 		PlatformCampaignID: body.PlatformCampaignID,
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
+		SlotVersion:        *body.SlotVersion,
 		Version:            *body.Version,
 	}
 	v.Etag = etag
@@ -4680,6 +4714,7 @@ func NewGetCampaignCampaignOK(body *GetCampaignResponseBody, etag *string) *lfxv
 		PlatformCampaignID: body.PlatformCampaignID,
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
+		SlotVersion:        *body.SlotVersion,
 		Version:            *body.Version,
 	}
 	v.Etag = etag
@@ -5193,6 +5228,7 @@ func NewUpdateCampaignCampaignOK(body *UpdateCampaignResponseBody, etag *string)
 		PlatformCampaignID: body.PlatformCampaignID,
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
+		SlotVersion:        *body.SlotVersion,
 		Version:            *body.Version,
 	}
 	v.Etag = etag
@@ -5313,6 +5349,7 @@ func NewToggleCampaignStatusCampaignOK(body *ToggleCampaignStatusResponseBody, e
 		PlatformCampaignID: body.PlatformCampaignID,
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
+		SlotVersion:        *body.SlotVersion,
 		Version:            *body.Version,
 	}
 	v.Etag = etag
@@ -5437,6 +5474,7 @@ func NewUpdateCampaignBudgetCampaignOK(body *UpdateCampaignBudgetResponseBody, e
 		PlatformCampaignID: body.PlatformCampaignID,
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
+		SlotVersion:        *body.SlotVersion,
 		Version:            *body.Version,
 	}
 	v.Etag = etag
@@ -7034,8 +7072,16 @@ func ValidateAdoptCampaignResponseBody(body *AdoptCampaignResponseBody) (err err
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
 	}
+	if body.SlotVersion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("slot_version", "body"))
+	}
 	if body.Version == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	if body.SlotVersion != nil {
+		if *body.SlotVersion < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
+		}
 	}
 	return
 }
@@ -7061,8 +7107,16 @@ func ValidateGetCampaignResponseBody(body *GetCampaignResponseBody) (err error) 
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
 	}
+	if body.SlotVersion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("slot_version", "body"))
+	}
 	if body.Version == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	if body.SlotVersion != nil {
+		if *body.SlotVersion < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
+		}
 	}
 	return
 }
@@ -7234,8 +7288,16 @@ func ValidateUpdateCampaignResponseBody(body *UpdateCampaignResponseBody) (err e
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
 	}
+	if body.SlotVersion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("slot_version", "body"))
+	}
 	if body.Version == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	if body.SlotVersion != nil {
+		if *body.SlotVersion < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
+		}
 	}
 	return
 }
@@ -7261,8 +7323,16 @@ func ValidateToggleCampaignStatusResponseBody(body *ToggleCampaignStatusResponse
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
 	}
+	if body.SlotVersion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("slot_version", "body"))
+	}
 	if body.Version == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	if body.SlotVersion != nil {
+		if *body.SlotVersion < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
+		}
 	}
 	return
 }
@@ -7288,8 +7358,16 @@ func ValidateUpdateCampaignBudgetResponseBody(body *UpdateCampaignBudgetResponse
 	if body.Status == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
 	}
+	if body.SlotVersion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("slot_version", "body"))
+	}
 	if body.Version == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	if body.SlotVersion != nil {
+		if *body.SlotVersion < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
+		}
 	}
 	return
 }

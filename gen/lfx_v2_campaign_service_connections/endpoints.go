@@ -16,63 +16,64 @@ import (
 
 // Endpoints wraps the "lfx-v2-campaign-service-connections" service endpoints.
 type Endpoints struct {
-	CreateGoogleAds           goa.Endpoint
-	GetGoogleAds              goa.Endpoint
-	UpdateGoogleAds           goa.Endpoint
-	DeleteGoogleAds           goa.Endpoint
-	TestGoogleAds             goa.Endpoint
-	SetCredentialGoogleAds    goa.Endpoint
-	CreateLinkedinAds         goa.Endpoint
-	GetLinkedinAds            goa.Endpoint
-	UpdateLinkedinAds         goa.Endpoint
-	DeleteLinkedinAds         goa.Endpoint
-	TestLinkedinAds           goa.Endpoint
-	SetCredentialLinkedinAds  goa.Endpoint
-	CreateMetaAds             goa.Endpoint
-	GetMetaAds                goa.Endpoint
-	UpdateMetaAds             goa.Endpoint
-	DeleteMetaAds             goa.Endpoint
-	TestMetaAds               goa.Endpoint
-	SetCredentialMetaAds      goa.Endpoint
-	CreateRedditAds           goa.Endpoint
-	GetRedditAds              goa.Endpoint
-	UpdateRedditAds           goa.Endpoint
-	DeleteRedditAds           goa.Endpoint
-	TestRedditAds             goa.Endpoint
-	SetCredentialRedditAds    goa.Endpoint
-	CreateTwitterAds          goa.Endpoint
-	GetTwitterAds             goa.Endpoint
-	UpdateTwitterAds          goa.Endpoint
-	DeleteTwitterAds          goa.Endpoint
-	TestTwitterAds            goa.Endpoint
-	SetCredentialTwitterAds   goa.Endpoint
-	CreateMicrosoftAds        goa.Endpoint
-	GetMicrosoftAds           goa.Endpoint
-	UpdateMicrosoftAds        goa.Endpoint
-	DeleteMicrosoftAds        goa.Endpoint
-	TestMicrosoftAds          goa.Endpoint
-	SetCredentialMicrosoftAds goa.Endpoint
-	CreateHubspot             goa.Endpoint
-	GetHubspot                goa.Endpoint
-	UpdateHubspot             goa.Endpoint
-	DeleteHubspot             goa.Endpoint
-	TestHubspot               goa.Endpoint
-	SetCredentialHubspot      goa.Endpoint
-	ListGoogleAdsAccounts     goa.Endpoint
-	GetGoogleAdsKeywords      goa.Endpoint
-	GetGoogleAdsAudience      goa.Endpoint
-	ResolveGoogleAdsCampaign  goa.Endpoint
-	ListMetaAdsAccounts       goa.Endpoint
-	ListLinkedinAdsAccounts   goa.Endpoint
-	ListMicrosoftAdsAccounts  goa.Endpoint
-	ListTwitterAdsAccounts    goa.Endpoint
-	ListHubspotEmails         goa.Endpoint
-	SearchHubspotCampaigns    goa.Endpoint
-	CreateHubspotCampaign     goa.Endpoint
-	MonitorGoogleAdsAccount   goa.Endpoint
-	MonitorLinkedinAdsAccount goa.Endpoint
-	MonitorMetaAdsAccount     goa.Endpoint
-	MonitorRedditAdsAccount   goa.Endpoint
+	CreateGoogleAds            goa.Endpoint
+	GetGoogleAds               goa.Endpoint
+	UpdateGoogleAds            goa.Endpoint
+	DeleteGoogleAds            goa.Endpoint
+	TestGoogleAds              goa.Endpoint
+	SetCredentialGoogleAds     goa.Endpoint
+	CreateLinkedinAds          goa.Endpoint
+	GetLinkedinAds             goa.Endpoint
+	UpdateLinkedinAds          goa.Endpoint
+	DeleteLinkedinAds          goa.Endpoint
+	TestLinkedinAds            goa.Endpoint
+	SetCredentialLinkedinAds   goa.Endpoint
+	CreateMetaAds              goa.Endpoint
+	GetMetaAds                 goa.Endpoint
+	UpdateMetaAds              goa.Endpoint
+	DeleteMetaAds              goa.Endpoint
+	TestMetaAds                goa.Endpoint
+	SetCredentialMetaAds       goa.Endpoint
+	CreateRedditAds            goa.Endpoint
+	GetRedditAds               goa.Endpoint
+	UpdateRedditAds            goa.Endpoint
+	DeleteRedditAds            goa.Endpoint
+	TestRedditAds              goa.Endpoint
+	SetCredentialRedditAds     goa.Endpoint
+	CreateTwitterAds           goa.Endpoint
+	GetTwitterAds              goa.Endpoint
+	UpdateTwitterAds           goa.Endpoint
+	DeleteTwitterAds           goa.Endpoint
+	TestTwitterAds             goa.Endpoint
+	SetCredentialTwitterAds    goa.Endpoint
+	CreateMicrosoftAds         goa.Endpoint
+	GetMicrosoftAds            goa.Endpoint
+	UpdateMicrosoftAds         goa.Endpoint
+	DeleteMicrosoftAds         goa.Endpoint
+	TestMicrosoftAds           goa.Endpoint
+	SetCredentialMicrosoftAds  goa.Endpoint
+	CreateHubspot              goa.Endpoint
+	GetHubspot                 goa.Endpoint
+	UpdateHubspot              goa.Endpoint
+	DeleteHubspot              goa.Endpoint
+	TestHubspot                goa.Endpoint
+	SetCredentialHubspot       goa.Endpoint
+	ListGoogleAdsAccounts      goa.Endpoint
+	GetGoogleAdsKeywords       goa.Endpoint
+	GetGoogleAdsAudience       goa.Endpoint
+	ResolveGoogleAdsCampaign   goa.Endpoint
+	ListMetaAdsAccounts        goa.Endpoint
+	ListLinkedinAdsAccounts    goa.Endpoint
+	ListMicrosoftAdsAccounts   goa.Endpoint
+	ListTwitterAdsAccounts     goa.Endpoint
+	ListHubspotEmails          goa.Endpoint
+	SearchHubspotCampaigns     goa.Endpoint
+	CreateHubspotCampaign      goa.Endpoint
+	MonitorGoogleAdsAccount    goa.Endpoint
+	MonitorLinkedinAdsAccount  goa.Endpoint
+	MonitorMetaAdsAccount      goa.Endpoint
+	MonitorRedditAdsAccount    goa.Endpoint
+	MonitorMicrosoftAdsAccount goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "lfx-v2-campaign-service-connections"
@@ -81,63 +82,64 @@ func NewEndpoints(s Service) *Endpoints {
 	// Casting service to Auther interface
 	a := s.(Auther)
 	return &Endpoints{
-		CreateGoogleAds:           NewCreateGoogleAdsEndpoint(s, a.JWTAuth),
-		GetGoogleAds:              NewGetGoogleAdsEndpoint(s, a.JWTAuth),
-		UpdateGoogleAds:           NewUpdateGoogleAdsEndpoint(s, a.JWTAuth),
-		DeleteGoogleAds:           NewDeleteGoogleAdsEndpoint(s, a.JWTAuth),
-		TestGoogleAds:             NewTestGoogleAdsEndpoint(s, a.JWTAuth),
-		SetCredentialGoogleAds:    NewSetCredentialGoogleAdsEndpoint(s, a.JWTAuth),
-		CreateLinkedinAds:         NewCreateLinkedinAdsEndpoint(s, a.JWTAuth),
-		GetLinkedinAds:            NewGetLinkedinAdsEndpoint(s, a.JWTAuth),
-		UpdateLinkedinAds:         NewUpdateLinkedinAdsEndpoint(s, a.JWTAuth),
-		DeleteLinkedinAds:         NewDeleteLinkedinAdsEndpoint(s, a.JWTAuth),
-		TestLinkedinAds:           NewTestLinkedinAdsEndpoint(s, a.JWTAuth),
-		SetCredentialLinkedinAds:  NewSetCredentialLinkedinAdsEndpoint(s, a.JWTAuth),
-		CreateMetaAds:             NewCreateMetaAdsEndpoint(s, a.JWTAuth),
-		GetMetaAds:                NewGetMetaAdsEndpoint(s, a.JWTAuth),
-		UpdateMetaAds:             NewUpdateMetaAdsEndpoint(s, a.JWTAuth),
-		DeleteMetaAds:             NewDeleteMetaAdsEndpoint(s, a.JWTAuth),
-		TestMetaAds:               NewTestMetaAdsEndpoint(s, a.JWTAuth),
-		SetCredentialMetaAds:      NewSetCredentialMetaAdsEndpoint(s, a.JWTAuth),
-		CreateRedditAds:           NewCreateRedditAdsEndpoint(s, a.JWTAuth),
-		GetRedditAds:              NewGetRedditAdsEndpoint(s, a.JWTAuth),
-		UpdateRedditAds:           NewUpdateRedditAdsEndpoint(s, a.JWTAuth),
-		DeleteRedditAds:           NewDeleteRedditAdsEndpoint(s, a.JWTAuth),
-		TestRedditAds:             NewTestRedditAdsEndpoint(s, a.JWTAuth),
-		SetCredentialRedditAds:    NewSetCredentialRedditAdsEndpoint(s, a.JWTAuth),
-		CreateTwitterAds:          NewCreateTwitterAdsEndpoint(s, a.JWTAuth),
-		GetTwitterAds:             NewGetTwitterAdsEndpoint(s, a.JWTAuth),
-		UpdateTwitterAds:          NewUpdateTwitterAdsEndpoint(s, a.JWTAuth),
-		DeleteTwitterAds:          NewDeleteTwitterAdsEndpoint(s, a.JWTAuth),
-		TestTwitterAds:            NewTestTwitterAdsEndpoint(s, a.JWTAuth),
-		SetCredentialTwitterAds:   NewSetCredentialTwitterAdsEndpoint(s, a.JWTAuth),
-		CreateMicrosoftAds:        NewCreateMicrosoftAdsEndpoint(s, a.JWTAuth),
-		GetMicrosoftAds:           NewGetMicrosoftAdsEndpoint(s, a.JWTAuth),
-		UpdateMicrosoftAds:        NewUpdateMicrosoftAdsEndpoint(s, a.JWTAuth),
-		DeleteMicrosoftAds:        NewDeleteMicrosoftAdsEndpoint(s, a.JWTAuth),
-		TestMicrosoftAds:          NewTestMicrosoftAdsEndpoint(s, a.JWTAuth),
-		SetCredentialMicrosoftAds: NewSetCredentialMicrosoftAdsEndpoint(s, a.JWTAuth),
-		CreateHubspot:             NewCreateHubspotEndpoint(s, a.JWTAuth),
-		GetHubspot:                NewGetHubspotEndpoint(s, a.JWTAuth),
-		UpdateHubspot:             NewUpdateHubspotEndpoint(s, a.JWTAuth),
-		DeleteHubspot:             NewDeleteHubspotEndpoint(s, a.JWTAuth),
-		TestHubspot:               NewTestHubspotEndpoint(s, a.JWTAuth),
-		SetCredentialHubspot:      NewSetCredentialHubspotEndpoint(s, a.JWTAuth),
-		ListGoogleAdsAccounts:     NewListGoogleAdsAccountsEndpoint(s, a.JWTAuth),
-		GetGoogleAdsKeywords:      NewGetGoogleAdsKeywordsEndpoint(s, a.JWTAuth),
-		GetGoogleAdsAudience:      NewGetGoogleAdsAudienceEndpoint(s, a.JWTAuth),
-		ResolveGoogleAdsCampaign:  NewResolveGoogleAdsCampaignEndpoint(s, a.JWTAuth),
-		ListMetaAdsAccounts:       NewListMetaAdsAccountsEndpoint(s, a.JWTAuth),
-		ListLinkedinAdsAccounts:   NewListLinkedinAdsAccountsEndpoint(s, a.JWTAuth),
-		ListMicrosoftAdsAccounts:  NewListMicrosoftAdsAccountsEndpoint(s, a.JWTAuth),
-		ListTwitterAdsAccounts:    NewListTwitterAdsAccountsEndpoint(s, a.JWTAuth),
-		ListHubspotEmails:         NewListHubspotEmailsEndpoint(s, a.JWTAuth),
-		SearchHubspotCampaigns:    NewSearchHubspotCampaignsEndpoint(s, a.JWTAuth),
-		CreateHubspotCampaign:     NewCreateHubspotCampaignEndpoint(s, a.JWTAuth),
-		MonitorGoogleAdsAccount:   NewMonitorGoogleAdsAccountEndpoint(s, a.JWTAuth),
-		MonitorLinkedinAdsAccount: NewMonitorLinkedinAdsAccountEndpoint(s, a.JWTAuth),
-		MonitorMetaAdsAccount:     NewMonitorMetaAdsAccountEndpoint(s, a.JWTAuth),
-		MonitorRedditAdsAccount:   NewMonitorRedditAdsAccountEndpoint(s, a.JWTAuth),
+		CreateGoogleAds:            NewCreateGoogleAdsEndpoint(s, a.JWTAuth),
+		GetGoogleAds:               NewGetGoogleAdsEndpoint(s, a.JWTAuth),
+		UpdateGoogleAds:            NewUpdateGoogleAdsEndpoint(s, a.JWTAuth),
+		DeleteGoogleAds:            NewDeleteGoogleAdsEndpoint(s, a.JWTAuth),
+		TestGoogleAds:              NewTestGoogleAdsEndpoint(s, a.JWTAuth),
+		SetCredentialGoogleAds:     NewSetCredentialGoogleAdsEndpoint(s, a.JWTAuth),
+		CreateLinkedinAds:          NewCreateLinkedinAdsEndpoint(s, a.JWTAuth),
+		GetLinkedinAds:             NewGetLinkedinAdsEndpoint(s, a.JWTAuth),
+		UpdateLinkedinAds:          NewUpdateLinkedinAdsEndpoint(s, a.JWTAuth),
+		DeleteLinkedinAds:          NewDeleteLinkedinAdsEndpoint(s, a.JWTAuth),
+		TestLinkedinAds:            NewTestLinkedinAdsEndpoint(s, a.JWTAuth),
+		SetCredentialLinkedinAds:   NewSetCredentialLinkedinAdsEndpoint(s, a.JWTAuth),
+		CreateMetaAds:              NewCreateMetaAdsEndpoint(s, a.JWTAuth),
+		GetMetaAds:                 NewGetMetaAdsEndpoint(s, a.JWTAuth),
+		UpdateMetaAds:              NewUpdateMetaAdsEndpoint(s, a.JWTAuth),
+		DeleteMetaAds:              NewDeleteMetaAdsEndpoint(s, a.JWTAuth),
+		TestMetaAds:                NewTestMetaAdsEndpoint(s, a.JWTAuth),
+		SetCredentialMetaAds:       NewSetCredentialMetaAdsEndpoint(s, a.JWTAuth),
+		CreateRedditAds:            NewCreateRedditAdsEndpoint(s, a.JWTAuth),
+		GetRedditAds:               NewGetRedditAdsEndpoint(s, a.JWTAuth),
+		UpdateRedditAds:            NewUpdateRedditAdsEndpoint(s, a.JWTAuth),
+		DeleteRedditAds:            NewDeleteRedditAdsEndpoint(s, a.JWTAuth),
+		TestRedditAds:              NewTestRedditAdsEndpoint(s, a.JWTAuth),
+		SetCredentialRedditAds:     NewSetCredentialRedditAdsEndpoint(s, a.JWTAuth),
+		CreateTwitterAds:           NewCreateTwitterAdsEndpoint(s, a.JWTAuth),
+		GetTwitterAds:              NewGetTwitterAdsEndpoint(s, a.JWTAuth),
+		UpdateTwitterAds:           NewUpdateTwitterAdsEndpoint(s, a.JWTAuth),
+		DeleteTwitterAds:           NewDeleteTwitterAdsEndpoint(s, a.JWTAuth),
+		TestTwitterAds:             NewTestTwitterAdsEndpoint(s, a.JWTAuth),
+		SetCredentialTwitterAds:    NewSetCredentialTwitterAdsEndpoint(s, a.JWTAuth),
+		CreateMicrosoftAds:         NewCreateMicrosoftAdsEndpoint(s, a.JWTAuth),
+		GetMicrosoftAds:            NewGetMicrosoftAdsEndpoint(s, a.JWTAuth),
+		UpdateMicrosoftAds:         NewUpdateMicrosoftAdsEndpoint(s, a.JWTAuth),
+		DeleteMicrosoftAds:         NewDeleteMicrosoftAdsEndpoint(s, a.JWTAuth),
+		TestMicrosoftAds:           NewTestMicrosoftAdsEndpoint(s, a.JWTAuth),
+		SetCredentialMicrosoftAds:  NewSetCredentialMicrosoftAdsEndpoint(s, a.JWTAuth),
+		CreateHubspot:              NewCreateHubspotEndpoint(s, a.JWTAuth),
+		GetHubspot:                 NewGetHubspotEndpoint(s, a.JWTAuth),
+		UpdateHubspot:              NewUpdateHubspotEndpoint(s, a.JWTAuth),
+		DeleteHubspot:              NewDeleteHubspotEndpoint(s, a.JWTAuth),
+		TestHubspot:                NewTestHubspotEndpoint(s, a.JWTAuth),
+		SetCredentialHubspot:       NewSetCredentialHubspotEndpoint(s, a.JWTAuth),
+		ListGoogleAdsAccounts:      NewListGoogleAdsAccountsEndpoint(s, a.JWTAuth),
+		GetGoogleAdsKeywords:       NewGetGoogleAdsKeywordsEndpoint(s, a.JWTAuth),
+		GetGoogleAdsAudience:       NewGetGoogleAdsAudienceEndpoint(s, a.JWTAuth),
+		ResolveGoogleAdsCampaign:   NewResolveGoogleAdsCampaignEndpoint(s, a.JWTAuth),
+		ListMetaAdsAccounts:        NewListMetaAdsAccountsEndpoint(s, a.JWTAuth),
+		ListLinkedinAdsAccounts:    NewListLinkedinAdsAccountsEndpoint(s, a.JWTAuth),
+		ListMicrosoftAdsAccounts:   NewListMicrosoftAdsAccountsEndpoint(s, a.JWTAuth),
+		ListTwitterAdsAccounts:     NewListTwitterAdsAccountsEndpoint(s, a.JWTAuth),
+		ListHubspotEmails:          NewListHubspotEmailsEndpoint(s, a.JWTAuth),
+		SearchHubspotCampaigns:     NewSearchHubspotCampaignsEndpoint(s, a.JWTAuth),
+		CreateHubspotCampaign:      NewCreateHubspotCampaignEndpoint(s, a.JWTAuth),
+		MonitorGoogleAdsAccount:    NewMonitorGoogleAdsAccountEndpoint(s, a.JWTAuth),
+		MonitorLinkedinAdsAccount:  NewMonitorLinkedinAdsAccountEndpoint(s, a.JWTAuth),
+		MonitorMetaAdsAccount:      NewMonitorMetaAdsAccountEndpoint(s, a.JWTAuth),
+		MonitorRedditAdsAccount:    NewMonitorRedditAdsAccountEndpoint(s, a.JWTAuth),
+		MonitorMicrosoftAdsAccount: NewMonitorMicrosoftAdsAccountEndpoint(s, a.JWTAuth),
 	}
 }
 
@@ -201,6 +203,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.MonitorLinkedinAdsAccount = m(e.MonitorLinkedinAdsAccount)
 	e.MonitorMetaAdsAccount = m(e.MonitorMetaAdsAccount)
 	e.MonitorRedditAdsAccount = m(e.MonitorRedditAdsAccount)
+	e.MonitorMicrosoftAdsAccount = m(e.MonitorMicrosoftAdsAccount)
 }
 
 // NewCreateGoogleAdsEndpoint returns an endpoint function that calls the
@@ -1539,5 +1542,29 @@ func NewMonitorRedditAdsAccountEndpoint(s Service, authJWTFn security.AuthJWTFun
 			return nil, err
 		}
 		return s.MonitorRedditAdsAccount(ctx, p)
+	}
+}
+
+// NewMonitorMicrosoftAdsAccountEndpoint returns an endpoint function that
+// calls the method "monitor-microsoft-ads-account" of service
+// "lfx-v2-campaign-service-connections".
+func NewMonitorMicrosoftAdsAccountEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*MonitorMicrosoftAdsAccountPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.MonitorMicrosoftAdsAccount(ctx, p)
 	}
 }

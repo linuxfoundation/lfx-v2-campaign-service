@@ -831,6 +831,26 @@ that error-code list on 2026-10-05 and is cited in `budget.go`; a wrong number w
 a refusal (1100 as "deleted upstream", 1159 as the shared-budget 409). None has been exercised against a live Microsoft Advertising account; the transport (PUT `Campaigns`,
 the `PartialErrors` envelope) is the one the status toggle already uses.
 
+## Account monitor (report-backed, default-OFF)
+
+`monitor.go` gives the account monitor three stateless primitives over the same Reporting
+pipeline, because the monitor cannot wait minutes for a report inside one request — the
+orchestrator saves the state between requests instead (see
+[Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md#microsoft-a-report-backed-monitor)):
+
+- `ListAccountCampaigns` — `Campaigns/QueryByAccountId` across every campaign type, decoded
+  as a stream and fail-closed; Deleted campaigns dropped; a shared budget (`BudgetId` set)
+  flagged rather than its pool amount reported as this campaign's.
+- `SubmitAccountCampaignReport` — the per-campaign read's report definition with
+  `Scope.AccountIds` instead of `Campaigns` (the account-wide union is the point here), over
+  `days-1` days ending today in UTC from the injected clock.
+- `CheckAccountCampaignReport` — exactly ONE Poll; on Success, download and fold PER CAMPAIGN.
+  An empty or header-only report is a real "nothing served" at account scope. "Potential
+  Incomplete Data" is reported as `Partial` rather than refused, unlike the per-campaign read,
+  because the monitor's window always includes today.
+
+`ValidateMonitorAccountID` is the strict, Pattern-identical account-id check for this path.
+
 ## Metrics read (asynchronous, default-OFF)
 
 `GetCampaignMetrics(ctx, campaignID, window)` answers the same question as every other client
