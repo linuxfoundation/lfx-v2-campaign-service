@@ -213,3 +213,43 @@ func TestMicrosoftSnapshotConfig_DoesNotMutateDispatchConfig(t *testing.T) {
 		t.Errorf("zero-valued fields must stay zero, got %+v", empty)
 	}
 }
+
+// A keyword is caller text: an unambiguous link in it is redacted before the unencrypted
+// snapshot, while path-like targeting terms stay exactly as written. The dispatch config the
+// keywords came from is not mutated.
+func TestMicrosoftSnapshotConfig_KeywordLinksRedactedTargetingTermsKept(t *testing.T) {
+	cases := map[string]string{
+		"https://example.test/reset/SECRET?token=VALUE": "https://example.test",
+		"buy https://shop.example/p#FRAG now":           "buy https://shop.example now",
+		"a.example/r?token=SECRET":                      "a.example",
+		"bob:pw@a.example":                              "",
+		"k8s.io/docs tutorial":                          "k8s.io/docs tutorial",
+		"node.js/express":                               "node.js/express",
+		"10.0.0.0/8":                                    "10.0.0.0/8",
+		"kubernetes.io":                                 "kubernetes.io",
+		"c++ jobs":                                      "c++ jobs",
+	}
+	var kws []microsoftKeywordConfig
+	for in := range cases {
+		kws = append(kws, microsoftKeywordConfig{Text: in, MatchType: "Exact"})
+	}
+	cfg := microsoftConfig{Keywords: kws}
+	snap := microsoftSnapshotConfig(cfg)
+	for i, k := range snap.Keywords {
+		in := cfg.Keywords[i].Text
+		if want := cases[in]; k.Text != want {
+			t.Errorf("snapshot keyword for %q = %q, want %q", in, k.Text, want)
+		}
+		if strings.Contains(k.Text, "SECRET") || strings.Contains(k.Text, "VALUE") || strings.Contains(k.Text, "FRAG") || strings.Contains(k.Text, "pw@") {
+			t.Errorf("snapshot keyword %q still carries a secret", k.Text)
+		}
+	}
+	for i, k := range cfg.Keywords {
+		if k.Text != kws[i].Text {
+			t.Errorf("dispatch keyword %d mutated to %q", i, k.Text)
+		}
+	}
+	if cfg.Keywords[0].Text == snap.Keywords[0].Text && &cfg.Keywords[0] == &snap.Keywords[0] {
+		t.Error("snapshot keywords alias the dispatch slice")
+	}
+}
