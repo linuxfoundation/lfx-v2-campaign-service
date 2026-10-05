@@ -286,6 +286,14 @@ func (s *ConnectionService) monitorReportedAccount(
 		asOf := read.MetricsAsOf.UTC().Format(time.RFC3339)
 		out.MetricsAsOf = &asOf
 	}
+	// The days the metrics actually cover, from the saved report's own window — not re-derived
+	// from `days`, which is the request and can differ (X drops a day from a 90-day window that
+	// crosses a DST fall-back). Both or neither: a half-known window states nothing.
+	if read.MetricsWindowStart != nil && read.MetricsWindowEnd != nil {
+		ws := read.MetricsWindowStart.UTC().Format(time.DateOnly)
+		we := read.MetricsWindowEnd.UTC().Format(time.DateOnly)
+		out.MetricsWindowStart, out.MetricsWindowEnd = &ws, &we
+	}
 	// Always set for a report-backed platform, false included: the field's absence is how the
 	// live-read platforms say "not applicable", so leaving it off here would read the same way.
 	pending := read.MetricsPending
