@@ -504,6 +504,37 @@ returned rows on every platform, so the aggregate and the campaigns array beside
 can never describe different populations. `FetchAccountTotals`, the `AccountTotals`
 type and the `AccountTotalsReader` plumbing were removed with it.
 
+**Scope audit (2026-10-05, LFXV2-2665 Track M3).** The read's only scope filter
+(`configured_status` ACTIVE/PAUSED) matches the BFF, so there is no Google-class scope
+defect; five other defects were fixed:
+
+- **Verified operation.** Each campaign's numbers come from `POST /ad_accounts/{id}/reports`
+  — the operation LFXV2-3282 verified against the published spec — with
+  `GetCampaignMetrics`' own body (`CAMPAIGN_ID`, `IMPRESSIONS`, `CLICKS`, `SPEND` as fields,
+  `filter: campaign:id==<id>`, no `breakdowns`), not the BFF's unverified nested
+  `/campaigns/{id}/reports`. Rows pass through `sumReportRows`, shared with
+  `GetCampaignMetrics`: a row attributed to another campaign, or missing a field, fails that
+  campaign (`FetchFailed`), and all rows are summed (it used to read `metrics[0]` only). One
+  call per campaign, five at a time, rather than one account report broken down by
+  `CAMPAIGN_ID`, because a broken-down report would depend on unverified report pagination
+  for completeness.
+- **Window.** Rendered by `reportRange` (shared with `dateRangeForWindow`): today-(days-1)
+  00:00 through today 23:00, inclusive of today. It used to end at today's midnight.
+- **Pagination.** `apiResponse` now keeps the top-level `pagination` object.
+  `walkPages` follows `pagination.next_url` for the campaign list and each report — same
+  scheme and host as the API base only, so the bearer token never leaves the origin — and
+  errors at `monitorMaxPages` (50), on a repeated page, or on a campaign listed twice, rather
+  than returning a truncated result. **Verification level:** the `next_url` field name and
+  re-POSTing a report body to it are Reddit's v3 convention, not checked against the spec by
+  this repo and never run against a live account; an absent key reads as one page.
+- **goal_type.** `LIFETIME_SPEND` → `TotalBudget`, `DAILY_SPEND` → `DailyBudget` (mapped to
+  `BudgetDay`), anything else or absent → neither, so pacing is reported unknown.
+  `LIFETIME_SPEND` is the literal this client's own create path sends; `DAILY_SPEND` is not
+  exercised anywhere else in this repo.
+- The stale comment that cited the superseded UNVERIFIED-CONTRACT banner on
+  `GetCampaignMetrics` now says what is and is not verified: the reports operation is, the
+  campaign-list operation is not.
+
 See [internal/platform/reddit](../../../internal/platform/reddit).
 
 ## Connection-probe predicates (LFXV2-2665)

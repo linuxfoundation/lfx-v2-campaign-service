@@ -166,7 +166,12 @@ This is a deliberate, documented divergence, not a defect to fix: it is kept
 because it matches the days-1-ending-today convention Google/Reddit's
 monitor dispatchers already use, so all four platforms answer "last N days"
 identically rather than Meta alone excluding today the way its removed
-preset did. See `fetchAccountCampaignInsights`'s doc comment in
+preset did. (Until 2026-10-05 Reddit only claimed this convention: its
+monitor rendered `ends_at` as today's `T00:00:00Z`, copied from the BFF,
+which stops the range as today begins, so a `days=N` read covered about
+N-1 days. It now renders through `reportRange`, the same renderer
+`GetCampaignMetrics` uses, ending at today's 23:00 hour — see the Reddit
+scope audit below.) See `fetchAccountCampaignInsights`'s doc comment in
 `internal/platform/meta/monitor.go` for the same note next to the code.
 
 ## Correctness bugs found during local differential verification
@@ -191,8 +196,65 @@ defects, since fixed:
    already `Float64` — the totals field is now `Float64` too, matching the
    BFF's plain float sum in `aggregateTotals`.
 
-LinkedIn and Reddit have not yet had the same class of check (missing
-platform-query scope filters) run against them.
+LinkedIn has not yet had the same class of check (missing platform-query
+scope filters) run against it.
+
+**Reddit has (2026-10-05, LFXV2-2665 Track M3).** Outcome: no Google-class
+scope defect. The read's only campaign filter — `configured_status` ACTIVE
+or PAUSED — matches the BFF's `activeCampaigns` filter exactly, and the
+report is scoped per campaign. The audit did find, and fixed, five defects
+of other classes in `internal/platform/reddit/monitor.go` and
+`internal/service/rules/monitor_reddit.go`:
+
+1. **Window.** `ends_at` was today's midnight (the BFF's rendering), so the
+   read stopped as today began and contradicted the inclusive-of-today
+   convention claimed above. Now rendered by `reportRange`, ending at the
+   final day's 23:00 hour (the spec allows only hourly granularity; whether
+   Reddit treats that hour as inclusive is still unverified, as it is for
+   `GetCampaignMetrics`). Pinned by a fixed-clock test.
+2. **Unverified endpoint.** The per-campaign report used the BFF's nested
+   `POST /ad_accounts/{a}/campaigns/{c}/reports`, which nothing in this repo
+   verifies. It now uses the one spec-verified operation,
+   `POST /ad_accounts/{a}/reports`, with `GetCampaignMetrics`' own body
+   (`CAMPAIGN_ID` as a field, `filter: campaign:id==<id>`, no breakdowns),
+   one call per campaign at the existing concurrency limit of 5. One account
+   report broken down by `CAMPAIGN_ID` was considered and not taken: it
+   would depend on report pagination for completeness, and this repo has not
+   verified the pagination envelope's fields, so an unfollowed page would
+   read as a campaign's zero. Each row is attributed by its returned
+   `campaign_id` (the shared `sumReportRows` provenance check), an
+   unattributable row fails that campaign (`FetchFailed`) rather than being
+   credited, and every row is summed — it used to read `metrics[0]` only.
+3. **Campaign-list pagination.** `apiResponse` dropped the pagination
+   envelope, so only the first page of campaigns was ever monitored. The list
+   (and each report) now follows `pagination.next_url` — same-origin only,
+   since following it sends the bearer token — and fails with an error, never
+   a truncated list, at a 50-page cap, on a repeated page, or on a campaign
+   returned twice. Mirrors Meta's pagination fix above. `next_url` itself is
+   Reddit's v3 convention but is **not** verified by this repo; a response
+   without it is a single page, which is the old behaviour.
+4. **goal_type.** `goal_value` was read as a lifetime budget whatever
+   `goal_type` said, so a `DAILY_SPEND` campaign's daily cap was prorated
+   across its flight and spending exactly the cap read as overspending.
+   `LIFETIME_SPEND` now sets `TotalBudget`, `DAILY_SPEND` sets `BudgetDay`
+   (paced as `BudgetDay` × the window's days clipped to the flight, as
+   LinkedIn's daily branch does), and any other or absent `goal_type`
+   sets neither, so the row is `PacingUnknown` rather than a guess.
+5. **Duplicate HIGH alert.** Keying the underspend item off the label
+   (`#3021`) made a zero-delivery campaign raise both the zero-delivery HIGH
+   item and an "Underspending at 0%" HIGH item. The underspend item is now
+   suppressed exactly when the zero-delivery item fired at 0%. This is
+   narrower than the BFF's `pacingPct > 0`: a CPC campaign with impressions,
+   no clicks and so no spend paces at 0% without triggering zero-delivery,
+   and still alerts as underspending.
+
+Deviations from the BFF kept on purpose: `days` is validated strictly
+(7–90, 400 outside it) rather than clamped; account totals are the row sum,
+which excludes ARCHIVED/DELETED campaigns the BFF's account-wide report
+counted (`#3022`); report numbers are strictly typed (a non-integer or
+missing metric fails the campaign rather than reading as 0); and every
+upstream campaign id must pass the `accountIDRe` charset guard before it is
+interpolated into the report filter.
 
 A fourth issue, flagged by automated PR review rather than the differential
 diff: the four `account_id` payload attributes had no `MinLength`, `Pattern`,
