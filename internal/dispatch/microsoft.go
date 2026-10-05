@@ -246,42 +246,33 @@ func microsoftKeywords(in []microsoftKeywordConfig) []microsoft.Keyword {
 }
 
 // microsoftSnapshotConfig returns the copy of cfg that is persisted to config_snapshot
-// (stored UNENCRYPTED and indexed), with every caller-written free-text field passed through
-// sanitizeSnapshotText — the same helper twitter.go applies to tweetText, so the reduction
-// (scheme+host only; query, fragment, path and userinfo gone; unreducible links dropped) is
-// identical across adapters.
+// (stored UNENCRYPTED and indexed).
 //
-// microsoftConfig carries NO dedicated URL field: the ad's destination (FinalUrls) is the
-// BRIEF's registration URL plus the service-composed utm_* params, and is never part of this
-// struct, so it never reaches the snapshot. What a caller CAN put a link into is free text the
-// client sends verbatim:
+// microsoftConfig carries NO URL field: the ad's destination (FinalUrls) is the BRIEF's
+// registration URL plus the client's utm_* params and is never part of this struct, so it
+// never reaches the snapshot. The one field reduced here is TimeZone: it is meant to be a
+// Microsoft enum value but the client does NOT validate it (it is forwarded as-is), so it is
+// effectively caller free text, and it goes through sanitizeSnapshotText — the helper X's
+// tweetText uses — which reduces any link-shaped run to scheme+host. Every real enum value is
+// a bare identifier and passes through unchanged.
 //
-//   - Keywords[].Text — up to 100 runes of arbitrary text; a pasted link (with whatever query
-//     the operator's browser session put on it) is a shape a keyword can have, and Microsoft
-//     accepts URL-like keywords. Sanitized. Ordinary keyword text has no URL-shaped run and is
-//     stored exactly as written.
-//   - TimeZone — meant to be a Microsoft enum value but NOT validated by the client (it is
-//     forwarded as-is), so it is effectively free text. Sanitized; every real enum value is a
-//     bare identifier and passes through unchanged.
+// Keywords[].Text is deliberately kept VERBATIM, matching googleAdsSnapshotConfig's policy for
+// keyword and ad text. sanitizeSnapshotText is for operator prose that routinely carries a
+// pasted link; a keyword is short targeting text whose exact value is the point of the
+// snapshot, and the prose redactor's path-only pass would rewrite legitimate keywords —
+// `k8s.io/docs tutorial` to `k8s.io tutorial`, `node.js/express` to `node.js`, a CIDR
+// `10.0.0.0/8` to `10.0.0.0` — so the snapshot would no longer say what was targeted.
 //
-// Kept verbatim, because they cannot carry a URL by construction: Budget and CpcBid (numbers),
-// Keywords[].MatchType (any value reaching here passed the client's Exact/Phrase/Broad check —
-// a snapshot is only written when the client got past validation), and GeoTargets (ISO
-// 3166-1 alpha-2 codes, shape-checked by the client before anything is sent).
+// Also kept verbatim, because they cannot carry a URL by construction: Budget and CpcBid
+// (numbers), Keywords[].MatchType (only Exact/Phrase/Broad gets past the client, and a
+// snapshot is only written once it has) and GeoTargets (ISO 3166-1 alpha-2 codes,
+// shape-checked by the client before anything is sent).
 //
-// cfg is passed by value but Keywords shares its backing array with the config Dispatch sends
-// to Microsoft, so the slice is COPIED before it is rewritten: the platform must still receive
-// the full keyword text.
+// cfg is passed by value and only a string field is rewritten, so the returned copy shares
+// nothing that is mutated: the config Dispatch sends to Microsoft is untouched.
 func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 	snapshot := cfg
 	snapshot.TimeZone = sanitizeSnapshotText(cfg.TimeZone)
-	if len(cfg.Keywords) > 0 {
-		snapshot.Keywords = make([]microsoftKeywordConfig, len(cfg.Keywords))
-		copy(snapshot.Keywords, cfg.Keywords)
-		for i := range snapshot.Keywords {
-			snapshot.Keywords[i].Text = sanitizeSnapshotText(snapshot.Keywords[i].Text)
-		}
-	}
 	return snapshot
 }
 
@@ -296,8 +287,8 @@ func campaignFromMicrosoft(ctx context.Context, r *microsoft.CampaignResult, cfg
 	// ConfigSnapshot captures the validated config; parity with the sibling adapters (a NULL
 	// budget/type/config_snapshot row would lose the configuration). It is built from a
 	// SANITIZED COPY (microsoftSnapshotConfig), never cfg itself: config_snapshot is stored
-	// UNENCRYPTED, and the free-text fields a caller writes verbatim are scrubbed of any URL
-	// they carry before they get there.
+	// UNENCRYPTED, and the unvalidated free-text timeZone is scrubbed of any link it carries
+	// before it gets there.
 	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", microsoftSnapshotConfig(cfg))
 	if raw, err := json.Marshal(r); err != nil {
 		// Near-impossible for this plain struct, but do NOT swallow it: on an ambiguous-orphan

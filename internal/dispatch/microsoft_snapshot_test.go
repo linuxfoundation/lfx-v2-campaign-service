@@ -17,11 +17,11 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 )
 
-// config_snapshot is persisted UNENCRYPTED and indexed, so the Microsoft adapter must not
-// copy a caller's link — query, fragment or path — into it. microsoftConfig has no URL field
-// of its own; the free-text fields a link can ride in are Keywords[].Text and TimeZone (the
-// latter is forwarded unvalidated). These tests pin that both are scrubbed in the snapshot
-// while the platform still receives every value exactly as the caller wrote it.
+// config_snapshot is persisted UNENCRYPTED and indexed. microsoftConfig has no URL field of
+// its own; the one caller free-text field reduced in the snapshot is TimeZone (forwarded
+// unvalidated). Keyword text is kept VERBATIM, matching googleAdsSnapshotConfig: the prose
+// redactor would rewrite legitimate keywords. These tests pin both halves, and that the
+// platform still receives every value exactly as the caller wrote it.
 
 // msSnapshotCapture records the raw bodies the fake Microsoft API received.
 type msSnapshotCapture struct {
@@ -67,7 +67,7 @@ func msSnapshotServers(t *testing.T) ([]microsoft.Option, *msSnapshotCapture) {
 			cap.mu.Lock()
 			cap.keywordBody = string(body)
 			cap.mu.Unlock()
-			_, _ = io.WriteString(w, `{"KeywordIds":[701,702,703],"PartialErrors":[]}`)
+			_, _ = io.WriteString(w, `{"KeywordIds":[701,702,703,704],"PartialErrors":[]}`)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, p)
 			w.WriteHeader(http.StatusNotFound)
@@ -77,12 +77,18 @@ func msSnapshotServers(t *testing.T) ([]microsoft.Option, *msSnapshotCapture) {
 	return []microsoft.Option{microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL)}, cap
 }
 
+// msSnapKeywords are legitimate keywords the prose redactor's path-only pass WOULD rewrite
+// (or that look link-ish); the snapshot must keep every one byte for byte.
+var msSnapKeywords = []microsoftKeywordConfig{
+	{Text: "k8s.io/docs tutorial", MatchType: "Exact"},
+	{Text: "node.js/express", MatchType: "Phrase"},
+	{Text: "kubernetes.io", MatchType: "Broad"},
+	{Text: "c++ jobs", MatchType: "Broad"},
+}
+
 const (
-	msSnapKeywordSchemeful  = "https://events.example.org/reg/KWPATH?access_token=KWSECRET1#KWFRAG1"
-	msSnapKeywordSchemeless = "events.example.org/reg?sig=KWSECRET2#KWFRAG2"
-	msSnapKeywordPlain      = "kubernetes training"
-	msSnapTimeZone          = "https://tz.example.net/z/TZPATH?token=TZSECRET#TZFRAG"
-	msSnapRegistrationURL   = "https://events.example/kc/REGPATH?ticket=REGSECRET"
+	msSnapTimeZone        = "https://tz.example.net/z/TZPATH?token=TZSECRET#TZFRAG"
+	msSnapRegistrationURL = "https://events.example/kc/REGPATH?ticket=REGSECRET"
 )
 
 func msSnapshotConfig(t *testing.T) json.RawMessage {
@@ -90,11 +96,7 @@ func msSnapshotConfig(t *testing.T) json.RawMessage {
 	raw, err := json.Marshal(map[string]any{"microsoftConfig": map[string]any{
 		"budget":   50,
 		"timeZone": msSnapTimeZone,
-		"keywords": []map[string]string{
-			{"text": msSnapKeywordSchemeful, "matchType": "Exact"},
-			{"text": msSnapKeywordSchemeless, "matchType": "Phrase"},
-			{"text": msSnapKeywordPlain, "matchType": "Broad"},
-		},
+		"keywords": msSnapKeywords,
 	}})
 	if err != nil {
 		t.Fatalf("marshal config: %v", err)
@@ -102,7 +104,7 @@ func msSnapshotConfig(t *testing.T) json.RawMessage {
 	return raw
 }
 
-func TestMicrosoft_ConfigSnapshotStripsURLsFromFreeTextFields(t *testing.T) {
+func TestMicrosoft_ConfigSnapshotScrubsTimeZoneKeepsKeywordsVerbatim(t *testing.T) {
 	opts, cap := msSnapshotServers(t)
 	d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{}, opts...)
 	brief := testBrief()
@@ -116,13 +118,11 @@ func TestMicrosoft_ConfigSnapshotStripsURLsFromFreeTextFields(t *testing.T) {
 		t.Fatal("ConfigSnapshot is empty; nothing was persisted to assert on")
 	}
 
-	// Nothing secret-bearing — query, fragment or path — survives into either persisted blob.
-	// Result carries no caller URL by construction (names, ids, Steps, a service-composed deep
-	// link); asserting it here keeps a future field that echoes one from landing silently.
-	for _, leak := range []string{
-		"KWSECRET1", "KWSECRET2", "KWFRAG1", "KWFRAG2", "KWPATH", "access_token", "sig=",
-		"TZSECRET", "TZFRAG", "TZPATH", "REGSECRET", "REGPATH", "ticket",
-	} {
+	// Neither the time zone's path/query/fragment nor the brief's registration URL reaches
+	// either persisted blob. Result carries no caller URL by construction (names, ids, Steps,
+	// a service-composed deep link); asserting it keeps a future field that echoes one from
+	// landing silently.
+	for _, leak := range []string{"TZSECRET", "TZFRAG", "TZPATH", "REGSECRET", "REGPATH", "ticket"} {
 		if strings.Contains(string(camp.ConfigSnapshot), leak) {
 			t.Errorf("config_snapshot carries %q: %s", leak, camp.ConfigSnapshot)
 		}
@@ -135,17 +135,12 @@ func TestMicrosoft_ConfigSnapshotStripsURLsFromFreeTextFields(t *testing.T) {
 	if err := json.Unmarshal(camp.ConfigSnapshot, &snap); err != nil {
 		t.Fatalf("config_snapshot must be valid JSON: %v", err)
 	}
-	wantKW := []microsoftKeywordConfig{
-		{Text: "https://events.example.org", MatchType: "Exact"},
-		{Text: "events.example.org", MatchType: "Phrase"},
-		{Text: msSnapKeywordPlain, MatchType: "Broad"}, // ordinary keyword text is untouched
+	if len(snap.Keywords) != len(msSnapKeywords) {
+		t.Fatalf("snapshot keywords = %+v, want %+v", snap.Keywords, msSnapKeywords)
 	}
-	if len(snap.Keywords) != len(wantKW) {
-		t.Fatalf("snapshot keywords = %+v, want %+v", snap.Keywords, wantKW)
-	}
-	for i := range wantKW {
-		if snap.Keywords[i] != wantKW[i] {
-			t.Errorf("snapshot keyword[%d] = %+v, want %+v", i, snap.Keywords[i], wantKW[i])
+	for i := range msSnapKeywords {
+		if snap.Keywords[i] != msSnapKeywords[i] {
+			t.Errorf("snapshot keyword[%d] = %+v, want it stored verbatim as %+v", i, snap.Keywords[i], msSnapKeywords[i])
 		}
 	}
 	if snap.TimeZone != "https://tz.example.net" {
@@ -156,12 +151,22 @@ func TestMicrosoft_ConfigSnapshotStripsURLsFromFreeTextFields(t *testing.T) {
 	}
 
 	// The platform still receives every value exactly as written: only the STORED copy is
-	// scrubbed. encoding/json escapes '&', '<', '>' but none appear in these values.
+	// scrubbed. Bodies are decoded rather than substring-matched, since encoding/json escapes
+	// '+' nowhere but does escape '&', '<' and '>'.
 	cap.mu.Lock()
 	defer cap.mu.Unlock()
-	for _, want := range []string{msSnapKeywordSchemeful, msSnapKeywordSchemeless, msSnapKeywordPlain} {
-		if !strings.Contains(cap.keywordBody, want) {
-			t.Errorf("POST /Keywords body lost the full keyword %q: %s", want, cap.keywordBody)
+	var kwBody struct {
+		Keywords []struct{ Text string }
+	}
+	if err := json.Unmarshal([]byte(cap.keywordBody), &kwBody); err != nil {
+		t.Fatalf("decode POST /Keywords body %q: %v", cap.keywordBody, err)
+	}
+	if len(kwBody.Keywords) != len(msSnapKeywords) {
+		t.Fatalf("POST /Keywords sent %d keywords, want %d: %s", len(kwBody.Keywords), len(msSnapKeywords), cap.keywordBody)
+	}
+	for i, kw := range msSnapKeywords {
+		if kwBody.Keywords[i].Text != kw.Text {
+			t.Errorf("POST /Keywords keyword[%d] = %q, want %q", i, kwBody.Keywords[i].Text, kw.Text)
 		}
 	}
 	if !strings.Contains(cap.campaignBody, msSnapTimeZone) {
@@ -172,36 +177,39 @@ func TestMicrosoft_ConfigSnapshotStripsURLsFromFreeTextFields(t *testing.T) {
 	}
 }
 
-// TestMicrosoftSnapshotConfig_DoesNotMutateDispatchConfig pins the copy: Keywords shares its
-// backing array with the config Dispatch hands the client, so rewriting it in place would
-// strip the URL from what Microsoft receives on any path that reads cfg after the snapshot.
+// TestMicrosoftSnapshotConfig_DoesNotMutateDispatchConfig pins that the snapshot is a copy:
+// the config Dispatch hands the client must keep the full timeZone, and the keyword slice
+// must come through unchanged on both sides.
 func TestMicrosoftSnapshotConfig_DoesNotMutateDispatchConfig(t *testing.T) {
 	cfg := microsoftConfig{
-		Budget:   10,
-		TimeZone: msSnapTimeZone,
-		Keywords: []microsoftKeywordConfig{
-			{Text: msSnapKeywordSchemeful, MatchType: "Exact"},
-			{Text: msSnapKeywordSchemeless, MatchType: "Phrase"},
-		},
+		Budget:     10,
+		TimeZone:   msSnapTimeZone,
+		Keywords:   append([]microsoftKeywordConfig(nil), msSnapKeywords...),
 		CpcBid:     1.5,
 		GeoTargets: []string{"US"},
 	}
 	snap := microsoftSnapshotConfig(cfg)
-	if cfg.TimeZone != msSnapTimeZone ||
-		cfg.Keywords[0].Text != msSnapKeywordSchemeful || cfg.Keywords[1].Text != msSnapKeywordSchemeless {
-		t.Fatalf("microsoftSnapshotConfig mutated the dispatch config: %+v", cfg)
+	if cfg.TimeZone != msSnapTimeZone {
+		t.Fatalf("microsoftSnapshotConfig mutated the dispatch timeZone: %q", cfg.TimeZone)
 	}
-	if snap.Keywords[0].Text == cfg.Keywords[0].Text {
-		t.Errorf("snapshot keyword was not sanitized: %q", snap.Keywords[0].Text)
+	for i, kw := range msSnapKeywords {
+		if cfg.Keywords[i] != kw || snap.Keywords[i] != kw {
+			t.Errorf("keyword[%d]: dispatch %+v, snapshot %+v, want both %+v", i, cfg.Keywords[i], snap.Keywords[i], kw)
+		}
+	}
+	if snap.TimeZone != "https://tz.example.net" {
+		t.Errorf("snapshot timeZone = %q, want it reduced to scheme+host", snap.TimeZone)
 	}
 	if snap.CpcBid != cfg.CpcBid || len(snap.GeoTargets) != 1 || snap.GeoTargets[0] != "US" {
 		t.Errorf("non-text fields must be kept verbatim: %+v", snap)
 	}
 
-	// An omitted keywords field stays nil (not an empty non-nil slice), and an empty timeZone
-	// stays empty.
+	// A real enum value passes through unchanged; an empty one stays empty.
+	if got := microsoftSnapshotConfig(microsoftConfig{TimeZone: "PacificTimeUSCanadaTijuana"}).TimeZone; got != "PacificTimeUSCanadaTijuana" {
+		t.Errorf("enum timeZone rewritten to %q", got)
+	}
 	empty := microsoftSnapshotConfig(microsoftConfig{Budget: 5})
 	if empty.Keywords != nil || empty.TimeZone != "" {
-		t.Errorf("zero-valued text fields must stay zero, got %+v", empty)
+		t.Errorf("zero-valued fields must stay zero, got %+v", empty)
 	}
 }

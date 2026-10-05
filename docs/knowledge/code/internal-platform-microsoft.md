@@ -726,13 +726,14 @@ ad also both pre-existed). A non-nil result accompanied
 by an error is a separate UNCONFIRMED partial (claim retained); (nil, err) means nothing
 was created (claim released).
 
-The persisted `config_snapshot` is a SANITIZED copy (`microsoftSnapshotConfig`): the
-config has no URL field of its own — the ad's `FinalUrls` is the brief's registration URL
-plus the client's `utm_*` params and never enters the struct — but `keywords[].text` and
-`timeZone` are caller free text the client forwards verbatim (`timeZone` is not validated
-against the enum), so both go through `sanitizeSnapshotText` before they are stored. The
-values sent to Microsoft are untouched. `CampaignResult` (the persisted `result`) carries no
-caller URL: names, ids, `Steps` (none of which interpolate a URL) and the service-composed
+The persisted `config_snapshot` is a copy built by `microsoftSnapshotConfig`: the config
+has no URL field of its own — the ad's `FinalUrls` is the brief's registration URL plus the
+client's `utm_*` params and never enters the struct — and the one field reduced is `timeZone`,
+which the client forwards verbatim without validating it against the enum, so it goes through
+`sanitizeSnapshotText`. `keywords[].text` is stored VERBATIM, matching Google Ads' policy for
+keyword text (the prose redactor would rewrite legitimate keywords such as `node.js/express`).
+The values sent to Microsoft are untouched. `CampaignResult` (the persisted `result`) carries
+no caller URL: names, ids, `Steps` (none of which interpolate a URL) and the service-composed
 `microsoftAdsUrl` deep link, whose `?aid=` is the account id.
 
 It has a creation dispatcher; its status-TOGGLE capability is described next.

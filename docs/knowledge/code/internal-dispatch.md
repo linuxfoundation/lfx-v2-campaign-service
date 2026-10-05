@@ -295,21 +295,35 @@ denylist that cannot name every credential parameter a registration page might u
 does not apply at all to rows written before it existed. The snapshot does not have to
 guess, so it keeps nothing.
 
-**Microsoft's snapshot is sanitized too, though its config has no URL field.**
-`campaignFromMicrosoft` used to pass the caller's `microsoftConfig` to `applyCampaignConfig`
-as-is. The struct carries no destination — the ad's `FinalUrls` is the BRIEF's registration
-URL plus the client's `utm_*` params, so it never reaches the snapshot — but two fields are
-caller free text forwarded verbatim: `keywords[].text` (up to 100 runes, and a pasted link
-is a shape a keyword can take) and `timeZone` (meant to be an enum, but not validated, so in
-practice free text). `microsoftSnapshotConfig` runs both through `sanitizeSnapshotText`,
-the same helper `tweetText` uses, on a COPY whose `Keywords` slice is reallocated first so
-the text sent to Microsoft is untouched. Ordinary keyword text and every real time-zone enum
-value contain no link-shaped run and are stored exactly as written. `budget`, `cpcBid`,
-`matchType` (only Exact/Phrase/Broad gets past the client before a snapshot can be written)
-and `geoTargets` (ISO-2 codes, shape-checked by the client) cannot carry a URL and are kept
-verbatim. The persisted `result` (`microsoft.CampaignResult`) needed no change: its `Steps`
-interpolate only ids, counts and geo codes, and its `microsoftAdsUrl` is a deep link the
-client composes from the account id.
+**Which fields each adapter scrubs.** Per adapter snapshot builder, as of LFXV2-2665:
+
+- `reddit.go` — `PostURL`, `ImageURL` (`sanitizeSnapshotURL`).
+- `meta.go` — each variant's `ImageURL` (`sanitizeSnapshotURL`, on a copied slice).
+- `googleads.go` — each sitelink's `finalUrl` (`googleAdsSnapshotConfig`); keyword and ad text
+  are kept VERBATIM by design.
+- `twitter.go` — `tweetText` (`sanitizeSnapshotText`).
+- `microsoft.go` — `timeZone` only (`microsoftSnapshotConfig`, `sanitizeSnapshotText`).
+- `hubspot.go` — snapshots only the provenance fields (`hubspotConfigProvenance`); subject and
+  body HTML are never stored.
+- `linkedin.go` — passes the raw `linkedinConfig`; NOTHING is scrubbed. It has no dedicated URL
+  field (the registration URL comes from the brief), but variant `introText`/`headline` are
+  caller free text stored verbatim. Not changed here; LinkedIn is owned by another engineer.
+
+**Microsoft keeps keywords verbatim and scrubs only `timeZone`.** `campaignFromMicrosoft`
+used to pass the caller's `microsoftConfig` to `applyCampaignConfig` as-is. The struct carries
+no URL field: the ad's `FinalUrls` is the BRIEF's registration URL plus the client's `utm_*`
+params and never reaches the snapshot. `timeZone` is meant to be an enum but is forwarded
+UNVALIDATED, so it is in practice caller free text, and `microsoftSnapshotConfig` runs it
+through `sanitizeSnapshotText` (every real enum value is a bare identifier and passes
+through unchanged). `keywords[].text` is deliberately kept verbatim, the same policy as
+`googleAdsSnapshotConfig`: `sanitizeSnapshotText` is for prose that routinely carries a pasted
+link, and its path-only pass would rewrite legitimate keywords — `k8s.io/docs tutorial` to
+`k8s.io tutorial`, `node.js/express` to `node.js`, `10.0.0.0/8` to `10.0.0.0` — so the
+snapshot would stop saying what was targeted. `budget`, `cpcBid`, `matchType` (only
+Exact/Phrase/Broad gets past the client before a snapshot can be written) and `geoTargets`
+(ISO-2 codes, shape-checked by the client) cannot carry a URL. The persisted `result`
+(`microsoft.CampaignResult`) needed no change: its `Steps` interpolate only ids, counts and
+geo codes, and its `microsoftAdsUrl` is a deep link the client composes from the account id.
 
 ## The claim contract (release vs retain)
 
