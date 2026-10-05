@@ -246,3 +246,36 @@ func budgetTimeoutClient(t *testing.T) *Client {
 		WithNowFunc(fixedRedditClock()), withRetryBaseDelay(tinyBackoff),
 		WithHTTPClient(&http.Client{Timeout: 50 * time.Millisecond}))
 }
+
+// A micros value UpdateCampaignBudget refuses is classified like BudgetMicros's own refusals —
+// ErrBudgetAmountInvalid, a permanent amount rejection — and no request is sent.
+func TestUpdateCampaignBudget_NonPositiveMicrosIsAnAmountRejection(t *testing.T) {
+	c, seen := budgetTestClient(t, http.StatusOK, `{}`)
+	for _, micros := range []int64{0, -5} {
+		err := c.UpdateCampaignBudget(context.Background(), "camp1", micros)
+		if !errors.Is(err, ErrBudgetAmountInvalid) {
+			t.Errorf("micros %d: err = %v, want ErrBudgetAmountInvalid", micros, err)
+		}
+	}
+	if got := seen(); len(got) != 0 {
+		t.Errorf("requests sent = %v, want none", got)
+	}
+}
+
+func TestParseGoalValue(t *testing.T) {
+	for _, tc := range []struct {
+		raw     string
+		want    *int64
+		badFlag bool
+	}{
+		{``, nil, false}, {`null`, nil, false}, {`250000000`, ptrInt64(250000000), false},
+		{`"250000000"`, ptrInt64(250000000), false}, {`1.5`, nil, true}, {`"abc"`, nil, true},
+	} {
+		got, bad := parseGoalValue(json.RawMessage(tc.raw))
+		if bad != tc.badFlag || (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+			t.Errorf("parseGoalValue(%q) = %v, %v; want %v, %v", tc.raw, got, bad, tc.want, tc.badFlag)
+		}
+	}
+}
+
+func ptrInt64(v int64) *int64 { return &v }

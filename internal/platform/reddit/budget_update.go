@@ -160,7 +160,7 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 		GoalType:                   strings.TrimSpace(wire.GoalType),
 		CampaignBudgetOptimization: wire.CBO,
 	}
-	out.GoalValueMicros = parseGoalValue(wire.GoalValue, &out.GoalValueUnparseable)
+	out.GoalValueMicros, out.GoalValueUnparseable = parseGoalValue(wire.GoalValue)
 	return out, nil
 }
 
@@ -168,20 +168,22 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 // JSON number or, defensively, a decimal string — yields its value. Anything else, including a
 // number with a fractional part, yields nil AND sets the unparseable flag: truncating it would be
 // a silent change to money, and reading it as absent would be an actively wrong answer.
-func parseGoalValue(raw json.RawMessage, unparseable *bool) *int64 {
+//
+// The second return reports a value that was present but unreadable. It is a return value, not an
+// out-parameter, so a caller cannot pass nil and panic.
+func parseGoalValue(raw json.RawMessage) (*int64, bool) {
 	s := strings.TrimSpace(string(raw))
 	if s == "" || s == "null" {
-		return nil
+		return nil, false
 	}
 	if unq, err := strconv.Unquote(s); err == nil {
 		s = strings.TrimSpace(unq)
 	}
 	v, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		*unparseable = true
-		return nil
+		return nil, true
 	}
-	return &v
+	return &v, false
 }
 
 // UpdateCampaignBudget sets an existing campaign's goal_value via
@@ -210,7 +212,10 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID string, mi
 		return err
 	}
 	if micros < 1 {
-		return fmt.Errorf("reddit: budget %d micro-units is not a valid amount; it must come from BudgetMicros", micros)
+		// A budgetAmountError, so a caller can classify it with ErrBudgetAmountInvalid exactly as
+		// it classifies BudgetMicros's own refusals — a permanent amount rejection, never an
+		// upstream failure.
+		return &budgetAmountError{msg: fmt.Sprintf("budget %d micro-units is not a valid amount; it must come from BudgetMicros", micros)}
 	}
 	body := map[string]any{"data": map[string]any{"goal_value": micros}}
 	resp, err := c.request(ctx, http.MethodPatch, path, body)
@@ -228,8 +233,7 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID string, mi
 	if got := strings.TrimSpace(echo.ID); got != "" && got != campaignID {
 		return &transportError{Method: http.MethodPatch, Path: "campaign budget", Err: fmt.Errorf("budget update for campaign %s was acknowledged for campaign %s", campaignID, got)}
 	}
-	var unparseable bool
-	if got := parseGoalValue(echo.GoalValue, &unparseable); unparseable || (got != nil && *got != micros) {
+	if got, unparseable := parseGoalValue(echo.GoalValue); unparseable || (got != nil && *got != micros) {
 		return &transportError{Method: http.MethodPatch, Path: "campaign budget", Err: fmt.Errorf("budget update for campaign %s was acknowledged with a goal_value other than the %d micro-units sent", campaignID, micros)}
 	}
 	return nil
