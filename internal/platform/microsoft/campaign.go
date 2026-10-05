@@ -1368,9 +1368,10 @@ func (c *Client) putStatus(ctx context.Context, path string, req any, entity str
 // was retried, a later definite 4xx, PartialError or pre-send failure answers only the LAST
 // attempt and cannot confirm that the earlier one changed nothing. Idempotence makes a retry
 // converge when it eventually succeeds; it does not make a later refusal speak for prior
-// attempts. Every non-success after a retry is therefore wrapped as retriedUnconfirmedError, so
-// IsOutcomeUnconfirmed holds and no caller maps it to a "platform unchanged" sentinel
-// (ErrSharedBudget, ErrBudgetAmountInvalid).
+// attempts. After a retried 429 every failure is therefore unconfirmed: only errors not already
+// unconfirmed are wrapped in retriedUnconfirmedError (one that already is passes through as it
+// is), so IsOutcomeUnconfirmed holds either way and no caller maps it to a "platform unchanged"
+// sentinel (ErrSharedBudget, ErrBudgetAmountInvalid).
 func (c *Client) putUpdate(ctx context.Context, path string, req any, what string) error {
 	body, retries, err := c.doRequestCounted(ctx, http.MethodPut, path, req, true)
 	err = putUpdateOutcome(body, err, path, what)
