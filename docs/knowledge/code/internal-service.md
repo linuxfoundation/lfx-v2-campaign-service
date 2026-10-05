@@ -1500,8 +1500,11 @@ appended to the 400. **The rendered error chain is never interpolated into a cli
 wrapped chain would publish whatever an adapter or transport put in it.
 
 **A positive amount that rounds to zero micros is refused 400 here too**, alongside NaN, Inf,
-zero and the ceiling. Every supported platform bills in micros, so an amount under 0.000001 of
-the account's currency rounds to nothing upstream and the adapter refuses it with a bare error
+zero and the ceiling. Not every platform bills in micros — Google Ads does, LinkedIn settles on
+whole cents, Meta on the account currency's minor unit — but one micro is the LOOSEST floor any
+of them has, so it is the only floor the contract can state for every platform at once (the
+design's `Minimum` says the same). An amount under 0.000001 of the account's currency rounds to
+nothing on every platform, and the adapter would refuse it with a bare error
 the switch below can classify only as 503 — an "unconfirmed upstream outcome" answer to a
 request that was never going to succeed, inviting a retry that cannot. The check compares the
 ROUNDED value rather than a literal floor so it stays in step with the adapter's own

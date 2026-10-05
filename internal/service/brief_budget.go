@@ -22,9 +22,14 @@ import (
 // guard, and a platform whose real ceiling is lower will still refuse below this one.
 const maxCampaignBudget = 1_000_000_000.0
 
-// microsPerCurrencyUnit is the scale every supported ad platform bills in. It is here for the
-// same reason maxCampaignBudget is: the smallest settable amount is part of the API contract
-// (answered 400, and declared as the design's Minimum), not a platform conversion detail.
+// microsPerCurrencyUnit sets the LOOSEST floor any supported ad platform has: Google Ads bills
+// in micros, LinkedIn in whole cents, Meta in its account currency's minor unit. Platforms do
+// NOT all bill in micros — one micro is simply the finest unit any of them accepts, so it is the
+// only floor this contract can state for every platform at once (matching the design's Minimum
+// and its comment). Each adapter enforces its own, stricter floor and its platform's minimums.
+// It is here for the same reason maxCampaignBudget is: the smallest settable amount is part of
+// the API contract (answered 400, and declared as the design's Minimum), not a platform
+// conversion detail.
 const microsPerCurrencyUnit = 1_000_000.0
 
 // UpdateCampaignBudget changes how much a campaign may spend ON THE AD PLATFORM, then persists
