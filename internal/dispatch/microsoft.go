@@ -819,7 +819,28 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	// Keyword ids come from the SAME persisted result blob as the child ids. They are passed
 	// on BOTH the activate and pause paths: keywords are created Paused, so an activate that
 	// skipped them would enable a campaign with nothing eligible to match a query.
-	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, microsoftKeywordIDs(campaign), msStatus); uerr != nil {
+	//
+	// They are first narrowed to the keywords still LIVE in the ad group (LFXV2-2665): keyword
+	// REMOVE deletes keywords upstream without touching this row, and a deleted id in the
+	// cascade's UpdateKeywords would turn every later toggle into an unconfirmed partial
+	// cascade. A failed read REFUSES an activate (definite — nothing has been changed yet, and
+	// activating with an unknown keyword set could enable a campaign with nothing to serve) but
+	// does not block a PAUSE, which falls back to the recorded ids: stopping delivery must not
+	// depend on a read succeeding, and the campaign gate flips first either way.
+	keywordIDs := microsoftKeywordIDs(campaign)
+	if len(keywordIDs) > 0 && adGroupID != "" {
+		live, lerr := microsoftLiveKeywordIDs(ctx, client, adGroupID, keywordIDs)
+		switch {
+		case lerr == nil:
+			keywordIDs = live
+		case msStatus == microsoft.StatusActive:
+			return fmt.Errorf("toggle microsoft campaign status: read the ad group's keywords before activating: %w", lerr)
+		}
+		if msStatus == microsoft.StatusActive && lerr == nil && len(keywordIDs) == 0 {
+			return fmt.Errorf("%w: microsoft campaign %s cannot be activated because every keyword it was created with has since been removed (at least one keyword is required for a search campaign to serve)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+	}
+	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, keywordIDs, msStatus); uerr != nil {
 		if microsoft.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}

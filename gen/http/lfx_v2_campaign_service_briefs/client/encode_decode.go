@@ -4257,6 +4257,219 @@ func DecodeApplyKeywordActionsResponse(decoder func(*http.Response) goahttp.Deco
 	}
 }
 
+// BuildAddNegativeKeywordsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "add-negative-keywords" endpoint
+func (c *Client) BuildAddNegativeKeywordsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID  string
+		briefID    string
+		campaignID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.AddNegativeKeywordsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "add-negative-keywords", "*lfxv2campaignservicebriefs.AddNegativeKeywordsPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		campaignID = p.CampaignID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: AddNegativeKeywordsLfxV2CampaignServiceBriefsPath(projectID, briefID, campaignID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "add-negative-keywords", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeAddNegativeKeywordsRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs add-negative-keywords server.
+func EncodeAddNegativeKeywordsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.AddNegativeKeywordsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "add-negative-keywords", "*lfxv2campaignservicebriefs.AddNegativeKeywordsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewAddNegativeKeywordsRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+		}
+		return nil
+	}
+}
+
+// DecodeAddNegativeKeywordsResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-briefs add-negative-keywords endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeAddNegativeKeywordsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeAddNegativeKeywordsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body AddNegativeKeywordsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			res := NewAddNegativeKeywordsNegativeKeywordsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body AddNegativeKeywordsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body AddNegativeKeywordsConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body AddNegativeKeywordsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body AddNegativeKeywordsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body AddNegativeKeywordsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body AddNegativeKeywordsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body AddNegativeKeywordsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "add-negative-keywords", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildDeleteCampaignRequest instantiates a HTTP request object with method
 // and path set to call the "lfx-v2-campaign-service-briefs" service
 // "delete-campaign" endpoint
@@ -6657,7 +6870,48 @@ func unmarshalKeywordActionResultResponseBodyToLfxv2campaignservicebriefsKeyword
 		AdGroupID:    *v.AdGroupID,
 		CriterionID:  *v.CriterionID,
 		Action:       *v.Action,
-		ResourceName: *v.ResourceName,
+		ResourceName: v.ResourceName,
+		Outcome:      v.Outcome,
+		ErrorCode:    v.ErrorCode,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsNegativeKeywordInputToNegativeKeywordInputRequestBody
+// builds a value of type *NegativeKeywordInputRequestBody from a value of type
+// *lfxv2campaignservicebriefs.NegativeKeywordInput.
+func marshalLfxv2campaignservicebriefsNegativeKeywordInputToNegativeKeywordInputRequestBody(v *lfxv2campaignservicebriefs.NegativeKeywordInput) *NegativeKeywordInputRequestBody {
+	res := &NegativeKeywordInputRequestBody{
+		Text:      v.Text,
+		MatchType: v.MatchType,
+	}
+
+	return res
+}
+
+// marshalNegativeKeywordInputRequestBodyToLfxv2campaignservicebriefsNegativeKeywordInput
+// builds a value of type *lfxv2campaignservicebriefs.NegativeKeywordInput from
+// a value of type *NegativeKeywordInputRequestBody.
+func marshalNegativeKeywordInputRequestBodyToLfxv2campaignservicebriefsNegativeKeywordInput(v *NegativeKeywordInputRequestBody) *lfxv2campaignservicebriefs.NegativeKeywordInput {
+	res := &lfxv2campaignservicebriefs.NegativeKeywordInput{
+		Text:      v.Text,
+		MatchType: v.MatchType,
+	}
+
+	return res
+}
+
+// unmarshalNegativeKeywordResultResponseBodyToLfxv2campaignservicebriefsNegativeKeywordResult
+// builds a value of type *lfxv2campaignservicebriefs.NegativeKeywordResult
+// from a value of type *NegativeKeywordResultResponseBody.
+func unmarshalNegativeKeywordResultResponseBodyToLfxv2campaignservicebriefsNegativeKeywordResult(v *NegativeKeywordResultResponseBody) *lfxv2campaignservicebriefs.NegativeKeywordResult {
+	res := &lfxv2campaignservicebriefs.NegativeKeywordResult{
+		Text:              *v.Text,
+		MatchType:         *v.MatchType,
+		Outcome:           *v.Outcome,
+		NegativeKeywordID: v.NegativeKeywordID,
+		ErrorCode:         v.ErrorCode,
 	}
 
 	return res

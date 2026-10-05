@@ -771,13 +771,29 @@ var KeywordActionInput = Type("keyword-action-input", func() {
 	Required("ad_group_id", "criterion_id", "action")
 })
 
+// keywordItemOutcomeEnum is the per-item outcome of a NON-atomic keyword lever (LFXV2-2665).
+// Microsoft Advertising applies a keyword batch item by item — PartialErrors name the items it
+// did not apply, and every other item in the same call DID apply — so its results carry one of
+// these per entry. Google's batch is atomic and its results carry none (an absent outcome on a
+// 200 means "applied, with the rest of the batch").
+func keywordItemOutcomeEnum() {
+	Enum("APPLIED", "FAILED", "UNCONFIRMED")
+}
+
 // KeywordActionResult is one mutation's outcome.
+//
+// resource_name is OPTIONAL as of LFXV2-2665, and only that: it is still present on EVERY
+// Google Ads result, exactly as before, because Google's adapter returns it for every applied
+// criterion. Microsoft Advertising has no resource names, and inventing one would hand a caller
+// an identifier no Microsoft API accepts. outcome and error_code are new and Microsoft-only.
 var KeywordActionResult = Type("keyword-action-result", func() {
 	Attribute("ad_group_id", String, "The ad group that was addressed", func() { Example("176216228") })
-	Attribute("criterion_id", String, "The criterion that was addressed", func() { Example("305729261") })
-	Attribute("action", String, "The action that was applied", keywordActionEnum)
-	Attribute("resource_name", String, "The criterion resource name Google returned for the applied mutation", func() { Example("customers/1234567890/adGroupCriteria/176216228~305729261") })
-	Required("ad_group_id", "criterion_id", "action", "resource_name")
+	Attribute("criterion_id", String, "The criterion (Google Ads) or keyword id (Microsoft Advertising) that was addressed", func() { Example("305729261") })
+	Attribute("action", String, "The action that was requested", keywordActionEnum)
+	Attribute("resource_name", String, "Google Ads only: the criterion resource name Google returned for the applied mutation. Present on every Google Ads result; absent on Microsoft Advertising, which has no resource names.", func() { Example("customers/1234567890/adGroupCriteria/176216228~305729261") })
+	Attribute("outcome", String, "Microsoft Advertising only: this action's own outcome, because a Microsoft batch is applied item by item. APPLIED — Microsoft did not reject it; FAILED — definitely not applied (see error_code); UNCONFIRMED — may have been applied, verify in Microsoft Advertising before retrying. ABSENT on Google Ads, whose batch is atomic: there every result on a 200 was applied.", keywordItemOutcomeEnum)
+	Attribute("error_code", String, "Microsoft Advertising only: the platform's machine-readable error code for a FAILED or UNCONFIRMED action, when it named one. NOT_SENT means the request carrying this action was never sent.", func() { Example("CampaignServiceInvalidKeywordId") })
+	Required("ad_group_id", "criterion_id", "action")
 })
 
 // KeywordActions is the outcome of a keyword-actions request.
@@ -795,8 +811,67 @@ var KeywordActionResult = Type("keyword-action-result", func() {
 // single permission-evaluated target; the batch is one campaign's keywords, not many campaigns.
 var KeywordActions = Type("keyword-actions", func() {
 	Attribute("campaign_id", String, "The campaign whose keywords were acted on", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
-	Attribute("results", ArrayOf(KeywordActionResult), "One entry per requested action, in request order. All applied, or the request failed and none were.")
-	Attribute("applied_count", Int, "How many actions were applied. Always equal to the number requested — a partial application is not a possible outcome.", func() { Example(3) })
+	Attribute("results", ArrayOf(KeywordActionResult), "Exactly one entry per requested action, in request order, so results[i] answers actions[i]. Google Ads: all applied, or the request failed and none were. Microsoft Advertising: each entry carries its own outcome.")
+	Attribute("applied_count", Int, "How many actions were applied. Google Ads: always equal to the number requested — its batch is atomic. Microsoft Advertising: the number of results whose outcome is APPLIED, which can be fewer.", func() { Example(3) })
+	Required("campaign_id", "results", "applied_count")
+})
+
+// ─── Negative keywords on a live campaign (LFXV2-2665) ───
+
+// negativeKeywordMatchTypeEnum is the match types a negative keyword may carry. Microsoft
+// Advertising: "The supported values for a negative keyword are Exact and Phrase."
+// (https://learn.microsoft.com/en-us/advertising/campaign-management-service/negativekeyword).
+// Broad is not a negative match type on the platform, so it is not offered here to be refused.
+func negativeKeywordMatchTypeEnum() {
+	Enum("Exact", "Phrase")
+}
+
+// negativeKeywordOutcomeEnum adds ALREADY_PRESENT to the per-item outcomes: Microsoft answers
+// a re-add of a negative the campaign already has with CampaignServiceNegativeKeywordAlreadyExists
+// (4335), and the state the caller asked for then holds.
+func negativeKeywordOutcomeEnum() {
+	Enum("APPLIED", "ALREADY_PRESENT", "FAILED", "UNCONFIRMED")
+}
+
+// NegativeKeywordInput is one negative keyword to add at campaign level.
+//
+// The Pattern is the transport's half of the text rules: letters, combining marks, digits,
+// spaces and & ' - . only. Microsoft's text policy refuses "unnecessary symbols such as @, }{,
+// \][, ¤, and §" and mathematical symbols such as <, >, = (https://about.ads.microsoft.com/en-us/policies/text-guidelines),
+// and quote and bracket characters are match-type syntax in the Bing UI, so none of them is
+// admitted. The adapter re-validates and adds what a regular expression states badly: no two
+// punctuation characters adjacent, whitespace collapsed, and the same (text, match type) at
+// most once per request. MaxLength is Microsoft's: "The text can contain a maximum of 100
+// characters." Goa counts runes, as Microsoft counts characters.
+var NegativeKeywordInput = Type("negative-keyword-input", func() {
+	Attribute("text", String, "The negative keyword text. Letters, digits, spaces and & ' - . only; at most 100 characters.", func() {
+		MinLength(1)
+		MaxLength(100)
+		Pattern(`^[\p{L}\p{M}\p{N} &'.\-]+$`)
+		Example("free download")
+	})
+	Attribute("match_type", String, "How the negative keyword is compared with a search query. Exact or Phrase.", func() {
+		negativeKeywordMatchTypeEnum()
+		Example("Phrase")
+	})
+	Required("text", "match_type")
+})
+
+// NegativeKeywordResult is one negative keyword's outcome.
+var NegativeKeywordResult = Type("negative-keyword-result", func() {
+	Attribute("text", String, "The negative keyword text as sent to the platform (trimmed, whitespace collapsed)", func() { Example("free download") })
+	Attribute("match_type", String, "The match type as sent to the platform", negativeKeywordMatchTypeEnum)
+	Attribute("outcome", String, "APPLIED — added by this request; ALREADY_PRESENT — the campaign already had it, so the requested state holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, verify in the ad platform before retrying.", negativeKeywordOutcomeEnum)
+	Attribute("negative_keyword_id", String, "The platform's id for a negative keyword this request added. Absent for every other outcome.", func() { Example("8475612390") })
+	Attribute("error_code", String, "The platform's machine-readable error code for a FAILED keyword, when it named one.", func() { Example("CampaignServiceNegativeKeywordMatchesKeyword") })
+	Required("text", "match_type", "outcome")
+})
+
+// NegativeKeywords is the outcome of an add-negative-keywords request.
+var NegativeKeywords = Type("negative-keywords", func() {
+	Attribute("campaign_id", String, "The campaign the negative keywords were added to", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("results", ArrayOf(NegativeKeywordResult), "Exactly one entry per requested negative keyword, in request order, so results[i] answers negative_keywords[i].")
+	Attribute("applied_count", Int, "How many requested negative keywords are now on the campaign: results whose outcome is APPLIED or ALREADY_PRESENT.", func() { Example(2) })
 	Required("campaign_id", "results", "applied_count")
 })
 
@@ -1605,21 +1680,26 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("apply-keyword-actions", func() {
-		Description("Pause or remove Google Ads keywords on one campaign. " +
+		Description("Pause or remove Google Ads or Microsoft Advertising keywords on one campaign. " +
 			"A MUTATION on a live paid campaign: pausing or removing a keyword changes what serves, so it " +
 			"is validated exactly like a create. The batch's syntax, the campaign's provisioning and the " +
 			"campaign's ad account are checked against the project's current connection BEFORE Google is " +
 			"contacted at all; each criterion is then resolved on the platform and confirmed to be a " +
 			"POSITIVE keyword in this campaign's ad group BEFORE THE MUTATE is issued — a read, so nothing " +
 			"has changed if that check refuses. " +
-			"ALL-OR-NOTHING: the batch is one atomic adGroupCriteria:mutate with partial failure disabled, " +
+			"GOOGLE ADS IS ALL-OR-NOTHING: the batch is one atomic adGroupCriteria:mutate with partial failure disabled, " +
 			"so either every action applied or none did. A caller is never left working out which half of " +
 			"a spend-stopping request took effect. " +
-			"REMOVE IS IRREVERSIBLE — Google cannot re-enable a removed criterion, only create a new one " +
-			"with a new id. " +
-			"Google Ads only: a campaign on any other platform is refused with 400, since no other adapter " +
-			"models keywords as addressable criteria. " +
-			"**409** when the change is refused before Google is contacted: the campaign is unprovisioned " +
+			"MICROSOFT ADVERTISING IS NOT: PAUSE is one UpdateKeywords call and REMOVE one DeleteKeywords call, " +
+			"and Microsoft applies each item independently. The same ownership guards run first (each keyword " +
+			"id must be a live keyword in THIS campaign's ad group, read before anything is changed), and the " +
+			"200 then carries one result per action, in request order, each with its own outcome — APPLIED, " +
+			"FAILED or UNCONFIRMED — and applied_count counts only APPLIED. A Microsoft request answers 503 " +
+			"only when no call was answered item by item. " +
+			"REMOVE IS IRREVERSIBLE on both platforms — a removed keyword cannot be re-enabled, only " +
+			"re-created with a new id. " +
+			"Any other platform is refused with 400. " +
+			"**409** when the change is refused before the ad platform is contacted: the campaign is unprovisioned " +
 			"(no platform campaign id, or no ad group), the campaign belongs to a different ad account than " +
 			"the project's connection now resolves to, the campaign does not record which ad account it was " +
 			"created under (it must be re-dispatched before its keywords can be acted on — a different " +
@@ -1661,6 +1741,55 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-actions")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("add-negative-keywords", func() {
+		Description("Add campaign-level negative keywords to one live campaign. Microsoft Advertising only " +
+			"(AddNegativeKeywordsToEntities, EntityType Campaign); a campaign on any other platform is refused " +
+			"with 400 before anything is contacted. " +
+			"A MUTATION on a live paid campaign — a negative keyword stops the campaign serving on matching " +
+			"queries — so it carries the keyword actions' guard set, all before the platform is contacted: the " +
+			"batch's syntax, the campaign's provisioning, and the campaign's ad account against the project's " +
+			"current connection (a campaign that does not record its ad account is refused, never assumed). " +
+			"Like apply-keyword-actions it persists nothing — the negatives live on the platform — so it takes " +
+			"no If-Match and returns no ETag. " +
+			"NOT ATOMIC: Microsoft adds each negative independently, so the 200 carries one result per requested " +
+			"keyword, in request order, each with its own outcome. A negative the campaign already has is " +
+			"ALREADY_PRESENT, a success. " +
+			"**400** for a malformed batch (empty or over 60, a text over 100 characters or outside the allowed " +
+			"characters, consecutive punctuation, a match type other than Exact or Phrase, the same keyword " +
+			"twice) or an unsupported platform. A malformed batch is 400 even when the campaign is also " +
+			"unprovisioned. " +
+			"**409** when refused before the platform is contacted: unprovisioned, a different ad account, an " +
+			"unrecorded ad account (re-dispatch), or an unusable connection. " +
+			"**503** only when the platform answered nothing per keyword. The MESSAGE separates a DEFINITE " +
+			"failure (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a timeout, a rate limit, an " +
+			"unreadable answer — verify the campaign's negative keywords before retrying).")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			// One explicit example for the same reason apply-keyword-actions has one: Goa's
+			// fabricated sample repeats the element example, which this endpoint refuses as a
+			// duplicate.
+			Attribute("negative_keywords", ArrayOf(NegativeKeywordInput), "The negative keywords to add, at campaign level.", func() {
+				MinLength(1)
+				MaxLength(60)
+				Example([]map[string]any{
+					{"text": "free download", "match_type": "Phrase"},
+				})
+			})
+			Required("project_id", "brief_id", "campaign_id", "negative_keywords")
+		})
+		Result(NegativeKeywords)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/negative-keywords")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()

@@ -3285,6 +3285,54 @@ default is the safe direction for a non-idempotent write, and
 that silently stopped happening would leave the service's own tests passing against sentinels
 nothing produces.
 
+## Microsoft keyword levers (LFXV2-2665)
+
+`microsoft_keywords.go` gives `MicrosoftDispatcher` two mutating capabilities on a live
+campaign: `KeywordActioner` (the EXISTING `apply-keyword-actions` endpoint) and the NEW
+`NegativeKeywordAdder` (`add-negative-keywords`). The Google adapter and its files are untouched;
+Google's keyword actions behave and respond exactly as before.
+
+**Keyword actions follow Google's contract in guard order** (`dispatch/googleads.go`
+`ApplyKeywordActions`): (1) `microsoft.ValidateKeywordActions` on the batch — a malformed batch
+is `ErrKeywordActionInvalid` (400) even against an unprovisioned campaign; (2) provisioning —
+a platform campaign id and the row's `adGroupId` (`microsoftChildIDs`), else
+`ErrCampaignNotProvisioned`; (3) every action must name THAT ad group, checked from the row
+before Microsoft is contacted; (4) provenance FAILS CLOSED (`microsoftKeywordLeverClient`: an
+unrecorded creating account is `ErrCampaignProvenanceUnknown`, refused before credentials are
+decrypted — stricter than `verifyMicrosoftAccountMatch`'s "unknown, proceed", as `WriteBudget`
+is), then the account must match; (5) an ownership READ, `GetAdGroupKeywords`: every keyword id
+must be a live, non-`Deleted` keyword of that ad group, else `ErrKeywordActionInvalid` with
+nothing mutated. A failed read is returned DEFINITE (no mutate was built). The mutation's
+whole-call ambiguity is wrapped `unconfirmedKeywordLeverError` (`Unconfirmed()`); per-item
+outcomes map 1:1 onto `model.KeywordOutcome*`, anything unnamed → `UNCONFIRMED`.
+`ResourceName` stays empty — Microsoft has no resource names.
+
+**The keyword ids are Microsoft's own** `Keyword.Id` within an ad group, carried in the
+existing `criterion_id`/`ad_group_id` fields. The design's id rule (digits only, canonical
+positive int64, ≤19 digits) was never Google-specific — both platforms' ids are `long` — so the
+request contract and its validation are unchanged for Google.
+
+**Negative keywords** go through the same guards minus the ownership read: the only id sent is
+the campaign's own, from the row (`microsoftCampaignIDRE`), so nothing the caller supplies can
+address another campaign. Validation first (`ErrNegativeKeywordInvalid`), then provisioning,
+provenance (fail closed), account.
+
+**Deliberately a separate interface, not a `KeywordAction` kind.** A kind on the existing enum
+would be delivered to every `KeywordActioner`, including Google's adapter, which has never been
+taught what a live negative keyword is; a separate optional interface means only a platform that
+implements the add can be asked to perform it, and every other platform answers
+`ErrNegativeKeywordsUnsupported` → 400.
+
+**Interaction with the status cascade.** Nothing about a keyword action is persisted, so after a
+REMOVE the row's `keywordIds` still names the deleted keyword. `ToggleStatus` therefore narrows
+them to the live ones (`microsoftLiveKeywordIDs`) before the cascade — see
+[internal/platform/microsoft](internal-platform-microsoft.md), "Status toggle". It still
+re-enables, on ACTIVATE, a keyword an operator paused through keyword-actions.
+
+**Gating.** No `MICROSOFT_*` flag gates either lever: the existing flag
+(`MICROSOFT_METRICS_ENABLED`) gates only the unverified Reporting reads, and no Microsoft WRITE —
+create, toggle, budget — is gated. Both levers follow the writes.
+
 ## Also here: the audience EXPLORER (LFXV2-2770)
 
 `AudienceExplorer` (`audience_explorer.go`) is a SEPARATE type from `AudienceBuilder` even though

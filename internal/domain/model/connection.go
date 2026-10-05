@@ -420,10 +420,51 @@ const (
 	KeywordActionRemove = "REMOVE"
 )
 
-// KeywordActionOutcome is one applied keyword mutation.
+// KeywordActionOutcome is one keyword mutation's outcome, positionally aligned with the
+// request.
+//
+// Outcome and ErrorCode are EMPTY for a platform whose batch is atomic (Google Ads): every
+// outcome it returns was applied, and the service renders them exactly as before. A
+// non-atomic platform (Microsoft Advertising) sets Outcome to one of the KeywordOutcome*
+// values on every entry, because there each action can land or fail independently.
+// ResourceName is Google's; it is empty on platforms that have no resource names.
 type KeywordActionOutcome struct {
 	AdGroupID    string
 	CriterionID  string
 	Action       string
 	ResourceName string
+	Outcome      string
+	ErrorCode    string
+}
+
+// Per-item outcomes a NON-atomic keyword lever reports. An empty Outcome means "applied by an
+// atomic batch" and is rendered as no outcome at all.
+const (
+	KeywordOutcomeApplied        = "APPLIED"
+	KeywordOutcomeAlreadyPresent = "ALREADY_PRESENT"
+	KeywordOutcomeFailed         = "FAILED"
+	KeywordOutcomeUnconfirmed    = "UNCONFIRMED"
+)
+
+// KeywordOutcomeTookEffect reports whether an outcome leaves the requested state in place:
+// applied (including the atomic batch's empty outcome) or already present.
+func KeywordOutcomeTookEffect(outcome string) bool {
+	return outcome == "" || outcome == KeywordOutcomeApplied || outcome == KeywordOutcomeAlreadyPresent
+}
+
+// NegativeKeyword is one requested campaign-level negative keyword. MatchType is the
+// platform-neutral "Exact" or "Phrase".
+type NegativeKeyword struct {
+	Text      string
+	MatchType string
+}
+
+// NegativeKeywordOutcome is one negative keyword's outcome, positionally aligned with the
+// request. NegativeKeywordID is set only when the platform created it in this request.
+type NegativeKeywordOutcome struct {
+	Text              string
+	MatchType         string
+	Outcome           string
+	NegativeKeywordID string
+	ErrorCode         string
 }

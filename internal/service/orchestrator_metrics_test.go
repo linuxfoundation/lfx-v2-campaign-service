@@ -334,6 +334,19 @@ func (d upstreamCapableDispatcher) ReadAudienceInsights(context.Context, string,
 	return &model.AudienceInsights{}, nil
 }
 
+// AddNegativeKeywords returns ONE outcome per requested keyword, for the same reason as
+// ApplyKeywordActions below: a short slice fails the success arm with unconfirmedOutcomeCountError.
+func (d upstreamCapableDispatcher) AddNegativeKeywords(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	out := make([]model.NegativeKeywordOutcome, 0, len(keywords))
+	for _, k := range keywords {
+		out = append(out, model.NegativeKeywordOutcome{Text: k.Text, MatchType: k.MatchType, Outcome: model.KeywordOutcomeApplied})
+	}
+	return out, nil
+}
+
 // ApplyKeywordActions returns ONE outcome per requested action, which is the contract the
 // orchestrator enforces. A fake returning an empty slice makes every "success" call fail with
 // unconfirmedOutcomeCountError, so a test that does not assert the success arm's error would
@@ -481,6 +494,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opKeywordActions,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ApplyKeywordActions(ctx, "p1", platform, campaign, []model.KeywordAction{{AdGroupID: "1", CriterionID: "2", Action: model.KeywordActionPause}})
+				return err
+			},
+		},
+		{
+			name: "negative keywords",
+			op:   opNegativeKeywords,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.AddNegativeKeywords(ctx, "p1", platform, campaign, []model.NegativeKeyword{{Text: "free", MatchType: "Exact"}})
 				return err
 			},
 		},

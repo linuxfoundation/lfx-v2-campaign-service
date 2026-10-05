@@ -174,38 +174,70 @@ type Service interface {
 	// is unchanged, and re-applying the same amount converges on the same state,
 	// so a retry is safe.
 	UpdateCampaignBudget(context.Context, *UpdateCampaignBudgetPayload) (res *Campaign, err error)
-	// Pause or remove Google Ads keywords on one campaign. A MUTATION on a live
-	// paid campaign: pausing or removing a keyword changes what serves, so it is
-	// validated exactly like a create. The batch's syntax, the campaign's
-	// provisioning and the campaign's ad account are checked against the project's
-	// current connection BEFORE Google is contacted at all; each criterion is then
-	// resolved on the platform and confirmed to be a POSITIVE keyword in this
-	// campaign's ad group BEFORE THE MUTATE is issued — a read, so nothing has
-	// changed if that check refuses. ALL-OR-NOTHING: the batch is one atomic
-	// adGroupCriteria:mutate with partial failure disabled, so either every action
-	// applied or none did. A caller is never left working out which half of a
-	// spend-stopping request took effect. REMOVE IS IRREVERSIBLE — Google cannot
-	// re-enable a removed criterion, only create a new one with a new id. Google
-	// Ads only: a campaign on any other platform is refused with 400, since no
-	// other adapter models keywords as addressable criteria. **409** when the
-	// change is refused before Google is contacted: the campaign is unprovisioned
-	// (no platform campaign id, or no ad group), the campaign belongs to a
-	// different ad account than the project's connection now resolves to, the
-	// campaign does not record which ad account it was created under (it must be
-	// re-dispatched before its keywords can be acted on — a different remedy from
-	// reconnecting, which is why it is reported separately), or the connection row
-	// itself is unusable. Those are non-retryable, which is why none of them is a
-	// 503. A malformed batch is **400 even when the campaign is also
-	// unprovisioned**: a permanent input fault the caller must fix dominates a
-	// contingent state fault they can only wait on, matching the order the adapter
-	// validates in. **503** carries two distinct outcomes and the MESSAGE
-	// separates them, so do not branch on the status alone: a DEFINITE failure
-	// (nothing was applied — retry), and an UNCONFIRMED one where the mutate may
-	// ALREADY have been applied (a short or mismatched mutate response, a 5xx, a
-	// timeout). The unconfirmed message tells the caller to VERIFY the campaign's
-	// keywords in the platform before retrying, because retrying an irreversible
-	// REMOVE that already ran cannot undo it.
+	// Pause or remove Google Ads or Microsoft Advertising keywords on one
+	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword
+	// changes what serves, so it is validated exactly like a create. The batch's
+	// syntax, the campaign's provisioning and the campaign's ad account are
+	// checked against the project's current connection BEFORE Google is contacted
+	// at all; each criterion is then resolved on the platform and confirmed to be
+	// a POSITIVE keyword in this campaign's ad group BEFORE THE MUTATE is issued —
+	// a read, so nothing has changed if that check refuses. GOOGLE ADS IS
+	// ALL-OR-NOTHING: the batch is one atomic adGroupCriteria:mutate with partial
+	// failure disabled, so either every action applied or none did. A caller is
+	// never left working out which half of a spend-stopping request took effect.
+	// MICROSOFT ADVERTISING IS NOT: PAUSE is one UpdateKeywords call and REMOVE
+	// one DeleteKeywords call, and Microsoft applies each item independently. The
+	// same ownership guards run first (each keyword id must be a live keyword in
+	// THIS campaign's ad group, read before anything is changed), and the 200 then
+	// carries one result per action, in request order, each with its own outcome —
+	// APPLIED, FAILED or UNCONFIRMED — and applied_count counts only APPLIED. A
+	// Microsoft request answers 503 only when no call was answered item by item.
+	// REMOVE IS IRREVERSIBLE on both platforms — a removed keyword cannot be
+	// re-enabled, only re-created with a new id. Any other platform is refused
+	// with 400. **409** when the change is refused before the ad platform is
+	// contacted: the campaign is unprovisioned (no platform campaign id, or no ad
+	// group), the campaign belongs to a different ad account than the project's
+	// connection now resolves to, the campaign does not record which ad account it
+	// was created under (it must be re-dispatched before its keywords can be acted
+	// on — a different remedy from reconnecting, which is why it is reported
+	// separately), or the connection row itself is unusable. Those are
+	// non-retryable, which is why none of them is a 503. A malformed batch is
+	// **400 even when the campaign is also unprovisioned**: a permanent input
+	// fault the caller must fix dominates a contingent state fault they can only
+	// wait on, matching the order the adapter validates in. **503** carries two
+	// distinct outcomes and the MESSAGE separates them, so do not branch on the
+	// status alone: a DEFINITE failure (nothing was applied — retry), and an
+	// UNCONFIRMED one where the mutate may ALREADY have been applied (a short or
+	// mismatched mutate response, a 5xx, a timeout). The unconfirmed message tells
+	// the caller to VERIFY the campaign's keywords in the platform before
+	// retrying, because retrying an irreversible REMOVE that already ran cannot
+	// undo it.
 	ApplyKeywordActions(context.Context, *ApplyKeywordActionsPayload) (res *KeywordActions, err error)
+	// Add campaign-level negative keywords to one live campaign. Microsoft
+	// Advertising only (AddNegativeKeywordsToEntities, EntityType Campaign); a
+	// campaign on any other platform is refused with 400 before anything is
+	// contacted. A MUTATION on a live paid campaign — a negative keyword stops the
+	// campaign serving on matching queries — so it carries the keyword actions'
+	// guard set, all before the platform is contacted: the batch's syntax, the
+	// campaign's provisioning, and the campaign's ad account against the project's
+	// current connection (a campaign that does not record its ad account is
+	// refused, never assumed). Like apply-keyword-actions it persists nothing —
+	// the negatives live on the platform — so it takes no If-Match and returns no
+	// ETag. NOT ATOMIC: Microsoft adds each negative independently, so the 200
+	// carries one result per requested keyword, in request order, each with its
+	// own outcome. A negative the campaign already has is ALREADY_PRESENT, a
+	// success. **400** for a malformed batch (empty or over 60, a text over 100
+	// characters or outside the allowed characters, consecutive punctuation, a
+	// match type other than Exact or Phrase, the same keyword twice) or an
+	// unsupported platform. A malformed batch is 400 even when the campaign is
+	// also unprovisioned. **409** when refused before the platform is contacted:
+	// unprovisioned, a different ad account, an unrecorded ad account
+	// (re-dispatch), or an unusable connection. **503** only when the platform
+	// answered nothing per keyword. The MESSAGE separates a DEFINITE failure
+	// (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a timeout, a
+	// rate limit, an unreadable answer — verify the campaign's negative keywords
+	// before retrying).
+	AddNegativeKeywords(context.Context, *AddNegativeKeywordsPayload) (res *NegativeKeywords, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the
 	// brief can be re-dispatched to that platform. It does NOT delete, pause, or
@@ -277,7 +309,22 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [29]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "apply-keyword-actions", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [30]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "apply-keyword-actions", "add-negative-keywords", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+
+// AddNegativeKeywordsPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service add-negative-keywords method.
+type AddNegativeKeywordsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// The negative keywords to add, at campaign level.
+	NegativeKeywords []*NegativeKeywordInput
+}
 
 // AdoptCampaignPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service adopt-campaign method.
@@ -1013,12 +1060,25 @@ type KeywordActionInput struct {
 type KeywordActionResult struct {
 	// The ad group that was addressed
 	AdGroupID string
-	// The criterion that was addressed
+	// The criterion (Google Ads) or keyword id (Microsoft Advertising) that was
+	// addressed
 	CriterionID string
-	// The action that was applied
+	// The action that was requested
 	Action string
-	// The criterion resource name Google returned for the applied mutation
-	ResourceName string
+	// Google Ads only: the criterion resource name Google returned for the applied
+	// mutation. Present on every Google Ads result; absent on Microsoft
+	// Advertising, which has no resource names.
+	ResourceName *string
+	// Microsoft Advertising only: this action's own outcome, because a Microsoft
+	// batch is applied item by item. APPLIED — Microsoft did not reject it; FAILED
+	// — definitely not applied (see error_code); UNCONFIRMED — may have been
+	// applied, verify in Microsoft Advertising before retrying. ABSENT on Google
+	// Ads, whose batch is atomic: there every result on a 200 was applied.
+	Outcome *string
+	// Microsoft Advertising only: the platform's machine-readable error code for a
+	// FAILED or UNCONFIRMED action, when it named one. NOT_SENT means the request
+	// carrying this action was never sent.
+	ErrorCode *string
 }
 
 // KeywordActions is the result type of the lfx-v2-campaign-service-briefs
@@ -1026,11 +1086,53 @@ type KeywordActionResult struct {
 type KeywordActions struct {
 	// The campaign whose keywords were acted on
 	CampaignID string
-	// One entry per requested action, in request order. All applied, or the
-	// request failed and none were.
+	// Exactly one entry per requested action, in request order, so results[i]
+	// answers actions[i]. Google Ads: all applied, or the request failed and none
+	// were. Microsoft Advertising: each entry carries its own outcome.
 	Results []*KeywordActionResult
-	// How many actions were applied. Always equal to the number requested — a
-	// partial application is not a possible outcome.
+	// How many actions were applied. Google Ads: always equal to the number
+	// requested — its batch is atomic. Microsoft Advertising: the number of
+	// results whose outcome is APPLIED, which can be fewer.
+	AppliedCount int
+}
+
+type NegativeKeywordInput struct {
+	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
+	// 100 characters.
+	Text string
+	// How the negative keyword is compared with a search query. Exact or Phrase.
+	MatchType string
+}
+
+type NegativeKeywordResult struct {
+	// The negative keyword text as sent to the platform (trimmed, whitespace
+	// collapsed)
+	Text string
+	// The match type as sent to the platform
+	MatchType string
+	// APPLIED — added by this request; ALREADY_PRESENT — the campaign already had
+	// it, so the requested state holds; FAILED — definitely not added (see
+	// error_code); UNCONFIRMED — may have been added, verify in the ad platform
+	// before retrying.
+	Outcome string
+	// The platform's id for a negative keyword this request added. Absent for
+	// every other outcome.
+	NegativeKeywordID *string
+	// The platform's machine-readable error code for a FAILED keyword, when it
+	// named one.
+	ErrorCode *string
+}
+
+// NegativeKeywords is the result type of the lfx-v2-campaign-service-briefs
+// service add-negative-keywords method.
+type NegativeKeywords struct {
+	// The campaign the negative keywords were added to
+	CampaignID string
+	// Exactly one entry per requested negative keyword, in request order, so
+	// results[i] answers negative_keywords[i].
+	Results []*NegativeKeywordResult
+	// How many requested negative keywords are now on the campaign: results whose
+	// outcome is APPLIED or ALREADY_PRESENT.
 	AppliedCount int
 }
 

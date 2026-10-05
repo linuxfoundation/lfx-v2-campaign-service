@@ -556,6 +556,28 @@ ambiguity is carried by the MESSAGE, which tells the caller to VERIFY before ret
 mirrors the status toggle's unconfirmed arm exactly. A client must therefore read the message on
 a 503 here rather than branch on the status alone, and `docs/api-catalog.md` says so.
 
+## Keyword levers on Microsoft Advertising (LFXV2-2665)
+
+`ApplyKeywordActions` now admits Microsoft Advertising campaigns as well as Google Ads; every other
+platform is still a 400 before the orchestrator is reached. Microsoft's batch is NOT atomic, so
+its adapter sets `Outcome` (and `ErrorCode`) on every `model.KeywordActionOutcome`, and the
+handler renders `outcome`/`error_code` only when set, `resource_name` only when set, and counts
+`applied_count` as the outcomes that are empty (Google's atomic batch) or `APPLIED`. A Google
+response is therefore byte-for-byte the pre-change body — pinned against the generated encoder
+by `TestApplyKeywordActions_GoogleResultsCarryNoOutcomeFields`. The 404 and the
+unusable-connection 409 messages name the campaign's platform (Google's wording unchanged).
+
+`AddNegativeKeywords` (`brief_negative_keywords.go`, `POST …/campaigns/{campaign_id}/negative-keywords`)
+is the new sibling. It follows `ApplyKeywordActions`, not the toggle or budget write, because it
+persists nothing: no `If-Match`, no write lock, no ETag, no index event. Microsoft only; any other
+platform is 400 at the handler, and a Microsoft dispatcher without the capability is 400 via
+`Orchestrator.AddNegativeKeywords`'s type assertion on the new optional `NegativeKeywordAdder`.
+The orchestrator applies the same mutation timeout and the same outcome-count check
+(`unconfirmedOutcomeCountError`, whose message no longer claims every batch is atomic), and
+records the `negative_keywords` upstream op. `classifyNegativeKeywordError` mirrors the keyword
+actions' arms in the same order; `applied_count` counts `APPLIED` and `ALREADY_PRESENT`, and an
+outcome an adapter left empty is rendered `UNCONFIRMED`, never success.
+
 ## Campaign adoption
 
 `BriefService.AdoptCampaign` (backing `POST .../campaigns/adopt`) binds a campaign that ALREADY

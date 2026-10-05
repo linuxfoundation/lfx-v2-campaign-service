@@ -106,6 +106,11 @@ func ApplyKeywordActionsLfxV2CampaignServiceBriefsPath(projectID string, briefID
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/keyword-actions", projectID, briefID, campaignID)
 }
 
+// AddNegativeKeywordsLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service add-negative-keywords HTTP endpoint.
+func AddNegativeKeywordsLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/negative-keywords", projectID, briefID, campaignID)
+}
+
 // DeleteCampaignLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service delete-campaign HTTP endpoint.
 func DeleteCampaignLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v", projectID, briefID, campaignID)
