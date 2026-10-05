@@ -262,8 +262,9 @@ func microsoftKeywords(in []microsoftKeywordConfig) []microsoft.Keyword {
 // valid keyword — and a link's PATH can carry a token as readily as its query
 // (knowledge base: caller-url-must-be-redacted-before-errors-steps-and-snapshots). So the
 // snapshot is a REDACTED record, not a verbatim one: a path-like targeting term is reduced too
-// (`k8s.io/docs tutorial` is stored as `k8s.io tutorial`), while Microsoft still receives every
-// keyword exactly as written.
+// (`k8s.io/docs tutorial` is stored as `k8s.io tutorial`). What Microsoft receives is not
+// snapshot-redacted; it is subject only to the client's own validation (trimmed, match type
+// canonicalized, case-insensitive duplicates dropped).
 //
 // Also kept verbatim, because they cannot carry a URL by construction: Budget and CpcBid
 // (numbers), Keywords[].MatchType (only Exact/Phrase/Broad gets past the client, and a
