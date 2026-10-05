@@ -4,6 +4,8 @@
 package googleads
 
 import (
+	"context"
+	"errors"
 	"net/url"
 	"strings"
 	"testing"
@@ -364,5 +366,38 @@ func TestSetIfAbsent(t *testing.T) {
 	setIfAbsent(q, "utm_medium", "cpc")
 	if q.Get("utm_medium") != "cpc" {
 		t.Errorf("setIfAbsent must set an absent key, got %q", q.Get("utm_medium"))
+	}
+}
+
+// *url.Error renders the full request URL, query included, so wrapping one with %w
+// puts a caller's signed URL into a persisted error however carefully the format
+// arguments were redacted. redactedCause renders the operation and the inner cause
+// and nothing else — while leaving the chain intact for errors.Is/As, which is what
+// the create-path ambiguity classification keys on.
+func TestRedactedCause_DropsTheURLAndKeepsTheChain(t *testing.T) {
+	const secret = "SECRETSIGNATURE"
+	inner := context.DeadlineExceeded
+	ue := &url.Error{
+		Op:  "Get",
+		URL: "https://cdn.example.org/a.png?sig=" + secret,
+		Err: inner,
+	}
+	if !strings.Contains(ue.Error(), secret) {
+		t.Fatal("precondition: *url.Error is expected to render the query string")
+	}
+
+	got := redactedCause{ue}
+	if strings.Contains(got.Error(), secret) {
+		t.Errorf("the redacted cause still carries the query string: %v", got)
+	}
+	if !strings.Contains(got.Error(), "Get") {
+		t.Errorf("the operation is load-bearing for diagnosis and must survive: %v", got)
+	}
+	if !errors.Is(got, inner) {
+		t.Error("the original chain must stay reachable through Unwrap")
+	}
+
+	if s := (redactedCause{nil}).Error(); s != "(redacted)" {
+		t.Errorf("a nil cause must render as a placeholder, got %q", s)
 	}
 }

@@ -501,3 +501,37 @@ func TestPreflight_RefusesABadBiddingPlanBeforeAnyMutate(t *testing.T) {
 		t.Error("the adoption guard accepted what create refuses")
 	}
 }
+
+// The supported set a rejection advertises is the set that applies on THIS channel, not every
+// name the package knows. Listing all of them answered a Demand Gen typo with names the very
+// next guard refuses, so the caller fixed the typo from the list and earned a second error for
+// it — one mistake, two round trips.
+func TestBiddingPlan_UnknownStrategyAdvertisesOnlyTheChannelsSet(t *testing.T) {
+	_, err := validateBiddingPlan(campaignKindDemandGen, biddingTestCustomer, CampaignInput{BiddingStrategy: "maximise-clicks"})
+	if err == nil {
+		t.Fatal("accepted an unknown bidding strategy")
+	}
+	if !strings.Contains(err.Error(), "supported on "+campaignKindDemandGen+":") {
+		t.Errorf("error %v does not name the channel whose set it is listing", err)
+	}
+	for name := range searchBiddingStrategies {
+		listed := strings.Contains(err.Error(), name)
+		if allowed := demandGenBiddingStrategies[name]; listed != allowed {
+			t.Errorf("strategy %q: listed=%v, allowed on %s=%v — the list must be exactly the channel's set", name, listed, campaignKindDemandGen, allowed)
+		}
+	}
+}
+
+// knownBiddingStrategies is the UNION, not an alias of the Search set: aliasing reads correctly
+// only while Search stays a superset of every other channel, and the first strategy a channel
+// accepts that Search does not would be rejected as an unknown NAME — an over-refusal of a
+// create Google would have taken.
+func TestKnownBiddingStrategies_CoversEveryChannelsSet(t *testing.T) {
+	for _, set := range []map[string]bool{searchBiddingStrategies, demandGenBiddingStrategies, performanceMaxBiddingStrategies} {
+		for name := range set {
+			if !knownBiddingStrategies[name] {
+				t.Errorf("strategy %q is accepted by some channel but is not a known name", name)
+			}
+		}
+	}
+}

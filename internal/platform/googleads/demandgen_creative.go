@@ -110,6 +110,22 @@ const (
 	// LimitReader rather than by trusting Content-Length.
 	maxDemandGenImageBytes = 5 << 20 // 5 MiB
 
+	// maxCreativeTotalImageBytes caps the SUM of every image in one creative.
+	//
+	// The per-image cap bounds one file; nothing bounded the set. A Performance Max
+	// asset group takes up to 30 images across its slots and a Demand Gen ad up to 25,
+	// every one of them read fully into memory, base64-expanded (which adds a third
+	// again) and marshalled into a SINGLE assets:mutate body — so the per-image cap
+	// alone permits a request of well over a hundred megabytes, held in one process.
+	//
+	// Positioned here rather than discovered at the mutate for the usual reason: the
+	// fetch loop runs before the budget mutate, so a refusal costs the caller an error,
+	// while the same request refused by Google lands after the campaign exists and
+	// leaves it orphaned. The bound is set generously on purpose — 64 MiB is an average
+	// of better than 2 MiB across a full 30-image group — because refusing a create
+	// Google would have accepted is the worse failure of the two.
+	maxCreativeTotalImageBytes = 64 << 20 // 64 MiB
+
 	// demandGenImageFetchTimeout bounds one image fetch. The cascade may fetch up
 	// to 25 images (20 marketing + 5 logos), so this is per-image and the caller's
 	// context still bounds the whole operation.
@@ -378,7 +394,11 @@ func validateImageURLs(slot imageSlot, in []string) ([]string, error) {
 		}
 		u, err := url.Parse(raw)
 		if err != nil {
-			return nil, fmt.Errorf("google-ads %s %d has an unparseable URL %q: %w", slot.label, i, raw, err)
+			// The unparseable value is NOT echoed. url.Parse failing tells us nothing
+			// about what the string holds, so echoing it to help the caller is exactly
+			// the case where it could be anything — including a signed URL whose query
+			// is the credential. redactURLForError fails closed to a placeholder.
+			return nil, fmt.Errorf("google-ads %s %d has an unparseable URL %q: %w", slot.label, i, redactURLForError(raw), redactedCause{err})
 		}
 		// HTTPS only, and not as a style preference: the bytes are fetched by this
 		// service from a caller-supplied address, and a plaintext fetch is one an
@@ -388,12 +408,12 @@ func validateImageURLs(slot imageSlot, in []string) ([]string, error) {
 			return nil, fmt.Errorf("google-ads %s %d must be an https URL, got scheme %q", slot.label, i, u.Scheme)
 		}
 		if u.Host == "" {
-			return nil, fmt.Errorf("google-ads %s %d has no host: %q", slot.label, i, raw)
+			return nil, fmt.Errorf("google-ads %s %d has no host: %q", slot.label, i, redactURLForError(raw))
 		}
 		// The same image uploaded twice is two assets on one ad, which Google
 		// refuses, and the duplicate consumes one of the slot's few places.
 		if _, dup := seen[raw]; dup {
-			return nil, fmt.Errorf("google-ads %s %q is listed more than once", slot.label, raw)
+			return nil, fmt.Errorf("google-ads %s %q is listed more than once", slot.label, redactURLForError(raw))
 		}
 		seen[raw] = struct{}{}
 		out = append(out, raw)
@@ -447,12 +467,20 @@ func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls []
 		total += len(u)
 	}
 	out := make([]fetchedImage, 0, total)
+	// Checked as a RUNNING total, not after the loop: the point is to stop reading
+	// before the whole set is resident, so an oversized creative never allocates the
+	// hundreds of megabytes the check exists to prevent.
+	fetched := 0
 	for slotIdx, slotURLs := range urls {
 		slot := slots[slotIdx]
 		for _, u := range slotURLs {
 			data, err := c.fetchOneImage(ctx, slot, u)
 			if err != nil {
 				return nil, err
+			}
+			fetched += len(data)
+			if fetched > maxCreativeTotalImageBytes {
+				return nil, fmt.Errorf("google-ads creative images total more than the %d byte limit across all slots", maxCreativeTotalImageBytes)
 			}
 			out = append(out, fetchedImage{slot: slotIdx, url: u, data: data})
 		}
@@ -472,7 +500,7 @@ func (c *Client) fetchOneImage(ctx context.Context, slot imageSlot, rawURL strin
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("google-ads %s %q could not be requested: %w", slot.label, rawURL, err)
+		return nil, fmt.Errorf("google-ads %s %q could not be requested: %w", slot.label, redactURLForError(rawURL), redactedCause{err})
 	}
 	// No Authorization header, no developer token, nothing from the Google client:
 	// this request goes to an address the caller chose.
@@ -480,12 +508,12 @@ func (c *Client) fetchOneImage(ctx context.Context, slot imageSlot, rawURL strin
 
 	resp, err := c.imageFetchClient().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("google-ads %s %q could not be downloaded: %w", slot.label, rawURL, err)
+		return nil, fmt.Errorf("google-ads %s %q could not be downloaded: %w", slot.label, redactURLForError(rawURL), redactedCause{err})
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("google-ads %s %q returned HTTP %d", slot.label, rawURL, resp.StatusCode)
+		return nil, fmt.Errorf("google-ads %s %q returned HTTP %d", slot.label, redactURLForError(rawURL), resp.StatusCode)
 	}
 
 	// LimitReader with one byte of headroom: reading exactly the cap cannot
@@ -495,13 +523,13 @@ func (c *Client) fetchOneImage(ctx context.Context, slot imageSlot, rawURL strin
 	// that is serving the bytes.
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDemandGenImageBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("google-ads %s %q could not be read: %w", slot.label, rawURL, err)
+		return nil, fmt.Errorf("google-ads %s %q could not be read: %w", slot.label, redactURLForError(rawURL), redactedCause{err})
 	}
 	if len(data) > maxDemandGenImageBytes {
-		return nil, fmt.Errorf("google-ads %s %q is larger than the %d byte limit", slot.label, rawURL, maxDemandGenImageBytes)
+		return nil, fmt.Errorf("google-ads %s %q is larger than the %d byte limit", slot.label, redactURLForError(rawURL), maxDemandGenImageBytes)
 	}
 	if len(data) == 0 {
-		return nil, fmt.Errorf("google-ads %s %q returned an empty body", slot.label, rawURL)
+		return nil, fmt.Errorf("google-ads %s %q returned an empty body", slot.label, redactURLForError(rawURL))
 	}
 
 	// Decoded rather than sniffed by Content-Type: the header is the serving host's
@@ -509,7 +537,7 @@ func (c *Client) fetchOneImage(ctx context.Context, slot imageSlot, rawURL strin
 	// decoders — GIF, JPEG, PNG — are the formats Google accepts here.
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("google-ads %s %q is not a usable GIF, JPEG or PNG: %w", slot.label, rawURL, err)
+		return nil, fmt.Errorf("google-ads %s %q is not a usable GIF, JPEG or PNG: %w", slot.label, redactURLForError(rawURL), err)
 	}
 	if err := checkImageGeometry(slot, rawURL, format, cfg.Width, cfg.Height); err != nil {
 		return nil, err
@@ -524,10 +552,10 @@ func (c *Client) fetchOneImage(ctx context.Context, slot imageSlot, rawURL strin
 // budget, campaign and ad group are committed, to before any of them exist.
 func checkImageGeometry(slot imageSlot, rawURL, format string, w, h int) error {
 	if w <= 0 || h <= 0 {
-		return fmt.Errorf("google-ads %s %q reports a %dx%d image, which is not usable", slot.label, rawURL, w, h)
+		return fmt.Errorf("google-ads %s %q reports a %dx%d image, which is not usable", slot.label, redactURLForError(rawURL), w, h)
 	}
 	if w < slot.minW || h < slot.minH {
-		return fmt.Errorf("google-ads %s %q is %dx%d (%s), below the %dx%d minimum", slot.label, rawURL, w, h, format, slot.minW, slot.minH)
+		return fmt.Errorf("google-ads %s %q is %dx%d (%s), below the %dx%d minimum", slot.label, redactURLForError(rawURL), w, h, format, slot.minW, slot.minH)
 	}
 	// Compared as a ratio of float64s against Google's documented +-1%. The target
 	// is built from the two integers so the documented value stays the value in the
@@ -535,7 +563,7 @@ func checkImageGeometry(slot imageSlot, rawURL, format string, w, h int) error {
 	want := float64(slot.ratioW) / float64(slot.ratioH)
 	got := float64(w) / float64(h)
 	if diff := (got - want) / want; diff > demandGenAspectTolerance || diff < -demandGenAspectTolerance {
-		return fmt.Errorf("google-ads %s %q is %dx%d, an aspect ratio of %.4f — Google requires %d:%d (%.4f) within %.0f%%", slot.label, rawURL, w, h, got, slot.ratioW, slot.ratioH, want, demandGenAspectTolerance*100)
+		return fmt.Errorf("google-ads %s %q is %dx%d, an aspect ratio of %.4f — Google requires %d:%d (%.4f) within %.0f%%", slot.label, redactURLForError(rawURL), w, h, got, slot.ratioW, slot.ratioH, want, demandGenAspectTolerance*100)
 	}
 	return nil
 }
@@ -742,6 +770,15 @@ func (c *Client) createDemandGenAd(ctx context.Context, adGroupResource, adGroup
 	}
 	assetResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("assets:mutate"), mutateRequest{Operations: assetOps}, false)
 	if err != nil {
+		// A 5xx or a timeout on a mutating POST is NOT a failure, it is an unknown
+		// outcome: the assets may well have been created. The malformed-response arm
+		// below and the adGroupAds:mutate that follows both already say so, as does the
+		// Performance Max sibling; this was the one assets:mutate on a create path that
+		// asserted "failed" over an outcome nobody knows, and an operator who believed
+		// it would retry into a second set of account-level image assets.
+		if createOutcomeAmbiguous(err) {
+			return nil, "", fmt.Errorf("google-ads demand gen image asset creation UNCONFIRMED (%d image(s) may exist; ad group %s created — verify in Google Ads before retrying): %w", len(assetOps), adGroupID, err)
+		}
 		return nil, "", fmt.Errorf("google-ads demand gen image asset creation failed (%d image(s); ad group %s created): %w", len(assetOps), adGroupID, err)
 	}
 	var assetResults mutateResponse

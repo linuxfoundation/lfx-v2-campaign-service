@@ -251,7 +251,26 @@ var searchBiddingStrategies = map[string]bool{
 // name apart from a name that is known but wrong for the channel. The two produce different
 // errors because they need different fixes: a typo is corrected in place, while a valid
 // strategy on the wrong channel means creating a different campaign.
-var knownBiddingStrategies = searchBiddingStrategies
+//
+// Built as the UNION of the per-channel sets rather than aliased to the Search one. An alias
+// read correctly only while Search happened to be a superset of every other channel: the
+// first strategy a channel accepts that Search does not would have been reported as an
+// unknown NAME, which is an over-refusal of a create Google would have taken. The union
+// cannot under-report, and it cannot drift, because there is no second list to maintain.
+var knownBiddingStrategies = unionStrategies(searchBiddingStrategies, demandGenBiddingStrategies, performanceMaxBiddingStrategies)
+
+// unionStrategies collects every name in the given sets into a new map. A new map, not one of
+// the inputs: the result is a distinct concept from any single channel's set, and sharing
+// backing storage with one of them would couple the two silently.
+func unionStrategies(sets ...map[string]bool) map[string]bool {
+	out := make(map[string]bool)
+	for _, set := range sets {
+		for name := range set {
+			out[name] = true
+		}
+	}
+	return out
+}
 
 // sortedKeys renders a strategy set for an error message. Sorted, because map iteration
 // order is randomized and an error whose supported-values list reshuffles between two
@@ -280,15 +299,16 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 	if strategy == "" {
 		strategy = defaultBiddingStrategy(kind)
 	}
-	if !knownBiddingStrategies[strategy] {
-		return biddingPlan{}, fmt.Errorf("google-ads: unknown bidding strategy %q; supported: %s", in.BiddingStrategy, strings.Join(sortedKeys(knownBiddingStrategies), ", "))
-	}
-
 	// A SWITCH, not a Demand Gen test with a Search fallback. The earlier shape gave
 	// any channel added later the un-restricted Search set by default — including
 	// manual CPC on a channel that has no manual bidding — and the rejection would land
 	// after the budget mutate, which is the one outcome this whole preflight exists to
 	// prevent. Every kind now names its own set.
+	//
+	// Resolved BEFORE the unknown-name check so that check can advertise the set that
+	// actually applies here. Listing every name the package recognizes answered a typo on
+	// Demand Gen with six names of which the next guard accepts one, so the caller fixed
+	// the typo from the list and got a second error for it — one mistake, two round trips.
 	var allowed map[string]bool
 	switch kind {
 	case campaignKindDemandGen:
@@ -297,6 +317,10 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 		allowed = performanceMaxBiddingStrategies
 	default:
 		allowed = searchBiddingStrategies
+	}
+
+	if !knownBiddingStrategies[strategy] {
+		return biddingPlan{}, fmt.Errorf("google-ads: unknown bidding strategy %q; supported on %s: %s", in.BiddingStrategy, kind, strings.Join(sortedKeys(allowed), ", "))
 	}
 	if !allowed[strategy] {
 		return biddingPlan{}, fmt.Errorf("google-ads: bidding strategy %q is not supported on %s (this client sends only %s there, which is the only combination verified against the live API; the others were rejected AFTER the budget was created); omit BiddingStrategy for the channel default, or create a Search campaign", strategy, kind, strings.Join(sortedKeys(allowed), ", "))

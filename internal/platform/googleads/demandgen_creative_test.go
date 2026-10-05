@@ -832,3 +832,74 @@ func TestCreateDemandGenCampaign_ShortAssetResponseIsUnconfirmed(t *testing.T) {
 		t.Fatalf("a short asset response must be UNCONFIRMED, got: %v", err)
 	}
 }
+
+// A 5xx on the asset mutate is an UNKNOWN outcome, not a failure: the assets may
+// have been created. Asserting "failed" over it invites the operator to retry into
+// a second set of account-level image assets.
+func TestCreateDemandGenCampaign_AssetMutate5xxIsUnconfirmed(t *testing.T) {
+	assetH := func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"error":{"code":500,"message":"backend error"}}`)
+	}
+	srv := demandGenTLSServer(t, demandGenCascade(t, twoImages(t), assetH,
+		failHandler(t, "the ad mutate after a 5xx asset mutate")))
+	c := demandGenClient(t, srv)
+
+	res, err := c.CreateDemandGenCampaign(context.Background(), creativeInput(creativeAt(srv.URL)))
+	if err == nil || !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Fatalf("a 5xx on assets:mutate must be UNCONFIRMED, got: %v", err)
+	}
+	if res == nil {
+		t.Fatal("a failure past the campaign create must return a non-nil partial result")
+	}
+}
+
+// The other half of the same contract, stated so the ambiguity arm above cannot
+// quietly widen into "every error is unconfirmed": a DEFINITE refusal stays a
+// failure, because nothing was created and the claim can be released.
+func TestCreateDemandGenCampaign_AssetMutate4xxIsStillAPlainFailure(t *testing.T) {
+	assetH := func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":400,"message":"invalid asset"}}`)
+	}
+	srv := demandGenTLSServer(t, demandGenCascade(t, twoImages(t), assetH,
+		failHandler(t, "the ad mutate after a 4xx asset mutate")))
+	c := demandGenClient(t, srv)
+
+	_, err := c.CreateDemandGenCampaign(context.Background(), creativeInput(creativeAt(srv.URL)))
+	if err == nil {
+		t.Fatal("a 400 on assets:mutate must fail the create")
+	}
+	if strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Fatalf("a definite 400 must not be reported as UNCONFIRMED, got: %v", err)
+	}
+}
+
+// Every error this path builds from a caller-supplied image URL must drop the query
+// string. A signed CDN URL is the case that matters: the query IS the credential,
+// and these errors are persisted unencrypted as Steps entries.
+func TestValidateImageURLs_ErrorsNeverEchoTheQueryString(t *testing.T) {
+	const secret = "SECRETSIGNATURE"
+	signed := "https://cdn.example.org/a.png?sig=" + secret
+	slot := demandGenImageSlots[0]
+
+	cases := []struct {
+		name string
+		in   []string
+	}{
+		{"duplicate", []string{signed, signed}},
+		{"no host", []string{"https:///a.png?sig=" + secret}},
+		{"unparseable", []string{"https://cdn.example.org/\x7f?sig=" + secret}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := validateImageURLs(slot, tc.in)
+			if err == nil {
+				t.Fatal("expected a refusal")
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("the error echoes the signed query string: %v", err)
+			}
+		})
+	}
+}

@@ -199,9 +199,10 @@ type googleAdsConfig struct {
 	AudienceSegments []string `json:"audienceSegments"`
 	// NegativeKeywords are optional CAMPAIGN-level keyword exclusions — queries the
 	// campaign must never pay for, however broadly Keywords match. SEARCH ONLY, and
-	// REFUSED on every other channel rather than ignored — unlike Keywords, which is
-	// ignored there. See googleads.CampaignInput.NegativeKeywords for why the two
-	// differ.
+	// REFUSED on every other channel rather than ignored — as Keywords and
+	// AudienceSegments now are too: all four of the Search-only fields here refuse
+	// off Search rather than being dropped. See
+	// googleads.CampaignInput.NegativeKeywords.
 	//
 	// Left empty, no exclusions are created, which is the behaviour of every caller
 	// that predates this field.

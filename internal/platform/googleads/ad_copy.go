@@ -4,6 +4,7 @@
 package googleads
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -339,3 +340,33 @@ func redactURLForError(raw string) string {
 	redacted := (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
 	return capForError(redacted)
 }
+
+// redactedCause renders a transport error WITHOUT the request URL, for wrapping the
+// cause of a fetch against a caller-supplied address.
+//
+// net/http's Client.Do, and http.NewRequestWithContext, return a *url.Error whose
+// Error() prints the full request URL — query string included, since only a password
+// in userinfo is stripped. Wrapping one with %w therefore puts the caller's URL into
+// the message a second time and into whatever persists it, which for this service is
+// an unencrypted Steps entry. Redacting the URL in the format arguments while handing
+// %w the raw cause redacts nothing at all.
+//
+// The chain stays reachable: Unwrap returns the original, so errors.Is/As — and the
+// ambiguity classification that keys on them — behave exactly as before. Only the
+// rendered text changes.
+type redactedCause struct{ err error }
+
+func (r redactedCause) Error() string {
+	if r.err == nil {
+		return "(redacted)"
+	}
+	var ue *url.Error
+	if errors.As(r.err, &ue) {
+		// The operation and the inner cause are what diagnose the failure; the URL is
+		// the part that can hold a secret, and the caller already has it.
+		return capForError(ue.Op + ": " + redactedCause{ue.Err}.Error())
+	}
+	return capForError(r.err.Error())
+}
+
+func (r redactedCause) Unwrap() error { return r.err }

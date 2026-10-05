@@ -122,21 +122,26 @@ type CampaignInput struct {
 	//
 	// Campaign level rather than ad group, deliberately — an exclusion expresses
 	// intent for the whole campaign and must keep applying to an ad group a human
-	// adds later in the UI. SEARCH only, and REFUSED on Demand Gen rather than
-	// ignored — see the guard in preflightCampaignKind. It is deliberately NOT
-	// modelled on Keywords, which IS ignored there: that silence is defensible
-	// because Demand Gen creates no ad and no keyword criteria at all, so a positive
-	// keyword has nothing it could have attached to and the caller is told as much in
-	// the closing step. An exclusion is the opposite case — its whole job is to stop
-	// spend, so dropping it quietly leaves the operator believing the campaign is
-	// protected while it pays for exactly the queries they named.
+	// adds later in the UI. SEARCH only, and REFUSED on EVERY non-Search channel
+	// rather than ignored — see the guard in preflightCampaignKind.
+	//
+	// Keywords and AudienceSegments were once accepted-and-ignored off Search and are
+	// now refused on the same terms, so the contrast this comment used to draw between
+	// them is gone: the rule is simply that a Search-only field refuses off Search.
+	// The reasoning that closed it is worth keeping, because it is why the refusal is
+	// the right default rather than a strictness. A dropped exclusion leaves the
+	// operator believing the campaign is protected while it pays for exactly the
+	// queries they named; a dropped positive keyword leaves them believing the
+	// campaign can serve a query it will never see. Neither silence is recoverable
+	// from the created campaign, so neither is defensible.
 	NegativeKeywords []Keyword
 	// CPCBid is the ad group's manual CPC bid in whole units of the ad ACCOUNT's
 	// currency — the same no-FX-conversion caveat Budget carries applies here.
 	//
 	// 0 means UNSET and no bid field is sent, which is exactly what every campaign
-	// created before this field existed did; no default is invented. SEARCH only —
-	// Demand Gen bids via targetSpend and rejects manualCpc outright. See
+	// created before this field existed did; no default is invented. SEARCH only, and
+	// REFUSED on every other channel — no non-Search channel here has a manual bidding
+	// strategy and their ad-group payloads carry no bid field at all. See
 	// validateCPCBid (adgroup_ad.go) for the accepted range.
 	CPCBid float64
 	// BiddingStrategy names the campaign's bidding strategy in the caller's

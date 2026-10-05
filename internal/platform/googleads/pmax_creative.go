@@ -515,7 +515,19 @@ func buildPerformanceMaxAssets(plan performanceMaxPlan, images []fetchedImage) [
 	}
 	for _, img := range images {
 		out = append(out, pendingAsset{
-			create:    performanceMaxAssetCreate{ImageAsset: &imageAssetCreate{Data: base64Image(img.data)}, Name: performanceMaxImageSlots[img.slot].label + " " + img.url},
+			// NO Name. The obvious label — the slot plus the source URL — ships the
+			// caller's creative URL, query string and all, to Google as a permanent
+			// human-visible asset label in the shared Foundation account: the same
+			// value sanitizeSnapshotURL reduces to scheme+host before it may be
+			// written to this service's own database. Redacted going in, exported
+			// verbatim going out. It was also an unbounded caller-controlled string
+			// in a payload sent AFTER the campaign exists, which is the orphan that
+			// maxAssetGroupNameRunes is positioned in preflight to prevent.
+			//
+			// Omitted rather than reduced to the bare slot label, which matches the
+			// Demand Gen sibling (demandGenAssetCreate sets no name either) and avoids
+			// handing Google twenty marketing images that share one name.
+			create:    performanceMaxAssetCreate{ImageAsset: &imageAssetCreate{Data: base64Image(img.data)}},
 			fieldType: performanceMaxImageSlots[img.slot].jsonKey,
 		})
 	}

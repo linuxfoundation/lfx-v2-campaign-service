@@ -394,11 +394,46 @@ func TestBuildPerformanceMaxAssets_OrderAndFieldTypes(t *testing.T) {
 	if got[6].create.TextAsset == nil || got[6].create.TextAsset.Text != "Linux Foundation" {
 		t.Errorf("the business name must follow the descriptions, got %+v", got[6].create)
 	}
-	if got[7].create.ImageAsset == nil || got[7].create.Name == "" {
-		t.Errorf("an image asset must carry bytes and a name, got %+v", got[7].create)
+	if got[7].create.ImageAsset == nil {
+		t.Errorf("an image asset must carry bytes, got %+v", got[7].create)
 	}
 	if got[9].create.YouTubeVideoAsset == nil || got[9].create.YouTubeVideoAsset.YouTubeVideoID != "vid1" {
 		t.Errorf("the video must come last, got %+v", got[9].create)
+	}
+}
+
+// An image asset carries NO name, and in particular never the source URL.
+//
+// The obvious label — slot plus source URL — ships the caller's creative URL to
+// Google as a permanent, human-visible asset label in the shared Foundation ad
+// account. That is the same value sanitizeSnapshotURL reduces to scheme+host before
+// this service may write it to its own database, so shipping it whole to a third
+// party redacts going in and exports going out. The URL is also unbounded and
+// caller-controlled, in a payload sent AFTER the campaign exists.
+//
+// Pinned on the URL's QUERY specifically: a signed CDN URL is the case where the
+// query string IS the credential.
+func TestBuildPerformanceMaxAssets_ImageAssetsCarryNoName(t *testing.T) {
+	plan, err := validatePerformanceMaxCreative(campaignKindPerformanceMax, pmaxInput(fullPMaxCreative()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	const signed = "https://cdn.example.org/m1.png?sig=SECRETSIGNATURE&Expires=99"
+	images := []fetchedImage{
+		{slot: pmaxSlotMarketing, url: signed, data: []byte("m")},
+		{slot: pmaxSlotLogo, url: "https://cdn.example.org/logo.png", data: []byte("l")},
+	}
+
+	for i, a := range buildPerformanceMaxAssets(plan, images) {
+		if a.create.ImageAsset == nil {
+			continue
+		}
+		if a.create.Name != "" {
+			t.Errorf("image asset %d carries a name %q; Google names it, and any name we build from caller input is a leak or an unbounded string", i, a.create.Name)
+		}
+		if strings.Contains(a.create.Name, "SECRETSIGNATURE") {
+			t.Errorf("image asset %d carries the signed query string from the source URL", i)
+		}
 	}
 }
 
