@@ -195,6 +195,7 @@ func TestUpdateCampaignDailyBudget_Classification(t *testing.T) {
 		{name: "unrelated PartialError is a definite failure", status: http.StatusOK, body: `{"PartialErrors":[{"Code":1234,"ErrorCode":"Other","Index":0}]}`},
 		{name: "shared budget PartialError", status: http.StatusOK, body: `{"PartialErrors":[{"Code":1159,"ErrorCode":"CampaignServiceCannotUpdateSharedBudget","Index":0}]}`, shared: true},
 		{name: "shared budget 4xx BatchError", status: http.StatusBadRequest, body: `{"BatchErrors":[{"Code":1159,"Index":0}]}`, shared: true},
+		{name: "shared budget 4xx BatchError by symbolic name", status: http.StatusBadRequest, body: `{"BatchErrors":[{"ErrorCode":"CampaignServiceCannotUpdateSharedBudget","Index":0}]}`, shared: true},
 		{name: "invalid daily budget PartialError", status: http.StatusOK, body: `{"PartialErrors":[{"Code":1106,"ErrorCode":"CampaignServiceInvalidDailyBudget","Index":0}]}`, amount: true},
 		{name: "below spend PartialError", status: http.StatusOK, body: `{"PartialErrors":[{"ErrorCode":"CampaignServiceCampaignBudgetAmountIsLessThanSpendAmount","Index":0}]}`, amount: true},
 	}
@@ -217,6 +218,37 @@ func TestUpdateCampaignDailyBudget_Classification(t *testing.T) {
 			_, gotAmount := BudgetAmountReason(err)
 			if gotAmount != tc.amount {
 				t.Errorf("BudgetAmountReason ok = %v, want %v (%v)", gotAmount, tc.amount, err)
+			}
+		})
+	}
+}
+
+// The client-facing reason must render a large amount as a plain decimal. Seven-figure daily
+// budgets are ordinary in JPY, KRW, IDR and VND, and %g would have rendered 1500000 as
+// "1.5e+06" in a sentence handed back to the caller.
+func TestUpdateCampaignDailyBudget_AmountReasonIsPlainDecimal(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   string
+		amount float64
+		want   string
+	}{
+		{name: "invalid daily budget, whole amount", code: "CampaignServiceInvalidDailyBudget", amount: 1500000, want: "refused a daily budget of 1500000 as not valid"},
+		{name: "below spend, whole amount", code: "CampaignServiceCampaignBudgetAmountIsLessThanSpendAmount", amount: 25000000, want: "refused a daily budget of 25000000 because it is less than"},
+		{name: "invalid daily budget, fractional amount", code: "CampaignServiceInvalidDailyBudget", amount: 1234567.89, want: "refused a daily budget of 1234567.89 as not valid"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"PartialErrors":[{"ErrorCode":"`+tc.code+`","Index":0}]}`)
+			})
+			err := c.UpdateCampaignDailyBudget(context.Background(), "321", tc.amount, BudgetTypeDailyStandard)
+			reason, ok := BudgetAmountReason(err)
+			if !ok {
+				t.Fatalf("want an amount refusal, got %v", err)
+			}
+			if !strings.Contains(reason, tc.want) || strings.Contains(reason, "e+") {
+				t.Errorf("reason = %q, want it to contain %q in plain decimal notation", reason, tc.want)
 			}
 		})
 	}

@@ -1490,7 +1490,9 @@ a different category of data from the resource ids these logs carry.
 
 **The `ErrBudgetAmountRejected` arm is the one that returns a SPECIFIC message, and it is
 specific by construction rather than by string-handling.** A platform's own floor — LinkedIn's
-`$10` daily / `$100` lifetime, Meta's one minor unit — has no equivalent at this layer, which
+`$10` daily / `$100` lifetime, Meta's one minor unit, Microsoft's minimum in the account currency
+(stated only by Microsoft's own definite refusal of the mutate, so the platform is still
+unchanged) — has no equivalent at this layer, which
 validates only what is true for every platform at once (finite, `> 0`, `<= 1e9`, `>= half a
 micro`) and deliberately holds no per-platform floor. Without this arm such a refusal fell to the
 default 503, inviting a retry of a request that can never succeed. The adapter therefore hands

@@ -819,12 +819,16 @@ Two further details belong to this layer specifically:
   `CampaignServiceCannotUpdateSharedBudget` (1159) → `ErrSharedBudget`;
   `CampaignServiceInvalidDailyBudget` (1106) or
   `CampaignServiceCampaignBudgetAmountIsLessThanSpendAmount` (1123) → an `ErrBudgetAmountInvalid`
-  whose client-safe sentence `BudgetAmountReason` returns. Anything else is returned as the
-  definite failure it is.
+  whose client-safe sentence `BudgetAmountReason` returns. That sentence renders the amount as a
+  plain decimal (`strconv.FormatFloat(amount, 'f', -1, 64)`), never `%g`'s exponent form —
+  seven-figure daily budgets are ordinary in JPY, KRW, IDR and VND, and `1.5e+06` is not a figure
+  to hand a caller. Anything else is returned as the definite failure it is.
 
 The endpoint names, field names and error codes come from Microsoft's published v13 reference
-(GetCampaignsByIds, UpdateCampaigns, the Campaign object, the operation error-code list). None
-has been exercised against a live Microsoft Advertising account; the transport (PUT `Campaigns`,
+(GetCampaignsByIds, UpdateCampaigns, the Campaign object, the operation error-code list). The
+numeric `Code` matched beside each symbolic name (1100, 1106, 1123, 1159) was checked against
+that error-code list on 2026-10-05 and is cited in `budget.go`; a wrong number would misclassify
+a refusal (1100 as "deleted upstream", 1159 as the shared-budget 409). None has been exercised against a live Microsoft Advertising account; the transport (PUT `Campaigns`,
 the `PartialErrors` envelope) is the one the status toggle already uses.
 
 ## Metrics read (asynchronous, default-OFF)

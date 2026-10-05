@@ -161,8 +161,10 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 		case errors.Is(werr, ErrCampaignNotProvisioned):
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet, so there is no upstream budget to change"}
 		case errors.Is(werr, ErrBudgetShared):
-			// The single most consequential refusal this endpoint has, and it happens BEFORE
-			// the mutate, so nothing changed. Writing a shared budget through one campaign
+			// The single most consequential refusal this endpoint has, and the platform was
+			// NOT changed: it is refused from the adapter's read BEFORE the mutate, or (on
+			// Microsoft, for a budget attached between the read and the write) the platform
+			// definitely refused the mutate itself. Writing a shared budget through one campaign
 			// moves the spend of every other campaign attached to it — including campaigns
 			// this service does not own and cannot see. Permanent (it is how the budget was
 			// set up), so 409 and never a retry; the remedy is a human one in the ad platform.
@@ -171,8 +173,10 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID)
 			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign's budget is shared with other campaigns, so changing it here would change their spend too; give the campaign its own budget in the ad platform, or make the change there where its full effect is visible"}
 		case errors.Is(werr, ErrBudgetAmountRejected):
-			// The AMOUNT was refused by the platform adapter's own validator, before anything
-			// was written. This layer validates every bound it can state for all platforms at
+			// The AMOUNT was refused and the platform was NOT changed: by the platform
+			// adapter's own validator before the mutate, or — on Microsoft — by the platform's
+			// own definite refusal of the mutate (CampaignServiceInvalidDailyBudget, or a
+			// daily budget below what the campaign has already spent). This layer validates every bound it can state for all platforms at
 			// once (finite, > 0, <= the contract maximum, >= half a micro) and deliberately
 			// holds NO per-platform floor — adding one would put an allowlist's worth of
 			// platform knowledge in the layer whose whole design is not to have it. So a
@@ -183,8 +187,8 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 			// and being answered 503 — an "unconfirmed upstream" answer, with a retry
 			// invitation, to a request that can never succeed.
 			//
-			// The validator's own text IS returned: it names the amount and the platform's
-			// published minimum, which is exactly what the caller needs to correct the
+			// The adapter's own text IS returned: it names the amount and the platform's
+			// published minimum or documented reason, which is exactly what the caller needs to correct the
 			// request, and it names no upstream account configuration. That is why this arm
 			// carries a message the ErrBudgetUnwritable arm below deliberately withholds.
 			slog.InfoContext(ctx, "campaign budget change refused: the requested amount is outside the platform's accepted range",

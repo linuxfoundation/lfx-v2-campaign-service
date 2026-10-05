@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -51,6 +52,13 @@ const (
 
 // Microsoft error codes the budget write classifies. Both spellings are matched because
 // Microsoft reports a numeric Code and a symbolic ErrorCode, and either may be the one present.
+// Each numeric Code is the one Microsoft's v13 operation error-code reference pairs with the
+// symbolic name beside it (https://learn.microsoft.com/en-us/advertising/guides/operation-error-codes,
+// checked 2026-10-05): 1100 CampaignServiceInvalidCampaignId, 1106
+// CampaignServiceInvalidDailyBudget, 1123 CampaignServiceCampaignBudgetAmountIsLessThanSpendAmount,
+// 1159 CampaignServiceCannotUpdateSharedBudget. A wrong number here misclassifies a refusal
+// (1100 reads as "deleted upstream", 1159 as the shared-budget 409), so change one only against
+// that reference.
 const (
 	errCodeInvalidCampaignID        = "CampaignServiceInvalidCampaignId"
 	errCodeInvalidCampaignIDNum     = "1100"
@@ -307,9 +315,17 @@ func (c *Client) UpdateCampaignDailyBudget(ctx context.Context, campaignID strin
 	case has(errCodeCannotUpdateSharedBudget, errCodeCannotUpdateSharedNum):
 		return fmt.Errorf("%w: %w", ErrSharedBudget, err)
 	case has(errCodeBudgetLessThanSpend, errCodeBudgetLessThanSpendNum):
-		return &budgetAmountError{msg: fmt.Sprintf("Microsoft Advertising refused a daily budget of %g because it is less than the amount the campaign has already spent", amount)}
+		return &budgetAmountError{msg: fmt.Sprintf("Microsoft Advertising refused a daily budget of %s because it is less than the amount the campaign has already spent", formatBudgetAmount(amount))}
 	case has(errCodeInvalidDailyBudget, errCodeInvalidDailyBudgetNum):
-		return &budgetAmountError{msg: fmt.Sprintf("Microsoft Advertising refused a daily budget of %g as not valid for this ad account — it is below the minimum, or not a settable amount, in the account's currency", amount)}
+		return &budgetAmountError{msg: fmt.Sprintf("Microsoft Advertising refused a daily budget of %s as not valid for this ad account — it is below the minimum, or not a settable amount, in the account's currency", formatBudgetAmount(amount))}
 	}
 	return err
+}
+
+// formatBudgetAmount renders an amount for a client-facing sentence in plain decimal notation.
+// %g would print 1500000 as "1.5e+06", and seven-figure daily budgets are ordinary in
+// currencies such as JPY, KRW, IDR and VND; 'f' with precision -1 is the shortest plain
+// decimal that round-trips, so no digit is invented or dropped either.
+func formatBudgetAmount(amount float64) string {
+	return strconv.FormatFloat(amount, 'f', -1, 64)
 }

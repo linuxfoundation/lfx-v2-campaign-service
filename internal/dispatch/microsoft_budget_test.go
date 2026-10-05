@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -34,6 +35,17 @@ var _ service.BudgetWriter = (*MicrosoftDispatcher)(nil)
 // t.Fatal inside the handler.
 func msBudgetDispatcher(t *testing.T, readJSON string, writeStatus int, writeJSON string) (*MicrosoftDispatcher, func() []budgetRequest) {
 	t.Helper()
+	return msBudgetDispatcherWith(t, readJSON, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(writeStatus)
+		_, _ = io.WriteString(w, writeJSON)
+	})
+}
+
+// msBudgetDispatcherWith is msBudgetDispatcher with the PUT answered by write, and opts passed to
+// the Microsoft client — for the outcomes a fixed status and body cannot express, such as a PUT
+// that never answers before the client's deadline.
+func msBudgetDispatcherWith(t *testing.T, readJSON string, write http.HandlerFunc, opts ...microsoft.Option) (*MicrosoftDispatcher, func() []budgetRequest) {
+	t.Helper()
 	var (
 		mu   sync.Mutex
 		seen []budgetRequest
@@ -49,8 +61,7 @@ func msBudgetDispatcher(t *testing.T, readJSON string, writeStatus int, writeJSO
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPut {
-			w.WriteHeader(writeStatus)
-			_, _ = io.WriteString(w, writeJSON)
+			write(w, r)
 			return
 		}
 		_, _ = io.WriteString(w, readJSON)
@@ -59,7 +70,7 @@ func msBudgetDispatcher(t *testing.T, readJSON string, writeStatus int, writeJSO
 
 	d := NewMicrosoftDispatcher(
 		fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
-		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+		append([]microsoft.Option{microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL)}, opts...)...,
 	)
 	return d, func() []budgetRequest {
 		mu.Lock()
@@ -264,7 +275,7 @@ func TestMicrosoft_WriteBudget_MalformedCampaignIDRefusedBeforeAnyCall(t *testin
 }
 
 // TestMicrosoft_WriteBudget_WriteOutcomes pins the classification of the PUT: ambiguity (5xx,
-// unanswered body) is UNCONFIRMED; a definite 4xx or PartialError is a definite failure; the
+// 3xx, a transport timeout, unanswered body) is UNCONFIRMED; a definite 4xx or PartialError is a definite failure; the
 // shared-budget and amount refusals keep their own identities.
 func TestMicrosoft_WriteBudget_WriteOutcomes(t *testing.T) {
 	cases := []struct {
@@ -273,8 +284,23 @@ func TestMicrosoft_WriteBudget_WriteOutcomes(t *testing.T) {
 		body        string
 		unconfirmed bool
 		want        error
+		// write, when set, answers the PUT in place of (status, body); opts reach the client.
+		write http.HandlerFunc
+		opts  []microsoft.Option
 	}{
 		{name: "5xx is unconfirmed", status: http.StatusBadGateway, body: ``, unconfirmed: true},
+		// Redirects are never followed (noFollow), so a 3xx is the PUT's last answer and says
+		// nothing about whether the update applied.
+		{name: "3xx is unconfirmed", status: http.StatusTemporaryRedirect, body: ``, unconfirmed: true},
+		// The PUT was SENT and the answer never arrived: the update may have applied.
+		{name: "transport timeout is unconfirmed", unconfirmed: true,
+			write: func(_ http.ResponseWriter, r *http.Request) {
+				select {
+				case <-r.Context().Done():
+				case <-time.After(5 * time.Second):
+				}
+			},
+			opts: []microsoft.Option{microsoft.WithHTTPClient(&http.Client{Timeout: 200 * time.Millisecond})}},
 		{name: "unanswered 200 is unconfirmed", status: http.StatusOK, body: `{}`, unconfirmed: true},
 		{name: "definite 4xx", status: http.StatusBadRequest, body: `{"Errors":[{"Code":1001,"ErrorCode":"SomethingElse"}]}`},
 		{name: "PartialError on the single op", status: http.StatusOK, body: `{"PartialErrors":[{"Code":1234,"ErrorCode":"Other","Index":0}]}`},
@@ -283,7 +309,14 @@ func TestMicrosoft_WriteBudget_WriteOutcomes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d, calls := msBudgetDispatcher(t, msOwnBudget(microsoft.BudgetTypeDailyStandard), tc.status, tc.body)
+			write := tc.write
+			if write == nil {
+				write = func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(tc.status)
+					_, _ = io.WriteString(w, tc.body)
+				}
+			}
+			d, calls := msBudgetDispatcherWith(t, msOwnBudget(microsoft.BudgetTypeDailyStandard), write, tc.opts...)
 			err := d.WriteBudget(context.Background(), "proj", model.ProviderMicrosoftAds, msBudgetCampaign(),
 				model.BudgetChange{Amount: 75, Type: model.BudgetDaily})
 			if err == nil {
