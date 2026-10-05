@@ -27,10 +27,11 @@ var _ service.BudgetWriter = (*TwitterDispatcher)(nil)
 
 const (
 	twitterBudgetCampaignPath = "/12/accounts/acc1/campaigns/cmp1"
-	// twitterDailyCampaign is the shape CreateCampaign produces: campaign budget optimization, a
-	// daily amount on the campaign, no total.
-	twitterDailyCampaign    = `{"data":{"id":"cmp1","budget_optimization":"CAMPAIGN","daily_budget_amount_local_micro":50000000,"total_budget_amount_local_micro":null,"currency":"USD"}}`
-	twitterLifetimeCampaign = `{"data":{"id":"cmp1","budget_optimization":"CAMPAIGN","daily_budget_amount_local_micro":null,"total_budget_amount_local_micro":500000000}}`
+	// twitterDailyCampaign is the shape CreateCampaign is INFERRED to produce (unverified live):
+	// campaign budget optimization, a daily amount on the campaign, no total.
+	twitterDailyCampaign = `{"data":{"id":"cmp1","budget_optimization":"CAMPAIGN","daily_budget_amount_local_micro":50000000,"total_budget_amount_local_micro":null,"currency":"USD"}}`
+	// twitterTotalOnlyCampaign contradicts X's CAMPAIGN contract (daily required) and is refused.
+	twitterTotalOnlyCampaign = `{"data":{"id":"cmp1","budget_optimization":"CAMPAIGN","daily_budget_amount_local_micro":null,"total_budget_amount_local_micro":500000000}}`
 )
 
 type twitterBudgetCall struct {
@@ -143,18 +144,6 @@ func TestTwitter_WriteBudget_DailyPutsTheDailyAmountOnTheCampaign(t *testing.T) 
 	}
 }
 
-func TestTwitter_WriteBudget_LifetimePutsTheTotalAmount(t *testing.T) {
-	s := newTwitterBudgetStub(t, http.StatusOK, twitterLifetimeCampaign,
-		twitterReply{http.StatusOK, `{"data":{"id":"cmp1","total_budget_amount_local_micro":900000000}}`})
-
-	if err := writeTwitterBudget(s, twitterBudgetCampaign(), 900, model.BudgetLifetime); err != nil {
-		t.Fatalf("WriteBudget: %v", err)
-	}
-	if p := s.puts(); len(p) != 1 || p[0].RawQuery != "total_budget_amount_local_micro=900000000" {
-		t.Fatalf("want one total_budget_amount_local_micro=900000000 write, got %+v", p)
-	}
-}
-
 func TestTwitter_WriteBudget_RoundsToTheNearestMicro(t *testing.T) {
 	s := newTwitterBudgetStub(t, http.StatusOK, twitterDailyCampaign)
 	if err := writeTwitterBudget(s, twitterBudgetCampaign(), 99.9999996, model.BudgetDaily); err != nil {
@@ -165,37 +154,33 @@ func TestTwitter_WriteBudget_RoundsToTheNearestMicro(t *testing.T) {
 	}
 }
 
-// The requested pacing must already be the campaign's: a mismatch is refused (409), never
-// translated by writing the other field, and before any PUT.
-func TestTwitter_WriteBudget_PacingMismatchRefusedWithoutMutate(t *testing.T) {
-	for _, tc := range []struct {
-		name, get string
-		typ       model.BudgetType
-	}{
-		{"lifetime requested on a daily campaign", twitterDailyCampaign, model.BudgetLifetime},
-		{"daily requested on a lifetime campaign", twitterLifetimeCampaign, model.BudgetDaily},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s := newTwitterBudgetStub(t, http.StatusOK, tc.get)
-			err := writeTwitterBudget(s, twitterBudgetCampaign(), 50, tc.typ)
-			if !errors.Is(err, domain.ErrBudgetUnwritable) {
-				t.Fatalf("want ErrBudgetUnwritable, got %v", err)
-			}
-			if !strings.Contains(err.Error(), "never its pacing model") {
-				t.Errorf("the refusal must say the pacing is not changed here: %v", err)
-			}
-			s.assertNoPut(t)
-		})
+// X budgets are written as a daily amount only: a lifetime request is refused (409) before any
+// X Ads endpoint is reached — whatever the campaign holds — and says why.
+func TestTwitter_WriteBudget_LifetimeRefusedBeforeAnyCall(t *testing.T) {
+	for _, get := range []string{twitterDailyCampaign, twitterTotalOnlyCampaign} {
+		s := newTwitterBudgetStub(t, http.StatusOK, get)
+		err := writeTwitterBudget(s, twitterBudgetCampaign(), 50, model.BudgetLifetime)
+		if !errors.Is(err, domain.ErrBudgetUnwritable) {
+			t.Fatalf("want ErrBudgetUnwritable, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "only as a daily amount") {
+			t.Errorf("the refusal must say X budgets are daily-only here: %v", err)
+		}
+		if n := len(s.requests()); n != 0 {
+			t.Errorf("a lifetime refusal must reach no endpoint, got %d request(s)", n)
+		}
 	}
 }
 
-// A budget model this service did not create — line-item optimization, an unreported or unknown
-// model, both caps, neither cap, or an unreadable amount — is refused rather than guessed.
+// A budget shape other than the daily-only CAMPAIGN one — line-item optimization, an unreported or
+// unknown model, a total cap alone (which contradicts X's CAMPAIGN contract), both caps, neither
+// cap, or an unreadable amount — is refused rather than guessed.
 func TestTwitter_WriteBudget_UnsupportedBudgetModelsRefusedWithoutMutate(t *testing.T) {
 	for _, tc := range []struct{ name, get string }{
 		{"line-item budget optimization", `{"data":{"id":"cmp1","budget_optimization":"LINE_ITEM","daily_budget_amount_local_micro":null}}`},
 		{"budget_optimization not reported", `{"data":{"id":"cmp1","daily_budget_amount_local_micro":50000000}}`},
 		{"unknown budget_optimization", `{"data":{"id":"cmp1","budget_optimization":"ACCOUNT","daily_budget_amount_local_micro":50000000}}`},
+		{"total cap only", twitterTotalOnlyCampaign},
 		{"both caps", `{"data":{"id":"cmp1","budget_optimization":"CAMPAIGN","daily_budget_amount_local_micro":50000000,"total_budget_amount_local_micro":500000000}}`},
 		{"neither cap", `{"data":{"id":"cmp1","budget_optimization":"CAMPAIGN"}}`},
 		{"fractional daily", `{"data":{"id":"cmp1","budget_optimization":"CAMPAIGN","daily_budget_amount_local_micro":1.5}}`},

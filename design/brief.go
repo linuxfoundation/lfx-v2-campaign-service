@@ -1524,10 +1524,14 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"A Reddit campaign's budget is its campaign-level spend goal (Campaign Budget Optimization on); " +
 			"one whose budget is governed per ad group (CBO off) is refused (409) rather than allocated, and " +
 			"Reddit has no shared-budget analogue. " +
-			"An X campaign's budget is the campaign's own daily_budget_amount_local_micro (daily) or " +
-			"total_budget_amount_local_micro (lifetime) under campaign budget optimization (budget_optimization " +
-			"CAMPAIGN, the shape this service creates); one with line-item budget optimization, an unreported " +
-			"budget model, or both a daily and a total cap is refused (409), and X has no shared-budget analogue. " +
+			"An X campaign's budget is written only as its own daily_budget_amount_local_micro, and only when " +
+			"X reports campaign budget optimization (budget_optimization CAMPAIGN). That this is the shape " +
+			"campaigns created here have is inferred from the create path (a daily budget on the campaign, " +
+			"no budget_optimization sent) and is unverified against a live account; X's current reference " +
+			"lists LINE_ITEM as the only value. A campaign reporting LINE_ITEM or omitting budget_optimization, " +
+			"one without a daily budget, or one that also carries a total cap is refused (409) before any write. " +
+			"A `lifetime` request for an X campaign is always refused (409): under campaign budget optimization " +
+			"X requires the daily budget, so the campaign is paced daily. X has no shared-budget analogue. " +
 			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: " +
 			"the campaign is unprovisioned (no platform campaign id); the campaign belongs to a different " +
 			"ad account than the project's connection now resolves to, or does not record which ad account " +

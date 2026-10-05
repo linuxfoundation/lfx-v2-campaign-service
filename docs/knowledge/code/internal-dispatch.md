@@ -1181,16 +1181,25 @@ path, whether that GET reports `is_campaign_budget_optimization` and `ad_account
 closed (a 409 refusal or an UNCONFIRMED 503), never as a wrong write. See
 [internal/platform/reddit](internal-platform-reddit.md).
 
-### X — the CAMPAIGN's daily or total `*_local_micro`, under campaign budget optimization
+### X — the CAMPAIGN's daily `*_local_micro`, only under a reported `CAMPAIGN` budget optimization
 
-Where the budget lives is taken from this repo's own create path: `twitter.Client.CreateCampaign`
-sends `daily_budget_amount_local_micro` on the **campaign**, sends no `budget_optimization` (X's
-v11 default is `CAMPAIGN`), and sends no budget on the line item. So
-`TwitterDispatcher.WriteBudget` (`internal/dispatch/twitter_budget.go`) addresses the campaign
-itself — `PUT accounts/:account_id/campaigns/:campaign_id`, the resource the status toggle PUTs —
-and writes ONE amount field: `daily_budget_amount_local_micro` for a `daily` request,
-`total_budget_amount_local_micro` for a `lifetime` one. Never `budget_optimization`, never
-`entity_status`, never the other amount.
+Where the budget lives is INFERRED from this repo's own create path and is unverified against a
+live account: `twitter.Client.CreateCampaign` sends `daily_budget_amount_local_micro` on the
+**campaign**, sends no `budget_optimization`, and sends no budget on the line item. X's v11
+announcement makes `CAMPAIGN` the default and the only model in which a campaign-level daily
+budget is valid; X's current reference page lists `LINE_ITEM` as the only value and default. So
+`TwitterDispatcher.WriteBudget` (`internal/dispatch/twitter_budget.go`) never relies on the
+inference: it writes only when the read REPORTS `CAMPAIGN`, and refuses a campaign reporting
+`LINE_ITEM` or omitting the field (409) before any write. The write is
+`PUT accounts/:account_id/campaigns/:campaign_id` — the resource the status toggle PUTs — with
+exactly `daily_budget_amount_local_micro`. Never `budget_optimization`, never `entity_status`,
+never `total_budget_amount_local_micro`.
+
+**Daily only.** Under `CAMPAIGN` the cited contract REQUIRES the daily budget on the campaign, so a
+`CAMPAIGN` campaign is always paced daily (a total, where present, is an extra whole-flight cap),
+and the create path never sets a total. No X document this service can cite shows a total-only
+campaign under `CAMPAIGN`, so a `lifetime` request is refused (409, `ErrBudgetUnwritable`) before
+any call, and a campaign reporting no daily budget is refused after the read.
 
 Order, all before the one PUT:
 
@@ -1199,12 +1208,12 @@ Order, all before the one PUT:
    `AccountID` through. The budget write refuses that absence itself
    (`ErrCampaignProvenanceUnknown` joined with `ErrCampaignAccountMismatch`) before any
    credential is resolved, then uses the shared helper for the mismatch.
-2. **Amount and field.** `twitter.BudgetMicros` applies the create path's own bound
+2. **Amount, then pacing.** `twitter.BudgetMicros` applies the create path's own bound
    (`maxBudgetUsd`) and rounding (`toMicroCurrency`), refuses an amount that rounds to zero
    micros, and maps to `ErrBudgetAmountRejected` → **400** via `rejectedBudgetAmountError`. X's
    reference publishes no per-currency minimum or maximum for these fields, so none is invented;
-   an amount X refuses on its own rules is X's definite 4xx on the PUT. The request's
-   `budget_type` picks the field before anything is read.
+   an amount X refuses on its own rules is X's definite 4xx on the PUT. A `lifetime` request is
+   then refused (409).
 3. **Credentials** through `resolveTwitterClientWithRes` — the same resolution, validation and
    SHARED cached client as `ToggleStatus` and `ReadMetrics`, so the PUT queues on the account's
    one write pacer.
@@ -1214,34 +1223,35 @@ Order, all before the one PUT:
    An unaddressable ACCOUNT id is the connection's (`ErrConnectionNotUsable` +
    `ErrProviderConfigInvalid`, system-scoped); an unaddressable CAMPAIGN id is the row's
    (`ErrBudgetUnwritable`).
-5. **The budget must be on the campaign.** `budget_optimization` must be `CAMPAIGN`. `LINE_ITEM`
-   puts the daily budget on each line item (and forbids it on the campaign), so it is refused
-   rather than allocated across line items; an unreported or unknown value is refused too —
-   X's current reference page lists `LINE_ITEM` as the only value and default, contradicting the
-   v11 announcement, and that contradiction is exactly when assuming would be guessing.
-6. **Legible amounts and matching pacing.** An unreadable amount (string, fraction, negative) is
-   refused. Daily set and total null ↔ `daily` (the create path's shape); total set and daily
-   null ↔ `lifetime`. BOTH set, or neither, has no single pacing the endpoint's vocabulary can
-   name and is refused; a request naming the other pacing is refused, never translated — all
-   `ErrBudgetUnwritable` → 409.
+5. **The budget must be on the campaign.** `budget_optimization` must be reported as `CAMPAIGN`.
+   `LINE_ITEM` puts the daily budget on each line item (and forbids it on the campaign), so it is
+   refused rather than allocated across line items; an unreported or unknown value is refused
+   too — the two X documents disagree, which is exactly when assuming would be guessing. If the
+   inference is wrong and created campaigns report `LINE_ITEM`, every X budget write is refused,
+   never misapplied.
+6. **Legible, daily-only amounts.** An unreadable amount (string, fraction, negative) is refused.
+   The daily amount must be set (total-only or neither contradicts the `CAMPAIGN` contract) and
+   no total may be set — all `ErrBudgetUnwritable` → 409.
 
-There is **no shared-budget analogue**: X's budget is a pair of fields on the campaign.
+There is **no shared-budget analogue**: X's budget is fields on the campaign.
 
 **The PUT is classified.** Parameters ride in the query string and are OAuth 1.0a-signed, as on
-every v12 write. A 429 is retried (setting the same amount converges); a transport failure,
-mutating 3xx, exhausted 429 or 5xx is `twitter.IsOutcomeUnconfirmed` →
-`unconfirmedBudgetWriteError` → 503. **A refusal after a retried 429 is UNCONFIRMED too**
-(`retriedUnconfirmedError`, the Microsoft PR #255 lesson): the 4xx answers only the last attempt.
-The 2xx echo is checked like Reddit's: another campaign id or another amount → UNCONFIRMED.
+every v12 write (a test recomputes the signature server-side and checks it covers the query
+parameter). A 429 is retried (setting the same amount converges); a transport failure, mutating
+3xx, exhausted 429 or 5xx is `twitter.IsOutcomeUnconfirmed` → `unconfirmedBudgetWriteError` →
+503. **Any failure after a retried 429 is UNCONFIRMED too** — a definite 4xx or even a pre-send
+dial failure answers only the last attempt (`retriedUnconfirmedError`, the Microsoft PR #255
+lesson). The 2xx echo is checked like Reddit's: another campaign id or another amount →
+UNCONFIRMED.
 
 **Not gated.** X campaign writes (create, toggle) are already ungated; the budget PUT uses the same
 client, pacer and classification. `TWITTER_METRICS_ENABLED` gates only the account monitor.
 
 **Unverified against a live X account**: which `budget_optimization` value a campaign this
-service creates actually reads back as (the docs disagree), whether the single-campaign GET
-returns `deleted` campaigns, whether the PUT response echoes the campaign, and X's unpublished
-per-currency minimums. Each unknown fails closed (409, a definite 4xx, or an UNCONFIRMED 503),
-never as a wrong write. See [internal/platform/twitter](internal-platform-twitter.md).
+service creates actually reads back as, whether the single-campaign GET returns `deleted`
+campaigns, whether the PUT response echoes the campaign, and X's unpublished per-currency
+minimums. Each unknown fails closed (409, a definite 4xx, or an UNCONFIRMED 503), never as a
+wrong write. See [internal/platform/twitter](internal-platform-twitter.md).
 
 ## Metrics read (optional capability)
 

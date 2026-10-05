@@ -17,29 +17,40 @@ import (
 // campaign's budget, after establishing that doing so moves this campaign's spend and nothing
 // else's.
 //
-// WHERE THE BUDGET LIVES is decided by the create path, not assumed here. CreateCampaign sends
-// daily_budget_amount_local_micro on the CAMPAIGN, sends no budget_optimization (X's v11 default
-// is CAMPAIGN, campaign budget optimization), and sends no budget on the line item. So the object
-// written is the campaign itself — no line-item id is involved — through
-// PUT accounts/:account_id/campaigns/:campaign_id
+// WHERE THE BUDGET LIVES is INFERRED from the create path and is unverified against a live
+// account. CreateCampaign sends daily_budget_amount_local_micro on the CAMPAIGN, sends no
+// budget_optimization, and sends no budget on the line item; X's v11 announcement makes CAMPAIGN
+// the default and the only model in which a campaign-level daily budget is valid, so a campaign
+// this service created is expected to report CAMPAIGN. X's current reference page instead lists
+// LINE_ITEM as the only value and default. The writer therefore never relies on the inference:
+// it writes only when the read REPORTS CAMPAIGN, and a campaign reporting LINE_ITEM or omitting
+// the field is refused (409) before any write. The object written is the campaign itself — no
+// line-item id is involved — through PUT accounts/:account_id/campaigns/:campaign_id
 // (https://docs.x.com/x-ads-api/campaign-management/reference, "Campaigns").
+//
+// DAILY ONLY. A `lifetime` request is refused (409) before any call. Under CAMPAIGN budget
+// optimization X requires the daily budget on the campaign (the same v11 announcement), so a
+// CAMPAIGN campaign is always paced daily — a total_budget_amount_local_micro, where present, is
+// an additional whole-flight cap, not an alternative pacing — and the create path never sets a
+// total at all. No X document this service can cite shows a total-only campaign under CAMPAIGN,
+// so supporting one would be supporting a shape the cited contract says cannot exist.
 //
 // IT IS READ-THEN-WRITE like every sibling, and the read establishes three facts:
 //
 //   - THE BUDGET IS ON THE CAMPAIGN (budget_optimization is CAMPAIGN). Under LINE_ITEM, X requires
 //     the daily budget on each line item and forbids it on the campaign, so spend is governed per
 //     line item and writing the campaign would not change what the caller thinks it changes.
-//     This service creates no such campaign; one is refused (409) rather than allocated across
-//     line items, as Reddit refuses CBO-off and Meta refuses an allocation across ad sets. An
+//     This service is not expected to create such a campaign (an inference, unverified live —
+//     if it does, every X budget write is refused, never misapplied). One is refused (409)
+//     rather than allocated across line items, as Reddit refuses CBO-off and Meta refuses an
+//     allocation across ad sets. An
 //     UNREPORTED or unrecognised value is refused too — X's own documentation disagrees with
 //     itself about the default (see twitter.BudgetOptimizationCampaign), which is precisely the
 //     situation in which assuming would be guessing.
-//   - THE PACING ALREADY MATCHES. An X campaign carries a daily cap, a whole-flight cap, or both.
-//     Only the daily cap set reads as daily (the shape CreateCampaign produces); only the total
-//     set reads as lifetime. A request naming the other is refused, never translated, exactly as
-//     on every sibling. A campaign with BOTH caps, or neither, has no single pacing this
-//     endpoint's daily/lifetime vocabulary can name, so it is refused rather than having one of
-//     its two caps rewritten under a label that describes only half of what governs its spend.
+//   - THE CAMPAIGN IS DAILY-ONLY. Its daily cap must be set (the contract requires it under
+//     CAMPAIGN; its absence — total-only or neither — contradicts the cited contract and is
+//     refused rather than interpreted) and no total cap may be set: with both, rewriting the
+//     daily amount under a `daily` label would describe only half of what governs its spend.
 //   - THE CURRENT AMOUNTS ARE LEGIBLE. An amount reported but unreadable is refused rather than
 //     read as "not set".
 //
@@ -83,14 +94,14 @@ func (d *TwitterDispatcher) WriteBudget(ctx context.Context, projectID string, p
 		return fmt.Errorf("write x ads campaign budget: %w", err)
 	}
 
-	// The field is chosen from the REQUEST before anything is read, so an unknown type is refused
-	// without a call. Which field the campaign actually paces on is checked against the read below.
-	var field twitter.BudgetField
+	// DAILY ONLY, decided from the REQUEST before anything is resolved or read (see the doc
+	// comment): a CAMPAIGN-optimized X campaign is always paced daily, so a lifetime request is a
+	// pacing this endpoint never changes, and nothing needs to be read to know that.
 	switch budget.Type {
 	case model.BudgetDaily:
-		field = twitter.BudgetFieldDaily
 	case model.BudgetLifetime:
-		field = twitter.BudgetFieldTotal
+		return fmt.Errorf("write x ads campaign budget: campaign %s: X campaign budgets are written only as a daily amount — under campaign budget optimization X requires a daily budget on the campaign, and this service's create path sets only that; a lifetime (total) budget is never changed here, so change it in X Ads Manager: %w",
+			campaign.PlatformCampaignID, domain.ErrBudgetUnwritable)
 	default:
 		return fmt.Errorf("write x ads campaign budget: unsupported budget type %q: %w", budget.Type, domain.ErrBudgetUnwritable)
 	}
@@ -147,23 +158,14 @@ func (d *TwitterDispatcher) WriteBudget(ctx context.Context, projectID string, p
 			campaign.PlatformCampaignID, domain.ErrBudgetUnwritable)
 	}
 
-	// GUARD 3 — THE PACING MODEL MUST ALREADY MATCH.
-	var upstreamType model.BudgetType
+	// GUARD 3 — THE CAMPAIGN MUST BE DAILY-ONLY.
 	switch {
-	case current.DailyMicros != nil && current.TotalMicros == nil:
-		upstreamType = model.BudgetDaily
-	case current.DailyMicros == nil && current.TotalMicros != nil:
-		upstreamType = model.BudgetLifetime
-	case current.DailyMicros != nil && current.TotalMicros != nil:
-		return fmt.Errorf("write x ads campaign budget: campaign %s carries both a daily and a total budget cap, a pacing this endpoint's daily/lifetime vocabulary cannot name — change the budget in X Ads Manager: %w",
+	case current.DailyMicros == nil:
+		return fmt.Errorf("write x ads campaign budget: campaign %s reports no daily budget, which X requires on the campaign under campaign budget optimization, so its budget shape cannot be established: %w",
 			campaign.PlatformCampaignID, domain.ErrBudgetUnwritable)
-	default:
-		return fmt.Errorf("write x ads campaign budget: campaign %s reports neither a daily nor a total budget, so it has no amount this endpoint can change: %w",
+	case current.TotalMicros != nil:
+		return fmt.Errorf("write x ads campaign budget: campaign %s carries a total budget cap as well as a daily one; this endpoint changes the daily amount of a daily-only campaign and never a pacing model — change the budget in X Ads Manager: %w",
 			campaign.PlatformCampaignID, domain.ErrBudgetUnwritable)
-	}
-	if upstreamType != budget.Type {
-		return fmt.Errorf("write x ads campaign budget: campaign %s is paced as %q upstream but the request asks for %q; this endpoint changes a budget's amount, never its pacing model — change the pacing in X Ads Manager, then set the amount here: %w",
-			campaign.PlatformCampaignID, upstreamType, budget.Type, domain.ErrBudgetUnwritable)
 	}
 
 	// Every guard has passed; this is the first and only mutating call.
@@ -172,7 +174,7 @@ func (d *TwitterDispatcher) WriteBudget(ctx context.Context, projectID string, p
 	// 429, or a 2xx whose echo names another campaign or amount may leave a new amount applied
 	// upstream. An unwrapped return would be answered "the campaign was not modified" — a false
 	// claim about a money-moving write. A definite 4xx is a refusal and passes through unwrapped.
-	if err := client.UpdateCampaignBudget(ctx, campaign.PlatformCampaignID, field, micros); err != nil {
+	if err := client.UpdateCampaignBudget(ctx, campaign.PlatformCampaignID, micros); err != nil {
 		werr := fmt.Errorf("write x ads campaign budget for campaign %s: %w", campaign.PlatformCampaignID, err)
 		if twitter.IsOutcomeUnconfirmed(err) {
 			return &unconfirmedBudgetWriteError{err: werr}

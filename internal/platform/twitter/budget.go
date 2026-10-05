@@ -18,14 +18,18 @@ import (
 // X's campaign budget_optimization values, as GET accounts/:account_id/campaigns/:campaign_id
 // reports them (https://docs.x.com/x-ads-api/campaign-management/reference, "Campaigns").
 //
-// BudgetOptimizationCampaign is the shape CreateCampaign produces. It sends no
-// budget_optimization (so X applies its default) and puts daily_budget_amount_local_micro on the
-// CAMPAIGN, with no budget on the line item. X's v11 announcement made budget_optimization an
-// optional campaign parameter defaulting to CAMPAIGN, and states the two shapes are exclusive:
-// under CAMPAIGN the daily budget is required on the campaign and must be absent from the line
-// item; under LINE_ITEM it is required on the line item and must be absent from the campaign
-// (https://devcommunity.x.com/t/ads-api-version-11/168814). So a campaign this service created
-// reads back CAMPAIGN, and its spend is governed by the campaign's own budget fields.
+// BudgetOptimizationCampaign is the shape this service INFERS its create path produces —
+// inferred, not observed: no campaign this service created has been read back from a live
+// account. CreateCampaign sends no budget_optimization (so X applies its default) and puts
+// daily_budget_amount_local_micro on the CAMPAIGN, with no budget on the line item. X's v11
+// announcement made budget_optimization an optional campaign parameter defaulting to CAMPAIGN,
+// and states the two shapes are exclusive: under CAMPAIGN the daily budget is required on the
+// campaign and must be absent from the line item; under LINE_ITEM it is required on the line
+// item and must be absent from the campaign
+// (https://devcommunity.x.com/t/ads-api-version-11/168814). Only that announcement makes a
+// campaign-level daily budget consistent with CAMPAIGN, which is the basis of the inference.
+// The dispatcher therefore writes only on a REPORTED CAMPAIGN: a campaign reporting LINE_ITEM,
+// or omitting the field, is refused (409) before any write rather than assumed either way.
 //
 // BudgetOptimizationLineItem is the other documented value. Its budget lives on each line item,
 // so writing the campaign's fields would not change what the caller thinks it changes; it is
@@ -38,16 +42,11 @@ const (
 	BudgetOptimizationLineItem = "LINE_ITEM"
 )
 
-// BudgetField names which of the campaign's two budget amounts a write sets. The two are X's
-// own field names, so the value goes on the wire verbatim.
-type BudgetField string
-
-const (
-	// BudgetFieldDaily is the campaign's daily cap. CreateCampaign sets only this one.
-	BudgetFieldDaily BudgetField = "daily_budget_amount_local_micro"
-	// BudgetFieldTotal is the campaign's whole-flight (lifetime) cap.
-	BudgetFieldTotal BudgetField = "total_budget_amount_local_micro"
-)
+// dailyBudgetField is the one budget field this client writes: the campaign's daily cap, the
+// only amount CreateCampaign sets and the one X requires on the campaign under CAMPAIGN budget
+// optimization. total_budget_amount_local_micro is READ (so a campaign carrying one can be
+// refused) but never written: see the dispatcher's WriteBudget for why lifetime is refused.
+const dailyBudgetField = "daily_budget_amount_local_micro"
 
 // CampaignBudget is one campaign's live budget state, as GetCampaignBudget read it. Amounts are
 // in micro-units of the ad account's own currency (X: "The currency associated with the
@@ -245,17 +244,16 @@ func (e *retriedUnconfirmedError) Unwrap() error { return e.err }
 // Unconfirmed marks the outcome as ambiguous-applied for IsOutcomeUnconfirmed.
 func (e *retriedUnconfirmedError) Unconfirmed() bool { return true }
 
-// UpdateCampaignBudget sets ONE of an existing campaign's budget amounts via
-// PUT accounts/:account_id/campaigns/:campaign_id with field=micros
+// UpdateCampaignBudget sets an existing campaign's DAILY budget via
+// PUT accounts/:account_id/campaigns/:campaign_id with daily_budget_amount_local_micro=micros
 // (https://docs.x.com/x-ads-api/campaign-management/reference, "Campaigns": the PUT accepts
-// daily_budget_amount_local_micro and total_budget_amount_local_micro). As on every v12 write
-// this client makes, the parameter rides in the QUERY STRING and is folded into the OAuth 1.0a
-// signature (see createRequest).
+// daily_budget_amount_local_micro). As on every v12 write this client makes, the parameter rides
+// in the QUERY STRING and is folded into the OAuth 1.0a signature (see createRequest).
 //
-// It writes the AMOUNT only: budget_optimization, entity_status and the other amount are never
-// sent, so the campaign's budget model, delivery and other cap are unchanged. The caller is
-// responsible for having established that the budget lives on the campaign and that field is the
-// one that carries the requested pacing — this function writes what it is told.
+// It writes the AMOUNT only: budget_optimization, entity_status and total_budget_amount_local_micro
+// are never sent, so the campaign's budget model, delivery and any total cap are unchanged. The
+// caller is responsible for having established that the budget lives on the campaign and is
+// paced daily — this function writes what it is told.
 //
 // micros must be the value BudgetMicros produced: taking the encoded integer rather than a float
 // makes it impossible to validate one value and send another.
@@ -276,10 +274,8 @@ func (e *retriedUnconfirmedError) Unconfirmed() bool { return true }
 // and something other than what was asked was applied, so it is returned as an UNCONFIRMED
 // transportError rather than as success or as a definite failure. An echo that names neither is
 // accepted: the 2xx itself is the confirmation, as it is for the status toggle.
-func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID string, field BudgetField, micros int64) error {
-	if field != BudgetFieldDaily && field != BudgetFieldTotal {
-		return fmt.Errorf("twitter: campaign budget: unsupported budget field %q", field)
-	}
+func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID string, micros int64) error {
+	const field = dailyBudgetField
 	path, campaignID, err := c.campaignBudgetPath(campaignID)
 	if err != nil {
 		return err
@@ -296,7 +292,7 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID string, fi
 	reqURL := c.accountURL() + "/" + path
 	var retries int
 	resp, err := c.doRequestAbsCounted(ctx, http.MethodPut, reqURL, path,
-		map[string]string{string(field): strconv.FormatInt(micros, 10)},
+		map[string]string{field: strconv.FormatInt(micros, 10)},
 		true /* idempotent: setting the same amount converges */, &retries)
 	if err != nil {
 		werr := fmt.Errorf("twitter: update campaign %s %s to %d: %w", campaignID, field, micros, err)
@@ -318,11 +314,7 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID string, fi
 	if got := strings.TrimSpace(echo.ID); got != "" && got != campaignID {
 		return &transportError{Method: http.MethodPut, Path: "campaign budget", err: fmt.Errorf("budget update for campaign %s was acknowledged for campaign %s", campaignID, got)}
 	}
-	raw := echo.Daily
-	if field == BudgetFieldTotal {
-		raw = echo.Total
-	}
-	if got, unparseable := parseBudgetMicros(raw); unparseable || (got != nil && *got != micros) {
+	if got, unparseable := parseBudgetMicros(echo.Daily); unparseable || (got != nil && *got != micros) {
 		return &transportError{Method: http.MethodPut, Path: "campaign budget", err: fmt.Errorf("budget update for campaign %s was acknowledged with a %s other than the %d micro-units sent", campaignID, field, micros)}
 	}
 	return nil

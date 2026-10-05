@@ -7,10 +7,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -128,7 +131,7 @@ func TestCampaignBudget_InvalidIDsRefusedBeforeAnyRequest(t *testing.T) {
 	if _, err := c.GetCampaignBudget(context.Background(), "cmp1/../x"); !errors.Is(err, ErrInvalidCampaignID) {
 		t.Errorf("want ErrInvalidCampaignID, got %v", err)
 	}
-	if err := c.UpdateCampaignBudget(context.Background(), "cmp1?x=1", BudgetFieldDaily, 1); !errors.Is(err, ErrInvalidCampaignID) {
+	if err := c.UpdateCampaignBudget(context.Background(), "cmp1?x=1", 1); !errors.Is(err, ErrInvalidCampaignID) {
 		t.Errorf("want ErrInvalidCampaignID, got %v", err)
 	}
 	c.account.AccountID = "acc/1"
@@ -140,33 +143,26 @@ func TestCampaignBudget_InvalidIDsRefusedBeforeAnyRequest(t *testing.T) {
 	}
 }
 
-// The PUT carries exactly the one field, in the query string (X v12 write contract), and nothing
-// that would change the budget model, status or the other cap.
-func TestUpdateCampaignBudget_PutsExactlyTheOneField(t *testing.T) {
-	for _, field := range []BudgetField{BudgetFieldDaily, BudgetFieldTotal} {
-		t.Run(string(field), func(t *testing.T) {
-			s, c := newBudgetServer(t, http.StatusOK, xCampaignBody,
-				budgetReply{http.StatusOK, `{"data":{"id":"cmp1","` + string(field) + `":75000000}}`})
-			if err := c.UpdateCampaignBudget(context.Background(), "cmp1", field, 75000000); err != nil {
-				t.Fatalf("UpdateCampaignBudget: %v", err)
-			}
-			calls := s.recorded()
-			if len(calls) != 1 || calls[0].Method != http.MethodPut || calls[0].Path != "/12/accounts/acc1/campaigns/cmp1" {
-				t.Fatalf("want one PUT /12/accounts/acc1/campaigns/cmp1, got %+v", calls)
-			}
-			if calls[0].RawQuery != string(field)+"=75000000" {
-				t.Errorf("query = %q, want exactly %s=75000000", calls[0].RawQuery, field)
-			}
-		})
+// The PUT carries exactly the daily field, in the query string (X v12 write contract), and nothing
+// that would change the budget model, status or a total cap.
+func TestUpdateCampaignBudget_PutsExactlyTheDailyField(t *testing.T) {
+	s, c := newBudgetServer(t, http.StatusOK, xCampaignBody,
+		budgetReply{http.StatusOK, `{"data":{"id":"cmp1","daily_budget_amount_local_micro":75000000}}`})
+	if err := c.UpdateCampaignBudget(context.Background(), "cmp1", 75000000); err != nil {
+		t.Fatalf("UpdateCampaignBudget: %v", err)
+	}
+	calls := s.recorded()
+	if len(calls) != 1 || calls[0].Method != http.MethodPut || calls[0].Path != "/12/accounts/acc1/campaigns/cmp1" {
+		t.Fatalf("want one PUT /12/accounts/acc1/campaigns/cmp1, got %+v", calls)
+	}
+	if calls[0].RawQuery != "daily_budget_amount_local_micro=75000000" {
+		t.Errorf("query = %q, want exactly daily_budget_amount_local_micro=75000000", calls[0].RawQuery)
 	}
 }
 
-func TestUpdateCampaignBudget_RefusesAnUnknownFieldAndANonPositiveAmount(t *testing.T) {
+func TestUpdateCampaignBudget_RefusesANonPositiveAmount(t *testing.T) {
 	s, c := newBudgetServer(t, http.StatusOK, xCampaignBody, budgetReply{http.StatusOK, `{}`})
-	if err := c.UpdateCampaignBudget(context.Background(), "cmp1", BudgetField("entity_status"), 1); err == nil {
-		t.Error("an unknown field must be refused")
-	}
-	err := c.UpdateCampaignBudget(context.Background(), "cmp1", BudgetFieldDaily, 0)
+	err := c.UpdateCampaignBudget(context.Background(), "cmp1", 0)
 	if !errors.Is(err, ErrBudgetAmountInvalid) {
 		t.Errorf("want ErrBudgetAmountInvalid, got %v", err)
 	}
@@ -199,7 +195,7 @@ func TestUpdateCampaignBudget_OutcomeClassification(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, c := newBudgetServer(t, http.StatusOK, xCampaignBody, tc.replies...)
-			err := c.UpdateCampaignBudget(context.Background(), "cmp1", BudgetFieldDaily, 75000000)
+			err := c.UpdateCampaignBudget(context.Background(), "cmp1", 75000000)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -218,7 +214,7 @@ func TestUpdateCampaignBudget_ExhaustedThrottleIsUnconfirmed(t *testing.T) {
 		t.Skip("sleeps through retryMax Retry-After waits")
 	}
 	_, c := newBudgetServer(t, http.StatusOK, xCampaignBody, budgetReply{http.StatusTooManyRequests, ``})
-	err := c.UpdateCampaignBudget(context.Background(), "cmp1", BudgetFieldDaily, 75000000)
+	err := c.UpdateCampaignBudget(context.Background(), "cmp1", 75000000)
 	if err == nil || !IsOutcomeUnconfirmed(err) {
 		t.Fatalf("an exhausted 429 on a PUT must be unconfirmed, got %v", err)
 	}
@@ -235,7 +231,7 @@ func TestUpdateCampaignBudget_TimeoutIsUnconfirmed(t *testing.T) {
 	c := newToggleTestClient(t, srv.URL)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	err := c.UpdateCampaignBudget(ctx, "cmp1", BudgetFieldDaily, 75000000)
+	err := c.UpdateCampaignBudget(ctx, "cmp1", 75000000)
 	if err == nil || !IsOutcomeUnconfirmed(err) {
 		t.Fatalf("a timed-out PUT must be unconfirmed, got %v", err)
 	}
@@ -255,5 +251,127 @@ func TestBudgetMicros_SharesTheCreatePathBounds(t *testing.T) {
 		if !ok || reason == "" || strings.Contains(reason, "e+") {
 			t.Errorf("BudgetMicros(%v): reason %q must be a plain client-safe sentence", bad, reason)
 		}
+	}
+}
+
+// scriptedTransport answers the n-th round trip with steps[n] (the last repeats): a status code
+// for an HTTP response, or an error for a transport failure. Used where the second attempt has
+// to fail in a way an httptest server cannot reproduce on demand.
+type scriptedTransport struct {
+	mu    sync.Mutex
+	n     int
+	steps []func(*http.Request) (*http.Response, error)
+}
+
+func (s *scriptedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	s.mu.Lock()
+	step := s.steps[min(s.n, len(s.steps)-1)]
+	s.n++
+	s.mu.Unlock()
+	return step(r)
+}
+
+func (s *scriptedTransport) calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.n
+}
+
+func throttled(r *http.Request) (*http.Response, error) {
+	h := http.Header{}
+	h.Set("Retry-After", "1")
+	return &http.Response{StatusCode: http.StatusTooManyRequests, Header: h, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+// A 429 says nothing about whether the throttled write applied, so ANY failure of the retry is
+// UNCONFIRMED — including one that by itself would be definite (a pre-send dial failure proves
+// only that the RETRY never left; the first attempt may have committed).
+func TestUpdateCampaignBudget_FailureAfterARetried429IsUnconfirmed(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		second        func(*http.Request) (*http.Response, error)
+		wantRetryWrap bool
+	}{
+		{"pre-send dial error", func(*http.Request) (*http.Response, error) {
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+		}, true},
+		{"timeout", func(*http.Request) (*http.Response, error) {
+			return nil, &net.OpError{Op: "read", Net: "tcp", Err: timeoutErr{}}
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &scriptedTransport{steps: []func(*http.Request) (*http.Response, error){throttled, tc.second}}
+			c := NewClient(
+				Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+				AccountConfig{AccountID: "acc1"},
+				WithBaseURL("https://ads-api.x.com"), WithAPIVersion("12"), WithWriteDelay(0),
+				WithHTTPClient(&http.Client{Transport: rt, CheckRedirect: noFollow}),
+			)
+			c.nonceFn = func() string { return "n" }
+			c.timeFn = staticTime
+			err := c.UpdateCampaignBudget(context.Background(), "cmp1", 75000000)
+			if err == nil || !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("a failure after a retried 429 must be unconfirmed, got %v", err)
+			}
+			var retried *retriedUnconfirmedError
+			if got := errors.As(err, &retried); got != tc.wantRetryWrap {
+				t.Errorf("retriedUnconfirmedError present = %v, want %v: %v", got, tc.wantRetryWrap, err)
+			}
+			if n := rt.calls(); n != 2 {
+				t.Errorf("want the 429 retried exactly once, got %d round trip(s)", n)
+			}
+		})
+	}
+}
+
+// The budget parameter rides in the QUERY STRING, so OAuth 1.0a (RFC 5849 §3.4.1.3) requires it
+// in the signature base string. Recompute the signature server-side from what actually arrived:
+// it must verify WITH the query parameter and must NOT verify without it.
+func TestUpdateCampaignBudget_SignatureCoversTheQueryParameter(t *testing.T) {
+	var (
+		mu                   sync.Mutex
+		withQ, withoutQ, got string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		oauth := map[string]string{}
+		for _, part := range strings.Split(strings.TrimPrefix(r.Header.Get("Authorization"), "OAuth "), ", ") {
+			k, v, _ := strings.Cut(part, "=")
+			v, _ = url.QueryUnescape(strings.Trim(v, `"`))
+			oauth[k] = v
+		}
+		sig := oauth["oauth_signature"]
+		delete(oauth, "oauth_signature")
+		var q []oauthParam
+		for k, vs := range r.URL.Query() {
+			for _, v := range vs {
+				q = append(q, oauthParam{name: k, value: v})
+			}
+		}
+		base := "http://" + r.Host + r.URL.EscapedPath()
+		mu.Lock()
+		got = sig
+		withQ = generateOAuthSignature(r.Method, base, oauth, q, "cs", "ats")
+		withoutQ = generateOAuthSignature(r.Method, base, oauth, nil, "cs", "ats")
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	t.Cleanup(srv.Close)
+	c := newToggleTestClient(t, srv.URL)
+	if err := c.UpdateCampaignBudget(context.Background(), "cmp1", 75000000); err != nil {
+		t.Fatalf("UpdateCampaignBudget: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got == "" || got != withQ {
+		t.Fatalf("signature %q does not verify over the request including its query (want %q)", got, withQ)
+	}
+	if got == withoutQ {
+		t.Fatalf("signature verifies WITHOUT the query parameter, so the budget amount is unsigned")
 	}
 }
