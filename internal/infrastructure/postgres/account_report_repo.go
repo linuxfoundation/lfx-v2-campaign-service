@@ -49,9 +49,13 @@ const (
 	// Upsert of the PENDING half only. The conflict arm deliberately names no ready_ column:
 	// a newer submission must leave the last finished report in place, because serving
 	// slightly stale numbers while the next report builds is the whole point of keeping it.
-	// An unconditional overwrite of any earlier pending report is correct too -- the later
-	// submission wins, and the compare-and-set on Complete/Fail stops the earlier one's
-	// collector from clearing it.
+	// The conflict arm applies ONLY when nothing is pending (`WHERE ... pending_report_id IS
+	// NULL`). Two requests that both read "nothing pending" can both submit; an unconditional
+	// overwrite let the later one silently replace the earlier, which was then never polled or
+	// collected -- a Microsoft report build thrown away per extra concurrent viewer. Now the
+	// first mark wins and the loser learns it (applied=false) and adopts the winner's report.
+	// A pending report is only ever cleared by Complete/Fail (including the abandon path), so
+	// this guard never blocks a legitimate replacement.
 	markAccountReportPendingQuery = `INSERT INTO account_monitor_reports
 		(project_id, platform, account_id, days,
 		 pending_report_id, pending_window_start, pending_window_end, pending_submitted_at)
@@ -61,7 +65,8 @@ const (
 			pending_window_start = EXCLUDED.pending_window_start,
 			pending_window_end   = EXCLUDED.pending_window_end,
 			pending_submitted_at = EXCLUDED.pending_submitted_at,
-			updated_at           = now()`
+			updated_at           = now()
+		WHERE account_monitor_reports.pending_report_id IS NULL`
 
 	// Promote a collected report to the ready half and clear the pending half in ONE
 	// statement, gated by `pending_report_id = $5`. That predicate is the compare-and-set the
@@ -76,7 +81,7 @@ const (
 		ready_partial        = $7,
 		ready_window_start   = $8,
 		ready_window_end     = $9,
-		ready_as_of   = $10,
+		ready_as_of          = $10,
 		pending_report_id    = NULL,
 		pending_window_start = NULL,
 		pending_window_end   = NULL,
@@ -116,24 +121,27 @@ func (r *AccountReportRepo) GetAccountReport(ctx context.Context, key model.Acco
 }
 
 // MarkAccountReportPending implements domain.AccountReportRepository.
-func (r *AccountReportRepo) MarkAccountReportPending(ctx context.Context, key model.AccountReportKey, p model.PendingAccountReport) error {
+func (r *AccountReportRepo) MarkAccountReportPending(ctx context.Context, key model.AccountReportKey, p model.PendingAccountReport) (bool, error) {
 	if err := validateAccountReportKey(key); err != nil {
-		return fmt.Errorf("mark account report pending: %w", err)
+		return false, fmt.Errorf("mark account report pending: %w", err)
 	}
 	if p.ReportID == "" {
-		return errors.New("mark account report pending: empty report id")
+		return false, errors.New("mark account report pending: empty report id")
 	}
 	if err := validateReportWindow(p.WindowStart, p.WindowEnd); err != nil {
-		return fmt.Errorf("mark account report pending: %w", err)
+		return false, fmt.Errorf("mark account report pending: %w", err)
 	}
 	if p.SubmittedAt.IsZero() {
-		return errors.New("mark account report pending: zero submitted-at")
+		return false, errors.New("mark account report pending: zero submitted-at")
 	}
 	args := append(accountReportKeyArgs(key), p.ReportID, reportDate(p.WindowStart), reportDate(p.WindowEnd), p.SubmittedAt)
-	if _, err := r.db.Exec(ctx, markAccountReportPendingQuery, args...); err != nil {
-		return fmt.Errorf("mark account report pending: %w", err)
+	tag, err := r.db.Exec(ctx, markAccountReportPendingQuery, args...)
+	if err != nil {
+		return false, fmt.Errorf("mark account report pending: %w", err)
 	}
-	return nil
+	// 1 for a fresh insert or a conflict arm that applied; 0 when another report was already
+	// pending and the guarded DO UPDATE declined.
+	return tag.RowsAffected() == 1, nil
 }
 
 // CompleteAccountReport implements domain.AccountReportRepository.

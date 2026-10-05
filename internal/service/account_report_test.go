@@ -69,7 +69,10 @@ type fakeReportStore struct {
 	// replaceBeforeComplete simulates another read submitting a newer report while this one
 	// was checking: the pending id changes just before Complete runs.
 	replaceBeforeComplete string
-	failures              []string
+	// markedBeforeSubmit simulates a concurrent read marking its own submission between this
+	// read's snapshot and its mark.
+	markedBeforeSubmit string
+	failures           []string
 }
 
 func (s *fakeReportStore) GetAccountReport(_ context.Context, key model.AccountReportKey) (*model.AccountReportSnapshot, error) {
@@ -84,12 +87,19 @@ func (s *fakeReportStore) GetAccountReport(_ context.Context, key model.AccountR
 	return &cp, nil
 }
 
-func (s *fakeReportStore) MarkAccountReportPending(_ context.Context, key model.AccountReportKey, p model.PendingAccountReport) error {
+func (s *fakeReportStore) MarkAccountReportPending(_ context.Context, key model.AccountReportKey, p model.PendingAccountReport) (bool, error) {
+	if s.markedBeforeSubmit != "" && s.snap != nil && s.snap.Pending == nil {
+		// A concurrent read's submission lands between this read's snapshot and its mark.
+		s.snap.Pending = &model.PendingAccountReport{ReportID: s.markedBeforeSubmit, SubmittedAt: time.Now()}
+	}
 	if s.snap == nil {
 		s.snap = &model.AccountReportSnapshot{Key: key}
 	}
+	if s.snap.Pending != nil {
+		return false, nil
+	}
 	s.snap.Pending = &p
-	return nil
+	return true, nil
 }
 
 func (s *fakeReportStore) CompleteAccountReport(_ context.Context, _ model.AccountReportKey, r model.ReadyAccountReport) (bool, error) {
@@ -372,5 +382,19 @@ func TestReadReported_DispatcherFetchFailedSurvivesTheMerge(t *testing.T) {
 	got := readReported(t, reportOrch(reader, store))
 	if !got.Rows[0].FetchFailed || got.Rows[0].Spend != 5 {
 		t.Errorf("row = %+v, want FetchFailed kept and spend filled", got.Rows[0])
+	}
+}
+
+// Two reads that both saw "nothing pending" both submit; the FIRST mark wins and the loser
+// adopts it instead of overwriting it, so the winner's report is still collected later.
+func TestReadReported_LosingTheMarkAdoptsTheWinnersReport(t *testing.T) {
+	reader := &fakeReportReader{campaigns: twoCampaigns(), submitID: "mine"}
+	store := &fakeReportStore{snap: &model.AccountReportSnapshot{}, markedBeforeSubmit: "theirs"}
+	got := readReported(t, reportOrch(reader, store))
+	if store.snap.Pending == nil || store.snap.Pending.ReportID != "theirs" {
+		t.Fatalf("saved pending = %+v, want the concurrent read's report kept", store.snap.Pending)
+	}
+	if !got.MetricsPending {
+		t.Error("metrics_pending = false, want the winner's report reported as building")
 	}
 }

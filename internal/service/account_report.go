@@ -241,10 +241,21 @@ func (o *Orchestrator) refreshAccountReport(callCtx, ctx context.Context, reader
 		return
 	}
 	pending := model.PendingAccountReport{ReportID: sub.ReportID, WindowStart: sub.WindowStart, WindowEnd: sub.WindowEnd, SubmittedAt: now}
-	if merr := store.MarkAccountReportPending(callCtx, key, pending); merr != nil {
+	applied, merr := store.MarkAccountReportPending(callCtx, key, pending)
+	if merr != nil {
 		// The report is building on the platform but nothing here remembers it, so it will
 		// never be collected; the next read submits again. Costly only in report builds.
 		slog.WarnContext(ctx, "account monitor: could not save a submitted report; it will not be collected", "platform", key.Platform, "project_id", key.ProjectID, "error", merr)
+		return
+	}
+	if !applied {
+		// A concurrent read marked its own submission first. Keeping that one (rather than
+		// overwriting it) is what stops a report from being built and never collected; this
+		// read's submission is the one left uncollected, at most one per race. The response
+		// reports the winner as building.
+		if latest, gerr := store.GetAccountReport(callCtx, key); gerr == nil && latest.Pending != nil {
+			snap.Pending = latest.Pending
+		}
 		return
 	}
 	snap.Pending = &pending

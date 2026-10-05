@@ -53,7 +53,7 @@ func TestLiveAccountReportRoundTrip(t *testing.T) {
 		WindowEnd:   reportDay(2026, 10, 5),
 		SubmittedAt: submitted,
 	}
-	require.NoError(t, repo.MarkAccountReportPending(ctx, key, p1))
+	requireMarked(t)(repo.MarkAccountReportPending(ctx, key, p1))
 	snap, err := repo.GetAccountReport(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, key, snap.Key)
@@ -114,7 +114,7 @@ func TestLiveAccountReportRoundTrip(t *testing.T) {
 
 	// Submit R2 while R1 is ready -> ready preserved, pending R2.
 	p2 := model.PendingAccountReport{ReportID: "r2", WindowStart: reportDay(2026, 9, 7), WindowEnd: reportDay(2026, 10, 6), SubmittedAt: submitted.Add(time.Hour)}
-	require.NoError(t, repo.MarkAccountReportPending(ctx, key, p2))
+	requireMarked(t)(repo.MarkAccountReportPending(ctx, key, p2))
 	snap, err = repo.GetAccountReport(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, before.Ready, snap.Ready, "a new submission must leave the ready half untouched")
@@ -165,7 +165,7 @@ func TestLiveAccountReportZeroRowsStoresEmptyArray(t *testing.T) {
 	key := accountReportKey(t, 7)
 
 	at := time.Date(2026, 10, 5, 9, 0, 0, 0, time.UTC)
-	require.NoError(t, repo.MarkAccountReportPending(ctx, key, model.PendingAccountReport{
+	requireMarked(t)(repo.MarkAccountReportPending(ctx, key, model.PendingAccountReport{
 		ReportID: "z1", WindowStart: reportDay(2026, 9, 29), WindowEnd: reportDay(2026, 10, 5), SubmittedAt: at,
 	}))
 	applied, err := repo.CompleteAccountReport(ctx, key, model.ReadyAccountReport{
@@ -241,7 +241,7 @@ func TestLiveAccountReportRejectsEmptyReportID(t *testing.T) {
 	key := accountReportKey(t, 14)
 	at := time.Date(2026, 10, 5, 9, 0, 0, 0, time.UTC)
 
-	require.Error(t, repo.MarkAccountReportPending(ctx, key, model.PendingAccountReport{
+	requireMarkErr(t)(repo.MarkAccountReportPending(ctx, key, model.PendingAccountReport{
 		WindowStart: reportDay(2026, 9, 22), WindowEnd: reportDay(2026, 10, 5), SubmittedAt: at,
 	}))
 	_, err := repo.CompleteAccountReport(ctx, key, model.ReadyAccountReport{
@@ -252,4 +252,47 @@ func TestLiveAccountReportRejectsEmptyReportID(t *testing.T) {
 	require.Error(t, err)
 	_, err = repo.GetAccountReport(ctx, key)
 	require.ErrorIs(t, err, domain.ErrNotFound, "rejected writes must not have created a row")
+}
+
+func requireMarked(t *testing.T) func(bool, error) {
+	t.Helper()
+	return func(applied bool, err error) {
+		t.Helper()
+		require.NoError(t, err)
+		require.True(t, applied, "the mark should have applied")
+	}
+}
+
+func requireMarkErr(t *testing.T) func(bool, error) {
+	t.Helper()
+	return func(_ bool, err error) {
+		t.Helper()
+		require.Error(t, err)
+	}
+}
+
+// A second mark while a report is already pending declines and leaves the first in place, so
+// the first submission is still collected. Clearing the pending half (here by completing it)
+// lets the next mark apply.
+func TestLiveAccountReportMarkDoesNotReplaceAPendingReport(t *testing.T) {
+	ctx := context.Background()
+	repo := postgres.NewAccountReportRepo(&postgres.Pool{Pool: dbtest.Pool(t)})
+	key := model.AccountReportKey{ProjectID: dbtest.UniqueID(t, "proj"), Platform: model.ProviderMicrosoftAds, AccountID: "123", Days: 7}
+	day := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+	mk := func(id string) model.PendingAccountReport {
+		return model.PendingAccountReport{ReportID: id, WindowStart: day.AddDate(0, 0, -6), WindowEnd: day, SubmittedAt: time.Now()}
+	}
+	requireMarked(t)(repo.MarkAccountReportPending(ctx, key, mk("first")))
+
+	applied, err := repo.MarkAccountReportPending(ctx, key, mk("second"))
+	require.NoError(t, err)
+	require.False(t, applied, "a second mark must not replace a pending report")
+	snap, err := repo.GetAccountReport(ctx, key)
+	require.NoError(t, err)
+	require.Equal(t, "first", snap.Pending.ReportID)
+
+	done, err := repo.CompleteAccountReport(ctx, key, model.ReadyAccountReport{ReportID: "first", WindowStart: day.AddDate(0, 0, -6), WindowEnd: day, AsOf: time.Now()})
+	require.NoError(t, err)
+	require.True(t, done)
+	requireMarked(t)(repo.MarkAccountReportPending(ctx, key, mk("third")))
 }

@@ -15,17 +15,18 @@ import (
 //
 // The pending and ready halves are written by separate, single-statement operations, and
 // completing or failing a report is a compare-and-set on its report id. Two requests for the
-// same account can race — both may submit, and the later submission wins the pending slot — and
-// the compare-and-set is what stops a request that collected an OLDER report from clearing the
-// newer one's pending marker. Nothing here holds a lock across a platform call.
+// same account can race — both may submit, and the FIRST mark wins the pending slot (the loser
+// adopts it) — and the compare-and-set on complete/fail is what stops a request that collected
+// an OLDER report from clearing a newer one's pending marker. Nothing here holds a lock across a platform call.
 type AccountReportRepository interface {
 	// GetAccountReport returns the snapshot for key, or ErrNotFound when nothing was ever
 	// saved for it.
 	GetAccountReport(ctx context.Context, key model.AccountReportKey) (*model.AccountReportSnapshot, error)
 	// MarkAccountReportPending records a newly submitted report as the key's pending one,
-	// creating the row if needed. It replaces any earlier pending report and leaves the ready
-	// half untouched.
-	MarkAccountReportPending(ctx context.Context, key model.AccountReportKey, p model.PendingAccountReport) error
+	// creating the row if needed, but ONLY when no report is already pending: applied=false
+	// means a concurrent request marked its own submission first, and the caller should adopt
+	// that one rather than replace it. The ready half is never touched.
+	MarkAccountReportPending(ctx context.Context, key model.AccountReportKey, p model.PendingAccountReport) (applied bool, err error)
 	// CompleteAccountReport stores r as the key's ready report and clears the pending half,
 	// but only if the pending report is still r.ReportID. applied=false means a newer
 	// submission replaced it meanwhile (or the row is gone), and nothing was written.
