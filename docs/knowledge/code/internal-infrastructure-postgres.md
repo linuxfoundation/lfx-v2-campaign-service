@@ -941,6 +941,19 @@ wrong destination. A foundation with no HubSpot connection of its own now reache
 on every audience build and email dispatch, which after the fallback change is the ordinary case
 rather than the exception.
 
+**Migration 000035** creates `account_monitor_reports`, the saved-report store behind the
+report-backed account monitor (Microsoft; see
+[Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md#microsoft-a-report-backed-monitor)).
+One row per (project_id, platform, account_id, days), with a READY half (the last finished
+report, served while the next builds) and a PENDING half (a report building upstream); each
+half is all-or-nothing by CHECK, and `ready_rows` must be a JSON array. A NEW table, so
+expand-only and safe for the N-1 binary; no FK (connections are one table per provider) and
+no `requiredIndexes` entry (its uniqueness is the PRIMARY KEY, not an index standing in for a
+constraint). `AccountReportRepo` writes each half with one statement, and Complete/Fail are a
+compare-and-set on `pending_report_id`, so a request that collected an older report cannot
+clear a newer one's pending marker. A finished report with no rows is stored as `[]`, which
+is "nothing served", not "no report". The down migration only discards cached platform data.
+
 **Migration 000034** adds `as_user_id` to `twitter_ads_connections`: the promotable X handle
 this connection's nullcast tweets are authored UNDER. It is on the CONNECTION rather than the
 campaign because it answers an authorization question, and the campaign config is caller JSON —
