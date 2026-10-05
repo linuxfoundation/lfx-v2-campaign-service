@@ -4,59 +4,55 @@
 package rules
 
 import (
+	"math"
 	"sort"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// The account-monitor pacing ladder, shared by all four EvaluateXMonitor loops.
+// The account-monitor pacing ladder is AccountMonitorLadder (50/90/100) in ladder.go, placed by
+// the same PacingLadder.Label the brief view uses with BriefViewLadder.
 //
-// These four used to be four private copies — googlePacing*, linkedinPacing*, metaPacing* and
-// redditPacing* — carrying identical numbers under names that disagreed about what the numbers
-// MEANT: Google called its 100 "overspending" and its 90 "constrainedFrom", while the other
-// three called 100 "constrained" and 90 "normal". Same ladder, four vocabularies, so the copies
-// read as four different rules and any future edit to one looked local.
+// These monitors used to carry four private copies — googlePacing*, linkedinPacing*, metaPacing*
+// and redditPacing* — carrying identical numbers under names that disagreed about what the
+// numbers MEANT: Google called its 100 "overspending" and its 90 "constrainedFrom", while the
+// other three called 100 "constrained" and 90 "normal". Same ladder, four vocabularies, so the
+// copies read as four different rules and any future edit to one looked local. They became one
+// const block and switch here, and that switch then became AccountMonitorLadder, so the ladder
+// arithmetic now exists once for both read paths.
 //
 // On the BFF side the split is real and is what linuxfoundation/lfx-self-serve#3019 records:
 // meta-ads.service.ts and linkedin-ads.service.ts read the shared CAMPAIGN_PACING_THRESHOLDS,
 // while campaign-metrics.service.ts (Google) and reddit-ads.service.ts hardcode the same numbers
 // locally, so an edit to the shared constant moves two platforms and silently leaves two behind.
-// The port copied that shape faithfully, private const block and all. One ladder here is the fix:
-// the four now cannot diverge, in either direction, by accident.
-//
-// Named for the boundary each one IS, not for the band it happens to gate:
-const (
-	// monitorPacingUnderspendingBelow is the floor: under half the prorated plan, a campaign is
-	// not delivering the budget it was given.
-	monitorPacingUnderspendingBelow = 50
-	// monitorPacingHealthyTo is the top of the healthy band, INCLUSIVE: at exactly 90 a campaign
-	// is still normal, above it it is constrained. Note this sits BELOW plan — a campaign at 95%
-	// of its prorated budget is already reported as constrained.
-	monitorPacingHealthyTo = 90
-	// monitorPacingOverspendingAbove is the top of the constrained band, INCLUSIVE: exactly on
-	// plan (100) is constrained, not overspending. Only running ahead of plan is overspend.
-	monitorPacingOverspendingAbove = 100
-)
 
-// pacingLabelFor places a prorated spend percentage on the ladder above.
+// pacingLabelFor places a prorated spend percentage on AccountMonitorLadder.
 //
 // It answers for the NUMBER only. Whether a campaign has a pacing figure worth placing at all is
 // each platform's own question — the guards differ because the platforms report budget
 // differently, not because the bands do — so a caller with no trustworthy budget must not reach
 // here at all. See each EvaluateXMonitor for the guard it applies first.
 //
-// This is deliberately NOT ComputePacing/Thresholds from pacing.go. That path is the
-// single-campaign brief view and runs a different ladder (50/100/130, Constrained as inclusive
-// top); routing the account-monitor path through it would move every platform's alerting bands
-// as a side effect of a refactor. Unifying the two is its own decision, tracked separately.
+// Deliberately AccountMonitorLadder, NOT BriefViewLadder: which is correct is open (D2), and
+// routing the account-monitor path through the brief view's ladder would move every platform's
+// alerting bands as a side effect of a refactor.
 func pacingLabelFor(pct float64) model.MonitorPacingLabel {
-	switch {
-	case pct < monitorPacingUnderspendingBelow:
+	// NaN is normal on this path, as it always was: the former switch tested `<` and two `>`
+	// comparisons, all false for NaN, and fell through to its normal default. PacingLadder.Label
+	// tests `<=` and falls through to overspending instead, so without this guard a NaN spend
+	// reported by a platform (math.Round keeps NaN) would turn from "normal" into an
+	// "overspending" label and its action item. Kept as found; whether NaN should reach the
+	// ladder at all is a separate question.
+	if math.IsNaN(pct) {
+		return model.MonitorPacingNormal
+	}
+	switch AccountMonitorLadder.Label(pct) {
+	case PacingUnderspending:
 		return model.MonitorPacingUnderspending
-	case pct > monitorPacingOverspendingAbove:
-		return model.MonitorPacingOverspending
-	case pct > monitorPacingHealthyTo:
+	case PacingConstrained:
 		return model.MonitorPacingConstrained
+	case PacingOverspending:
+		return model.MonitorPacingOverspending
 	default:
 		return model.MonitorPacingNormal
 	}
