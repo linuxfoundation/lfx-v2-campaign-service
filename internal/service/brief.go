@@ -235,6 +235,7 @@ func campaignDoc(c *briefs.Campaign) indexer.CampaignDoc {
 		PlatformCampaignID: derefStr(c.PlatformCampaignID),
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
+		SlotVersion:        c.SlotVersion,
 		Version:            c.Version,
 	}
 }

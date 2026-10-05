@@ -14,7 +14,9 @@ its opaque name suffix (`brief-id-2`) because it treats a matching name as the s
 slot 1 names are unchanged. Every other provider also reuses or collides on a name that does not
 vary per slot yet, so `new_version` is allowlisted to Microsoft and refused with a 400 elsewhere.
 Google and LinkedIn belong to the Google-readiness workstream and are left to it. `Campaign`
-responses carry `slot_version`.
+responses carry `slot_version`, and so does the indexed `CampaignDoc` — lists and revision
+history come from the Query Service, where two live campaigns on one slot would otherwise read
+as duplicates.
 
 **Expand/contract.** `000022`'s three-column index stays for this release, so the N-1 binary
 keeps its serialization during the rollout. While it exists, a `new_version` claim on an

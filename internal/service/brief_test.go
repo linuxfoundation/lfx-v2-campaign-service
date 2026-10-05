@@ -2048,12 +2048,14 @@ func TestIndexedDocsUseSnakeCase(t *testing.T) {
 	pcid := "pc-9"
 	raw, err = json.Marshal(campaignDoc(&briefs.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: "hubspot",
-		PlatformCampaignID: &pcid, CampaignName: "n", Status: "created", Version: 1,
+		PlatformCampaignID: &pcid, CampaignName: "n", Status: "created", SlotVersion: 2, Version: 1,
 	}))
 	if err != nil {
 		t.Fatalf("marshal campaign doc: %v", err)
 	}
-	for _, want := range []string{`"project_id":"cncf"`, `"brief_id":"b1"`, `"platform_campaign_id":"pc-9"`, `"campaign_name":"n"`} {
+	// slot_version is indexed: lists come from the Query Service, and without it two live
+	// campaigns on one slot (a first and a new_version second) would read as duplicates.
+	for _, want := range []string{`"project_id":"cncf"`, `"brief_id":"b1"`, `"platform_campaign_id":"pc-9"`, `"campaign_name":"n"`, `"slot_version":2`} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("campaign doc missing %s\ngot: %s", want, raw)
 		}
