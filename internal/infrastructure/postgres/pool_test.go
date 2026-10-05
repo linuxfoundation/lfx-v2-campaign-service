@@ -232,10 +232,10 @@ func TestMigrationIndexOwners_FindsEveryCreatedIndex(t *testing.T) {
 
 // TestRequiredIndexes_CoversTheDispatchUniqueIndex pins the membership, not the message.
 //
-// uq_campaigns_brief_platform_variant_live is the sole arbiter of
-// (brief_id, platform, variant) uniqueness
-// once 000014 drops campaigns_brief_id_platform_key, and 000014's guard checks it exactly
-// once — while 000014 runs. An index lost any time afterwards left a schema that booted
+// uq_campaigns_brief_platform_variant_slot_version_live is the sole arbiter of
+// (brief_id, platform, variant, slot_version) uniqueness since 000038 dropped 000022's
+// three-column index (and 000014 / 000024 the constraint and index before that), and a
+// migration-time guard checks an index exactly once — while that migration runs. An index lost any time afterwards left a schema that booted
 // clean with concurrent claims free to double-create paid campaigns. Membership in
 // requiredIndexes is what makes every later boot re-check it, and the DEFINITION is
 // checked rather than the name because 000013 creates it with IF NOT EXISTS: any index
@@ -243,7 +243,7 @@ func TestMigrationIndexOwners_FindsEveryCreatedIndex(t *testing.T) {
 // healthy (TestMigration000014_GuardChecksIndexDefinition records the PostgreSQL 16.10 run
 // where a same-named NON-unique index passed the name-only form of 000014's own guard).
 func TestRequiredIndexes_CoversTheDispatchUniqueIndex(t *testing.T) {
-	const dispatchUnique = "uq_campaigns_brief_platform_variant_live"
+	const dispatchUnique = "uq_campaigns_brief_platform_variant_slot_version_live"
 
 	var got *requiredIndex
 	for i, ri := range requiredIndexes {
@@ -252,14 +252,22 @@ func TestRequiredIndexes_CoversTheDispatchUniqueIndex(t *testing.T) {
 		}
 	}
 	require.NotNilf(t, got, "%s is not in requiredIndexes: nothing re-checks the only "+
-		"index enforcing dispatch uniqueness after 000014 drops the constraint", dispatchUnique)
+		"index enforcing dispatch uniqueness after 000038 drops the three-column one", dispatchUnique)
+	// And the index 000038 drops must be GONE from the list: requiredIndexes fails boot when a
+	// member is missing, so leaving it here would turn the contract migration into a
+	// service that cannot start.
+	for _, ri := range requiredIndexes {
+		assert.NotEqualf(t, "uq_campaigns_brief_platform_variant_live", ri.name,
+			"000038 drops %s, so requiring it would fail every boot after that migration", ri.name)
+	}
 
 	assert.Equal(t, "campaigns", got.table)
 	assert.True(t, got.unique, "a non-unique index of this name arbitrates nothing")
 	// (brief_id, platform, VARIANT) since 000022 — Google's Search and Demand Gen are
 	// separate campaigns under one brief, and keying on the pair alone made the second
-	// dispatch read the first's row and report a false success.
-	assert.Equal(t, []string{"brief_id", "platform", "variant"}, got.keys)
+	// dispatch read the first's row and report a false success — and SLOT_VERSION since
+	// 000037, so a deliberate second campaign on a slot is not mistaken for a retry.
+	assert.Equal(t, []string{"brief_id", "platform", "variant", "slot_version"}, got.keys)
 	// Character-identical to the deparsed form 000023's guard compares against. Two
 	// checks on one definition are only two checks while they agree on what it is.
 	assert.Equal(t, "(status <> 'deleted'::text)", got.predicate)

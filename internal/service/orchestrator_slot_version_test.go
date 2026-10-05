@@ -145,32 +145,6 @@ func TestOrchestrator_NewVersionDoesNotBuildOnAnUnfinishedCampaign(t *testing.T)
 	}
 }
 
-// While 000022's one-campaign-per-slot index is still in place (the release that ships
-// 000037), the second campaign cannot be claimed. That must surface as an explicit refusal —
-// never as a reuse of the first campaign, which is the bug — and nothing may be dispatched.
-func TestOrchestrator_NewVersionIsRefusedDuringTheExpandPhase(t *testing.T) {
-	jobs := newFakeJobRepo()
-	camps := completedSlot1()
-	camps.legacySlotIndex = true
-	disp := &slotRecordingDispatcher{}
-	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
-
-	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
-
-	if j.Status != model.JobFailed {
-		t.Errorf("status = %s, want failed", j.Status)
-	}
-	if got := disp.seen(); len(got) != 0 {
-		t.Fatalf("dispatcher called with slot versions %v, want no call", got)
-	}
-	if !strings.Contains(string(j.Result), "not available yet") {
-		t.Errorf("result = %s, want the not-available-yet refusal", j.Result)
-	}
-	if strings.Contains(string(j.Result), "pc-first") {
-		t.Errorf("result = %s, must not report the first campaign as the second", j.Result)
-	}
-}
-
 // Releasing a slot-2 claim after a pre-create failure must free slot 2 only. The first
 // campaign stays live and is the latest again, so the next plain retry reuses it. (An
 // AMBIGUOUS failure retains the slot-2 claim instead, exactly as it would for slot 1.)

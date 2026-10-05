@@ -935,9 +935,9 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 	// checking a guessed slot earlier refused a Demand Gen adoption onto a brief that merely
 	// had a Search campaign, which the insert would have accepted.
 	//
-	// The insert remains the authority — its partial unique index is what actually arbitrates
-	// — so this is a deterministic 409 in place of a generic unique-violation, not the
-	// guarantee itself.
+	// The repository remains the authority — it re-checks the slot under a per-slot lock it
+	// shares with the dispatch claim, in the insert's own transaction — so this is an early
+	// 409, not the guarantee itself.
 	if _, cerr := campaignRepo.GetCampaignByPlatform(ctx, p.ProjectID, p.BriefID, platform, ref.Variant); cerr == nil {
 		return nil, &briefs.ConflictError{Code: "409", Message: "this brief already has a live campaign on that platform"}
 	} else if !errors.Is(cerr, domain.ErrNotFound) {

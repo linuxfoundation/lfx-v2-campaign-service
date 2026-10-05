@@ -1648,15 +1648,6 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// platform). Exactly one worker across all replicas wins (the unique index
 	// arbitrates) — no held connection, no blocking lock.
 	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, variant, slotVersion, jobID, by)
-	if errors.Is(err, domain.ErrSlotVersionUnavailable) {
-		// Expected until the release after 000037 drops the old one-campaign-per-slot index,
-		// which still rejects the second campaign. Nothing was written or created, so this
-		// is a plain refusal rather than a fault.
-		slog.WarnContext(ctx, "new campaign version refused: the schema still allows one live campaign per slot",
-			"platform", p, "job_id", jobID, "project_id", brief.ProjectID, "slot_version", slotVersion)
-		res.Error = "creating another campaign on this platform for the same brief is not available yet"
-		return res
-	}
 	if err != nil {
 		slog.ErrorContext(ctx, "claim dispatch failed", "platform", p, "job_id", jobID, "error", err)
 		res.Error = "could not claim campaign dispatch"

@@ -177,16 +177,38 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `uq_campaigns_brief_platform_variant_slot_version_live` as their `ON CONFLICT` arbiter;
   `GetCampaignByPlatform` returns the slot's LATEST live row (`ORDER BY slot_version DESC
   LIMIT 1`), and the claim reads back its own slot version. `000022`'s three-column index
-  stays for one release (expand/contract), and while it does a claim for `slot_version` 2
-  violates it — not the arbiter, so `DO NOTHING` does not apply — and `ClaimCampaignDispatch`
-  classifies that `23505` as `domain.ErrSlotVersionUnavailable` — for slot versions above 1
-  only. Postgres pre-checks only the arbiter, so CONCURRENT slot-1 claims can all pass it and
-  the losers then hit `23505` on the legacy index; at slot 1 that is a lost race and is answered
-  like the arbiter conflict (not claimed, winner's row), pinned live by
-  `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`. `AdoptCampaign` classifies `23505` by
-  index name for the same reason: the legacy slot index means `ErrConflict`, only
-  `uq_campaigns_platform_campaign_live` means `ErrPlatformCampaignAlreadyBound`. Both indexes are in
-  `requiredIndexes` until the follow-up release drops the narrower one.
+  stayed for one release (expand/contract) and refused a second live row per slot; `000038`
+  (the contract step, `DROP INDEX CONCURRENTLY`, alone in its file) drops it and
+  `requiredIndexes` lost its entry, so a `new_version` claim for `slot_version` 2 now succeeds
+  and `domain.ErrSlotVersionUnavailable` is gone. `000038`'s down re-creates the index exactly
+  as `000022` did and FAILS once any slot holds two live campaigns — which one stays live is a
+  data decision.
+
+  **Per-slot advisory lock.** With the three-column index gone, nothing in the schema says
+  "an adopt binds only an EMPTY slot": adopt always writes `slot_version` 1, so its
+  `ON CONFLICT` arm cannot see a live version 2, and an adopt racing a `new_version` claim did
+  not conflict on any index. So `ClaimCampaignDispatch` (now a short transaction),
+  `UpsertCampaign` and `AdoptCampaign` each take
+  `pg_advisory_xact_lock(<'slot' namespace>, hashtext(brief_id::uuid::text|platform|variant))`
+  before writing, and `AdoptCampaign` then checks for ANY live row on the slot
+  (`slotLiveRowExistsQuery`) and returns `ErrConflict` if one exists. The lock is held to
+  COMMIT and READ COMMITTED takes a fresh snapshot per statement, so the adopt's check sees
+  everything an earlier holder wrote. Adopt takes the slot lock BEFORE its brief `FOR UPDATE`:
+  the claim's INSERT takes `FOR KEY SHARE` on the brief through the FK, and the reverse order
+  deadlocks (Postgres aborts one with `40P01` — observed live with the adopt's lock removed).
+  The two-int lock form keeps these keys out of the bigint space `hashCampaignID`'s session
+  locks use; a hash collision between two slots only serializes them. Nothing does platform I/O
+  under the lock. Residual, by design: an adopt that commits FIRST on a slot whose only campaign
+  was just deleted, followed by a `new_version` claim computed from the pre-delete read, leaves
+  the adopted version 1 plus version 2 — ordered, distinct versions, which is what
+  `new_version` asks for. The N-1 binary takes no lock, so during the rolling deploy that
+  ships `000038` the old guarantee is only the four-column index. `AdoptCampaign` still
+  classifies `23505` by index name: only `uq_campaigns_platform_campaign_live` means
+  `ErrPlatformCampaignAlreadyBound`. Pinned live by `TestLiveNewVersionCreatesSlotVersion2`,
+  `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`, `TestLiveConcurrentNewVersionClaims`,
+  `TestLiveConcurrentClaimAndAdoptLeaveOneLiveRow`,
+  `TestLiveAdoptRefusesASlotWhoseOnlyLiveCampaignIsALaterVersion` and
+  `TestLiveClaimAndAdoptWaitForTheSlotLock`.
 
   **Authoring rule — expand/contract, one release apart.** The general form of the
   constraint `000013`/`000014` had to break: *a migration that removes or narrows something
