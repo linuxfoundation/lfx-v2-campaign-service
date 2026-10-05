@@ -883,7 +883,9 @@ the saved report (see [Microsoft keyword insights](../architecture/microsoft-key
   as quoted `long`s. Never `AccountIds`: `AccountThroughAdGroupReportScope` is documented as the
   UNION of its elements, so adding the account would read every campaign on it. An empty scope,
   more than `MaxKeywordReportCampaigns` (300, the documented `Campaigns` ceiling) or a non-id is
-  refused before any request (`ErrKeywordReportScope`). Columns: `CampaignId`, `CampaignName`,
+  refused before any request (`ErrKeywordReportScope`; `ValidateKeywordReportCampaignID` is the
+  exported id check the dispatcher runs first). A 2027 scope rejection wraps
+  `ErrKeywordReportScopeRejected` so the caller can treat it as permanent. Columns: `CampaignId`, `CampaignName`,
   `AdGroupId`, `AdGroupName`, `KeywordId`, `Keyword`, `BidMatchType`, `KeywordStatus`,
   `QualityScore`, `Impressions`, `Clicks`, `Spend`, `ConversionsQualified` — not the deprecated
   `Conversions`, not `DeliveredMatchType` (it splits a keyword per query), and not `Ctr` /

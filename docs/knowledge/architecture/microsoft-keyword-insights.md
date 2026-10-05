@@ -27,9 +27,13 @@ reports `--`. The envelope repeats Google's four fields and adds three:
 - `conversions_complete` — false when Microsoft left a row's `ConversionsQualified` blank
   (typically no Universal Event Tracking); those rows carry `conversions: 0`, which is then not a
   measurement. Google's row type requires `conversions`, so the caveat lives on the envelope.
+- `data_incomplete` — the served report's "Potential Incomplete Data" flag: the window's last day
+  may still be aggregating, so counters may still rise.
 
 `window` accepts `today`, `last_7_days`, `last_30_days` (default), `this_month`, `last_month` —
-the windows the Microsoft client maps to a UTC date range; the decoder refuses the other two.
+the windows the Microsoft client maps to a UTC date range; the decoder refuses the other two, and
+the service's own 400 (for a non-HTTP caller) is built from the same set, so it never lists a
+window this read refuses. It deliberately does not go through the Google reads' window helper.
 
 **Audience demographics are not offered.** Microsoft's `AgeGenderAudienceReportRequest` carries
 age and gender but no device dimension, so the age/gender/device answer would need a second
@@ -66,8 +70,16 @@ different type. See [internal/infrastructure/postgres](../code/internal-infrastr
   scope as the UNION of its elements.
 - Provenance: if ANY campaign in scope records a creation account other than the bound one, the
   read is 409 (`ErrCampaignAccountMismatch`) rather than the matching subset.
-- More than 300 campaigns (the documented `Campaigns` ceiling) is 409
-  (`ErrKeywordReportScopeTooLarge`).
+- The scope is de-duplicated (one Microsoft campaign can be held by two live rows — the scope
+  query's DISTINCT includes the result blob and Microsoft has no live-row uniqueness index), with
+  the provenance check still run over every row. More than 300 DISTINCT campaigns (the documented
+  `Campaigns` ceiling) is 409 (`ErrKeywordReportScopeTooLarge`).
+- A stored campaign id that is not a canonical Microsoft id is 409
+  (`ErrKeywordReportScopeInvalid`), refused locally — it would otherwise fail every submission
+  and leave the read silently empty.
+- Microsoft rejecting the campaign-only scope itself (error 2027) is the same rejection on every
+  read, so it is tagged `ErrServiceDefect` (a logged 500) and fails the read, instead of being
+  logged as a transient submit failure forever. The scope is not widened to `AccountIds`.
 - Every refusal happens in `KeywordReportAccount`, before the store or any upstream call.
 - Off unless `MICROSOFT_METRICS_ENABLED=true` (400 "not supported"), like the other Microsoft
   reporting reads, because the Reporting contract has not been exercised against a live account.

@@ -1236,7 +1236,8 @@ var MicrosoftAdsKeywords = Type("microsoft-ads-keywords", func() {
 	})
 	Attribute("metrics_pending", Boolean, "True while a newer Microsoft report is building, so a later read will return newer rows (or the first ones, when metrics_as_of is absent).", func() { Example(false) })
 	Attribute("conversions_complete", Boolean, "False when Microsoft reported no conversion count (a blank ConversionsQualified cell — typically an account without Universal Event Tracking) for at least one returned row; those rows carry conversions 0, which then is NOT a measurement. Do not compute CPA from them.", func() { Example(true) })
-	Required("window", "rows", "row_count", "truncated", "metrics_pending", "conversions_complete")
+	Attribute("data_incomplete", Boolean, "True when Microsoft flagged the served report's data as potentially incomplete (\"Potential Incomplete Data\" — the window's last day, usually today, may still be aggregating): its counters may still rise. False when no report is served.", func() { Example(true) })
+	Required("window", "rows", "row_count", "truncated", "metrics_pending", "conversions_complete", "data_incomplete")
 })
 
 // microsoftKeywordsWindowEnum is the subset of metricsWindowEnum the Microsoft keyword read can

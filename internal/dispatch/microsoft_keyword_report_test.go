@@ -34,6 +34,8 @@ type msKeywordServer struct {
 	submitRaw []byte
 	pollReply string
 	zip       []byte
+	// submitReject, when set, is returned by Submit as a 400 body.
+	submitReject string
 }
 
 func newMSKeywordServer(t *testing.T) (*msKeywordServer, []microsoft.Option) {
@@ -56,6 +58,11 @@ func newMSKeywordServer(t *testing.T) (*msKeywordServer, []microsoft.Option) {
 				t.Errorf("CustomerAccountId = %q, want the connection's 1234567", got)
 			}
 			m.submitRaw = raw
+			if m.submitReject != "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, m.submitReject)
+				return
+			}
 			_, _ = io.WriteString(w, `{"ReportRequestId":"kr-1"}`)
 		case strings.HasSuffix(r.URL.Path, "/GenerateReport/Poll"):
 			_, _ = io.WriteString(w, strings.ReplaceAll(m.pollReply, "%URL%", api.URL+"/download?sig=x"))
@@ -154,6 +161,10 @@ func TestMicrosoftKeywords_RefusalsMakeNoUpstreamCall(t *testing.T) {
 		{"one campaign from another account", model.MetricsWindowLast30Days, "1234567",
 			[]model.ProjectCampaignScope{msScope("111", "1234567"), msScope("222", "7654321")}, domain.ErrCampaignAccountMismatch},
 		{"unsupported window", model.MetricsWindowYesterday, "1234567", own, domain.ErrMetricsWindowUnsupported},
+		{"malformed stored campaign id", model.MetricsWindowLast30Days, "1234567",
+			[]model.ProjectCampaignScope{msScope("111", "1234567"), msScope("0222", "")}, domain.ErrKeywordReportScopeInvalid},
+		{"non-numeric stored campaign id", model.MetricsWindowLast30Days, "1234567",
+			[]model.ProjectCampaignScope{msScope("abc", "")}, domain.ErrKeywordReportScopeInvalid},
 		{"account the connection is not bound to", model.MetricsWindowLast30Days, "7654321", own, domain.ErrAccountNotManagedByConnection},
 	}
 	for _, tc := range cases {
@@ -258,5 +269,68 @@ func TestMicrosoftKeywords_CheckStates(t *testing.T) {
 	}
 	if b.MatchType != "UNKNOWN" || b.Status != "PAUSED" || b.QualityScore != nil {
 		t.Errorf("row 2 = %+v", b)
+	}
+}
+
+// One campaign held by two live rows (the scope query's DISTINCT includes the result blob, and
+// Microsoft has no live-row uniqueness index) is sent ONCE and counted ONCE against the ceiling,
+// while the provenance check still runs over every row.
+func TestMicrosoftKeywords_ScopeIsDeduplicated(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftMetricsEnabled, "true")
+	m, opts := newMSKeywordServer(t)
+	d := msKeywordDispatcher(opts)
+	dup := []model.ProjectCampaignScope{msScope("111", "1234567"), msScope("111", ""), msScope("222", "")}
+	sub, err := d.SubmitKeywordReport(context.Background(), "cncf", model.ProviderMicrosoftAds, "1234567", model.MetricsWindowLast7Days, dup)
+	if err != nil {
+		t.Fatalf("SubmitKeywordReport: %v", err)
+	}
+	if strings.Join(sub.CampaignIDs, ",") != "111,222" {
+		t.Errorf("CampaignIDs = %v, want each campaign once", sub.CampaignIDs)
+	}
+	m.mu.Lock()
+	if n := bytes.Count(m.submitRaw, []byte(`"CampaignId":"111"`)); n != 1 {
+		t.Errorf("campaign 111 sent %d times, want once: %s", n, m.submitRaw)
+	}
+	m.mu.Unlock()
+
+	// The ceiling counts DISTINCT campaigns: 300 distinct plus duplicates is allowed.
+	atCap := make([]model.ProjectCampaignScope, 0, microsoft.MaxKeywordReportCampaigns+10)
+	for i := 1; i <= microsoft.MaxKeywordReportCampaigns; i++ {
+		atCap = append(atCap, msScope(fmt.Sprint(i), ""))
+	}
+	for i := 1; i <= 10; i++ {
+		atCap = append(atCap, msScope(fmt.Sprint(i), ""))
+	}
+	if _, err := d.KeywordReportAccount(context.Background(), "cncf", model.ProviderMicrosoftAds, model.MetricsWindowLast7Days, atCap); err != nil {
+		t.Errorf("300 distinct campaigns with duplicate rows must fit the ceiling: %v", err)
+	}
+
+	// A duplicate row recording ANOTHER account still refuses the read.
+	mixed := []model.ProjectCampaignScope{msScope("111", "1234567"), msScope("111", "7654321")}
+	if _, err := d.KeywordReportAccount(context.Background(), "cncf", model.ProviderMicrosoftAds, model.MetricsWindowLast7Days, mixed); !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Errorf("err = %v, want ErrCampaignAccountMismatch from the duplicate row", err)
+	}
+}
+
+// Microsoft refusing the campaign-only scope (2027) is the same refusal on every read: it is
+// tagged permanent (a service defect), never left as a transient upstream error.
+func TestMicrosoftKeywords_ScopeRejectionIsPermanent(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftMetricsEnabled, "true")
+	for _, body := range []string{`{"Code":2027,"Message":"scope rejected"}`, `{"ErrorCode":"InvalidAccountThruCampaignReportScope"}`} {
+		m, opts := newMSKeywordServer(t)
+		m.submitReject = body
+		_, err := msKeywordDispatcher(opts).SubmitKeywordReport(context.Background(), "cncf", model.ProviderMicrosoftAds, "1234567",
+			model.MetricsWindowLast7Days, []model.ProjectCampaignScope{msScope("111", "")})
+		if !errors.Is(err, domain.ErrServiceDefect) || !errors.Is(err, microsoft.ErrKeywordReportScopeRejected) {
+			t.Errorf("%s: err = %v, want ErrServiceDefect wrapping ErrKeywordReportScopeRejected", body, err)
+		}
+	}
+	// An unrelated rejection stays an ordinary (transient) error.
+	m, opts := newMSKeywordServer(t)
+	m.submitReject = `{"Code":105,"Message":"other"}`
+	_, err := msKeywordDispatcher(opts).SubmitKeywordReport(context.Background(), "cncf", model.ProviderMicrosoftAds, "1234567",
+		model.MetricsWindowLast7Days, []model.ProjectCampaignScope{msScope("111", "")})
+	if err == nil || errors.Is(err, domain.ErrServiceDefect) {
+		t.Errorf("err = %v, want a non-defect error", err)
 	}
 }

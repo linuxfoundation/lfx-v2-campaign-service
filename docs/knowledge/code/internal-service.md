@@ -1829,8 +1829,8 @@ runs `ReadReportedAccountCampaigns`' sequence over `domain.KeywordReportReposito
 report once, submit when nothing is building and the last finished report is missing, older than
 `accountReportFreshFor`, or does NOT cover every campaign the project now owns; same
 `accountsCallTimeout`, same detached `accountReportMarkTimeout` for the mark, same abandon rule.
-A permanent refusal at submission (`isPermanentKeywordRefusal`) fails the read; anything else is
-logged. `mergeKeywordReport` serves the ready report ONLY if it covers the current scope (the
+A permanent refusal at submission (`isPermanentKeywordRefusal`: too-large or invalid scope,
+unsupported window, account mismatch, service defect) fails the read; anything else is logged. `mergeKeywordReport` serves the ready report ONLY if it covers the current scope (the
 response has no partial-coverage field), confined to the scope's campaigns, impressions-descending,
 capped at `keywordReportRowCap` (50, Google's cap) with `Truncated`; cost is `Spend`×10⁶, `Ctr` a
 fraction as on the Google read, and a nil conversion count publishes 0 with
@@ -1840,7 +1840,9 @@ fraction as on the Google read, and a nil conversion count publishes 0 with
 `ConnectionService.GetMicrosoftAdsKeywords` (`connection_keyword_report.go`) maps the read onto
 the Google row type plus `metrics_as_of`, `metrics_pending` and `conversions_complete`; it refuses
 the reserved system scope and windows outside `today|last_7_days|last_30_days|this_month|last_month`
-with 400, and classifies through `classifyInsightsErrorFor` with its own descriptor — the
+with 400 (`resolveMicrosoftKeywordWindow`, whose message is built from `microsoftKeywordWindows`
+— not `resolveInsightsWindow`, whose message lists all seven), publishes `data_incomplete` from
+the report's Partial flag, and classifies through `classifyInsightsErrorFor` with its own descriptor — the
 Google path's `classifyInsightsError` now delegates to it unchanged, and the one new arm
-(`ErrKeywordReportScopeTooLarge` → 409) is unreachable from Google. See
+(`ErrKeywordReportScopeTooLarge` / `ErrKeywordReportScopeInvalid` → 409) are unreachable from Google. See
 [Microsoft keyword insights](../architecture/microsoft-keyword-insights.md).

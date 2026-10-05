@@ -1562,13 +1562,17 @@ three-dimension answer would need a second report and could be half-finished.
   `ErrKeywordInsightsUnsupported`), window (`ErrMetricsWindowUnsupported`), scope ceiling (more
   than 300 campaigns → `domain.ErrKeywordReportScopeTooLarge`), then `resolveOwned` (the
   project's OWN connection; no LF fallback), the strict stored-account check, and the provenance
-  filter `microsoftKeywordScope`: ANY scope entry whose recorded creation account
+  filter `microsoftKeywordScope`, after `microsoftKeywordScopeIDs` (local, no connection: each
+  id must be canonical — else `domain.ErrKeywordReportScopeInvalid` — ids are de-duplicated, and
+  the 300 ceiling applies to the DISTINCT count): ANY scope ROW whose recorded creation account
   (`microsoftCreationAccountID`) is not the bound account refuses the whole read with
   `ErrCampaignAccountMismatch` — `googleAdsScopeForCustomer`'s rule; an unrecorded account is
   "unknown, proceed". Returns the bound account, which keys the saved report.
 - `SubmitKeywordReport` — re-runs the window, connection, bound-account
   (`requireMicrosoftManagedAccount`) and scope checks, then submits for exactly the scope's
-  campaign ids, which it returns so the orchestrator records what the report covers.
+  campaign ids, which it returns so the orchestrator records what the report covers. A 2027
+  scope rejection (`microsoft.ErrKeywordReportScopeRejected`) is tagged `domain.ErrServiceDefect`:
+  permanent, and ours.
 - `CheckKeywordReport` — same connection and account checks, one poll; rows normalised onto the
   published enums (`BidMatchType` → `EXACT`/`PHRASE`/`BROAD`/`UNKNOWN`, `KeywordStatus` →
   `ENABLED`/`PAUSED`/`UNKNOWN`) with `KeywordId` + `AdGroupId` kept as the action handle; a spend

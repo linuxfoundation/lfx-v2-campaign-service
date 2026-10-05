@@ -59,6 +59,22 @@ const MaxKeywordReportCampaigns = 300
 // build a report wider than the caller's own campaigns.
 var ErrKeywordReportScope = errors.New("microsoft-ads: invalid keyword report scope")
 
+// ErrKeywordReportScopeRejected marks Microsoft refusing the campaign-only report scope itself
+// (error 2027 / InvalidAccountThruCampaignReportScope). The request shape is fixed by this client,
+// so the same request is refused every time: the caller must treat it as permanent, never as a
+// transient failure to retry on the next read.
+var ErrKeywordReportScopeRejected = errors.New("microsoft-ads: the campaign-only keyword report scope was rejected")
+
+// ValidateKeywordReportCampaignID reports whether id is a canonical Microsoft campaign id — a
+// positive integer, no leading zero, at most 18 digits — the shape SubmitKeywordReport sends.
+// Exported so the dispatcher can refuse a malformed stored id BEFORE any upstream call.
+func ValidateKeywordReportCampaignID(id string) error {
+	if !monitorAccountIDRE.MatchString(id) {
+		return fmt.Errorf("%w: campaign id %q is not a Microsoft campaign id", ErrKeywordReportScope, clipID(id))
+	}
+	return nil
+}
+
 // ValidateKeywordReportWindow reports whether window has a Microsoft date-range mapping, without
 // a clock. The dispatcher calls it BEFORE resolving a connection so an unsupported window is the
 // same 400 whatever the connection's state.
@@ -134,10 +150,10 @@ func (c *Client) SubmitKeywordReport(ctx context.Context, window model.MetricsWi
 	if err != nil {
 		var ae *apiError
 		if errors.As(err, &ae) && (ae.hasErrorCode(msErrCodeInvalidScope) || ae.hasErrorCode(msErrNameInvalidScope)) {
-			return "", time.Time{}, time.Time{}, fmt.Errorf("submit microsoft keyword report: the campaign-only report scope was REJECTED "+
+			return "", time.Time{}, time.Time{}, fmt.Errorf("submit microsoft keyword report: %w "+
 				"(error %s/%s); it is NOT widened to AccountIds here, because that would read every campaign on the account — see "+
 				"docs/knowledge/log/2026-08-18-LFXV2-3260-scope-union-tradeoff.md: %w",
-				msErrCodeInvalidScope, msErrNameInvalidScope, errors.Unwrap(err))
+				ErrKeywordReportScopeRejected, msErrCodeInvalidScope, msErrNameInvalidScope, errors.Unwrap(err))
 		}
 		return "", time.Time{}, time.Time{}, err
 	}
@@ -154,8 +170,8 @@ func validateKeywordReportScope(ids []string) error {
 		return fmt.Errorf("%w: %d campaigns exceeds the documented limit of %d", ErrKeywordReportScope, len(ids), MaxKeywordReportCampaigns)
 	}
 	for _, id := range ids {
-		if !monitorAccountIDRE.MatchString(id) {
-			return fmt.Errorf("%w: campaign id %q is not a Microsoft campaign id", ErrKeywordReportScope, clipID(id))
+		if err := ValidateKeywordReportCampaignID(id); err != nil {
+			return err
 		}
 	}
 	return nil

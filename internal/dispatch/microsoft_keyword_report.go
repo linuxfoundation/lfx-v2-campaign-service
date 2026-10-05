@@ -77,31 +77,54 @@ func (d *MicrosoftDispatcher) resolveMicrosoftKeywordClient(ctx context.Context,
 	return d.cachedMicrosoftClient(projectID, platform, res, creds, accountID), nil
 }
 
-// microsoftKeywordScope applies the scope rules shared by KeywordReportAccount and
-// SubmitKeywordReport: never empty, at most the documented report-scope ceiling, and ANY entry
-// whose recorded creation account is not accountID refuses the whole read — the rule
-// googleAdsScopeForCustomer applies, for the reason recorded there. An entry with no recorded
-// account is "unknown, proceed" (microsoftCreationAccountID).
-func microsoftKeywordScope(scope []model.ProjectCampaignScope, accountID string) ([]string, error) {
+// microsoftKeywordScopeIDs is the LOCAL half of the scope rules, needing no connection: every
+// entry's id must be a canonical Microsoft campaign id (ErrKeywordReportScopeInvalid — refused
+// here so a malformed stored id never reaches Microsoft, where it would fail every submission),
+// ids are DE-DUPLICATED (the scope query's DISTINCT includes the result blob, and live-row
+// uniqueness on (platform, platform_campaign_id) is enforced for Google only, so one Microsoft
+// campaign can arrive as two rows), and the DISTINCT count must fit the report-scope ceiling.
+// An empty scope is refused: nothing here may build a report wider than the caller's campaigns.
+func microsoftKeywordScopeIDs(scope []model.ProjectCampaignScope) ([]string, error) {
 	if len(scope) == 0 {
 		return nil, fmt.Errorf("read microsoft keyword performance: %w", microsoft.ErrKeywordReportScope)
 	}
-	if len(scope) > microsoft.MaxKeywordReportCampaigns {
-		return nil, fmt.Errorf("read microsoft keyword performance: %d campaigns, at most %d per report: %w",
-			len(scope), microsoft.MaxKeywordReportCampaigns, domain.ErrKeywordReportScopeTooLarge)
-	}
 	ids := make([]string, 0, len(scope))
+	seen := make(map[string]bool, len(scope))
+	for _, s := range scope {
+		if err := microsoft.ValidateKeywordReportCampaignID(s.PlatformCampaignID); err != nil {
+			return nil, fmt.Errorf("read microsoft keyword performance: %w: %w", domain.ErrKeywordReportScopeInvalid, err)
+		}
+		if !seen[s.PlatformCampaignID] {
+			seen[s.PlatformCampaignID] = true
+			ids = append(ids, s.PlatformCampaignID)
+		}
+	}
+	if len(ids) > microsoft.MaxKeywordReportCampaigns {
+		return nil, fmt.Errorf("read microsoft keyword performance: %d campaigns, at most %d per report: %w",
+			len(ids), microsoft.MaxKeywordReportCampaigns, domain.ErrKeywordReportScopeTooLarge)
+	}
+	return ids, nil
+}
+
+// microsoftKeywordScope applies microsoftKeywordScopeIDs and then the provenance rule over EVERY
+// row (not the de-duplicated ids — two rows for one campaign may record different accounts):
+// ANY entry whose recorded creation account is not accountID refuses the whole read, the rule
+// googleAdsScopeForCustomer applies for the reason recorded there. An entry with no recorded
+// account is "unknown, proceed" (microsoftCreationAccountID).
+func microsoftKeywordScope(scope []model.ProjectCampaignScope, accountID string) ([]string, error) {
+	ids, err := microsoftKeywordScopeIDs(scope)
+	if err != nil {
+		return nil, err
+	}
 	mismatched := 0
 	for _, s := range scope {
 		created := microsoftCreationAccountID(&model.Campaign{Result: s.Result})
 		if created != "" && created != accountID {
 			mismatched++
-			continue
 		}
-		ids = append(ids, s.PlatformCampaignID)
 	}
 	if mismatched > 0 {
-		return nil, fmt.Errorf("read microsoft keyword performance: %d of this project's %d campaigns were created under a different ad account than the one its connection is bound to (%s); returning only the rest would report a partial result as complete: %w",
+		return nil, fmt.Errorf("read microsoft keyword performance: %d of this project's %d campaign rows were created under a different ad account than the one its connection is bound to (%s); returning only the rest would report a partial result as complete: %w",
 			mismatched, len(scope), accountID, domain.ErrCampaignAccountMismatch)
 	}
 	return ids, nil
@@ -118,8 +141,7 @@ func (d *MicrosoftDispatcher) KeywordReportAccount(ctx context.Context, projectI
 	if err := microsoft.ValidateKeywordReportWindow(window); err != nil {
 		return "", fmt.Errorf("read microsoft keyword performance: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
 	}
-	if len(scope) > microsoft.MaxKeywordReportCampaigns {
-		_, err := microsoftKeywordScope(scope, "")
+	if _, err := microsoftKeywordScopeIDs(scope); err != nil {
 		return "", err
 	}
 	client, err := d.resolveMicrosoftKeywordClient(ctx, projectID, platform, "")
@@ -147,6 +169,14 @@ func (d *MicrosoftDispatcher) SubmitKeywordReport(ctx context.Context, projectID
 	}
 	reportID, start, end, err := client.SubmitKeywordReport(ctx, window, ids)
 	if err != nil {
+		if errors.Is(err, microsoft.ErrKeywordReportScopeRejected) {
+			// PERMANENT, and ours: Microsoft refused the request SHAPE this client builds
+			// (campaign-only scope, error 2027), so every later read would be refused the same
+			// way. Tagged as a service defect — a logged 500, not a retry-forever empty 200 and
+			// not a 409 asking the caller to fix something they cannot. The scope is deliberately
+			// NOT widened to AccountIds, which would read other projects' campaigns.
+			return nil, fmt.Errorf("submit microsoft keyword report: %w: %w", domain.ErrServiceDefect, err)
+		}
 		return nil, fmt.Errorf("submit microsoft keyword report: %w", err)
 	}
 	return &model.KeywordReportSubmission{ReportID: reportID, WindowStart: start, WindowEnd: end, CampaignIDs: ids}, nil

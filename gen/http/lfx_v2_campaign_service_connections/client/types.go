@@ -864,6 +864,11 @@ type GetMicrosoftAdsKeywordsResponseBody struct {
 	// Tracking) for at least one returned row; those rows carry conversions 0,
 	// which then is NOT a measurement. Do not compute CPA from them.
 	ConversionsComplete *bool `form:"conversions_complete,omitempty" json:"conversions_complete,omitempty" xml:"conversions_complete,omitempty"`
+	// True when Microsoft flagged the served report's data as potentially
+	// incomplete ("Potential Incomplete Data" — the window's last day, usually
+	// today, may still be aggregating): its counters may still rise. False when no
+	// report is served.
+	DataIncomplete *bool `form:"data_incomplete,omitempty" json:"data_incomplete,omitempty" xml:"data_incomplete,omitempty"`
 }
 
 // ResolveGoogleAdsCampaignResponseBody is the type of the
@@ -9554,6 +9559,7 @@ func NewGetMicrosoftAdsKeywordsMicrosoftAdsKeywordsOK(body *GetMicrosoftAdsKeywo
 		MetricsAsOf:         body.MetricsAsOf,
 		MetricsPending:      *body.MetricsPending,
 		ConversionsComplete: *body.ConversionsComplete,
+		DataIncomplete:      *body.DataIncomplete,
 	}
 	v.Rows = make([]*lfxv2campaignserviceconnections.GoogleAdsKeyword, len(body.Rows))
 	for i, val := range body.Rows {
@@ -11773,6 +11779,9 @@ func ValidateGetMicrosoftAdsKeywordsResponseBody(body *GetMicrosoftAdsKeywordsRe
 	}
 	if body.ConversionsComplete == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("conversions_complete", "body"))
+	}
+	if body.DataIncomplete == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("data_incomplete", "body"))
 	}
 	if body.Window != nil {
 		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {

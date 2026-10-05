@@ -864,6 +864,11 @@ type GetMicrosoftAdsKeywordsResponseBody struct {
 	// Tracking) for at least one returned row; those rows carry conversions 0,
 	// which then is NOT a measurement. Do not compute CPA from them.
 	ConversionsComplete bool `form:"conversions_complete" json:"conversions_complete" xml:"conversions_complete"`
+	// True when Microsoft flagged the served report's data as potentially
+	// incomplete ("Potential Incomplete Data" — the window's last day, usually
+	// today, may still be aggregating): its counters may still rise. False when no
+	// report is served.
+	DataIncomplete bool `form:"data_incomplete" json:"data_incomplete" xml:"data_incomplete"`
 }
 
 // ResolveGoogleAdsCampaignResponseBody is the type of the
@@ -5888,6 +5893,7 @@ func NewGetMicrosoftAdsKeywordsResponseBody(res *lfxv2campaignserviceconnections
 		MetricsAsOf:         res.MetricsAsOf,
 		MetricsPending:      res.MetricsPending,
 		ConversionsComplete: res.ConversionsComplete,
+		DataIncomplete:      res.DataIncomplete,
 	}
 	if res.Rows != nil {
 		body.Rows = make([]*GoogleAdsKeywordResponseBody, len(res.Rows))

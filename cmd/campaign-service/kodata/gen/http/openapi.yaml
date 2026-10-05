@@ -9573,6 +9573,7 @@ paths:
                             - truncated
                             - metrics_pending
                             - conversions_complete
+                            - data_incomplete
                 "400":
                     description: Bad Request response.
                     schema:
@@ -15399,6 +15400,10 @@ definitions:
                 type: boolean
                 description: False when Microsoft reported no conversion count (a blank ConversionsQualified cell — typically an account without Universal Event Tracking) for at least one returned row; those rows carry conversions 0, which then is NOT a measurement. Do not compute CPA from them.
                 example: true
+            data_incomplete:
+                type: boolean
+                description: 'True when Microsoft flagged the served report''s data as potentially incomplete ("Potential Incomplete Data" — the window''s last day, usually today, may still be aggregating): its counters may still rise. False when no report is served.'
+                example: true
             metrics_as_of:
                 type: string
                 description: When the Microsoft report these rows come from was requested (not when it was collected, which can be later). Microsoft builds keyword reports asynchronously in minutes, so the service serves the last finished report and builds the next one between requests. ABSENT when no finished report covers every campaign this project now owns — the first read, or the first after a campaign was added — and `rows` is then empty rather than a partial picture.
@@ -15493,6 +15498,7 @@ definitions:
                     - last_month
         example:
             conversions_complete: true
+            data_incomplete: true
             metrics_as_of: "2026-10-05T14:30:00Z"
             metrics_pending: false
             row_count: 50
@@ -15562,6 +15568,7 @@ definitions:
             - truncated
             - metrics_pending
             - conversions_complete
+            - data_incomplete
     NotFoundError:
         title: NotFoundError
         type: object

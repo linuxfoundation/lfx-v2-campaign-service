@@ -228,6 +228,8 @@ func (o *Orchestrator) collectPendingKeywordReport(callCtx, ctx context.Context,
 // dispatcher that raises one only at submission still fails the read rather than logging forever.
 func isPermanentKeywordRefusal(err error) bool {
 	return errors.Is(err, domain.ErrKeywordReportScopeTooLarge) ||
+		errors.Is(err, domain.ErrKeywordReportScopeInvalid) ||
+		errors.Is(err, domain.ErrServiceDefect) ||
 		errors.Is(err, domain.ErrMetricsWindowUnsupported) ||
 		errors.Is(err, ErrCampaignAccountMismatch)
 }
@@ -296,6 +298,7 @@ func mergeKeywordReport(window model.MetricsWindow, snap *model.KeywordReportSna
 	}
 	asOf := r.AsOf
 	out.MetricsAsOf = &asOf
+	out.DataIncomplete = r.Partial
 
 	rows := make([]model.KeywordReportRow, 0, len(r.Rows))
 	for _, row := range r.Rows {

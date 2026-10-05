@@ -105,4 +105,7 @@ type ReportedKeywordRead struct {
 	MetricsAsOf *time.Time
 	// MetricsPending is true while a newer report is building.
 	MetricsPending bool
+	// DataIncomplete is the served report's Partial flag: the platform said its last day may
+	// still be aggregating. False when no report is served.
+	DataIncomplete bool
 }

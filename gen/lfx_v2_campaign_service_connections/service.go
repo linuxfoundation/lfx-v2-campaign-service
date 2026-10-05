@@ -1336,6 +1336,11 @@ type MicrosoftAdsKeywords struct {
 	// Tracking) for at least one returned row; those rows carry conversions 0,
 	// which then is NOT a measurement. Do not compute CPA from them.
 	ConversionsComplete bool
+	// True when Microsoft flagged the served report's data as potentially
+	// incomplete ("Potential Incomplete Data" — the window's last day, usually
+	// today, may still be aggregating): its counters may still rise. False when no
+	// report is served.
+	DataIncomplete bool
 }
 
 // MonitorGoogleAdsAccountPayload is the payload type of the

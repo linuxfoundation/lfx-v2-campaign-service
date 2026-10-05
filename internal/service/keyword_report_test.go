@@ -274,11 +274,18 @@ func TestReadKeywords_PendingStatesAndAbandon(t *testing.T) {
 func TestReadKeywords_RefusalsStopBeforeUpstream(t *testing.T) {
 	for _, refusal := range []error{
 		domain.ErrKeywordInsightsUnsupported, domain.ErrCampaignAccountMismatch,
-		domain.ErrKeywordReportScopeTooLarge, domain.ErrMetricsWindowUnsupported, domain.ErrNotFound,
+		domain.ErrKeywordReportScopeTooLarge, domain.ErrKeywordReportScopeInvalid,
+		domain.ErrMetricsWindowUnsupported, domain.ErrNotFound,
 	} {
 		r := &fakeKeywordReader{accountErr: fmt.Errorf("refused: %w", refusal)}
 		store := &fakeKeywordStore{}
-		_, err := keywordOrch([]string{"111"}, r, store).ReadReportedKeywordPerformance(context.Background(), "cncf", model.ProviderMicrosoftAds, model.MetricsWindowLast30Days)
+		o := keywordOrch([]string{"111"}, r, store)
+		rec := &recordingMetrics{}
+		o.SetMetrics(rec)
+		_, err := o.ReadReportedKeywordPerformance(context.Background(), "cncf", model.ProviderMicrosoftAds, model.MetricsWindowLast30Days)
+		if got := rec.upstreamCalls(); len(got) != 0 {
+			t.Errorf("%v: a local refusal recorded %d upstream calls, want none", refusal, len(got))
+		}
 		if !errors.Is(err, refusal) {
 			t.Errorf("err = %v, want %v", err, refusal)
 		}
@@ -293,9 +300,14 @@ func TestReadKeywords_SubmitErrorDoesNotFailTheReadButPermanentRefusalDoes(t *te
 	if _, err := keywordOrch([]string{"111"}, r, &fakeKeywordStore{}).ReadReportedKeywordPerformance(context.Background(), "cncf", model.ProviderMicrosoftAds, model.MetricsWindowLast30Days); err != nil {
 		t.Errorf("a transient submit error must not fail the read: %v", err)
 	}
-	r = &fakeKeywordReader{account: "123", submitErr: fmt.Errorf("x: %w", domain.ErrCampaignAccountMismatch)}
-	if _, err := keywordOrch([]string{"111"}, r, &fakeKeywordStore{}).ReadReportedKeywordPerformance(context.Background(), "cncf", model.ProviderMicrosoftAds, model.MetricsWindowLast30Days); !errors.Is(err, domain.ErrCampaignAccountMismatch) {
-		t.Errorf("a permanent refusal must fail the read, got %v", err)
+	for _, permanent := range []error{
+		domain.ErrCampaignAccountMismatch, domain.ErrKeywordReportScopeInvalid,
+		domain.ErrKeywordReportScopeTooLarge, domain.ErrServiceDefect,
+	} {
+		r = &fakeKeywordReader{account: "123", submitErr: fmt.Errorf("x: %w", permanent)}
+		if _, err := keywordOrch([]string{"111"}, r, &fakeKeywordStore{}).ReadReportedKeywordPerformance(context.Background(), "cncf", model.ProviderMicrosoftAds, model.MetricsWindowLast30Days); !errors.Is(err, permanent) {
+			t.Errorf("%v: a permanent refusal must fail the read, got %v", permanent, err)
+		}
 	}
 }
 
@@ -346,7 +358,7 @@ func TestGetMicrosoftAdsKeywords_MapsTheSavedReport(t *testing.T) {
 	qs := int64(6)
 	row.QualityScore = &qs
 	store := &fakeKeywordStore{snap: &model.KeywordReportSnapshot{Ready: &model.ReadyKeywordReport{
-		ReportID: "k1", CampaignIDs: []string{"111"}, AsOf: asOf, Rows: []model.KeywordReportRow{row},
+		ReportID: "k1", CampaignIDs: []string{"111"}, AsOf: asOf, Rows: []model.KeywordReportRow{row}, Partial: true,
 	}}}
 	// asOf is far older than accountReportFreshFor, so the read also submits a refresh.
 	got, err := microsoftKeywordService([]string{"111"}, &fakeKeywordReader{account: "123", submitID: "k2"}, store).
@@ -359,6 +371,9 @@ func TestGetMicrosoftAdsKeywords_MapsTheSavedReport(t *testing.T) {
 	}
 	if got.MetricsAsOf == nil || *got.MetricsAsOf != "2026-10-05T14:30:00Z" || !got.MetricsPending {
 		t.Errorf("as_of=%v pending=%v", got.MetricsAsOf, got.MetricsPending)
+	}
+	if !got.DataIncomplete {
+		t.Errorf("data_incomplete must carry the served report's Partial flag")
 	}
 	if got.ConversionsComplete {
 		t.Errorf("conversions_complete must be false when a row's count was not reported")
@@ -374,10 +389,15 @@ func TestGetMicrosoftAdsKeywords_RefusesUnservableWindowsAndSystemScope(t *testi
 	svc := microsoftKeywordService([]string{"111"}, r, &fakeKeywordStore{})
 	for _, w := range []string{"yesterday", "last_14_days", "last_90_days"} {
 		w := w
-		if _, err := svc.GetMicrosoftAdsKeywords(context.Background(), &conn.GetMicrosoftAdsKeywordsPayload{ProjectID: "p", Window: &w}); err == nil {
-			t.Errorf("window %s: want a 400", w)
-		} else if _, ok := err.(*conn.BadRequestError); !ok {
+		_, err := svc.GetMicrosoftAdsKeywords(context.Background(), &conn.GetMicrosoftAdsKeywordsPayload{ProjectID: "p", Window: &w})
+		br, ok := err.(*conn.BadRequestError)
+		if !ok {
 			t.Errorf("window %s: got %T, want 400", w, err)
+			continue
+		}
+		// The message lists ONLY the Microsoft windows — never one this read refuses.
+		if br.Message != "window must be one of: last_30_days, last_7_days, last_month, this_month, today" {
+			t.Errorf("window %s: message = %q", w, br.Message)
 		}
 	}
 	if _, err := svc.GetMicrosoftAdsKeywords(context.Background(), &conn.GetMicrosoftAdsKeywordsPayload{ProjectID: model.SystemProjectID}); err == nil {
@@ -398,6 +418,8 @@ func TestGetMicrosoftAdsKeywords_ClassifiesErrors(t *testing.T) {
 		{domain.ErrNotFound, "404"}, // no connection of the project's own
 		{domain.ErrCampaignAccountMismatch, "409"},
 		{domain.ErrKeywordReportScopeTooLarge, "409"},
+		{domain.ErrKeywordReportScopeInvalid, "409"},
+		{domain.ErrServiceDefect, "500"},
 		{errors.New("boom"), "503"},
 	} {
 		_, err := microsoftKeywordService([]string{"111"}, &fakeKeywordReader{accountErr: fmt.Errorf("x: %w", tc.err)}, &fakeKeywordStore{}).
@@ -410,6 +432,8 @@ func TestGetMicrosoftAdsKeywords_ClassifiesErrors(t *testing.T) {
 			_, ok = err.(*conn.NotFoundError)
 		case "409":
 			_, ok = err.(*conn.ConflictError)
+		case "500":
+			_, ok = err.(*conn.InternalServerError)
 		case "503":
 			var su *conn.ConnServiceUnavailableError
 			su, ok = err.(*conn.ConnServiceUnavailableError)

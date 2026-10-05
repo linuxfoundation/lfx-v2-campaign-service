@@ -5,6 +5,8 @@ package service
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"time"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -33,6 +35,32 @@ var microsoftKeywordWindows = map[model.MetricsWindow]bool{
 	model.MetricsWindowLastMonth:  true,
 }
 
+// resolveMicrosoftKeywordWindow maps the optional window onto the Microsoft subset, defaulting to
+// last_30_days. It does NOT go through resolveInsightsWindow: that helper's 400 lists all seven
+// windows, two of which this read refuses, so a caller would be told `yesterday` is valid and
+// then refused for it. The message here is built from microsoftKeywordWindows itself, sorted, so
+// it can never advertise a window the map does not hold.
+func resolveMicrosoftKeywordWindow(window *string) (model.MetricsWindow, error) {
+	if window == nil {
+		return model.MetricsWindowLast30Days, nil
+	}
+	w := model.MetricsWindow(*window)
+	if !microsoftKeywordWindows[w] {
+		return "", &conn.BadRequestError{Code: "400", Message: microsoftKeywordWindowMessage}
+	}
+	return w, nil
+}
+
+// microsoftKeywordWindowMessage is the 400 text for an unservable window, derived from the map.
+var microsoftKeywordWindowMessage = func() string {
+	names := make([]string, 0, len(microsoftKeywordWindows))
+	for w := range microsoftKeywordWindows {
+		names = append(names, string(w))
+	}
+	sort.Strings(names)
+	return "window must be one of: " + strings.Join(names, ", ")
+}()
+
 // GetMicrosoftAdsKeywords reads Microsoft Advertising keyword performance across the project's
 // OWN campaigns, served from the last finished saved report (Orchestrator.ReadReportedKeywordPerformance).
 //
@@ -43,12 +71,9 @@ func (s *ConnectionService) GetMicrosoftAdsKeywords(ctx context.Context, p *conn
 	if err := rejectSystemScope(p.ProjectID); err != nil {
 		return nil, err
 	}
-	window, err := resolveInsightsWindow(p.Window)
+	window, err := resolveMicrosoftKeywordWindow(p.Window)
 	if err != nil {
 		return nil, err
-	}
-	if !microsoftKeywordWindows[window] {
-		return nil, &conn.BadRequestError{Code: "400", Message: "window must be one of: today, last_7_days, last_30_days, this_month, last_month"}
 	}
 	_, _, orch, err := s.resolveBackendWithOrch(microsoftAdsKeywordInsights.label())
 	if err != nil {
@@ -84,6 +109,7 @@ func (s *ConnectionService) GetMicrosoftAdsKeywords(ctx context.Context, p *conn
 		Truncated:           read.Truncated,
 		MetricsPending:      read.MetricsPending,
 		ConversionsComplete: read.ConversionsComplete,
+		DataIncomplete:      read.DataIncomplete,
 	}
 	if read.MetricsAsOf != nil {
 		asOf := read.MetricsAsOf.UTC().Format(time.RFC3339)
