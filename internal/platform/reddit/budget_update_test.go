@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -194,6 +195,10 @@ func TestUpdateCampaignBudget_OutcomeClassification(t *testing.T) {
 		{"2xx echoing another campaign", http.StatusOK, `{"data":{"id":"t3_x"}}`, true, true},
 		{"2xx echoing another amount", http.StatusOK, `{"data":{"goal_value":2}}`, true, true},
 		{"2xx echoing an unreadable amount", http.StatusOK, `{"data":{"goal_value":"many"}}`, true, true},
+		// A 2xx whose data is not a campaign object says nothing about what was applied.
+		{"2xx whose data is an array", http.StatusOK, `{"data":["MARKER_9f3a"]}`, true, true},
+		{"2xx whose data is a string", http.StatusOK, `{"data":"MARKER_9f3a"}`, true, true},
+		{"2xx whose id is the wrong kind", http.StatusOK, `{"data":{"id":["MARKER_9f3a"]}}`, true, true},
 		{"400 is a definite refusal", http.StatusBadRequest, `{}`, true, false},
 		{"404 is a definite refusal", http.StatusNotFound, `{}`, true, false},
 		{"500 is ambiguous", http.StatusInternalServerError, `{}`, true, true},
@@ -217,6 +222,10 @@ func TestUpdateCampaignBudget_OutcomeClassification(t *testing.T) {
 			}
 			if err != nil && IsOutcomeUnconfirmed(err) != tc.unconfirmed {
 				t.Errorf("IsOutcomeUnconfirmed = %v, want %v: %v", IsOutcomeUnconfirmed(err), tc.unconfirmed, err)
+			}
+			// The decode error is wrapped into the chain; it must carry no upstream value.
+			if err != nil && strings.Contains(err.Error(), "MARKER_9f3a") {
+				t.Errorf("error echoes response content: %v", err)
 			}
 		})
 	}
