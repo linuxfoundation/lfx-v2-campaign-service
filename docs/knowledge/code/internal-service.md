@@ -126,6 +126,22 @@ upstream create, so it fails loud instead. Replacing a brief's
 content resets it to `draft` (re-approval required). Optimistic concurrency is enforced via
 version/If-Match (`428` when missing, `412` on mismatch).
 
+**A deliberate second campaign (`new_version`).** Reuse is right for a retry and wrong for an
+operator who asks for another campaign on a platform the brief already has one on — the service
+used to hand back the first campaign as a success. `create-campaigns` now takes `new_version`,
+threaded as `StartOptions.NewVersion` (`Start` is `StartWithOptions` with the zero value). In
+`dispatchPlatform` the lookup returns the slot's LATEST campaign, and the claim takes a
+`slotVersion`: the latest one's for a retry, `latest+1` when `NewVersion` is set AND the latest
+is complete, and `1` on an empty slot. An UNFINISHED latest campaign is never built on — the
+claim targets its own slot version and gets the skip / reconciliation-required answer a retry
+gets, because a second campaign beside an unresolved one would spend twice. The slot version
+reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). While `000022`'s
+three-column index still exists, the claim returns `domain.ErrSlotVersionUnavailable` and the
+platform result is a plain "not available yet" refusal; nothing is created. `CreateCampaigns`
+refuses `new_version` synchronously (400, before a job exists) for any platform outside
+`model.ProviderSupportsSlotVersions` — today Microsoft only, because the other providers reuse
+campaigns by a name that does not yet vary by slot version (see the dispatch concept).
+
 Dispatch is durable (LFXV2-2665): single-flight per (brief, platform) is
 enforced by an atomic claim — `ClaimCampaignDispatch` does INSERT ... ON CONFLICT
 DO NOTHING of a `pending` campaign row, so exactly one worker across replicas
@@ -781,12 +797,12 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
 - `ErrMonitorDaysInvalid` → **400** — a caller-supplied `days` window, not a stored connection, is
   outside the inclusive `domain.MonitorDaysMin`..`domain.MonitorDaysMax` bound. The service layer's
   own `validateMonitorDays` already rejects this for an HTTP caller before any dispatcher runs, and
-  each of the four account-monitor dispatchers re-checks it themselves too — same defense-in-depth
+  each of the six account-monitor dispatchers re-checks it themselves too — same defense-in-depth
   rationale as `ErrAccountIDMalformed` above, for a non-HTTP caller that bypasses Goa. See
   `domain.ErrMonitorDaysInvalid`'s doc comment.
 - `ErrAccountNotManagedByConnection` → **400** — a caller-supplied account id is well-formed but
   names an account the project's own resolved connection does not manage (answerable by the
-  Reddit, LinkedIn, Meta and Microsoft monitor reads, since a connection is bound to exactly
+  Reddit, LinkedIn, Meta, Microsoft and X monitor reads, since a connection is bound to exactly
   one ad account; Reddit checked it first, and Google Ads is the remaining deliberate gap). Checked before `ErrConnectionNotUsable`
   below: the stored connection is fine here, the REQUEST named the wrong account, so
   `ErrConnectionNotUsable`'s "check that the stored credential is active and valid" message
@@ -1428,7 +1444,8 @@ rollback this endpoint does not have.
 **What is persisted is the REQUESTED amount, not a readback of the applied one** — the dispatcher
 confirms acceptance and does not re-read, so the two can differ by less than the platform's
 smallest settable unit (LinkedIn settles on two decimals, Meta on the account currency's minor
-unit, Google on a micro). That is the same meaning the column already carries, and a sub-unit
+unit, Google on a micro, Microsoft on whatever its own validation of the account currency settles,
+since that amount is sent unrounded). That is the same meaning the column already carries, and a sub-unit
 drift is exactly what the settings readback exists to surface rather than to hide.
 Writing those columns does NOT breach the readback's "never write an observation back" rule: the
 budget columns record what a dispatch ASKED FOR, and a budget change is a new REQUEST, so the
@@ -1489,7 +1506,9 @@ a different category of data from the resource ids these logs carry.
 
 **The `ErrBudgetAmountRejected` arm is the one that returns a SPECIFIC message, and it is
 specific by construction rather than by string-handling.** A platform's own floor — LinkedIn's
-`$10` daily / `$100` lifetime, Meta's one minor unit — has no equivalent at this layer, which
+`$10` daily / `$100` lifetime, Meta's one minor unit, Microsoft's minimum in the account currency
+(stated only by Microsoft's own definite refusal of the mutate, so the platform is still
+unchanged) — has no equivalent at this layer, which
 validates only what is true for every platform at once (finite, `> 0`, `<= 1e9`, `>= half a
 micro`) and deliberately holds no per-platform floor. Without this arm such a refusal fell to the
 default 503, inviting a retry of a request that can never succeed. The adapter therefore hands
@@ -1500,10 +1519,21 @@ appended to the 400. **The rendered error chain is never interpolated into a cli
 wrapped chain would publish whatever an adapter or transport put in it.
 
 **A positive amount that rounds to zero micros is refused 400 here too**, alongside NaN, Inf,
-zero and the ceiling. Every supported platform bills in micros, so an amount under 0.000001 of
-the account's currency rounds to nothing upstream and the adapter refuses it with a bare error
-the switch below can classify only as 503 — an "unconfirmed upstream outcome" answer to a
-request that was never going to succeed, inviting a retry that cannot. The check compares the
+zero and the ceiling. Not every platform bills in micros — Google Ads does, LinkedIn settles on
+whole cents, Meta on the account currency's minor unit — but one micro is the LOOSEST floor any
+of them has, so it is the only floor the contract can state for every platform at once (the
+design's `Minimum` says the same). Two different bounds are in play and they are not the same
+number: the CONTRACT floor is 0.000001 (the design's `Minimum`, enforced by Goa's generated
+decoder, so an HTTP caller below it never reaches this method), while this method's RUNTIME
+cutoff is half a micro, because it compares the ROUNDED value — `math.Round(budget*1e6)` turns
+[0.0000005, 0.000001) into one micro, which Google accepts. Only an amount that rounds to ZERO
+micros reaches this refusal, and only a direct (non-HTTP) caller can send one below the contract
+floor at all; its 400 wording is therefore seen by Go callers, not by the HTTP API, which answers
+with Goa's validation error instead. LinkedIn and Meta already map their own (stricter) floors
+to a 400 with the adapter's reason; Google does not. Its bounds ARE the service's own, so its
+adapter would refuse such an amount with a bare error that the switch below can classify only as
+503. That is an "unconfirmed upstream outcome" answer to a request that was never going to
+succeed, inviting a retry that cannot. The check compares the
 ROUNDED value rather than a literal floor so it stays in step with the adapter's own
 `math.Round`, and it sits with the other validations, ahead of the load, the claim and the live
 settings read: a doomed request must not take the write lock. This floor is also what the
@@ -1746,8 +1776,11 @@ See [internal/service](../../../internal/service).
 ## Report-backed account monitor (`account_report.go`)
 
 `AccountReportReader` is the optional dispatcher capability for a platform whose monitor
-metrics come from an ASYNCHRONOUS report — today Microsoft, whose Reporting service takes
-minutes against a 20s call budget. `Orchestrator.ReadReportedAccountCampaigns` lists the
+metrics come from an ASYNCHRONOUS report — Microsoft, whose Reporting service takes
+minutes against a 20s call budget, and X, whose synchronous stats are capped at 7 days per
+request and share one rate budget across every foundation, so its monitor reads asynchronous
+stats jobs for every window. Both share the one orchestration and the one store below; nothing
+in either is platform-specific. `Orchestrator.ReadReportedAccountCampaigns` lists the
 account's campaigns live, checks a pending report once, submits a new one when nothing is
 building and the last finished report's as-of (its SUBMISSION time) is older than
 `accountReportFreshFor` (30m), abandons one still pending or uncheckable past
@@ -1755,10 +1788,26 @@ building and the last finished report's as-of (its SUBMISSION time) is older tha
 rather than thrown away — and fills metrics from the last finished
 report — all inside ONE `accountsCallTimeout`, because three per-step timeouts could together
 outlast the 60s ingress. Only the live list can fail the call; a check, submit or save error
-is logged and the response serves whatever was saved. State lives in
+is logged and the response serves whatever was saved. The one write that does NOT share the
+call budget is recording a completed submission: `MarkAccountReportPending` (and the lost-race
+re-read after it) runs on `context.WithTimeout(context.WithoutCancel(ctx),
+accountReportMarkTimeout)` — 5s of its own — because a submission can finish with the shared
+budget spent (X's paced job creates take ~1s each), and a report built upstream but never
+recorded would be resubmitted on every read and never collected
+(`TestReadReported_MarkUsesItsOwnBudget`). A submission the dispatcher declines up front for
+lack of budget (`domain.ErrAccountReportBudgetTooShort`) is logged at info as a skip, not a
+failure. `mergeAccountReport` also carries the finished report's calendar window as
+`ReportedAccountRead.MetricsWindowStart/End`, and `monitorReportedAccount`'s evaluate callback
+now receives the whole read, so `MonitorTwitterAdsAccount` evaluates X's rules on the report's
+own account-local days rather than on `time.Now()`; Microsoft's callback still passes only the
+rows and `days`. State lives in
 `domain.AccountReportRepository` (`account_monitor_reports`), late-bound with
 `SetAccountReportStore` through `Container.newOrchestrator`'s parameter so neither
 construction path can forget it. `ConnectionService.monitorReportedAccount` is
 `monitorAccount`'s twin for these platforms — same guards, classification, rules and totals
-(`buildAccountMonitor`) — and adds `metrics_as_of` / `metrics_pending` to the response. See
+(`buildAccountMonitor`) — and adds `metrics_as_of` / `metrics_pending` to the response.
+`MonitorMicrosoftAdsAccount` and `MonitorTwitterAdsAccount` are its two callers, each with its
+own `operation: "account monitor"` descriptor (`microsoftAdsMonitorDiscovery`,
+`twitterAdsMonitorDiscovery`). No new upstream-call operation tokens: X's three calls record as
+`list_account_campaigns` / `submit_account_report` / `check_account_report` like Microsoft's. See
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md#microsoft-a-report-backed-monitor).

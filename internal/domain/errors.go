@@ -131,55 +131,70 @@ var (
 	// ErrToggleUnsupported: a platform dispatcher can return it directly without
 	// importing the orchestration layer.
 	//
-	// Google Ads, LinkedIn and Meta implement the capability today; every other platform
-	// still answers 400. Budget writing is added per platform, and each addition is a
+	// Google Ads, LinkedIn, Meta, Microsoft Advertising and Reddit implement the capability
+	// today; every other platform still answers 400. Budget writing is added per platform, and each addition is a
 	// separate deliberate decision about that platform's budget model — not a gap to be
 	// closed mechanically. The service layer holds NO allowlist, so what a platform
 	// supports is decided solely by whether its dispatcher is a BudgetWriter.
 	ErrBudgetWriteUnsupported = errors.New("budget writes are not supported for this platform")
 
-	// ErrBudgetAmountRejected indicates the requested AMOUNT was refused by the platform
-	// adapter's own validator, before anything was written. The platform may have been
-	// read, but it was never mutated.
+	// ErrBudgetAmountRejected indicates the requested AMOUNT was refused and the platform
+	// was NOT changed: either the platform adapter's own validator refused it before the
+	// mutate (LinkedIn, Meta, Reddit), or the platform itself DEFINITELY refused the mutate on the
+	// amount (Microsoft: CampaignServiceInvalidDailyBudget, or a daily budget below what the
+	// campaign has already spent). The platform may have been read, but it was never
+	// changed. An outcome the platform did not confirm either way is never this sentinel.
 	//
 	// Maps to 400, NOT 503: these are permanent properties of the amount against that
 	// platform's rules — LinkedIn's $10 daily / $100 lifetime minimums, Meta's
-	// one-minor-unit floor in the account's currency — and no retry of the same request
-	// can succeed. The service layer validates the amount it can validate for every
+	// one-minor-unit floor in the account's currency, Microsoft's own minimum in the
+	// account's currency — and no retry of the same request can succeed. The service layer validates the amount it can validate for every
 	// platform (finite, > 0, <= the contract maximum, >= half a micro) but deliberately
 	// holds no per-platform floor, which is exactly the set of refusals this sentinel
 	// carries back. Google Ads needs it least: its adapter's floor is the one the service
-	// already mirrors, so its validator is unreachable through this endpoint.
+	// already mirrors, so its validator is unreachable through this endpoint. Reddit's
+	// bounds (reddit.BudgetMicros: the create path's maximum and a non-zero micro amount)
+	// are likewise the service's own, so its mapping is defense in depth for a non-HTTP
+	// caller.
 	//
-	// The validator's own text is safe to return to the caller: it names the amount and
-	// the platform's published minimum, never upstream account configuration.
+	// The adapter's own text is safe to return to the caller: it names the amount and
+	// the platform's published minimum or documented reason, never upstream account
+	// configuration.
 	ErrBudgetAmountRejected = errors.New("the requested budget amount was rejected by the platform's rules")
 
 	// ErrBudgetShared indicates the campaign's upstream budget is SHARED across more than
-	// one campaign (Google Ads: campaign_budget.explicitly_shared is true), so writing it
+	// one campaign (Google Ads: campaign_budget.explicitly_shared is true; Microsoft
+	// Advertising: the campaign is attached to a shared Budget, BudgetId set), so writing it
 	// would change the spend of campaigns this request never named — including campaigns
 	// this service does not own and cannot see.
 	//
-	// This is refused rather than written, and refused BEFORE the mutate, so nothing has
-	// changed when the caller sees it. Maps to 409: it is a permanent property of how that
+	// This is refused rather than written, and the platform was NOT changed when the caller
+	// sees it: the adapter refuses it from its read BEFORE the mutate, or — Microsoft's
+	// server-side backstop for a budget attached between that read and the write — the
+	// platform DEFINITELY refused the mutate (CampaignServiceCannotUpdateSharedBudget). An
+	// outcome the platform did not confirm either way is never this sentinel. Maps to 409: it is a permanent property of how that
 	// budget was set up, so retrying cannot help. The remedy is a human one and belongs in
 	// the ad platform — give the campaign its own budget, or accept the shared change there
 	// with full sight of what else it moves.
 	//
-	// Campaigns this service CREATES are never in this state: the create path sets
-	// ExplicitlyShared=false (internal/platform/googleads/campaign.go), so each gets a
-	// dedicated budget. An ADOPTED campaign (see CampaignAdopter) carries whatever budget
+	// Campaigns this service CREATES are never in this state: the Google create path sets
+	// ExplicitlyShared=false (internal/platform/googleads/campaign.go), and the Microsoft one
+	// sets a campaign-level DailyBudget with no BudgetId, so each gets a dedicated budget. An ADOPTED campaign (see CampaignAdopter) carries whatever budget
 	// it was already attached to, which is the case this guard exists for.
 	//
-	// THIS SENTINEL IS GOOGLE-ONLY, and deliberately so: it has a subject only where the
-	// budget is a resource that can be attached to several campaigns at once. LinkedIn's
+	// THIS SENTINEL IS RAISED BY GOOGLE ADS AND MICROSOFT ADVERTISING ONLY, and deliberately
+	// so: it has a subject only where the budget is a resource that can be attached to
+	// several campaigns at once — Google's campaign_budget, Microsoft's shared Budget entity
+	// (the same shape: one Budget, named by BudgetId, drawn on by several campaigns). LinkedIn's
 	// budget is a pair of fields on the campaign itself, so there is nothing to share and
-	// the guard has no analogue. Meta's analogue is NOT absent but is a different shape —
+	// the guard has no analogue; nor does Reddit's, whose budget is the campaign's own
+	// goal_value and cannot be attached to another campaign. Meta's analogue is NOT absent but is a different shape —
 	// Campaign Budget Optimization, where the campaign holds one amount distributed across
 	// every ad set beneath it — and that adapter refuses it with ErrBudgetUnwritable rather
 	// than this sentinel, because it is a property of the ad set's addressability, not of a
-	// budget shared between named campaigns. A platform adding this sentinel must mean the
-	// Google shape, not merely "the budget is not exclusively ours".
+	// budget shared between named campaigns. A platform adding this sentinel must mean that
+	// shape — one budget entity attached to several campaigns — not merely "the budget is
+	// not exclusively ours".
 	ErrBudgetShared = errors.New("the campaign's budget is shared across campaigns and cannot be written through this campaign")
 
 	// ErrBudgetUnwritable indicates the campaign's upstream budget cannot be addressed for
@@ -327,6 +342,14 @@ var (
 	// service having ported its monitor rule engine, and vice versa is possible in principle
 	// even if it does not occur among the four platforms this was added for).
 	ErrAccountMetricsUnsupported = errors.New("account campaign metrics are not supported for this platform")
+
+	// ErrAccountReportBudgetTooShort indicates a report-backed account monitor declined to
+	// submit a report because the time left in the read's call budget cannot fit the
+	// submission's paced writes. Nothing was created on the platform. Not a failure of the read:
+	// the orchestrator logs it as a skipped submission and the next read submits with a fresh
+	// budget. Returned (wrapped) by AccountReportReader.SubmitAccountReport; X's stats-job
+	// submission is the producer, since its job creates are paced at one per second.
+	ErrAccountReportBudgetTooShort = errors.New("account report submission skipped: not enough call budget left for its paced writes")
 
 	// ErrKeywordInsightsUnsupported indicates the platform has no keyword/audience-insight
 	// capability wired. The platform is never contacted.
@@ -979,6 +1002,14 @@ var (
 	// one live campaign; the 409 message says so without identifying the other project, which
 	// the caller may not be able to see. Maps to 409.
 	ErrPlatformCampaignAlreadyBound = errors.New("this platform campaign is already bound to another brief")
+
+	// ErrSlotVersionUnavailable indicates a request for ANOTHER campaign on a slot that
+	// already has one could not be claimed because the schema still enforces one live
+	// campaign per (brief, platform, variant). Migration 000037 adds the per-slot-version
+	// index alongside the old one, and the old one is dropped a release later (expand/
+	// contract); until then this is the expected answer to new_version, not a fault.
+	// Nothing was created upstream.
+	ErrSlotVersionUnavailable = errors.New("another campaign on this platform cannot be created for this brief yet")
 
 	// ErrAdoptionRequiresOwnConnection indicates the project has no ad-platform connection of
 	// its own. Maps to 409.

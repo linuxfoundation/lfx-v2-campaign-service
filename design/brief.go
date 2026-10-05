@@ -199,6 +199,10 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 			},
 		})
 	})
+	Attribute("new_version", Boolean, "Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Until the follow-up release removes the one-campaign-per-slot index, a request on a platform that already has a live campaign fails that platform with 'not available yet' and creates nothing.", func() {
+		Default(false)
+		Example(false)
+	})
 	Required("platforms")
 })
 
@@ -244,9 +248,13 @@ var Campaign = Type("campaign", func() {
 	Attribute("platform_campaign_id", String, "ID returned by the ad platform")
 	Attribute("campaign_name", String, "Campaign name")
 	Attribute("status", String, "Campaign status")
+	Attribute("slot_version", Int, "Which campaign this is among the brief's campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.", func() {
+		Minimum(1)
+		Example(1)
+	})
 	Attribute("version", Int64, "Optimistic-concurrency version")
 	Attribute("etag", String, "ETag header value (mirrors version)")
-	Required("id", "project_id", "brief_id", "platform", "campaign_name", "status", "version")
+	Required("id", "project_id", "brief_id", "platform", "campaign_name", "status", "slot_version", "version")
 })
 
 // CampaignMetrics is the live-read performance snapshot for one campaign over one window.
@@ -1505,12 +1513,17 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"pacing in the ad platform, then set the amount here. " +
 			"The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor " +
 			"converts it. " +
-			"Google Ads, LinkedIn and Meta today: a campaign on any other platform is refused with 400. " +
+			"Google Ads, LinkedIn, Meta, Microsoft Advertising and Reddit today: a campaign on any other platform is refused with 400. " +
 			"Budget writing is added per platform, because each platform's budget model is its own " +
 			"deliberate decision, and the refusals below are the union of what those models can refuse — " +
 			"a platform whose model has no analogue of a given refusal simply never raises it (LinkedIn " +
 			"budgets are fields on the campaign and cannot be shared, so the shared-budget 409 is a " +
-			"Google and Meta answer; Meta's form of it is a campaign-level, ad-set-spanning budget). " +
+			"Google, Meta and Microsoft answer; Meta's form of it is a campaign-level, ad-set-spanning budget, " +
+			"Microsoft's a campaign attached to a shared Budget). Microsoft Search campaigns are paced DAILY only, " +
+			"so a lifetime request for one is the pacing refusal (409). " +
+			"A Reddit campaign's budget is its campaign-level spend goal (Campaign Budget Optimization on); " +
+			"one whose budget is governed per ad group (CBO off) is refused (409) rather than allocated, and " +
+			"Reddit has no shared-budget analogue. " +
 			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: " +
 			"the campaign is unprovisioned (no platform campaign id); the campaign belongs to a different " +
 			"ad account than the project's connection now resolves to, or does not record which ad account " +
@@ -1543,13 +1556,14 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// floor only from a 400. One micro is the LOOSEST floor any supported platform
 			// has — Google Ads bills in micros, LinkedIn in whole cents, Meta in its
 			// account currency's minor unit — so it is the only floor this contract can
-			// state for every platform at once. Each adapter enforces its own, stricter
-			// floor and its own platform minimums, which is where a 400 still comes from
-			// for an amount this range admits. Zero is not a budget — it is a request to
-			// stop spending, and pausing is what expresses that. NaN and Inf remain the
-			// only runtime rejections a Goa range cannot express, and the service checks
-			// them first. The maximum matches the platform adapter's own cap, so a figure
-			// this service would refuse to create with cannot be reached by editing.
+			// state for every platform at once. LinkedIn and Meta enforce their own,
+			// stricter floors and minimums, which is where a 400 still comes from for an
+			// amount this range admits; Google's floor is this one. Zero is not a budget —
+			// it is a request to stop spending, and pausing is what expresses that. NaN and
+			// Inf remain the only runtime rejections a Goa range cannot express, and the
+			// service checks them first. The maximum matches the platform adapter's own
+			// cap, so a figure this service would refuse to create with cannot be reached
+			// by editing.
 			//
 			// THIS PUBLISHED FLOOR IS MARGINALLY STRICTER THAN THE SERVICE'S OWN CHECK, and
 			// that direction is the safe one. The service refuses an amount whose ROUNDED

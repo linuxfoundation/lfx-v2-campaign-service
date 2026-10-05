@@ -937,17 +937,19 @@ type MonitorGoogleAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Microsoft Ads only: the point in time these campaigns' metrics describe —
-	// when the platform report they come from was requested (not when it was
-	// collected, which can be later). Microsoft reports take minutes, so the
-	// service serves the last finished report and builds the next one between
-	// requests. Absent when no report has finished yet; in that case every
-	// campaign has fetch_failed=true and is excluded from pacing and action items.
-	// Omitted on every other platform, whose metrics are read live in the request.
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Microsoft Ads only: true while a newer report is building on the platform,
-	// so a later read will return newer metrics (or the first ones, when
-	// metrics_as_of is absent). Omitted on every other platform.
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
@@ -965,17 +967,19 @@ type MonitorLinkedinAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Microsoft Ads only: the point in time these campaigns' metrics describe —
-	// when the platform report they come from was requested (not when it was
-	// collected, which can be later). Microsoft reports take minutes, so the
-	// service serves the last finished report and builds the next one between
-	// requests. Absent when no report has finished yet; in that case every
-	// campaign has fetch_failed=true and is excluded from pacing and action items.
-	// Omitted on every other platform, whose metrics are read live in the request.
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Microsoft Ads only: true while a newer report is building on the platform,
-	// so a later read will return newer metrics (or the first ones, when
-	// metrics_as_of is absent). Omitted on every other platform.
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
@@ -993,17 +997,19 @@ type MonitorMetaAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Microsoft Ads only: the point in time these campaigns' metrics describe —
-	// when the platform report they come from was requested (not when it was
-	// collected, which can be later). Microsoft reports take minutes, so the
-	// service serves the last finished report and builds the next one between
-	// requests. Absent when no report has finished yet; in that case every
-	// campaign has fetch_failed=true and is excluded from pacing and action items.
-	// Omitted on every other platform, whose metrics are read live in the request.
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Microsoft Ads only: true while a newer report is building on the platform,
-	// so a later read will return newer metrics (or the first ones, when
-	// metrics_as_of is absent). Omitted on every other platform.
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
@@ -1021,17 +1027,19 @@ type MonitorRedditAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Microsoft Ads only: the point in time these campaigns' metrics describe —
-	// when the platform report they come from was requested (not when it was
-	// collected, which can be later). Microsoft reports take minutes, so the
-	// service serves the last finished report and builds the next one between
-	// requests. Absent when no report has finished yet; in that case every
-	// campaign has fetch_failed=true and is excluded from pacing and action items.
-	// Omitted on every other platform, whose metrics are read live in the request.
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Microsoft Ads only: true while a newer report is building on the platform,
-	// so a later read will return newer metrics (or the first ones, when
-	// metrics_as_of is absent). Omitted on every other platform.
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
@@ -1049,17 +1057,49 @@ type MonitorMicrosoftAdsAccountResponseBody struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Microsoft Ads only: the point in time these campaigns' metrics describe —
-	// when the platform report they come from was requested (not when it was
-	// collected, which can be later). Microsoft reports take minutes, so the
-	// service serves the last finished report and builds the next one between
-	// requests. Absent when no report has finished yet; in that case every
-	// campaign has fetch_failed=true and is excluded from pacing and action items.
-	// Omitted on every other platform, whose metrics are read live in the request.
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Microsoft Ads only: true while a newer report is building on the platform,
-	// so a later read will return newer metrics (or the first ones, when
-	// metrics_as_of is absent). Omitted on every other platform.
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// MonitorTwitterAdsAccountResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body.
+type MonitorTwitterAdsAccountResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The trailing-days window this read covers, echoed back from the request.
+	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
@@ -4730,6 +4770,66 @@ type MonitorMicrosoftAdsAccountPayloadTooLargeResponseBody struct {
 // "monitor-microsoft-ads-account" endpoint HTTP response body for the
 // "Unauthorized" error.
 type MonitorMicrosoftAdsAccountUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorTwitterAdsAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body for the "BadRequest" error.
+type MonitorTwitterAdsAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorTwitterAdsAccountServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type MonitorTwitterAdsAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorTwitterAdsAccountInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body for the "InternalServerError" error.
+type MonitorTwitterAdsAccountInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorTwitterAdsAccountNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body for the "NotFound" error.
+type MonitorTwitterAdsAccountNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorTwitterAdsAccountPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type MonitorTwitterAdsAccountPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorTwitterAdsAccountUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body for the "Unauthorized" error.
+type MonitorTwitterAdsAccountUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -10559,6 +10659,110 @@ func NewMonitorMicrosoftAdsAccountUnauthorized(body *MonitorMicrosoftAdsAccountU
 	return v
 }
 
+// NewMonitorTwitterAdsAccountAccountMonitorOK builds a
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint result from a HTTP "OK" response.
+func NewMonitorTwitterAdsAccountAccountMonitorOK(body *MonitorTwitterAdsAccountResponseBody) *lfxv2campaignserviceconnections.AccountMonitor {
+	v := &lfxv2campaignserviceconnections.AccountMonitor{
+		AccountID:      *body.AccountID,
+		Days:           *body.Days,
+		MetricsAsOf:    body.MetricsAsOf,
+		MetricsPending: body.MetricsPending,
+	}
+	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
+	for i, val := range body.Campaigns {
+		if val == nil {
+			v.Campaigns[i] = nil
+			continue
+		}
+		v.Campaigns[i] = unmarshalAccountMonitorCampaignResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorCampaign(val)
+	}
+	v.ActionItems = make([]*lfxv2campaignserviceconnections.AccountMonitorActionItem, len(body.ActionItems))
+	for i, val := range body.ActionItems {
+		if val == nil {
+			v.ActionItems[i] = nil
+			continue
+		}
+		v.ActionItems[i] = unmarshalAccountMonitorActionItemResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorActionItem(val)
+	}
+	v.Totals = unmarshalAccountMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorTotals(body.Totals)
+
+	return v
+}
+
+// NewMonitorTwitterAdsAccountBadRequest builds a
+// lfx-v2-campaign-service-connections service monitor-twitter-ads-account
+// endpoint BadRequest error.
+func NewMonitorTwitterAdsAccountBadRequest(body *MonitorTwitterAdsAccountBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorTwitterAdsAccountServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service monitor-twitter-ads-account
+// endpoint ServiceUnavailable error.
+func NewMonitorTwitterAdsAccountServiceUnavailable(body *MonitorTwitterAdsAccountServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorTwitterAdsAccountInternalServerError builds a
+// lfx-v2-campaign-service-connections service monitor-twitter-ads-account
+// endpoint InternalServerError error.
+func NewMonitorTwitterAdsAccountInternalServerError(body *MonitorTwitterAdsAccountInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorTwitterAdsAccountNotFound builds a
+// lfx-v2-campaign-service-connections service monitor-twitter-ads-account
+// endpoint NotFound error.
+func NewMonitorTwitterAdsAccountNotFound(body *MonitorTwitterAdsAccountNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorTwitterAdsAccountPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service monitor-twitter-ads-account
+// endpoint PayloadTooLarge error.
+func NewMonitorTwitterAdsAccountPayloadTooLarge(body *MonitorTwitterAdsAccountPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorTwitterAdsAccountUnauthorized builds a
+// lfx-v2-campaign-service-connections service monitor-twitter-ads-account
+// endpoint Unauthorized error.
+func NewMonitorTwitterAdsAccountUnauthorized(body *MonitorTwitterAdsAccountUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // ValidateCreateGoogleAdsResponseBody runs the validations defined on
 // Create-Google-AdsResponseBody
 func ValidateCreateGoogleAdsResponseBody(body *CreateGoogleAdsResponseBody) (err error) {
@@ -11612,6 +11816,49 @@ func ValidateMonitorRedditAdsAccountResponseBody(body *MonitorRedditAdsAccountRe
 // ValidateMonitorMicrosoftAdsAccountResponseBody runs the validations defined
 // on Monitor-Microsoft-Ads-AccountResponseBody
 func ValidateMonitorMicrosoftAdsAccountResponseBody(body *MonitorMicrosoftAdsAccountResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", "body"))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", "body"))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", "body"))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := ValidateAccountMonitorCampaignResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := ValidateAccountMonitorActionItemResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := ValidateAccountMonitorTotalsResponseBody(body.Totals); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	return
+}
+
+// ValidateMonitorTwitterAdsAccountResponseBody runs the validations defined on
+// Monitor-Twitter-Ads-AccountResponseBody
+func ValidateMonitorTwitterAdsAccountResponseBody(body *MonitorTwitterAdsAccountResponseBody) (err error) {
 	if body.AccountID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
 	}
@@ -16117,6 +16364,81 @@ func ValidateMonitorMicrosoftAdsAccountPayloadTooLargeResponseBody(body *Monitor
 // validations defined on
 // monitor-microsoft-ads-account_Unauthorized_response_body
 func ValidateMonitorMicrosoftAdsAccountUnauthorizedResponseBody(body *MonitorMicrosoftAdsAccountUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorTwitterAdsAccountBadRequestResponseBody runs the validations
+// defined on monitor-twitter-ads-account_BadRequest_response_body
+func ValidateMonitorTwitterAdsAccountBadRequestResponseBody(body *MonitorTwitterAdsAccountBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorTwitterAdsAccountServiceUnavailableResponseBody runs the
+// validations defined on
+// monitor-twitter-ads-account_ServiceUnavailable_response_body
+func ValidateMonitorTwitterAdsAccountServiceUnavailableResponseBody(body *MonitorTwitterAdsAccountServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorTwitterAdsAccountInternalServerErrorResponseBody runs the
+// validations defined on
+// monitor-twitter-ads-account_InternalServerError_response_body
+func ValidateMonitorTwitterAdsAccountInternalServerErrorResponseBody(body *MonitorTwitterAdsAccountInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorTwitterAdsAccountNotFoundResponseBody runs the validations
+// defined on monitor-twitter-ads-account_NotFound_response_body
+func ValidateMonitorTwitterAdsAccountNotFoundResponseBody(body *MonitorTwitterAdsAccountNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorTwitterAdsAccountPayloadTooLargeResponseBody runs the
+// validations defined on
+// monitor-twitter-ads-account_PayloadTooLarge_response_body
+func ValidateMonitorTwitterAdsAccountPayloadTooLargeResponseBody(body *MonitorTwitterAdsAccountPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorTwitterAdsAccountUnauthorizedResponseBody runs the
+// validations defined on monitor-twitter-ads-account_Unauthorized_response_body
+func ValidateMonitorTwitterAdsAccountUnauthorizedResponseBody(body *MonitorTwitterAdsAccountUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

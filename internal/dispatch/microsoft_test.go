@@ -814,3 +814,28 @@ func TestMicrosoft_ToggleStatus_MatchingOrUnknownAccountStillToggles(t *testing.
 		})
 	}
 }
+
+// Microsoft enforces case-insensitive campaign-name uniqueness and its client REUSES an
+// existing campaign it finds by name, so a second campaign on the same slot composing the
+// first one's name would be handed back the first. Slot 2 must extend the suffix; slot 1 must
+// keep the bare brief id.
+func TestMicrosoft_SlotVersionExtendsTheNameSuffix(t *testing.T) {
+	for _, tc := range []struct {
+		slot int
+		want string
+	}{
+		{model.FirstSlotVersion, "brief-1"},
+		{2, "brief-1-2"},
+	} {
+		opts, _ := microsoftServers(t)
+		d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{}, opts...)
+		ctx := model.WithDispatchSlotVersion(context.Background(), tc.slot)
+		camp, err := d.Dispatch(ctx, testBrief(), model.ProviderMicrosoftAds, json.RawMessage(`{"microsoftConfig":{"budget":50}}`))
+		if err != nil {
+			t.Fatalf("slot %d: Dispatch: %v", tc.slot, err)
+		}
+		if !strings.HasSuffix(camp.CampaignName, tc.want) {
+			t.Errorf("slot %d: campaign name %q, want it to end %q", tc.slot, camp.CampaignName, tc.want)
+		}
+	}
+}

@@ -2015,3 +2015,56 @@ func BuildMonitorMicrosoftAdsAccountPayload(lfxV2CampaignServiceConnectionsMonit
 
 	return v, nil
 }
+
+// BuildMonitorTwitterAdsAccountPayload builds the payload for the
+// lfx-v2-campaign-service-connections monitor-twitter-ads-account endpoint
+// from CLI flags.
+func BuildMonitorTwitterAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountProjectID string, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountAccountID string, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountDays string, lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountBearerToken string) (*lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountProjectID
+	}
+	var accountID string
+	{
+		accountID = lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountAccountID
+		err = goa.MergeErrors(err, goa.ValidatePattern("account_id", accountID, "^[A-Za-z0-9]+$"))
+		if utf8.RuneCountInString(accountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("account_id", accountID, utf8.RuneCountInString(accountID), 64, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var days int
+	{
+		var v int64
+		v, err = strconv.ParseInt(lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountDays, 10, strconv.IntSize)
+		days = int(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid value for days, must be INT")
+		}
+		if days < 7 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 7, true))
+		}
+		if days > 90 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsMonitorTwitterAdsAccountBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload{}
+	v.ProjectID = projectID
+	v.AccountID = accountID
+	v.Days = days
+	v.BearerToken = bearerToken
+
+	return v, nil
+}

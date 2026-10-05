@@ -22,9 +22,20 @@ import (
 // guard, and a platform whose real ceiling is lower will still refuse below this one.
 const maxCampaignBudget = 1_000_000_000.0
 
-// microsPerCurrencyUnit is the scale every supported ad platform bills in. It is here for the
-// same reason maxCampaignBudget is: the smallest settable amount is part of the API contract
-// (answered 400, and declared as the design's Minimum), not a platform conversion detail.
+// microsPerCurrencyUnit sets the LOOSEST floor any supported ad platform has: Google Ads bills
+// in micros, LinkedIn in whole cents, Meta in its account currency's minor unit. Platforms do
+// NOT all bill in micros — one micro is simply the finest unit any of them accepts, so it is the
+// only floor this contract can state for every platform at once (matching the design's Minimum
+// and its comment). LinkedIn and Meta enforce their own, stricter floors on top (whole cents with
+// $10/$100 minimums; one minor unit); Google's (and Reddit's, which also bills in micros) floor IS
+// this one, so for them nothing below this check can refuse the amount.
+//
+// Two bounds use this constant and they are not the same number. The CONTRACT floor is one micro
+// (0.000001, the design's Minimum, enforced by Goa's decoder before this service runs). The
+// RUNTIME check below compares the ROUNDED value, math.Round(budget*microsPerCurrencyUnit) < 1, so
+// its cutoff is half a micro: [0.0000005, 0.000001) rounds up to one micro and is accepted, which
+// only a direct (non-HTTP) caller can reach. It is here for the same reason maxCampaignBudget is:
+// the smallest settable amount is part of the API contract, not a platform conversion detail.
 const microsPerCurrencyUnit = 1_000_000.0
 
 // UpdateCampaignBudget changes how much a campaign may spend ON THE AD PLATFORM, then persists
@@ -34,7 +45,9 @@ const microsPerCurrencyUnit = 1_000_000.0
 // WHAT IS PERSISTED IS THE REQUESTED AMOUNT, NOT A READBACK OF THE APPLIED ONE. The dispatcher
 // confirms that the platform ACCEPTED the write; it does not re-read what the platform then
 // holds, and the two can differ by less than the platform's smallest settable unit — LinkedIn
-// settles on two decimal places, Meta on the account currency's minor unit, Google on a micro.
+// settles on two decimal places, Meta on the account currency's minor unit, Google on a micro,
+// and Microsoft on whatever its own validation of the account currency settles (the amount is
+// sent unrounded as a decimal, and an amount Microsoft refuses is answered 400).
 // That is the same meaning the column already carries (see the next paragraph), not a new
 // looseness: a readback compares live-against-requested, and a sub-unit rounding difference is
 // exactly the kind of drift that comparison is there to surface rather than to hide.
@@ -90,7 +103,7 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 	// The comparison is against the rounded value, not a literal floor, so it stays in step
 	// with the adapter's own math.Round rather than drifting from it.
 	if math.Round(budget*microsPerCurrencyUnit) < 1 {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "budget is too small to set; the smallest amount an ad platform accepts is 0.000001 of the account's currency"}
+		return nil, &briefs.BadRequestError{Code: "400", Message: "budget is too small to set; it rounds to zero micros (one micro is 0.000001 of the account's currency, and this amount is under half of one), which no ad platform accepts"}
 	}
 	budgetType := model.BudgetType(p.BudgetType)
 	if budgetType != model.BudgetDaily && budgetType != model.BudgetLifetime {
@@ -159,8 +172,10 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 		case errors.Is(werr, ErrCampaignNotProvisioned):
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet, so there is no upstream budget to change"}
 		case errors.Is(werr, ErrBudgetShared):
-			// The single most consequential refusal this endpoint has, and it happens BEFORE
-			// the mutate, so nothing changed. Writing a shared budget through one campaign
+			// The single most consequential refusal this endpoint has, and the platform was
+			// NOT changed: it is refused from the adapter's read BEFORE the mutate, or (on
+			// Microsoft, for a budget attached between the read and the write) the platform
+			// definitely refused the mutate itself. Writing a shared budget through one campaign
 			// moves the spend of every other campaign attached to it — including campaigns
 			// this service does not own and cannot see. Permanent (it is how the budget was
 			// set up), so 409 and never a retry; the remedy is a human one in the ad platform.
@@ -169,19 +184,22 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID)
 			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign's budget is shared with other campaigns, so changing it here would change their spend too; give the campaign its own budget in the ad platform, or make the change there where its full effect is visible"}
 		case errors.Is(werr, ErrBudgetAmountRejected):
-			// The AMOUNT was refused by the platform adapter's own validator, before anything
-			// was written. This layer validates every bound it can state for all platforms at
+			// The AMOUNT was refused and the platform was NOT changed: by the platform
+			// adapter's own validator before the mutate, or — on Microsoft — by the platform's
+			// own definite refusal of the mutate (CampaignServiceInvalidDailyBudget, or a
+			// daily budget below what the campaign has already spent). This layer validates every bound it can state for all platforms at
 			// once (finite, > 0, <= the contract maximum, >= half a micro) and deliberately
 			// holds NO per-platform floor — adding one would put an allowlist's worth of
 			// platform knowledge in the layer whose whole design is not to have it. So a
 			// LinkedIn $5 daily budget, a $50 lifetime budget, or a Meta amount below one
-			// minor unit of the account's currency can only be refused down in the adapter,
+			// minor unit of the account's currency, or a Microsoft daily budget below the account
+			// currency's minimum, can only be refused down in the adapter,
 			// and this arm is what keeps that refusal a 400 instead of falling to the default
 			// and being answered 503 — an "unconfirmed upstream" answer, with a retry
 			// invitation, to a request that can never succeed.
 			//
-			// The validator's own text IS returned: it names the amount and the platform's
-			// published minimum, which is exactly what the caller needs to correct the
+			// The adapter's own text IS returned: it names the amount and the platform's
+			// published minimum or documented reason, which is exactly what the caller needs to correct the
 			// request, and it names no upstream account configuration. That is why this arm
 			// carries a message the ErrBudgetUnwritable arm below deliberately withholds.
 			slog.InfoContext(ctx, "campaign budget change refused: the requested amount is outside the platform's accepted range",
@@ -285,7 +303,7 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 				"platform", existing.Platform, "reason", unusableConnectionReason(werr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign budget could not be changed"}
 		case errors.Is(werr, domain.ErrAccountNotSelected):
-			// Above the general arm for the same reason, and on all three budget-writing
+			// Above the general arm for the same reason, and on all five budget-writing
 			// platforms this sentinel is ALWAYS wrapped alongside ErrConnectionNotUsable — so
 			// without this arm the generic message tells an operator to repair credentials that
 			// are perfectly fine when the actual remedy is choosing an ad account. The
