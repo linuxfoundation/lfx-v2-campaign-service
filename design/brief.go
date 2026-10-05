@@ -1548,8 +1548,9 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// amount this range admits; Google's floor is this one. Zero is not a budget —
 			// it is a request to stop spending, and pausing is what expresses that. NaN and
 			// Inf remain the only runtime rejections a Goa range cannot express, and the
-			// service checks them first. The maximum matches the platform adapter's own cap, so a figure
-			// this service would refuse to create with cannot be reached by editing.
+			// service checks them first. The maximum matches the platform adapter's own
+			// cap, so a figure this service would refuse to create with cannot be reached
+			// by editing.
 			//
 			// THIS PUBLISHED FLOOR IS MARGINALLY STRICTER THAN THE SERVICE'S OWN CHECK, and
 			// that direction is the safe one. The service refuses an amount whose ROUNDED
