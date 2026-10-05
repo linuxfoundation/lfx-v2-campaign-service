@@ -243,9 +243,9 @@ func TestFlightRanges(t *testing.T) {
 			{at("2026-09-01T07:00:00Z"), at("2026-09-06T07:00:00Z")},
 			{at("2026-10-01T07:00:00Z"), time.Time{}},
 		}, []FlightRange{{"2026-09-01", "2026-09-05"}, {"2026-10-01", ""}}},
-		{"empty interval dropped", []flightSpan{
-			{at("2026-09-01T07:00:00Z"), at("2026-09-01T07:00:00Z")},
-		}, []FlightRange{}},
+		{"an hour-long interval schedules its day", []flightSpan{
+			{at("2026-09-01T17:00:00Z"), at("2026-09-01T18:00:00Z")},
+		}, []FlightRange{{"2026-09-01", "2026-09-01"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -273,6 +273,45 @@ func TestListAccountCampaigns_UnreadableFlightIsMarked(t *testing.T) {
 	for _, c := range got {
 		if !c.FlightUnparseable || c.StartDate != "" {
 			t.Errorf("campaign %s = %+v, want FlightUnparseable with no dates", c.ID, c)
+		}
+	}
+}
+
+// A line item whose end_time is at or before its start_time — syntactically valid, but serving
+// no instant — marks the flight unparseable like any other unreadable time: it neither widens
+// the envelope nor puts a scheduled day into Flights. A well-formed sibling is unaffected.
+func TestListAccountCampaigns_NonIncreasingFlightIsMarked(t *testing.T) {
+	srv, _ := monitorServer(t, map[string]http.HandlerFunc{
+		"/12/accounts/account123": accountTZ("UTC"),
+		"/12/accounts/account123/campaigns": jsonBody(`{"data":[{"id":"c1","entity_status":"ACTIVE","daily_budget_amount_local_micro":1000000},
+			{"id":"c2","entity_status":"ACTIVE","daily_budget_amount_local_micro":1000000},
+			{"id":"c3","entity_status":"ACTIVE","daily_budget_amount_local_micro":1000000}],"next_cursor":null}`),
+		"/12/accounts/account123/line_items": jsonBody(`{"data":[
+			{"id":"l1","campaign_id":"c1","start_time":"2026-10-01T10:00:00Z","end_time":"2026-10-01T09:00:00Z"},
+			{"id":"l2","campaign_id":"c2","start_time":"2026-10-01T10:00:00Z","end_time":"2026-10-01T10:00:00Z"},
+			{"id":"l3","campaign_id":"c3","start_time":"2026-10-01T10:00:00Z","end_time":"2026-10-01T11:00:00Z"}],"next_cursor":null}`),
+	})
+	got, err := monitorClient(srv.URL, time.Now()).ListAccountCampaigns(context.Background())
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d campaigns, want 3", len(got))
+	}
+	for _, c := range got {
+		switch c.ID {
+		case "c1", "c2": // inverted, zero-length
+			if !c.FlightUnparseable || c.StartDate != "" || c.EndDate != "" || len(c.Flights) != 0 {
+				t.Errorf("campaign %s = %+v, want FlightUnparseable with no dates or flights", c.ID, c)
+			}
+		case "c3":
+			want := []FlightRange{{"2026-10-01", "2026-10-01"}}
+			if c.FlightUnparseable || c.StartDate != "2026-10-01" || c.EndDate != "2026-10-01" ||
+				!reflect.DeepEqual(c.Flights, want) {
+				t.Errorf("campaign c3 = %+v, want a readable one-day flight", c)
+			}
+		default:
+			t.Errorf("unexpected campaign %s", c.ID)
 		}
 	}
 }

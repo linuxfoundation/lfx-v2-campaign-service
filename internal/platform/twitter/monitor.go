@@ -87,9 +87,12 @@ const MaxMonitorActiveCampaigns = maxStatsJobsPerReport * statsJobMaxEntities
 // caller surfaces it rather than retrying it as an upstream failure.
 var ErrTooManyActiveCampaigns = fmt.Errorf("twitter: the account has more than %d campaigns active in the report window", MaxMonitorActiveCampaigns)
 
-// ErrReportWindowNotWholeHours is returned by SubmitAccountCampaignReport, before any request,
-// when a local midnight bounding the report window is not a whole UTC hour — an account whose
-// timezone has a fractional-hour offset (Asia/Kolkata, Asia/Kathmandu, Australia/Adelaide, ...).
+// ErrReportWindowNotWholeHours is returned by SubmitAccountCampaignReport when a local midnight
+// bounding the report window is not a whole UTC hour — an account whose timezone has a
+// fractional-hour offset (Asia/Kolkata, Asia/Kathmandu, Australia/Adelaide, ...). It comes
+// before any stats request or job creation, not before every request: the account timezone is
+// read first (an account GET when the cache is cold), and the caller has usually listed the
+// account's campaigns and line items already.
 // X accepts "whole hours only" for start_time/end_time, so such an account's calendar days cannot
 // be queried exactly, and querying a shifted window while reporting the account's own days would
 // misattribute up to 45 minutes of delivery to the wrong day. PERMANENT for the account's zone.
@@ -433,10 +436,11 @@ func (c *Client) applyLineItemFlights(ctx context.Context, out []AccountCampaign
 // flightRanges unions line-item intervals into account-local day ranges: each interval becomes
 // [its start day, its last day] (lastFlightDay), and ranges that overlap or touch — the next one
 // starts on or before the day after the current one ends — merge. An open-ended interval absorbs
-// everything after its start. An interval that ends before its first day ran on no day and is
-// dropped. The days are compared as DATES, not instants, because "scheduled on day D" is what
-// the rule engine needs and two line items one serving the morning, one the evening of the same
-// day both schedule that day.
+// everything after its start. Every bounded span ends after it starts — foldLineItemFlight marks
+// the whole flight unparseable rather than record an inverted or zero-length one — so a span's
+// last day is never before its first. The days are compared as DATES, not instants, because
+// "scheduled on day D" is what the rule engine needs and two line items one serving the morning,
+// one the evening of the same day both schedule that day.
 func flightRanges(spans []flightSpan, loc *time.Location) []FlightRange {
 	type dayRange struct {
 		first, last time.Time // UTC-midnight dates; last zero = open-ended
@@ -450,9 +454,6 @@ func flightRanges(spans []flightSpan, loc *time.Location) []FlightRange {
 		r := dayRange{first: day(sp.start)}
 		if !sp.end.IsZero() {
 			r.last = day(sp.end.Add(-time.Nanosecond))
-			if r.last.Before(r.first) {
-				continue
-			}
 		}
 		rs = append(rs, r)
 	}
@@ -488,7 +489,9 @@ func flightRanges(spans []flightSpan, loc *time.Location) []FlightRange {
 // line item has no end_time — and records the line item's own interval, so the gaps between line
 // items survive into AccountCampaign.Flights. A start_time that is absent or unparseable marks the
 // flight bad — X requires start_time on a line item (the create path sends it as REQUIRED), so its
-// absence is not an "unscheduled" state this code can interpret.
+// absence is not an "unscheduled" state this code can interpret. So does an end_time that is
+// unparseable or not after start_time (inverted or zero-length), checked before the envelope or
+// the spans change, so every recorded bounded span runs forward.
 func foldLineItemFlight(f *flightAcc, el monitorLineItemElement) {
 	if el.StartTime == nil {
 		f.bad = true
@@ -508,7 +511,9 @@ func foldLineItemFlight(f *flightAcc, el monitorLineItemElement) {
 		return
 	}
 	et, err := time.Parse(time.RFC3339, strings.TrimSpace(*el.EndTime))
-	if err != nil {
+	if err != nil || !et.After(st) {
+		// An end at or before the start is as unreadable as a malformed one: the interval
+		// serves no instant, so recording it would claim a day nothing could serve.
 		f.bad = true
 		return
 	}

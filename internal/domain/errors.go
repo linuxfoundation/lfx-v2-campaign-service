@@ -368,10 +368,11 @@ var (
 	// local midnight off a whole UTC hour (a fractional-hour offset such as Asia/Kolkata's
 	// +05:30), and the platform accepts whole-hour bounds only. Querying a shifted window while
 	// reporting the account's own days would misattribute delivery, so the read fails closed
-	// instead. Nothing was requested. PERMANENT for as long as the account's timezone keeps a
-	// fractional-hour offset (all year in most such zones; only part of the year in one with a
-	// half-hour DST shift, e.g. Australia/Lord_Howe); surfaced by
-	// Orchestrator.ReadReportedAccountCampaigns and mapped to 409 with reason
+	// instead. The refusal comes before any stats request or job creation; reads (the account's
+	// timezone, its campaigns and line items) may already have happened. PERMANENT for as long
+	// as the account's timezone keeps a fractional-hour offset (all year in most such zones;
+	// only part of the year in one with a half-hour DST shift, e.g. Australia/Lord_Howe);
+	// surfaced by Orchestrator.ReadReportedAccountCampaigns and mapped to 409 with reason
 	// "account_timezone_unsupported". Producer: the X monitor.
 	//
 	// The message is fixed, client-safe text: it reaches the HTTP body.

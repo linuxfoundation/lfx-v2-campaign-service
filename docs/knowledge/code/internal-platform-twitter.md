@@ -1052,12 +1052,16 @@ while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
   touching ranges merged, disjoint ones kept apart, an open-ended one absorbing everything
   after it), so the gap between line items Sep 1–5 and Oct 1–5 is not reported as scheduled.
   Dates are in the ACCOUNT's timezone, the last day being the last day served (an end at
-  local midnight belongs to the previous day). An unreadable time sets `FlightUnparseable`.
+  local midnight belongs to the previous day). An unreadable time sets `FlightUnparseable`,
+  and so does a line item whose `end_time` is not after its `start_time` (inverted or
+  zero-length): it is rejected before the envelope or the union changes, never recorded as a
+  scheduled day and never silently dropped.
 - **`SubmitAccountCampaignReport`** — window `[local midnight of today-(days-1), the local
   midnight after today)` in the account's zone (`accountReportWindow`), sent as UTC instants,
   and always EXACTLY the days returned as the report's first/last day. A local midnight that
-  is not a whole UTC hour (X takes whole hours only) is refused before any request with
-  `ErrReportWindowNotWholeHours`, never floored; a 90-day window over a DST fall-back (90 days
+  is not a whole UTC hour (X takes whole hours only) is refused with
+  `ErrReportWindowNotWholeHours`, never floored — before any stats request or job is created,
+  though the account timezone has been read by then (an account GET when the cache is cold); a 90-day window over a DST fall-back (90 days
   and an hour) drops its earliest local day instead of trimming an hour, so it covers 89 whole
   days and says so. GET `stats/accounts/:id/active_entities?entity=CAMPAIGN`, then one POST
   `stats/jobs/accounts/:id` per ≤20 active campaigns (`entity=CAMPAIGN`, `granularity=TOTAL`,

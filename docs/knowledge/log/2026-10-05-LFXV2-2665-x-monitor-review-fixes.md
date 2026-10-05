@@ -1,6 +1,6 @@
-# 2026-10-05 — X account monitor: PR #252 review fixes
+# 2026-10-05 — X account monitor: PR #252 and #254 review fixes
 
-**Fix** — five review findings on the X Ads account monitor, each fixed where the monitor would
+**Fix** — seven review findings on the X Ads account monitor, each fixed where the monitor would
 otherwise have reported something untrue.
 
 - **Gaps between line items are not scheduled days.** The flight was folded into one
@@ -29,6 +29,17 @@ otherwise have reported something untrue.
   account resource does not carry its code. Item text now reads "12.50 in account currency",
   and the placeholder-budget remedy no longer quotes "$10-50/day".
 - **`metrics_as_of` / `metrics_pending` docs say Microsoft and X**, not Microsoft only.
+- **A non-increasing line item is an unparseable flight.** A line item whose `end_time` is at
+  or before its `start_time` (10:00 start, 09:00 end on the same day) was still folded into
+  the envelope and recorded as a span, so it could claim a scheduled day nothing could serve,
+  while `flightRanges` silently dropped the zero-length case. `foldLineItemFlight` now rejects
+  it before touching the envelope or spans and sets `FlightUnparseable`, like a malformed time;
+  `flightRanges` no longer drops anything, since every recorded bounded span runs forward.
+- **The timezone refusal's "nothing was requested" was untrue.** `SubmitAccountCampaignReport`
+  reads the account timezone first (an account GET when the cache is cold) and the orchestrator
+  has already listed campaigns and line items. `twitter.ErrReportWindowNotWholeHours`,
+  `domain.ErrAccountTimezoneUnsupported` and the dispatcher now say the refusal comes before
+  any stats request or job creation, with reads possibly already made.
 
 Concepts updated: `architecture/account-monitor-endpoints.md`,
 `code/internal-platform-twitter.md`, `code/internal-service-rules.md`,

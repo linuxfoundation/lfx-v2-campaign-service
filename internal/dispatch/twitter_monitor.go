@@ -150,7 +150,8 @@ func (d *TwitterDispatcher) SubmitAccountReport(ctx context.Context, projectID s
 		return nil, fmt.Errorf("submit x ads account report: %w: %w", domain.ErrAccountTooManyActiveCampaigns, err)
 	}
 	if errors.Is(err, twitter.ErrReportWindowNotWholeHours) {
-		// Permanent for the account's timezone; surfaced the same way. Nothing was requested.
+		// Permanent for the account's timezone; surfaced the same way. No stats request or job
+		// was made, though the account and its campaigns may already have been read.
 		return nil, fmt.Errorf("submit x ads account report: %w: %w", domain.ErrAccountTimezoneUnsupported, err)
 	}
 	if err != nil {
