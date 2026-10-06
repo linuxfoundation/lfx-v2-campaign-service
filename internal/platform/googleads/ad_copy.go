@@ -231,11 +231,20 @@ func defaultDescriptions(eventName, project string) []string {
 
 // capForError truncates s to maxErrorComponentLen characters for safe inclusion in
 // persisted error messages, adding "…" if truncated.
+//
+// The cut lands on a RUNE boundary, not a byte one. Callers include fields this client
+// validates by DISPLAY WIDTH rather than byte length — business names, headlines,
+// descriptions — so multibyte text is expected there, and a byte-slice at a fixed offset
+// would write a half rune into a message that persists unencrypted as a Steps entry.
 func capForError(s string) string {
 	if len(s) <= maxErrorComponentLen {
 		return s
 	}
-	return s[:maxErrorComponentLen] + "…"
+	cut := maxErrorComponentLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 // buildAdFinalURL builds the ad's destination URL from the brief's

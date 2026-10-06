@@ -493,11 +493,11 @@ func validateConversionActions(kind, customerID string, actions []string) ([]str
 		case conversionActionResourceRE.MatchString(action):
 			owner := conversionActionResourceRE.FindStringSubmatch(action)[1]
 			if owner != customerID {
-				return nil, fmt.Errorf("google-ads: conversion action %q belongs to customer %s, not the campaign's account %s; a conversion action cannot be shared across accounts", action, owner, customerID)
+				return nil, fmt.Errorf("google-ads: conversion action %q belongs to customer %s, not the campaign's account %s; a conversion action cannot be shared across accounts", capForError(action), owner, customerID)
 			}
 			resource = action
 		default:
-			return nil, fmt.Errorf("google-ads: conversion action %q is neither a numeric id nor a customers/<id>/conversionActions/<id> resource name", action)
+			return nil, fmt.Errorf("google-ads: conversion action %q is neither a numeric id nor a customers/<id>/conversionActions/<id> resource name", capForError(action))
 		}
 		// Deduplicated rather than refused: naming the same conversion twice is a
 		// harmless paste, and Google rejects a selective_optimization list containing a

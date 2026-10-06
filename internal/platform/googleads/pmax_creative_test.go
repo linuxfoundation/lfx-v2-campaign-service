@@ -6,6 +6,7 @@ package googleads
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -442,5 +443,53 @@ func TestBuildPerformanceMaxAssets_ImageAssetsCarryNoName(t *testing.T) {
 func TestBuildPerformanceMaxAssets_EmptyPlanBuildsNothing(t *testing.T) {
 	if got := buildPerformanceMaxAssets(performanceMaxPlan{}, nil); len(got) != 0 {
 		t.Errorf("an absent plan must build no assets, got %d", len(got))
+	}
+}
+
+// TestValidateYouTubeVideoIDs_URLRefusalRedactsTheQuery pins the privacy half of the
+// URL refusal. That arm fires precisely BECAUSE the value is URL-shaped, and the error it
+// returns persists unencrypted as a Steps entry — so a pasted share link must not carry its
+// tracking or signing query into the database. scheme+host+path already tells the caller
+// everything the message needs to.
+func TestValidateYouTubeVideoIDs_URLRefusalRedactsTheQuery(t *testing.T) {
+	_, err := validateYouTubeVideoIDs([]string{"https://youtu.be/dQw4w9WgXcQ?si=SECRET-SHARE-TOKEN"})
+	if err == nil {
+		t.Fatal("a URL must be refused")
+	}
+	if strings.Contains(err.Error(), "SECRET-SHARE-TOKEN") || strings.Contains(err.Error(), "si=") {
+		t.Errorf("the query string must not reach a persisted error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "youtu.be") {
+		t.Errorf("the refusal must still name the host so the caller can recognise what they pasted: %v", err)
+	}
+}
+
+// TestValidateYouTubeVideoIDs_NonURLValuesAreBounded covers the other arms. They have
+// established the value is NOT a URL, so it is capped rather than redacted — but nothing
+// bounds its length, and the error is emitted in exactly the case the value is unbounded.
+func TestValidateYouTubeVideoIDs_NonURLValuesAreBounded(t *testing.T) {
+	long := strings.Repeat("A", 5000) + "!"
+	_, err := validateYouTubeVideoIDs([]string{long})
+	if err == nil {
+		t.Fatal("a non-id character must be refused")
+	}
+	if len(err.Error()) > 400 {
+		t.Errorf("the refusal must not echo the whole caller string (%d bytes): %.120s…", len(err.Error()), err.Error())
+	}
+}
+
+// TestCapForError_CutsOnARuneBoundary pins the contract the display-width-validated callers
+// depend on. Those fields are measured by width, not bytes, so multibyte text is expected
+// there, and a fixed byte offset would write half a rune into a persisted Steps entry.
+func TestCapForError_CutsOnARuneBoundary(t *testing.T) {
+	got := capForError(strings.Repeat("日", 200))
+	if !utf8.ValidString(got) {
+		t.Errorf("capForError produced invalid UTF-8: %q", got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("a truncated value must be marked as truncated: %q", got)
+	}
+	if ascii := capForError(strings.Repeat("a", 50)); ascii != strings.Repeat("a", 50) {
+		t.Errorf("a short value must pass through untouched, got %q", ascii)
 	}
 }

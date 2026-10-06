@@ -321,13 +321,13 @@ func validateDemandGenCreative(kind string, in CampaignInput) (demandGenCreative
 		return demandGenCreativePlan{}, errors.New("google-ads Demand Gen ad requires a business name (Google marks the field required)")
 	}
 	if w := textWeight(name); w > maxDemandGenBusinessNameWeight {
-		return demandGenCreativePlan{}, fmt.Errorf("google-ads Demand Gen business name %q has a display width of %d, exceeding the %d limit", name, w, maxDemandGenBusinessNameWeight)
+		return demandGenCreativePlan{}, fmt.Errorf("google-ads Demand Gen business name %q has a display width of %d, exceeding the %d limit", capForError(name), w, maxDemandGenBusinessNameWeight)
 	}
 	plan.businessName = name
 
 	cta := strings.TrimSpace(d.CallToActionText)
 	if n := utf8.RuneCountInString(cta); n > maxDemandGenCallToActionRunes {
-		return demandGenCreativePlan{}, fmt.Errorf("google-ads Demand Gen call to action %q is %d characters, exceeding the %d limit", cta, n, maxDemandGenCallToActionRunes)
+		return demandGenCreativePlan{}, fmt.Errorf("google-ads Demand Gen call to action %q is %d characters, exceeding the %d limit", capForError(cta), n, maxDemandGenCallToActionRunes)
 	}
 	plan.callToActionText = cta
 
@@ -352,7 +352,7 @@ func validateCreativeText(channel, label string, in []string, min, max, maxWeigh
 			return nil, fmt.Errorf("google-ads %s %s %d is empty", channel, label, i)
 		}
 		if w := textWeight(text); w > maxWeight {
-			return nil, fmt.Errorf("google-ads %s %s %q has a display width of %d, exceeding the %d limit", channel, label, text, w, maxWeight)
+			return nil, fmt.Errorf("google-ads %s %s %q has a display width of %d, exceeding the %d limit", channel, label, capForError(text), w, maxWeight)
 		}
 		// Google refuses a duplicate asset within one ad, and a caller who wrote
 		// the same headline twice meant one — the same judgement validateCallouts
@@ -360,7 +360,7 @@ func validateCreativeText(channel, label string, in []string, min, max, maxWeigh
 		// changes how many assets the ad has, and the count carries a minimum.
 		key := strings.ToLower(text)
 		if _, dup := seen[key]; dup {
-			return nil, fmt.Errorf("google-ads %s %s %q is listed more than once", channel, label, text)
+			return nil, fmt.Errorf("google-ads %s %s %q is listed more than once", channel, label, capForError(text))
 		}
 		seen[key] = struct{}{}
 		out = append(out, text)

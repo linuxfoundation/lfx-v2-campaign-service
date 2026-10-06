@@ -1720,12 +1720,13 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 	if err != nil {
 		return err
 	}
-	// Refuse ACTIVATE if targeting was not successfully provisioned: GA-4 requires at least
-	// one keyword criterion before allowing activation (audience criteria alone are
-	// observation-only and do not qualify for activation, so they don't satisfy this gate).
-	// Checked below via the persisted KeywordCriteriaIDs in the Result blob — empty means
-	// keyword targeting was never attempted or failed before any criterion resource name
-	// could be parsed.
+	// Refuse ACTIVATE if this campaign's own serving resources were not successfully
+	// provisioned. What those ARE is channel-specific and lives in googleAdsActivationGate:
+	// the keyword requirement named here is SEARCH-ONLY, because Demand Gen refuses keywords
+	// at create and Performance Max has neither ad groups nor keywords. Both inputs come from
+	// the persisted Result blob — keywordsProvisioned from KeywordCriteriaIDs (empty means
+	// keyword targeting was never attempted, or failed before any criterion resource name
+	// could be parsed), assetGroupID from the Performance Max creative.
 	targets, keywordsProvisioned, incompleteGroups := googleAdsToggleTargets(campaign)
 	assetGroupID := googleAdsToggleAssetGroup(campaign)
 	if gaStatus == googleads.StatusEnabled {
@@ -2151,30 +2152,6 @@ func googleAdsCampaignAdGroupIDs(campaign *model.Campaign) map[string]bool {
 	return ids
 }
 
-// googleAdsToggleTargets recovers EVERY ad group of a campaign, with its own ads, from
-// the persisted CampaignResult blob — the set a status toggle has to cascade over.
-//
-// The scalar AdGroupID/AdID pair the blob also carries is a copy of the FIRST group's, and
-// was the whole story while a campaign could only have one. Since
-// multiple ad groups and multiple responsive search ads landed, cascading over that pair
-// alone enables group 1's first ad and leaves every other group and ad PAUSED while the
-// campaign reports ENABLED — a campaign that says it is running and mostly is not.
-//
-// The three returns:
-//
-//   - targets: the groups that can actually be toggled, in the order they were created.
-//   - keywordsProvisioned: whether ANY group has a keyword criterion. Campaign-wide on
-//     purpose. The activation gate asks whether the campaign can deliver, and a campaign
-//     delivers if one of its groups has keywords; asking only about the first group
-//     refuses a campaign that would have served, which is the over-refusal this gate
-//     must not commit.
-//   - incomplete: groups recorded in the blob that cannot be toggled because their create
-//     did not finish — present with an empty id, or with no ad. The create path appends an
-//     entry BEFORE the group's mutate precisely so a failed group leaves a trace, and the
-//     caller reports these rather than silently acting on a subset.
-//
-// Falls back to the scalar pair when AdGroups is absent: rows written before that field
-// existed are single-group by construction, so the pair IS the whole campaign there.
 // googleAdsActivationGate refuses an ACTIVATE that would report a launch the campaign
 // cannot deliver. What counts as "fully provisioned" is CHANNEL-SPECIFIC, because the three
 // channels this dispatcher creates do not have the same serving resources:
@@ -2259,6 +2236,30 @@ func googleAdsToggleChildren(ctx context.Context, client *googleads.Client, targ
 	return client.UpdateAdGroupsAndAdsStatus(ctx, targets, gaStatus)
 }
 
+// googleAdsToggleTargets recovers EVERY ad group of a campaign, with its own ads, from
+// the persisted CampaignResult blob — the set a status toggle has to cascade over.
+//
+// The scalar AdGroupID/AdID pair the blob also carries is a copy of the FIRST group's, and
+// was the whole story while a campaign could only have one. Since
+// multiple ad groups and multiple responsive search ads landed, cascading over that pair
+// alone enables group 1's first ad and leaves every other group and ad PAUSED while the
+// campaign reports ENABLED — a campaign that says it is running and mostly is not.
+//
+// The three returns:
+//
+//   - targets: the groups that can actually be toggled, in the order they were created.
+//   - keywordsProvisioned: whether ANY group has a keyword criterion. Campaign-wide on
+//     purpose. The activation gate asks whether the campaign can deliver, and a campaign
+//     delivers if one of its groups has keywords; asking only about the first group
+//     refuses a campaign that would have served, which is the over-refusal this gate
+//     must not commit.
+//   - incomplete: groups recorded in the blob that cannot be toggled because their create
+//     did not finish — present with an empty id, or with no ad. The create path appends an
+//     entry BEFORE the group's mutate precisely so a failed group leaves a trace, and the
+//     caller reports these rather than silently acting on a subset.
+//
+// Falls back to the scalar pair when AdGroups is absent: rows written before that field
+// existed are single-group by construction, so the pair IS the whole campaign there.
 func googleAdsToggleTargets(campaign *model.Campaign) (targets []googleads.AdGroupStatusTarget, keywordsProvisioned bool, incomplete []string) {
 	if campaign == nil || len(campaign.Result) == 0 {
 		return nil, false, nil

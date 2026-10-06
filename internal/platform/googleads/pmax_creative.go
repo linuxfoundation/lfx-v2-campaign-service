@@ -322,7 +322,7 @@ func validatePerformanceMaxCreative(kind string, in CampaignInput) (performanceM
 		return performanceMaxPlan{}, errors.New("google-ads Performance Max asset group requires a business name (Google marks the field required)")
 	}
 	if w := textWeight(name); w > maxPerformanceMaxBusinessNameWeight {
-		return performanceMaxPlan{}, fmt.Errorf("google-ads Performance Max business name %q has a display width of %d, exceeding the %d limit", name, w, maxPerformanceMaxBusinessNameWeight)
+		return performanceMaxPlan{}, fmt.Errorf("google-ads Performance Max business name %q has a display width of %d, exceeding the %d limit", capForError(name), w, maxPerformanceMaxBusinessNameWeight)
 	}
 	plan.businessName = name
 
@@ -337,7 +337,7 @@ func validatePerformanceMaxCreative(kind string, in CampaignInput) (performanceM
 		groupName = strings.TrimSpace(in.EventName) + performanceMaxAssetGroupSuffix
 	}
 	if n := utf8.RuneCountInString(groupName); n > maxAssetGroupNameRunes {
-		return performanceMaxPlan{}, fmt.Errorf("google-ads Performance Max asset group name %q is %d characters, exceeding the %d limit", groupName, n, maxAssetGroupNameRunes)
+		return performanceMaxPlan{}, fmt.Errorf("google-ads Performance Max asset group name %q is %d characters, exceeding the %d limit", capForError(groupName), n, maxAssetGroupNameRunes)
 	}
 	plan.assetGroupName = groupName
 
@@ -370,10 +370,10 @@ func validateDisplayPath(label, raw string) (string, error) {
 		return "", nil
 	}
 	if n := utf8.RuneCountInString(p); n > maxDisplayPathRunes {
-		return "", fmt.Errorf("google-ads Performance Max display %s %q is %d characters, exceeding the %d limit", label, p, n, maxDisplayPathRunes)
+		return "", fmt.Errorf("google-ads Performance Max display %s %q is %d characters, exceeding the %d limit", label, capForError(p), n, maxDisplayPathRunes)
 	}
 	if strings.ContainsAny(p, "/?#&= \t\n") {
-		return "", fmt.Errorf("google-ads Performance Max display %s %q contains a character Google does not accept in a display path (no slashes, spaces or URL punctuation)", label, p)
+		return "", fmt.Errorf("google-ads Performance Max display %s %q contains a character Google does not accept in a display path (no slashes, spaces or URL punctuation)", label, capForError(p))
 	}
 	return p, nil
 }
@@ -398,6 +398,14 @@ func isYouTubeIDRune(r rune) bool {
 // A URL is REFUSED rather than parsed into an id. Accepting one would mean guessing
 // which of youtu.be, /watch?v=, /shorts/ and /embed/ forms the caller meant, and a guess
 // that extracted the wrong substring would attach the wrong video to a real campaign.
+//
+// The refusal reports the value through redactURLForError, like every other URL this
+// package puts in an error. That arm fires precisely BECAUSE the value is URL-shaped, and
+// these errors persist unencrypted as Steps entries — a pasted share link carries its
+// tracking or signing query with it, so echoing the raw string would write a credential to
+// the database to tell the caller something scheme+host+path already tells them. Every
+// other arm caps the value instead: those have established it is NOT a URL, but nothing
+// bounds its length.
 func validateYouTubeVideoIDs(in []string) ([]string, error) {
 	out := make([]string, 0, len(in))
 	seen := make(map[string]struct{}, len(in))
@@ -407,7 +415,7 @@ func validateYouTubeVideoIDs(in []string) ([]string, error) {
 			return nil, fmt.Errorf("google-ads Performance Max YouTube video %d is empty", i)
 		}
 		if strings.Contains(id, "/") || strings.Contains(id, ":") || strings.Contains(id, "?") {
-			return nil, fmt.Errorf("google-ads Performance Max YouTube video %d looks like a URL (%q); supply the bare video id instead, because this client will not guess which part of a URL is the id", i, id)
+			return nil, fmt.Errorf("google-ads Performance Max YouTube video %d looks like a URL (%q); supply the bare video id instead, because this client will not guess which part of a URL is the id", i, redactURLForError(id))
 		}
 		// The id alphabet is YouTube's own: unreserved base64url characters. Length is
 		// deliberately NOT pinned to 11 — that is the length every id has had, not a
@@ -415,11 +423,11 @@ func validateYouTubeVideoIDs(in []string) ([]string, error) {
 		// would have accepted.
 		for _, r := range id {
 			if !isYouTubeIDRune(r) {
-				return nil, fmt.Errorf("google-ads Performance Max YouTube video %q contains %q, which is not a YouTube id character", id, r)
+				return nil, fmt.Errorf("google-ads Performance Max YouTube video %q contains %q, which is not a YouTube id character", capForError(id), r)
 			}
 		}
 		if _, dup := seen[id]; dup {
-			return nil, fmt.Errorf("google-ads Performance Max YouTube video %q is listed more than once", id)
+			return nil, fmt.Errorf("google-ads Performance Max YouTube video %q is listed more than once", capForError(id))
 		}
 		seen[id] = struct{}{}
 		out = append(out, id)

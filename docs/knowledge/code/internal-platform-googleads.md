@@ -446,6 +446,27 @@ step/snapshot. Mirrors the twitter client's `redactURLForError` and the
 reddit/meta clients' equivalent `redactURL` (userinfo/credentials-in-caller-
 URL pattern, see `docs/reviews/knowledge-base/credentials-and-untrusted-text.md`).
 
+**The same discipline applies to every caller-controlled string this package puts in an
+error, not only to URLs**, because these errors persist unencrypted as `Steps` entries.
+Two helpers, and which one applies is decided by what the surrounding code has already
+ESTABLISHED about the value:
+
+- `redactURLForError` where the value is, or may be, a URL. This includes arms that fire
+  *because* a value is URL-shaped — `validateYouTubeVideoIDs` refuses a pasted share link
+  and reports it reduced to scheme+host+path, since the `?si=…` or signing query it carries
+  is exactly what must not be written to the database, and the host alone already tells the
+  caller what they pasted.
+- `capForError` everywhere else: business names, asset-group names, display paths,
+  headlines, descriptions, calls to action, bidding strategies and conversion actions. These
+  arms have established the value is NOT a URL, but nothing bounds its LENGTH — and a
+  length-limit error is emitted in precisely the case where the value exceeds the limit, so
+  echoing it raw is unbounded by construction. `capForError` cuts on a rune boundary rather
+  than a byte one, because several of these fields are validated by DISPLAY WIDTH and
+  multibyte copy is expected in them.
+
+`validateEntityName` shows the third option, which remains available and is stricter still:
+report the measured width and the limit and do not echo the value at all.
+
 ## Ad group + responsive search ad creation (GA-3b)
 
 `CreateCampaign` extends the GA-2 campaign shell with a real
