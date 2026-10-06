@@ -1254,6 +1254,52 @@ campaigns, whether the PUT response echoes the campaign, and X's unpublished per
 minimums. Each unknown fails closed (409, a definite 4xx, or an UNCONFIRMED 503), never as a
 wrong write. See [internal/platform/twitter](internal-platform-twitter.md).
 
+## Bid write (optional capability, LFXV2-2665)
+
+`service.BidWriter` (`WriteBid`) sets a campaign's manual max CPC bid. **Microsoft Advertising and
+Reddit only**; every other dispatcher is not a `BidWriter` (pinned by
+`TestBidWriter_OnlyMicrosoftAndRedditImplementIt`), so the orchestrator answers
+`ErrBidUnsupported` (400). Shared outcome types live in `bid.go`: `unconfirmedBidWriteError`
+(`Unconfirmed()`) and `rejectedBidAmountError` (`BidAmountReason()`), the bid lever's
+counterparts of the budget types. No env gate, matching the budget writers.
+
+Both adapters follow the budget writers' order: provenance FAILED CLOSED first (absent creating
+account → `ErrCampaignProvenanceUnknown` + `ErrCampaignAccountMismatch`, before any token or
+request), then the row/request facts (bid type, recorded ad group id, amount), then credential
+resolution and the account-match guard, then a READ, then the guards, then the one mutate,
+classified. Nothing is written until every guard has passed.
+
+- **Microsoft** (`microsoft_bid.go`): writes the default `CpcBid` of the ad group recorded in
+  the row's result blob (`microsoftChildIDs`) — the field the create path sets; keywords are
+  created without bids and inherit it. Reads the CAMPAIGN's bid strategy
+  (`GetCampaignBidStrategy`) and writes only under its OWN `EnhancedCpc` or `ManualCpc`; any
+  automated scheme (MaxClicks, MaxConversions, TargetCpa, TargetRoas, MaxConversionValue,
+  TargetImpressionShare, CostPerSale, ...), any portfolio (`BidStrategyId > 0`), an unreadable
+  portfolio id, and an unreported or unreadable scheme → `ErrBidUnwritable`. Amount bounds are
+  the create path's (`ValidateMaxCPCBid`: 0.01–1000 in the account currency) → 400 before any
+  call. PUT outcomes: unconfirmed (incl. any failure after a retried 429) → 503; Microsoft's
+  floor/ceiling/invalid-bid codes → `ErrBidAmountRejected`; CannotSetSearchBidOnAdGroup or an
+  invalid ad group id → `ErrBidUnwritable`; anything else definite → default 503 "not modified".
+- **Reddit** (`reddit_bid.go`): writes `bid_value` of the ad group recorded in the result blob
+  (`redditChildIDs`; its shape is checked with `reddit.CheckAdGroupID` before any request).
+  Reads the CAMPAIGN first (`GetCampaignBudget`, which now also reports `bid_strategy`): under
+  CBO the ad group's strategy must match the campaign's, and Reddit's reference could not be
+  fetched to confirm more, so CBO on requires the campaign's own `MANUAL_BIDDING`, an unreported
+  CBO flag is refused, and CBO off accepts only an absent or `MANUAL_BIDDING` campaign strategy;
+  an absent campaign → `ErrPlatformCampaignAbsent`, a campaign reported under another account →
+  `ErrCampaignAccountMismatch`. Then reads the ad group and requires: it belongs to this campaign
+  (an UNREPORTED `campaign_id` is refused like a different one), `bid_strategy == MANUAL_BIDDING`,
+  `bid_type == CPC`, a legible `bid_value`; else `ErrBidUnwritable`. **Every Reddit campaign this service creates is `BIDLESS`**, so this leg
+  refuses them until an operator moves the ad group to manual bidding. A 404 on the ad group is
+  `ErrBidUnwritable`, NOT `ErrPlatformCampaignAbsent` — the campaign may still exist. Amount via
+  `reddit.BidMicros` (positive, ≤ 1,000,000, ≥ one micro). PATCH outcomes as the budget write's,
+  plus a definite 400 carrying a STRUCTURED field error on `bid_value`
+  (`error.fields[].field == "bid_value"`) → `ErrBidAmountRejected` with this service's own
+  sentence (never Reddit's text); a 400 that merely mentions `bid_value` elsewhere stays a
+  definite refusal. **Known gap, inherited from the Reddit budget write:** a definite 4xx that
+  follows a retried 429 is classified DEFINITE, not unconfirmed (Microsoft's `putUpdate` treats
+  it as unconfirmed); the 429'd attempt may have applied.
+
 ## Metrics read (optional capability)
 
 `MetricsReader` is a second OPTIONAL dispatcher interface, alongside `StatusToggler` —

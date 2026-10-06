@@ -184,6 +184,46 @@ type Service interface {
 	// or did not confirm; the row is unchanged, and re-applying the same amount
 	// converges on the same state, so a retry is safe.
 	UpdateCampaignBudget(context.Context, *UpdateCampaignBudgetPayload) (res *Campaign, err error)
+	// Change a campaign's MAX COST-PER-CLICK BID on its ad platform, then persist
+	// the new bid. A MUTATION on a live paid campaign, dispatched to the platform
+	// first, with the same ONE-WAY invariant as update-campaign-budget: the new
+	// bid is never persisted before the platform confirms it; once confirmed, a
+	// failed row write answers 500 with the platform holding the new bid, logged
+	// as a divergence, and re-applying the same bid reconciles it. ONE MANUAL CPC
+	// BID, AT THE LEVEL THIS SERVICE'S CREATE PATH PUTS IT — never a bid strategy.
+	// Microsoft Advertising: the default CpcBid of the ONE ad group this service
+	// created for the campaign (keywords are created without their own bids, so
+	// they inherit it). Reddit: the bid_value of the ONE ad group this service
+	// created. A campaign whose row records no ad group (an adopted campaign, or
+	// one whose creation never reached the ad group) is refused (409): the service
+	// will not choose which of several ad groups to re-bid. REFUSED (409) WHEN THE
+	// BID WOULD BE IGNORED. A manual bid only does something under a bid strategy
+	// that reads it — Microsoft's EnhancedCpc or ManualCpc; Reddit's
+	// MANUAL_BIDDING. Under an automated strategy (Microsoft MaxClicks,
+	// MaxConversions, TargetCpa, TargetRoas, MaxConversionValue,
+	// TargetImpressionShare, a portfolio strategy the read cannot name; Reddit
+	// BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX) the platform would ignore it or,
+	// worse, the write would be read as a request to switch strategy — and this
+	// endpoint NEVER switches strategy. An unreported strategy is refused the same
+	// way rather than assumed manual. NOTE: every Reddit campaign this service
+	// creates is BIDLESS, so the Reddit leg applies only after an operator has
+	// moved the ad group to manual bidding in Reddit Ads Manager. The amount is in
+	// the AD ACCOUNT's own currency, not USD, and this service neither knows nor
+	// converts it. Microsoft Advertising and Reddit today: a campaign on any other
+	// platform is refused with 400. **409** when the change is refused BEFORE the
+	// platform is written, so nothing has changed: the campaign is unprovisioned;
+	// it belongs to a different ad account than the project's connection now
+	// resolves to, or does not record which ad account it was created under; its
+	// bid strategy is automated or unreported; or the bid could not be addressed
+	// (no recorded ad group, an ad group reporting another campaign, or one
+	// bidding in a unit other than `bid_type`). None is retryable. **400** for a
+	// request fault: a non-positive, non-finite or out-of-range bid, an unknown
+	// bid type, a platform with no bid-write capability wired, or a bid the
+	// campaign's platform refuses on its own minimum or maximum — the response
+	// names what it was. **503** when the platform could not be reached or did not
+	// confirm; the row is unchanged. Setting the same bid twice converges, but
+	// verify the bid in the ad platform before retrying.
+	UpdateCampaignBid(context.Context, *UpdateCampaignBidPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads keywords on one campaign. A MUTATION on a live
 	// paid campaign: pausing or removing a keyword changes what serves, so it is
 	// validated exactly like a create. The batch's syntax, the campaign's
@@ -287,7 +327,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [29]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "apply-keyword-actions", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [30]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AdoptCampaignPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service adopt-campaign method.
@@ -1153,6 +1193,27 @@ type UpdateBriefPayload struct {
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
 	Brief   *BriefInput
+}
+
+// UpdateCampaignBidPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service update-campaign-bid method.
+type UpdateCampaignBidPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	// New maximum cost-per-click bid, in the AD ACCOUNT's own currency (NOT USD).
+	// Must be strictly positive.
+	Bid float64
+	// The unit the bid is expressed in. Only a max cost-per-click bid is
+	// supported; it MUST match how the ad group bids upstream.
+	BidType string
 }
 
 // UpdateCampaignBudgetPayload is the payload type of the

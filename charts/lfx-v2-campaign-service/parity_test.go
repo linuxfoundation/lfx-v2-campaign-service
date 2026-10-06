@@ -418,6 +418,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// briefs match/rule must fail here loudly rather than leave a money-moving endpoint
 		// routed-but-unauthorized, or unreachable.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/budget", true},
+		// The campaign bid write (LFXV2-2665) is the third spend-affecting mutation in this
+		// set — it changes what a live campaign pays per click — and is pinned for the budget
+		// row's reason.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/bid", true},
 		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
 		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
 		// rule — no separate route/rule entry. These rows pin that coverage so a future

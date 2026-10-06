@@ -83,6 +83,19 @@ func TestCampaignRepo_OnConflictCarriesLivePredicate(t *testing.T) {
 // campaign writes at one version, two outbox rows, and the later one silently overwriting
 // the earlier. Asserted against the SQL text because this package has no live-database
 // harness in CI.
+// TestReplaceCampaignWritesTheBidColumn pins that the full-row replace carries max_cpc_bid
+// (000039). update-campaign-bid persists through ReplaceCampaign; a SET list without the column
+// would answer 200 and a bumped ETag while recording nothing, and every other caller writes back
+// the value it loaded, so including it costs them nothing.
+func TestReplaceCampaignWritesTheBidColumn(t *testing.T) {
+	assert.Regexp(t, `max_cpc_bid=\$\d+`, normalizeWS(replaceCampaignQuery),
+		"ReplaceCampaign must SET max_cpc_bid, or a confirmed bid change is silently not recorded")
+	// RETURNING campaignCols legitimately SELECTS the column; what must be absent is a write.
+	assert.NotRegexp(t, `max_cpc_bid\s*=`, normalizeWS(upsertCampaignQuery),
+		"the dispatch upsert must not touch max_cpc_bid: it records only bids set through the bid "+
+			"endpoint, and a re-dispatch writing NULL over it would erase that record")
+}
+
 func TestClaimVersionIsBackedByACompareAndSwap(t *testing.T) {
 	q := replaceCampaignQuery
 
@@ -522,7 +535,7 @@ var campaignColumnOrder = []string{
 	"id", "project_id", "brief_id", "job_id", "platform", "variant", "slot_version", "platform_campaign_id",
 	"campaign_name", "status", "budget_amount", "budget_type", "start_date", "end_date",
 	"config_snapshot", "result", "version", "created_by", "updated_by", "ran_on_system_account",
-	"created_at", "updated_at",
+	"created_at", "updated_at", "max_cpc_bid",
 }
 
 // fakeCampaignRow is a pgx.Row handing scanCampaign a fixed, positionally ordered result set.
@@ -583,17 +596,22 @@ func TestScanCampaign_MapsEachColumnToItsField(t *testing.T) {
 	jobID, pcID, budgetType := "j1", "gads-123", "daily"
 	amount := 250.5
 	ranOnSystem := true
+	bid := 1.75
 
 	c, err := scanCampaign(fakeCampaignRow{vals: []any{
 		"c1", "cncf", "b1", &jobID, "google-ads", "demand-gen", 3, &pcID, "Spring launch", "created",
 		&amount, &budgetType, &start, &end,
 		json.RawMessage(`{"cfg":1}`), json.RawMessage(`{"res":2}`), int64(9),
 		[]byte(`{"email":"ada@lf.dev"}`), []byte(`{"email":"grace@lf.dev"}`), &ranOnSystem,
-		created, updated,
+		created, updated, &bid,
 	}})
 	require.NoError(t, err)
 
 	assert.Equal(t, "c1", c.ID)
+	// max_cpc_bid (000039) and budget_amount are both *float64, so a destination swap would
+	// scan cleanly; distinct values (1.75 vs 250.5) are what make it visible.
+	require.NotNil(t, c.MaxCPCBid)
+	assert.InDelta(t, 1.75, *c.MaxCPCBid, 0.000001)
 	assert.Equal(t, "cncf", c.ProjectID)
 	assert.Equal(t, "b1", c.BriefID)
 	require.NotNil(t, c.JobID)
@@ -647,9 +665,11 @@ func TestScanCampaign_NullActorsDecodeToNil(t *testing.T) {
 	c, err := scanCampaign(fakeCampaignRow{vals: []any{
 		"c1", "cncf", "b1", nil, "google-ads", "default", 1, nil, "n", "created",
 		nil, nil, nil, nil, nil, nil, int64(1),
-		nil, nil, nil, time.Time{}, time.Time{},
+		nil, nil, nil, time.Time{}, time.Time{}, nil,
 	}})
 	require.NoError(t, err)
+	// A NULL max_cpc_bid means "never set through update-campaign-bid", which is nil.
+	assert.Nil(t, c.MaxCPCBid)
 	assert.Nil(t, c.CreatedBy, "a NULL created_by means \"not recorded\", which is nil, not an error")
 	assert.Nil(t, c.UpdatedBy)
 	// The other nullable columns travel the same path and must not be invented either.
@@ -679,7 +699,7 @@ func TestScanCampaign_MalformedActorJSONIsAnError(t *testing.T) {
 		return []any{
 			"c1", "cncf", "b1", nil, "google-ads", "default", 1, nil, "n", "created",
 			nil, nil, nil, nil, nil, nil, int64(1),
-			createdBy, updatedBy, nil, time.Time{}, time.Time{},
+			createdBy, updatedBy, nil, time.Time{}, time.Time{}, nil,
 		}
 	}
 	_, err := scanCampaign(fakeCampaignRow{vals: base([]byte(`["not","an","actor"]`), nil)})

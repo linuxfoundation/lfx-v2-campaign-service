@@ -171,6 +171,11 @@ const settingsCallTimeout = 20 * time.Second
 // applied twice is money.
 const budgetWriteCallTimeout = 45 * time.Second
 
+// bidWriteCallTimeout bounds the SYNCHRONOUS bid-write platform call. It IS the budget write's
+// ceiling, for the budget write's reasons: a read of the governing bid strategy and ad group
+// precedes the mutate, so the call is a sequence, and a timeout surfaces as UNCONFIRMED.
+const bidWriteCallTimeout = budgetWriteCallTimeout
+
 // accountsCallTimeout bounds the SYNCHRONOUS account-listing platform call, which — like
 // metrics and toggle — runs on the HTTP request goroutine. Account discovery is a pure read
 // with no cascade, so it can use the same ceiling as metrics reads.
@@ -323,6 +328,40 @@ type BudgetWriter interface {
 	// Returns nil ONLY when the platform confirmed the change. The caller persists the new
 	// budget onto the row on nil and on nothing else.
 	WriteBudget(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, budget model.BudgetChange) error
+}
+
+// BidWriter is an OPTIONAL dispatcher capability: change an existing campaign's MANUAL max
+// cost-per-click bid ON THE AD PLATFORM. Type-asserted like BudgetWriter, so a dispatcher
+// without it yields a clean ErrBidUnsupported -> 400.
+//
+// BudgetWriter's sibling, and bound by the same three non-negotiable rules — confirm before
+// persisting, never report an unconfirmed write as success, and enforce the account-identity
+// invariant at least as strictly as ReadSettings (a missing creating account is refused, not
+// waved through). A bid moves money per click rather than per day, but it moves money.
+//
+// One rule is its own, and it is what makes the capability honest rather than merely
+// successful:
+//
+//   - NEVER WRITE A BID THE PLATFORM WILL IGNORE, AND NEVER SWITCH STRATEGY. A manual bid
+//     only means something under a bid strategy that reads it. Under an AUTOMATED strategy the
+//     platform either ignores the value (a 200 that changed nothing a caller can observe) or —
+//     on some platforms — treats the write as a request to move the campaign to manual
+//     bidding. Both are wrong answers to "set my max CPC to X". An implementation must READ
+//     the strategy that governs the bid first and refuse with ErrBidUnwritable when it is
+//     automated or unreported; it must never send a strategy field itself.
+//
+// The bid is written AT THE LEVEL THE CREATE PATH PUT IT — for the platforms wired today, the
+// one ad group this service created for the campaign, named by the row's recorded result. A
+// row recording no ad group is refused rather than resolved by listing ad groups upstream:
+// choosing which of several ad groups to re-bid is a decision this endpoint does not make.
+type BidWriter interface {
+	// WriteBid sets the campaign's manual max CPC bid on the platform. campaign is the
+	// persisted row, supplied so the adapter can reach PlatformCampaignID, the creation
+	// provenance and the recorded ad group id.
+	//
+	// Returns nil ONLY when the platform confirmed the change. The caller persists the new
+	// bid onto the row on nil and on nothing else.
+	WriteBid(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, bid model.BidChange) error
 }
 
 // AccountLister is an OPTIONAL dispatcher capability: enumerate accessible ad accounts for a
@@ -617,6 +656,15 @@ var (
 	// unconfirmed outcome is never this sentinel.
 	ErrBudgetAmountRejected = domain.ErrBudgetAmountRejected
 
+	// ErrBidUnsupported: the campaign's platform has no bid-write capability wired.
+	ErrBidUnsupported = domain.ErrBidUnsupported
+	// ErrBidUnwritable: the bid cannot be written as a manual bid (automated or unreported
+	// strategy, or an unaddressable ad group); the platform confirmed NO change.
+	ErrBidUnwritable = domain.ErrBidUnwritable
+	// ErrBidAmountRejected: the requested bid was refused and the platform confirmed NO
+	// change. A permanent request fault, answered 400.
+	ErrBidAmountRejected = domain.ErrBidAmountRejected
+
 	// ErrAccountsUnsupported: the platform has no account-listing capability wired.
 	ErrAccountsUnsupported = domain.ErrAccountsUnsupported
 
@@ -779,6 +827,7 @@ const (
 	opLookupCampaign             = "lookup_campaign"
 	opReadSettings               = "read_settings"
 	opWriteBudget                = "write_budget"
+	opWriteBid                   = "write_bid"
 	opListAccounts               = "list_accounts"
 	opListAccountCampaignMetrics = "list_account_campaign_metrics"
 	opSearchEmails               = "search_emails"
@@ -2208,6 +2257,31 @@ func (o *Orchestrator) WriteCampaignBudget(ctx context.Context, projectID string
 	start := time.Now()
 	werr := writer.WriteBudget(callCtx, projectID, platform, campaign, budget)
 	o.recordUpstream(ctx, platform, opWriteBudget, start, werr)
+	return werr
+}
+
+// WriteCampaignBid changes an already-created campaign's manual max CPC bid on its ad
+// platform. WriteCampaignBudget's twin in every respect — the same pre-platform guards, the
+// same classification of what the returned error can mean, the same confirm-then-persist split
+// — with ErrBidUnsupported, ErrBidUnwritable and ErrBidAmountRejected in place of the budget
+// sentinels. Request validation is the service layer's job, as there.
+func (o *Orchestrator) WriteCampaignBid(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, bid model.BidChange) error {
+	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
+		return ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return fmt.Errorf("%w: no dispatcher registered for platform %s", ErrBidUnsupported, platform)
+	}
+	writer, ok := d.(BidWriter)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrBidUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, bidWriteCallTimeout)
+	defer cancel()
+	start := time.Now()
+	werr := writer.WriteBid(callCtx, projectID, platform, campaign, bid)
+	o.recordUpstream(ctx, platform, opWriteBid, start, werr)
 	return werr
 }
 

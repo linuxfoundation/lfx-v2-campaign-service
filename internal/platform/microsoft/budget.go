@@ -146,20 +146,33 @@ func (b *CampaignBudget) IsShared() bool { return b.SharedBudgetID != "" }
 // queryCampaignsByIDsRequest is the POST Campaigns/QueryByIds (GetCampaignsByIds) body.
 // CampaignType is sent explicitly even though Search is the documented default, so the read's
 // scope does not depend on a default that could change.
+//
+// ReturnAdditionalFields is sent only by the bid-strategy read (bid.go), which needs BidStrategyId:
+// Microsoft returns that element only when it is requested ("Request that the BidStrategyId
+// element be included within each returned Campaign object",
+// https://learn.microsoft.com/en-us/advertising/campaign-management-service/campaignadditionalfield).
+// omitempty keeps the budget read's body byte-for-byte what it was.
 type queryCampaignsByIDsRequest struct {
-	AccountId    json.Number   `json:"AccountId"`
-	CampaignIds  []json.Number `json:"CampaignIds"`
-	CampaignType string        `json:"CampaignType"`
+	AccountId              json.Number   `json:"AccountId"`
+	CampaignIds            []json.Number `json:"CampaignIds"`
+	CampaignType           string        `json:"CampaignType"`
+	ReturnAdditionalFields string        `json:"ReturnAdditionalFields,omitempty"`
 }
 
 // msCampaignBudgetRead is the subset of a returned Campaign the budget guards need. Every id is
 // a *json.Number: Microsoft types them `long`, a nil pointer is how an absent/null field stays
 // distinguishable from a present one, and json.Number keeps digits a float64 would round.
+//
+// BiddingScheme and BidStrategyId are read only by the bid-strategy guard (bid.go) and are kept
+// RAW: they are parsed there, so a shape this package does not expect in either can fail the bid
+// read without ever failing the budget read that shares this decode.
 type msCampaignBudgetRead struct {
-	Id           *json.Number `json:"Id"`
-	BudgetId     *json.Number `json:"BudgetId"`
-	BudgetType   *string      `json:"BudgetType"`
-	ExperimentId *json.Number `json:"ExperimentId"`
+	Id            *json.Number    `json:"Id"`
+	BudgetId      *json.Number    `json:"BudgetId"`
+	BudgetType    *string         `json:"BudgetType"`
+	ExperimentId  *json.Number    `json:"ExperimentId"`
+	BiddingScheme json.RawMessage `json:"BiddingScheme"`
+	BidStrategyId json.RawMessage `json:"BidStrategyId"`
 }
 
 // queryCampaignsByIDsResponse is the (subset of the) 200 body. Campaigns is a pointer so an
@@ -180,49 +193,9 @@ type queryCampaignsByIDsResponse struct {
 // a PartialError of any other kind. None of those describes this campaign, and a budget guard
 // reasoning about a campaign it did not actually read is a guard in name only.
 func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*CampaignBudget, error) {
-	id := strings.TrimSpace(campaignID)
-	if !idRE.MatchString(id) {
-		return nil, fmt.Errorf("microsoft-ads: campaign id %q is not a numeric id", campaignID)
-	}
-	body, err := c.doRequest(ctx, http.MethodPost, "Campaigns/QueryByIds", queryCampaignsByIDsRequest{
-		AccountId:    json.Number(c.account.AccountID),
-		CampaignIds:  []json.Number{json.Number(id)},
-		CampaignType: campaignTypeSearch,
-	}, true)
-	if err != nil {
-		// Microsoft may answer an unknown id with a fault rather than a 200 PartialError; the
-		// documented code means the same thing either way.
-		var ae *apiError
-		if errors.As(err, &ae) && isDefiniteClientError(ae) &&
-			(ae.hasErrorCode(errCodeInvalidCampaignID) || ae.hasErrorCode(errCodeInvalidCampaignIDNum)) {
-			return nil, nil
-		}
+	camp, id, err := c.queryCampaignByID(ctx, campaignID, "budget", "")
+	if err != nil || camp == nil {
 		return nil, err
-	}
-	var resp queryCampaignsByIDsResponse
-	if uerr := json.Unmarshal(body, &resp); uerr != nil {
-		return nil, fmt.Errorf("decode Campaigns/QueryByIds response: %w", uerr)
-	}
-	if resp.PartialErrors.AnyErrors {
-		if !resp.PartialErrors.Truncated && partialErrorsHaveAny(resp.PartialErrors.Items) &&
-			(partialErrorsHaveCode(resp.PartialErrors.Items, errCodeInvalidCampaignID) ||
-				partialErrorsHaveCode(resp.PartialErrors.Items, errCodeInvalidCampaignIDNum)) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("microsoft-ads campaign read for %s reported errors: %s", id, partialErrorCodes(resp.PartialErrors.Items))
-	}
-	if resp.Campaigns == nil {
-		return nil, fmt.Errorf("Campaigns/QueryByIds response omitted the Campaigns field, so campaign %s's budget cannot be read", id)
-	}
-	if len(*resp.Campaigns) != 1 || (*resp.Campaigns)[0] == nil {
-		return nil, fmt.Errorf("Campaigns/QueryByIds response for one campaign id returned %d entries with no usable campaign and no error, so campaign %s's budget cannot be read", len(*resp.Campaigns), id)
-	}
-	camp := (*resp.Campaigns)[0]
-	// The answer must describe the campaign that was ASKED about. Every guard the caller makes
-	// rests on this; a slot for another campaign would have them approve a write to this one on
-	// the strength of someone else's budget.
-	if got := numberID(camp.Id); got != id {
-		return nil, fmt.Errorf("Campaigns/QueryByIds asked for campaign %s but the response describes %q, so its budget cannot be trusted", id, got)
 	}
 	out := &CampaignBudget{CampaignID: id}
 	if camp.BudgetId != nil {
@@ -245,6 +218,66 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 		}
 	}
 	return out, nil
+}
+
+// queryCampaignByID reads ONE campaign with GetCampaignsByIds (POST Campaigns/QueryByIds) and
+// returns the decoded entry. It is shared by the budget read and the bid-strategy read (bid.go),
+// so both guards rest on exactly the same answer-validation rules. `what` names the read in
+// error messages ("budget", "bid strategy").
+//
+// It is a READ: retried on 429, and every failure is DEFINITE. (nil, id, nil) means Microsoft
+// affirmatively reported there is no such campaign in the account
+// (CampaignServiceInvalidCampaignId). Every other unusable answer is an error: an omitted
+// Campaigns field, a null slot Microsoft did not explain, a slot for a DIFFERENT campaign id, or
+// a PartialError of any other kind — a guard reasoning about a campaign it did not actually read
+// is a guard in name only.
+func (c *Client) queryCampaignByID(ctx context.Context, campaignID, what, additionalFields string) (*msCampaignBudgetRead, string, error) {
+	id := strings.TrimSpace(campaignID)
+	if !idRE.MatchString(id) {
+		return nil, id, fmt.Errorf("microsoft-ads: campaign id %q is not a numeric id", campaignID)
+	}
+	body, err := c.doRequest(ctx, http.MethodPost, "Campaigns/QueryByIds", queryCampaignsByIDsRequest{
+		AccountId:              json.Number(c.account.AccountID),
+		CampaignIds:            []json.Number{json.Number(id)},
+		CampaignType:           campaignTypeSearch,
+		ReturnAdditionalFields: additionalFields,
+	}, true)
+	if err != nil {
+		// Microsoft may answer an unknown id with a fault rather than a 200 PartialError; the
+		// documented code means the same thing either way.
+		var ae *apiError
+		if errors.As(err, &ae) && isDefiniteClientError(ae) &&
+			(ae.hasErrorCode(errCodeInvalidCampaignID) || ae.hasErrorCode(errCodeInvalidCampaignIDNum)) {
+			return nil, id, nil
+		}
+		return nil, id, err
+	}
+	var resp queryCampaignsByIDsResponse
+	if uerr := json.Unmarshal(body, &resp); uerr != nil {
+		return nil, id, fmt.Errorf("decode Campaigns/QueryByIds response: %w", uerr)
+	}
+	if resp.PartialErrors.AnyErrors {
+		if !resp.PartialErrors.Truncated && partialErrorsHaveAny(resp.PartialErrors.Items) &&
+			(partialErrorsHaveCode(resp.PartialErrors.Items, errCodeInvalidCampaignID) ||
+				partialErrorsHaveCode(resp.PartialErrors.Items, errCodeInvalidCampaignIDNum)) {
+			return nil, id, nil
+		}
+		return nil, id, fmt.Errorf("microsoft-ads campaign read for %s reported errors: %s", id, partialErrorCodes(resp.PartialErrors.Items))
+	}
+	if resp.Campaigns == nil {
+		return nil, id, fmt.Errorf("Campaigns/QueryByIds response omitted the Campaigns field, so campaign %s's %s cannot be read", id, what)
+	}
+	if len(*resp.Campaigns) != 1 || (*resp.Campaigns)[0] == nil {
+		return nil, id, fmt.Errorf("Campaigns/QueryByIds response for one campaign id returned %d entries with no usable campaign and no error, so campaign %s's %s cannot be read", len(*resp.Campaigns), id, what)
+	}
+	camp := (*resp.Campaigns)[0]
+	// The answer must describe the campaign that was ASKED about. Every guard the caller makes
+	// rests on this; a slot for another campaign would have them approve a write to this one on
+	// the strength of someone else's settings.
+	if got := numberID(camp.Id); got != id {
+		return nil, id, fmt.Errorf("Campaigns/QueryByIds asked for campaign %s but the response describes %q, so its %s cannot be trusted", id, got, what)
+	}
+	return camp, id, nil
 }
 
 // updateCampaignBudgetRequest is the PUT Campaigns (UpdateCampaigns) body for a budget-only
