@@ -70,7 +70,7 @@ const (
 
 	// budgetTypeDailyStandard spends the DailyBudget evenly across the day. Mirrors the
 	// google-ads STANDARD delivery choice for a conservative PAUSED shell.
-	budgetTypeDailyStandard = "DailyBudgetStandard"
+	budgetTypeDailyStandard = BudgetTypeDailyStandard
 
 	// campaignStatusPaused creates the campaign PAUSED so nothing serves until a human
 	// enables it. Microsoft's Campaign.Status enum uses "Paused".
@@ -1330,6 +1330,9 @@ type partialCascadeError struct {
 	applied string
 	stage   string
 	err     error
+	// pausedKeywordStage marks a PAUSE whose campaign gate, ad group and ad were all paused and
+	// only the trailing KEYWORD housekeeping failed (LFXV2-2665). See IsPausedBeforeKeywordStage.
+	pausedKeywordStage bool
 }
 
 func (e *partialCascadeError) Error() string {
@@ -1339,6 +1342,21 @@ func (e *partialCascadeError) Unwrap() error { return e.err }
 
 // Unconfirmed marks the outcome as ambiguous-applied for IsOutcomeUnconfirmed.
 func (e *partialCascadeError) Unconfirmed() bool { return true }
+
+// IsPausedBeforeKeywordStage reports whether err is a PAUSE cascade that confirmed the campaign
+// gate — and every other non-keyword entity it addressed — Paused, and failed only at the
+// trailing keyword stage.
+//
+// That failure does not make "the campaign is paused" untrue: the gate flips FIRST on pause and
+// Microsoft confirmed it, so nothing under it can serve. The keyword PUT on pause is
+// housekeeping that keeps the tree in the all-Paused create shape, and it is the stage a keyword
+// deleted upstream (keyword REMOVE, which persists nothing) is rejected at. Reporting such a
+// pause as unconfirmed would tell the operator their campaign might still be spending when
+// Microsoft has confirmed it is not.
+func IsPausedBeforeKeywordStage(err error) bool {
+	var pc *partialCascadeError
+	return errors.As(err, &pc) && pc.pausedKeywordStage
+}
 
 // putStatus issues one status-only PUT and folds Microsoft's 200-with-PartialErrors contract
 // into an ordinary error, so callers can't mistake a rejected update for a success.
@@ -1351,7 +1369,58 @@ func (e *partialCascadeError) Unconfirmed() bool { return true }
 // which is a strictly worse outcome than letting the client absorb the 429. Matches the sibling
 // Reddit status setter (internal/platform/reddit/client.go, updateEntityStatus).
 func (c *Client) putStatus(ctx context.Context, path string, req any, entity string) error {
-	body, err := c.doRequest(ctx, http.MethodPut, path, req, true)
+	return c.putUpdate(ctx, path, req, entity+" status")
+}
+
+// putUpdate issues one IDEMPOTENT partial-update PUT and folds Microsoft's 200-with-PartialErrors
+// contract into an ordinary error. It is the body of putStatus, extracted so the campaign BUDGET
+// update (budget.go) answers its PUT under exactly the same rules rather than a copy of them —
+// the response shape is the same UpdateCampaigns envelope either way. `what` names the update in
+// every message ("campaign status", "campaign budget").
+//
+// A per-entity rejection comes back as a *partialUpdateError so a caller that needs to tell one
+// rejection code from another (the budget path does) can read the codes without parsing text.
+//
+// A RETRIED PUT never reports a definite refusal. The loop retries only a 429, but a mutating
+// 429 is AMBIGUOUS under this package's contract (createOutcomeAmbiguous) — so once any attempt
+// was retried, a later definite 4xx, PartialError or pre-send failure answers only the LAST
+// attempt and cannot confirm that the earlier one changed nothing. Idempotence makes a retry
+// converge when it eventually succeeds; it does not make a later refusal speak for prior
+// attempts. After a retried 429 every failure is therefore unconfirmed: only errors not already
+// unconfirmed are wrapped in retriedUnconfirmedError (one that already is passes through as it
+// is), so IsOutcomeUnconfirmed holds either way and no caller maps it to a "platform unchanged"
+// sentinel (ErrSharedBudget, ErrBudgetAmountInvalid).
+func (c *Client) putUpdate(ctx context.Context, path string, req any, what string) error {
+	body, retries, err := c.doRequestCounted(ctx, http.MethodPut, path, req, true)
+	err = putUpdateOutcome(body, err, path, what)
+	if err != nil && retries > 0 && !IsOutcomeUnconfirmed(err) {
+		return &retriedUnconfirmedError{what: what, retries: retries, err: err}
+	}
+	return err
+}
+
+// retriedUnconfirmedError marks a partial-update PUT whose FINAL attempt failed definitely after
+// at least one earlier attempt was answered with an (ambiguous) 429 and retried. The final
+// refusal is kept reachable through Unwrap for logging, but Unconfirmed() makes
+// IsOutcomeUnconfirmed report true, which every caller checks before any definite-refusal
+// mapping.
+type retriedUnconfirmedError struct {
+	what    string
+	retries int
+	err     error
+}
+
+func (e *retriedUnconfirmedError) Error() string {
+	return fmt.Sprintf("microsoft-ads %s update unconfirmed: %d earlier attempt(s) were rate-limited with an unknown outcome before this failure: %s", e.what, e.retries, e.err.Error())
+}
+func (e *retriedUnconfirmedError) Unwrap() error { return e.err }
+
+// Unconfirmed marks the outcome as ambiguous-applied for IsOutcomeUnconfirmed.
+func (e *retriedUnconfirmedError) Unconfirmed() bool { return true }
+
+// putUpdateOutcome classifies the final attempt of a partial-update PUT: doRequest's error as
+// is, or the 200 body under Microsoft's PartialErrors contract.
+func putUpdateOutcome(body []byte, err error, path, what string) error {
 	if err != nil {
 		return err
 	}
@@ -1360,27 +1429,50 @@ func (c *Client) putStatus(ctx context.Context, path string, req any, entity str
 		// A malformed 200 leaves the outcome UNKNOWN: the update MAY have applied, so do not
 		// report success. transportError reports Unconfirmed, matching the create path's
 		// treatment of an undecodable success body.
-		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s status response: %w", entity, uerr)}
+		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s response: %w", what, uerr)}
 	}
 	// A syntactically valid body that OMITS PartialErrors (`{}`, or a top-level `null`) decodes
 	// without error and leaves the field zero, which partialErrorsHaveAny reads as "no rejection".
-	// That would report success for a status Microsoft never confirmed. The field's ABSENCE is
+	// That would report success for an update Microsoft never confirmed. The field's ABSENCE is
 	// therefore treated as an unconfirmed outcome; its valid empty forms (`null`, `[]`) are still
 	// accepted, since those are how Microsoft says "no per-entity failures".
 	if !resp.sawPartialErrors {
-		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s status response: response omitted PartialErrors", entity)}
+		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s response: response omitted PartialErrors", what)}
 	}
 	// A present but malformed PartialErrors array such as `[null]` or `[{}]` decodes without
 	// error but contains no valid error codes — partialErrorsHaveAny returns false, which would
-	// report success for a status Microsoft never confirmed. Reject any non-empty list that
+	// report success for an update Microsoft never confirmed. Reject any non-empty list that
 	// yields no valid codes (mirroring the create path's handling of null-only error responses).
 	if len(resp.PartialErrors.Items) > 0 && !partialErrorsHaveAny(resp.PartialErrors.Items) {
-		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s status response: PartialErrors present but contains no valid error codes", entity)}
+		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s response: PartialErrors present but contains no valid error codes", what)}
 	}
 	if partialErrorsHaveAny(resp.PartialErrors.Items) {
-		return fmt.Errorf("microsoft-ads rejected the %s status update: %s", entity, partialErrorCodes(resp.PartialErrors.Items))
+		return &partialUpdateError{what: what, items: resp.PartialErrors.Items}
 	}
 	return nil
+}
+
+// partialUpdateError is a DEFINITE per-entity rejection of a partial-update PUT: Microsoft
+// answered 200 and named, in PartialErrors, why the single entity was not changed. It carries
+// the items so a caller can classify by code (hasCode); its text renders only the codes, never
+// Message/Details, matching the apiError contract.
+type partialUpdateError struct {
+	what  string
+	items []msErrorItem
+}
+
+func (e *partialUpdateError) Error() string {
+	return fmt.Sprintf("microsoft-ads rejected the %s update: %s", e.what, partialErrorCodes(e.items))
+}
+
+// hasCode reports whether any PartialError carries one of codes (symbolic or numeric spelling).
+func (e *partialUpdateError) hasCode(codes ...string) bool {
+	for _, code := range codes {
+		if partialErrorsHaveCode(e.items, code) {
+			return true
+		}
+	}
+	return false
 }
 
 // UpdateCampaignAndChildrenStatus toggles a Microsoft campaign and its ad group, ad and
@@ -1482,7 +1574,7 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 	if status == StatusActive {
 		// DESCENDANTS FIRST, campaign gate LAST. Both child ids are guaranteed present above.
 		if err := c.putStatus(ctx, "AdGroups", adGroupReq, "ad group"); err != nil {
-			return err // nothing mutated yet — a definite rejection stays definite
+			return err // first stage: returned as classified — definite only if no retried 429 preceded it
 		}
 		if err := ctx.Err(); err != nil {
 			return &partialCascadeError{applied: "ad group", stage: "ad", err: err}
@@ -1515,7 +1607,7 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 
 	// PAUSE: campaign gate first — delivery stops now, even if a child call fails below.
 	if err := c.putStatus(ctx, "Campaigns", campaignReq, "campaign"); err != nil {
-		return err // nothing mutated yet
+		return err // first stage: returned as classified — definite only if no retried 429 preceded it
 	}
 	// applied tracks what ACTUALLY changed, so a later failure names only entities that were
 	// really touched — this text is what an operator reads to decide what to verify by hand.
@@ -1542,11 +1634,13 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 	// housekeeping that leaves the tree in the same all-Paused shape CreateCampaign produces
 	// — which is what makes a later re-activate symmetric with a fresh create.
 	if len(keywordStatuses) > 0 {
+		// Reached only after every addressed non-keyword entity was confirmed Paused, so a
+		// failure here is marked as such (IsPausedBeforeKeywordStage).
 		if err := ctx.Err(); err != nil {
-			return &partialCascadeError{applied: applied, stage: "keywords", err: err}
+			return &partialCascadeError{applied: applied, stage: "keywords", err: err, pausedKeywordStage: true}
 		}
 		if err := c.putStatus(ctx, "Keywords", keywordReq, "keywords"); err != nil {
-			return &partialCascadeError{applied: applied, stage: "keywords", err: err}
+			return &partialCascadeError{applied: applied, stage: "keywords", err: err, pausedKeywordStage: true}
 		}
 	}
 	return nil

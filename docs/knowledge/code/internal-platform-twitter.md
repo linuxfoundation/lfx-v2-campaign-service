@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/twitter"
-description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, the campaign -> line_item -> promoted_tweet creation flow, and per-client write pacing toward X's 1-write/sec account limit."
+description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, the campaign -> line_item -> promoted_tweet creation flow, per-client write pacing toward X's 1-write/sec account limit, the account monitor's asynchronous stats-job primitives, a campaign budget read+write (GET then one paced, classified PUT of the daily *_local_micro amount) for the budget writer (LFXV2-2665), and a line-item bid_amount_local_micro write made only when the line item bids MAX per link click (which no campaign this service creates does)."
 resource: "internal/platform/twitter"
 tags:
   - platform-client
@@ -804,6 +804,46 @@ chunked-upload call to a different host this client does not implement, so image
 tweets are out of scope for this path — the manual workflow remains the only way
 to attach a tweet with media, for now.
 
+## Line-item bid write (`bid_update.go`, LFXV2-2665)
+
+Backs `TwitterDispatcher.WriteBid`. Source: the X Ads API v12 Campaign Management reference,
+<https://docs.x.com/x-ads-api/campaign-management/reference> (line items: `POST` and
+`PUT accounts/:account_id/line_items/:line_item_id`), and the guide
+<https://docs.x.com/x-ads-api/campaign-management>, consulted 2026-10-05: `bid_strategy` is `AUTO`,
+`MAX` or `TARGET`; `bid_amount_local_micro` is in micro-units of the funding instrument's
+currency; `pay_by` includes `LINK_CLICK` and `IMPRESSION` (the LINK_CLICKS goal supports both,
+IMPRESSION by default); `WEBSITE_CLICKS` prices as CPLC. The reference page is too long to fetch
+whole from the authoring environment, so the enum spellings were confirmed against its search
+index and example line-item response rather than quoted in full; the guards fail closed on
+anything unrecognized.
+
+**Decision**: `bid_amount_local_micro` is a max CPC only when `bid_strategy == MAX` AND
+`pay_by == LINK_CLICK` (`LineItemBid.ManualCPC`). **The create path sends `bid_strategy: AUTO`**
+(objective `WEBSITE_CLICKS`, no bid, no `pay_by`), so every X campaign this service creates is
+refused (409) until an operator moves the line item to a manual max bid charged per link click.
+
+- `BidMicros(amount)` — positive, finite, at most 1,000,000, rounded like `toMicroCurrency`,
+  refused if it rounds to zero; refusals are `ErrBidAmountInvalid` (`BidAmountReason`).
+- `GetLineItemBid(ctx, lineItemID)` — `GET line_items/{id}?with_deleted=true`; a pure read; 404 →
+  `(nil, nil)`; reports `deleted`; an answer for another id is an error; an id failing the path
+  guard is `ErrInvalidLineItemID`, and a connection account id failing it (empty, outside
+  `accountIDRe`, or longer than `maxAccountIDLen`) is `ErrInvalidAccountID` — the sentinel
+  `campaignBudgetPath` uses — both before any request.
+- `UpdateLineItemBid(ctx, lineItemID, micros)` — takes a write-pacer slot, then `PUT` with ONLY
+  `bid_amount_local_micro` in the OAuth-signed query string (never `bid_strategy`/`pay_by`).
+  `idempotent=false`, so a 429 is NOT retried in-call and comes back UNCONFIRMED — no refusal
+  from a retry can be reported as "nothing changed". Transport/3xx/5xx and a 2xx echo of another
+  line item or amount are UNCONFIRMED; a definite 400 is an amount refusal (`bidAmountError`,
+  this package's own sentence) ONLY when an error is `INVALID_PARAMETER` with `"parameter":
+  "bid_amount_local_micro"` — the shape the X Ads error reference
+  (<https://docs.x.com/x-ads-api/fundamentals/error-codes-and-responses>) documents. That
+  reference lists no bid-specific code, so there is no code allow-list; a code substring match
+  would also catch `FORBIDDEN` or a bid-unit mismatch. `apiError` now carries an unexported
+  `errorParams` — the envelope's (code, parameter) pairs, bounded like `ErrorCodes` and never
+  rendered by `Error()`. The budget write
+  (`UpdateCampaignBudget`) takes the other route — it retries the 429 and marks a later definite
+  failure `retriedUnconfirmedError`; the bid write does not retry, so it needs neither.
+
 ## Status toggle
 
 `UpdateCampaignAndChildrenStatus(ctx, campaignID, lineItemID, status)` toggles an existing
@@ -834,6 +874,42 @@ the caller is told to verify rather than "not modified". A failure on the FIRST 
 nothing, so a definite 4xx stays definite. The exported `IsOutcomeUnconfirmed` folds this
 together with `createOutcomeAmbiguous` for callers across the package boundary (the
 dispatcher), mirroring the reddit client's helper of the same name.
+
+## Campaign budget read + write (`budget.go`, LFXV2-2665)
+
+The platform half of `TwitterDispatcher.WriteBudget` (see
+[internal/dispatch](internal-dispatch.md#x--the-campaigns-daily-_local_micro-only-under-a-reported-campaign-budget-optimization)).
+
+- `GetCampaignBudget(ctx, campaignID)` — `GET accounts/:account_id/campaigns/:campaign_id`
+  ([reference](https://docs.x.com/x-ads-api/campaign-management/reference), "Campaigns"). A pure
+  read returning `budget_optimization` and the two amounts as integer micro-units, each with an
+  "unparseable" flag (string, fraction, negative, overflow — never read as "not set"). A 404 or
+  `deleted: true` is `(nil, nil)`; an answer about another campaign id is an error. X's campaign
+  object carries no `account_id`, so the account-scoped path is the account check.
+- `UpdateCampaignBudget(ctx, campaignID, micros)` — `PUT` of exactly
+  `daily_budget_amount_local_micro` (the total is read, never written), in the query string and
+  OAuth-signed like every v12 write, after a slot on the shared write pacer. Idempotent, so a 429
+  is retried; the retry loop now counts retries (`doRequestAbsCounted`, a caller-owned counter —
+  never state on the shared client), and a definite failure AFTER a retried 429 is returned as
+  `retriedUnconfirmedError` (Unconfirmed), mirroring the Microsoft client's PR #255 fix — a
+  pre-send dial failure on the retry included, since it proves only that the RETRY never left. The 2xx
+  echo is checked: another campaign id or another amount is an UNCONFIRMED `transportError`.
+- `BudgetMicros` shares the create path's bound (`maxBudgetUsd`) and rounding
+  (`toMicroCurrency`); its refusals wrap `ErrBudgetAmountInvalid` with a client-safe sentence
+  (`BudgetAmountReason`). X publishes no per-currency minimum or maximum for these fields — only
+  that the daily amount should not exceed the total.
+- Ids are validated before any request: the connection's account id with `accountIDRe` and
+  `maxAccountIDLen` (`ErrInvalidAccountID`), the row's campaign id with `campaignIDRe`
+  (`ErrInvalidCampaignID`).
+
+**Budget model.** `BudgetOptimizationCampaign` (`CAMPAIGN`) is the shape `CreateCampaign` is
+INFERRED to produce — inferred from its sending no `budget_optimization` and putting the daily
+amount on the campaign, not observed on a live account. X's v11
+announcement makes `CAMPAIGN` the default and the two models exclusive (under `LINE_ITEM` the
+daily budget must be on the line item and absent from the campaign); the current reference page
+instead lists `LINE_ITEM` as the only value and default. The dispatcher therefore writes only on a
+reported `CAMPAIGN` and refuses a campaign reporting `LINE_ITEM` or omitting the field (409)
+before any write.
 
 ## Metrics reads
 
@@ -1026,6 +1102,85 @@ PAUSE. An ACTIVATE with an unknown line-item id is refused as `ErrCampaignNotPro
 (a 409) before any call.
 
 See [internal/platform/twitter](../../../internal/platform/twitter).
+
+## Account monitor (`monitor.go`, LFXV2-2665)
+
+Stateless primitives for X's REPORT-BACKED account monitor, driven across requests by
+`service.Orchestrator.ReadReportedAccountCampaigns` exactly as Microsoft's are. Report-backed
+for every `days` value, because X's synchronous stats endpoint is capped at 7 days per request
+and has one 250-requests-per-15-minutes budget shared by every foundation on the LF token,
+while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
+
+- **`ListAccountCampaigns`** — `AccountTimezone` (GET the account root, `timezone`, loaded as
+  an IANA zone; absent/unknown fails closed; a success is cached on the client for
+  `accountTimezoneCacheFor`, one minute, so list-then-submit in one read costs one account GET,
+  and failures are never cached), then `campaigns?with_deleted=false&with_draft=false&count=1000`
+  and `line_items?campaign_ids=<≤200>&with_deleted=false&with_draft=false&count=1000`, both
+  through `walkPages`: the STRICT cursor rule `ListAdAccounts` uses (only X's documented null
+  `next_cursor` ends a walk; absent/empty cursor, a repeated cursor, absent/null `data` or the
+  page cap are errors). Status is `entity_status` verbatim. Budgets are
+  `daily_budget_amount_local_micro` / `total_budget_amount_local_micro` ÷ 1e6, account
+  currency; null/absent is "no budget", anything but a non-negative JSON integer sets
+  `BudgetUnparseable`. The flight comes from the line items (v12 campaigns carry none):
+  the envelope `StartDate`/`EndDate` — earliest `start_time`, latest `end_time`, `EndDate`
+  empty if any line item is open-ended — and `Flights`, the union of the line items
+  (`flightRanges`: each line item's first through last local day, sorted, overlapping or
+  touching ranges merged, disjoint ones kept apart, an open-ended one absorbing everything
+  after it), so the gap between line items Sep 1–5 and Oct 1–5 is not reported as scheduled.
+  Dates are in the ACCOUNT's timezone, the last day being the last day served (an end at
+  local midnight belongs to the previous day). An unreadable time sets `FlightUnparseable`,
+  and so does a line item whose `end_time` is not after its `start_time` (inverted or
+  zero-length): it is rejected before the envelope or the union changes, never recorded as a
+  scheduled day and never silently dropped.
+- **`SubmitAccountCampaignReport`** — window `[start of today-(days-1), start of the day after
+  today)` in the account's zone (`accountReportWindow`), sent as UTC instants, and always
+  EXACTLY the days returned as the report's first/last day. A day's start is its local
+  midnight, or — when a DST spring-forward skips 00:00 (America/Santiago on 2026-09-06,
+  America/Asuncion …) — the first instant that exists on that day (`localDayStart`): plain
+  `time.Date` normalizes the nonexistent midnight BACK to 23:00 of the previous day, which put
+  an hour of the previous day into the window and dated the saved first/last day one day early.
+  A day start that is not a whole UTC hour (X takes whole hours only) is refused with
+  `ErrReportWindowNotWholeHours`, never floored — before any stats request or job is created,
+  though the account timezone has been read by then (an account GET when the cache is cold); a
+  90-day window over a DST fall-back (90 days and an hour) drops its earliest local day instead
+  of trimming an hour, so it covers 89 whole days and says so — the account monitor response
+  exposes those days as `metrics_window_start` / `metrics_window_end` beside the requested
+  `days`. GET `stats/accounts/:id/active_entities?entity=CAMPAIGN`, then one POST
+  `stats/jobs/accounts/:id` per ≤20 active campaigns (`entity=CAMPAIGN`, `granularity=TOTAL`,
+  `placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`), each through the write
+  pacer and never retried on a 429. Before the first POST, `statsJobsFitBudget` compares the
+  context deadline's remaining time (wall-clock `time.Until`) with `jobs × writeDelay +
+  statsJobSubmitMargin` (2s) and returns `ErrStatsJobBudget` — no job created — when it cannot
+  fit, so a deadline cannot fire mid-loop and strand created jobs in X's concurrent-job slots
+  (the dispatcher wraps it as `domain.ErrAccountReportBudgetTooShort`). Returns ONE composite id — the jobs' `id_str`s
+  comma-joined — or `NoActiveCampaignsReportID` (`"none"`) when nothing was active, which
+  Check answers as a finished empty report without a request. More than
+  `MaxMonitorActiveCampaigns` (`maxStatsJobsPerReport` 10 jobs × 20 = 200) active campaigns
+  is refused with `ErrTooManyActiveCampaigns` before any job is created, not truncated. The
+  dispatcher wraps the two permanent refusals as `domain.ErrAccountTooManyActiveCampaigns` /
+  `domain.ErrAccountTimezoneUnsupported`, which the monitor endpoint answers with 409.
+- **`CheckAccountCampaignReport`** — ONE GET `stats/jobs/accounts/:id?job_ids=<all>`. Any
+  `FAILED`/`FAILURE`/`CANCELLED` job, or a `SUCCESS` with no `url`, fails the report; any
+  `QUEUED`/`PROCESSING` job, or one missing from X's answer, leaves it pending; an unknown
+  status is an error. When all succeeded, each file is downloaded WITHOUT OAuth signing (X:
+  "requires no authentication"), only from an https URL whose host is exactly
+  `statsFileHost` (`ton.twimg.com`, the host of X's documented job-result example — not a
+  `*.twimg.com` suffix) or the client's own API origin; any other host, userinfo, or a non-https
+  foreign URL is refused before a request. Capped at 8 MiB compressed / 32 MiB decompressed
+  (client fields defaulted from `defaultStatsFileCompressedCap` / `defaultStatsFileDecompressedCap`;
+  the unexported `withStatsFileHosts` / `withStatsFileCaps` options are test seams that let a TLS
+  httptest server stand in for the file host and lower the caps), gunzipped when it carries the gzip magic
+  number, decoded with the synchronous stats types, and folded per campaign (impressions,
+  clicks, `billed_charge_local_micro`); a URL never appears in an error. `Partial` is always
+  true: X's billed charge is an estimate for days afterwards.
+- **`ValidateMonitorAccountID`** — the connection's own `^[A-Za-z0-9]+$` + 64-character rule,
+  untrimmed, mirrored by the design `Pattern`/`MaxLength` and pinned by the drift test.
+- **`WithClock`** — new option setting the client's clock, which the window, OAuth timestamp
+  and pacer all read.
+- `time/tzdata` is embedded so `time.LoadLocation` works on the static base image.
+
+The whole file is UNVERIFIED CONTRACT against a live X account; each relied-on claim cites
+docs.x.com next to the code.
 
 ## Connection-probe predicates (LFXV2-2665)
 

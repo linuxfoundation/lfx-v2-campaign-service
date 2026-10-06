@@ -64,7 +64,7 @@ func TestUnknownPacingRow_ReportsAbsenceNotZero(t *testing.T) {
 //
 // Reddit already routed this through PacingUnknown and is included to pin that it still does.
 //
-// All four must now agree — and Microsoft, added later on the same shared helpers, with them:
+// All four must now agree — and Microsoft and X, added later on the same shared helpers, with them:
 // PacingUnknown true, and never the underspending label.
 func TestBudgetlessCampaignIsPacingUnknown_AllPlatforms(t *testing.T) {
 	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
@@ -98,6 +98,12 @@ func TestBudgetlessCampaignIsPacingUnknown_AllPlatforms(t *testing.T) {
 		// takes no clock.
 		{"microsoft", "Active", func(r []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return EvaluateMicrosoftMonitor(r, 10)
+		}},
+		// X, the second report-backed platform, paces a daily or a total budget; with neither
+		// there is nothing to pace.
+		{"x", "ACTIVE", func(r []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+			first, last := now.AddDate(0, 0, -9), now
+			return EvaluateTwitterMonitor(r, &first, &last)
 		}},
 	}
 

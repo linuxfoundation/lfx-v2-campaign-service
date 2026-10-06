@@ -3275,6 +3275,218 @@ func EncodeUpdateCampaignBudgetError(encoder func(context.Context, http.Response
 	}
 }
 
+// EncodeUpdateCampaignBidResponse returns an encoder for responses returned by
+// the lfx-v2-campaign-service-briefs update-campaign-bid endpoint.
+func EncodeUpdateCampaignBidResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.Campaign)
+		enc := encoder(ctx, w)
+		body := NewUpdateCampaignBidResponseBody(res)
+		if res.Etag != nil {
+			w.Header().Set("Etag", *res.Etag)
+		}
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeUpdateCampaignBidRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs update-campaign-bid endpoint.
+func DecodeUpdateCampaignBidRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.UpdateCampaignBidPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.UpdateCampaignBidPayload, error) {
+		var payload *lfxv2campaignservicebriefs.UpdateCampaignBidPayload
+		var (
+			body UpdateCampaignBidRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateUpdateCampaignBidRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			briefID     string
+			campaignID  string
+			bearerToken *string
+			ifMatch     *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		campaignID = params["campaign_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("campaign_id", campaignID, goa.FormatUUID))
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		ifMatchRaw := r.Header.Get("If-Match")
+		if ifMatchRaw != "" {
+			ifMatch = &ifMatchRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewUpdateCampaignBidPayload(&body, projectID, briefID, campaignID, bearerToken, ifMatch)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeUpdateCampaignBidError returns an encoder for errors returned by the
+// update-campaign-bid lfx-v2-campaign-service-briefs endpoint.
+func EncodeUpdateCampaignBidError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignBidBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignBidConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignBidServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignBidInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignBidNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignBidPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "PreconditionFailed":
+			var res *lfxv2campaignservicebriefs.PreconditionFailedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignBidPreconditionFailedResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return enc.Encode(body)
+		case "PreconditionRequired":
+			var res *lfxv2campaignservicebriefs.PreconditionRequiredError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignBidPreconditionRequiredResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusPreconditionRequired)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewUpdateCampaignBidUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeApplyKeywordActionsResponse returns an encoder for responses returned
 // by the lfx-v2-campaign-service-briefs apply-keyword-actions endpoint.
 func EncodeApplyKeywordActionsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
@@ -3442,6 +3654,184 @@ func EncodeApplyKeywordActionsError(encoder func(context.Context, http.ResponseW
 				body = formatter(ctx, res)
 			} else {
 				body = NewApplyKeywordActionsUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeAddNegativeKeywordsResponse returns an encoder for responses returned
+// by the lfx-v2-campaign-service-briefs add-negative-keywords endpoint.
+func EncodeAddNegativeKeywordsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.NegativeKeywords)
+		enc := encoder(ctx, w)
+		body := NewAddNegativeKeywordsResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeAddNegativeKeywordsRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs add-negative-keywords endpoint.
+func DecodeAddNegativeKeywordsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.AddNegativeKeywordsPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.AddNegativeKeywordsPayload, error) {
+		var payload *lfxv2campaignservicebriefs.AddNegativeKeywordsPayload
+		var (
+			body AddNegativeKeywordsRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateAddNegativeKeywordsRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			briefID     string
+			campaignID  string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		campaignID = params["campaign_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("campaign_id", campaignID, goa.FormatUUID))
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewAddNegativeKeywordsPayload(&body, projectID, briefID, campaignID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeAddNegativeKeywordsError returns an encoder for errors returned by the
+// add-negative-keywords lfx-v2-campaign-service-briefs endpoint.
+func EncodeAddNegativeKeywordsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAddNegativeKeywordsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAddNegativeKeywordsConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAddNegativeKeywordsServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAddNegativeKeywordsInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAddNegativeKeywordsNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAddNegativeKeywordsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewAddNegativeKeywordsUnauthorizedResponseBody(res)
 			}
 			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
 			w.Header().Set("goa-error", res.GoaErrorName())
@@ -5209,9 +5599,15 @@ func unmarshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaign
 	res := &lfxv2campaignservicebriefs.CampaignCreateInput{
 		Config: v.Config,
 	}
+	if v.NewVersion != nil {
+		res.NewVersion = *v.NewVersion
+	}
 	res.Platforms = make([]string, len(v.Platforms))
 	for i, val := range v.Platforms {
 		res.Platforms[i] = val
+	}
+	if v.NewVersion == nil {
+		res.NewVersion = false
 	}
 
 	return res
@@ -5374,6 +5770,35 @@ func marshalLfxv2campaignservicebriefsKeywordActionResultToKeywordActionResultRe
 		CriterionID:  v.CriterionID,
 		Action:       v.Action,
 		ResourceName: v.ResourceName,
+		Outcome:      v.Outcome,
+		ErrorCode:    v.ErrorCode,
+	}
+
+	return res
+}
+
+// unmarshalNegativeKeywordInputRequestBodyToLfxv2campaignservicebriefsNegativeKeywordInput
+// builds a value of type *lfxv2campaignservicebriefs.NegativeKeywordInput from
+// a value of type *NegativeKeywordInputRequestBody.
+func unmarshalNegativeKeywordInputRequestBodyToLfxv2campaignservicebriefsNegativeKeywordInput(v *NegativeKeywordInputRequestBody) *lfxv2campaignservicebriefs.NegativeKeywordInput {
+	res := &lfxv2campaignservicebriefs.NegativeKeywordInput{
+		Text:      *v.Text,
+		MatchType: *v.MatchType,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsNegativeKeywordResultToNegativeKeywordResultResponseBody
+// builds a value of type *NegativeKeywordResultResponseBody from a value of
+// type *lfxv2campaignservicebriefs.NegativeKeywordResult.
+func marshalLfxv2campaignservicebriefsNegativeKeywordResultToNegativeKeywordResultResponseBody(v *lfxv2campaignservicebriefs.NegativeKeywordResult) *NegativeKeywordResultResponseBody {
+	res := &NegativeKeywordResultResponseBody{
+		Text:              v.Text,
+		MatchType:         v.MatchType,
+		Outcome:           v.Outcome,
+		NegativeKeywordID: v.NegativeKeywordID,
+		ErrorCode:         v.ErrorCode,
 	}
 
 	return res

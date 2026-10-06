@@ -1322,3 +1322,155 @@ func TestResolveGoogleAdsCampaign_WellFormedIDsAreStillAccepted(t *testing.T) {
 		}
 	}
 }
+
+// ─── Microsoft Advertising campaign resolution (LFXV2-2665) ───
+
+func microsoftCampaign(id, briefID, projectID, platformCampaignID string) *model.Campaign {
+	c := googleCampaign(id, briefID, projectID, platformCampaignID)
+	c.Platform = model.ProviderMicrosoftAds
+	return c
+}
+
+func resolveMicrosoft(t *testing.T, svc *ConnectionService, projectID, id string) *conn.PlatformCampaignResolution {
+	t.Helper()
+	res, err := svc.ResolveMicrosoftAdsCampaign(context.Background(), &conn.ResolveMicrosoftAdsCampaignPayload{
+		ProjectID:          projectID,
+		PlatformCampaignID: id,
+	})
+	if err != nil {
+		t.Fatalf("ResolveMicrosoftAdsCampaign(%q, %q): %v", projectID, id, err)
+	}
+	return res
+}
+
+func TestResolveMicrosoftAdsCampaign_ReturnsTheBriefAndCampaignPair(t *testing.T) {
+	svc := resolverService(t, microsoftCampaign("c-ms", "b-ms", "cncf", "413296582"))
+
+	res := resolveMicrosoft(t, svc, "cncf", "413296582")
+
+	if res.MatchCount != 1 || len(res.Matches) != 1 {
+		t.Fatalf("matches = %d, match_count = %d, want 1", len(res.Matches), res.MatchCount)
+	}
+	if res.Matches[0].CampaignID != "c-ms" || res.Matches[0].BriefID != "b-ms" {
+		t.Errorf("match = %+v, want campaign c-ms under brief b-ms", res.Matches[0])
+	}
+	if res.PlatformCampaignID != "413296582" {
+		t.Errorf("PlatformCampaignID = %q, want the requested id", res.PlatformCampaignID)
+	}
+}
+
+// THE PLATFORM IS FIXED BY THE ROUTE. Google and Microsoft mint ids in unrelated spaces, so the
+// same digits can name a Google campaign and a Microsoft one in the same project. Each route must
+// answer only for its own platform — a Microsoft lookup that returned the Google row would hand
+// the caller a campaign whose keyword lever then acts on Google.
+func TestResolveCampaignRef_EachRouteResolvesOnlyItsOwnPlatform(t *testing.T) {
+	svc := resolverService(t,
+		googleCampaign("c-google", "b-google", "cncf", "413296582"),
+		microsoftCampaign("c-ms", "b-ms", "cncf", "413296582"),
+	)
+
+	ms := resolveMicrosoft(t, svc, "cncf", "413296582")
+	if ms.MatchCount != 1 || ms.Matches[0].CampaignID != "c-ms" {
+		t.Errorf("microsoft route matched %+v, want only c-ms", ms.Matches)
+	}
+
+	g, err := svc.ResolveGoogleAdsCampaign(context.Background(), &conn.ResolveGoogleAdsCampaignPayload{
+		ProjectID:          "cncf",
+		PlatformCampaignID: "413296582",
+	})
+	if err != nil {
+		t.Fatalf("ResolveGoogleAdsCampaign: %v", err)
+	}
+	if g.MatchCount != 1 || g.Matches[0].CampaignID != "c-google" {
+		t.Errorf("google route matched %+v, want only c-google", g.Matches)
+	}
+}
+
+// The tenant boundary, as for Google: another project's Microsoft campaign resolves to nothing,
+// and an unowned id is an empty 200, not an error.
+func TestResolveMicrosoftAdsCampaign_DoesNotResolveAnotherProjectsCampaign(t *testing.T) {
+	svc := resolverService(t, microsoftCampaign("c-other", "b-other", "another-foundation", "413296582"))
+
+	res := resolveMicrosoft(t, svc, "cncf", "413296582")
+
+	if res.MatchCount != 0 || len(res.Matches) != 0 {
+		t.Fatalf("another project's campaign resolved: %+v", res.Matches)
+	}
+	if res.Matches == nil {
+		t.Error("Matches = nil, want an empty slice so the JSON carries [] rather than null")
+	}
+}
+
+func TestResolveMicrosoftAdsCampaign_SkipsSoftDeletedCampaigns(t *testing.T) {
+	deleted := microsoftCampaign("c-ms", "b-ms", "cncf", "413296582")
+	deleted.Status = "deleted"
+	svc := resolverService(t, deleted)
+
+	if res := resolveMicrosoft(t, svc, "cncf", "413296582"); res.MatchCount != 0 {
+		t.Errorf("a soft-deleted campaign was resolved: %+v", res.Matches)
+	}
+}
+
+// REACHABLE for Microsoft, unlike Google. Migration 000020's unique index is scoped to
+// google-ads, because Microsoft mints campaign ids per ad account; a project re-pointed between
+// two accounts can therefore hold two live rows with the same id, and PostgreSQL accepts both.
+// Both must come back so the caller can refuse — never the first one quietly.
+func TestResolveMicrosoftAdsCampaign_ReportsTwoLiveRowsRatherThanPickingOne(t *testing.T) {
+	svc := resolverService(t,
+		microsoftCampaign("c-1", "b-1", "cncf", "413296582"),
+		microsoftCampaign("c-2", "b-2", "cncf", "413296582"),
+	)
+
+	res := resolveMicrosoft(t, svc, "cncf", "413296582")
+
+	if res.MatchCount != 2 || len(res.Matches) != 2 {
+		t.Fatalf("matches = %d, want both rows so the caller can refuse", len(res.Matches))
+	}
+}
+
+func TestResolveMicrosoftAdsCampaign_MalformedIDIsRefusedNotAnsweredEmpty(t *testing.T) {
+	svc := resolverService(t, microsoftCampaign("c-ms", "b-ms", "cncf", "413296582"))
+	for _, id := range []string{"", "abc", "0", "0413296582", "-1", "12345678901234567890", "9999999999999999999"} {
+		_, err := svc.ResolveMicrosoftAdsCampaign(context.Background(), &conn.ResolveMicrosoftAdsCampaignPayload{
+			ProjectID:          "cncf",
+			PlatformCampaignID: id,
+		})
+		if _, ok := err.(*conn.BadRequestError); !ok {
+			t.Errorf("id %q: error = %T (%v), want *conn.BadRequestError", id, err, err)
+		}
+	}
+}
+
+func TestResolveMicrosoftAdsCampaign_RejectsSystemScope(t *testing.T) {
+	svc := resolverService(t, microsoftCampaign("c-ms", "b-ms", model.SystemProjectID, "413296582"))
+
+	_, err := svc.ResolveMicrosoftAdsCampaign(context.Background(), &conn.ResolveMicrosoftAdsCampaignPayload{
+		ProjectID:          model.SystemProjectID,
+		PlatformCampaignID: "413296582",
+	})
+	if _, ok := err.(*conn.NotFoundError); !ok {
+		t.Errorf("error = %T (%v), want *conn.NotFoundError", err, err)
+	}
+}
+
+// The two non-answer failures keep their distinct statuses on the Microsoft route too: a storage
+// fault is a 500 (retrying does not help), an unwired backend the declared 503.
+func TestResolveMicrosoftAdsCampaign_StorageFaultIs500AndColdStartIs503(t *testing.T) {
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	payload := &conn.ResolveMicrosoftAdsCampaignPayload{ProjectID: "cncf", PlatformCampaignID: "413296582"}
+
+	if _, err := svc.ResolveMicrosoftAdsCampaign(context.Background(), payload); err == nil {
+		t.Fatal("expected a cold-start refusal")
+	} else if _, ok := err.(*conn.ConnServiceUnavailableError); !ok {
+		t.Errorf("cold start: error = %T (%v), want *conn.ConnServiceUnavailableError", err, err)
+	}
+
+	svc.SetOrchestrator(NewOrchestrator(&fakeCampaignRepo{resolveErr: errors.New("connection refused")}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: &keywordActionDispatcher{},
+	}))
+	if _, err := svc.ResolveMicrosoftAdsCampaign(context.Background(), payload); err == nil {
+		t.Fatal("a storage failure must not be reported as success")
+	} else if _, ok := err.(*conn.InternalServerError); !ok {
+		t.Errorf("storage fault: error = %T (%v), want *conn.InternalServerError", err, err)
+	}
+}

@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/microsoft"
-description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), campaign-level GEO targeting that resolves ISO-2 codes to Microsoft LocationIds through the ingested, cached geographical-locations file and fails closed before any mutating call rather than creating an untargeted campaign that spends everywhere (LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260)."
+description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), campaign-level GEO targeting that resolves ISO-2 codes to Microsoft LocationIds through the ingested, cached geographical-locations file and fails closed before any mutating call rather than creating an untargeted campaign that spends everywhere (LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260), and a campaign DAILY-budget read+write (GetCampaignsByIds then UpdateCampaigns) that reports shared, experiment and budget-type facts for the dispatcher to refuse on before the one idempotent PUT (LFXV2-2665), and project-scoped keyword performance as a saved asynchronous KeywordPerformanceReportRequest — submit and single-poll check primitives whose scope is the project's own campaigns only, never AccountIds (LFXV2-2665), and an ad-group CpcBid write (UpdateAdGroups) made only after the same read shows the campaign's own EnhancedCpc or ManualCpc strategy (LFXV2-2665), and keyword levers on a live campaign — pause/remove via UpdateKeywords/DeleteKeywords behind a GetKeywordsByAdGroupId ownership read, and campaign-level negatives via AddNegativeKeywordsToEntities — reported per item, positionally, because neither is atomic (LFXV2-2665)."
 resource: "internal/platform/microsoft"
 tags:
   - platform-client
@@ -701,7 +701,9 @@ CpcBid (`targeting.go`), which is what makes a created campaign able to serve at
 **status toggle** (LFXV2-2810) adds `UpdateCampaignAndChildrenStatus` on top: a cascade whose
 ordering, child-id guard and outcome classification are described under Status toggle below. **Ad-account discovery**
 (LFXV2-3064) adds `ListAdAccounts` against the separate Customer Management service, the
-one call in this package that is NOT account-scoped.
+one call in this package that is NOT account-scoped. The **budget write** (LFXV2-2665) adds
+`GetCampaignBudget` + `UpdateCampaignDailyBudget` (`budget.go`), described under Campaign budget
+below.
 
 ## Dispatch adapter (internal/dispatch)
 
@@ -724,6 +726,19 @@ ad also both pre-existed). A non-nil result accompanied
 by an error is a separate UNCONFIRMED partial (claim retained); (nil, err) means nothing
 was created (claim released).
 
+The persisted `config_snapshot` is a copy built by `microsoftSnapshotConfig`: the config
+has no URL field of its own — the ad's `FinalUrls` is the brief's registration URL plus the
+client's `utm_*` params and never enters the struct — and the one field reduced is `timeZone`,
+which the client forwards verbatim without validating it against the enum, so it goes through
+`sanitizeSnapshotText`, and so does every `keywords[].text`: a keyword is caller text, and a
+link's path can carry a token as readily as its query, so the snapshot is a redacted record
+(`k8s.io/docs tutorial` is stored as `k8s.io tutorial`), while what Microsoft receives is not
+snapshot-redacted (only the client's own trim / match-type / de-duplication validation applies).
+The snapshot redaction never reaches the values sent to Microsoft, which differ from the caller's
+only by that validation. `CampaignResult` (the persisted `result`) carries
+no caller URL: names, ids, `Steps` (none of which interpolate a URL) and the service-composed
+`microsoftAdsUrl` deep link, whose `?aid=` is the account id.
+
 It has a creation dispatcher; its status-TOGGLE capability is described next.
 
 ## Status toggle
@@ -745,6 +760,22 @@ without one are refused, exactly as an orphan ad is.
   NOT a strict leaf-to-root walk: Ads is deeper than AdGroups in the tree, yet AdGroups PUTs first.
   The campaign is only un-gated once its children are already serving; the reverse would briefly
   serve nothing under a live campaign.
+- **On ACTIVATE, keyword ids are narrowed to the LIVE ones first** (LFXV2-2665, dispatcher side).
+  Keyword REMOVE deletes keywords without touching the row, so the recorded `keywordIds` can name
+  a deleted keyword, which UpdateKeywords would reject. `ToggleStatus` reads `GetAdGroupKeywords`
+  under its OWN sub-budget (`microsoftActivateKeywordReadBudget`, 10s of the toggle's 45s, so a
+  slow or throttled read cannot leave the four PUTs without time) and passes only ids still
+  present and not `Deleted`; a failed or timed-out read refuses DEFINITELY (nothing changed yet)
+  and an emptied set is `ErrCampaignNotProvisioned`.
+- **PAUSE never reads** — stopping delivery must not wait on, or be starved by, a read (an earlier
+  revision read on pause too and could exhaust the toggle deadline before the gate was sent). The
+  recorded ids are sent as they are; the gate flips FIRST, and a failure at the trailing KEYWORD
+  stage after the gate, ad group and ad were confirmed Paused is marked
+  (`IsPausedBeforeKeywordStage`) and reported by the dispatcher as a successful pause with a
+  warning — Microsoft confirmed nothing under the gate can serve. A failure at the gate, ad group
+  or ad stage is reported exactly as before. **⚠️ Known limitation (documented, not
+  fixed — see [internal/dispatch](internal-dispatch.md), "Microsoft keyword levers"): ACTIVATE
+  re-enables a keyword an operator PAUSED through keyword-actions — nothing records that pause.**
 - **Unknown children are SKIPPED, not guessed**, with direction-dependent rules. An ad can only be
   addressed when its parent ad-group id is also known. **ACTIVATE requires both child ids** — if
   either `adGroupId` or `adId` is missing, it is refused locally with `ErrCampaignNotProvisioned`
@@ -783,6 +814,163 @@ Two further details belong to this layer specifically:
   to parse would let the service persist a status Microsoft never confirmed. The valid empty forms
   (`null`, `[]`) are still accepted.
 
+## Campaign budget read + write (LFXV2-2665)
+
+`budget.go` serves `MicrosoftDispatcher.WriteBudget` (see [internal/dispatch](internal-dispatch.md),
+"Microsoft — FIELDS ON THE CAMPAIGN"). The client reports facts; the dispatcher decides refusals.
+
+- **Read: `GetCampaignBudget(ctx, campaignID) (*CampaignBudget, error)`** — GetCampaignsByIds as
+  `POST CampaignManagement/v13/Campaigns/QueryByIds`, body
+  `{"AccountId":…,"CampaignIds":[<id>],"CampaignType":"Search"}` (CampaignType sent explicitly
+  rather than relying on the documented Search default). Idempotent, so a 429 is retried; every
+  failure is DEFINITE. It reports `SharedBudgetID` (a `BudgetId` > 0; `null`/absent/`0` are
+  Microsoft's documented "own budget" forms), `BudgetIDUnreadable` (present but neither — never
+  read as "not shared"), the reported `BudgetType` (`""` when unreported) and `ExperimentID`.
+  `(nil, nil)` ONLY for `CampaignServiceInvalidCampaignId` (1100), as a 200 PartialError or a 4xx
+  fault. An omitted `Campaigns`, an unexplained null slot, any other PartialError, or a slot whose
+  `Id` is not the one requested is an error: a guard reasoning about a campaign it did not read is
+  a guard in name only.
+- **Write: `UpdateCampaignDailyBudget(ctx, campaignID, amount, budgetType) error`** —
+  UpdateCampaigns as `PUT CampaignManagement/v13/Campaigns`, body
+  `{"AccountId":…,"Campaigns":[{"Id":…,"BudgetType":…,"DailyBudget":…}]}`. Only Id plus the two
+  budget fields are sent ("If no value is set for the update, this setting is not changed").
+  `budgetType` must be `DailyBudgetStandard` — the only daily type a Search campaign can have,
+  since Microsoft's BudgetLimitType reference documents `DailyBudgetAccelerated` as available only
+  to Audience campaigns — and is the one the read reported, so the PUT changes the amount and
+  nothing else. Any other value is refused before a request is made. `BudgetTypeDailyAccelerated`
+  stays named so the dispatcher can recognize, and refuse, a Search campaign reporting it. The amount is validated by `ValidateDailyBudget` (finite,
+  > 0, ≤ `maxBudget` — the create path's bounds) and sent UNROUNDED: this client does not know
+  the account currency, so rounding to an assumed two decimals would change a JPY amount; Microsoft's
+  own validation decides the smallest settable amount. Its over-maximum refusal names the amount
+  and the maximum through the same plain-decimal `formatBudgetAmount` as the mutate's refusals —
+  never `%.2f`, which would state a rounded figure for an amount that is never rounded.
+- **The PUT goes through `putUpdate`** — the body of `putStatus`, extracted so the status toggle
+  and the budget write share ONE reading of the UpdateCampaigns envelope (unanswered
+  `PartialErrors` → unconfirmed; `[null]`/`[{}]` → unconfirmed; a coded PartialError → a definite
+  `*partialUpdateError`). `putStatus`'s error texts are unchanged and pinned by a test.
+- **A RETRIED PUT never reports a definite refusal.** The loop (`doCounted`) retries ONLY a 429
+  (including a 429 whose body was unreadable or oversized) — never a 5xx, 3xx, timeout or transport
+  failure, which are returned on the attempt that produced them. But a mutating 429 is itself
+  ambiguous under this package's contract (`createOutcomeAmbiguous`), so a definite 4xx,
+  PartialError, pre-send failure or token failure on a LATER attempt answers that attempt alone
+  and cannot confirm the earlier one changed nothing. `putUpdate` therefore calls
+  `doRequestCounted`, which also returns how many attempts were retried. After a retried 429
+  every failure is unconfirmed: only errors not already unconfirmed are wrapped in
+  `retriedUnconfirmedError` (`Unconfirmed()` true, the final refusal still reachable through
+  `Unwrap`); one already unconfirmed (an exhausted 429, a 5xx, a transport failure) is returned
+  as it is. Idempotence makes a retry converge when it eventually succeeds — 429-then-success
+  still returns nil — but it does not make a later refusal speak for prior attempts. This covers
+  the status toggle too, since it shares `putUpdate`.
+- **Classification of a failed write:** `IsOutcomeUnconfirmed` first (5xx, transport, mutating
+  redirect, exhausted 429, unanswered body, or ANY failure after a retried 429). Then, from a
+  PartialError OR a definite 4xx's codes:
+  `CampaignServiceCannotUpdateSharedBudget` (1159) → `ErrSharedBudget`;
+  `CampaignServiceInvalidDailyBudget` (1106) or
+  `CampaignServiceCampaignBudgetAmountIsLessThanSpendAmount` (1123) → an `ErrBudgetAmountInvalid`
+  whose client-safe sentence `BudgetAmountReason` returns. That sentence renders the amount as a
+  plain decimal (`strconv.FormatFloat(amount, 'f', -1, 64)`), never `%g`'s exponent form —
+  seven-figure daily budgets are ordinary in JPY, KRW, IDR and VND, and `1.5e+06` is not a figure
+  to hand a caller. Both are DEFINITE refusals of a PUT that was sent: Microsoft confirmed nothing
+  was applied, which is what lets the dispatcher map them to the "platform unchanged"
+  `ErrBudgetShared` / `ErrBudgetAmountRejected`. Anything else is returned as the definite failure
+  it is.
+
+The endpoint names, field names and error codes come from Microsoft's published v13 reference
+(GetCampaignsByIds, UpdateCampaigns, the Campaign object, the operation error-code list). The
+numeric `Code` matched beside each symbolic name (1100, 1106, 1123, 1159) was checked against
+that error-code list on 2026-10-05 and is cited in `budget.go`; a wrong number would misclassify
+a refusal (1100 as "deleted upstream", 1159 as the shared-budget 409). None has been exercised against a live Microsoft Advertising account; the transport (PUT `Campaigns`,
+the `PartialErrors` envelope) is the one the status toggle already uses.
+
+## Keyword levers on a live campaign (LFXV2-2665)
+
+`keyword_levers.go` serves `MicrosoftDispatcher.ApplyKeywordActions` and
+`MicrosoftDispatcher.AddNegativeKeywords` (see [internal/dispatch](internal-dispatch.md),
+"Microsoft keyword levers"). Endpoints, all Campaign Management v13 REST on the usual host and
+request layer, checked against Microsoft's reference on 2026-10-05:
+
+| Operation | Wire | Reference |
+|---|---|---|
+| GetKeywordsByAdGroupId | `POST Keywords/QueryByAdGroupId` `{AdGroupId}` | learn.microsoft.com/en-us/advertising/campaign-management-service/getkeywordsbyadgroupid |
+| UpdateKeywords | `PUT Keywords` `{AdGroupId, Keywords:[{Id, Status:"Paused"}]}` (≤1,000) | …/updatekeywords, …/keyword |
+| DeleteKeywords | `DELETE Keywords` `{AdGroupId, KeywordIds}` (≤1,000) | …/deletekeywords |
+| AddNegativeKeywordsToEntities | `POST EntityNegativeKeywords` `{EntityNegativeKeywords:[{EntityId, EntityType:"Campaign", NegativeKeywords:[{MatchType, Text}]}]}` (one entity per call) | …/addnegativekeywordstoentities, …/entitynegativekeyword, …/negativekeyword |
+
+- **NOT ATOMIC, so reported per item.** Microsoft answers each batch 200 with `PartialErrors`
+  (keywords) or `NestedPartialErrors[].BatchErrors` (negatives) naming, by `Index`, the items it
+  did NOT apply; every other item in the call DID apply. Outcomes are therefore positional
+  (`APPLIED` / `ALREADY_PRESENT` / `FAILED` / `UNCONFIRMED`) and the error return is reserved for
+  "no call was answered per item". Errors are decoded by a dedicated `indexedErrors` (bounded at
+  4× the request cap, truncation recorded) because `boundedErrorItems` keeps no `Index` and
+  retains only 16 entries. An error with a null/absent/out-of-range `Index`, or a truncated
+  array, makes every UN-named item `UNCONFIRMED` — an error that could be any item's means no
+  un-named item can be called applied. `Index` is a pointer so "absent" is never read as item 0.
+- **PAUSE first, then REMOVE**, as two calls: the reversible half lands first. The DELETE is
+  sent only when the PAUSE call was answered item by item and the caller's context is still live;
+  after a whole-call PAUSE failure (definite OR unconfirmed) its items are `FAILED` with
+  `error_code` `NOT_SENT` (definitely not applied), so a failure never leaves only the
+  irreversible half applied. One call answered and the other ambiguous yields a 200
+  with the second call's items `UNCONFIRMED` — never a whole-request error hiding the pauses
+  that did land.
+- **Update/Delete are IDEMPOTENT (429 retried); a refusal after a retry is UNCONFIRMED** — the
+  `putUpdate` rule (PR #255): a whole-call refusal becomes `retriedUnconfirmedError`, and a
+  per-item `FAILED` becomes `UNCONFIRMED`, because the earlier rate-limited attempt may have
+  applied it. A 200 that omits `PartialErrors` or will not decode is UNCONFIRMED.
+- **The negative add is NOT retried on 429** (`idempotent=false`, the create rule): a 429, 5xx,
+  transport failure or unreadable 200 is UNCONFIRMED. Per item: an id → `APPLIED` (with
+  `NegativeKeywordID`); an already-exists as the item's ONLY error → `ALREADY_PRESENT` (the
+  requested state holds) — matched strictly: a present symbolic `ErrorCode` must be
+  `CampaignServiceNegativeKeywordAlreadyExists`, and the numeric `4335` counts only when
+  `ErrorCode` is absent; any other attributed error → `FAILED`; neither → `UNCONFIRMED`. An
+  ENTITY-level error on the collection (the campaign itself refused) is a DEFINITE whole-call
+  failure (`negativeKeywordEntityError`) ONLY when no id came back at all: a zero or empty
+  collection `Code` is absent (the field is a non-nullable int), and an entity code alongside a real
+  id falls through to per-item attribution rather than discarding ids for negatives that exist. 4335 was confirmed
+  from the operation-error-codes reference via search on 2026-10-05; the full table page did not
+  render past code 2946 in the fetch tool, so the number is the least-verified constant here.
+- **Validation before any request.** `ValidateKeywordActions` mirrors the google-ads rules
+  (canonical positive int64 ids, PAUSE/REMOVE, ≤60, no keyword twice). `ValidateNegativeKeywords`:
+  1–60; text trimmed, whitespace collapsed, ≤100 runes (Microsoft's NegativeKeyword.Text limit);
+  letters, marks, digits, spaces and `& ' - .` only, no two punctuation characters adjacent
+  (Microsoft's text policy: about.ads.microsoft.com/en-us/policies/text-guidelines); match type
+  `Exact`/`Phrase` in any casing (Broad is not a negative match type upstream and is refused, not
+  mapped); the same (match type, case-folded text) twice is REFUSED, not de-duplicated, because
+  de-duplication would shift every later positional result.
+- **`GetAdGroupKeywords` refuses a body without `Keywords`** — Microsoft documents an empty array
+  for an empty ad group, so absence is an unanswered read, not "no keywords". Entries carry `Id`
+  and `Status`; `IsDeleted()` reads `Status == "Deleted"`.
+
+None of the four has been exercised against a live Microsoft Advertising account; the transport
+and the 200-with-PartialErrors envelope are the ones the status toggle and creates already use.
+
+## Ad-group max CPC bid read + write (LFXV2-2665)
+
+`bid.go` backs `MicrosoftDispatcher.WriteBid`. The bid lives on the AD GROUP (`AdGroup.CpcBid`,
+the default bid for its keywords); the STRATEGY lives on the CAMPAIGN (since April 2021 ad group
+and keyword strategies are ignored). Only `EnhancedCpc` and `ManualCpc` use the ad group bid;
+for the automated types "your bid and ad rotation settings are ignored". Citations are in the
+file header (learn.microsoft.com: adgroup, campaign, biddingscheme, enhancedcpcbiddingscheme,
+manualcpcbiddingscheme, updateadgroups, operation-error-codes).
+
+- `GetCampaignBidStrategy(ctx, campaignID)` — the SAME `Campaigns/QueryByIds` read and answer
+  validation as `GetCampaignBudget`, now shared through `queryCampaignByID`. `BiddingScheme` and
+  `BidStrategyId` are decoded RAW in the shared struct, so an unexpected shape can fail only the
+  bid guard, never the budget read. Both `EnhancedCpc` and `EnhancedCpcBiddingScheme` spellings
+  are recognized (Microsoft documents both). `BidStrategyId` is a CampaignAdditionalField —
+  returned only when requested — so this read sends `ReturnAdditionalFields: "BidStrategyId"`
+  (the budget read's body is unchanged); once requested, an absent/null value is Microsoft's
+  documented "not using a portfolio bid strategy". `UsesAdGroupBid()` is true only for the campaign's
+  OWN EnhancedCpc/ManualCpc — an absent scheme (Microsoft omits it for MaxConversionValue and
+  TargetImpressionShare), an unreadable one, or any portfolio is false.
+- `ValidateMaxCPCBid(amount)` — the create path's `[minCpcBid, maxCpcBid]` (0.01–1000) with no
+  "zero = unset" case; refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`).
+- `UpdateAdGroupCpcBid(ctx, campaignID, adGroupID, amount)` — `PUT AdGroups` naming ONLY `Id`
+  and `CpcBid` (plus `UpdateAudienceAdsBidAdjustment`/`ReturnInheritedBidStrategyTypes` false),
+  through `putUpdate`, so the outcome rules — and the retried-429 → unconfirmed rule — are the
+  budget PUT's. Floor (602/1515), ceiling (1516) and invalid-bid (633/1017/1538) codes →
+  `bidAmountError`; 1229 CannotSetSearchBidOnAdGroup and 605/1201 invalid ad group →
+  `ErrBidNotSettable`.
+
 ## Account monitor (report-backed, default-OFF)
 
 `monitor.go` gives the account monitor three stateless primitives over the same Reporting
@@ -802,6 +990,40 @@ orchestrator saves the state between requests instead (see
   because the monitor's window always includes today.
 
 `ValidateMonitorAccountID` is the strict, Pattern-identical account-id check for this path.
+
+## Keyword report (report-backed, default-OFF, LFXV2-2665)
+
+`keyword_report.go` gives the project-scoped keyword read the account monitor's two stateless
+report primitives, for the same reason (minutes to build, 20s to answer); the orchestrator keeps
+the saved report (see [Microsoft keyword insights](../architecture/microsoft-keyword-insights.md)):
+
+- `SubmitKeywordReport(window, campaignIDs)` — a `KeywordPerformanceReportRequest`, `Summary`
+  aggregation, `ReturnOnlyCompleteData=false`, the shared `reportTime` (UTC dates, the London
+  report time zone), and a `Scope` of **`Campaigns` only** — each entry `{AccountId, CampaignId}`
+  as quoted `long`s. Never `AccountIds`: `AccountThroughAdGroupReportScope` is documented as the
+  UNION of its elements, so adding the account would read every campaign on it. An empty scope,
+  more than `MaxKeywordReportCampaigns` (300, the documented `Campaigns` ceiling) or a non-id is
+  refused before any request (`ErrKeywordReportScope`; `ValidateKeywordReportCampaignID` is the
+  exported id check the dispatcher runs first). A 2027 scope rejection wraps
+  `ErrKeywordReportScopeRejected` so the caller can treat it as permanent. Columns: `CampaignId`, `CampaignName`,
+  `AdGroupId`, `AdGroupName`, `KeywordId`, `Keyword`, `BidMatchType`, `KeywordStatus`,
+  `QualityScore`, `Impressions`, `Clicks`, `Spend`, `ConversionsQualified` — not the deprecated
+  `Conversions`, not `DeliveredMatchType` (it splits a keyword per query), and not `Ctr` /
+  `AverageCpc` (per-row ratios; recomputed from summed counters instead). No `Filter` and no
+  `MaxRows`: both would cut before the fold.
+- `CheckKeywordReport(reportID)` — exactly ONE Poll; on Success, download and fold PER
+  (ad group, keyword): counters summed with overflow checks, `Deleted` keywords dropped, a `--`
+  or off-scale `QualityScore` is nil, a blank conversion cell withdraws that keyword's
+  conversions only, an unattributable id fails the whole read. Empty or header-only is an empty
+  Success; "Potential Incomplete Data" is reported as `Partial`.
+- `ValidateKeywordReportWindow` — the clock-free window check (`reportDateRange`; `yesterday`
+  and `last_14_days` have no mapping).
+
+`metrics.go`'s report submission was split so all three report types share one tail
+(`submitReportRequest`, the fail-closed `ReportRequestId` decode) and one `reportTime`.
+Contract verified against learn.microsoft.com on 2026-10-05 (KeywordPerformanceReportRequest,
+KeywordPerformanceReportColumn, AccountThroughAdGroupReportScope, KeywordStatusReportFilter);
+NOT exercised against a live account.
 
 ## Metrics read (asynchronous, default-OFF)
 

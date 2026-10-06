@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,11 @@ func TestMonitorAccount_RejectsTheReservedSystemScope(t *testing.T) {
 		{"microsoft ads", func(s *ConnectionService) error {
 			_, err := s.MonitorMicrosoftAdsAccount(context.Background(),
 				&conn.MonitorMicrosoftAdsAccountPayload{ProjectID: model.SystemProjectID, AccountID: "1", Days: 30})
+			return err
+		}},
+		{"x ads", func(s *ConnectionService) error {
+			_, err := s.MonitorTwitterAdsAccount(context.Background(),
+				&conn.MonitorTwitterAdsAccountPayload{ProjectID: model.SystemProjectID, AccountID: "a1", Days: 30})
 			return err
 		}},
 	}
@@ -261,6 +267,17 @@ func TestMonitorAccount_TotalsSumTheReturnedRows(t *testing.T) {
 	if result.Totals.Spend != 50 || result.Totals.Impressions != 100 || result.Totals.Clicks != 5 || result.Totals.CampaignCount != 1 {
 		t.Errorf("totals = %+v, want the row summed verbatim (spend=50, impressions=100, clicks=5, campaignCount=1)", result.Totals)
 	}
+	assertNoReportFields(t, result)
+}
+
+// assertNoReportFields checks that a live-read platform's response carries none of the
+// report-backed fields: its metrics are read in the request, over exactly the requested days.
+func assertNoReportFields(t *testing.T, got *conn.AccountMonitor) {
+	t.Helper()
+	if got.MetricsAsOf != nil || got.MetricsPending != nil || got.MetricsWindowStart != nil || got.MetricsWindowEnd != nil {
+		t.Errorf("metrics_as_of=%v metrics_pending=%v metrics_window_start=%v metrics_window_end=%v, want all omitted on a live-read platform",
+			got.MetricsAsOf, got.MetricsPending, got.MetricsWindowStart, got.MetricsWindowEnd)
+	}
 }
 
 // TestMonitorAccount_TotalsExcludeRowsTheRuleEngineDropped pins which rows the sum is over: the
@@ -318,6 +335,7 @@ func TestMonitorRedditAccount_TotalsSumTheReturnedRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MonitorRedditAdsAccount failed: %T: %v", err, err)
 	}
+	assertNoReportFields(t, result)
 	if result.Totals == nil {
 		t.Fatalf("expected non-nil totals")
 	}
@@ -392,8 +410,11 @@ func microsoftMonitorService(reader *fakeReportReader, store domain.AccountRepor
 func TestMonitorMicrosoftAdsAccount_ReportsMetricsFreshness(t *testing.T) {
 	completed := time.Date(2026, 10, 5, 14, 30, 0, 0, time.UTC)
 	reader := &fakeReportReader{campaigns: twoCampaigns()}
+	// Microsoft's saved window: CustomDateRangeStart..CustomDateRangeEnd, both inclusive.
 	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{
-		AsOf: completed,
+		AsOf:        completed,
+		WindowStart: time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC),
+		WindowEnd:   time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC),
 		Rows: []model.AccountReportRow{
 			{PlatformCampaignID: "1", Spend: 70, Impressions: 1000, Clicks: 30},
 			{PlatformCampaignID: "2", Spend: 10, Impressions: 500, Clicks: 5},
@@ -410,6 +431,11 @@ func TestMonitorMicrosoftAdsAccount_ReportsMetricsFreshness(t *testing.T) {
 	}
 	if got.MetricsAsOf == nil || *got.MetricsAsOf != "2026-10-05T14:30:00Z" {
 		t.Errorf("metrics_as_of = %v, want the report's completion time in RFC 3339", got.MetricsAsOf)
+	}
+	if got.MetricsWindowStart == nil || *got.MetricsWindowStart != "2026-09-29" ||
+		got.MetricsWindowEnd == nil || *got.MetricsWindowEnd != "2026-10-05" {
+		t.Errorf("metrics window = %v..%v, want the saved report's 2026-09-29..2026-10-05",
+			got.MetricsWindowStart, got.MetricsWindowEnd)
 	}
 	if got.MetricsPending == nil || !*got.MetricsPending {
 		t.Errorf("metrics_pending = %v, want true", got.MetricsPending)
@@ -430,6 +456,9 @@ func TestMonitorMicrosoftAdsAccount_FirstReadHasNoFindings(t *testing.T) {
 	}
 	if got.MetricsAsOf != nil {
 		t.Errorf("metrics_as_of = %v, want absent", *got.MetricsAsOf)
+	}
+	if got.MetricsWindowStart != nil || got.MetricsWindowEnd != nil {
+		t.Errorf("metrics window = %v..%v, want absent before any report finishes", got.MetricsWindowStart, got.MetricsWindowEnd)
 	}
 	if got.MetricsPending == nil || !*got.MetricsPending {
 		t.Errorf("metrics_pending = %v, want true", got.MetricsPending)
@@ -475,6 +504,146 @@ func TestMonitorMicrosoftAdsAccount_ClassifiesListErrors(t *testing.T) {
 				if !ok || !strings.Contains(su.Message, "account monitor") {
 					t.Fatalf("got %T: %v, want a 503 naming the account monitor", err, err)
 				}
+			}
+		})
+	}
+}
+
+// twitterMonitorService wires a ConnectionService whose orchestrator answers X's report-backed
+// monitor from the given reader and store — the same orchestration as Microsoft's, keyed on X.
+func twitterMonitorService(reader *fakeReportReader, store domain.AccountReportRepository) *ConnectionService {
+	o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderTwitterAds: reader})
+	o.SetAccountReportStore(store)
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(o)
+	return svc
+}
+
+// X is served through the shared report-backed path: freshness fields set, rows filled from the
+// saved report, evaluated by X's own rule engine and totalled from the returned rows.
+func TestMonitorTwitterAdsAccount_ServesSavedReport(t *testing.T) {
+	asOf := time.Date(2026, 10, 5, 14, 30, 0, 0, time.UTC)
+	reader := &fakeReportReader{
+		campaigns: []model.AccountCampaignMetrics{
+			{PlatformCampaignID: "c1", Name: "a", Status: "ACTIVE", BudgetDay: 10},
+			{PlatformCampaignID: "c2", Name: "b", Status: "PAUSED", BudgetDay: 20},
+		},
+		submitID: "111,222",
+	}
+	// The saved report's window is the account's local days Sep 29..Oct 5; X's rules pace on it.
+	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{
+		AsOf:        asOf,
+		WindowStart: time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC),
+		WindowEnd:   time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC),
+		Rows:        []model.AccountReportRow{{PlatformCampaignID: "c1", Spend: 70, Impressions: 1000, Clicks: 30}},
+	}}}
+	got, err := twitterMonitorService(reader, store).MonitorTwitterAdsAccount(context.Background(),
+		&conn.MonitorTwitterAdsAccountPayload{ProjectID: "p", AccountID: "a1", Days: 7})
+	if err != nil {
+		t.Fatalf("MonitorTwitterAdsAccount: %v", err)
+	}
+	if got.MetricsAsOf == nil || *got.MetricsAsOf != "2026-10-05T14:30:00Z" {
+		t.Errorf("metrics_as_of = %v, want the report's as-of in RFC 3339", got.MetricsAsOf)
+	}
+	if got.MetricsPending == nil {
+		t.Errorf("metrics_pending absent, want it set on a report-backed platform")
+	}
+	if got.Totals.Spend != 70 || got.Totals.CampaignCount != 2 {
+		t.Errorf("totals = %+v, want spend 70 over both returned rows", got.Totals)
+	}
+	// c1: 70 spent against 10/day over the report's seven days — paced on the report's window.
+	for _, c := range got.Campaigns {
+		if c.PlatformCampaignID == "c1" && (c.PacingUnknown || c.PacingPct != 100) {
+			t.Errorf("c1 pacing = %v, want 100 over the report's seven days", c.PacingPct)
+		}
+	}
+	// c2 is absent from the finished report: a measured zero, and PAUSED — X's paused rule fires.
+	var paused bool
+	for _, it := range got.ActionItems {
+		if it.CampaignID != nil && *it.CampaignID == "c2" && strings.Contains(it.Issue, "paused") {
+			paused = true
+		}
+	}
+	if !paused {
+		t.Errorf("action_items = %+v, want X's paused-campaign item for c2", got.ActionItems)
+	}
+}
+
+// A 90-day X window across a DST fall-back covers 89 days (twitter.accountReportWindow drops the
+// earliest day to stay within X's 90-day cap). `days` still echoes the request, so the response
+// must state the covered days itself: metrics_window_start/end come from the saved report's
+// window, not from `days`.
+func TestMonitorTwitterAdsAccount_ExposesTheCoveredWindow(t *testing.T) {
+	reader := &fakeReportReader{
+		campaigns: []model.AccountCampaignMetrics{{PlatformCampaignID: "c1", Name: "a", Status: "ACTIVE", BudgetDay: 10}},
+		submitID:  "111",
+	}
+	// The window accountReportWindow returns for a 90-day read on 2026-11-20 in America/New_York.
+	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{
+		AsOf:        time.Date(2026, 11, 20, 17, 0, 0, 0, time.UTC),
+		WindowStart: time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC),
+		WindowEnd:   time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC),
+		Rows:        []model.AccountReportRow{{PlatformCampaignID: "c1", Spend: 500}},
+	}}}
+	got, err := twitterMonitorService(reader, store).MonitorTwitterAdsAccount(context.Background(),
+		&conn.MonitorTwitterAdsAccountPayload{ProjectID: "p", AccountID: "a1", Days: 90})
+	if err != nil {
+		t.Fatalf("MonitorTwitterAdsAccount: %v", err)
+	}
+	if got.Days != 90 {
+		t.Errorf("days = %d, want the requested 90 echoed", got.Days)
+	}
+	if got.MetricsWindowStart == nil || *got.MetricsWindowStart != "2026-08-24" ||
+		got.MetricsWindowEnd == nil || *got.MetricsWindowEnd != "2026-11-20" {
+		t.Fatalf("metrics window = %v..%v, want the covered 2026-08-24..2026-11-20", got.MetricsWindowStart, got.MetricsWindowEnd)
+	}
+	first, _ := time.Parse(time.DateOnly, *got.MetricsWindowStart)
+	last, _ := time.Parse(time.DateOnly, *got.MetricsWindowEnd)
+	if n := int(last.Sub(first).Hours()/24) + 1; n != 89 {
+		t.Errorf("covered days = %d, want 89", n)
+	}
+}
+
+// With no finished X report yet, the window is omitted along with metrics_as_of.
+func TestMonitorTwitterAdsAccount_NoReportOmitsTheWindow(t *testing.T) {
+	reader := &fakeReportReader{
+		campaigns: []model.AccountCampaignMetrics{{PlatformCampaignID: "c1", Name: "a", Status: "ACTIVE", BudgetDay: 10}},
+		submitID:  "111",
+	}
+	got, err := twitterMonitorService(reader, &fakeReportStore{}).MonitorTwitterAdsAccount(context.Background(),
+		&conn.MonitorTwitterAdsAccountPayload{ProjectID: "p", AccountID: "a1", Days: 7})
+	if err != nil {
+		t.Fatalf("MonitorTwitterAdsAccount: %v", err)
+	}
+	if got.MetricsAsOf != nil || got.MetricsWindowStart != nil || got.MetricsWindowEnd != nil {
+		t.Errorf("metrics_as_of=%v window=%v..%v, want all absent before any report finishes",
+			got.MetricsAsOf, got.MetricsWindowStart, got.MetricsWindowEnd)
+	}
+}
+
+// The permanent refusals reach the caller as a 409 whose reason names the account state — not
+// the generic 503 an upstream failure gets, which would invite a retry that cannot succeed.
+func TestMonitorTwitterAdsAccount_PermanentRefusalsAre409(t *testing.T) {
+	for sentinel, reason := range map[error]string{
+		domain.ErrAccountTooManyActiveCampaigns: "account_too_many_active_campaigns",
+		domain.ErrAccountTimezoneUnsupported:    "account_timezone_unsupported",
+	} {
+		t.Run(reason, func(t *testing.T) {
+			reader := &fakeReportReader{
+				campaigns: []model.AccountCampaignMetrics{{PlatformCampaignID: "c1", Name: "a", Status: "ACTIVE", BudgetDay: 10}},
+				submitErr: fmt.Errorf("submit x ads account report: %w: upstream detail", sentinel),
+			}
+			_, err := twitterMonitorService(reader, &fakeReportStore{}).MonitorTwitterAdsAccount(context.Background(),
+				&conn.MonitorTwitterAdsAccountPayload{ProjectID: "p", AccountID: "a1", Days: 7})
+			var ce *conn.ConflictError
+			if !errors.As(err, &ce) {
+				t.Fatalf("err = %T %v, want *conn.ConflictError", err, err)
+			}
+			if ce.Code != "409" || ce.Reason == nil || *ce.Reason != reason {
+				t.Errorf("conflict = %+v (reason %v), want 409 with reason %q", ce, ce.Reason, reason)
+			}
+			if strings.Contains(ce.Message, "upstream detail") {
+				t.Errorf("message %q echoes the wrapped error; it must be fixed text", ce.Message)
 			}
 		})
 	}

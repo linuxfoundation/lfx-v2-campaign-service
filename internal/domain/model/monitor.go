@@ -39,6 +39,14 @@ const (
 	MonitorPacingOverspending  MonitorPacingLabel = "overspending"
 )
 
+// FlightRange is one contiguous span of scheduled calendar days: StartDate through EndDate,
+// both inclusive, as YYYY-MM-DD in the platform's own (account-local) days. EndDate is empty for
+// an open-ended span, which can only be the last range of a set.
+type FlightRange struct {
+	StartDate string
+	EndDate   string
+}
+
 // AccountCampaignMetrics is one campaign row read live from a raw ad account (not from this
 // service's own persisted Campaign rows) — the input the monitor rule engines act on.
 //
@@ -81,6 +89,13 @@ type AccountCampaignMetrics struct {
 	// RFC 3339 date-only (YYYY-MM-DD), empty when the platform did not report one.
 	StartDate string
 	EndDate   string
+	// FlightRanges is X only: the days the campaign is actually scheduled on, as the union of its
+	// line items' flights — sorted, disjoint, non-adjacent ranges of account-local calendar days.
+	// StartDate/EndDate above are only the envelope of these (earliest start, latest end), which
+	// counts any gap BETWEEN line items as scheduled; a rule engine that pacing- or
+	// delivery-judges a window must use the ranges when they are set. Empty when the platform
+	// does not report per-line-item flights or the campaign has none.
+	FlightRanges []FlightRange
 	// PacingUnknown is true when pacing could not be computed at all: either the flight dates
 	// were unavailable (e.g. Google Ads rows this port does not schedule-bound, or a platform
 	// row with no runSchedule/start_time), or the campaign has no usable budget to pace

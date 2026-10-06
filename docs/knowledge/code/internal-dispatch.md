@@ -353,6 +353,56 @@ denylist that cannot name every credential parameter a registration page might u
 does not apply at all to rows written before it existed. The snapshot does not have to
 guess, so it keeps nothing.
 
+**Which fields each adapter scrubs.** Per adapter snapshot builder, as of LFXV2-2665:
+
+- `reddit.go` — `PostURL`, `ImageURL` (`sanitizeSnapshotURL`).
+- `meta.go` — each variant's `ImageURL` (`sanitizeSnapshotURL`, on a copied slice).
+- `googleads.go` — each sitelink's `finalUrl` (`googleAdsSnapshotConfig`); keyword and ad text
+  are kept VERBATIM by design.
+- `twitter.go` — `tweetText` (`sanitizeSnapshotText`).
+- `microsoft.go` — `timeZone` and every `keywords[].text`, both through `sanitizeSnapshotText`
+  (`microsoftSnapshotConfig`); the snapshot is a redacted record, not a verbatim one.
+- `hubspot.go` — snapshots only the provenance fields (`hubspotConfigProvenance`); subject and
+  body HTML are never stored.
+- `linkedin.go` — passes the raw `linkedinConfig`; NOTHING is scrubbed. It has no dedicated URL
+  field (the registration URL comes from the brief), but variant `introText`/`headline` are
+  caller free text stored verbatim. Not changed here; LinkedIn is owned by another engineer.
+
+**The redactors live in `pkg/redact`, and the update path uses them generically.** The pure
+string sanitizers (`SnapshotURL`, `SnapshotText` and the run patterns behind them) moved
+unchanged to `pkg/redact/snapshot.go`; `creds.go` keeps `sanitizeSnapshotURL` /
+`sanitizeSnapshotText` as one-line wrappers, so every adapter above and `creds_test.go` are
+untouched and behaviour is byte-identical. The move exists because `internal/dispatch`
+imports `internal/service`, so the service cannot import this package without a cycle, and
+the service needs the same rules: `UpdateCampaign` (`PUT .../campaigns/{id}`) accepts
+`config` as Goa `Any` with no adapter in the loop, and it used to persist that JSON straight
+into `config_snapshot`, bypassing every per-adapter scrub listed above. It now walks the
+value and runs EVERY string value and object key through `SnapshotText` before persisting (see
+[internal/service](internal-service.md), "Campaign config update"). The per-adapter list
+above is the CREATE/adoption path only; the LinkedIn create-path gap is unchanged.
+
+**Microsoft scrubs `timeZone` and the links inside keywords.** `campaignFromMicrosoft` persists
+`microsoftSnapshotConfig(cfg)`, never the caller's raw `microsoftConfig`. The struct carries no
+URL field: the ad's `FinalUrls` is the BRIEF's registration URL plus the client's `utm_*`
+params and never reaches the snapshot. `timeZone` is meant to be an enum but is forwarded
+UNVALIDATED, so it is caller free text and goes through `sanitizeSnapshotText` (every real enum
+value is a bare identifier and passes through unchanged). `keywords[].text` is caller text too —
+`validateKeywords` only trims, length-checks and validates the match type, so
+`https://example.test/reset/SECRET?token=VALUE` and `example.org/reset/SECRET` are valid keywords
+— and goes through the same full `sanitizeSnapshotText`. A link's PATH can carry a token as
+readily as its query (knowledge base: `caller-url-must-be-redacted-before-errors-steps-and-snapshots`
+— "it kept the path" is a finding), so no keyword exemption is made: the snapshot is a REDACTED
+record, and a path-like targeting term is reduced too (`k8s.io/docs tutorial` is stored as
+`k8s.io tutorial`, `node.js/express` as `node.js`). What Microsoft receives is not
+snapshot-redacted — only the client's own validation applies (trim, canonical match type,
+case-insensitive de-duplication); only the stored copy is redacted. The keyword slice is
+reallocated first, so the snapshot redaction never reaches the config sent to Microsoft.
+`budget`, `cpcBid`, `matchType` (only Exact/Phrase/Broad gets past
+the client before a snapshot can be written) and `geoTargets` (ISO-2 codes, shape-checked by
+the client) cannot carry a URL. The persisted `result` (`microsoft.CampaignResult`) carries no
+caller URL: its `Steps` interpolate only ids, counts and geo codes, and its `microsoftAdsUrl`
+is a deep link the client composes from the account id.
+
 ## The claim contract (release vs retain)
 
 The claim is PERMANENT until released — deliberately NOT auto-reclaimed on a timer. `pending`
@@ -420,6 +470,25 @@ not be read", a RETRYABLE 503, from a verdict on the connection; see
 [internal-service.md](internal-service.md). It is distinct from `ErrNotFound` (the row is absent,
 a settled fact) and from `ErrConnectionNotUsable` (the row was read and is unusable), and is the
 only one of the three that retrying can fix.
+
+### Slot versions and unique upstream names
+
+A deliberate second campaign on one slot (the service concept's `new_version`) must not
+compose the first campaign's upstream name on a provider that treats a matching name as the
+same campaign. Microsoft enforces case-insensitive name uniqueness and its find-first lookup
+REUSES a match, so `MicrosoftDispatcher` sets `NameSuffix: model.SlotNameSuffix(brief.ID,
+model.DispatchSlotVersion(ctx))`: slot 1 is the bare brief id (every existing name and retry is
+byte-identical) and slot 2+ appends `-<n>` — an internal identifier where the brief id already
+sat, not a version label.
+
+Every other provider still composes the same name for every slot, and most look campaigns up by
+it: Google (`FindCampaignByName`, `DUPLICATE_CAMPAIGN_NAME`), LinkedIn
+(`findCampaignByNameInGroup`, which would also push new creatives onto the live campaign), X and
+Meta (`findCampaignByName`); HubSpot clones under the same email name. So
+`model.ProviderSupportsSlotVersions` is an allowlist holding only Microsoft, and `create-campaigns`
+refuses `new_version` with a 400 for anything else. A provider joins it in the same change that
+makes its name unique per slot version. Google and LinkedIn are owned by the Google-readiness
+workstream (LFXV2-2665).
 
 ## Registration
 
@@ -916,23 +985,25 @@ against serving legacy rows at all.
 `BudgetWriter` — `WriteBudget(ctx, projectID, platform, campaign *model.Campaign, budget
 model.BudgetChange) error` — changes an existing campaign's budget ON THE AD PLATFORM.
 Discovered by the same type assertion as `StatusToggler` and `SettingsReader`; a dispatcher
-without it yields `ErrBudgetWriteUnsupported` -> 400. **Google Ads, LinkedIn and Meta implement
-it today**; every other platform still answers 400. It is the settings readback's mirror: the
+without it yields `ErrBudgetWriteUnsupported` -> 400. **Google Ads, LinkedIn, Meta, Microsoft
+Advertising, Reddit and X implement it today**; every other platform still answers 400. It is the settings readback's mirror: the
 readback makes a budget divergence legible, and this is the only capability that can act on it.
 
 **Adding a platform is purely additive** — the service layer holds no allowlist, so a slice is
 the adapter plus its dispatcher method and nothing else. What is NOT shared between the slices
 is the refusal set: each platform's budget model decides which guards even have a subject, and
-the design's published refusal list is the UNION of the three (see [design.md](design.md)). The
+the design's published refusal list is the UNION of the six (see [design.md](design.md)). The
 three rules every implementation does obey, stated in `internal/service/orchestrator.go`, are:
 confirm before persisting, refuse a shared budget, and enforce the account-identity invariant at
 least as strictly as `ReadSettings` does.
 
-**All three enforce provenance more strictly than their own sibling paths do, and each says so
-in code.** `verifyLinkedInAccountMatch` returns `nil` when the campaign records no creating
-account; `verifyMetaAccountMatch` returns `nil` when EITHER the recorded account or the current
-one is absent — deliberately, because Meta's toggle and metrics address the campaign node by id
-and need no account at all. Both tolerances are correct for those callers and wrong for a budget
+**All six enforce provenance more strictly than their own sibling paths do, and each says so
+in code.** `verifyLinkedInAccountMatch` and `verifyMicrosoftAccountMatch` return `nil` when the
+campaign records no creating account (and so do `verifyRedditAccountMatch` and
+`verifyTwitterAccountMatch`);
+`verifyMetaAccountMatch` returns `nil` when EITHER the recorded account or the current one is
+absent — deliberately, because Meta's toggle and metrics address the campaign node by id and
+need no account at all. Those tolerances are correct for those callers and wrong for a budget
 write, so each budget dispatcher refuses the absence(s) itself BEFORE calling the shared helper,
 which is then still used for the mismatch case so the wording stays common. Reusing the helper
 alone would silently inherit a contract this path cannot accept.
@@ -1105,6 +1176,294 @@ scale is off by a factor of a hundred.
 `UpdateAdSetBudget` writes exactly one field, `daily_budget` or `lifetime_budget`, as a decimal
 STRING, and **sends no `end_time`**: it only ever writes `lifetime_budget` on an ad set that
 already reports one, which already has its end time set.
+
+### Microsoft — FIELDS ON THE CAMPAIGN, unless a shared Budget owns them
+
+`MicrosoftDispatcher.WriteBudget` (`internal/dispatch/microsoft_budget.go`). Microsoft's model
+sits between LinkedIn's and Google's: `DailyBudget` (a plain decimal in the AD ACCOUNT's currency
+— not micros, not minor units) and `BudgetType` are fields on the campaign, so the campaign id
+addresses the budget and there is no budget-id resolution — **unless `BudgetId` is set**, in
+which case the campaign draws on a SHARED `Budget` entity and both fields are read-only echoes of
+a pool other campaigns also spend from. So the shared-budget guard Google has, and LinkedIn
+deliberately lacks, reappears here, reached through `BudgetId`.
+
+**Daily Standard only.** Microsoft's
+[BudgetLimitType](https://learn.microsoft.com/en-us/advertising/campaign-management-service/budgetlimittype)
+reference documents both `DailyBudgetAccelerated` ("only available for Audience campaigns that
+use unshared campaign-level budgets") and `LifetimeBudgetStandard` as Audience-only, and this
+service creates and reads Search campaigns only — so `DailyBudgetStandard` is the one pacing a
+campaign this path can reach may have. A `lifetime` request is therefore the SAME pacing
+refusal every sibling makes — `ErrBudgetUnwritable` → **409**, not a 400 — and is raised locally
+before any credential is decrypted, because no Microsoft campaign this path can reach is paced
+that way. (409 rather than `ErrBudgetWriteUnsupported`'s 400 is deliberate: that sentinel's
+message says the PLATFORM has no budget writing, which is no longer true, and the design states
+a pacing mismatch as a 409.)
+
+Order, every refusal before the one mutate:
+
+1. **Provenance, failed closed.** A row recording no creating account is refused
+   (`ErrCampaignProvenanceUnknown` joined with `ErrCampaignAccountMismatch`) — stricter than
+   `ToggleStatus`, whose "unknown, proceed" is right for a pause and wrong for money.
+2. **Lifetime request** → `ErrBudgetUnwritable`, no call at all.
+3. **Id shape.** A recorded platform id that is not a positive integer is a fact about the row →
+   `ErrBudgetUnwritable`, no call at all.
+4. **Resolution and the mismatch guard** — the SAME `resolveMicrosoftClient` (`resolveExisting`
+   on the creation account) and `verifyMicrosoftAccountMatch` that `ToggleStatus` uses, so a
+   re-pointed connection is refused before Microsoft is contacted.
+5. **Read** `GetCampaignBudget` (`POST Campaigns/QueryByIds`). Its failure is DEFINITE and is
+   returned unclassified; Microsoft's `CampaignServiceInvalidCampaignId` → `ErrPlatformCampaignAbsent`
+   (404).
+6. **Experiment campaign** (`ExperimentId` set) → `ErrBudgetUnwritable`: its budget is inherited
+   from the base campaign and Microsoft documents it as not settable.
+7. **Shared budget** → `ErrBudgetShared` (409); an UNREADABLE `BudgetId` → `ErrBudgetUnwritable`,
+   never assumed private.
+8. **Budget type** must be `DailyBudgetStandard` as Microsoft REPORTED it; unreported, lifetime or
+   unknown → `ErrBudgetUnwritable`. **`DailyBudgetAccelerated` is refused too**
+   (`ErrBudgetUnwritable`, zero PUTs): the read asked for `CampaignType` Search, and Microsoft
+   documents Accelerated as Audience-only, so a Search campaign reporting it is a contradictory
+   response — failed closed rather than echoed back on the PUT. The reported type is what the
+   write sends back, never a default.
+
+Then ONE `PUT Campaigns` (UpdateCampaigns), idempotent, body
+`{"AccountId":…,"Campaigns":[{"Id":…,"BudgetType":<reported>,"DailyBudget":<amount>}]}`. The
+mutate's outcome is classified: `microsoft.IsOutcomeUnconfirmed` (5xx, transport, redirect,
+exhausted 429, a 200 that does not answer `PartialErrors`, or any failure after the client
+retried a 429 — that refusal answers only the last attempt) → `unconfirmedBudgetWriteError`
+(503 "verify upstream"); Microsoft's `CampaignServiceCannotUpdateSharedBudget` (a budget attached
+between the read and the write) → `ErrBudgetShared`; `CampaignServiceInvalidDailyBudget` or a
+budget below spend → `rejectedBudgetAmountError` (**400** with the client's sentence). Those two
+follow a PUT that WAS sent, so on Microsoft these sentinels do not mean "refused before any
+mutate": they mean what they mean on every platform — the platform confirmed NO change, here by a
+DEFINITE refusal of the mutate. An unconfirmed outcome is never either of them. Any other
+`PartialError` on the single operation, or a definite 4xx, is a definite failure (503 "not
+modified").
+
+**Precision.** The amount is sent UNROUNDED, as the shortest decimal that round-trips the float —
+the same as the create path sends `DailyBudget`. The siblings round to a unit they KNOW (LinkedIn
+two decimals, Meta the account currency's minor unit, Google a micro); this client does not know
+the account currency, and rounding to an assumed two decimals would silently change a JPY amount.
+Microsoft's own validation is the authority on the smallest settable amount, and its refusal is
+the 400 above rather than the default 503. Unlike LinkedIn and Meta, then, Microsoft's floor is
+stated only by its mutate — which is why its amount refusal is a DEFINITE refusal of that mutate,
+never a pre-write validation.
+
+### Reddit — the budget is the CAMPAIGN's goal, in MICRO-UNITS
+
+Where the budget lives is taken from this repo's own create path, not assumed:
+`reddit.Client.CreateCampaign` sends `is_campaign_budget_optimization: true`, `goal_type:
+"LIFETIME_SPEND"` and `goal_value` (integer micro-units of the account currency) on the
+**campaign**, and sends no budget on the ad group. So `RedditDispatcher.WriteBudget` addresses
+the campaign itself — the same `/ad_accounts/{accountID}/campaigns/{campaignID}` resource the
+status toggle PATCHes — and writes `goal_value` alone: never `goal_type` (the pacing), never a
+schedule field.
+
+Order, all before the one PATCH:
+
+1. **Provenance, failed closed.** `verifyRedditAccountMatch` waves an absent creating account
+   through, and on Reddit that covers every row written before `accountId` existed — there is no
+   URL fallback to recover it from. The budget write refuses that absence itself
+   (`ErrCampaignProvenanceUnknown` joined with `ErrCampaignAccountMismatch`), before a credential
+   is resolved or a token fetched, then uses the shared helper for the mismatch.
+2. **Amount.** `reddit.BudgetMicros` applies the create path's own bound (`redditMaxBudgetUSD`,
+   which keeps the ×1e6 conversion clear of int64 overflow) and rounding (`toMicrodollars`,
+   half-away-from-zero), and refuses an amount that rounds to zero micros. Its refusals wrap
+   `reddit.ErrBudgetAmountInvalid` and become `ErrBudgetAmountRejected` → **400** via
+   `rejectedBudgetAmountError`. Like Google's, these bounds are the service's own, so the mapping
+   is defense in depth for a non-HTTP caller.
+3. **Credentials** through `resolveRedditClient` with `existingResolver(created)` — the same
+   resolution and connection-defect tagging as `ToggleStatus` and `ReadMetrics`.
+4. **Read** (`GetCampaignBudget`, a pure read — its failure is definite, never unconfirmed). A 404
+   is `ErrPlatformCampaignAbsent`; an answer naming a different campaign id is refused; an
+   answer naming a different `ad_account_id` is `ErrCampaignAccountMismatch`. The two ids the
+   client refuses before building a request are classified by their owner: an unaddressable
+   ACCOUNT id is the connection's (`client.AccountID()`), so it is `ErrConnectionNotUsable` +
+   `ErrProviderConfigInvalid` (system-scoped on the LF fallback row) → 409 "repair the
+   connection"; an unaddressable CAMPAIGN id is the persisted row's, so it is
+   `ErrBudgetUnwritable` → 409.
+5. **The budget must be on the campaign.** `is_campaign_budget_optimization` false means spend is
+   governed per AD GROUP; following Meta's precedent this service **refuses rather than choose an
+   allocation** across ad groups (`ErrBudgetUnwritable`). An UNREPORTED flag is refused too, the
+   fail-closed reading Google applies to `explicitly_shared`. This service creates no such
+   campaign, so only one changed by hand in Reddit Ads Manager reaches it. With CBO on the number
+   of ad groups is irrelevant: none of them holds a budget.
+6. **Legible amount and matching pacing.** An unreadable `goal_value` (non-integer, fractional) is
+   refused rather than read as "no budget". `LIFETIME_SPEND` ↔ `lifetime`, `DAILY_SPEND` ↔
+   `daily`; anything else, or no `goal_type`, is a shape with no mapping; a request naming the
+   other pacing is refused **409**, never translated — all `ErrBudgetUnwritable`. The create path
+   only makes `LIFETIME_SPEND` campaigns, so a `daily` request against one this service created
+   is always this 409.
+
+There is **no shared-budget analogue**: a Reddit campaign's goal cannot be attached to another
+campaign, so that refusal is deliberately absent. There is no currency guard either: Reddit
+reports `goal_value` in the account's own currency's micro-units and this service never
+converts, matching the create path.
+
+**The PATCH is classified.** It goes through `request()`, which retries a 429 because setting the
+same `goal_value` twice converges (the status toggle's PATCH does the same); an exhausted
+throttle, a transport failure, a 3xx or a 5xx is `reddit.IsOutcomeUnconfirmed` and is wrapped in
+`unconfirmedBudgetWriteError` → 503 "verify before retrying". **The 2xx echo is checked**: a
+response naming another campaign id or another `goal_value` than the one sent — or a `data` that
+is not a campaign object — is returned as an UNCONFIRMED `transportError`, because the request
+reached Reddit and something not asked for may have applied. An echo naming neither is accepted;
+the 2xx is the confirmation, as for the toggle. A definite 4xx passes through as a refusal.
+
+**Unverified against a live Reddit account**: the single-campaign `GET` on the account-scoped
+path, whether that GET reports `is_campaign_budget_optimization` and `ad_account_id`, the
+`DAILY_SPEND` token, and whether the PATCH response echoes the campaign. Each unknown fails
+closed (a 409 refusal or an UNCONFIRMED 503), never as a wrong write. See
+[internal/platform/reddit](internal-platform-reddit.md).
+
+### X — the CAMPAIGN's daily `*_local_micro`, only under a reported `CAMPAIGN` budget optimization
+
+Where the budget lives is INFERRED from this repo's own create path and is unverified against a
+live account: `twitter.Client.CreateCampaign` sends `daily_budget_amount_local_micro` on the
+**campaign**, sends no `budget_optimization`, and sends no budget on the line item. X's v11
+announcement makes `CAMPAIGN` the default and the only model in which a campaign-level daily
+budget is valid; X's current reference page lists `LINE_ITEM` as the only value and default. So
+`TwitterDispatcher.WriteBudget` (`internal/dispatch/twitter_budget.go`) never relies on the
+inference: it writes only when the read REPORTS `CAMPAIGN`, and refuses a campaign reporting
+`LINE_ITEM` or omitting the field (409) before any write. The write is
+`PUT accounts/:account_id/campaigns/:campaign_id` — the resource the status toggle PUTs — with
+exactly `daily_budget_amount_local_micro`. Never `budget_optimization`, never `entity_status`,
+never `total_budget_amount_local_micro`.
+
+**Daily only.** Under `CAMPAIGN` the cited contract REQUIRES the daily budget on the campaign, so a
+`CAMPAIGN` campaign is always paced daily (a total, where present, is an extra whole-flight cap),
+and the create path never sets a total. No X document this service can cite shows a total-only
+campaign under `CAMPAIGN`, so a `lifetime` request is refused (409, `ErrBudgetUnwritable`) before
+any call, and a campaign reporting no daily budget is refused after the read.
+
+Order, all before the one PUT:
+
+1. **Provenance, failed closed.** `twitterCreationAccountID` has no fallback (the persisted
+   `TwitterURL` is the bare Ads Manager constant), so `verifyTwitterAccountMatch` waves an absent
+   `AccountID` through. The budget write refuses that absence itself
+   (`ErrCampaignProvenanceUnknown` joined with `ErrCampaignAccountMismatch`) before any
+   credential is resolved, then uses the shared helper for the mismatch.
+2. **Amount, then pacing.** `twitter.BudgetMicros` applies the create path's own bound
+   (`maxBudgetUsd`) and rounding (`toMicroCurrency`), refuses an amount that rounds to zero
+   micros, and maps to `ErrBudgetAmountRejected` → **400** via `rejectedBudgetAmountError`. X's
+   reference publishes no per-currency minimum or maximum for these fields, so none is invented;
+   an amount X refuses on its own rules is X's definite 4xx on the PUT. A `lifetime` request is
+   then refused (409).
+3. **Credentials** through `resolveTwitterClientWithRes` — the same resolution, validation and
+   SHARED cached client as `ToggleStatus` and `ReadMetrics`, so the PUT queues on the account's
+   one write pacer.
+4. **Read** (`GetCampaignBudget`, a pure read; failure is definite). A 404, or `deleted: true`,
+   is `ErrPlatformCampaignAbsent`; an answer naming another campaign id is refused. X's campaign
+   object carries no `account_id`, so the account-scoped path plus step 1 are the account check.
+   An unaddressable ACCOUNT id is the connection's (`ErrConnectionNotUsable` +
+   `ErrProviderConfigInvalid`, system-scoped); an unaddressable CAMPAIGN id is the row's
+   (`ErrBudgetUnwritable`).
+5. **The budget must be on the campaign.** `budget_optimization` must be reported as `CAMPAIGN`.
+   `LINE_ITEM` puts the daily budget on each line item (and forbids it on the campaign), so it is
+   refused rather than allocated across line items; an unreported or unknown value is refused
+   too — the two X documents disagree, which is exactly when assuming would be guessing. If the
+   inference is wrong and created campaigns report `LINE_ITEM`, every X budget write is refused,
+   never misapplied.
+6. **Legible, daily-only amounts.** An unreadable amount (string, fraction, negative) is refused.
+   The daily amount must be set (total-only or neither contradicts the `CAMPAIGN` contract) and
+   no total may be set — all `ErrBudgetUnwritable` → 409.
+
+There is **no shared-budget analogue**: X's budget is fields on the campaign.
+
+**The PUT is classified.** Parameters ride in the query string and are OAuth 1.0a-signed, as on
+every v12 write (a test recomputes the signature server-side and checks it covers the query
+parameter). A 429 is retried (setting the same amount converges); a transport failure, mutating
+3xx, exhausted 429 or 5xx is `twitter.IsOutcomeUnconfirmed` → `unconfirmedBudgetWriteError` →
+503. **Any failure after a retried 429 is UNCONFIRMED too** — a definite 4xx or even a pre-send
+dial failure answers only the last attempt (`retriedUnconfirmedError`, the Microsoft PR #255
+lesson). The 2xx echo is checked like Reddit's: another campaign id or another amount →
+UNCONFIRMED.
+
+**Not gated.** X campaign writes (create, toggle) are already ungated; the budget PUT uses the same
+client, pacer and classification. `TWITTER_METRICS_ENABLED` gates only the account monitor.
+
+**Unverified against a live X account**: which `budget_optimization` value a campaign this
+service creates actually reads back as, whether the single-campaign GET returns `deleted`
+campaigns, whether the PUT response echoes the campaign, and X's unpublished per-currency
+minimums. Each unknown fails closed (409, a definite 4xx, or an UNCONFIRMED 503), never as a
+wrong write. See [internal/platform/twitter](internal-platform-twitter.md).
+
+## Bid write (optional capability, LFXV2-2665)
+
+`service.BidWriter` (`WriteBid`) sets a campaign's manual max CPC bid. **Microsoft Advertising,
+Reddit, Meta and X**; Google Ads, LinkedIn and HubSpot are not `BidWriter`s (pinned by
+`TestBidWriter_OnlyMicrosoftRedditMetaAndXImplementIt`), so the orchestrator answers
+`ErrBidUnsupported` (400). Shared outcome types live in `bid.go`: `unconfirmedBidWriteError`
+(`Unconfirmed()`) and `rejectedBidAmountError` (`BidAmountReason()`), the bid lever's
+counterparts of the budget types. No env gate, matching the budget writers.
+
+Every adapter follows the budget writers' order: provenance FAILED CLOSED first (absent creating
+account → `ErrCampaignProvenanceUnknown` + `ErrCampaignAccountMismatch`, before any token or
+request), then the row/request facts (bid type, recorded ad group id, amount), then credential
+resolution and the account-match guard, then a READ, then the guards, then the one mutate,
+classified. Nothing is written until every guard has passed.
+
+- **Microsoft** (`microsoft_bid.go`): writes the default `CpcBid` of the ad group recorded in
+  the row's result blob (`microsoftChildIDs`) — the field the create path sets; keywords are
+  created without bids and inherit it. Reads the CAMPAIGN's bid strategy
+  (`GetCampaignBidStrategy`) and writes only under its OWN `EnhancedCpc` or `ManualCpc`; any
+  automated scheme (MaxClicks, MaxConversions, TargetCpa, TargetRoas, MaxConversionValue,
+  TargetImpressionShare, CostPerSale, ...), any portfolio (`BidStrategyId > 0`), an unreadable
+  portfolio id, and an unreported or unreadable scheme → `ErrBidUnwritable`. Amount bounds are
+  the create path's (`ValidateMaxCPCBid`: 0.01–1000 in the account currency) → 400 before any
+  call. PUT outcomes: unconfirmed (incl. any failure after a retried 429) → 503; Microsoft's
+  floor/ceiling/invalid-bid codes → `ErrBidAmountRejected`; CannotSetSearchBidOnAdGroup or an
+  invalid ad group id → `ErrBidUnwritable`; anything else definite → default 503 "not modified".
+- **Reddit** (`reddit_bid.go`): writes `bid_value` of the ad group recorded in the result blob
+  (`redditChildIDs`; its shape is checked with `reddit.CheckAdGroupID` before any request).
+  Reads the CAMPAIGN first (`GetCampaignBudget`, which now also reports `bid_strategy`): under
+  CBO the ad group's strategy must match the campaign's, and Reddit's reference could not be
+  fetched to confirm more, so CBO on requires the campaign's own `MANUAL_BIDDING`, an unreported
+  CBO flag is refused, and CBO off accepts only an absent or `MANUAL_BIDDING` campaign strategy;
+  an absent campaign → `ErrPlatformCampaignAbsent`, a campaign reported under another account →
+  `ErrCampaignAccountMismatch`. Then reads the ad group and requires: it belongs to this campaign
+  (an UNREPORTED `campaign_id` is refused like a different one), `bid_strategy == MANUAL_BIDDING`,
+  `bid_type == CPC`, a legible `bid_value`; else `ErrBidUnwritable`. **Every Reddit campaign this service creates is `BIDLESS`** on both the
+  campaign and its ad group, so this leg refuses them until an operator switches BOTH the campaign's bid strategy (Campaign Budget Optimization is on for every campaign this service creates, so the ad group must match it) AND the ad group to `MANUAL_BIDDING` in Reddit Ads Manager — the adapter checks the campaign first, then the ad group. A 404 on the ad group is
+  `ErrBidUnwritable`, NOT `ErrPlatformCampaignAbsent` — the campaign may still exist. Amount via
+  `reddit.BidMicros` (positive, ≤ 1,000,000, ≥ one micro). PATCH outcomes as the budget write's,
+  plus a definite 400 carrying a STRUCTURED field error on `bid_value`
+  (`error.fields[].field == "bid_value"`) → `ErrBidAmountRejected` with this service's own
+  sentence (never Reddit's text); a 400 that merely mentions `bid_value` elsewhere stays a
+  definite refusal. **Any failure after a retried 429 is UNCONFIRMED** (503) — the client counts
+  retries (`requestCounted`) and wraps it as `retriedUnconfirmedError`, as Microsoft's
+  `putUpdate` does. **Known gap, the Reddit BUDGET write only:** it still classifies a definite
+  4xx after a retried 429 as DEFINITE.
+- **Meta** (`meta_bid.go`): writes `bid_amount` (minor units of the account currency) on the ad set
+  recorded in the result blob (`metaAdSetID`) — the object `WriteBudget` writes. Reads the ad set
+  (`GetAdSetBid`) and requires: it belongs to this campaign (an UNREPORTED owner is refused too),
+  `bid_strategy == LOWEST_COST_WITH_BID_CAP`, `billing_event == LINK_CLICKS` AND
+  `optimization_goal == LINK_CLICKS`, a legible `bid_amount`; else `ErrBidUnwritable`. A Meta bid
+  cap is per optimization event and, billed on impressions, per 1,000 impressions, so only that
+  pairing is a max cost per click; `CLICKS` billing (any click) is refused too. **Every Meta
+  campaign this service creates is `LOWEST_COST_WITHOUT_CAP` billed on `IMPRESSIONS`**, so this
+  leg refuses them until an operator moves the ad set to a link-click bid cap. The amount is
+  encoded AFTER the read by `ResolveBidMinorUnits` against the account's own currency (an
+  unknown currency → `ErrBidUnwritable`; under one minor unit or over 1,000,000 →
+  `ErrBidAmountRejected`); a missing account selection is `ErrAccountNotSelected` before any
+  request, and a stored account id that is not `act_<digits>` (`meta.ValidateAccountID`) is
+  `ErrConnectionNotUsable` + `ErrProviderConfigInvalid` (409, system-scoped) before any request —
+  `verifyMetaAccountMatch` would otherwise read a malformed id as "unknown" and the id would be
+  spliced into the currency preflight's Graph path. POST outcomes: the throttle is NOT retried in-call, so a 429 or HTTP-400 rate-limit
+  code is UNCONFIRMED; transport/3xx/5xx UNCONFIRMED; a definite 4xx whose `error_data.blame_field_specs`
+  names `bid_amount` → `ErrBidAmountRejected` with this service's own sentence (the message is
+  never consulted); else definite.
+- **X** (`twitter_bid.go`): writes `bid_amount_local_micro` on the line item recorded in the
+  result blob (`twitterChildIDs`). Provenance is stricter than the toggle's: a row recording no
+  creating account is refused first. A stored account id the client cannot put in a path is
+  `twitter.ErrInvalidAccountID`, mapped exactly as `WriteBudget` maps it: `ErrConnectionNotUsable`
+  + `ErrProviderConfigInvalid` (409, system-scoped). Reads the line item (`GetLineItemBid`, `with_deleted=true`)
+  and requires: it belongs to this campaign (unreported refused), not deleted,
+  `bid_strategy == MAX`, `pay_by == LINK_CLICK`, a legible bid; else `ErrBidUnwritable`. A 404 or
+  deleted line item is `ErrBidUnwritable`, not `ErrPlatformCampaignAbsent`. **Every X campaign
+  this service creates is `AUTO`**, so this leg refuses them until an operator moves the line
+  item to a manual max bid charged per link click. Amount via `twitter.BidMicros` before any call.
+  PUT outcomes: the 429 is NOT retried in-call (UNCONFIRMED); transport/3xx/5xx and a 2xx echo of
+  another line item or amount UNCONFIRMED; a definite 400 carrying `INVALID_PARAMETER` with
+  `parameter == bid_amount_local_micro` → `ErrBidAmountRejected`; else definite (a code merely
+  containing "BID" is not an amount refusal).
 
 ## Metrics read (optional capability)
 
@@ -1509,6 +1868,39 @@ by different places:
 The token is `TrimSpace`d ONCE inside the helper and the trimmed value is
 what reaches `hubspot.NewClient`, so the incomplete-credential check is made against the value
 the client will actually use.
+
+## Report-backed keyword read (Microsoft, LFXV2-2665)
+
+`microsoft_keyword_report.go` makes `MicrosoftDispatcher` a `service.KeywordReportReader` — the
+report-backed stand-in for `KeywordInsightsReader.ReadKeywordPerformance`, as
+`AccountReportReader` stands in for `AccountMetricsReader`. It does NOT implement
+`KeywordInsightsReader`, so the audience read stays `ErrKeywordInsightsUnsupported` (400) for
+Microsoft: `AgeGenderAudienceReportRequest` has age and gender but no device dimension, so the
+three-dimension answer would need a second report and could be half-finished.
+
+- `KeywordReportAccount` — makes NO upstream call. Gate (`MICROSOFT_METRICS_ENABLED`, off →
+  `ErrKeywordInsightsUnsupported`), window (`ErrMetricsWindowUnsupported`), scope ceiling (more
+  than 300 campaigns → `domain.ErrKeywordReportScopeTooLarge`), then `resolveOwned` (the
+  project's OWN connection; no LF fallback), the strict stored-account check, and the provenance
+  filter `microsoftKeywordScope`, after `microsoftKeywordScopeIDs` (local, no connection: each
+  id must be canonical — else `domain.ErrKeywordReportScopeInvalid` — ids are de-duplicated, and
+  the 300 ceiling applies to the DISTINCT count): ANY scope ROW whose recorded creation account
+  (`microsoftCreationAccountID`) is not the bound account refuses the whole read with
+  `ErrCampaignAccountMismatch` — `googleAdsScopeForCustomer`'s rule; an unrecorded account is
+  "unknown, proceed". Returns the bound account, which keys the saved report.
+- `SubmitKeywordReport` — re-runs the window, connection, bound-account
+  (`requireMicrosoftManagedAccount`) and scope checks, then submits for exactly the scope's
+  campaign ids, which it returns so the orchestrator records what the report covers. A 2027
+  scope rejection (`microsoft.ErrKeywordReportScopeRejected`) is tagged `domain.ErrServiceDefect`:
+  permanent, and ours.
+- `CheckKeywordReport` — same connection and account checks, one poll; rows normalised onto the
+  published enums (`BidMatchType` → `EXACT`/`PHRASE`/`BROAD`/`UNKNOWN`, `KeywordStatus` →
+  `ENABLED`/`PAUSED`/`UNKNOWN`) with `KeywordId` + `AdGroupId` kept as the action handle; a spend
+  whose micros would overflow int64 is refused.
+
+Tests (`microsoft_keyword_report_test.go`): gate off on all three methods, every refusal arm with
+zero upstream calls, the provenance filter, the system-fallback refusal, the submitted scope
+(Campaigns only, no `AccountIds`), and the poll states.
 
 ## Account discovery (optional capability)
 
@@ -2411,7 +2803,7 @@ overlay flip like the cutover flags; the branch stays dormant until an operator 
 | --- | --- | --- |
 | `resolve` | `Dispatch` (creation) and the discovery/`ListAccounts` helpers | system when the flag is on, else project-then-fallback |
 | `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` | **the account the campaign RECORDS being created under** |
-| `resolveOwned` | adoption, and every provider's account-monitor read (`ListAccountCampaignMetrics`, and Microsoft's report-backed `ListAccountCampaigns`/`SubmitAccountReport`/`CheckAccountReport` in `microsoft_monitor.go`; round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
+| `resolveOwned` | adoption, and every provider's account-monitor read (`ListAccountCampaignMetrics`, Microsoft's and X's report-backed `ListAccountCampaigns`/`SubmitAccountReport`/`CheckAccountReport` in `microsoft_monitor.go` and `twitter_monitor.go`, and Microsoft's report-backed keyword read in `microsoft_keyword_report.go`; round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
 
 The rule for an existing campaign is NOT "never forced". It is "follow the recorded creation
 account", and the difference is the whole point: those two agree for a campaign created before the
@@ -3263,6 +3655,66 @@ default is the safe direction for a non-idempotent write, and
 `TestHubSpot_CreateCampaignTagsDomainSentinels` pins it with a 500 case — because a translation
 that silently stopped happening would leave the service's own tests passing against sentinels
 nothing produces.
+
+## Microsoft keyword levers (LFXV2-2665)
+
+`microsoft_keywords.go` gives `MicrosoftDispatcher` two mutating capabilities on a live
+campaign: `KeywordActioner` (the EXISTING `apply-keyword-actions` endpoint) and the NEW
+`NegativeKeywordAdder` (`add-negative-keywords`). The Google adapter and its files are untouched;
+Google's keyword actions behave and respond exactly as before.
+
+**Keyword actions follow Google's contract in guard order** (`dispatch/googleads.go`
+`ApplyKeywordActions`): (1) `microsoft.ValidateKeywordActions` on the batch — a malformed batch
+is `ErrKeywordActionInvalid` (400) even against an unprovisioned campaign; (2) provisioning —
+a platform campaign id and the row's `adGroupId` (`microsoftChildIDs`), else
+`ErrCampaignNotProvisioned`; (3) every action must name THAT ad group, checked from the row
+before Microsoft is contacted; (4) provenance FAILS CLOSED (`microsoftKeywordLeverClient`: an
+unrecorded creating account is `ErrCampaignProvenanceUnknown`, refused before credentials are
+decrypted — stricter than `verifyMicrosoftAccountMatch`'s "unknown, proceed", as `WriteBudget`
+is), then the account must match; (5) an ownership READ, `GetAdGroupKeywords`: every keyword id
+must be a live, non-`Deleted` keyword of that ad group, else `ErrKeywordActionInvalid` with
+nothing mutated. A failed read is returned DEFINITE (no mutate was built). The mutation's
+whole-call ambiguity is wrapped `unconfirmedKeywordLeverError` (`Unconfirmed()`); per-item
+outcomes map 1:1 onto `model.KeywordOutcome*`, anything unnamed → `UNCONFIRMED`.
+`ResourceName` stays empty — Microsoft has no resource names.
+
+**The keyword ids are Microsoft's own** `Keyword.Id` within an ad group, carried in the
+existing `criterion_id`/`ad_group_id` fields. The design's id rule (digits only, canonical
+positive int64, ≤19 digits) was never Google-specific — both platforms' ids are `long` — so the
+request contract and its validation are unchanged for Google.
+
+**Negative keywords** go through the same guards minus the ownership read: the only id sent is
+the campaign's own, from the row (`microsoftCampaignIDRE`), so nothing the caller supplies can
+address another campaign. Validation first (`ErrNegativeKeywordInvalid`), then provisioning,
+provenance (fail closed), account.
+
+**Deliberately a separate interface, not a `KeywordAction` kind.** A kind on the existing enum
+would be delivered to every `KeywordActioner`, including Google's adapter, which has never been
+taught what a live negative keyword is; a separate optional interface means only a platform that
+implements the add can be asked to perform it, and every other platform answers
+`ErrNegativeKeywordsUnsupported` → 400.
+
+**Interaction with the status cascade.** Nothing about a keyword action is persisted, so after a
+REMOVE the row's `keywordIds` still names the deleted keyword. On ACTIVATE `ToggleStatus` therefore
+narrows them to the live ones (`microsoftLiveKeywordIDs`, under a bounded 10s sub-budget) before
+the cascade; PAUSE never reads, and a keyword-stage rejection after the confirmed gate is reported
+as a successful pause — see [internal/platform/microsoft](internal-platform-microsoft.md),
+"Status toggle".
+
+**⚠️ Known limitation, documented rather than fixed: ACTIVATE re-enables a keyword an operator
+PAUSED through keyword-actions.** The cascade enables every recorded, live keyword, and keywords
+are CREATED Paused, so a live status of Paused cannot tell "operator paused it" from "never
+enabled". Recording operator pauses in the row's JSON was considered and rejected: this endpoint
+takes no If-Match and persists nothing, so a write would have to bump the row version under the
+claim lock — silently staling every client's ETag and turning their next toggle or budget edit into
+a 412 — and with no ENABLE action the recorded set could only be cleared by a pause made or undone
+in the Bing UI, which this service never observes, so it would drift from Microsoft's state in
+both directions. The limitation is stated in the endpoint description, `docs/api-catalog.md` and
+here; the operator remedy is to pause the keyword again after activating.
+
+**Gating.** No `MICROSOFT_*` flag gates either lever: the existing flag
+(`MICROSOFT_METRICS_ENABLED`) gates only the unverified Reporting reads, and no Microsoft WRITE —
+create, toggle, budget — is gated. Both levers follow the writes.
 
 ## Also here: the audience EXPLORER (LFXV2-2770)
 

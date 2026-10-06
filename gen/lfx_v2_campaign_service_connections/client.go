@@ -15,128 +15,134 @@ import (
 
 // Client is the "lfx-v2-campaign-service-connections" service client.
 type Client struct {
-	CreateGoogleAdsEndpoint            goa.Endpoint
-	GetGoogleAdsEndpoint               goa.Endpoint
-	UpdateGoogleAdsEndpoint            goa.Endpoint
-	DeleteGoogleAdsEndpoint            goa.Endpoint
-	TestGoogleAdsEndpoint              goa.Endpoint
-	SetCredentialGoogleAdsEndpoint     goa.Endpoint
-	CreateLinkedinAdsEndpoint          goa.Endpoint
-	GetLinkedinAdsEndpoint             goa.Endpoint
-	UpdateLinkedinAdsEndpoint          goa.Endpoint
-	DeleteLinkedinAdsEndpoint          goa.Endpoint
-	TestLinkedinAdsEndpoint            goa.Endpoint
-	SetCredentialLinkedinAdsEndpoint   goa.Endpoint
-	CreateMetaAdsEndpoint              goa.Endpoint
-	GetMetaAdsEndpoint                 goa.Endpoint
-	UpdateMetaAdsEndpoint              goa.Endpoint
-	DeleteMetaAdsEndpoint              goa.Endpoint
-	TestMetaAdsEndpoint                goa.Endpoint
-	SetCredentialMetaAdsEndpoint       goa.Endpoint
-	CreateRedditAdsEndpoint            goa.Endpoint
-	GetRedditAdsEndpoint               goa.Endpoint
-	UpdateRedditAdsEndpoint            goa.Endpoint
-	DeleteRedditAdsEndpoint            goa.Endpoint
-	TestRedditAdsEndpoint              goa.Endpoint
-	SetCredentialRedditAdsEndpoint     goa.Endpoint
-	CreateTwitterAdsEndpoint           goa.Endpoint
-	GetTwitterAdsEndpoint              goa.Endpoint
-	UpdateTwitterAdsEndpoint           goa.Endpoint
-	DeleteTwitterAdsEndpoint           goa.Endpoint
-	TestTwitterAdsEndpoint             goa.Endpoint
-	SetCredentialTwitterAdsEndpoint    goa.Endpoint
-	CreateMicrosoftAdsEndpoint         goa.Endpoint
-	GetMicrosoftAdsEndpoint            goa.Endpoint
-	UpdateMicrosoftAdsEndpoint         goa.Endpoint
-	DeleteMicrosoftAdsEndpoint         goa.Endpoint
-	TestMicrosoftAdsEndpoint           goa.Endpoint
-	SetCredentialMicrosoftAdsEndpoint  goa.Endpoint
-	CreateHubspotEndpoint              goa.Endpoint
-	GetHubspotEndpoint                 goa.Endpoint
-	UpdateHubspotEndpoint              goa.Endpoint
-	DeleteHubspotEndpoint              goa.Endpoint
-	TestHubspotEndpoint                goa.Endpoint
-	SetCredentialHubspotEndpoint       goa.Endpoint
-	ListGoogleAdsAccountsEndpoint      goa.Endpoint
-	GetGoogleAdsKeywordsEndpoint       goa.Endpoint
-	GetGoogleAdsAudienceEndpoint       goa.Endpoint
-	ResolveGoogleAdsCampaignEndpoint   goa.Endpoint
-	ListMetaAdsAccountsEndpoint        goa.Endpoint
-	ListLinkedinAdsAccountsEndpoint    goa.Endpoint
-	ListMicrosoftAdsAccountsEndpoint   goa.Endpoint
-	ListTwitterAdsAccountsEndpoint     goa.Endpoint
-	ListHubspotEmailsEndpoint          goa.Endpoint
-	SearchHubspotCampaignsEndpoint     goa.Endpoint
-	CreateHubspotCampaignEndpoint      goa.Endpoint
-	MonitorGoogleAdsAccountEndpoint    goa.Endpoint
-	MonitorLinkedinAdsAccountEndpoint  goa.Endpoint
-	MonitorMetaAdsAccountEndpoint      goa.Endpoint
-	MonitorRedditAdsAccountEndpoint    goa.Endpoint
-	MonitorMicrosoftAdsAccountEndpoint goa.Endpoint
+	CreateGoogleAdsEndpoint             goa.Endpoint
+	GetGoogleAdsEndpoint                goa.Endpoint
+	UpdateGoogleAdsEndpoint             goa.Endpoint
+	DeleteGoogleAdsEndpoint             goa.Endpoint
+	TestGoogleAdsEndpoint               goa.Endpoint
+	SetCredentialGoogleAdsEndpoint      goa.Endpoint
+	CreateLinkedinAdsEndpoint           goa.Endpoint
+	GetLinkedinAdsEndpoint              goa.Endpoint
+	UpdateLinkedinAdsEndpoint           goa.Endpoint
+	DeleteLinkedinAdsEndpoint           goa.Endpoint
+	TestLinkedinAdsEndpoint             goa.Endpoint
+	SetCredentialLinkedinAdsEndpoint    goa.Endpoint
+	CreateMetaAdsEndpoint               goa.Endpoint
+	GetMetaAdsEndpoint                  goa.Endpoint
+	UpdateMetaAdsEndpoint               goa.Endpoint
+	DeleteMetaAdsEndpoint               goa.Endpoint
+	TestMetaAdsEndpoint                 goa.Endpoint
+	SetCredentialMetaAdsEndpoint        goa.Endpoint
+	CreateRedditAdsEndpoint             goa.Endpoint
+	GetRedditAdsEndpoint                goa.Endpoint
+	UpdateRedditAdsEndpoint             goa.Endpoint
+	DeleteRedditAdsEndpoint             goa.Endpoint
+	TestRedditAdsEndpoint               goa.Endpoint
+	SetCredentialRedditAdsEndpoint      goa.Endpoint
+	CreateTwitterAdsEndpoint            goa.Endpoint
+	GetTwitterAdsEndpoint               goa.Endpoint
+	UpdateTwitterAdsEndpoint            goa.Endpoint
+	DeleteTwitterAdsEndpoint            goa.Endpoint
+	TestTwitterAdsEndpoint              goa.Endpoint
+	SetCredentialTwitterAdsEndpoint     goa.Endpoint
+	CreateMicrosoftAdsEndpoint          goa.Endpoint
+	GetMicrosoftAdsEndpoint             goa.Endpoint
+	UpdateMicrosoftAdsEndpoint          goa.Endpoint
+	DeleteMicrosoftAdsEndpoint          goa.Endpoint
+	TestMicrosoftAdsEndpoint            goa.Endpoint
+	SetCredentialMicrosoftAdsEndpoint   goa.Endpoint
+	CreateHubspotEndpoint               goa.Endpoint
+	GetHubspotEndpoint                  goa.Endpoint
+	UpdateHubspotEndpoint               goa.Endpoint
+	DeleteHubspotEndpoint               goa.Endpoint
+	TestHubspotEndpoint                 goa.Endpoint
+	SetCredentialHubspotEndpoint        goa.Endpoint
+	ListGoogleAdsAccountsEndpoint       goa.Endpoint
+	GetGoogleAdsKeywordsEndpoint        goa.Endpoint
+	GetGoogleAdsAudienceEndpoint        goa.Endpoint
+	GetMicrosoftAdsKeywordsEndpoint     goa.Endpoint
+	ResolveGoogleAdsCampaignEndpoint    goa.Endpoint
+	ResolveMicrosoftAdsCampaignEndpoint goa.Endpoint
+	ListMetaAdsAccountsEndpoint         goa.Endpoint
+	ListLinkedinAdsAccountsEndpoint     goa.Endpoint
+	ListMicrosoftAdsAccountsEndpoint    goa.Endpoint
+	ListTwitterAdsAccountsEndpoint      goa.Endpoint
+	ListHubspotEmailsEndpoint           goa.Endpoint
+	SearchHubspotCampaignsEndpoint      goa.Endpoint
+	CreateHubspotCampaignEndpoint       goa.Endpoint
+	MonitorGoogleAdsAccountEndpoint     goa.Endpoint
+	MonitorLinkedinAdsAccountEndpoint   goa.Endpoint
+	MonitorMetaAdsAccountEndpoint       goa.Endpoint
+	MonitorRedditAdsAccountEndpoint     goa.Endpoint
+	MonitorMicrosoftAdsAccountEndpoint  goa.Endpoint
+	MonitorTwitterAdsAccountEndpoint    goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-connections" service client
 // given the endpoints.
-func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, resolveGoogleAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listHubspotEmails, searchHubspotCampaigns, createHubspotCampaign, monitorGoogleAdsAccount, monitorLinkedinAdsAccount, monitorMetaAdsAccount, monitorRedditAdsAccount, monitorMicrosoftAdsAccount goa.Endpoint) *Client {
+func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, getMicrosoftAdsKeywords, resolveGoogleAdsCampaign, resolveMicrosoftAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listHubspotEmails, searchHubspotCampaigns, createHubspotCampaign, monitorGoogleAdsAccount, monitorLinkedinAdsAccount, monitorMetaAdsAccount, monitorRedditAdsAccount, monitorMicrosoftAdsAccount, monitorTwitterAdsAccount goa.Endpoint) *Client {
 	return &Client{
-		CreateGoogleAdsEndpoint:            createGoogleAds,
-		GetGoogleAdsEndpoint:               getGoogleAds,
-		UpdateGoogleAdsEndpoint:            updateGoogleAds,
-		DeleteGoogleAdsEndpoint:            deleteGoogleAds,
-		TestGoogleAdsEndpoint:              testGoogleAds,
-		SetCredentialGoogleAdsEndpoint:     setCredentialGoogleAds,
-		CreateLinkedinAdsEndpoint:          createLinkedinAds,
-		GetLinkedinAdsEndpoint:             getLinkedinAds,
-		UpdateLinkedinAdsEndpoint:          updateLinkedinAds,
-		DeleteLinkedinAdsEndpoint:          deleteLinkedinAds,
-		TestLinkedinAdsEndpoint:            testLinkedinAds,
-		SetCredentialLinkedinAdsEndpoint:   setCredentialLinkedinAds,
-		CreateMetaAdsEndpoint:              createMetaAds,
-		GetMetaAdsEndpoint:                 getMetaAds,
-		UpdateMetaAdsEndpoint:              updateMetaAds,
-		DeleteMetaAdsEndpoint:              deleteMetaAds,
-		TestMetaAdsEndpoint:                testMetaAds,
-		SetCredentialMetaAdsEndpoint:       setCredentialMetaAds,
-		CreateRedditAdsEndpoint:            createRedditAds,
-		GetRedditAdsEndpoint:               getRedditAds,
-		UpdateRedditAdsEndpoint:            updateRedditAds,
-		DeleteRedditAdsEndpoint:            deleteRedditAds,
-		TestRedditAdsEndpoint:              testRedditAds,
-		SetCredentialRedditAdsEndpoint:     setCredentialRedditAds,
-		CreateTwitterAdsEndpoint:           createTwitterAds,
-		GetTwitterAdsEndpoint:              getTwitterAds,
-		UpdateTwitterAdsEndpoint:           updateTwitterAds,
-		DeleteTwitterAdsEndpoint:           deleteTwitterAds,
-		TestTwitterAdsEndpoint:             testTwitterAds,
-		SetCredentialTwitterAdsEndpoint:    setCredentialTwitterAds,
-		CreateMicrosoftAdsEndpoint:         createMicrosoftAds,
-		GetMicrosoftAdsEndpoint:            getMicrosoftAds,
-		UpdateMicrosoftAdsEndpoint:         updateMicrosoftAds,
-		DeleteMicrosoftAdsEndpoint:         deleteMicrosoftAds,
-		TestMicrosoftAdsEndpoint:           testMicrosoftAds,
-		SetCredentialMicrosoftAdsEndpoint:  setCredentialMicrosoftAds,
-		CreateHubspotEndpoint:              createHubspot,
-		GetHubspotEndpoint:                 getHubspot,
-		UpdateHubspotEndpoint:              updateHubspot,
-		DeleteHubspotEndpoint:              deleteHubspot,
-		TestHubspotEndpoint:                testHubspot,
-		SetCredentialHubspotEndpoint:       setCredentialHubspot,
-		ListGoogleAdsAccountsEndpoint:      listGoogleAdsAccounts,
-		GetGoogleAdsKeywordsEndpoint:       getGoogleAdsKeywords,
-		GetGoogleAdsAudienceEndpoint:       getGoogleAdsAudience,
-		ResolveGoogleAdsCampaignEndpoint:   resolveGoogleAdsCampaign,
-		ListMetaAdsAccountsEndpoint:        listMetaAdsAccounts,
-		ListLinkedinAdsAccountsEndpoint:    listLinkedinAdsAccounts,
-		ListMicrosoftAdsAccountsEndpoint:   listMicrosoftAdsAccounts,
-		ListTwitterAdsAccountsEndpoint:     listTwitterAdsAccounts,
-		ListHubspotEmailsEndpoint:          listHubspotEmails,
-		SearchHubspotCampaignsEndpoint:     searchHubspotCampaigns,
-		CreateHubspotCampaignEndpoint:      createHubspotCampaign,
-		MonitorGoogleAdsAccountEndpoint:    monitorGoogleAdsAccount,
-		MonitorLinkedinAdsAccountEndpoint:  monitorLinkedinAdsAccount,
-		MonitorMetaAdsAccountEndpoint:      monitorMetaAdsAccount,
-		MonitorRedditAdsAccountEndpoint:    monitorRedditAdsAccount,
-		MonitorMicrosoftAdsAccountEndpoint: monitorMicrosoftAdsAccount,
+		CreateGoogleAdsEndpoint:             createGoogleAds,
+		GetGoogleAdsEndpoint:                getGoogleAds,
+		UpdateGoogleAdsEndpoint:             updateGoogleAds,
+		DeleteGoogleAdsEndpoint:             deleteGoogleAds,
+		TestGoogleAdsEndpoint:               testGoogleAds,
+		SetCredentialGoogleAdsEndpoint:      setCredentialGoogleAds,
+		CreateLinkedinAdsEndpoint:           createLinkedinAds,
+		GetLinkedinAdsEndpoint:              getLinkedinAds,
+		UpdateLinkedinAdsEndpoint:           updateLinkedinAds,
+		DeleteLinkedinAdsEndpoint:           deleteLinkedinAds,
+		TestLinkedinAdsEndpoint:             testLinkedinAds,
+		SetCredentialLinkedinAdsEndpoint:    setCredentialLinkedinAds,
+		CreateMetaAdsEndpoint:               createMetaAds,
+		GetMetaAdsEndpoint:                  getMetaAds,
+		UpdateMetaAdsEndpoint:               updateMetaAds,
+		DeleteMetaAdsEndpoint:               deleteMetaAds,
+		TestMetaAdsEndpoint:                 testMetaAds,
+		SetCredentialMetaAdsEndpoint:        setCredentialMetaAds,
+		CreateRedditAdsEndpoint:             createRedditAds,
+		GetRedditAdsEndpoint:                getRedditAds,
+		UpdateRedditAdsEndpoint:             updateRedditAds,
+		DeleteRedditAdsEndpoint:             deleteRedditAds,
+		TestRedditAdsEndpoint:               testRedditAds,
+		SetCredentialRedditAdsEndpoint:      setCredentialRedditAds,
+		CreateTwitterAdsEndpoint:            createTwitterAds,
+		GetTwitterAdsEndpoint:               getTwitterAds,
+		UpdateTwitterAdsEndpoint:            updateTwitterAds,
+		DeleteTwitterAdsEndpoint:            deleteTwitterAds,
+		TestTwitterAdsEndpoint:              testTwitterAds,
+		SetCredentialTwitterAdsEndpoint:     setCredentialTwitterAds,
+		CreateMicrosoftAdsEndpoint:          createMicrosoftAds,
+		GetMicrosoftAdsEndpoint:             getMicrosoftAds,
+		UpdateMicrosoftAdsEndpoint:          updateMicrosoftAds,
+		DeleteMicrosoftAdsEndpoint:          deleteMicrosoftAds,
+		TestMicrosoftAdsEndpoint:            testMicrosoftAds,
+		SetCredentialMicrosoftAdsEndpoint:   setCredentialMicrosoftAds,
+		CreateHubspotEndpoint:               createHubspot,
+		GetHubspotEndpoint:                  getHubspot,
+		UpdateHubspotEndpoint:               updateHubspot,
+		DeleteHubspotEndpoint:               deleteHubspot,
+		TestHubspotEndpoint:                 testHubspot,
+		SetCredentialHubspotEndpoint:        setCredentialHubspot,
+		ListGoogleAdsAccountsEndpoint:       listGoogleAdsAccounts,
+		GetGoogleAdsKeywordsEndpoint:        getGoogleAdsKeywords,
+		GetGoogleAdsAudienceEndpoint:        getGoogleAdsAudience,
+		GetMicrosoftAdsKeywordsEndpoint:     getMicrosoftAdsKeywords,
+		ResolveGoogleAdsCampaignEndpoint:    resolveGoogleAdsCampaign,
+		ResolveMicrosoftAdsCampaignEndpoint: resolveMicrosoftAdsCampaign,
+		ListMetaAdsAccountsEndpoint:         listMetaAdsAccounts,
+		ListLinkedinAdsAccountsEndpoint:     listLinkedinAdsAccounts,
+		ListMicrosoftAdsAccountsEndpoint:    listMicrosoftAdsAccounts,
+		ListTwitterAdsAccountsEndpoint:      listTwitterAdsAccounts,
+		ListHubspotEmailsEndpoint:           listHubspotEmails,
+		SearchHubspotCampaignsEndpoint:      searchHubspotCampaigns,
+		CreateHubspotCampaignEndpoint:       createHubspotCampaign,
+		MonitorGoogleAdsAccountEndpoint:     monitorGoogleAdsAccount,
+		MonitorLinkedinAdsAccountEndpoint:   monitorLinkedinAdsAccount,
+		MonitorMetaAdsAccountEndpoint:       monitorMetaAdsAccount,
+		MonitorRedditAdsAccountEndpoint:     monitorRedditAdsAccount,
+		MonitorMicrosoftAdsAccountEndpoint:  monitorMicrosoftAdsAccount,
+		MonitorTwitterAdsAccountEndpoint:    monitorTwitterAdsAccount,
 	}
 }
 
@@ -955,6 +961,26 @@ func (c *Client) GetGoogleAdsAudience(ctx context.Context, p *GetGoogleAdsAudien
 	return ires.(*GoogleAdsAudience), nil
 }
 
+// GetMicrosoftAdsKeywords calls the "get-microsoft-ads-keywords" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+// GetMicrosoftAdsKeywords may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) GetMicrosoftAdsKeywords(ctx context.Context, p *GetMicrosoftAdsKeywordsPayload) (res *MicrosoftAdsKeywords, err error) {
+	var ires any
+	ires, err = c.GetMicrosoftAdsKeywordsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*MicrosoftAdsKeywords), nil
+}
+
 // ResolveGoogleAdsCampaign calls the "resolve-google-ads-campaign" endpoint of
 // the "lfx-v2-campaign-service-connections" service.
 // ResolveGoogleAdsCampaign may return the following errors:
@@ -968,6 +994,25 @@ func (c *Client) GetGoogleAdsAudience(ctx context.Context, p *GetGoogleAdsAudien
 func (c *Client) ResolveGoogleAdsCampaign(ctx context.Context, p *ResolveGoogleAdsCampaignPayload) (res *PlatformCampaignResolution, err error) {
 	var ires any
 	ires, err = c.ResolveGoogleAdsCampaignEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*PlatformCampaignResolution), nil
+}
+
+// ResolveMicrosoftAdsCampaign calls the "resolve-microsoft-ads-campaign"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+// ResolveMicrosoftAdsCampaign may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) ResolveMicrosoftAdsCampaign(ctx context.Context, p *ResolveMicrosoftAdsCampaignPayload) (res *PlatformCampaignResolution, err error) {
+	var ires any
+	ires, err = c.ResolveMicrosoftAdsCampaignEndpoint(ctx, p)
 	if err != nil {
 		return
 	}
@@ -1196,6 +1241,26 @@ func (c *Client) MonitorRedditAdsAccount(ctx context.Context, p *MonitorRedditAd
 func (c *Client) MonitorMicrosoftAdsAccount(ctx context.Context, p *MonitorMicrosoftAdsAccountPayload) (res *AccountMonitor, err error) {
 	var ires any
 	ires, err = c.MonitorMicrosoftAdsAccountEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*AccountMonitor), nil
+}
+
+// MonitorTwitterAdsAccount calls the "monitor-twitter-ads-account" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+// MonitorTwitterAdsAccount may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) MonitorTwitterAdsAccount(ctx context.Context, p *MonitorTwitterAdsAccountPayload) (res *AccountMonitor, err error) {
+	var ires any
+	ires, err = c.MonitorTwitterAdsAccountEndpoint(ctx, p)
 	if err != nil {
 		return
 	}

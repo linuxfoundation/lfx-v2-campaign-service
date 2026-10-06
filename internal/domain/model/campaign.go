@@ -4,7 +4,9 @@
 package model
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -41,6 +43,28 @@ type BudgetChange struct {
 	// value named "lifetime" at all; each adapter maps its own, where the mapping can be
 	// stated once and tested.
 	Type BudgetType
+}
+
+// BidType is the unit a campaign's bid is expressed in.
+type BidType string
+
+// Bid types. Only a max cost-per-click bid exists today; the type is still named so the
+// request states its unit and an ad group bidding in another one (a Reddit CPM ad group)
+// is refused rather than re-bid in a unit nobody asked for.
+const (
+	BidTypeCPC BidType = "cpc"
+)
+
+// BidChange is a request to set an existing campaign's MANUAL max CPC bid on its ad
+// platform: the payload of the BidWriter capability. A REQUEST, never an observation, in
+// the same sense as BudgetChange.
+type BidChange struct {
+	// Amount is the new maximum cost-per-click in the AD ACCOUNT's own currency, not USD.
+	// Strictly positive; the service has already checked it is finite and within the
+	// contract's bounds.
+	Amount float64
+	// Type is the unit Amount is in. Always BidTypeCPC today.
+	Type BidType
 }
 
 // Campaign is one platform's campaign, subordinate to a brief. A brief drives
@@ -109,6 +133,71 @@ func NormalizeVariant(v string) string {
 	return v
 }
 
+// FirstSlotVersion is the SlotVersion of the first campaign on a slot, and the value every
+// row written before migration 000036 was backfilled to.
+const FirstSlotVersion = 1
+
+// NormalizeSlotVersion maps a zero or negative slot version to FirstSlotVersion, for the
+// same reason NormalizeVariant maps "" to the default: a Campaign built without one means
+// "the first campaign on this slot", and the column's CHECK rejects anything below 1.
+func NormalizeSlotVersion(n int) int {
+	if n < FirstSlotVersion {
+		return FirstSlotVersion
+	}
+	return n
+}
+
+// SlotNameSuffix returns the opaque name suffix a dispatcher puts on an upstream campaign
+// for one slot version. Slot 1 returns base unchanged, so every campaign that existed before
+// slot versions keeps its exact upstream name — retries, adopt-on-create and name-based
+// reconciliation all match on that name. Later slots append "-<n>", which keeps Google's and
+// Microsoft's per-account unique-name rule from rejecting the second campaign (or, on Google,
+// from adopting the first one by name and reporting it as the second).
+//
+// Deliberately not a human-facing "v2" label: the suffix already carries the brief id, and
+// this only extends that identifier.
+func SlotNameSuffix(base string, slotVersion int) string {
+	if n := NormalizeSlotVersion(slotVersion); n > FirstSlotVersion {
+		return fmt.Sprintf("%s-%d", base, n)
+	}
+	return base
+}
+
+// ProviderSupportsSlotVersions reports whether a deliberate second campaign on one slot
+// (new_version) is safe to dispatch on p.
+//
+// It is an ALLOWLIST because the hazard is per provider and silent: Google, LinkedIn and X
+// find-or-reuse a campaign by its composed name, and their names do not yet vary by slot
+// version, so slot 2 would be bound to slot 1's live campaign (on LinkedIn, with new creatives
+// pushed onto it); Meta also looks campaigns up by name; HubSpot clones an email under the same
+// name. Microsoft folds the slot version into its name suffix (SlotNameSuffix). A provider is
+// added here in the same change that makes its upstream name unique per slot version.
+func ProviderSupportsSlotVersions(p Provider) bool {
+	return p == ProviderMicrosoftAds
+}
+
+type dispatchSlotVersionKey struct{}
+
+// WithDispatchSlotVersion returns ctx carrying the slot version one platform dispatch is
+// creating. The orchestrator sets it; a dispatcher that composes a unique upstream name
+// reads it with DispatchSlotVersion.
+//
+// A context value rather than a PlatformDispatcher parameter because only the name-unique
+// providers read it, and its absence has a safe meaning: FirstSlotVersion, the exact name
+// every campaign had before slot versions existed.
+func WithDispatchSlotVersion(ctx context.Context, slotVersion int) context.Context {
+	return context.WithValue(ctx, dispatchSlotVersionKey{}, NormalizeSlotVersion(slotVersion))
+}
+
+// DispatchSlotVersion returns the slot version set by WithDispatchSlotVersion, or
+// FirstSlotVersion when none was set.
+func DispatchSlotVersion(ctx context.Context) int {
+	if n, ok := ctx.Value(dispatchSlotVersionKey{}).(int); ok {
+		return n
+	}
+	return FirstSlotVersion
+}
+
 type Campaign struct {
 	ID        string
 	ProjectID string
@@ -124,17 +213,36 @@ type Campaign struct {
 	// Part of the campaign's identity, not its config: (BriefID, Platform, Variant)
 	// is the slot key the dispatch claim arbitrates on (migration 000022), which is
 	// what stops a retry creating a second paid campaign.
-	Variant            string
+	Variant string
+	// SlotVersion counts DELIBERATE campaigns on one (BriefID, Platform, Variant) slot:
+	// 1 for the first, 2 for the one an operator asked for on top of it, and so on. It is
+	// what lets a second create on a slot mean "another campaign" rather than "retry the
+	// first" (migration 000036). Assigned once, at claim time, and never changed.
+	//
+	// NOT Version. Version is the optimistic-concurrency counter every write bumps; the
+	// two share a word and nothing else.
+	//
+	// Internal only: it never reaches an ad platform as a label. Where a platform needs a
+	// unique upstream name, the dispatcher folds it into the opaque name suffix it already
+	// carries (see SlotNameSuffix), and slot 1 keeps the exact name it always had.
+	SlotVersion        int
 	PlatformCampaignID string // ID returned by the ad platform
 	CampaignName       string
 	Status             string
 	BudgetAmount       *float64
 	BudgetType         *BudgetType
-	StartDate          *time.Time
-	EndDate            *time.Time
-	ConfigSnapshot     json.RawMessage
-	Result             json.RawMessage
-	Version            int64
+	// MaxCPCBid is the manual max cost-per-click bid most recently SET through the
+	// update-campaign-bid endpoint, in the ad account's own currency (migration 000039). Like
+	// BudgetAmount it records a REQUEST the platform confirmed, never an observation. nil means
+	// "never set through that endpoint" — NOT "no bid": a bid given at creation lives in the
+	// dispatch config (ConfigSnapshot), and a bid changed in the platform's own UI is not
+	// recorded anywhere here.
+	MaxCPCBid      *float64
+	StartDate      *time.Time
+	EndDate        *time.Time
+	ConfigSnapshot json.RawMessage
+	Result         json.RawMessage
+	Version        int64
 	// CreatedBy / UpdatedBy name the human behind the write, with the same three
 	// causes for nil as CampaignBrief.CreatedBy — read that doc first, it is the
 	// canonical statement and is not repeated here.

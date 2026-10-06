@@ -101,13 +101,14 @@ spec:
           # Account-scoped monitor reads — a live, credential-scoped read of every
           # campaign under one raw ad account plus derived pacing/action-item rules
           # (ported from the LFX One BFF's four rule engines). Ruled for exactly the
-          # five providers with a monitor dispatcher: google-ads, linkedin-ads,
+          # six providers with a monitor dispatcher: google-ads, linkedin-ads,
           # meta-ads and reddit-ads implement AccountMetricsReader, and microsoft-ads
-          # implements AccountReportReader (its metrics come from an asynchronous
-          # Microsoft report served from a saved copy). reddit-ads gets this despite
+          # and twitter-ads implement AccountReportReader (their metrics come from
+          # asynchronous platform reports — Microsoft's Reporting service, X's stats
+          # jobs — served from a saved copy). reddit-ads gets this despite
           # having no /accounts entry above — it has no AccountLister (no
           # ListAdAccounts in its platform client) but DOES have a monitor
-          # dispatcher. twitter-ads has none and is not ruled.
+          # dispatcher.
           - path: /projects/:projectId/connection-google-ads/account-monitor
           - path: /projects/:projectId/connection-linkedin-ads
           - path: /projects/:projectId/connection-linkedin-ads/test
@@ -127,6 +128,7 @@ spec:
           - path: /projects/:projectId/connection-twitter-ads/test
           - path: /projects/:projectId/connection-twitter-ads/set-credential
           - path: /projects/:projectId/connection-twitter-ads/accounts
+          - path: /projects/:projectId/connection-twitter-ads/account-monitor
           - path: /projects/:projectId/connection-microsoft-ads
           - path: /projects/:projectId/connection-microsoft-ads/test
           - path: /projects/:projectId/connection-microsoft-ads/set-credential
@@ -173,6 +175,13 @@ spec:
           # Maps a Google Ads campaign id to this service's campaign + brief, so a caller
           # holding keyword rows can address the brief-scoped mutation routes.
           - path: /projects/:projectId/google-ads/campaign-ref
+          # Microsoft keyword read (LFXV2-2665): the Google read's row shape, served from a
+          # saved asynchronous Microsoft report. A campaign_manager read like its Google sibling.
+          - path: /projects/:projectId/microsoft-ads/keywords
+          # Microsoft twin of google-ads/campaign-ref (LFXV2-2665): maps a Microsoft campaign
+          # id to this service's campaign + brief so the Microsoft keyword levers are addressable.
+          # A pure project-scoped read of this service's tables, campaign_manager like its sibling.
+          - path: /projects/:projectId/microsoft-ads/campaign-ref
           # HubSpot UTM (portal-wide; projectId gates permission AND selects the
           # connection, hence which portal is visible). ** covers
           # /hubspot/utm and any deeper path; the bare /hubspot is kept explicitly.

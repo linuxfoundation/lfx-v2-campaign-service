@@ -4044,6 +4044,259 @@ func DecodeUpdateCampaignBudgetResponse(decoder func(*http.Response) goahttp.Dec
 	}
 }
 
+// BuildUpdateCampaignBidRequest instantiates a HTTP request object with method
+// and path set to call the "lfx-v2-campaign-service-briefs" service
+// "update-campaign-bid" endpoint
+func (c *Client) BuildUpdateCampaignBidRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID  string
+		briefID    string
+		campaignID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.UpdateCampaignBidPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "update-campaign-bid", "*lfxv2campaignservicebriefs.UpdateCampaignBidPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		campaignID = p.CampaignID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: UpdateCampaignBidLfxV2CampaignServiceBriefsPath(projectID, briefID, campaignID)}
+	req, err := http.NewRequest("PATCH", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "update-campaign-bid", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeUpdateCampaignBidRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs update-campaign-bid server.
+func EncodeUpdateCampaignBidRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.UpdateCampaignBidPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "update-campaign-bid", "*lfxv2campaignservicebriefs.UpdateCampaignBidPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		if p.IfMatch != nil {
+			head := *p.IfMatch
+			req.Header.Set("If-Match", head)
+		}
+		body := NewUpdateCampaignBidRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+		}
+		return nil
+	}
+}
+
+// DecodeUpdateCampaignBidResponse returns a decoder for responses returned by
+// the lfx-v2-campaign-service-briefs update-campaign-bid endpoint. restoreBody
+// controls whether the response body should be restored after having been read.
+// DecodeUpdateCampaignBidResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "PreconditionFailed" (type *lfxv2campaignservicebriefs.PreconditionFailedError): http.StatusPreconditionFailed
+//   - "PreconditionRequired" (type *lfxv2campaignservicebriefs.PreconditionRequiredError): http.StatusPreconditionRequired
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeUpdateCampaignBidResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body UpdateCampaignBidResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			err = ValidateUpdateCampaignBidResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			var (
+				etag *string
+			)
+			etagRaw := resp.Header.Get("Etag")
+			if etagRaw != "" {
+				etag = &etagRaw
+			}
+			res := NewUpdateCampaignBidCampaignOK(&body, etag)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body UpdateCampaignBidBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			err = ValidateUpdateCampaignBidBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			return nil, NewUpdateCampaignBidBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body UpdateCampaignBidConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			err = ValidateUpdateCampaignBidConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			return nil, NewUpdateCampaignBidConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body UpdateCampaignBidServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			err = ValidateUpdateCampaignBidServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			return nil, NewUpdateCampaignBidServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body UpdateCampaignBidInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			err = ValidateUpdateCampaignBidInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			return nil, NewUpdateCampaignBidInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body UpdateCampaignBidNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			err = ValidateUpdateCampaignBidNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			return nil, NewUpdateCampaignBidNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body UpdateCampaignBidPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			err = ValidateUpdateCampaignBidPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			return nil, NewUpdateCampaignBidPayloadTooLarge(&body)
+		case http.StatusPreconditionFailed:
+			var (
+				body UpdateCampaignBidPreconditionFailedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			err = ValidateUpdateCampaignBidPreconditionFailedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			return nil, NewUpdateCampaignBidPreconditionFailed(&body)
+		case http.StatusPreconditionRequired:
+			var (
+				body UpdateCampaignBidPreconditionRequiredResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			err = ValidateUpdateCampaignBidPreconditionRequiredResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			return nil, NewUpdateCampaignBidPreconditionRequired(&body)
+		case http.StatusUnauthorized:
+			var (
+				body UpdateCampaignBidUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			err = ValidateUpdateCampaignBidUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
+			}
+			return nil, NewUpdateCampaignBidUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "update-campaign-bid", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildApplyKeywordActionsRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-briefs" service
 // "apply-keyword-actions" endpoint
@@ -4253,6 +4506,219 @@ func DecodeApplyKeywordActionsResponse(decoder func(*http.Response) goahttp.Deco
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "apply-keyword-actions", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildAddNegativeKeywordsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "add-negative-keywords" endpoint
+func (c *Client) BuildAddNegativeKeywordsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID  string
+		briefID    string
+		campaignID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.AddNegativeKeywordsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "add-negative-keywords", "*lfxv2campaignservicebriefs.AddNegativeKeywordsPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		campaignID = p.CampaignID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: AddNegativeKeywordsLfxV2CampaignServiceBriefsPath(projectID, briefID, campaignID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "add-negative-keywords", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeAddNegativeKeywordsRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs add-negative-keywords server.
+func EncodeAddNegativeKeywordsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.AddNegativeKeywordsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "add-negative-keywords", "*lfxv2campaignservicebriefs.AddNegativeKeywordsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewAddNegativeKeywordsRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+		}
+		return nil
+	}
+}
+
+// DecodeAddNegativeKeywordsResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-briefs add-negative-keywords endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeAddNegativeKeywordsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeAddNegativeKeywordsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body AddNegativeKeywordsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			res := NewAddNegativeKeywordsNegativeKeywordsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body AddNegativeKeywordsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body AddNegativeKeywordsConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body AddNegativeKeywordsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body AddNegativeKeywordsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body AddNegativeKeywordsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body AddNegativeKeywordsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body AddNegativeKeywordsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			err = ValidateAddNegativeKeywordsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+			}
+			return nil, NewAddNegativeKeywordsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "add-negative-keywords", resp.StatusCode, string(body))
 		}
 	}
 }
@@ -6428,7 +6894,8 @@ func marshalBriefInputRequestBodyToLfxv2campaignservicebriefsBriefInput(v *Brief
 // *lfxv2campaignservicebriefs.CampaignCreateInput.
 func marshalLfxv2campaignservicebriefsCampaignCreateInputToCampaignCreateInputRequestBody(v *lfxv2campaignservicebriefs.CampaignCreateInput) *CampaignCreateInputRequestBody {
 	res := &CampaignCreateInputRequestBody{
-		Config: v.Config,
+		Config:     v.Config,
+		NewVersion: v.NewVersion,
 	}
 	if v.Platforms != nil {
 		res.Platforms = make([]string, len(v.Platforms))
@@ -6437,6 +6904,12 @@ func marshalLfxv2campaignservicebriefsCampaignCreateInputToCampaignCreateInputRe
 		}
 	} else {
 		res.Platforms = []string{}
+	}
+	{
+		var zero bool
+		if res.NewVersion == zero {
+			res.NewVersion = false
+		}
 	}
 
 	return res
@@ -6447,7 +6920,8 @@ func marshalLfxv2campaignservicebriefsCampaignCreateInputToCampaignCreateInputRe
 // a value of type *CampaignCreateInputRequestBody.
 func marshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaignCreateInput(v *CampaignCreateInputRequestBody) *lfxv2campaignservicebriefs.CampaignCreateInput {
 	res := &lfxv2campaignservicebriefs.CampaignCreateInput{
-		Config: v.Config,
+		Config:     v.Config,
+		NewVersion: v.NewVersion,
 	}
 	if v.Platforms != nil {
 		res.Platforms = make([]string, len(v.Platforms))
@@ -6456,6 +6930,12 @@ func marshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaignCr
 		}
 	} else {
 		res.Platforms = []string{}
+	}
+	{
+		var zero bool
+		if res.NewVersion == zero {
+			res.NewVersion = false
+		}
 	}
 
 	return res
@@ -6643,7 +7123,48 @@ func unmarshalKeywordActionResultResponseBodyToLfxv2campaignservicebriefsKeyword
 		AdGroupID:    *v.AdGroupID,
 		CriterionID:  *v.CriterionID,
 		Action:       *v.Action,
-		ResourceName: *v.ResourceName,
+		ResourceName: v.ResourceName,
+		Outcome:      v.Outcome,
+		ErrorCode:    v.ErrorCode,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsNegativeKeywordInputToNegativeKeywordInputRequestBody
+// builds a value of type *NegativeKeywordInputRequestBody from a value of type
+// *lfxv2campaignservicebriefs.NegativeKeywordInput.
+func marshalLfxv2campaignservicebriefsNegativeKeywordInputToNegativeKeywordInputRequestBody(v *lfxv2campaignservicebriefs.NegativeKeywordInput) *NegativeKeywordInputRequestBody {
+	res := &NegativeKeywordInputRequestBody{
+		Text:      v.Text,
+		MatchType: v.MatchType,
+	}
+
+	return res
+}
+
+// marshalNegativeKeywordInputRequestBodyToLfxv2campaignservicebriefsNegativeKeywordInput
+// builds a value of type *lfxv2campaignservicebriefs.NegativeKeywordInput from
+// a value of type *NegativeKeywordInputRequestBody.
+func marshalNegativeKeywordInputRequestBodyToLfxv2campaignservicebriefsNegativeKeywordInput(v *NegativeKeywordInputRequestBody) *lfxv2campaignservicebriefs.NegativeKeywordInput {
+	res := &lfxv2campaignservicebriefs.NegativeKeywordInput{
+		Text:      v.Text,
+		MatchType: v.MatchType,
+	}
+
+	return res
+}
+
+// unmarshalNegativeKeywordResultResponseBodyToLfxv2campaignservicebriefsNegativeKeywordResult
+// builds a value of type *lfxv2campaignservicebriefs.NegativeKeywordResult
+// from a value of type *NegativeKeywordResultResponseBody.
+func unmarshalNegativeKeywordResultResponseBodyToLfxv2campaignservicebriefsNegativeKeywordResult(v *NegativeKeywordResultResponseBody) *lfxv2campaignservicebriefs.NegativeKeywordResult {
+	res := &lfxv2campaignservicebriefs.NegativeKeywordResult{
+		Text:              *v.Text,
+		MatchType:         *v.MatchType,
+		Outcome:           *v.Outcome,
+		NegativeKeywordID: v.NegativeKeywordID,
+		ErrorCode:         v.ErrorCode,
 	}
 
 	return res

@@ -1,0 +1,460 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	goahttp "goa.design/goa/v3/http"
+
+	briefsclient "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/client"
+	briefsserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
+	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+)
+
+// bidWriterDispatcher is a dispatcher implementing ONLY BidWriter. gotChange records what reached
+// the dispatcher, so a test can assert the service forwarded the caller's bid unaltered.
+type bidWriterDispatcher struct {
+	err       error
+	calls     int
+	gotChange model.BidChange
+}
+
+func (d *bidWriterDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("unused")
+}
+
+func (d *bidWriterDispatcher) WriteBid(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, bid model.BidChange) error {
+	d.calls++
+	d.gotChange = bid
+	return d.err
+}
+
+// bidCampaign is the ordinary subject: a provisioned, toggleable Microsoft campaign at version 3.
+func bidCampaign() *model.Campaign {
+	c := budgetCampaign()
+	c.Platform = model.ProviderMicrosoftAds
+	return c
+}
+
+func bidPayload(amount float64, bidType string, ifMatch string) *briefs.UpdateCampaignBidPayload {
+	im := ifMatch
+	bt := bidType
+	return &briefs.UpdateCampaignBidPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+		IfMatch: &im, Bid: amount, BidType: &bt,
+	}
+}
+
+func TestUpdateCampaignBid_HappyPathPersistsBidAndLeavesEverythingElseAlone(t *testing.T) {
+	d := &bidWriterDispatcher{}
+	camp := bidCampaign()
+	budget := 900.0
+	camp.BudgetAmount = &budget
+	s, camps := budgetService(t, camp, d)
+
+	ctx := ctxWithActor(&model.Actor{Username: "sinde"})
+	res, err := s.UpdateCampaignBid(ctx, bidPayload(2.35, "cpc", "3"))
+	if err != nil {
+		t.Fatalf("UpdateCampaignBid: %v", err)
+	}
+	if d.calls != 1 {
+		t.Fatalf("WriteBid called %d times, want exactly 1", d.calls)
+	}
+	if d.gotChange.Amount != 2.35 || d.gotChange.Type != model.BidTypeCPC {
+		t.Errorf("dispatcher got %+v, want {2.35 cpc}", d.gotChange)
+	}
+	if camps.got == nil {
+		t.Fatal("ReplaceCampaign was never called on the happy path")
+	}
+	if camps.got.MaxCPCBid == nil || *camps.got.MaxCPCBid != 2.35 {
+		t.Errorf("persisted MaxCPCBid = %v, want 2.35", camps.got.MaxCPCBid)
+	}
+	// A bid change must not touch the budget or the status columns.
+	if camps.got.BudgetAmount == nil || *camps.got.BudgetAmount != 900 {
+		t.Errorf("budget was modified by a bid change: %v", camps.got.BudgetAmount)
+	}
+	if camps.got.Status != model.CampaignStatusCreated {
+		t.Errorf("status was modified by a bid change: %q", camps.got.Status)
+	}
+	if camps.got.UpdatedBy == nil || camps.got.UpdatedBy.Username != "sinde" {
+		t.Errorf("UpdatedBy = %+v, want the requesting actor", camps.got.UpdatedBy)
+	}
+	if res.Version != 4 {
+		t.Errorf("result version = %d, want the bumped 4", res.Version)
+	}
+	if len(camps.indexPayloads) != 1 {
+		t.Errorf("bid change must co-commit exactly one index event, got %d", len(camps.indexPayloads))
+	}
+	if len(camps.cooldowns) != 0 {
+		t.Errorf("a confirmed change must not hold the lock for a cooldown, got %v", camps.cooldowns)
+	}
+}
+
+// bid_type is optional and the SERVICE applies the cpc default (the design has none, so the
+// generated CLI accepts an omitted value): omitted (nil) and empty both mean cpc.
+func TestUpdateCampaignBid_OmittedOrEmptyBidTypeDefaultsToCPC(t *testing.T) {
+	omitted := bidPayload(1, "", "3")
+	omitted.BidType = nil
+	for name, p := range map[string]*briefs.UpdateCampaignBidPayload{
+		"omitted": omitted,
+		"empty":   bidPayload(1, "", "3"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := &bidWriterDispatcher{}
+			s, _ := budgetService(t, bidCampaign(), d)
+			if _, err := s.UpdateCampaignBid(context.Background(), p); err != nil {
+				t.Fatalf("UpdateCampaignBid: %v", err)
+			}
+			if d.gotChange.Type != model.BidTypeCPC {
+				t.Errorf("dispatcher got type %q, want cpc", d.gotChange.Type)
+			}
+		})
+	}
+}
+
+func TestUpdateCampaignBid_CreatedDegradedIsAllowedAndKeepsItsMarker(t *testing.T) {
+	camp := bidCampaign()
+	camp.Status = model.CampaignStatusCreatedDegraded
+	s, camps := budgetService(t, camp, &bidWriterDispatcher{})
+	if _, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3")); err != nil {
+		t.Fatalf("a created_degraded campaign must accept a bid change: %v", err)
+	}
+	if camps.got.Status != model.CampaignStatusCreatedDegraded {
+		t.Errorf("the reconciliation marker was lost: status = %q", camps.got.Status)
+	}
+}
+
+// Request validation runs BEFORE the row is loaded, the claim is taken, or the platform is
+// contacted.
+func TestUpdateCampaignBid_RejectsBadRequests(t *testing.T) {
+	cases := []struct {
+		name    string
+		amount  float64
+		bidType string
+	}{
+		{"NaN", math.NaN(), "cpc"},
+		{"positive infinity", math.Inf(1), "cpc"},
+		{"negative infinity", math.Inf(-1), "cpc"},
+		{"zero", 0, "cpc"},
+		{"negative", -1, "cpc"},
+		{"over the maximum", maxCampaignBid + 1, "cpc"},
+		{"rounds to zero micros", 0.0000001, "cpc"},
+		{"unknown bid_type", 1, "cpm"},
+		{"uppercase bid_type", 1, "CPC"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &bidWriterDispatcher{}
+			s, camps := budgetService(t, bidCampaign(), d)
+			_, err := s.UpdateCampaignBid(context.Background(), bidPayload(tc.amount, tc.bidType, "3"))
+			if !isBadRequest(err) {
+				t.Fatalf("expected 400 BadRequestError, got %T: %v", err, err)
+			}
+			if d.calls != 0 || camps.claims != 0 || camps.got != nil {
+				t.Errorf("an invalid request reached the platform (%d), the claim (%d) or the row (%v)", d.calls, camps.claims, camps.got != nil)
+			}
+		})
+	}
+}
+
+func TestUpdateCampaignBid_BoundsAreInclusive(t *testing.T) {
+	for _, amount := range []float64{maxCampaignBid, 0.000001} {
+		d := &bidWriterDispatcher{}
+		s, _ := budgetService(t, bidCampaign(), d)
+		if _, err := s.UpdateCampaignBid(context.Background(), bidPayload(amount, "cpc", "3")); err != nil {
+			t.Fatalf("bound %v must be accepted: %v", amount, err)
+		}
+		if d.calls != 1 {
+			t.Errorf("WriteBid calls = %d, want 1", d.calls)
+		}
+	}
+}
+
+func TestUpdateCampaignBid_MissingIfMatchIsPreconditionRequired(t *testing.T) {
+	d := &bidWriterDispatcher{}
+	s, _ := budgetService(t, bidCampaign(), d)
+	_, err := s.UpdateCampaignBid(context.Background(), &briefs.UpdateCampaignBidPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Bid: 1,
+	})
+	var required *briefs.PreconditionRequiredError
+	if !errors.As(err, &required) {
+		t.Fatalf("expected 428 PreconditionRequiredError, got %T: %v", err, err)
+	}
+	if d.calls != 0 {
+		t.Error("the platform must not be contacted without an If-Match")
+	}
+}
+
+func TestUpdateCampaignBid_StaleIfMatchIsPreconditionFailed(t *testing.T) {
+	camp := bidCampaign()
+	camp.Version = 7
+	camp.Status = model.CampaignStatusPending
+	d := &bidWriterDispatcher{}
+	s, camps := budgetService(t, camp, d)
+	_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+	var preFailed *briefs.PreconditionFailedError
+	if !errors.As(err, &preFailed) {
+		t.Fatalf("expected 412 PreconditionFailedError, got %T: %v", err, err)
+	}
+	if d.calls != 0 || camps.claims != 0 {
+		t.Error("a stale If-Match must reach neither the claim nor the platform")
+	}
+}
+
+func TestUpdateCampaignBid_RefusedStatesBeforeTheClaim(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*model.Campaign)
+		want   func(error) bool
+	}{
+		{"still provisioning", func(c *model.Campaign) { c.Status = model.CampaignStatusPending }, isConflict},
+		{"email channel", func(c *model.Campaign) { c.Platform = model.ProviderHubSpot }, isBadRequest},
+		{"no upstream id", func(c *model.Campaign) { c.PlatformCampaignID = "" }, isConflict},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			camp := bidCampaign()
+			tc.mutate(camp)
+			d := &bidWriterDispatcher{}
+			s, camps := budgetService(t, camp, d)
+			_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+			if !tc.want(err) {
+				t.Fatalf("unexpected error %T: %v", err, err)
+			}
+			if d.calls != 0 || camps.claims != 0 {
+				t.Errorf("a refused state reached the claim (%d) or the platform (%d)", camps.claims, d.calls)
+			}
+		})
+	}
+}
+
+// Google Ads and LinkedIn have no BidWriter today. A registered dispatcher without the
+// capability is what exercises the type assertion; each platform's real dispatcher is held to it
+// by the dispatch package's compile-time checks.
+func TestUpdateCampaignBid_UnsupportedPlatformIsBadRequest(t *testing.T) {
+	for _, p := range []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds} {
+		t.Run(string(p), func(t *testing.T) {
+			camp := bidCampaign()
+			camp.Platform = p
+			s, camps := budgetService(t, camp, plainDispatcher{})
+			_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+			var badReq *briefs.BadRequestError
+			if !errors.As(err, &badReq) {
+				t.Fatalf("expected 400, got %T: %v", err, err)
+			}
+			if !strings.Contains(badReq.Message, "not supported") {
+				t.Errorf("message = %q", badReq.Message)
+			}
+			if camps.got != nil {
+				t.Error("the row must not be written when the platform cannot change bids")
+			}
+		})
+	}
+}
+
+func TestUpdateCampaignBid_DispatcherSentinelsMapToStatuses(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		wantAs func(error) bool
+	}{
+		{"unsupported", ErrBidUnsupported, isBadRequest},
+		{"not provisioned", ErrCampaignNotProvisioned, isConflict},
+		{"automated strategy", ErrBidUnwritable, isConflict},
+		{"rejected amount", ErrBidAmountRejected, isBadRequest},
+		{"platform campaign absent", domain.ErrPlatformCampaignAbsent, isNotFound},
+		{"unknown provenance", domain.ErrCampaignProvenanceUnknown, isConflict},
+		{"account mismatch", ErrCampaignAccountMismatch, isConflict},
+		{"system connection unusable", domain.ErrSystemConnectionNotUsable, isInternal},
+		{"system connection missing", domain.ErrSystemConnectionMissing, isInternal},
+		{"credential decryption failed", domain.ErrCredentialDecryptionFailed, isInternal},
+		{"service defect", fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, domain.ErrServiceDefect), isInternal},
+		{"no ad account selected", fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected), isConflict},
+		{"project connection unusable", domain.ErrConnectionNotUsable, isConflict},
+		{"no connection at all", domain.ErrNotFound, isNotFound},
+		{"definite platform failure", errors.New("microsoft returned 400"), isUnavailable},
+		// The budget sentinels are NOT this endpoint's: a budget refusal leaking here would be a
+		// defect, and it must not be dressed up as a bid refusal either — it is a definite failure.
+		{"budget sentinel is not a bid refusal", ErrBudgetUnwritable, isUnavailable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &bidWriterDispatcher{err: tc.err}
+			s, camps := budgetService(t, bidCampaign(), d)
+			_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+			if err == nil || !tc.wantAs(err) {
+				t.Fatalf("unexpected error type %T: %v", err, err)
+			}
+			if camps.got != nil {
+				t.Error("the row must not be written when the platform change did not happen")
+			}
+			if len(camps.cooldowns) != 0 {
+				t.Errorf("a settled failure must not hold the lock for a cooldown, got %v", camps.cooldowns)
+			}
+			if camps.releases != 1 {
+				t.Errorf("the claim lock was released %d times, want exactly 1", camps.releases)
+			}
+		})
+	}
+}
+
+// reasonedBidAmountError mirrors the dispatch package's rejectedBidAmountError.
+type reasonedBidAmountError struct {
+	reason string
+	err    error
+}
+
+func (e *reasonedBidAmountError) Error() string           { return e.err.Error() }
+func (e *reasonedBidAmountError) Unwrap() error           { return e.err }
+func (e *reasonedBidAmountError) BidAmountReason() string { return e.reason }
+
+func TestUpdateCampaignBid_RejectedAmountCarriesTheAdapterReasonOnly(t *testing.T) {
+	reason := "Microsoft Advertising refused a max CPC bid of 0.02 as below the minimum bid for this ad account's currency"
+	d := &bidWriterDispatcher{err: &reasonedBidAmountError{
+		reason: reason,
+		err:    fmt.Errorf("write microsoft campaign bid: %s: %w", reason, ErrBidAmountRejected),
+	}}
+	s, camps := budgetService(t, bidCampaign(), d)
+	_, err := s.UpdateCampaignBid(context.Background(), bidPayload(0.02, "cpc", "3"))
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("want a 400, got %T: %v", err, err)
+	}
+	if !strings.Contains(bad.Message, reason) {
+		t.Errorf("the 400 must carry the adapter's reason, got %q", bad.Message)
+	}
+	if strings.Contains(bad.Message, "write microsoft campaign bid") {
+		t.Errorf("the 400 must not render the error chain, got %q", bad.Message)
+	}
+	if camps.got != nil {
+		t.Error("the row must not be written when the amount was refused")
+	}
+}
+
+// ErrBidUnwritable covers two different kinds of refusal — a bidding setup that is not a manual
+// per-click bid, and an ad group / ad set / line item that could not be confirmed — so its 409
+// must be NEUTRAL across both (no "change the strategy" remedy that would mislead the second)
+// and carry no upstream detail.
+func TestUpdateCampaignBid_UnwritableMessageIsNeutralAndCarriesNoUpstreamDetail(t *testing.T) {
+	for _, cause := range []string{
+		"campaign 555 uses the automated MaxConversions strategy",
+		"ad set 777 bills on IMPRESSIONS",
+		"X holds no live line item li9 for campaign 555",
+	} {
+		t.Run(cause, func(t *testing.T) {
+			d := &bidWriterDispatcher{err: fmt.Errorf("%s: %w", cause, ErrBidUnwritable)}
+			s, _ := budgetService(t, bidCampaign(), d)
+			_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("expected 409, got %T: %v", err, err)
+			}
+			for _, want := range []string{"not a manual per-click bid", "could not be confirmed", "never changes a bid strategy", "check the campaign in the ad platform"} {
+				if !strings.Contains(conflict.Message, want) {
+					t.Errorf("the 409 must say %q, got %q", want, conflict.Message)
+				}
+			}
+			if strings.Contains(conflict.Message, "change the strategy") {
+				t.Errorf("the 409 must not prescribe a strategy change for every cause, got %q", conflict.Message)
+			}
+			for _, leak := range []string{"555", "777", "li9", "MaxConversions", "IMPRESSIONS"} {
+				if strings.Contains(conflict.Message, leak) {
+					t.Errorf("the 409 must not carry upstream detail %q, got %q", leak, conflict.Message)
+				}
+			}
+		})
+	}
+}
+
+func TestUpdateCampaignBid_AbsentProvenanceOutranksAccountMismatch(t *testing.T) {
+	d := &bidWriterDispatcher{err: errors.Join(domain.ErrCampaignProvenanceUnknown, ErrCampaignAccountMismatch)}
+	s, _ := budgetService(t, bidCampaign(), d)
+	_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) || !contains(conflict.Message, "re-dispatched") {
+		t.Fatalf("an absent provenance must route the caller to a re-dispatch, got %T: %v", err, err)
+	}
+}
+
+func TestUpdateCampaignBid_UnconfirmedHoldsTheLockAndDoesNotPersist(t *testing.T) {
+	d := &bidWriterDispatcher{err: unconfirmedErr{}}
+	s, camps := budgetService(t, bidCampaign(), d)
+	_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+	var unavailable *briefs.ConnServiceUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("expected 503, got %T: %v", err, err)
+	}
+	if !strings.Contains(unavailable.Message, "verify the bid in the platform before retrying") {
+		t.Errorf("the 503 must tell the caller to verify upstream, got %q", unavailable.Message)
+	}
+	if camps.got != nil {
+		t.Error("an unconfirmed outcome must not write the row")
+	}
+	if camps.releases != 0 || len(camps.cooldowns) != 1 || camps.cooldowns[0] != unconfirmedLockCooldown {
+		t.Errorf("want the lock held for one cooldown of %v, got releases=%d cooldowns=%v", unconfirmedLockCooldown, camps.releases, camps.cooldowns)
+	}
+}
+
+// TestUpdateCampaignBidDecoder_AcceptsAnOmittedBidType pins the PR #264 fix through the REAL
+// generated server decoder: with no Goa Default on bid_type, a body naming only the bid decodes
+// to a nil BidType (which the service defaults to cpc), and an unknown bid_type is still refused
+// by the decoder's Enum.
+func TestUpdateCampaignBidDecoder_AcceptsAnOmittedBidType(t *testing.T) {
+	mux := goahttp.NewMuxer()
+	decode := briefsserver.DecodeUpdateCampaignBidRequest(mux, goahttp.RequestDecoder)
+	var routed *http.Request
+	mux.Handle(http.MethodPatch, "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/bid", func(_ http.ResponseWriter, rr *http.Request) {
+		routed = rr
+	})
+	route := func(t *testing.T, body string) *http.Request {
+		t.Helper()
+		routed = nil
+		req := httptest.NewRequest(http.MethodPatch, "/projects/cncf/briefs/11111111-1111-4111-8111-111111111111/campaigns/22222222-2222-4222-8222-222222222222/bid", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("If-Match", `"3"`)
+		mux.ServeHTTP(httptest.NewRecorder(), req)
+		if routed == nil {
+			t.Fatal("request was not routed")
+		}
+		return routed
+	}
+
+	p, err := decode(route(t, `{"bid":2.5}`))
+	if err != nil {
+		t.Fatalf("a body without bid_type must decode: %v", err)
+	}
+	if p.Bid != 2.5 || p.BidType != nil {
+		t.Errorf("decoded bid=%v bid_type=%v, want 2.5 and nil", p.Bid, p.BidType)
+	}
+	if _, err := decode(route(t, `{"bid":2.5,"bid_type":"cpm"}`)); err == nil {
+		t.Error("an unknown bid_type must still be refused by the decoder's Enum")
+	}
+}
+
+// TestBuildUpdateCampaignBidPayload_AcceptsAnOmittedBidType pins the CLIENT half of the PR #264
+// fix. The server decoder above already accepted a body without bid_type; what failed was the
+// generated CLI builder, which — with a Goa Default plus Enum — validated the empty value before
+// applying the default. A body naming only the bid must build, leaving BidType nil for the
+// service to default to cpc.
+func TestBuildUpdateCampaignBidPayload_AcceptsAnOmittedBidType(t *testing.T) {
+	p, err := briefsclient.BuildUpdateCampaignBidPayload(`{"bid":2.5}`, "cncf",
+		"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "token", `"3"`)
+	if err != nil {
+		t.Fatalf("a body without bid_type must build: %v", err)
+	}
+	if p.Bid != 2.5 || p.BidType != nil {
+		t.Errorf("built bid=%v bid_type=%v, want 2.5 and nil", p.Bid, p.BidType)
+	}
+}

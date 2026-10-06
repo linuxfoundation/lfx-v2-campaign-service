@@ -41,7 +41,8 @@ spec:
     # denied, or worse). Only briefs/jobs/hubspot carry `**` in the RuleSet, so
     # only they get the free `(/.*)?` tail here. The connection-* family is ruled
     # for exactly the base, /test, and /set-credential sub-paths; per-provider
-    # /metrics and google-ads/keywords|audience are ruled at the base path only.
+    # /metrics, google-ads/keywords|audience|campaign-ref and microsoft-ads/keywords|campaign-ref
+    # are ruled at the base path only.
     #
     # google-ads, meta-ads, linkedin-ads, microsoft-ads and twitter-ads are spelled out
     # separately from the rest of the family because they carry one extra ruled
@@ -49,13 +50,11 @@ spec:
     # into the shared alternation would admit it for every provider, and a path the
     # RuleSet does not rule is a route/rule parity violation.
     #
-    # google-ads, linkedin-ads, meta-ads and microsoft-ads are split into their OWN
-    # sub-branch, further than that, because they also carry /account-monitor (the
-    # account-scoped monitor endpoints). microsoft-ads joined it with its report-backed
-    # monitor (AccountReportReader — its metrics come from an asynchronous Microsoft
-    # report, see the account-monitor architecture concept). twitter-ads has no monitor
-    # dispatcher and stays on /accounts only — folding /account-monitor into a shared
-    # alternation would admit it for twitter-ads too, with nothing to answer it.
+    # All five of those also carry /account-monitor (the account-scoped monitor
+    # endpoints), so they share ONE sub-branch with both extra sub-paths. microsoft-ads
+    # and twitter-ads joined it with their report-backed monitors (AccountReportReader —
+    # their metrics come from asynchronous platform reports, Microsoft's Reporting service
+    # and X's stats jobs; see the account-monitor architecture concept).
     #
     # reddit-ads remains its own branch because its platform client has no
     # ListAdAccounts, so its dispatcher does not implement AccountLister and /accounts
@@ -85,7 +84,7 @@ spec:
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads)(/(test|set-credential|accounts|account-monitor))?|connection-twitter-ads(/(test|set-credential|accounts))?|connection-hubspot(/(test|set-credential|emails|campaigns))?|connection-reddit-ads(/(test|set-credential|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience|campaign-ref)|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns))?|connection-reddit-ads(/(test|set-credential|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience|campaign-ref)|microsoft-ads/(keywords|campaign-ref)|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef

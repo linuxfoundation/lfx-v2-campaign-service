@@ -161,6 +161,19 @@ type Service interface {
 	// than dropped: they are real unattributed traffic, and hiding them would make
 	// the buckets silently under-sum.
 	GetGoogleAdsAudience(context.Context, *GetGoogleAdsAudiencePayload) (res *GoogleAdsAudience, err error)
+	// Read Microsoft Advertising keyword performance for this project's own
+	// campaigns, in the same row shape as get-google-ads-keywords. Scoped to the
+	// campaigns this service holds for the project, NOT to the connected ad
+	// account, and read from the project's OWN connection only (never the LF
+	// system account). Microsoft serves keyword performance only through its
+	// asynchronous Reporting service, which takes minutes, so rows come from the
+	// last finished report — see metrics_as_of and metrics_pending — while the
+	// next one builds; the first read returns no rows with metrics_pending=true. A
+	// report is served only while it covers every campaign the project owns. Saved
+	// reports are cached platform data. Off (400, not supported) unless
+	// MICROSOFT_METRICS_ENABLED is true. Audience demographics are not offered for
+	// Microsoft.
+	GetMicrosoftAdsKeywords(context.Context, *GetMicrosoftAdsKeywordsPayload) (res *MicrosoftAdsKeywords, err error)
 	// Resolve one Google Ads campaign id to this service's own campaign and brief.
 	// A caller holding a keyword row has the PLATFORM's numeric campaign id; every
 	// mutation route here is keyed by this service's campaign UUID under its
@@ -187,6 +200,22 @@ type Service interface {
 	// returning the matches for one supplied id, with no collection, pagination or
 	// filtering.
 	ResolveGoogleAdsCampaign(context.Context, *ResolveGoogleAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
+	// Resolve one Microsoft Advertising campaign id to this service's own campaign
+	// and brief. The Microsoft twin of resolve-google-ads-campaign: a caller
+	// holding a row from get-microsoft-ads-keywords has Microsoft's numeric
+	// CampaignId, while apply-keyword-actions and add-negative-keywords are keyed
+	// by this service's campaign UUID under its brief. A pure READ of this
+	// service's own tables: Microsoft is never contacted, no connection is
+	// resolved, and nothing is mutated. Scoped to the project's own campaigns by
+	// the same `project_id` predicate, so it cannot answer whether ANOTHER project
+	// holds a given id. **An unowned id is 200 with an empty `matches`, not 404.**
+	// **`matches` CAN hold more than one entry here, unlike Google:** Microsoft
+	// campaign ids are minted per ad account, so migration 000020's unique index
+	// deliberately covers Google Ads only, and a project whose connection was
+	// re-pointed between accounts can hold two live rows with the same id. A
+	// caller receiving more than one must refuse rather than choose. Not a list
+	// endpoint under rule 3: a keyed lookup for one supplied id.
+	ResolveMicrosoftAdsCampaign(context.Context, *ResolveMicrosoftAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
 	// Enumerate the Meta ad accounts accessible via the stored connection
 	// credential. Returns act_-prefixed account ids, ready to store as the
 	// connection's account_id. Accounts Meta reports as disabled, unsettled or
@@ -363,6 +392,27 @@ type Service interface {
 	// metrics_pending=true. Saved reports are cached platform data, not a record
 	// of anything this service did.
 	MonitorMicrosoftAdsAccount(context.Context, *MonitorMicrosoftAdsAccountPayload) (res *AccountMonitor, err error)
+	// Read every live campaign on an X (Twitter) Ads account with pacing and
+	// action items derived by this service's rule engine. Account-scoped, not
+	// project-scoped, the same way monitor-google-ads-account is, and resolved
+	// from the project's OWN connection only. The campaign list (names, statuses,
+	// budgets, and flights from the line items) is read live; delivery metrics
+	// come from X's asynchronous stats jobs — X's synchronous stats are capped at
+	// 7 days per request — so they are served from the last report that finished —
+	// see metrics_as_of and metrics_pending — while the next one builds. The first
+	// read for an account and window therefore returns campaigns with
+	// fetch_failed=true and metrics_pending=true. Conversions are never reported
+	// for X. Saved reports are cached platform data, not a record of anything this
+	// service did. Two account states are refused with 409 rather than served
+	// metrics that would be wrong: more than 200 campaigns active in the window
+	// (reason account_too_many_active_campaigns — one report covers at most ten X
+	// stats jobs of 20 campaigns), and an account timezone whose local midnight is
+	// not a whole UTC hour, such as Asia/Kolkata (reason
+	// account_timezone_unsupported — X accepts whole-hour window bounds only, so
+	// the account's own days cannot be queried exactly). A 90-day window that
+	// crosses a DST fall-back covers the trailing 89 whole local days, because 90
+	// such days are 90 days and an hour, over X's 90-day limit.
+	MonitorTwitterAdsAccount(context.Context, *MonitorTwitterAdsAccountPayload) (res *AccountMonitor, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -385,7 +435,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [58]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "resolve-google-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account"}
+var MethodNames = [61]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-microsoft-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -406,7 +456,12 @@ type AccessibleAccount struct {
 type AccountMonitor struct {
 	// The account this read covers, echoed back from the request.
 	AccountID string
-	// The trailing-days window this read covers, echoed back from the request.
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
 	Days int
 	// Every campaign visible on the account, with the rule engine's per-row pacing
 	// output attached.
@@ -414,17 +469,31 @@ type AccountMonitor struct {
 	// The rule engine's findings across the account's campaigns.
 	ActionItems []*AccountMonitorActionItem
 	Totals      *AccountMonitorTotals
-	// Microsoft Ads only: the point in time these campaigns' metrics describe —
-	// when the platform report they come from was requested (not when it was
-	// collected, which can be later). Microsoft reports take minutes, so the
-	// service serves the last finished report and builds the next one between
-	// requests. Absent when no report has finished yet; in that case every
-	// campaign has fetch_failed=true and is excluded from pacing and action items.
-	// Omitted on every other platform, whose metrics are read live in the request.
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
 	MetricsAsOf *string
-	// Microsoft Ads only: true while a newer report is building on the platform,
-	// so a later read will return newer metrics (or the first ones, when
-	// metrics_as_of is absent). Omitted on every other platform.
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
 	MetricsPending *bool
 }
 
@@ -748,6 +817,19 @@ type GetMetaAdsPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
+}
+
+// GetMicrosoftAdsKeywordsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
+// method.
+type GetMicrosoftAdsKeywordsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Reporting window; defaults to last_30_days when omitted. yesterday and
+	// last_14_days are not available on Microsoft.
+	Window *string
 }
 
 // GetMicrosoftAdsPayload is the payload type of the
@@ -1253,6 +1335,47 @@ type MicrosoftAdsCredentials struct {
 	DeveloperToken string
 }
 
+// MicrosoftAdsKeywords is the result type of the
+// lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
+// method.
+type MicrosoftAdsKeywords struct {
+	// The reporting window these counters cover
+	Window string
+	// Keyword rows from the last finished Microsoft keyword report that covers
+	// every campaign this project owns, ordered by impressions descending and
+	// capped — see `truncated`. criterion_id is the Microsoft KeywordId and
+	// ad_group_id its AdGroupId. cost_micros is Microsoft's Spend (account
+	// currency, no FX) times 10^6; ctr is clicks/impressions. Empty while no such
+	// report has finished (metrics_as_of absent).
+	Rows []*GoogleAdsKeyword
+	// How many rows are in `rows`.
+	RowCount int
+	// True when this project's campaigns have more keywords than were returned.
+	// The rows are the TOP ones by impressions, not the project's full keyword set.
+	Truncated bool
+	// When the Microsoft report these rows come from was requested (not when it
+	// was collected, which can be later). Microsoft builds keyword reports
+	// asynchronously in minutes, so the service serves the last finished report
+	// and builds the next one between requests. ABSENT when no finished report
+	// covers every campaign this project now owns — the first read, or the first
+	// after a campaign was added — and `rows` is then empty rather than a partial
+	// picture.
+	MetricsAsOf *string
+	// True while a newer Microsoft report is building, so a later read will return
+	// newer rows (or the first ones, when metrics_as_of is absent).
+	MetricsPending bool
+	// False when Microsoft reported no conversion count (a blank
+	// ConversionsQualified cell — typically an account without Universal Event
+	// Tracking) for at least one returned row; those rows carry conversions 0,
+	// which then is NOT a measurement. Do not compute CPA from them.
+	ConversionsComplete bool
+	// True when Microsoft flagged the served report's data as potentially
+	// incomplete ("Potential Incomplete Data" — the window's last day, usually
+	// today, may still be aggregating): its counters may still rise. False when no
+	// report is served.
+	DataIncomplete bool
+}
+
 // MonitorGoogleAdsAccountPayload is the payload type of the
 // lfx-v2-campaign-service-connections service monitor-google-ads-account
 // method.
@@ -1322,6 +1445,20 @@ type MonitorRedditAdsAccountPayload struct {
 	Days int
 }
 
+// MonitorTwitterAdsAccountPayload is the payload type of the
+// lfx-v2-campaign-service-connections service monitor-twitter-ads-account
+// method.
+type MonitorTwitterAdsAccountPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The X Ads account to read (alphanumeric handle).
+	AccountID string
+	// Trailing days to read metrics over.
+	Days int
+}
+
 // PlatformCampaignResolution is the result type of the
 // lfx-v2-campaign-service-connections service resolve-google-ads-campaign
 // method.
@@ -1329,9 +1466,10 @@ type PlatformCampaignResolution struct {
 	// The upstream id that was resolved, echoed back.
 	PlatformCampaignID string
 	// Every live campaign this project holds for that upstream id. Empty when the
-	// project owns none. A unique index makes more than one impossible in a valid
-	// database; the array shape exists so that case is refusable rather than
-	// silently resolved.
+	// project owns none. For Google Ads a unique index makes more than one
+	// impossible in a valid database; Microsoft Advertising ids are minted per ad
+	// account and no index makes them single. Either way, more than one match must
+	// be refused rather than silently resolved.
 	Matches []*CampaignRef
 	// How many matches were found.
 	MatchCount int
@@ -1389,6 +1527,19 @@ type ResolveGoogleAdsCampaignPayload struct {
 	ProjectID string
 	// The Google Ads campaign id to resolve. Digits only, no leading zero, and
 	// within int64.
+	PlatformCampaignID string
+}
+
+// ResolveMicrosoftAdsCampaignPayload is the payload type of the
+// lfx-v2-campaign-service-connections service resolve-microsoft-ads-campaign
+// method.
+type ResolveMicrosoftAdsCampaignPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The Microsoft Advertising campaign id to resolve. Digits only, no leading
+	// zero, and within int64.
 	PlatformCampaignID string
 }
 

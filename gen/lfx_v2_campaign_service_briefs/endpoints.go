@@ -34,7 +34,9 @@ type Endpoints struct {
 	UpdateCampaign        goa.Endpoint
 	ToggleCampaignStatus  goa.Endpoint
 	UpdateCampaignBudget  goa.Endpoint
+	UpdateCampaignBid     goa.Endpoint
 	ApplyKeywordActions   goa.Endpoint
+	AddNegativeKeywords   goa.Endpoint
 	DeleteCampaign        goa.Endpoint
 	GetJob                goa.Endpoint
 	StartEmailWizardPlan  goa.Endpoint
@@ -71,7 +73,9 @@ func NewEndpoints(s Service) *Endpoints {
 		UpdateCampaign:        NewUpdateCampaignEndpoint(s, a.JWTAuth),
 		ToggleCampaignStatus:  NewToggleCampaignStatusEndpoint(s, a.JWTAuth),
 		UpdateCampaignBudget:  NewUpdateCampaignBudgetEndpoint(s, a.JWTAuth),
+		UpdateCampaignBid:     NewUpdateCampaignBidEndpoint(s, a.JWTAuth),
 		ApplyKeywordActions:   NewApplyKeywordActionsEndpoint(s, a.JWTAuth),
+		AddNegativeKeywords:   NewAddNegativeKeywordsEndpoint(s, a.JWTAuth),
 		DeleteCampaign:        NewDeleteCampaignEndpoint(s, a.JWTAuth),
 		GetJob:                NewGetJobEndpoint(s, a.JWTAuth),
 		StartEmailWizardPlan:  NewStartEmailWizardPlanEndpoint(s, a.JWTAuth),
@@ -106,7 +110,9 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.UpdateCampaign = m(e.UpdateCampaign)
 	e.ToggleCampaignStatus = m(e.ToggleCampaignStatus)
 	e.UpdateCampaignBudget = m(e.UpdateCampaignBudget)
+	e.UpdateCampaignBid = m(e.UpdateCampaignBid)
 	e.ApplyKeywordActions = m(e.ApplyKeywordActions)
+	e.AddNegativeKeywords = m(e.AddNegativeKeywords)
 	e.DeleteCampaign = m(e.DeleteCampaign)
 	e.GetJob = m(e.GetJob)
 	e.StartEmailWizardPlan = m(e.StartEmailWizardPlan)
@@ -533,6 +539,29 @@ func NewUpdateCampaignBudgetEndpoint(s Service, authJWTFn security.AuthJWTFunc) 
 	}
 }
 
+// NewUpdateCampaignBidEndpoint returns an endpoint function that calls the
+// method "update-campaign-bid" of service "lfx-v2-campaign-service-briefs".
+func NewUpdateCampaignBidEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*UpdateCampaignBidPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.UpdateCampaignBid(ctx, p)
+	}
+}
+
 // NewApplyKeywordActionsEndpoint returns an endpoint function that calls the
 // method "apply-keyword-actions" of service "lfx-v2-campaign-service-briefs".
 func NewApplyKeywordActionsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
@@ -553,6 +582,29 @@ func NewApplyKeywordActionsEndpoint(s Service, authJWTFn security.AuthJWTFunc) g
 			return nil, err
 		}
 		return s.ApplyKeywordActions(ctx, p)
+	}
+}
+
+// NewAddNegativeKeywordsEndpoint returns an endpoint function that calls the
+// method "add-negative-keywords" of service "lfx-v2-campaign-service-briefs".
+func NewAddNegativeKeywordsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*AddNegativeKeywordsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.AddNegativeKeywords(ctx, p)
 	}
 }
 

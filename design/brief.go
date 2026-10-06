@@ -199,6 +199,10 @@ var CampaignCreateInput = Type("campaign-create-input", func() {
 			},
 		})
 	})
+	Attribute("new_version", Boolean, "Create ANOTHER campaign on each selected platform instead of retrying. Without it, repeating a create for a platform that already has a completed campaign returns that campaign (idempotent retry). With it, a platform whose latest campaign is complete gets a new campaign alongside it; a platform with none gets its first; a platform whose latest campaign is still in flight or needs reconciliation is reported exactly as a retry would be. The version is tracked by this service only and is never shown on the ad platform as a label. Supported on microsoft-ads only for now; any other platform in the request is refused with 400. Until the follow-up release removes the one-campaign-per-slot index, a request on a platform that already has a live campaign fails that platform with 'not available yet' and creates nothing.", func() {
+		Default(false)
+		Example(false)
+	})
 	Required("platforms")
 })
 
@@ -244,9 +248,13 @@ var Campaign = Type("campaign", func() {
 	Attribute("platform_campaign_id", String, "ID returned by the ad platform")
 	Attribute("campaign_name", String, "Campaign name")
 	Attribute("status", String, "Campaign status")
+	Attribute("slot_version", Int, "Which campaign this is among the brief's campaigns on the same platform and channel: 1 for the first, 2 for one created on top of it with new_version, and so on. Unrelated to version.", func() {
+		Minimum(1)
+		Example(1)
+	})
 	Attribute("version", Int64, "Optimistic-concurrency version")
 	Attribute("etag", String, "ETag header value (mirrors version)")
-	Required("id", "project_id", "brief_id", "platform", "campaign_name", "status", "version")
+	Required("id", "project_id", "brief_id", "platform", "campaign_name", "status", "slot_version", "version")
 })
 
 // CampaignMetrics is the live-read performance snapshot for one campaign over one window.
@@ -671,10 +679,16 @@ var CampaignRef = Type("campaign-ref", func() {
 
 // PlatformCampaignResolution answers "which of my campaigns is this platform id?".
 //
-// `matches` is an ARRAY, but a valid database can never return more than one entry: migration
-// 000020's uq_campaigns_platform_campaign_live is a UNIQUE index on
+// For GOOGLE ADS, `matches` is an ARRAY, but a valid database can never return more than one
+// entry: migration 000020's uq_campaigns_platform_campaign_live is a UNIQUE index on
 // (platform, platform_campaign_id) over every live Google Ads row, and it is global rather than
 // per-project, so scoping to a project can only narrow one row to zero or one.
+//
+// For MICROSOFT ADVERTISING (resolve-microsoft-ads-campaign) no index makes it single: 000020's
+// WHERE clause deliberately excludes Microsoft, whose campaign ids are minted per ad account, so
+// one project whose connection was re-pointed between accounts can hold two live rows for the
+// same id. There the array is not defensive but load-bearing, and a caller must refuse more than
+// one match.
 //
 // It stays an array rather than an optional single ref because the shape should not encode an
 // invariant it cannot enforce. If that index were ever dropped or its predicate narrowed, a
@@ -691,7 +705,7 @@ var PlatformCampaignResolution = Type("platform-campaign-resolution", func() {
 	// Goa's synthesised array example repeats the element type's example twice, which shows a
 	// duplicate for an id a unique index makes single — wrong in the per-property schema even
 	// though the composite example is right.
-	Attribute("matches", ArrayOf(CampaignRef), "Every live campaign this project holds for that upstream id. Empty when the project owns none. A unique index makes more than one impossible in a valid database; the array shape exists so that case is refusable rather than silently resolved.", func() {
+	Attribute("matches", ArrayOf(CampaignRef), "Every live campaign this project holds for that upstream id. Empty when the project owns none. For Google Ads a unique index makes more than one impossible in a valid database; Microsoft Advertising ids are minted per ad account and no index makes them single. Either way, more than one match must be refused rather than silently resolved.", func() {
 		Example([]map[string]any{
 			{
 				"campaign_id": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
@@ -763,13 +777,29 @@ var KeywordActionInput = Type("keyword-action-input", func() {
 	Required("ad_group_id", "criterion_id", "action")
 })
 
+// keywordItemOutcomeEnum is the per-item outcome of a NON-atomic keyword lever (LFXV2-2665).
+// Microsoft Advertising applies a keyword batch item by item — PartialErrors name the items it
+// did not apply, and every other item in the same call DID apply — so its results carry one of
+// these per entry. Google's batch is atomic and its results carry none (an absent outcome on a
+// 200 means "applied, with the rest of the batch").
+func keywordItemOutcomeEnum() {
+	Enum("APPLIED", "FAILED", "UNCONFIRMED")
+}
+
 // KeywordActionResult is one mutation's outcome.
+//
+// resource_name is OPTIONAL as of LFXV2-2665, and only that: it is still present on EVERY
+// Google Ads result, exactly as before, because Google's adapter returns it for every applied
+// criterion. Microsoft Advertising has no resource names, and inventing one would hand a caller
+// an identifier no Microsoft API accepts. outcome and error_code are new and Microsoft-only.
 var KeywordActionResult = Type("keyword-action-result", func() {
 	Attribute("ad_group_id", String, "The ad group that was addressed", func() { Example("176216228") })
-	Attribute("criterion_id", String, "The criterion that was addressed", func() { Example("305729261") })
-	Attribute("action", String, "The action that was applied", keywordActionEnum)
-	Attribute("resource_name", String, "The criterion resource name Google returned for the applied mutation", func() { Example("customers/1234567890/adGroupCriteria/176216228~305729261") })
-	Required("ad_group_id", "criterion_id", "action", "resource_name")
+	Attribute("criterion_id", String, "The criterion (Google Ads) or keyword id (Microsoft Advertising) that was addressed", func() { Example("305729261") })
+	Attribute("action", String, "The action that was requested", keywordActionEnum)
+	Attribute("resource_name", String, "Google Ads only: the criterion resource name Google returned for the applied mutation. Present on every Google Ads result; absent on Microsoft Advertising, which has no resource names.", func() { Example("customers/1234567890/adGroupCriteria/176216228~305729261") })
+	Attribute("outcome", String, "Microsoft Advertising only: this action's own outcome, because a Microsoft batch is applied item by item. APPLIED — Microsoft did not reject it; FAILED — definitely not applied (see error_code); UNCONFIRMED — may have been applied, verify in Microsoft Advertising before retrying. ABSENT on Google Ads, whose batch is atomic: there every result on a 200 was applied.", keywordItemOutcomeEnum)
+	Attribute("error_code", String, "Microsoft Advertising only: the platform's machine-readable error code for a FAILED or UNCONFIRMED action, when it named one. NOT_SENT means the request carrying this action was never sent.", func() { Example("CampaignServiceInvalidKeywordId") })
+	Required("ad_group_id", "criterion_id", "action")
 })
 
 // KeywordActions is the outcome of a keyword-actions request.
@@ -787,8 +817,67 @@ var KeywordActionResult = Type("keyword-action-result", func() {
 // single permission-evaluated target; the batch is one campaign's keywords, not many campaigns.
 var KeywordActions = Type("keyword-actions", func() {
 	Attribute("campaign_id", String, "The campaign whose keywords were acted on", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
-	Attribute("results", ArrayOf(KeywordActionResult), "One entry per requested action, in request order. All applied, or the request failed and none were.")
-	Attribute("applied_count", Int, "How many actions were applied. Always equal to the number requested — a partial application is not a possible outcome.", func() { Example(3) })
+	Attribute("results", ArrayOf(KeywordActionResult), "Exactly one entry per requested action, in request order, so results[i] answers actions[i]. Google Ads: all applied, or the request failed and none were. Microsoft Advertising: each entry carries its own outcome.")
+	Attribute("applied_count", Int, "How many actions were applied. Google Ads: always equal to the number requested — its batch is atomic. Microsoft Advertising: the number of results whose outcome is APPLIED, which can be fewer.", func() { Example(3) })
+	Required("campaign_id", "results", "applied_count")
+})
+
+// ─── Negative keywords on a live campaign (LFXV2-2665) ───
+
+// negativeKeywordMatchTypeEnum is the match types a negative keyword may carry. Microsoft
+// Advertising: "The supported values for a negative keyword are Exact and Phrase."
+// (https://learn.microsoft.com/en-us/advertising/campaign-management-service/negativekeyword).
+// Broad is not a negative match type on the platform, so it is not offered here to be refused.
+func negativeKeywordMatchTypeEnum() {
+	Enum("Exact", "Phrase")
+}
+
+// negativeKeywordOutcomeEnum adds ALREADY_PRESENT to the per-item outcomes: Microsoft answers
+// a re-add of a negative the campaign already has with CampaignServiceNegativeKeywordAlreadyExists
+// (4335), and the state the caller asked for then holds.
+func negativeKeywordOutcomeEnum() {
+	Enum("APPLIED", "ALREADY_PRESENT", "FAILED", "UNCONFIRMED")
+}
+
+// NegativeKeywordInput is one negative keyword to add at campaign level.
+//
+// The Pattern is the transport's half of the text rules: letters, combining marks, digits,
+// spaces and & ' - . only. Microsoft's text policy refuses "unnecessary symbols such as @, }{,
+// \][, ¤, and §" and mathematical symbols such as <, >, = (https://about.ads.microsoft.com/en-us/policies/text-guidelines),
+// and quote and bracket characters are match-type syntax in the Bing UI, so none of them is
+// admitted. The adapter re-validates and adds what a regular expression states badly: no two
+// punctuation characters adjacent, whitespace collapsed, and the same (text, match type) at
+// most once per request. MaxLength is Microsoft's: "The text can contain a maximum of 100
+// characters." Goa counts runes, as Microsoft counts characters.
+var NegativeKeywordInput = Type("negative-keyword-input", func() {
+	Attribute("text", String, "The negative keyword text. Letters, digits, spaces and & ' - . only; at most 100 characters.", func() {
+		MinLength(1)
+		MaxLength(100)
+		Pattern(`^[\p{L}\p{M}\p{N} &'.\-]+$`)
+		Example("free download")
+	})
+	Attribute("match_type", String, "How the negative keyword is compared with a search query. Exact or Phrase.", func() {
+		negativeKeywordMatchTypeEnum()
+		Example("Phrase")
+	})
+	Required("text", "match_type")
+})
+
+// NegativeKeywordResult is one negative keyword's outcome.
+var NegativeKeywordResult = Type("negative-keyword-result", func() {
+	Attribute("text", String, "The negative keyword text as sent to the platform (trimmed, whitespace collapsed)", func() { Example("free download") })
+	Attribute("match_type", String, "The match type as sent to the platform", negativeKeywordMatchTypeEnum)
+	Attribute("outcome", String, "APPLIED — added by this request; ALREADY_PRESENT — the campaign already had it, so the requested state holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, verify in the ad platform before retrying.", negativeKeywordOutcomeEnum)
+	Attribute("negative_keyword_id", String, "The platform's id for a negative keyword this request added. Absent for every other outcome.", func() { Example("8475612390") })
+	Attribute("error_code", String, "The platform's machine-readable error code for a FAILED keyword, when it named one.", func() { Example("CampaignServiceNegativeKeywordMatchesKeyword") })
+	Required("text", "match_type", "outcome")
+})
+
+// NegativeKeywords is the outcome of an add-negative-keywords request.
+var NegativeKeywords = Type("negative-keywords", func() {
+	Attribute("campaign_id", String, "The campaign the negative keywords were added to", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("results", ArrayOf(NegativeKeywordResult), "Exactly one entry per requested negative keyword, in request order, so results[i] answers negative_keywords[i].")
+	Attribute("applied_count", Int, "How many requested negative keywords are now on the campaign: results whose outcome is APPLIED or ALREADY_PRESENT.", func() { Example(2) })
 	Required("campaign_id", "results", "applied_count")
 })
 
@@ -1505,12 +1594,25 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"pacing in the ad platform, then set the amount here. " +
 			"The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor " +
 			"converts it. " +
-			"Google Ads, LinkedIn and Meta today: a campaign on any other platform is refused with 400. " +
+			"Google Ads, LinkedIn, Meta, Microsoft Advertising, Reddit and X today: a campaign on any other platform is refused with 400. " +
 			"Budget writing is added per platform, because each platform's budget model is its own " +
 			"deliberate decision, and the refusals below are the union of what those models can refuse — " +
 			"a platform whose model has no analogue of a given refusal simply never raises it (LinkedIn " +
 			"budgets are fields on the campaign and cannot be shared, so the shared-budget 409 is a " +
-			"Google and Meta answer; Meta's form of it is a campaign-level, ad-set-spanning budget). " +
+			"Google, Meta and Microsoft answer; Meta's form of it is a campaign-level, ad-set-spanning budget, " +
+			"Microsoft's a campaign attached to a shared Budget). Microsoft Search campaigns are paced DAILY only, " +
+			"so a lifetime request for one is the pacing refusal (409). " +
+			"A Reddit campaign's budget is its campaign-level spend goal (Campaign Budget Optimization on); " +
+			"one whose budget is governed per ad group (CBO off) is refused (409) rather than allocated, and " +
+			"Reddit has no shared-budget analogue. " +
+			"An X campaign's budget is written only as its own daily_budget_amount_local_micro, and only when " +
+			"X reports campaign budget optimization (budget_optimization CAMPAIGN). That this is the shape " +
+			"campaigns created here have is inferred from the create path (a daily budget on the campaign, " +
+			"no budget_optimization sent) and is unverified against a live account; X's current reference " +
+			"lists LINE_ITEM as the only value. A campaign reporting LINE_ITEM or omitting budget_optimization, " +
+			"one without a daily budget, or one that also carries a total cap is refused (409) before any write. " +
+			"A `lifetime` request for an X campaign is always refused (409): under campaign budget optimization " +
+			"X requires the daily budget, so the campaign is paced daily. X has no shared-budget analogue. " +
 			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: " +
 			"the campaign is unprovisioned (no platform campaign id); the campaign belongs to a different " +
 			"ad account than the project's connection now resolves to, or does not record which ad account " +
@@ -1543,13 +1645,14 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// floor only from a 400. One micro is the LOOSEST floor any supported platform
 			// has — Google Ads bills in micros, LinkedIn in whole cents, Meta in its
 			// account currency's minor unit — so it is the only floor this contract can
-			// state for every platform at once. Each adapter enforces its own, stricter
-			// floor and its own platform minimums, which is where a 400 still comes from
-			// for an amount this range admits. Zero is not a budget — it is a request to
-			// stop spending, and pausing is what expresses that. NaN and Inf remain the
-			// only runtime rejections a Goa range cannot express, and the service checks
-			// them first. The maximum matches the platform adapter's own cap, so a figure
-			// this service would refuse to create with cannot be reached by editing.
+			// state for every platform at once. LinkedIn and Meta enforce their own,
+			// stricter floors and minimums, which is where a 400 still comes from for an
+			// amount this range admits; Google's floor is this one. Zero is not a budget —
+			// it is a request to stop spending, and pausing is what expresses that. NaN and
+			// Inf remain the only runtime rejections a Goa range cannot express, and the
+			// service checks them first. The maximum matches the platform adapter's own
+			// cap, so a figure this service would refuse to create with cannot be reached
+			// by editing.
 			//
 			// THIS PUBLISHED FLOOR IS MARGINALLY STRICTER THAN THE SERVICE'S OWN CHECK, and
 			// that direction is the safe one. The service refuses an amount whose ROUNDED
@@ -1590,22 +1693,131 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("update-campaign-bid", func() {
+		Description("Change a campaign's MAX COST-PER-CLICK BID on its ad platform, then persist the new bid. " +
+			"A MUTATION on a live paid campaign, dispatched to the platform first, with the same ONE-WAY " +
+			"invariant as update-campaign-budget: the new bid is never persisted before the platform " +
+			"confirms it; once confirmed, a failed row write answers 500 with the platform holding the new " +
+			"bid, logged as a divergence, and re-applying the same bid reconciles it. " +
+			"ONE MANUAL CPC BID, AT THE LEVEL THIS SERVICE'S CREATE PATH PUTS IT — never a bid strategy. " +
+			"Microsoft Advertising: the default CpcBid of the ONE ad group this service created for the " +
+			"campaign (keywords are created without their own bids, so they inherit it). Reddit: the " +
+			"bid_value of the ONE ad group this service created. Meta: the bid_amount (a bid cap, in the " +
+			"account currency's minor units) of the ONE ad set this service created. X: the " +
+			"bid_amount_local_micro of the ONE line item this service created. A campaign whose row " +
+			"records none (an adopted campaign, or one whose creation never reached it) is refused (409): " +
+			"the service will not choose which of several to re-bid. " +
+			"REFUSED (409) WHEN THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only does " +
+			"something under a bid strategy that reads it — Microsoft's EnhancedCpc or ManualCpc; Reddit's " +
+			"MANUAL_BIDDING with bid_type CPC; Meta's LOWEST_COST_WITH_BID_CAP with billing_event AND " +
+			"optimization_goal both LINK_CLICKS (a Meta bid cap is per optimization event and, billed on " +
+			"impressions, per 1,000 impressions — so only that pairing is a max cost per click); X's MAX " +
+			"with pay_by LINK_CLICK. Under an automated or target strategy (Microsoft MaxClicks, " +
+			"MaxConversions, TargetCpa, TargetRoas, MaxConversionValue, TargetImpressionShare, a portfolio " +
+			"strategy the read cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta " +
+			"LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO, TARGET) the platform " +
+			"would ignore it or, worse, the write would be read as a request to switch strategy — and this " +
+			"endpoint NEVER switches strategy, billing or charge unit. An unreported strategy is refused " +
+			"the same way rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked first " +
+			"and then the ad group's: with Campaign Budget Optimization on (as on every campaign this " +
+			"service creates) the ad group's strategy must match the campaign's, so both must be " +
+			"MANUAL_BIDDING. NOTE: every Reddit campaign this service creates is BIDLESS on both the " +
+			"campaign and its ad group, every Meta campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, " +
+			"and every X campaign AUTO, so those three legs apply only after an operator has moved the " +
+			"Reddit campaign and ad group, the Meta ad set or the X line item to a manual per-click bid in " +
+			"the platform's own UI. " +
+			"The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor " +
+			"converts it. " +
+			"Microsoft Advertising, Reddit, Meta and X today: a campaign on any other platform is refused " +
+			"with 400. " +
+			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: the " +
+			"campaign is unprovisioned; it belongs to a different ad account than the project's connection " +
+			"now resolves to, or does not record which ad account it was created under; its bid strategy is " +
+			"automated, a target, or unreported; or the bid could not be addressed (no recorded ad group, ad " +
+			"set or line item, one reporting another campaign or deleted, or one bidding in a unit other " +
+			"than `bid_type`). None is retryable. " +
+			"**400** for a request fault: a non-positive, non-finite or out-of-range bid, an unknown bid type, " +
+			"a platform with no bid-write capability wired, or a bid the campaign's platform refuses on its " +
+			"own minimum or maximum — the response names what it was. " +
+			"**503** when the platform could not be reached or did not confirm — including a throttled Meta " +
+			"or X write, which is never retried in-call; the row is unchanged. Setting the same bid twice " +
+			"converges, but verify the bid in the ad platform before retrying.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			ifMatchAttr()
+			// Minimum is ONE MICRO for the reason update-campaign-budget's is: Goa's Minimum
+			// is inclusive, zero is not a bid, and a micro is the finest unit any supported
+			// platform bills in (Reddit and X set bids in micro-units). Each platform's own,
+			// stricter floor — Microsoft's 0.01 in the account currency, Meta's one minor unit
+			// — is applied by its adapter and answered 400 with the reason. The maximum is the CONTRACT's
+			// ceiling, deliberately loose enough for high-unit currencies (JPY, KRW, IDR);
+			// each adapter applies the platform's own, lower one.
+			Attribute("bid", Float64, "New maximum cost-per-click bid, in the AD ACCOUNT's own currency (NOT USD). Must be strictly positive.", func() {
+				Minimum(0.000001)
+				Maximum(1000000)
+				Example(2.50)
+			})
+			// Optional, unlike budget_type: there is only one value today, and it exists so the
+			// contract names the unit the amount is in. An ad group bidding in another unit (a
+			// Reddit CPM ad group, a Meta cap billed on impressions, an X line item charged per
+			// impression) is refused 409 rather than re-bid in a unit the caller never named — the
+			// same "never translate" rule budget_type follows.
+			//
+			// NO Goa Default: with Default plus Enum, the generated CLI validates the empty value
+			// before applying the default, so a body without bid_type fails there. Without a
+			// Default the field is an optional pointer, validated only when present, and the
+			// service applies the cpc default (nil or empty → cpc).
+			Attribute("bid_type", String, "The unit the bid is expressed in; defaults to cpc when omitted. Only a max cost-per-click bid is supported; it MUST match how the campaign's ad group, ad set or line item bids upstream.", func() {
+				Enum("cpc")
+				Example("cpc")
+			})
+			Required("project_id", "brief_id", "campaign_id", "bid")
+		})
+		Result(Campaign)
+		commonBriefErrors()
+		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
+		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
+		HTTP(func() {
+			PATCH("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/bid")
+			Header("bearer_token:Authorization")
+			Header("if_match:If-Match")
+			Response(StatusOK, func() { Header("etag:ETag") })
+			briefErrorResponses()
+			Response("PreconditionFailed", StatusPreconditionFailed)
+			Response("PreconditionRequired", StatusPreconditionRequired)
+		})
+	})
+
 	Method("apply-keyword-actions", func() {
-		Description("Pause or remove Google Ads keywords on one campaign. " +
+		Description("Pause or remove Google Ads or Microsoft Advertising keywords on one campaign. " +
 			"A MUTATION on a live paid campaign: pausing or removing a keyword changes what serves, so it " +
 			"is validated exactly like a create. The batch's syntax, the campaign's provisioning and the " +
-			"campaign's ad account are checked against the project's current connection BEFORE Google is " +
-			"contacted at all; each criterion is then resolved on the platform and confirmed to be a " +
-			"POSITIVE keyword in this campaign's ad group BEFORE THE MUTATE is issued — a read, so nothing " +
+			"campaign's ad account are checked against the project's current connection BEFORE the ad " +
+			"platform is contacted at all; each keyword is then resolved on the platform and confirmed to be a " +
+			"live POSITIVE keyword in this campaign's ad group BEFORE ANY MUTATION is issued — a read, so nothing " +
 			"has changed if that check refuses. " +
-			"ALL-OR-NOTHING: the batch is one atomic adGroupCriteria:mutate with partial failure disabled, " +
+			"GOOGLE ADS IS ALL-OR-NOTHING: the batch is one atomic adGroupCriteria:mutate with partial failure disabled, " +
 			"so either every action applied or none did. A caller is never left working out which half of " +
 			"a spend-stopping request took effect. " +
-			"REMOVE IS IRREVERSIBLE — Google cannot re-enable a removed criterion, only create a new one " +
-			"with a new id. " +
-			"Google Ads only: a campaign on any other platform is refused with 400, since no other adapter " +
-			"models keywords as addressable criteria. " +
-			"**409** when the change is refused before Google is contacted: the campaign is unprovisioned " +
+			"MICROSOFT ADVERTISING IS NOT: PAUSE is one UpdateKeywords call and REMOVE one DeleteKeywords call, " +
+			"and Microsoft applies each item independently. The same ownership guards run first (each keyword " +
+			"id must be a live keyword in THIS campaign's ad group, read before anything is changed), and the " +
+			"200 then carries one result per action, in request order, each with its own outcome — APPLIED, " +
+			"FAILED or UNCONFIRMED — and applied_count counts only APPLIED. A Microsoft request answers 503 " +
+			"only when no call was answered item by item. " +
+			"KNOWN LIMITATION (Microsoft Advertising): a keyword PAUSED here is RE-ENABLED by the next " +
+			"activation of the campaign through the status endpoint, because that cascade enables every " +
+			"keyword the campaign was created with and this endpoint persists nothing that distinguishes an " +
+			"operator's pause from the Paused state keywords are created in. Pause it again after activating, " +
+			"or pause it in Microsoft Advertising. There is no ENABLE action: a paused keyword is un-paused by " +
+			"activating the campaign or in Microsoft Advertising. A REMOVED keyword is never re-created. " +
+			"REMOVE IS IRREVERSIBLE on both platforms — a removed keyword cannot be re-enabled, only " +
+			"re-created with a new id. " +
+			"Any other platform is refused with 400. " +
+			"**409** when the change is refused before the ad platform is contacted: the campaign is unprovisioned " +
 			"(no platform campaign id, or no ad group), the campaign belongs to a different ad account than " +
 			"the project's connection now resolves to, the campaign does not record which ad account it was " +
 			"created under (it must be re-dispatched before its keywords can be acted on — a different " +
@@ -1634,7 +1846,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// criterion twice — a batch ValidateKeywordActions rejects with a 400, so anyone
 			// pasting the documented example got an error. One action, so the sample is
 			// valid by construction rather than by two ids happening to differ.
-			Attribute("actions", ArrayOf(KeywordActionInput), "The keyword mutations to apply, all-or-nothing.", func() {
+			Attribute("actions", ArrayOf(KeywordActionInput), "The keyword mutations to apply. Google Ads applies them all-or-nothing; Microsoft Advertising applies each independently and reports a per-action outcome.", func() {
 				MinLength(1)
 				MaxLength(60)
 				Example([]map[string]any{
@@ -1647,6 +1859,55 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-actions")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("add-negative-keywords", func() {
+		Description("Add campaign-level negative keywords to one live campaign. Microsoft Advertising only " +
+			"(AddNegativeKeywordsToEntities, EntityType Campaign); a campaign on any other platform is refused " +
+			"with 400 before anything is contacted. " +
+			"A MUTATION on a live paid campaign — a negative keyword stops the campaign serving on matching " +
+			"queries — so it carries the keyword actions' guard set, all before the platform is contacted: the " +
+			"batch's syntax, the campaign's provisioning, and the campaign's ad account against the project's " +
+			"current connection (a campaign that does not record its ad account is refused, never assumed). " +
+			"Like apply-keyword-actions it persists nothing — the negatives live on the platform — so it takes " +
+			"no If-Match and returns no ETag. " +
+			"NOT ATOMIC: Microsoft adds each negative independently, so the 200 carries one result per requested " +
+			"keyword, in request order, each with its own outcome. A negative the campaign already has is " +
+			"ALREADY_PRESENT, a success. " +
+			"**400** for a malformed batch (empty or over 60, a text over 100 characters or outside the allowed " +
+			"characters, consecutive punctuation, a match type other than Exact or Phrase, the same keyword " +
+			"twice) or an unsupported platform. A malformed batch is 400 even when the campaign is also " +
+			"unprovisioned. " +
+			"**409** when refused before the platform is contacted: unprovisioned, a different ad account, an " +
+			"unrecorded ad account (re-dispatch), or an unusable connection. " +
+			"**503** only when the platform answered nothing per keyword. The MESSAGE separates a DEFINITE " +
+			"failure (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a timeout, a rate limit, an " +
+			"unreadable answer — verify the campaign's negative keywords before retrying).")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			// One explicit example for the same reason apply-keyword-actions has one: Goa's
+			// fabricated sample repeats the element example, which this endpoint refuses as a
+			// duplicate.
+			Attribute("negative_keywords", ArrayOf(NegativeKeywordInput), "The negative keywords to add, at campaign level.", func() {
+				MinLength(1)
+				MaxLength(60)
+				Example([]map[string]any{
+					{"text": "free download", "match_type": "Phrase"},
+				})
+			})
+			Required("project_id", "brief_id", "campaign_id", "negative_keywords")
+		})
+		Result(NegativeKeywords)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/negative-keywords")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()

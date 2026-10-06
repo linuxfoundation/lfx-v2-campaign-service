@@ -121,7 +121,7 @@ func TestClaimDoesNotReturnAnotherVariantsCampaign(t *testing.T) {
 	})
 
 	claimed, existing, err := repo.ClaimCampaignDispatch(
-		context.Background(), "cncf", "b1", model.ProviderGoogleAds, "demand-gen", "job-1", nil)
+		context.Background(), "cncf", "b1", model.ProviderGoogleAds, "demand-gen", model.FirstSlotVersion, "job-1", nil)
 	if err != nil {
 		t.Fatalf("ClaimCampaignDispatch: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestReleasingOneSlotDoesNotFreeAnother(t *testing.T) {
 		BriefID: "b1", Platform: model.ProviderGoogleAds, Variant: "demand-gen", Status: "pending",
 	})
 
-	if err := repo.DeleteDispatchClaim(context.Background(), "b1", model.ProviderGoogleAds, "demand-gen"); err != nil {
+	if err := repo.DeleteDispatchClaim(context.Background(), "b1", model.ProviderGoogleAds, "demand-gen", model.FirstSlotVersion); err != nil {
 		t.Fatalf("DeleteDispatchClaim: %v", err)
 	}
 	if _, ok := repo.existing[slotKey("b1", model.ProviderGoogleAds, "demand-gen")]; ok {

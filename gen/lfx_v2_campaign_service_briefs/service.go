@@ -136,70 +136,182 @@ type Service interface {
 	// period; its counterpart, CUSTOM_PERIOD, is a narrower thing). Change the
 	// pacing in the ad platform, then set the amount here. The amount is in the AD
 	// ACCOUNT's own currency, not USD, and this service neither knows nor converts
-	// it. Google Ads, LinkedIn and Meta today: a campaign on any other platform is
-	// refused with 400. Budget writing is added per platform, because each
-	// platform's budget model is its own deliberate decision, and the refusals
-	// below are the union of what those models can refuse — a platform whose model
-	// has no analogue of a given refusal simply never raises it (LinkedIn budgets
-	// are fields on the campaign and cannot be shared, so the shared-budget 409 is
-	// a Google and Meta answer; Meta's form of it is a campaign-level,
-	// ad-set-spanning budget). **409** when the change is refused BEFORE the
-	// platform is written, so nothing has changed: the campaign is unprovisioned
-	// (no platform campaign id); the campaign belongs to a different ad account
-	// than the project's connection now resolves to, or does not record which ad
-	// account it was created under; the campaign's budget is SHARED across
-	// campaigns, where changing the amount would change the spend of campaigns
-	// this request never named — including campaigns this service does not own and
-	// cannot see (give the campaign its own budget in the ad platform, or make the
-	// change there where its full effect is visible); or the budget could not be
-	// addressed at all — the platform did not report which budget resource is
-	// attached, did not report whether it is shared, did not report its pacing, or
-	// reports a pacing this service has no mapping for. An unreported fact is
-	// refused rather than assumed: 'we could not establish that this budget is
-	// private' and 'this budget is private' are opposite facts, and only one of
-	// them justifies a write that could move a stranger's spend. None of the 409s
-	// is retryable — each needs a change in the ad platform or a re-dispatch.
-	// **400** for a request fault: a non-positive, non-finite or out-of-range
-	// amount, an unknown budget type, a platform with no budget-write capability
-	// wired, or an amount the campaign's own platform refuses on its published
-	// minimums — the service validates only the bounds every platform shares, so a
-	// platform's stricter floor is a permanent request fault and the response
-	// names what it was. **503** when the platform could not be reached or did not
-	// confirm; the row is unchanged, and re-applying the same amount converges on
-	// the same state, so a retry is safe.
+	// it. Google Ads, LinkedIn, Meta, Microsoft Advertising, Reddit and X today: a
+	// campaign on any other platform is refused with 400. Budget writing is added
+	// per platform, because each platform's budget model is its own deliberate
+	// decision, and the refusals below are the union of what those models can
+	// refuse — a platform whose model has no analogue of a given refusal simply
+	// never raises it (LinkedIn budgets are fields on the campaign and cannot be
+	// shared, so the shared-budget 409 is a Google, Meta and Microsoft answer;
+	// Meta's form of it is a campaign-level, ad-set-spanning budget, Microsoft's a
+	// campaign attached to a shared Budget). Microsoft Search campaigns are paced
+	// DAILY only, so a lifetime request for one is the pacing refusal (409). A
+	// Reddit campaign's budget is its campaign-level spend goal (Campaign Budget
+	// Optimization on); one whose budget is governed per ad group (CBO off) is
+	// refused (409) rather than allocated, and Reddit has no shared-budget
+	// analogue. An X campaign's budget is written only as its own
+	// daily_budget_amount_local_micro, and only when X reports campaign budget
+	// optimization (budget_optimization CAMPAIGN). That this is the shape
+	// campaigns created here have is inferred from the create path (a daily budget
+	// on the campaign, no budget_optimization sent) and is unverified against a
+	// live account; X's current reference lists LINE_ITEM as the only value. A
+	// campaign reporting LINE_ITEM or omitting budget_optimization, one without a
+	// daily budget, or one that also carries a total cap is refused (409) before
+	// any write. A `lifetime` request for an X campaign is always refused (409):
+	// under campaign budget optimization X requires the daily budget, so the
+	// campaign is paced daily. X has no shared-budget analogue. **409** when the
+	// change is refused BEFORE the platform is written, so nothing has changed:
+	// the campaign is unprovisioned (no platform campaign id); the campaign
+	// belongs to a different ad account than the project's connection now resolves
+	// to, or does not record which ad account it was created under; the campaign's
+	// budget is SHARED across campaigns, where changing the amount would change
+	// the spend of campaigns this request never named — including campaigns this
+	// service does not own and cannot see (give the campaign its own budget in the
+	// ad platform, or make the change there where its full effect is visible); or
+	// the budget could not be addressed at all — the platform did not report which
+	// budget resource is attached, did not report whether it is shared, did not
+	// report its pacing, or reports a pacing this service has no mapping for. An
+	// unreported fact is refused rather than assumed: 'we could not establish that
+	// this budget is private' and 'this budget is private' are opposite facts, and
+	// only one of them justifies a write that could move a stranger's spend. None
+	// of the 409s is retryable — each needs a change in the ad platform or a
+	// re-dispatch. **400** for a request fault: a non-positive, non-finite or
+	// out-of-range amount, an unknown budget type, a platform with no budget-write
+	// capability wired, or an amount the campaign's own platform refuses on its
+	// published minimums — the service validates only the bounds every platform
+	// shares, so a platform's stricter floor is a permanent request fault and the
+	// response names what it was. **503** when the platform could not be reached
+	// or did not confirm; the row is unchanged, and re-applying the same amount
+	// converges on the same state, so a retry is safe.
 	UpdateCampaignBudget(context.Context, *UpdateCampaignBudgetPayload) (res *Campaign, err error)
-	// Pause or remove Google Ads keywords on one campaign. A MUTATION on a live
-	// paid campaign: pausing or removing a keyword changes what serves, so it is
-	// validated exactly like a create. The batch's syntax, the campaign's
-	// provisioning and the campaign's ad account are checked against the project's
-	// current connection BEFORE Google is contacted at all; each criterion is then
-	// resolved on the platform and confirmed to be a POSITIVE keyword in this
-	// campaign's ad group BEFORE THE MUTATE is issued — a read, so nothing has
-	// changed if that check refuses. ALL-OR-NOTHING: the batch is one atomic
+	// Change a campaign's MAX COST-PER-CLICK BID on its ad platform, then persist
+	// the new bid. A MUTATION on a live paid campaign, dispatched to the platform
+	// first, with the same ONE-WAY invariant as update-campaign-budget: the new
+	// bid is never persisted before the platform confirms it; once confirmed, a
+	// failed row write answers 500 with the platform holding the new bid, logged
+	// as a divergence, and re-applying the same bid reconciles it. ONE MANUAL CPC
+	// BID, AT THE LEVEL THIS SERVICE'S CREATE PATH PUTS IT — never a bid strategy.
+	// Microsoft Advertising: the default CpcBid of the ONE ad group this service
+	// created for the campaign (keywords are created without their own bids, so
+	// they inherit it). Reddit: the bid_value of the ONE ad group this service
+	// created. Meta: the bid_amount (a bid cap, in the account currency's minor
+	// units) of the ONE ad set this service created. X: the bid_amount_local_micro
+	// of the ONE line item this service created. A campaign whose row records none
+	// (an adopted campaign, or one whose creation never reached it) is refused
+	// (409): the service will not choose which of several to re-bid. REFUSED (409)
+	// WHEN THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only
+	// does something under a bid strategy that reads it — Microsoft's EnhancedCpc
+	// or ManualCpc; Reddit's MANUAL_BIDDING with bid_type CPC; Meta's
+	// LOWEST_COST_WITH_BID_CAP with billing_event AND optimization_goal both
+	// LINK_CLICKS (a Meta bid cap is per optimization event and, billed on
+	// impressions, per 1,000 impressions — so only that pairing is a max cost per
+	// click); X's MAX with pay_by LINK_CLICK. Under an automated or target
+	// strategy (Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas,
+	// MaxConversionValue, TargetImpressionShare, a portfolio strategy the read
+	// cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta
+	// LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO,
+	// TARGET) the platform would ignore it or, worse, the write would be read as a
+	// request to switch strategy — and this endpoint NEVER switches strategy,
+	// billing or charge unit. An unreported strategy is refused the same way
+	// rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked
+	// first and then the ad group's: with Campaign Budget Optimization on (as on
+	// every campaign this service creates) the ad group's strategy must match the
+	// campaign's, so both must be MANUAL_BIDDING. NOTE: every Reddit campaign this
+	// service creates is BIDLESS on both the campaign and its ad group, every Meta
+	// campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, and every X campaign
+	// AUTO, so those three legs apply only after an operator has moved the Reddit
+	// campaign and ad group, the Meta ad set or the X line item to a manual
+	// per-click bid in the platform's own UI. The amount is in the AD ACCOUNT's
+	// own currency, not USD, and this service neither knows nor converts it.
+	// Microsoft Advertising, Reddit, Meta and X today: a campaign on any other
+	// platform is refused with 400. **409** when the change is refused BEFORE the
+	// platform is written, so nothing has changed: the campaign is unprovisioned;
+	// it belongs to a different ad account than the project's connection now
+	// resolves to, or does not record which ad account it was created under; its
+	// bid strategy is automated, a target, or unreported; or the bid could not be
+	// addressed (no recorded ad group, ad set or line item, one reporting another
+	// campaign or deleted, or one bidding in a unit other than `bid_type`). None
+	// is retryable. **400** for a request fault: a non-positive, non-finite or
+	// out-of-range bid, an unknown bid type, a platform with no bid-write
+	// capability wired, or a bid the campaign's platform refuses on its own
+	// minimum or maximum — the response names what it was. **503** when the
+	// platform could not be reached or did not confirm — including a throttled
+	// Meta or X write, which is never retried in-call; the row is unchanged.
+	// Setting the same bid twice converges, but verify the bid in the ad platform
+	// before retrying.
+	UpdateCampaignBid(context.Context, *UpdateCampaignBidPayload) (res *Campaign, err error)
+	// Pause or remove Google Ads or Microsoft Advertising keywords on one
+	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword
+	// changes what serves, so it is validated exactly like a create. The batch's
+	// syntax, the campaign's provisioning and the campaign's ad account are
+	// checked against the project's current connection BEFORE the ad platform is
+	// contacted at all; each keyword is then resolved on the platform and
+	// confirmed to be a live POSITIVE keyword in this campaign's ad group BEFORE
+	// ANY MUTATION is issued — a read, so nothing has changed if that check
+	// refuses. GOOGLE ADS IS ALL-OR-NOTHING: the batch is one atomic
 	// adGroupCriteria:mutate with partial failure disabled, so either every action
 	// applied or none did. A caller is never left working out which half of a
-	// spend-stopping request took effect. REMOVE IS IRREVERSIBLE — Google cannot
-	// re-enable a removed criterion, only create a new one with a new id. Google
-	// Ads only: a campaign on any other platform is refused with 400, since no
-	// other adapter models keywords as addressable criteria. **409** when the
-	// change is refused before Google is contacted: the campaign is unprovisioned
-	// (no platform campaign id, or no ad group), the campaign belongs to a
-	// different ad account than the project's connection now resolves to, the
-	// campaign does not record which ad account it was created under (it must be
-	// re-dispatched before its keywords can be acted on — a different remedy from
-	// reconnecting, which is why it is reported separately), or the connection row
-	// itself is unusable. Those are non-retryable, which is why none of them is a
-	// 503. A malformed batch is **400 even when the campaign is also
-	// unprovisioned**: a permanent input fault the caller must fix dominates a
-	// contingent state fault they can only wait on, matching the order the adapter
-	// validates in. **503** carries two distinct outcomes and the MESSAGE
-	// separates them, so do not branch on the status alone: a DEFINITE failure
-	// (nothing was applied — retry), and an UNCONFIRMED one where the mutate may
-	// ALREADY have been applied (a short or mismatched mutate response, a 5xx, a
-	// timeout). The unconfirmed message tells the caller to VERIFY the campaign's
-	// keywords in the platform before retrying, because retrying an irreversible
-	// REMOVE that already ran cannot undo it.
+	// spend-stopping request took effect. MICROSOFT ADVERTISING IS NOT: PAUSE is
+	// one UpdateKeywords call and REMOVE one DeleteKeywords call, and Microsoft
+	// applies each item independently. The same ownership guards run first (each
+	// keyword id must be a live keyword in THIS campaign's ad group, read before
+	// anything is changed), and the 200 then carries one result per action, in
+	// request order, each with its own outcome — APPLIED, FAILED or UNCONFIRMED —
+	// and applied_count counts only APPLIED. A Microsoft request answers 503 only
+	// when no call was answered item by item. KNOWN LIMITATION (Microsoft
+	// Advertising): a keyword PAUSED here is RE-ENABLED by the next activation of
+	// the campaign through the status endpoint, because that cascade enables every
+	// keyword the campaign was created with and this endpoint persists nothing
+	// that distinguishes an operator's pause from the Paused state keywords are
+	// created in. Pause it again after activating, or pause it in Microsoft
+	// Advertising. There is no ENABLE action: a paused keyword is un-paused by
+	// activating the campaign or in Microsoft Advertising. A REMOVED keyword is
+	// never re-created. REMOVE IS IRREVERSIBLE on both platforms — a removed
+	// keyword cannot be re-enabled, only re-created with a new id. Any other
+	// platform is refused with 400. **409** when the change is refused before the
+	// ad platform is contacted: the campaign is unprovisioned (no platform
+	// campaign id, or no ad group), the campaign belongs to a different ad account
+	// than the project's connection now resolves to, the campaign does not record
+	// which ad account it was created under (it must be re-dispatched before its
+	// keywords can be acted on — a different remedy from reconnecting, which is
+	// why it is reported separately), or the connection row itself is unusable.
+	// Those are non-retryable, which is why none of them is a 503. A malformed
+	// batch is **400 even when the campaign is also unprovisioned**: a permanent
+	// input fault the caller must fix dominates a contingent state fault they can
+	// only wait on, matching the order the adapter validates in. **503** carries
+	// two distinct outcomes and the MESSAGE separates them, so do not branch on
+	// the status alone: a DEFINITE failure (nothing was applied — retry), and an
+	// UNCONFIRMED one where the mutate may ALREADY have been applied (a short or
+	// mismatched mutate response, a 5xx, a timeout). The unconfirmed message tells
+	// the caller to VERIFY the campaign's keywords in the platform before
+	// retrying, because retrying an irreversible REMOVE that already ran cannot
+	// undo it.
 	ApplyKeywordActions(context.Context, *ApplyKeywordActionsPayload) (res *KeywordActions, err error)
+	// Add campaign-level negative keywords to one live campaign. Microsoft
+	// Advertising only (AddNegativeKeywordsToEntities, EntityType Campaign); a
+	// campaign on any other platform is refused with 400 before anything is
+	// contacted. A MUTATION on a live paid campaign — a negative keyword stops the
+	// campaign serving on matching queries — so it carries the keyword actions'
+	// guard set, all before the platform is contacted: the batch's syntax, the
+	// campaign's provisioning, and the campaign's ad account against the project's
+	// current connection (a campaign that does not record its ad account is
+	// refused, never assumed). Like apply-keyword-actions it persists nothing —
+	// the negatives live on the platform — so it takes no If-Match and returns no
+	// ETag. NOT ATOMIC: Microsoft adds each negative independently, so the 200
+	// carries one result per requested keyword, in request order, each with its
+	// own outcome. A negative the campaign already has is ALREADY_PRESENT, a
+	// success. **400** for a malformed batch (empty or over 60, a text over 100
+	// characters or outside the allowed characters, consecutive punctuation, a
+	// match type other than Exact or Phrase, the same keyword twice) or an
+	// unsupported platform. A malformed batch is 400 even when the campaign is
+	// also unprovisioned. **409** when refused before the platform is contacted:
+	// unprovisioned, a different ad account, an unrecorded ad account
+	// (re-dispatch), or an unusable connection. **503** only when the platform
+	// answered nothing per keyword. The MESSAGE separates a DEFINITE failure
+	// (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a timeout, a
+	// rate limit, an unreadable answer — verify the campaign's negative keywords
+	// before retrying).
+	AddNegativeKeywords(context.Context, *AddNegativeKeywordsPayload) (res *NegativeKeywords, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the
 	// brief can be re-dispatched to that platform. It does NOT delete, pause, or
@@ -271,7 +383,22 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [29]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "apply-keyword-actions", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [31]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+
+// AddNegativeKeywordsPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service add-negative-keywords method.
+type AddNegativeKeywordsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// The negative keywords to add, at campaign level.
+	NegativeKeywords []*NegativeKeywordInput
+}
 
 // AdoptCampaignPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service adopt-campaign method.
@@ -299,7 +426,9 @@ type ApplyKeywordActionsPayload struct {
 	BriefID string
 	// Campaign UUID
 	CampaignID string
-	// The keyword mutations to apply, all-or-nothing.
+	// The keyword mutations to apply. Google Ads applies them all-or-nothing;
+	// Microsoft Advertising applies each independently and reports a per-action
+	// outcome.
 	Actions []*KeywordActionInput
 }
 
@@ -437,6 +566,10 @@ type Campaign struct {
 	CampaignName string
 	// Campaign status
 	Status string
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion int
 	// Optimistic-concurrency version
 	Version int64
 	// ETag header value (mirrors version)
@@ -463,6 +596,19 @@ type CampaignCreateInput struct {
 	Platforms []string
 	// Per-platform campaign configuration
 	Config any
+	// Create ANOTHER campaign on each selected platform instead of retrying.
+	// Without it, repeating a create for a platform that already has a completed
+	// campaign returns that campaign (idempotent retry). With it, a platform whose
+	// latest campaign is complete gets a new campaign alongside it; a platform
+	// with none gets its first; a platform whose latest campaign is still in
+	// flight or needs reconciliation is reported exactly as a retry would be. The
+	// version is tracked by this service only and is never shown on the ad
+	// platform as a label. Supported on microsoft-ads only for now; any other
+	// platform in the request is refused with 400. Until the follow-up release
+	// removes the one-campaign-per-slot index, a request on a platform that
+	// already has a live campaign fails that platform with 'not available yet' and
+	// creates nothing.
+	NewVersion bool
 }
 
 // CampaignMetrics is the result type of the lfx-v2-campaign-service-briefs
@@ -996,12 +1142,25 @@ type KeywordActionInput struct {
 type KeywordActionResult struct {
 	// The ad group that was addressed
 	AdGroupID string
-	// The criterion that was addressed
+	// The criterion (Google Ads) or keyword id (Microsoft Advertising) that was
+	// addressed
 	CriterionID string
-	// The action that was applied
+	// The action that was requested
 	Action string
-	// The criterion resource name Google returned for the applied mutation
-	ResourceName string
+	// Google Ads only: the criterion resource name Google returned for the applied
+	// mutation. Present on every Google Ads result; absent on Microsoft
+	// Advertising, which has no resource names.
+	ResourceName *string
+	// Microsoft Advertising only: this action's own outcome, because a Microsoft
+	// batch is applied item by item. APPLIED — Microsoft did not reject it; FAILED
+	// — definitely not applied (see error_code); UNCONFIRMED — may have been
+	// applied, verify in Microsoft Advertising before retrying. ABSENT on Google
+	// Ads, whose batch is atomic: there every result on a 200 was applied.
+	Outcome *string
+	// Microsoft Advertising only: the platform's machine-readable error code for a
+	// FAILED or UNCONFIRMED action, when it named one. NOT_SENT means the request
+	// carrying this action was never sent.
+	ErrorCode *string
 }
 
 // KeywordActions is the result type of the lfx-v2-campaign-service-briefs
@@ -1009,11 +1168,53 @@ type KeywordActionResult struct {
 type KeywordActions struct {
 	// The campaign whose keywords were acted on
 	CampaignID string
-	// One entry per requested action, in request order. All applied, or the
-	// request failed and none were.
+	// Exactly one entry per requested action, in request order, so results[i]
+	// answers actions[i]. Google Ads: all applied, or the request failed and none
+	// were. Microsoft Advertising: each entry carries its own outcome.
 	Results []*KeywordActionResult
-	// How many actions were applied. Always equal to the number requested — a
-	// partial application is not a possible outcome.
+	// How many actions were applied. Google Ads: always equal to the number
+	// requested — its batch is atomic. Microsoft Advertising: the number of
+	// results whose outcome is APPLIED, which can be fewer.
+	AppliedCount int
+}
+
+type NegativeKeywordInput struct {
+	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
+	// 100 characters.
+	Text string
+	// How the negative keyword is compared with a search query. Exact or Phrase.
+	MatchType string
+}
+
+type NegativeKeywordResult struct {
+	// The negative keyword text as sent to the platform (trimmed, whitespace
+	// collapsed)
+	Text string
+	// The match type as sent to the platform
+	MatchType string
+	// APPLIED — added by this request; ALREADY_PRESENT — the campaign already had
+	// it, so the requested state holds; FAILED — definitely not added (see
+	// error_code); UNCONFIRMED — may have been added, verify in the ad platform
+	// before retrying.
+	Outcome string
+	// The platform's id for a negative keyword this request added. Absent for
+	// every other outcome.
+	NegativeKeywordID *string
+	// The platform's machine-readable error code for a FAILED keyword, when it
+	// named one.
+	ErrorCode *string
+}
+
+// NegativeKeywords is the result type of the lfx-v2-campaign-service-briefs
+// service add-negative-keywords method.
+type NegativeKeywords struct {
+	// The campaign the negative keywords were added to
+	CampaignID string
+	// Exactly one entry per requested negative keyword, in request order, so
+	// results[i] answers negative_keywords[i].
+	Results []*NegativeKeywordResult
+	// How many requested negative keywords are now on the campaign: results whose
+	// outcome is APPLIED or ALREADY_PRESENT.
 	AppliedCount int
 }
 
@@ -1126,6 +1327,28 @@ type UpdateBriefPayload struct {
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
 	Brief   *BriefInput
+}
+
+// UpdateCampaignBidPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service update-campaign-bid method.
+type UpdateCampaignBidPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	// New maximum cost-per-click bid, in the AD ACCOUNT's own currency (NOT USD).
+	// Must be strictly positive.
+	Bid float64
+	// The unit the bid is expressed in; defaults to cpc when omitted. Only a max
+	// cost-per-click bid is supported; it MUST match how the campaign's ad group,
+	// ad set or line item bids upstream.
+	BidType *string
 }
 
 // UpdateCampaignBudgetPayload is the payload type of the

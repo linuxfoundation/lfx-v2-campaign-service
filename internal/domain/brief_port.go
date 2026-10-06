@@ -111,9 +111,11 @@ type BriefRepository interface {
 type CampaignReader interface {
 	// GetCampaign returns a single campaign under a brief, or ErrNotFound.
 	GetCampaign(ctx context.Context, projectID, briefID, id string) (*model.Campaign, error)
-	// GetCampaignByPlatform returns the campaign for a (brief, platform, variant)
-	// slot, or
-	// ErrNotFound. Used to make dispatch idempotent: a brief already dispatched to
+	// GetCampaignByPlatform returns the LATEST live campaign for a (brief, platform,
+	// variant) slot — the one with the highest SlotVersion — or ErrNotFound. Latest,
+	// because that is the campaign a retry is retrying and the one a new_version request
+	// builds on; and any live row at all is enough for a caller asking "is this slot
+	// taken". Used to make dispatch idempotent: a brief already dispatched to
 	// a platform must not create a second upstream (paid) campaign on retry. Scoped
 	// by projectID for tenant isolation, matching GetCampaign/ClaimCampaignDispatch.
 	// `variant` names WHICH of that platform's campaign types is wanted — Google has
@@ -155,10 +157,11 @@ type CampaignReader interface {
 	// campaign id) can address the brief-scoped mutation routes.
 	//
 	// Returns EVERY live match rather than one, and an empty slice rather than an error when
-	// the project owns none. A valid database holds at most one match —
+	// the project owns none. For Google Ads a valid database holds at most one match —
 	// uq_campaigns_platform_campaign_live (migration 000020) is a global UNIQUE index on
-	// (platform, platform_campaign_id) for live Google Ads rows — so the slice is a shape that
-	// keeps the impossible case refusable, not a claim that duplicates are expected. "This
+	// (platform, platform_campaign_id) for live Google Ads rows only. For Microsoft Advertising
+	// more than one live match is reachable (ids are per ad account, and the index does not
+	// cover it), so the slice is load-bearing: a caller must refuse more than one. "This
 	// project does not own that campaign" is an ordinary answer a caller acts on, not a fault.
 	//
 	// Scoped by projectID, which is what stops it answering questions about another
@@ -183,12 +186,16 @@ type CampaignReader interface {
 	// hand and threads it down. nil is legitimate: Start reads the actor with
 	// attributedActor, which returns nil — after logging a warning — when the request
 	// carried no authenticated principal, and NULL means "not recorded", not "nobody".
-	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant, jobID string, by *model.Actor) (claimed bool, row *model.Campaign, err error)
+	//
+	// slotVersion names WHICH campaign on the slot is being claimed (model.Campaign.
+	// SlotVersion); 1 for the first. A claim for a slot version the schema cannot hold yet
+	// returns domain.ErrSlotVersionUnavailable, having written nothing.
+	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (claimed bool, row *model.Campaign, err error)
 	// DeleteDispatchClaim removes a still-'pending' claim row for (brief, platform)
 	// so the pair can be retried after a dispatch fails before the upstream
 	// campaign is created. It only deletes rows still in 'pending' status, so it
 	// can never remove a real (created) campaign.
-	DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider, variant string) error
+	DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider, variant string, slotVersion int) error
 }
 
 // CampaignLockToken is an opaque handle identifying one successful ClaimCampaignVersion call.

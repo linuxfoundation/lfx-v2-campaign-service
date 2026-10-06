@@ -210,6 +210,18 @@ type Client struct {
 	// sleep is asserting on a race it can lose silently. Firing here makes the same
 	// window an ordinary synchronous callback. Never set in production.
 	onPaceWait func(context.Context, time.Duration)
+
+	// Account monitor state (monitor.go). statsFileHosts is the https host allowlist for
+	// stats-job result files and the two caps bound a download; NewClient sets the production
+	// values, and only in-package tests change them (withStatsFileHosts, withStatsFileCaps).
+	statsFileHosts           []string
+	statsFileCompressedCap   int64
+	statsFileDecompressedCap int64
+
+	// tzMu guards the account timezone AccountTimezone caches for accountTimezoneCacheFor.
+	tzMu  sync.Mutex
+	tzLoc *time.Location
+	tzAt  time.Time
 }
 
 // Option customizes a Client at construction time.
@@ -256,6 +268,19 @@ func WithHTTPClient(h *http.Client) Option {
 // per-request sleeps.
 func WithWriteDelay(d time.Duration) Option { return func(c *Client) { c.writeDelay = d } }
 
+// WithClock overrides the client's clock (default time.Now), matching the WithClock option the
+// googleads, linkedin, meta and microsoft clients expose. It drives everything this client
+// derives from "now": the OAuth timestamp, the 429 reset arithmetic, the write pacer's
+// reservations, the metrics windows and the account monitor's stats-job window (monitor.go).
+// A nil func is ignored so the option cannot produce a client that panics on its first call.
+func WithClock(now func() time.Time) Option {
+	return func(c *Client) {
+		if now != nil {
+			c.timeFn = now
+		}
+	}
+}
+
 // NewClient constructs a Client from injected credentials and account config.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	// Normalize the account identifiers once, on the way in, so every method uses
@@ -275,6 +300,10 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		nonceFn:    defaultNonce,
 		timeFn:     time.Now,
 		writeDelay: writeDelay,
+
+		statsFileHosts:           []string{statsFileHost},
+		statsFileCompressedCap:   defaultStatsFileCompressedCap,
+		statsFileDecompressedCap: defaultStatsFileDecompressedCap,
 	}
 	for _, o := range opts {
 		o(c)
@@ -629,6 +658,10 @@ type apiError struct {
 	// for the bounds applied at parse time. Empty when the body wasn't a
 	// recognizable X error envelope.
 	ErrorCodes []string
+	// errorParams carries the (code, parameter) pairs of the envelope's errors, bounded like
+	// ErrorCodes and, like them, never rendered by Error(): read only to classify which request
+	// parameter X refused. Unexported so reflection- or JSON-based logging cannot walk it.
+	errorParams []xErrorParam
 	// err optionally carries an underlying cause, set when the status is inferred
 	// rather than read straight off a final response — today only when a 429's
 	// retry backoff is cut short by context cancellation. Keeping the cause
@@ -670,13 +703,47 @@ func (e *apiError) hasErrorCode(code string) bool {
 // promoted (possibly by a different line item). See isDuplicatePromotedTweetErr.
 const errCodeDuplicatePromotableEntity = "DUPLICATE_PROMOTABLE_ENTITY"
 
-// xErrorEnvelope is the X Ads error body shape: {"errors":[{"code":"...", ...}]}.
-// message is intentionally NOT captured — only the machine-readable codes are
-// retained (see apiError.ErrorCodes).
+// xErrorEnvelope is the X Ads error body shape: {"errors":[{"code":"...", "parameter":"...",
+// ...}]}. message is intentionally NOT captured — only the machine-readable code and the
+// parameter it names are retained (see apiError.ErrorCodes and apiError.errorParams).
 type xErrorEnvelope struct {
 	Errors []struct {
-		Code string `json:"code"`
+		Code      string `json:"code"`
+		Parameter string `json:"parameter"`
 	} `json:"errors"`
+}
+
+// xErrorParam is one error's (code, parameter) pair, kept so a caller can classify WHICH
+// request parameter X refused rather than inferring it from a code alone. The X Ads error
+// reference (https://docs.x.com/x-ads-api/fundamentals/error-codes-and-responses) documents
+// "parameter" alongside "code" on an INVALID_PARAMETER error.
+type xErrorParam struct {
+	Code      string
+	Parameter string
+}
+
+// parseErrorParams extracts the (code, parameter) pairs of a non-2xx body under the same
+// bounds as parseErrorCodes: an entry with an empty or over-long code or parameter is dropped,
+// and at most maxRetainedErrorCodes are kept.
+func parseErrorParams(body []byte) []xErrorParam {
+	if len(body) == 0 {
+		return nil
+	}
+	var env xErrorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil
+	}
+	var out []xErrorParam
+	for _, e := range env.Errors {
+		if e.Code == "" || len(e.Code) > maxErrorCodeCodeLength || e.Parameter == "" || len(e.Parameter) > maxErrorCodeCodeLength {
+			continue
+		}
+		out = append(out, xErrorParam{Code: e.Code, Parameter: e.Parameter})
+		if len(out) >= maxRetainedErrorCodes {
+			break
+		}
+	}
+	return out
 }
 
 // Bounds on the internally-retained error codes. Even though codes are never
@@ -1092,6 +1159,20 @@ func drainAndClose(resp *http.Response) {
 // now surfaces for reconciliation instead of riding out the rate limit, which is the
 // correct trade when the alternative is a duplicate nobody was told about.
 func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath string, queryParams map[string]string, idempotent bool) (*apiResponse, error) {
+	return c.doRequestAbsCounted(ctx, method, reqURL, logPath, queryParams, idempotent, nil)
+}
+
+// doRequestAbsCounted is doRequestAbs with one addition: when retried is non-nil it is
+// incremented once for every 429 this loop answered by RETRYING (sleeping and re-issuing).
+//
+// It exists for the one caller that must know: a mutate whose final attempt failed DEFINITELY
+// after an earlier attempt was throttled. A 429 does not say the write was refused — the
+// throttle can be reported at or after the write is accepted — so a later 400 answers only the
+// LAST attempt and cannot confirm the earlier one changed nothing. UpdateCampaignBudget uses the
+// count to report such an outcome as UNCONFIRMED (retriedUnconfirmedError) rather than as a
+// definite refusal. The counter is caller-owned, never a field on the shared Client, because
+// the client is shared by every concurrent caller for the account (see Client).
+func (c *Client) doRequestAbsCounted(ctx context.Context, method, reqURL, logPath string, queryParams map[string]string, idempotent bool, retried *int) (*apiResponse, error) {
 	// Entry-time only — see errRequestContextAlreadyDone. Without it a caller that had
 	// already cancelled got the context error back out of http.Client.Do wrapped as a
 	// transportError, which ProbeNotSent does not recognise: the probe then charged X's
@@ -1212,6 +1293,9 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 					}
 				}
 			}
+			if retried != nil {
+				*retried++
+			}
 			continue
 		}
 
@@ -1226,7 +1310,7 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 			// A read error just means no codes are available. createOutcomeAmbiguous
 			// uses the type to treat a mutating 3xx/5xx as "may exist" while a definite
 			// 4xx is a clean failure.
-			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, ErrorCodes: parseErrorCodes(respBody)}
+			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, ErrorCodes: parseErrorCodes(respBody), errorParams: parseErrorParams(respBody)}
 		}
 		if readErr != nil {
 			// A 2xx with a body we couldn't fully/cleanly read is AMBIGUOUS on a

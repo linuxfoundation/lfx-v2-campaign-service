@@ -1,17 +1,18 @@
 ---
 type: "Architecture Doc"
 title: "Account-Monitor Endpoints"
-description: "Five account-scoped monitor endpoints, one per ad platform: four ported from the LFX One BFF's rule engines and read live, and Microsoft Ads served from saved asynchronous reports because its metrics take minutes to build."
+description: "Six account-scoped monitor endpoints, one per ad platform: four ported from the LFX One BFF's rule engines and read live, and Microsoft Ads and X served from saved asynchronous reports because their metrics cannot be read inside one request."
 resource: "internal/service/connection_monitor.go"
 ---
 
 # Account-Monitor Endpoints
 
-`GET /projects/{project_id}/connection-{google,linkedin,meta,reddit,microsoft}-ads/account-monitor?account_id=&days=`
+`GET /projects/{project_id}/connection-{google,linkedin,meta,reddit,microsoft,twitter}-ads/account-monitor?account_id=&days=`
 
-Microsoft Ads joined later and is the one REPORT-BACKED monitor — see
-[Microsoft: a report-backed monitor](#microsoft-a-report-backed-monitor). Everything
-below that is not in that section describes the four live reads.
+Microsoft Ads and X joined later and are the two REPORT-BACKED monitors — see
+[Microsoft: a report-backed monitor](#microsoft-a-report-backed-monitor) and
+[X: a second report-backed monitor](#x-a-second-report-backed-monitor). Everything below
+that is not in those sections describes the four live reads.
 
 Ports the LFX One BFF's `/api/campaigns/monitor` family (Google, LinkedIn,
 Meta, Reddit — Meta ships with a pagination fix, not a verbatim port; see
@@ -88,10 +89,14 @@ reaches), not project-scoped ones.
   (`pacingLabelFor`), one priority rank (`priorityRank`/`sortByPriority`),
   one unknown-pacing row. Each `EvaluateXMonitor` keeps its own guard for
   whether a campaign has a pacing figure worth placing at all, because the
-  platforms report budget differently. They are still **not** routed onto
-  `pacing.go`/`actions.go`, which run a different ladder (50/100/130) for
-  the single-campaign brief path; merging the two read paths would move
-  operator-facing alerting bands and remains its own decision.
+  platforms report budget differently. The ladder's arithmetic is now one
+  implementation for both read paths, `PacingLadder.Label` in
+  `internal/service/rules/ladder.go`: `pacingLabelFor` places on
+  `AccountMonitorLadder` (50/90/100), while `pacing.go`/`actions.go` place on
+  `BriefViewLadder` (50/100/130) for the single-campaign brief path. Which
+  ladder is correct is open product decision **D2**; switching a caller's
+  ladder would move operator-facing alerting bands and remains its own
+  decision.
 - `internal/service/connection_monitor.go`'s `monitorAccount` is the shared
   handler body: validate → resolve backend → `ReadAccountCampaignMetrics` →
   per-platform `evaluate` closure → `monitorTotals`, which sums the
@@ -165,7 +170,12 @@ This is a deliberate, documented divergence, not a defect to fix: it is kept
 because it matches the days-1-ending-today convention Google/Reddit's
 monitor dispatchers already use, so all four platforms answer "last N days"
 identically rather than Meta alone excluding today the way its removed
-preset did. See `fetchAccountCampaignInsights`'s doc comment in
+preset did. (Until 2026-10-05 Reddit only claimed this convention: its
+monitor rendered `ends_at` as today's `T00:00:00Z`, copied from the BFF,
+which stops the range as today begins, so a `days=N` read covered about
+N-1 days. It now renders through `reportRange`, the same renderer
+`GetCampaignMetrics` uses, ending at today's 23:00 hour — see the Reddit
+scope audit below.) See `fetchAccountCampaignInsights`'s doc comment in
 `internal/platform/meta/monitor.go` for the same note next to the code.
 
 ## Correctness bugs found during local differential verification
@@ -190,8 +200,65 @@ defects, since fixed:
    already `Float64` — the totals field is now `Float64` too, matching the
    BFF's plain float sum in `aggregateTotals`.
 
-LinkedIn and Reddit have not yet had the same class of check (missing
-platform-query scope filters) run against them.
+LinkedIn has not yet had the same class of check (missing platform-query
+scope filters) run against it.
+
+**Reddit has (2026-10-05, LFXV2-2665 Track M3).** Outcome: no Google-class
+scope defect. The read's only campaign filter — `configured_status` ACTIVE
+or PAUSED — matches the BFF's `activeCampaigns` filter exactly, and the
+report is scoped per campaign. The audit did find, and fixed, five defects
+of other classes in `internal/platform/reddit/monitor.go` and
+`internal/service/rules/monitor_reddit.go`:
+
+1. **Window.** `ends_at` was today's midnight (the BFF's rendering), so the
+   read stopped as today began and contradicted the inclusive-of-today
+   convention claimed above. Now rendered by `reportRange`, ending at the
+   final day's 23:00 hour (the spec allows only hourly granularity; whether
+   Reddit treats that hour as inclusive is still unverified, as it is for
+   `GetCampaignMetrics`). Pinned by a fixed-clock test.
+2. **Unverified endpoint.** The per-campaign report used the BFF's nested
+   `POST /ad_accounts/{a}/campaigns/{c}/reports`, which nothing in this repo
+   verifies. It now uses the one spec-verified operation,
+   `POST /ad_accounts/{a}/reports`, with `GetCampaignMetrics`' own body
+   (`CAMPAIGN_ID` as a field, `filter: campaign:id==<id>`, no breakdowns),
+   one call per campaign at the existing concurrency limit of 5. One account
+   report broken down by `CAMPAIGN_ID` was considered and not taken: it
+   would depend on report pagination for completeness, and this repo has not
+   verified the pagination envelope's fields, so an unfollowed page would
+   read as a campaign's zero. Each row is attributed by its returned
+   `campaign_id` (the shared `sumReportRows` provenance check), an
+   unattributable row fails that campaign (`FetchFailed`) rather than being
+   credited, and every row is summed — it used to read `metrics[0]` only.
+3. **Campaign-list pagination.** `apiResponse` dropped the pagination
+   envelope, so only the first page of campaigns was ever monitored. The list
+   (and each report) now follows `pagination.next_url` — same-origin only,
+   since following it sends the bearer token — and fails with an error, never
+   a truncated list, at a 50-page cap, on a repeated page, or on a campaign
+   returned twice. Mirrors Meta's pagination fix above. `next_url` itself is
+   Reddit's v3 convention but is **not** verified by this repo; a response
+   without it is a single page, which is the old behaviour.
+4. **goal_type.** `goal_value` was read as a lifetime budget whatever
+   `goal_type` said, so a `DAILY_SPEND` campaign's daily cap was prorated
+   across its flight and spending exactly the cap read as overspending.
+   `LIFETIME_SPEND` now sets `TotalBudget`, `DAILY_SPEND` sets `BudgetDay`
+   (paced as `BudgetDay` × the window's days clipped to the flight, as
+   LinkedIn's daily branch does), and any other or absent `goal_type`
+   sets neither, so the row is `PacingUnknown` rather than a guess.
+5. **Duplicate HIGH alert.** Keying the underspend item off the label
+   (`#3021`) made a zero-delivery campaign raise both the zero-delivery HIGH
+   item and an "Underspending at 0%" HIGH item. The underspend item is now
+   suppressed exactly when the zero-delivery item fired at 0%. This is
+   narrower than the BFF's `pacingPct > 0`: a CPC campaign with impressions,
+   no clicks and so no spend paces at 0% without triggering zero-delivery,
+   and still alerts as underspending.
+
+Deviations from the BFF kept on purpose: `days` is validated strictly
+(7–90, 400 outside it) rather than clamped; account totals are the row sum,
+which excludes ARCHIVED/DELETED campaigns the BFF's account-wide report
+counted (`#3022`); report numbers are strictly typed (a non-integer or
+missing metric fails the campaign rather than reading as 0); and every
+upstream campaign id must pass the `accountIDRe` charset guard before it is
+interpolated into the report filter.
 
 A fourth issue, flagged by automated PR review rather than the differential
 diff: the four `account_id` payload attributes had no `MinLength`, `Pattern`,
@@ -516,20 +583,35 @@ So the read is split, and the state between requests is saved:
   older than `accountReportFreshFor` (30m); fill each live campaign's metrics from the last
   finished report. The saved snapshot is read first, on the request context, so a slow list
   cannot turn the store read into a 503. A check, submit or save that fails is logged and
-  never fails the read. Checking BEFORE abandoning matters: an age-only abandon threw away
+  never fails the read. Recording a submission that completed (`MarkAccountReportPending`)
+  runs on its OWN short budget — `accountReportMarkTimeout` (5s) on a context detached from the
+  read's cancellation — not on the shared, possibly spent, call budget: a report built upstream
+  but not recorded would be resubmitted on every read and never collected. A submission the
+  dispatcher declines for lack of budget (`domain.ErrAccountReportBudgetTooShort`) is logged as
+  a skip and retried on a later read. Checking BEFORE abandoning matters: an age-only abandon threw away
   every report on an account viewed less than hourly, so it never showed metrics.
 - **Store.** `account_monitor_reports` (migration `000035`), one row per
   (project, platform, account, days) with a READY half (served, possibly stale) and a
   PENDING half (building upstream). Completing or failing a report is a compare-and-set on
   its report id, so a request that collected an older report cannot clear a newer one's
-  pending marker. Platform-neutral on purpose: a second asynchronous platform reuses it.
-- **Response.** Same `AccountMonitor` type, plus two Microsoft-only fields:
+  pending marker. Platform-neutral on purpose, and now SHARED: X's monitor keeps its rows in
+  the same table under `platform = 'twitter-ads'`, with no schema change (see below).
+- **Response.** Same `AccountMonitor` type, plus two fields set only by the report-backed
+  platforms, Microsoft and X:
   `metrics_as_of` (when the report was REQUESTED — the point in time the data describes, never
   the later moment it was collected, which would overstate freshness; absent before the first
   one finishes) and
-  `metrics_pending` (a newer report is building; always set on Microsoft, omitted on the
-  live four). Before any report has finished, every row is `fetch_failed` and therefore
-  skipped by the rules — unavailable metrics never read as a campaign spending nothing.
+  `metrics_pending` (a newer report is building; always set on Microsoft and X, omitted on
+  the live four), and
+  `metrics_window_start` / `metrics_window_end` (`YYYY-MM-DD`, the first and last calendar day
+  the metrics cover, both inclusive, from the saved report's own window — not re-derived from
+  `days`, which is the request echoed and can differ: X covers 89 days of a 90-day request
+  across a DST fall-back). The days are in the timezone the report is built in: the account's
+  on X; on Microsoft the report's GMT (Europe/London) zone, named by the UTC dates sent as
+  `CustomDateRangeStart` / `CustomDateRangeEnd` (inclusive). Both are omitted before the first
+  report finishes and on the live four, which cover exactly the requested days. Before any
+  report has finished, every row is `fetch_failed` and therefore skipped by the rules —
+  unavailable metrics never read as a campaign spending nothing.
 - **Report scope.** The submission is scoped by `AccountIds` — the account-wide union the
   per-campaign read deliberately avoids is exactly what this read wants — so a campaign
   absent from a finished report served nothing (spend/impressions/clicks zero, conversions
@@ -547,3 +629,102 @@ So the read is split, and the state between requests is saved:
   `^[1-9][0-9]{0,17}$` and, identically, by `microsoft.ValidateMonitorAccountID` — not by the
   create path's `ValidateAccountID`, which trims and admits a 19th digit — and the drift test
   covers it, length included.
+
+## X: a second report-backed monitor
+
+X reuses the Microsoft machinery unchanged — `service.AccountReportReader`,
+`Orchestrator.ReadReportedAccountCampaigns`, `account_monitor_reports`, the same freshness
+(30m) and abandon (60m) timings, the same `metrics_as_of` / `metrics_pending` /
+`metrics_window_start` / `metrics_window_end` response fields —
+with `TwitterDispatcher` as a second implementation. Nothing was forked.
+
+- **Why report-backed, for every `days`.** X's synchronous stats are capped at 7 days per
+  request and share a 250-requests-per-15-minutes budget across every foundation on the shared
+  LF token; the asynchronous stats-jobs API covers up to 90 days per job and is limited by
+  concurrent jobs per account instead (https://docs.x.com/x-ads-api/analytics). One path for
+  every window, so a 7-day and a 30-day view never differ in how they were read.
+- **List (live).** `campaigns` and `line_items` (with_deleted=false, with_draft=false,
+  count=1000, line items filtered by ≤200 `campaign_ids`), on the strict cursor rule: anything
+  short of X's documented null `next_cursor` fails the read. Status is `entity_status`
+  verbatim; budgets are `*_local_micro` ÷ 1e6 in the account's currency (malformed →
+  `fetch_failed`); the flight is the line items' dates in the ACCOUNT's timezone (read from
+  the account resource). Two shapes travel together: the envelope `StartDate`/`EndDate`
+  (earliest start, latest end, open-ended if any line item is) and `FlightRanges`, the UNION of
+  the line items as sorted, disjoint day ranges — overlapping or touching line items merge,
+  disjoint ones stay apart. The rules judge on the ranges, so a window in the gap between two
+  line items (Sep 1–5 and Oct 1–5, window Sep 15–21) is not "scheduled".
+- **Submit.** `active_entities` for the window, then one stats job per ≤20 active campaigns
+  (`entity=CAMPAIGN`, `granularity=TOTAL`, `placement=ALL_ON_TWITTER`,
+  `metric_groups=ENGAGEMENT,BILLING`), paced on the client's write pacer and never retried on
+  a 429. The window is today-(days-1) 00:00 to the next midnight in the ACCOUNT's timezone
+  (where a DST spring-forward skips a midnight — America/Santiago — that day starts at its first
+  existing instant, so the window is never dated a day early), and the window QUERIED is
+  exactly the window SAVED — nothing is floored or trimmed. An
+  account whose local midnight is not a whole UTC hour (Asia/Kolkata, Asia/Kathmandu,
+  America/St_Johns …) cannot be queried on its own days, since X takes whole-hour bounds only,
+  so the submission is refused before any stats request (`twitter.ErrReportWindowNotWholeHours`
+  → `domain.ErrAccountTimezoneUnsupported` → **409**, reason `account_timezone_unsupported`).
+  A 90-day window across a DST fall-back is 90 days and an hour, over X's 90-day cap, so its
+  earliest local day is dropped: it covers the trailing 89 whole days and its saved first day
+  says so — the response echoes `days: 90` (the request) and states the 89 covered days in
+  `metrics_window_start` / `metrics_window_end` (an earlier draft trimmed one hour off the start, querying a window that began an
+  hour into the first saved day). Before the first job POST the time left on the call budget is
+  checked against one pacer interval per job plus a 2s margin; if it cannot fit, the
+  submission is declined whole (`twitter.ErrStatsJobBudget` → `domain.ErrAccountReportBudgetTooShort`)
+  rather than stranding half-created jobs in X's 100 concurrent-job slots. The account timezone
+  is cached on the shared client for a minute, so one read (list, then submit) reads the
+  account once. The saved report id is ONE composite value — the jobs' `id_str`s
+  comma-joined (≤10 jobs, ~210 bytes in a TEXT column). No active campaign gives the sentinel
+  `none`, which Check answers as a finished empty report without calling X. An account with
+  more than 200 campaigns active in the window (`twitter.MaxMonitorActiveCampaigns`, ten jobs
+  of 20) is refused before any job is created rather than half-reported
+  (`twitter.ErrTooManyActiveCampaigns` → `domain.ErrAccountTooManyActiveCampaigns` → **409**,
+  reason `account_too_many_active_campaigns`).
+- **Permanent refusals fail the read.** Unlike a transient submit failure (logged, retried on
+  the next read), those two refusals cannot succeed later, so
+  `ReadReportedAccountCampaigns` returns them and `classifyDiscoveryError` maps each to a 409
+  `ConflictError` with its `reason` and fixed text. A fresh saved report is still served,
+  because no submission is attempted while it is fresh.
+- **Check.** ONE job-status read for every job. Any failed or cancelled job fails the report
+  (and so does a finished job whose file is gone); any job still building, or missing from
+  X's answer, leaves it pending; otherwise every file is downloaded — unsigned, because X says
+  the URL needs no authentication and our credentials must not go to a storage host — then
+  gunzipped, bounded, and folded per campaign. The file URL is upstream data, so it is fetched
+  only over https from exactly `ton.twimg.com`, the host X's documented job example serves
+  results from (or the client's own API origin); any other host is refused with an error that
+  does not echo the URL. Spend is `billed_charge_local_micro` ÷ 1e6;
+  `Partial` is always true because X's billed charge settles over days.
+- **Absence.** A campaign absent from a finished report served nothing, exactly as on
+  Microsoft — and here that rests on `active_entities` too: a campaign it did not list had no
+  activity in the window.
+- **Conversions are never reported.** X splits them per event type under metric groups the
+  monitor does not request, and reports nothing at all for an account with no conversion tag,
+  which is indistinguishable from a measured zero. Every row's `conversions` is absent.
+- **Rules.** `rules.EvaluateTwitterMonitor`: a daily budget paced as `BudgetDay` × the window
+  days a line item is scheduled on (window closed by the exclusive midnight after its last
+  day, as Reddit's daily branch settled); otherwise a total budget prorated over the scheduled
+  days (the sum of `FlightRanges`, gaps excluded); otherwise unknown. The zero-delivery HIGH
+  needs at least one scheduled day in the window. Amounts in item text are printed as
+  "12.50 in account currency" — no currency symbol, since X's `*_local_micro` figures are in the
+  account's own currency, which the account resource does not carry. The window is the SAVED REPORT's own — its first and last day in the account's
+  timezone, carried to the service as `ReportedAccountRead.MetricsWindowStart/End` — so the
+  rules, the stats jobs and the line items' flight dates all count the account's calendar
+  days. (An earlier draft derived "today" from the service's UTC clock: on a US/Pacific
+  account every evening it counted a flight starting the next local day as scheduled and
+  raised a false zero-delivery HIGH.) With no window the pacing and zero-delivery judgements
+  are skipped. Microsoft's rules take no date at all (daily budget × days), so they did not
+  have this flaw and are unchanged.
+- **Boundary.** `resolveOwned` only, the bound account only
+  (`ErrAccountNotManagedByConnection`), and `account_id` checked by the design `Pattern`
+  `^[A-Za-z0-9]+$` + `MaxLength(64)` and identically by `twitter.ValidateMonitorAccountID` —
+  the connection's own rule, so every storable id can be monitored. Every refusal makes zero
+  upstream calls.
+- **Gate.** Behind `TWITTER_METRICS_ENABLED` (chart default `"false"`), on the same terms as
+  Microsoft's and Reddit's gates: only exactly `"true"` enables it, and disabled, all three
+  `AccountReportReader` methods answer `ErrAccountMetricsUnsupported` — the same 400 as a
+  platform with no monitor — before any credential is resolved. It gates only the monitor; X's
+  per-campaign metrics read is a different endpoint and is not affected.
+- **Unverified.** The whole X contract here follows docs.x.com and has not been exercised
+  against a live X account; the specific open points (the queued and failed status spellings,
+  whether job creation counts as a write) are marked UNVERIFIED in
+  `internal/platform/twitter/monitor.go`.

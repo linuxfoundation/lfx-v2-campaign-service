@@ -19,65 +19,68 @@ import (
 // Server lists the lfx-v2-campaign-service-connections service endpoint HTTP
 // handlers.
 type Server struct {
-	Mounts                     []*MountPoint
-	CreateGoogleAds            http.Handler
-	GetGoogleAds               http.Handler
-	UpdateGoogleAds            http.Handler
-	DeleteGoogleAds            http.Handler
-	TestGoogleAds              http.Handler
-	SetCredentialGoogleAds     http.Handler
-	CreateLinkedinAds          http.Handler
-	GetLinkedinAds             http.Handler
-	UpdateLinkedinAds          http.Handler
-	DeleteLinkedinAds          http.Handler
-	TestLinkedinAds            http.Handler
-	SetCredentialLinkedinAds   http.Handler
-	CreateMetaAds              http.Handler
-	GetMetaAds                 http.Handler
-	UpdateMetaAds              http.Handler
-	DeleteMetaAds              http.Handler
-	TestMetaAds                http.Handler
-	SetCredentialMetaAds       http.Handler
-	CreateRedditAds            http.Handler
-	GetRedditAds               http.Handler
-	UpdateRedditAds            http.Handler
-	DeleteRedditAds            http.Handler
-	TestRedditAds              http.Handler
-	SetCredentialRedditAds     http.Handler
-	CreateTwitterAds           http.Handler
-	GetTwitterAds              http.Handler
-	UpdateTwitterAds           http.Handler
-	DeleteTwitterAds           http.Handler
-	TestTwitterAds             http.Handler
-	SetCredentialTwitterAds    http.Handler
-	CreateMicrosoftAds         http.Handler
-	GetMicrosoftAds            http.Handler
-	UpdateMicrosoftAds         http.Handler
-	DeleteMicrosoftAds         http.Handler
-	TestMicrosoftAds           http.Handler
-	SetCredentialMicrosoftAds  http.Handler
-	CreateHubspot              http.Handler
-	GetHubspot                 http.Handler
-	UpdateHubspot              http.Handler
-	DeleteHubspot              http.Handler
-	TestHubspot                http.Handler
-	SetCredentialHubspot       http.Handler
-	ListGoogleAdsAccounts      http.Handler
-	GetGoogleAdsKeywords       http.Handler
-	GetGoogleAdsAudience       http.Handler
-	ResolveGoogleAdsCampaign   http.Handler
-	ListMetaAdsAccounts        http.Handler
-	ListLinkedinAdsAccounts    http.Handler
-	ListMicrosoftAdsAccounts   http.Handler
-	ListTwitterAdsAccounts     http.Handler
-	ListHubspotEmails          http.Handler
-	SearchHubspotCampaigns     http.Handler
-	CreateHubspotCampaign      http.Handler
-	MonitorGoogleAdsAccount    http.Handler
-	MonitorLinkedinAdsAccount  http.Handler
-	MonitorMetaAdsAccount      http.Handler
-	MonitorRedditAdsAccount    http.Handler
-	MonitorMicrosoftAdsAccount http.Handler
+	Mounts                      []*MountPoint
+	CreateGoogleAds             http.Handler
+	GetGoogleAds                http.Handler
+	UpdateGoogleAds             http.Handler
+	DeleteGoogleAds             http.Handler
+	TestGoogleAds               http.Handler
+	SetCredentialGoogleAds      http.Handler
+	CreateLinkedinAds           http.Handler
+	GetLinkedinAds              http.Handler
+	UpdateLinkedinAds           http.Handler
+	DeleteLinkedinAds           http.Handler
+	TestLinkedinAds             http.Handler
+	SetCredentialLinkedinAds    http.Handler
+	CreateMetaAds               http.Handler
+	GetMetaAds                  http.Handler
+	UpdateMetaAds               http.Handler
+	DeleteMetaAds               http.Handler
+	TestMetaAds                 http.Handler
+	SetCredentialMetaAds        http.Handler
+	CreateRedditAds             http.Handler
+	GetRedditAds                http.Handler
+	UpdateRedditAds             http.Handler
+	DeleteRedditAds             http.Handler
+	TestRedditAds               http.Handler
+	SetCredentialRedditAds      http.Handler
+	CreateTwitterAds            http.Handler
+	GetTwitterAds               http.Handler
+	UpdateTwitterAds            http.Handler
+	DeleteTwitterAds            http.Handler
+	TestTwitterAds              http.Handler
+	SetCredentialTwitterAds     http.Handler
+	CreateMicrosoftAds          http.Handler
+	GetMicrosoftAds             http.Handler
+	UpdateMicrosoftAds          http.Handler
+	DeleteMicrosoftAds          http.Handler
+	TestMicrosoftAds            http.Handler
+	SetCredentialMicrosoftAds   http.Handler
+	CreateHubspot               http.Handler
+	GetHubspot                  http.Handler
+	UpdateHubspot               http.Handler
+	DeleteHubspot               http.Handler
+	TestHubspot                 http.Handler
+	SetCredentialHubspot        http.Handler
+	ListGoogleAdsAccounts       http.Handler
+	GetGoogleAdsKeywords        http.Handler
+	GetGoogleAdsAudience        http.Handler
+	GetMicrosoftAdsKeywords     http.Handler
+	ResolveGoogleAdsCampaign    http.Handler
+	ResolveMicrosoftAdsCampaign http.Handler
+	ListMetaAdsAccounts         http.Handler
+	ListLinkedinAdsAccounts     http.Handler
+	ListMicrosoftAdsAccounts    http.Handler
+	ListTwitterAdsAccounts      http.Handler
+	ListHubspotEmails           http.Handler
+	SearchHubspotCampaigns      http.Handler
+	CreateHubspotCampaign       http.Handler
+	MonitorGoogleAdsAccount     http.Handler
+	MonitorLinkedinAdsAccount   http.Handler
+	MonitorMetaAdsAccount       http.Handler
+	MonitorRedditAdsAccount     http.Handler
+	MonitorMicrosoftAdsAccount  http.Handler
+	MonitorTwitterAdsAccount    http.Handler
 }
 
 // MountPoint holds information about the mounted endpoints.
@@ -153,7 +156,9 @@ func New(
 			{"ListGoogleAdsAccounts", "GET", "/projects/{project_id}/connection-google-ads/accounts"},
 			{"GetGoogleAdsKeywords", "GET", "/projects/{project_id}/google-ads/keywords"},
 			{"GetGoogleAdsAudience", "GET", "/projects/{project_id}/google-ads/audience"},
+			{"GetMicrosoftAdsKeywords", "GET", "/projects/{project_id}/microsoft-ads/keywords"},
 			{"ResolveGoogleAdsCampaign", "GET", "/projects/{project_id}/google-ads/campaign-ref"},
+			{"ResolveMicrosoftAdsCampaign", "GET", "/projects/{project_id}/microsoft-ads/campaign-ref"},
 			{"ListMetaAdsAccounts", "GET", "/projects/{project_id}/connection-meta-ads/accounts"},
 			{"ListLinkedinAdsAccounts", "GET", "/projects/{project_id}/connection-linkedin-ads/accounts"},
 			{"ListMicrosoftAdsAccounts", "GET", "/projects/{project_id}/connection-microsoft-ads/accounts"},
@@ -166,65 +171,69 @@ func New(
 			{"MonitorMetaAdsAccount", "GET", "/projects/{project_id}/connection-meta-ads/account-monitor"},
 			{"MonitorRedditAdsAccount", "GET", "/projects/{project_id}/connection-reddit-ads/account-monitor"},
 			{"MonitorMicrosoftAdsAccount", "GET", "/projects/{project_id}/connection-microsoft-ads/account-monitor"},
+			{"MonitorTwitterAdsAccount", "GET", "/projects/{project_id}/connection-twitter-ads/account-monitor"},
 		},
-		CreateGoogleAds:            NewCreateGoogleAdsHandler(e.CreateGoogleAds, mux, decoder, encoder, errhandler, formatter),
-		GetGoogleAds:               NewGetGoogleAdsHandler(e.GetGoogleAds, mux, decoder, encoder, errhandler, formatter),
-		UpdateGoogleAds:            NewUpdateGoogleAdsHandler(e.UpdateGoogleAds, mux, decoder, encoder, errhandler, formatter),
-		DeleteGoogleAds:            NewDeleteGoogleAdsHandler(e.DeleteGoogleAds, mux, decoder, encoder, errhandler, formatter),
-		TestGoogleAds:              NewTestGoogleAdsHandler(e.TestGoogleAds, mux, decoder, encoder, errhandler, formatter),
-		SetCredentialGoogleAds:     NewSetCredentialGoogleAdsHandler(e.SetCredentialGoogleAds, mux, decoder, encoder, errhandler, formatter),
-		CreateLinkedinAds:          NewCreateLinkedinAdsHandler(e.CreateLinkedinAds, mux, decoder, encoder, errhandler, formatter),
-		GetLinkedinAds:             NewGetLinkedinAdsHandler(e.GetLinkedinAds, mux, decoder, encoder, errhandler, formatter),
-		UpdateLinkedinAds:          NewUpdateLinkedinAdsHandler(e.UpdateLinkedinAds, mux, decoder, encoder, errhandler, formatter),
-		DeleteLinkedinAds:          NewDeleteLinkedinAdsHandler(e.DeleteLinkedinAds, mux, decoder, encoder, errhandler, formatter),
-		TestLinkedinAds:            NewTestLinkedinAdsHandler(e.TestLinkedinAds, mux, decoder, encoder, errhandler, formatter),
-		SetCredentialLinkedinAds:   NewSetCredentialLinkedinAdsHandler(e.SetCredentialLinkedinAds, mux, decoder, encoder, errhandler, formatter),
-		CreateMetaAds:              NewCreateMetaAdsHandler(e.CreateMetaAds, mux, decoder, encoder, errhandler, formatter),
-		GetMetaAds:                 NewGetMetaAdsHandler(e.GetMetaAds, mux, decoder, encoder, errhandler, formatter),
-		UpdateMetaAds:              NewUpdateMetaAdsHandler(e.UpdateMetaAds, mux, decoder, encoder, errhandler, formatter),
-		DeleteMetaAds:              NewDeleteMetaAdsHandler(e.DeleteMetaAds, mux, decoder, encoder, errhandler, formatter),
-		TestMetaAds:                NewTestMetaAdsHandler(e.TestMetaAds, mux, decoder, encoder, errhandler, formatter),
-		SetCredentialMetaAds:       NewSetCredentialMetaAdsHandler(e.SetCredentialMetaAds, mux, decoder, encoder, errhandler, formatter),
-		CreateRedditAds:            NewCreateRedditAdsHandler(e.CreateRedditAds, mux, decoder, encoder, errhandler, formatter),
-		GetRedditAds:               NewGetRedditAdsHandler(e.GetRedditAds, mux, decoder, encoder, errhandler, formatter),
-		UpdateRedditAds:            NewUpdateRedditAdsHandler(e.UpdateRedditAds, mux, decoder, encoder, errhandler, formatter),
-		DeleteRedditAds:            NewDeleteRedditAdsHandler(e.DeleteRedditAds, mux, decoder, encoder, errhandler, formatter),
-		TestRedditAds:              NewTestRedditAdsHandler(e.TestRedditAds, mux, decoder, encoder, errhandler, formatter),
-		SetCredentialRedditAds:     NewSetCredentialRedditAdsHandler(e.SetCredentialRedditAds, mux, decoder, encoder, errhandler, formatter),
-		CreateTwitterAds:           NewCreateTwitterAdsHandler(e.CreateTwitterAds, mux, decoder, encoder, errhandler, formatter),
-		GetTwitterAds:              NewGetTwitterAdsHandler(e.GetTwitterAds, mux, decoder, encoder, errhandler, formatter),
-		UpdateTwitterAds:           NewUpdateTwitterAdsHandler(e.UpdateTwitterAds, mux, decoder, encoder, errhandler, formatter),
-		DeleteTwitterAds:           NewDeleteTwitterAdsHandler(e.DeleteTwitterAds, mux, decoder, encoder, errhandler, formatter),
-		TestTwitterAds:             NewTestTwitterAdsHandler(e.TestTwitterAds, mux, decoder, encoder, errhandler, formatter),
-		SetCredentialTwitterAds:    NewSetCredentialTwitterAdsHandler(e.SetCredentialTwitterAds, mux, decoder, encoder, errhandler, formatter),
-		CreateMicrosoftAds:         NewCreateMicrosoftAdsHandler(e.CreateMicrosoftAds, mux, decoder, encoder, errhandler, formatter),
-		GetMicrosoftAds:            NewGetMicrosoftAdsHandler(e.GetMicrosoftAds, mux, decoder, encoder, errhandler, formatter),
-		UpdateMicrosoftAds:         NewUpdateMicrosoftAdsHandler(e.UpdateMicrosoftAds, mux, decoder, encoder, errhandler, formatter),
-		DeleteMicrosoftAds:         NewDeleteMicrosoftAdsHandler(e.DeleteMicrosoftAds, mux, decoder, encoder, errhandler, formatter),
-		TestMicrosoftAds:           NewTestMicrosoftAdsHandler(e.TestMicrosoftAds, mux, decoder, encoder, errhandler, formatter),
-		SetCredentialMicrosoftAds:  NewSetCredentialMicrosoftAdsHandler(e.SetCredentialMicrosoftAds, mux, decoder, encoder, errhandler, formatter),
-		CreateHubspot:              NewCreateHubspotHandler(e.CreateHubspot, mux, decoder, encoder, errhandler, formatter),
-		GetHubspot:                 NewGetHubspotHandler(e.GetHubspot, mux, decoder, encoder, errhandler, formatter),
-		UpdateHubspot:              NewUpdateHubspotHandler(e.UpdateHubspot, mux, decoder, encoder, errhandler, formatter),
-		DeleteHubspot:              NewDeleteHubspotHandler(e.DeleteHubspot, mux, decoder, encoder, errhandler, formatter),
-		TestHubspot:                NewTestHubspotHandler(e.TestHubspot, mux, decoder, encoder, errhandler, formatter),
-		SetCredentialHubspot:       NewSetCredentialHubspotHandler(e.SetCredentialHubspot, mux, decoder, encoder, errhandler, formatter),
-		ListGoogleAdsAccounts:      NewListGoogleAdsAccountsHandler(e.ListGoogleAdsAccounts, mux, decoder, encoder, errhandler, formatter),
-		GetGoogleAdsKeywords:       NewGetGoogleAdsKeywordsHandler(e.GetGoogleAdsKeywords, mux, decoder, encoder, errhandler, formatter),
-		GetGoogleAdsAudience:       NewGetGoogleAdsAudienceHandler(e.GetGoogleAdsAudience, mux, decoder, encoder, errhandler, formatter),
-		ResolveGoogleAdsCampaign:   NewResolveGoogleAdsCampaignHandler(e.ResolveGoogleAdsCampaign, mux, decoder, encoder, errhandler, formatter),
-		ListMetaAdsAccounts:        NewListMetaAdsAccountsHandler(e.ListMetaAdsAccounts, mux, decoder, encoder, errhandler, formatter),
-		ListLinkedinAdsAccounts:    NewListLinkedinAdsAccountsHandler(e.ListLinkedinAdsAccounts, mux, decoder, encoder, errhandler, formatter),
-		ListMicrosoftAdsAccounts:   NewListMicrosoftAdsAccountsHandler(e.ListMicrosoftAdsAccounts, mux, decoder, encoder, errhandler, formatter),
-		ListTwitterAdsAccounts:     NewListTwitterAdsAccountsHandler(e.ListTwitterAdsAccounts, mux, decoder, encoder, errhandler, formatter),
-		ListHubspotEmails:          NewListHubspotEmailsHandler(e.ListHubspotEmails, mux, decoder, encoder, errhandler, formatter),
-		SearchHubspotCampaigns:     NewSearchHubspotCampaignsHandler(e.SearchHubspotCampaigns, mux, decoder, encoder, errhandler, formatter),
-		CreateHubspotCampaign:      NewCreateHubspotCampaignHandler(e.CreateHubspotCampaign, mux, decoder, encoder, errhandler, formatter),
-		MonitorGoogleAdsAccount:    NewMonitorGoogleAdsAccountHandler(e.MonitorGoogleAdsAccount, mux, decoder, encoder, errhandler, formatter),
-		MonitorLinkedinAdsAccount:  NewMonitorLinkedinAdsAccountHandler(e.MonitorLinkedinAdsAccount, mux, decoder, encoder, errhandler, formatter),
-		MonitorMetaAdsAccount:      NewMonitorMetaAdsAccountHandler(e.MonitorMetaAdsAccount, mux, decoder, encoder, errhandler, formatter),
-		MonitorRedditAdsAccount:    NewMonitorRedditAdsAccountHandler(e.MonitorRedditAdsAccount, mux, decoder, encoder, errhandler, formatter),
-		MonitorMicrosoftAdsAccount: NewMonitorMicrosoftAdsAccountHandler(e.MonitorMicrosoftAdsAccount, mux, decoder, encoder, errhandler, formatter),
+		CreateGoogleAds:             NewCreateGoogleAdsHandler(e.CreateGoogleAds, mux, decoder, encoder, errhandler, formatter),
+		GetGoogleAds:                NewGetGoogleAdsHandler(e.GetGoogleAds, mux, decoder, encoder, errhandler, formatter),
+		UpdateGoogleAds:             NewUpdateGoogleAdsHandler(e.UpdateGoogleAds, mux, decoder, encoder, errhandler, formatter),
+		DeleteGoogleAds:             NewDeleteGoogleAdsHandler(e.DeleteGoogleAds, mux, decoder, encoder, errhandler, formatter),
+		TestGoogleAds:               NewTestGoogleAdsHandler(e.TestGoogleAds, mux, decoder, encoder, errhandler, formatter),
+		SetCredentialGoogleAds:      NewSetCredentialGoogleAdsHandler(e.SetCredentialGoogleAds, mux, decoder, encoder, errhandler, formatter),
+		CreateLinkedinAds:           NewCreateLinkedinAdsHandler(e.CreateLinkedinAds, mux, decoder, encoder, errhandler, formatter),
+		GetLinkedinAds:              NewGetLinkedinAdsHandler(e.GetLinkedinAds, mux, decoder, encoder, errhandler, formatter),
+		UpdateLinkedinAds:           NewUpdateLinkedinAdsHandler(e.UpdateLinkedinAds, mux, decoder, encoder, errhandler, formatter),
+		DeleteLinkedinAds:           NewDeleteLinkedinAdsHandler(e.DeleteLinkedinAds, mux, decoder, encoder, errhandler, formatter),
+		TestLinkedinAds:             NewTestLinkedinAdsHandler(e.TestLinkedinAds, mux, decoder, encoder, errhandler, formatter),
+		SetCredentialLinkedinAds:    NewSetCredentialLinkedinAdsHandler(e.SetCredentialLinkedinAds, mux, decoder, encoder, errhandler, formatter),
+		CreateMetaAds:               NewCreateMetaAdsHandler(e.CreateMetaAds, mux, decoder, encoder, errhandler, formatter),
+		GetMetaAds:                  NewGetMetaAdsHandler(e.GetMetaAds, mux, decoder, encoder, errhandler, formatter),
+		UpdateMetaAds:               NewUpdateMetaAdsHandler(e.UpdateMetaAds, mux, decoder, encoder, errhandler, formatter),
+		DeleteMetaAds:               NewDeleteMetaAdsHandler(e.DeleteMetaAds, mux, decoder, encoder, errhandler, formatter),
+		TestMetaAds:                 NewTestMetaAdsHandler(e.TestMetaAds, mux, decoder, encoder, errhandler, formatter),
+		SetCredentialMetaAds:        NewSetCredentialMetaAdsHandler(e.SetCredentialMetaAds, mux, decoder, encoder, errhandler, formatter),
+		CreateRedditAds:             NewCreateRedditAdsHandler(e.CreateRedditAds, mux, decoder, encoder, errhandler, formatter),
+		GetRedditAds:                NewGetRedditAdsHandler(e.GetRedditAds, mux, decoder, encoder, errhandler, formatter),
+		UpdateRedditAds:             NewUpdateRedditAdsHandler(e.UpdateRedditAds, mux, decoder, encoder, errhandler, formatter),
+		DeleteRedditAds:             NewDeleteRedditAdsHandler(e.DeleteRedditAds, mux, decoder, encoder, errhandler, formatter),
+		TestRedditAds:               NewTestRedditAdsHandler(e.TestRedditAds, mux, decoder, encoder, errhandler, formatter),
+		SetCredentialRedditAds:      NewSetCredentialRedditAdsHandler(e.SetCredentialRedditAds, mux, decoder, encoder, errhandler, formatter),
+		CreateTwitterAds:            NewCreateTwitterAdsHandler(e.CreateTwitterAds, mux, decoder, encoder, errhandler, formatter),
+		GetTwitterAds:               NewGetTwitterAdsHandler(e.GetTwitterAds, mux, decoder, encoder, errhandler, formatter),
+		UpdateTwitterAds:            NewUpdateTwitterAdsHandler(e.UpdateTwitterAds, mux, decoder, encoder, errhandler, formatter),
+		DeleteTwitterAds:            NewDeleteTwitterAdsHandler(e.DeleteTwitterAds, mux, decoder, encoder, errhandler, formatter),
+		TestTwitterAds:              NewTestTwitterAdsHandler(e.TestTwitterAds, mux, decoder, encoder, errhandler, formatter),
+		SetCredentialTwitterAds:     NewSetCredentialTwitterAdsHandler(e.SetCredentialTwitterAds, mux, decoder, encoder, errhandler, formatter),
+		CreateMicrosoftAds:          NewCreateMicrosoftAdsHandler(e.CreateMicrosoftAds, mux, decoder, encoder, errhandler, formatter),
+		GetMicrosoftAds:             NewGetMicrosoftAdsHandler(e.GetMicrosoftAds, mux, decoder, encoder, errhandler, formatter),
+		UpdateMicrosoftAds:          NewUpdateMicrosoftAdsHandler(e.UpdateMicrosoftAds, mux, decoder, encoder, errhandler, formatter),
+		DeleteMicrosoftAds:          NewDeleteMicrosoftAdsHandler(e.DeleteMicrosoftAds, mux, decoder, encoder, errhandler, formatter),
+		TestMicrosoftAds:            NewTestMicrosoftAdsHandler(e.TestMicrosoftAds, mux, decoder, encoder, errhandler, formatter),
+		SetCredentialMicrosoftAds:   NewSetCredentialMicrosoftAdsHandler(e.SetCredentialMicrosoftAds, mux, decoder, encoder, errhandler, formatter),
+		CreateHubspot:               NewCreateHubspotHandler(e.CreateHubspot, mux, decoder, encoder, errhandler, formatter),
+		GetHubspot:                  NewGetHubspotHandler(e.GetHubspot, mux, decoder, encoder, errhandler, formatter),
+		UpdateHubspot:               NewUpdateHubspotHandler(e.UpdateHubspot, mux, decoder, encoder, errhandler, formatter),
+		DeleteHubspot:               NewDeleteHubspotHandler(e.DeleteHubspot, mux, decoder, encoder, errhandler, formatter),
+		TestHubspot:                 NewTestHubspotHandler(e.TestHubspot, mux, decoder, encoder, errhandler, formatter),
+		SetCredentialHubspot:        NewSetCredentialHubspotHandler(e.SetCredentialHubspot, mux, decoder, encoder, errhandler, formatter),
+		ListGoogleAdsAccounts:       NewListGoogleAdsAccountsHandler(e.ListGoogleAdsAccounts, mux, decoder, encoder, errhandler, formatter),
+		GetGoogleAdsKeywords:        NewGetGoogleAdsKeywordsHandler(e.GetGoogleAdsKeywords, mux, decoder, encoder, errhandler, formatter),
+		GetGoogleAdsAudience:        NewGetGoogleAdsAudienceHandler(e.GetGoogleAdsAudience, mux, decoder, encoder, errhandler, formatter),
+		GetMicrosoftAdsKeywords:     NewGetMicrosoftAdsKeywordsHandler(e.GetMicrosoftAdsKeywords, mux, decoder, encoder, errhandler, formatter),
+		ResolveGoogleAdsCampaign:    NewResolveGoogleAdsCampaignHandler(e.ResolveGoogleAdsCampaign, mux, decoder, encoder, errhandler, formatter),
+		ResolveMicrosoftAdsCampaign: NewResolveMicrosoftAdsCampaignHandler(e.ResolveMicrosoftAdsCampaign, mux, decoder, encoder, errhandler, formatter),
+		ListMetaAdsAccounts:         NewListMetaAdsAccountsHandler(e.ListMetaAdsAccounts, mux, decoder, encoder, errhandler, formatter),
+		ListLinkedinAdsAccounts:     NewListLinkedinAdsAccountsHandler(e.ListLinkedinAdsAccounts, mux, decoder, encoder, errhandler, formatter),
+		ListMicrosoftAdsAccounts:    NewListMicrosoftAdsAccountsHandler(e.ListMicrosoftAdsAccounts, mux, decoder, encoder, errhandler, formatter),
+		ListTwitterAdsAccounts:      NewListTwitterAdsAccountsHandler(e.ListTwitterAdsAccounts, mux, decoder, encoder, errhandler, formatter),
+		ListHubspotEmails:           NewListHubspotEmailsHandler(e.ListHubspotEmails, mux, decoder, encoder, errhandler, formatter),
+		SearchHubspotCampaigns:      NewSearchHubspotCampaignsHandler(e.SearchHubspotCampaigns, mux, decoder, encoder, errhandler, formatter),
+		CreateHubspotCampaign:       NewCreateHubspotCampaignHandler(e.CreateHubspotCampaign, mux, decoder, encoder, errhandler, formatter),
+		MonitorGoogleAdsAccount:     NewMonitorGoogleAdsAccountHandler(e.MonitorGoogleAdsAccount, mux, decoder, encoder, errhandler, formatter),
+		MonitorLinkedinAdsAccount:   NewMonitorLinkedinAdsAccountHandler(e.MonitorLinkedinAdsAccount, mux, decoder, encoder, errhandler, formatter),
+		MonitorMetaAdsAccount:       NewMonitorMetaAdsAccountHandler(e.MonitorMetaAdsAccount, mux, decoder, encoder, errhandler, formatter),
+		MonitorRedditAdsAccount:     NewMonitorRedditAdsAccountHandler(e.MonitorRedditAdsAccount, mux, decoder, encoder, errhandler, formatter),
+		MonitorMicrosoftAdsAccount:  NewMonitorMicrosoftAdsAccountHandler(e.MonitorMicrosoftAdsAccount, mux, decoder, encoder, errhandler, formatter),
+		MonitorTwitterAdsAccount:    NewMonitorTwitterAdsAccountHandler(e.MonitorTwitterAdsAccount, mux, decoder, encoder, errhandler, formatter),
 	}
 }
 
@@ -278,7 +287,9 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.ListGoogleAdsAccounts = m(s.ListGoogleAdsAccounts)
 	s.GetGoogleAdsKeywords = m(s.GetGoogleAdsKeywords)
 	s.GetGoogleAdsAudience = m(s.GetGoogleAdsAudience)
+	s.GetMicrosoftAdsKeywords = m(s.GetMicrosoftAdsKeywords)
 	s.ResolveGoogleAdsCampaign = m(s.ResolveGoogleAdsCampaign)
+	s.ResolveMicrosoftAdsCampaign = m(s.ResolveMicrosoftAdsCampaign)
 	s.ListMetaAdsAccounts = m(s.ListMetaAdsAccounts)
 	s.ListLinkedinAdsAccounts = m(s.ListLinkedinAdsAccounts)
 	s.ListMicrosoftAdsAccounts = m(s.ListMicrosoftAdsAccounts)
@@ -291,6 +302,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.MonitorMetaAdsAccount = m(s.MonitorMetaAdsAccount)
 	s.MonitorRedditAdsAccount = m(s.MonitorRedditAdsAccount)
 	s.MonitorMicrosoftAdsAccount = m(s.MonitorMicrosoftAdsAccount)
+	s.MonitorTwitterAdsAccount = m(s.MonitorTwitterAdsAccount)
 }
 
 // MethodNames returns the methods served.
@@ -344,7 +356,9 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountListGoogleAdsAccountsHandler(mux, h.ListGoogleAdsAccounts)
 	MountGetGoogleAdsKeywordsHandler(mux, h.GetGoogleAdsKeywords)
 	MountGetGoogleAdsAudienceHandler(mux, h.GetGoogleAdsAudience)
+	MountGetMicrosoftAdsKeywordsHandler(mux, h.GetMicrosoftAdsKeywords)
 	MountResolveGoogleAdsCampaignHandler(mux, h.ResolveGoogleAdsCampaign)
+	MountResolveMicrosoftAdsCampaignHandler(mux, h.ResolveMicrosoftAdsCampaign)
 	MountListMetaAdsAccountsHandler(mux, h.ListMetaAdsAccounts)
 	MountListLinkedinAdsAccountsHandler(mux, h.ListLinkedinAdsAccounts)
 	MountListMicrosoftAdsAccountsHandler(mux, h.ListMicrosoftAdsAccounts)
@@ -357,6 +371,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountMonitorMetaAdsAccountHandler(mux, h.MonitorMetaAdsAccount)
 	MountMonitorRedditAdsAccountHandler(mux, h.MonitorRedditAdsAccount)
 	MountMonitorMicrosoftAdsAccountHandler(mux, h.MonitorMicrosoftAdsAccount)
+	MountMonitorTwitterAdsAccountHandler(mux, h.MonitorTwitterAdsAccount)
 }
 
 // Mount configures the mux to serve the lfx-v2-campaign-service-connections
@@ -2808,6 +2823,61 @@ func NewGetGoogleAdsAudienceHandler(
 	})
 }
 
+// MountGetMicrosoftAdsKeywordsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
+// endpoint.
+func MountGetMicrosoftAdsKeywordsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/microsoft-ads/keywords", f)
+}
+
+// NewGetMicrosoftAdsKeywordsHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-connections" service
+// "get-microsoft-ads-keywords" endpoint.
+func NewGetMicrosoftAdsKeywordsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeGetMicrosoftAdsKeywordsRequest(mux, decoder)
+		encodeResponse = EncodeGetMicrosoftAdsKeywordsResponse(encoder)
+		encodeError    = EncodeGetMicrosoftAdsKeywordsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "get-microsoft-ads-keywords")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
 // MountResolveGoogleAdsCampaignHandler configures the mux to serve the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint.
@@ -2840,6 +2910,61 @@ func NewResolveGoogleAdsCampaignHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "resolve-google-ads-campaign")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountResolveMicrosoftAdsCampaignHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-microsoft-ads-campaign" endpoint.
+func MountResolveMicrosoftAdsCampaignHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/microsoft-ads/campaign-ref", f)
+}
+
+// NewResolveMicrosoftAdsCampaignHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-connections" service
+// "resolve-microsoft-ads-campaign" endpoint.
+func NewResolveMicrosoftAdsCampaignHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeResolveMicrosoftAdsCampaignRequest(mux, decoder)
+		encodeResponse = EncodeResolveMicrosoftAdsCampaignResponse(encoder)
+		encodeError    = EncodeResolveMicrosoftAdsCampaignError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "resolve-microsoft-ads-campaign")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {
@@ -3499,6 +3624,61 @@ func NewMonitorMicrosoftAdsAccountHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "monitor-microsoft-ads-account")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountMonitorTwitterAdsAccountHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint.
+func MountMonitorTwitterAdsAccountHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/connection-twitter-ads/account-monitor", f)
+}
+
+// NewMonitorTwitterAdsAccountHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-connections" service
+// "monitor-twitter-ads-account" endpoint.
+func NewMonitorTwitterAdsAccountHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeMonitorTwitterAdsAccountRequest(mux, decoder)
+		encodeResponse = EncodeMonitorTwitterAdsAccountResponse(encoder)
+		encodeError    = EncodeMonitorTwitterAdsAccountError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "monitor-twitter-ads-account")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {

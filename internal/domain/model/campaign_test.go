@@ -4,6 +4,7 @@
 package model
 
 import (
+	"context"
 	"go/ast"
 	"go/doc"
 	"go/parser"
@@ -297,5 +298,37 @@ func TestDocCommentsAreAttachedToTheirOwnTypes(t *testing.T) {
 		if !strings.Contains(found.Doc, want) {
 			t.Errorf("%s's doc comment does not name it, so it probably belongs to another type:\n%s", want, found.Doc)
 		}
+	}
+}
+
+// Slot 1 must compose exactly the suffix every campaign had before slot versions existed:
+// retries and name-based reconciliation of those campaigns match on it. Later slots extend it.
+func TestSlotNameSuffix(t *testing.T) {
+	for _, tc := range []struct {
+		slot int
+		want string
+	}{
+		{0, "brief-1"}, // unset normalizes to the first slot
+		{FirstSlotVersion, "brief-1"},
+		{2, "brief-1-2"},
+		{10, "brief-1-10"},
+	} {
+		if got := SlotNameSuffix("brief-1", tc.slot); got != tc.want {
+			t.Errorf("SlotNameSuffix(brief-1, %d) = %q, want %q", tc.slot, got, tc.want)
+		}
+	}
+}
+
+// A context without a slot version means the first slot — that is what every dispatch path
+// that predates slot versions passes, and it must keep composing the names it always did.
+func TestDispatchSlotVersionDefaultsToTheFirstSlot(t *testing.T) {
+	if got := DispatchSlotVersion(context.Background()); got != FirstSlotVersion {
+		t.Errorf("DispatchSlotVersion(empty ctx) = %d, want %d", got, FirstSlotVersion)
+	}
+	if got := DispatchSlotVersion(WithDispatchSlotVersion(context.Background(), 3)); got != 3 {
+		t.Errorf("DispatchSlotVersion round trip = %d, want 3", got)
+	}
+	if got := DispatchSlotVersion(WithDispatchSlotVersion(context.Background(), 0)); got != FirstSlotVersion {
+		t.Errorf("DispatchSlotVersion(0) = %d, want it normalized to %d", got, FirstSlotVersion)
 	}
 }

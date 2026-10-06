@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -28,6 +29,9 @@ type fakeReportReader struct {
 	submits   int
 	checks    int
 	checkedID string
+	// submitUntilDeadline makes SubmitAccountReport block until its context is done and THEN
+	// succeed — the platform accepted the last write just as the call budget ran out.
+	submitUntilDeadline bool
 }
 
 func (f *fakeReportReader) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
@@ -41,7 +45,10 @@ func (f *fakeReportReader) ListAccountCampaigns(context.Context, string, model.P
 	return append([]model.AccountCampaignMetrics(nil), f.campaigns...), nil
 }
 
-func (f *fakeReportReader) SubmitAccountReport(context.Context, string, model.Provider, string, int) (*model.AccountReportSubmission, error) {
+func (f *fakeReportReader) SubmitAccountReport(ctx context.Context, _ string, _ model.Provider, _ string, _ int) (*model.AccountReportSubmission, error) {
+	if f.submitUntilDeadline {
+		<-ctx.Done()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.submits++
@@ -396,5 +403,105 @@ func TestReadReported_LosingTheMarkAdoptsTheWinnersReport(t *testing.T) {
 	}
 	if !got.MetricsPending {
 		t.Error("metrics_pending = false, want the winner's report reported as building")
+	}
+}
+
+// markCtxStore records the context MarkAccountReportPending was handed.
+type markCtxStore struct {
+	fakeReportStore
+	markErr      error
+	markDeadline time.Time
+	markHasDL    bool
+}
+
+func (s *markCtxStore) MarkAccountReportPending(ctx context.Context, key model.AccountReportKey, p model.PendingAccountReport) (bool, error) {
+	s.markErr = ctx.Err()
+	s.markDeadline, s.markHasDL = ctx.Deadline()
+	if s.markErr != nil {
+		return false, s.markErr
+	}
+	return s.fakeReportStore.MarkAccountReportPending(ctx, key, p)
+}
+
+// A submission that completes with the call budget spent must still be recorded: the report
+// exists on the platform, and an unrecorded one is resubmitted on every read and never collected.
+// The mark therefore runs on its own short budget, detached from the expired one.
+func TestReadReported_MarkUsesItsOwnBudget(t *testing.T) {
+	reader := &fakeReportReader{campaigns: twoCampaigns(), submitID: "r1", submitUntilDeadline: true}
+	store := &markCtxStore{}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	got, err := reportOrch(reader, store).ReadReportedAccountCampaigns(ctx, "proj", model.ProviderMicrosoftAds, "123", 7)
+	if err != nil {
+		t.Fatalf("ReadReportedAccountCampaigns: %v", err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("precondition: the request budget should be spent by the time the mark runs")
+	}
+	if store.markErr != nil {
+		t.Fatalf("mark ran on a dead context (%v); want its own live budget", store.markErr)
+	}
+	if !store.markHasDL || time.Until(store.markDeadline) > accountReportMarkTimeout {
+		t.Errorf("mark deadline = %v (set=%v), want one bounded by accountReportMarkTimeout", store.markDeadline, store.markHasDL)
+	}
+	if store.snap == nil || store.snap.Pending == nil || store.snap.Pending.ReportID != "r1" || !got.MetricsPending {
+		t.Errorf("saved pending = %+v, response pending = %v; want r1 recorded and reported as building", store.snap, got.MetricsPending)
+	}
+}
+
+// A submission declined for lack of budget is a skip, not a failure: nothing is recorded, the
+// read still serves its rows, and nothing is reported as building.
+func TestReadReported_BudgetSkipIsNotRecorded(t *testing.T) {
+	reader := &fakeReportReader{campaigns: twoCampaigns(), submitErr: fmt.Errorf("submit: %w", domain.ErrAccountReportBudgetTooShort)}
+	store := &fakeReportStore{}
+	got := readReported(t, reportOrch(reader, store))
+	if got.MetricsPending || len(got.Rows) != 2 || (store.snap != nil && store.snap.Pending != nil) {
+		t.Errorf("pending=%v rows=%d saved=%+v, want a skipped submission with nothing saved", got.MetricsPending, len(got.Rows), store.snap)
+	}
+}
+
+// A PERMANENT refusal — too many active campaigns, or a timezone off the whole UTC hour — fails
+// the read with its sentinel instead of being logged as a retry: no later read could submit, so
+// serving the saved (or absent) metrics as if a refresh were merely delayed would hide it
+// forever. Nothing is recorded as pending.
+func TestReadReported_PermanentRefusalFailsTheRead(t *testing.T) {
+	for _, sentinel := range []error{domain.ErrAccountTooManyActiveCampaigns, domain.ErrAccountTimezoneUnsupported} {
+		t.Run(sentinel.Error(), func(t *testing.T) {
+			reader := &fakeReportReader{campaigns: twoCampaigns(), submitErr: fmt.Errorf("submit: %w", sentinel)}
+			store := &fakeReportStore{}
+			got, err := reportOrch(reader, store).ReadReportedAccountCampaigns(context.Background(), "proj", model.ProviderMicrosoftAds, "123", 7)
+			if !errors.Is(err, sentinel) || got != nil {
+				t.Fatalf("got %+v, err = %v; want the read to fail with %v", got, err, sentinel)
+			}
+			if store.snap != nil && store.snap.Pending != nil {
+				t.Errorf("saved pending = %+v, want nothing recorded", store.snap.Pending)
+			}
+		})
+	}
+	// A fresh saved report means no submission is attempted, so it is still served.
+	reader := &fakeReportReader{campaigns: twoCampaigns(), submitErr: domain.ErrAccountTooManyActiveCampaigns}
+	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{ReportID: "r0", AsOf: time.Now()}}}
+	if got := readReported(t, reportOrch(reader, store)); len(got.Rows) != 2 || reader.submits != 0 {
+		t.Errorf("rows=%d submits=%d, want the fresh report served with no submission", len(got.Rows), reader.submits)
+	}
+}
+
+// The finished report's window travels with its metrics, so a rule engine that judges dates
+// (X's) evaluates on the days the report covered.
+func TestReadReported_CarriesTheReportWindow(t *testing.T) {
+	ws := time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC)
+	we := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+	reader := &fakeReportReader{campaigns: twoCampaigns()}
+	store := &fakeReportStore{snap: &model.AccountReportSnapshot{Ready: &model.ReadyAccountReport{
+		ReportID: "r0", AsOf: time.Now(), WindowStart: ws, WindowEnd: we,
+	}}}
+	got := readReported(t, reportOrch(reader, store))
+	if got.MetricsWindowStart == nil || !got.MetricsWindowStart.Equal(ws) || got.MetricsWindowEnd == nil || !got.MetricsWindowEnd.Equal(we) {
+		t.Errorf("window = %v..%v, want %v..%v", got.MetricsWindowStart, got.MetricsWindowEnd, ws, we)
+	}
+
+	none := readReported(t, reportOrch(&fakeReportReader{campaigns: twoCampaigns(), submitID: "r1"}, &fakeReportStore{}))
+	if none.MetricsWindowStart != nil || none.MetricsWindowEnd != nil {
+		t.Errorf("window = %v..%v, want nil with no finished report", none.MetricsWindowStart, none.MetricsWindowEnd)
 	}
 }

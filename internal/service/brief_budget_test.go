@@ -191,6 +191,15 @@ func TestUpdateCampaignBudget_RejectsBadRequests(t *testing.T) {
 			if !errors.As(err, &badReq) {
 				t.Fatalf("expected 400 BadRequestError, got %T: %v", err, err)
 			}
+			if tc.name == "rounds to zero micros" {
+				// Pins the corrected diagnostic: the cutoff is half a micro (rounding), not one
+				// micro, and the unit is the currency-relative micro.
+				for _, want := range []string{"rounds to zero micros", "0.000001 of the account's currency", "under half of one"} {
+					if !strings.Contains(badReq.Message, want) {
+						t.Errorf("message %q does not contain %q", badReq.Message, want)
+					}
+				}
+			}
 			if d.calls != 0 {
 				t.Errorf("the platform was contacted %d times for a request that is invalid on its face", d.calls)
 			}

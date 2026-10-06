@@ -8967,6 +8967,216 @@ func DecodeGetGoogleAdsAudienceResponse(decoder func(*http.Response) goahttp.Dec
 	}
 }
 
+// BuildGetMicrosoftAdsKeywordsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "get-microsoft-ads-keywords" endpoint
+func (c *Client) BuildGetMicrosoftAdsKeywordsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.GetMicrosoftAdsKeywordsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", "*lfxv2campaignserviceconnections.GetMicrosoftAdsKeywordsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetMicrosoftAdsKeywordsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGetMicrosoftAdsKeywordsRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections get-microsoft-ads-keywords server.
+func EncodeGetMicrosoftAdsKeywordsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.GetMicrosoftAdsKeywordsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", "*lfxv2campaignserviceconnections.GetMicrosoftAdsKeywordsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		if p.Window != nil {
+			values.Add("window", *p.Window)
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeGetMicrosoftAdsKeywordsResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// get-microsoft-ads-keywords endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeGetMicrosoftAdsKeywordsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeGetMicrosoftAdsKeywordsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GetMicrosoftAdsKeywordsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			err = ValidateGetMicrosoftAdsKeywordsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			res := NewGetMicrosoftAdsKeywordsMicrosoftAdsKeywordsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetMicrosoftAdsKeywordsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			err = ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			return nil, NewGetMicrosoftAdsKeywordsBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GetMicrosoftAdsKeywordsConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			err = ValidateGetMicrosoftAdsKeywordsConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			return nil, NewGetMicrosoftAdsKeywordsConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GetMicrosoftAdsKeywordsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			err = ValidateGetMicrosoftAdsKeywordsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			return nil, NewGetMicrosoftAdsKeywordsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GetMicrosoftAdsKeywordsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			err = ValidateGetMicrosoftAdsKeywordsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			return nil, NewGetMicrosoftAdsKeywordsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GetMicrosoftAdsKeywordsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			err = ValidateGetMicrosoftAdsKeywordsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			return nil, NewGetMicrosoftAdsKeywordsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetMicrosoftAdsKeywordsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			err = ValidateGetMicrosoftAdsKeywordsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			return nil, NewGetMicrosoftAdsKeywordsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetMicrosoftAdsKeywordsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			err = ValidateGetMicrosoftAdsKeywordsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+			}
+			return nil, NewGetMicrosoftAdsKeywordsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildResolveGoogleAdsCampaignRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-connections"
 // service "resolve-google-ads-campaign" endpoint
@@ -9157,6 +9367,200 @@ func DecodeResolveGoogleAdsCampaignResponse(decoder func(*http.Response) goahttp
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "resolve-google-ads-campaign", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildResolveMicrosoftAdsCampaignRequest instantiates a HTTP request object
+// with method and path set to call the "lfx-v2-campaign-service-connections"
+// service "resolve-microsoft-ads-campaign" endpoint
+func (c *Client) BuildResolveMicrosoftAdsCampaignRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ResolveMicrosoftAdsCampaignPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", "*lfxv2campaignserviceconnections.ResolveMicrosoftAdsCampaignPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ResolveMicrosoftAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeResolveMicrosoftAdsCampaignRequest returns an encoder for requests
+// sent to the lfx-v2-campaign-service-connections
+// resolve-microsoft-ads-campaign server.
+func EncodeResolveMicrosoftAdsCampaignRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ResolveMicrosoftAdsCampaignPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", "*lfxv2campaignserviceconnections.ResolveMicrosoftAdsCampaignPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		values.Add("platform_campaign_id", p.PlatformCampaignID)
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeResolveMicrosoftAdsCampaignResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// resolve-microsoft-ads-campaign endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeResolveMicrosoftAdsCampaignResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeResolveMicrosoftAdsCampaignResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ResolveMicrosoftAdsCampaignResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			err = ValidateResolveMicrosoftAdsCampaignResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			res := NewResolveMicrosoftAdsCampaignPlatformCampaignResolutionOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ResolveMicrosoftAdsCampaignBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			err = ValidateResolveMicrosoftAdsCampaignBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			return nil, NewResolveMicrosoftAdsCampaignBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ResolveMicrosoftAdsCampaignServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			err = ValidateResolveMicrosoftAdsCampaignServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			return nil, NewResolveMicrosoftAdsCampaignServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ResolveMicrosoftAdsCampaignInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			err = ValidateResolveMicrosoftAdsCampaignInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			return nil, NewResolveMicrosoftAdsCampaignInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ResolveMicrosoftAdsCampaignNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			err = ValidateResolveMicrosoftAdsCampaignNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			return nil, NewResolveMicrosoftAdsCampaignNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ResolveMicrosoftAdsCampaignPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			err = ValidateResolveMicrosoftAdsCampaignPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			return nil, NewResolveMicrosoftAdsCampaignPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ResolveMicrosoftAdsCampaignUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			err = ValidateResolveMicrosoftAdsCampaignUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+			}
+			return nil, NewResolveMicrosoftAdsCampaignUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", resp.StatusCode, string(body))
 		}
 	}
 }
@@ -11472,6 +11876,216 @@ func DecodeMonitorMicrosoftAdsAccountResponse(decoder func(*http.Response) goaht
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "monitor-microsoft-ads-account", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildMonitorTwitterAdsAccountRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "monitor-twitter-ads-account" endpoint
+func (c *Client) BuildMonitorTwitterAdsAccountRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", "*lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: MonitorTwitterAdsAccountLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeMonitorTwitterAdsAccountRequest returns an encoder for requests sent
+// to the lfx-v2-campaign-service-connections monitor-twitter-ads-account
+// server.
+func EncodeMonitorTwitterAdsAccountRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", "*lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		values.Add("account_id", p.AccountID)
+		values.Add("days", fmt.Sprintf("%v", p.Days))
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeMonitorTwitterAdsAccountResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// monitor-twitter-ads-account endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeMonitorTwitterAdsAccountResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeMonitorTwitterAdsAccountResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body MonitorTwitterAdsAccountResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			res := NewMonitorTwitterAdsAccountAccountMonitorOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body MonitorTwitterAdsAccountBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body MonitorTwitterAdsAccountConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body MonitorTwitterAdsAccountServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body MonitorTwitterAdsAccountInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body MonitorTwitterAdsAccountNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body MonitorTwitterAdsAccountPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body MonitorTwitterAdsAccountUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", resp.StatusCode, string(body))
 		}
 	}
 }

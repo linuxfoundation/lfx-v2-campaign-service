@@ -126,6 +126,22 @@ upstream create, so it fails loud instead. Replacing a brief's
 content resets it to `draft` (re-approval required). Optimistic concurrency is enforced via
 version/If-Match (`428` when missing, `412` on mismatch).
 
+**A deliberate second campaign (`new_version`).** Reuse is right for a retry and wrong for an
+operator who asks for another campaign on a platform the brief already has one on — the service
+used to hand back the first campaign as a success. `create-campaigns` now takes `new_version`,
+threaded as `StartOptions.NewVersion` (`Start` is `StartWithOptions` with the zero value). In
+`dispatchPlatform` the lookup returns the slot's LATEST campaign, and the claim takes a
+`slotVersion`: the latest one's for a retry, `latest+1` when `NewVersion` is set AND the latest
+is complete, and `1` on an empty slot. An UNFINISHED latest campaign is never built on — the
+claim targets its own slot version and gets the skip / reconciliation-required answer a retry
+gets, because a second campaign beside an unresolved one would spend twice. The slot version
+reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). While `000022`'s
+three-column index still exists, the claim returns `domain.ErrSlotVersionUnavailable` and the
+platform result is a plain "not available yet" refusal; nothing is created. `CreateCampaigns`
+refuses `new_version` synchronously (400, before a job exists) for any platform outside
+`model.ProviderSupportsSlotVersions` — today Microsoft only, because the other providers reuse
+campaigns by a name that does not yet vary by slot version (see the dispatch concept).
+
 Dispatch is durable (LFXV2-2665): single-flight per (brief, platform) is
 enforced by an atomic claim — `ClaimCampaignDispatch` does INSERT ... ON CONFLICT
 DO NOTHING of a `pending` campaign row, so exactly one worker across replicas
@@ -279,6 +295,36 @@ binds it in the same step as the brief repos, and BOTH startup paths bind throug
 `bindBriefLiveBackends` helper — the interface forces the method to exist, only the shared helper
 forces it to be CALLED, and the handler's 503 is deliberately indistinguishable from the
 no-database mode's, so a mis-wired live container cannot be detected from the outside.
+
+## Campaign config update: the caller's config is redacted before `config_snapshot`
+
+`BriefService.UpdateCampaign` (backing `PUT .../campaigns/{id}`) is DB-only and overlays the
+caller's name and, when supplied, `config`. `config` is Goa `Any` (`CampaignUpdateInput`), so
+any JSON value is accepted, and no dispatch adapter sees it on this path — the per-adapter
+create-time scrubbing in [internal/dispatch](internal-dispatch.md) never runs. It used to be
+persisted verbatim into `campaigns.config_snapshot`, which is stored UNENCRYPTED and carried
+into the campaign's index document, so a token in a link's query, fragment, userinfo or path
+landed in the clear.
+
+`redactedConfigSnapshot` (`campaign_config_redact.go`) now sits between the payload and the
+column. It is provider-agnostic: it marshals the value, decodes it with `UseNumber`, walks it
+recursively and runs every STRING value AND every object KEY through `redact.SnapshotText` —
+the same full redactor the adapters use for free text (scheme-ful URL → scheme+host;
+scheme-less link with a query/fragment or a path → host; `user:password@` runs and URLs with
+userinfo dropped). Keys are caller-typed too (a map keyed by landing-page URL carries its links
+in the keys). Numbers, booleans and null pass through untouched; structure is preserved. A nil
+`config` still leaves the stored snapshot unchanged.
+
+Two keys can redact to the same string (`https://a.example/x?t=1` and `https://a.example/y`).
+Nothing is silently merged or dropped: original keys are processed in sorted order, the first
+keeps the redacted key and each later one is stored as `<redacted>#2`, `#3`, … (lowest free
+suffix), so the output is stable across runs. The only reader of `config_snapshot`
+(`googleAdsRecordedChannelType`) reads the literal key `channel`, which redaction leaves alone.
+
+The contract is deliberately NOT tightened: a non-object config (a bare string or array) is
+still accepted and is redacted the same way. No caller in `lfx-v2-ui` was found sending this
+PUT, so the shape a client sends is not pinned down well enough to justify refusing anything.
+Rows written before this redaction are not backfilled.
 
 ## Campaign status toggle
 
@@ -540,6 +586,28 @@ ambiguity is carried by the MESSAGE, which tells the caller to VERIFY before ret
 mirrors the status toggle's unconfirmed arm exactly. A client must therefore read the message on
 a 503 here rather than branch on the status alone, and `docs/api-catalog.md` says so.
 
+## Keyword levers on Microsoft Advertising (LFXV2-2665)
+
+`ApplyKeywordActions` now admits Microsoft Advertising campaigns as well as Google Ads; every other
+platform is still a 400 before the orchestrator is reached. Microsoft's batch is NOT atomic, so
+its adapter sets `Outcome` (and `ErrorCode`) on every `model.KeywordActionOutcome`, and the
+handler renders `outcome`/`error_code` only when set, `resource_name` only when set, and counts
+`applied_count` as the outcomes that are empty (Google's atomic batch) or `APPLIED`. A Google
+response is therefore byte-for-byte the pre-change body — pinned against the generated encoder
+by `TestApplyKeywordActions_GoogleResultsCarryNoOutcomeFields`. The 404 and the
+unusable-connection 409 messages name the campaign's platform (Google's wording unchanged).
+
+`AddNegativeKeywords` (`brief_negative_keywords.go`, `POST …/campaigns/{campaign_id}/negative-keywords`)
+is the new sibling. It follows `ApplyKeywordActions`, not the toggle or budget write, because it
+persists nothing: no `If-Match`, no write lock, no ETag, no index event. Microsoft only; any other
+platform is 400 at the handler, and a Microsoft dispatcher without the capability is 400 via
+`Orchestrator.AddNegativeKeywords`'s type assertion on the new optional `NegativeKeywordAdder`.
+The orchestrator applies the same mutation timeout and the same outcome-count check
+(`unconfirmedOutcomeCountError`, whose message no longer claims every batch is atomic), and
+records the `negative_keywords` upstream op. `classifyNegativeKeywordError` mirrors the keyword
+actions' arms in the same order; `applied_count` counts `APPLIED` and `ALREADY_PRESENT`, and an
+outcome an adapter left empty is rendered `UNCONFIRMED`, never success.
+
 ## Campaign adoption
 
 `BriefService.AdoptCampaign` (backing `POST .../campaigns/adopt`) binds a campaign that ALREADY
@@ -781,12 +849,12 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
 - `ErrMonitorDaysInvalid` → **400** — a caller-supplied `days` window, not a stored connection, is
   outside the inclusive `domain.MonitorDaysMin`..`domain.MonitorDaysMax` bound. The service layer's
   own `validateMonitorDays` already rejects this for an HTTP caller before any dispatcher runs, and
-  each of the four account-monitor dispatchers re-checks it themselves too — same defense-in-depth
+  each of the six account-monitor dispatchers re-checks it themselves too — same defense-in-depth
   rationale as `ErrAccountIDMalformed` above, for a non-HTTP caller that bypasses Goa. See
   `domain.ErrMonitorDaysInvalid`'s doc comment.
 - `ErrAccountNotManagedByConnection` → **400** — a caller-supplied account id is well-formed but
   names an account the project's own resolved connection does not manage (answerable by the
-  Reddit, LinkedIn, Meta and Microsoft monitor reads, since a connection is bound to exactly
+  Reddit, LinkedIn, Meta, Microsoft and X monitor reads, since a connection is bound to exactly
   one ad account; Reddit checked it first, and Google Ads is the remaining deliberate gap). Checked before `ErrConnectionNotUsable`
   below: the stored connection is fine here, the REQUEST named the wrong account, so
   `ErrConnectionNotUsable`'s "check that the stored credential is active and valid" message
@@ -1428,7 +1496,8 @@ rollback this endpoint does not have.
 **What is persisted is the REQUESTED amount, not a readback of the applied one** — the dispatcher
 confirms acceptance and does not re-read, so the two can differ by less than the platform's
 smallest settable unit (LinkedIn settles on two decimals, Meta on the account currency's minor
-unit, Google on a micro). That is the same meaning the column already carries, and a sub-unit
+unit, Google on a micro, Microsoft on whatever its own validation of the account currency settles,
+since that amount is sent unrounded). That is the same meaning the column already carries, and a sub-unit
 drift is exactly what the settings readback exists to surface rather than to hide.
 Writing those columns does NOT breach the readback's "never write an observation back" rule: the
 budget columns record what a dispatch ASKED FOR, and a budget change is a new REQUEST, so the
@@ -1489,7 +1558,9 @@ a different category of data from the resource ids these logs carry.
 
 **The `ErrBudgetAmountRejected` arm is the one that returns a SPECIFIC message, and it is
 specific by construction rather than by string-handling.** A platform's own floor — LinkedIn's
-`$10` daily / `$100` lifetime, Meta's one minor unit — has no equivalent at this layer, which
+`$10` daily / `$100` lifetime, Meta's one minor unit, Microsoft's minimum in the account currency
+(stated only by Microsoft's own definite refusal of the mutate, so the platform is still
+unchanged) — has no equivalent at this layer, which
 validates only what is true for every platform at once (finite, `> 0`, `<= 1e9`, `>= half a
 micro`) and deliberately holds no per-platform floor. Without this arm such a refusal fell to the
 default 503, inviting a retry of a request that can never succeed. The adapter therefore hands
@@ -1500,10 +1571,21 @@ appended to the 400. **The rendered error chain is never interpolated into a cli
 wrapped chain would publish whatever an adapter or transport put in it.
 
 **A positive amount that rounds to zero micros is refused 400 here too**, alongside NaN, Inf,
-zero and the ceiling. Every supported platform bills in micros, so an amount under 0.000001 of
-the account's currency rounds to nothing upstream and the adapter refuses it with a bare error
-the switch below can classify only as 503 — an "unconfirmed upstream outcome" answer to a
-request that was never going to succeed, inviting a retry that cannot. The check compares the
+zero and the ceiling. Not every platform bills in micros — Google Ads does, LinkedIn settles on
+whole cents, Meta on the account currency's minor unit — but one micro is the LOOSEST floor any
+of them has, so it is the only floor the contract can state for every platform at once (the
+design's `Minimum` says the same). Two different bounds are in play and they are not the same
+number: the CONTRACT floor is 0.000001 (the design's `Minimum`, enforced by Goa's generated
+decoder, so an HTTP caller below it never reaches this method), while this method's RUNTIME
+cutoff is half a micro, because it compares the ROUNDED value — `math.Round(budget*1e6)` turns
+[0.0000005, 0.000001) into one micro, which Google accepts. Only an amount that rounds to ZERO
+micros reaches this refusal, and only a direct (non-HTTP) caller can send one below the contract
+floor at all; its 400 wording is therefore seen by Go callers, not by the HTTP API, which answers
+with Goa's validation error instead. LinkedIn and Meta already map their own (stricter) floors
+to a 400 with the adapter's reason; Google does not. Its bounds ARE the service's own, so its
+adapter would refuse such an amount with a bare error that the switch below can classify only as
+503. That is an "unconfirmed upstream outcome" answer to a request that was never going to
+succeed, inviting a retry that cannot. The check compares the
 ROUNDED value rather than a literal floor so it stays in step with the adapter's own
 `math.Round`, and it sits with the other validations, ahead of the load, the claim and the live
 settings read: a doomed request must not take the write lock. This floor is also what the
@@ -1525,6 +1607,46 @@ or the platform carries the new budget while the row still reports the old one w
 compensating rollback. The write is gated on the originally claimed version — the claim takes
 the lock but does not bump — so `ReplaceCampaign` co-commits the index event as every campaign
 write does.
+
+## Campaign bid write (LFXV2-2665)
+
+`BriefService.UpdateCampaignBid` (`brief_bid.go`, backing `PATCH .../campaigns/{id}/bid`) sets a
+campaign's MANUAL max cost-per-click bid on its ad platform, then persists it. It is
+`UpdateCampaignBudget`'s twin step for step — validation before load and claim (NaN first,
+`> 0`, `<= maxCampaignBid` = 1,000,000, and the same half-a-micro rounding cutoff), `If-Match`
+428/412 against the loaded row, `created_degraded` allowed, the email channel 400 and an empty
+platform id 409 before the claim, platform FIRST then `ReplaceCampaign` on a cancel-detached
+bounded context, and a success log — so the reasoning in the budget section above applies here
+unchanged and is not repeated.
+
+What differs:
+
+- **Body**: `bid` (Float64, account currency, contract `Minimum` one micro / `Maximum` 1,000,000)
+  and an OPTIONAL `bid_type` (enum `cpc`, NO Goa default — with `Default` plus `Enum` the
+  generated CLI validated the empty value before defaulting and rejected `{"bid":2.5}` — so the
+  service defaults it: omitted (nil) or empty → `cpc`). One unit exists today; it is named so an ad group bidding in another unit is
+  refused rather than re-bid in a unit nobody asked for.
+- **Persisted to `max_cpc_bid`** (migration `000039`, `model.Campaign.MaxCPCBid`), the bid
+  lever's twin of `budget_amount`: a REQUEST the platform confirmed, never an observation. NULL
+  means "never set through this endpoint", not "no bid" — a create-time bid lives in
+  `config_snapshot` under each platform's own key, which this layer deliberately does not patch.
+- **Sentinels**: `ErrBidUnsupported` → 400 (no `BidWriter`; Google Ads and LinkedIn today),
+  `ErrBidUnwritable` → 409 (automated, unreported or non-per-click bid strategy, or an
+  unaddressable ad group, ad set or line item — the message is NEUTRAL across both kinds ("its
+  bidding setup is not a manual per-click bid, or the ad group, ad set or line item this service
+  created for it could not be confirmed ... check the campaign in the ad platform"), says a bid
+  strategy is never changed, and carries no upstream detail),
+  `ErrBidAmountRejected` → 400 carrying ONLY the adapter's `BidAmountReason()` sentence. Every
+  connection/provenance/system arm and the UNCONFIRMED → 503 "verify the bid in the platform
+  before retrying" (lock held for `unconfirmedLockCooldown`) are the budget's, verbatim in shape.
+- **`Orchestrator.WriteCampaignBid`** is `WriteCampaignBudget`'s twin: the same pre-platform
+  guards, `bidWriteCallTimeout` (= `budgetWriteCallTimeout`), upstream metric op `write_bid`.
+- **`BidWriter`** (orchestrator.go) carries the budget's three rules plus its own: never write a
+  bid the platform will ignore, and never switch strategy — read the governing strategy first and
+  refuse an automated or unreported one with `ErrBidUnwritable`; never send a strategy field.
+  The bid goes to the level the create path put it (the one ad group — Microsoft, Reddit — ad set
+  — Meta — or line item — X — this service created); a row recording none is refused rather than
+  resolved upstream.
 
 ## Campaign delete
 
@@ -1746,8 +1868,11 @@ See [internal/service](../../../internal/service).
 ## Report-backed account monitor (`account_report.go`)
 
 `AccountReportReader` is the optional dispatcher capability for a platform whose monitor
-metrics come from an ASYNCHRONOUS report — today Microsoft, whose Reporting service takes
-minutes against a 20s call budget. `Orchestrator.ReadReportedAccountCampaigns` lists the
+metrics come from an ASYNCHRONOUS report — Microsoft, whose Reporting service takes
+minutes against a 20s call budget, and X, whose synchronous stats are capped at 7 days per
+request and share one rate budget across every foundation, so its monitor reads asynchronous
+stats jobs for every window. Both share the one orchestration and the one store below; nothing
+in either is platform-specific. `Orchestrator.ReadReportedAccountCampaigns` lists the
 account's campaigns live, checks a pending report once, submits a new one when nothing is
 building and the last finished report's as-of (its SUBMISSION time) is older than
 `accountReportFreshFor` (30m), abandons one still pending or uncheckable past
@@ -1755,10 +1880,61 @@ building and the last finished report's as-of (its SUBMISSION time) is older tha
 rather than thrown away — and fills metrics from the last finished
 report — all inside ONE `accountsCallTimeout`, because three per-step timeouts could together
 outlast the 60s ingress. Only the live list can fail the call; a check, submit or save error
-is logged and the response serves whatever was saved. State lives in
+is logged and the response serves whatever was saved. The one write that does NOT share the
+call budget is recording a completed submission: `MarkAccountReportPending` (and the lost-race
+re-read after it) runs on `context.WithTimeout(context.WithoutCancel(ctx),
+accountReportMarkTimeout)` — 5s of its own — because a submission can finish with the shared
+budget spent (X's paced job creates take ~1s each), and a report built upstream but never
+recorded would be resubmitted on every read and never collected
+(`TestReadReported_MarkUsesItsOwnBudget`). A submission the dispatcher declines up front for
+lack of budget (`domain.ErrAccountReportBudgetTooShort`) is logged at info as a skip, not a
+failure. A PERMANENT refusal — `domain.ErrAccountTooManyActiveCampaigns` or
+`domain.ErrAccountTimezoneUnsupported` (`isPermanentReportRefusal`; X is the producer) — instead
+fails the read, since no later read could submit either, and `classifyDiscoveryError` answers
+it with a 409 `ConflictError` whose `reason` is `account_too_many_active_campaigns` or
+`account_timezone_unsupported` (`TestReadReported_PermanentRefusalFailsTheRead`,
+`TestMonitorTwitterAdsAccount_PermanentRefusalsAre409`). `mergeAccountReport` also carries the finished report's calendar window as
+`ReportedAccountRead.MetricsWindowStart/End`, and `monitorReportedAccount`'s evaluate callback
+now receives the whole read, so `MonitorTwitterAdsAccount` evaluates X's rules on the report's
+own account-local days rather than on `time.Now()`; Microsoft's callback still passes only the
+rows and `days`. State lives in
 `domain.AccountReportRepository` (`account_monitor_reports`), late-bound with
 `SetAccountReportStore` through `Container.newOrchestrator`'s parameter so neither
 construction path can forget it. `ConnectionService.monitorReportedAccount` is
 `monitorAccount`'s twin for these platforms — same guards, classification, rules and totals
-(`buildAccountMonitor`) — and adds `metrics_as_of` / `metrics_pending` to the response. See
+(`buildAccountMonitor`) — and adds `metrics_as_of` / `metrics_pending` to the response.
+`MonitorMicrosoftAdsAccount` and `MonitorTwitterAdsAccount` are its two callers, each with its
+own `operation: "account monitor"` descriptor (`microsoftAdsMonitorDiscovery`,
+`twitterAdsMonitorDiscovery`). No new upstream-call operation tokens: X's three calls record as
+`list_account_campaigns` / `submit_account_report` / `check_account_report` like Microsoft's. See
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md#microsoft-a-report-backed-monitor).
+
+## Report-backed keyword read (`keyword_report.go`, LFXV2-2665)
+
+`KeywordReportReader` is `AccountReportReader`'s counterpart for the project-scoped keyword read
+(Microsoft today): `KeywordReportAccount` (every trust-boundary refusal, no upstream call),
+`SubmitKeywordReport`, `CheckKeywordReport`. `Orchestrator.ReadReportedKeywordPerformance`
+resolves the project's campaign scope from the database (empty → empty result, no dispatcher or
+store call, like `ReadKeywordPerformance`), asks the dispatcher for the bound account, and then
+runs `ReadReportedAccountCampaigns`' sequence over `domain.KeywordReportRepository`
+(`keyword_insight_reports`, keyed by project, platform, account and WINDOW): check a pending
+report once, submit when nothing is building and the last finished report is missing, older than
+`accountReportFreshFor`, or does NOT cover every campaign the project now owns; same
+`accountsCallTimeout`, same detached `accountReportMarkTimeout` for the mark, same abandon rule.
+A permanent refusal at submission (`isPermanentKeywordRefusal`: too-large or invalid scope,
+unsupported window, account mismatch, service defect) fails the read; anything else is logged. `mergeKeywordReport` serves the ready report ONLY if it covers the current scope (the
+response has no partial-coverage field), confined to the scope's campaigns, impressions-descending,
+capped at `keywordReportRowCap` (50, Google's cap) with `Truncated`; cost is `Spend`×10⁶, `Ctr` a
+fraction as on the Google read, and a nil conversion count publishes 0 with
+`ConversionsComplete=false`. New upstream tokens `submit_keyword_report` / `check_keyword_report`.
+`SetKeywordReportStore` is wired through `Container.newOrchestrator`'s new parameter.
+
+`ConnectionService.GetMicrosoftAdsKeywords` (`connection_keyword_report.go`) maps the read onto
+the Google row type plus `metrics_as_of`, `metrics_pending` and `conversions_complete`; it refuses
+the reserved system scope and windows outside `today|last_7_days|last_30_days|this_month|last_month`
+with 400 (`resolveMicrosoftKeywordWindow`, whose message is built from `microsoftKeywordWindows`
+— not `resolveInsightsWindow`, whose message lists all seven), publishes `data_incomplete` from
+the report's Partial flag, and classifies through `classifyInsightsErrorFor` with its own descriptor — the
+Google path's `classifyInsightsError` now delegates to it unchanged, and the one new arm
+(`ErrKeywordReportScopeTooLarge` / `ErrKeywordReportScopeInvalid` → 409) are unreachable from Google. See
+[Microsoft keyword insights](../architecture/microsoft-keyword-insights.md).

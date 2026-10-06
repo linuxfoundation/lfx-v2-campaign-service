@@ -350,6 +350,23 @@ var requiredIndexes = []requiredIndex{{
 	// Deparsed, and character-identical to the form 000023's guard compares against.
 	predicate: "(status <> 'deleted'::text)",
 }, {
+	// at most one live campaign per (brief, platform, variant, slot_version) — 000037. The
+	// four-column successor to the entry above, widening the slot so a DELIBERATE second
+	// campaign on one slot is distinguishable from a RETRY of the first.
+	//
+	// Both entries are listed on purpose while expand/contract runs. The three-column
+	// index is what the N-1 binary's claims key on and must stay enforced through a
+	// rollout; the four-column one is what this release's claim, upsert and adopt name as
+	// their ON CONFLICT arbiter. The follow-up release drops the narrower index and this
+	// list loses the entry above with it — until then a missing EITHER index is a boot
+	// failure, because each one serializes a different binary's writes.
+	name:   "uq_campaigns_brief_platform_variant_slot_version_live",
+	table:  "campaigns",
+	unique: true,
+	keys:   []string{"brief_id", "platform", "variant", "slot_version"},
+	// Deparsed form, matching the sibling entry above.
+	predicate: "(status <> 'deleted'::text)",
+}, {
 	// at most one live campaign per (platform, platform_campaign_id) — the guard that keeps
 	// adoption from binding one upstream Google Ads campaign to two briefs. 000020 creates
 	// it with no IF NOT EXISTS precisely because a same-named leftover would make the build

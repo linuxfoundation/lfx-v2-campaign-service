@@ -934,15 +934,8 @@ func (c *Client) validateAccountIDs() error {
 // those the 429 is returned as an apiError immediately (and createOutcomeAmbiguous
 // treats a mutating 429 as "may exist").
 func (c *Client) doRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
-	// Validate the account/customer ids at the shared request choke point (mirrors the
-	// google-ads client). They flow into the CustomerAccountId/CustomerId request
-	// HEADERS below, and validateAccountIDs is what keeps a control char out of a
-	// header; doing it here (not only in CreateCampaign) covers every future caller
-	// that routes through doRequest — e.g. a later read/metrics helper.
-	if err := c.validateAccountIDs(); err != nil {
-		return nil, err
-	}
-	return c.do(ctx, method, c.baseURL+"/CampaignManagement/"+c.apiVersion+"/"+path, path, body, idempotent, true)
+	raw, _, err := c.doRequestCounted(ctx, method, path, body, idempotent)
+	return raw, err
 }
 
 // doCustomerRequest performs one call against the CUSTOMER MANAGEMENT service —
@@ -1018,12 +1011,37 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // noisier and a wider disclosure surface. accountScoped selects whether the per-account
 // headers are attached.
 func (c *Client) do(ctx context.Context, method, fullURL, path string, body any, idempotent, accountScoped bool) ([]byte, error) {
+	raw, _, err := c.doCounted(ctx, method, fullURL, path, body, idempotent, accountScoped)
+	return raw, err
+}
+
+// doRequestCounted is doRequest for a caller that must know whether the request was RETRIED,
+// i.e. whether at least one earlier attempt was answered with a 429 before the returned outcome.
+// A mutating 429 is ambiguous under this package's own contract (createOutcomeAmbiguous), so an
+// idempotent mutation that was retried can never treat a LATER definite refusal as proof that
+// nothing changed: the earlier attempt may have applied. putUpdate is the caller.
+func (c *Client) doRequestCounted(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, int, error) {
+	// Validate the account/customer ids at the shared request choke point (mirrors the
+	// google-ads client). They flow into the CustomerAccountId/CustomerId request
+	// HEADERS, and validateAccountIDs is what keeps a control char out of a
+	// header; doing it here (not only in CreateCampaign) covers every future caller
+	// that routes through doRequest or this — e.g. a later read/metrics helper.
+	if err := c.validateAccountIDs(); err != nil {
+		return nil, 0, err
+	}
+	return c.doCounted(ctx, method, c.baseURL+"/CampaignManagement/"+c.apiVersion+"/"+path, path, body, idempotent, true)
+}
+
+// doCounted is do, additionally returning how many attempts were RETRIED — each of which was
+// answered with a 429, the only status the loop retries. 0 means the returned outcome is the
+// answer to the one and only request sent.
+func (c *Client) doCounted(ctx context.Context, method, fullURL, path string, body any, idempotent, accountScoped bool) (_ []byte, retries int, _ error) {
 	var payload []byte
 	if body != nil {
 		p, err := json.Marshal(body)
 		if err != nil {
 			// A marshal failure is a pre-send programmer/input error — nothing was sent.
-			return nil, fmt.Errorf("microsoft-ads %s %s: encode request: %w", method, path, err)
+			return nil, 0, fmt.Errorf("microsoft-ads %s %s: encode request: %w", method, path, err)
 		}
 		payload = p
 	}
@@ -1035,7 +1053,7 @@ func (c *Client) do(ctx context.Context, method, fullURL, path string, body any,
 		// is nearly free on the first attempt. Mirrors the google-ads sibling.
 		token, err := c.accessTokenValue(ctx)
 		if err != nil {
-			return nil, err
+			return nil, attempt, err
 		}
 
 		raw, retryAfter, retryable, aerr := c.attempt(ctx, method, fullURL, path, token, payload, accountScoped)
@@ -1045,7 +1063,7 @@ func (c *Client) do(ctx context.Context, method, fullURL, path string, body any,
 		// On the final allowed attempt the 429's apiError (aerr) is returned so the
 		// caller still sees a rate-limit outcome rather than a bare nil.
 		if !retryable || !idempotent || attempt >= retryMax {
-			return raw, aerr
+			return raw, attempt, aerr
 		}
 		// A server-DECLARED reset longer than maxRetryWait is a signal to ABORT, not
 		// clamp: sleeping only maxRetryWait can't clear the window, so a clamped retry
@@ -1055,7 +1073,7 @@ func (c *Client) do(ctx context.Context, method, fullURL, path string, body any,
 		// clean rate-limit signal. (Only the parsed Retry-After can be over-cap; the
 		// exponential-backoff fallback is already bounded by backoff().) Mirrors google-ads.
 		if retryAfter == overCapRetryAfter {
-			return nil, aerr
+			return nil, attempt, aerr
 		}
 		wait := retryAfter
 		if wait <= 0 {
@@ -1069,7 +1087,7 @@ func (c *Client) do(ctx context.Context, method, fullURL, path string, body any,
 			// transportError nor apiError, so IsOutcomeUnconfirmed would report false
 			// and the caller would be told the mutation definitely did not apply. Wrap it
 			// so the ambiguity survives. Mirrors the google-ads client fix for the same gap.
-			return nil, &transportError{Method: method, Path: path, err: ctx.Err()}
+			return nil, attempt, &transportError{Method: method, Path: path, err: ctx.Err()}
 		case <-time.After(wait):
 		}
 	}

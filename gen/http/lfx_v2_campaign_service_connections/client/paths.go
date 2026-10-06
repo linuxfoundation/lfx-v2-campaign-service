@@ -236,9 +236,19 @@ func GetGoogleAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string) s
 	return fmt.Sprintf("/projects/%v/google-ads/audience", projectID)
 }
 
+// GetMicrosoftAdsKeywordsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-microsoft-ads-keywords HTTP endpoint.
+func GetMicrosoftAdsKeywordsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/microsoft-ads/keywords", projectID)
+}
+
 // ResolveGoogleAdsCampaignLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service resolve-google-ads-campaign HTTP endpoint.
 func ResolveGoogleAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/google-ads/campaign-ref", projectID)
+}
+
+// ResolveMicrosoftAdsCampaignLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service resolve-microsoft-ads-campaign HTTP endpoint.
+func ResolveMicrosoftAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/microsoft-ads/campaign-ref", projectID)
 }
 
 // ListMetaAdsAccountsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-meta-ads-accounts HTTP endpoint.
@@ -299,4 +309,9 @@ func MonitorRedditAdsAccountLfxV2CampaignServiceConnectionsPath(projectID string
 // MonitorMicrosoftAdsAccountLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service monitor-microsoft-ads-account HTTP endpoint.
 func MonitorMicrosoftAdsAccountLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/connection-microsoft-ads/account-monitor", projectID)
+}
+
+// MonitorTwitterAdsAccountLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service monitor-twitter-ads-account HTTP endpoint.
+func MonitorTwitterAdsAccountLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/connection-twitter-ads/account-monitor", projectID)
 }

@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/reddit"
-description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
+description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), the campaign status toggle, campaign-level budget (goal_value) write and ad-group manual bid (bid_value) write, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
 resource: "internal/platform/reddit"
 tags:
   - platform-client
@@ -10,7 +10,7 @@ tags:
   - oauth2
   - go-package
   - metrics
-timestamp: "2026-08-05T00:00:00Z"
+timestamp: "2026-10-05T00:00:00Z"
 ---
 
 # internal/platform/reddit
@@ -342,6 +342,74 @@ account. Reddit has NO recoverable fallback for it: `redditUrl` is the bare
 field existed records no provenance at all and is treated as "unknown, proceed". See
 `internal-dispatch.md` for the guard itself.
 
+## Campaign budget write (LFXV2-2665)
+
+`budget_update.go` backs `RedditDispatcher.WriteBudget` (see
+[internal/dispatch](internal-dispatch.md) for the guard order). The budget this service sets is
+the one `CreateCampaign` sets: `goal_value` on the **campaign**, in integer micro-units of the
+account currency, under `goal_type: "LIFETIME_SPEND"` with `is_campaign_budget_optimization:
+true`. The ad group carries no budget.
+
+- `BudgetMicros(amount)` — the create path's own bound (`redditMaxBudgetUSD`) and rounding
+  (`toMicrodollars`), refusing an amount that rounds to zero. Refusals wrap
+  `ErrBudgetAmountInvalid` and carry a client-safe sentence via `BudgetAmountReason`, the same
+  split the Meta and LinkedIn clients make.
+- `GetCampaignBudget(ctx, campaignID)` — `GET /ad_accounts/{accountID}/campaigns/{campaignID}`,
+  a pure read. Returns `goal_type`, `goal_value` (a present-but-unreadable value sets
+  `GoalValueUnparseable` rather than reading as absent; a fractional value is never truncated),
+  `is_campaign_budget_optimization` (nil when unreported — never assumed on) and
+  `ad_account_id`. A 404 is `(nil, nil)`; a 2xx naming another campaign id is an error.
+- `UpdateCampaignBudget(ctx, campaignID, micros)` — `PATCH
+  /ad_accounts/{accountID}/campaigns/{campaignID}` with exactly `{"data":{"goal_value":
+  <micros>}}`, the same resource and envelope as the status toggle. Never sends `goal_type` or a
+  schedule field. Through `request()`, so a 429 is retried (setting the same amount converges)
+  and an exhausted throttle is UNCONFIRMED. The 2xx echo is checked: another campaign id, another
+  or unreadable `goal_value`, or a non-object `data` is an UNCONFIRMED `transportError`.
+
+Both ids are checked with the letters/digits/underscores guard before interpolation
+(`ErrInvalidAccountID` / `ErrInvalidCampaignID`), so no request is built for an unsafe id.
+
+**Confidence.** Verified in this repo: the budget's location and units (the create body), the
+`/ad_accounts/{id}/campaigns/{id}` PATCH resource (the toggle), and `goal_value` in micros (the
+create body and the monitor read's `goal_value/1e6`). **Not verified against a live account or
+the published spec** (Reddit's OpenAPI document could not be fetched from this environment): the
+single-campaign GET on that path, whether it reports `is_campaign_budget_optimization` and
+`ad_account_id`, the `DAILY_SPEND` token, and the PATCH response's echo shape. Each fails closed
+— an unreported CBO flag or `goal_type` is refused 409, a mismatched echo is UNCONFIRMED.
+
+## Ad-group bid write (LFXV2-2665)
+
+`bid_update.go` backs `RedditDispatcher.WriteBid`. A Reddit ad group bids through `bid_strategy`
+(BIDLESS, MANUAL_BIDDING, MAXIMIZE_VOLUME, TARGET_CPX), `bid_type` (CPC, CPM, CPV, ...) and
+`bid_value` in micro-units; only MANUAL_BIDDING pays the `bid_value` given. **The create path
+sends `bid_strategy: "BIDLESS"` on the campaign and the ad group**, so every campaign this
+service creates is refused by the dispatcher until an operator switches BOTH the campaign's bid strategy (Campaign Budget Optimization is on for every campaign this service creates, so the ad group must match it) AND the ad group to `MANUAL_BIDDING` in Reddit Ads Manager — the adapter checks the campaign first, then the ad group.
+The field names and enum follow the OpenAPI document this package already cites
+(`https://ads-api.reddit.com/api/v3/openapi.json`); it could not be re-fetched when this was
+written (the host refuses automated fetches), so the guards fail closed on anything they do not
+recognize.
+
+- `BidMicros(amount)` — positive, finite, at most `redditMaxBid` (1,000,000), rounded like
+  `BudgetMicros`, refused if it rounds to zero; refusals are `ErrBidAmountInvalid` with a sentence
+  (`BidAmountReason`).
+- `GetAdGroupBid(ctx, adGroupID)` — `GET /ad_accounts/{account}/ad_groups/{id}`; a pure read; 404
+  → `(nil, nil)`; an answer for another ad group is an error; an id that cannot address a path is
+  `ErrInvalidAdGroupID` before any request.
+- `UpdateAdGroupBid(ctx, adGroupID, micros)` — PATCH of the same path naming ONLY `bid_value`
+  (never `bid_strategy`/`bid_type`), with `UpdateCampaignBudget`'s 429-retry and echo checks
+  (another ad group or another `bid_value` in a 2xx → UNCONFIRMED). Only a definite 400 carrying
+  a STRUCTURED field error, `{"error":{"fields":[{"field":"bid_value"}]}}`
+  (`bidValueFieldError`), is a `bidAmountError` with this package's own sentence; a body that
+  mentions `bid_value` anywhere else (a strategy race, an echoed payload) stays a definite
+  refusal. The PATCH goes through `requestCounted` (`request()` plus the number of 429s retried;
+  every other caller keeps `request()` unchanged), and ANY failure after a retried 429 is a
+  `retriedUnconfirmedError` (UNCONFIRMED) before any amount mapping — the 429'd attempt may have
+  applied. Known gap, the budget write only: `UpdateCampaignBudget` still classifies a definite
+  4xx after a retried 429 as definite.
+- `CheckAdGroupID(id)` — the path guard alone, so the dispatcher refuses a corrupt recorded id
+  before its first request. `GetCampaignBudget` now also reports the campaign's `bid_strategy`
+  (`CampaignBudget.BidStrategy`), which the bid write needs under CBO.
+
 ## Metrics reads — contract from Reddit's public OpenAPI spec (LFXV2-3282)
 
 `GetCampaignMetrics(ctx, campaignID, window)` reads impressions, clicks, and spend for a
@@ -446,6 +514,10 @@ and a toggle accept exactly the same connections) builds the client, then
 child ad group + ad (read from the persisted `CampaignResult`) — because the create path
 PAUSES all three, so toggling only the campaign would not serve.
 
+It also implements `BudgetWriter` (`reddit_budget.go`): the same credential resolution, with
+provenance failed closed, then `GetCampaignBudget` → guards → one `UpdateCampaignBudget` PATCH.
+See "Campaign budget write" above.
+
 ## Account-monitor read
 
 `monitor.go`'s `ListAccountCampaigns` backs the
@@ -464,6 +536,37 @@ separate account-level totals call is gone (`#3022`) — `AccountMonitorTotals` 
 returned rows on every platform, so the aggregate and the campaigns array beside it
 can never describe different populations. `FetchAccountTotals`, the `AccountTotals`
 type and the `AccountTotalsReader` plumbing were removed with it.
+
+**Scope audit (2026-10-05, LFXV2-2665 Track M3).** The read's only scope filter
+(`configured_status` ACTIVE/PAUSED) matches the BFF, so there is no Google-class scope
+defect; five other defects were fixed:
+
+- **Verified operation.** Each campaign's numbers come from `POST /ad_accounts/{id}/reports`
+  — the operation LFXV2-3282 verified against the published spec — with
+  `GetCampaignMetrics`' own body (`CAMPAIGN_ID`, `IMPRESSIONS`, `CLICKS`, `SPEND` as fields,
+  `filter: campaign:id==<id>`, no `breakdowns`), not the BFF's unverified nested
+  `/campaigns/{id}/reports`. Rows pass through `sumReportRows`, shared with
+  `GetCampaignMetrics`: a row attributed to another campaign, or missing a field, fails that
+  campaign (`FetchFailed`), and all rows are summed (it used to read `metrics[0]` only). One
+  call per campaign, five at a time, rather than one account report broken down by
+  `CAMPAIGN_ID`, because a broken-down report would depend on unverified report pagination
+  for completeness.
+- **Window.** Rendered by `reportRange` (shared with `dateRangeForWindow`): today-(days-1)
+  00:00 through today 23:00, inclusive of today. It used to end at today's midnight.
+- **Pagination.** `apiResponse` now keeps the top-level `pagination` object.
+  `walkPages` follows `pagination.next_url` for the campaign list and each report — same
+  scheme and host as the API base only, so the bearer token never leaves the origin — and
+  errors at `monitorMaxPages` (50), on a repeated page, or on a campaign listed twice, rather
+  than returning a truncated result. **Verification level:** the `next_url` field name and
+  re-POSTing a report body to it are Reddit's v3 convention, not checked against the spec by
+  this repo and never run against a live account; an absent key reads as one page.
+- **goal_type.** `LIFETIME_SPEND` → `TotalBudget`, `DAILY_SPEND` → `DailyBudget` (mapped to
+  `BudgetDay`), anything else or absent → neither, so pacing is reported unknown.
+  `LIFETIME_SPEND` is the literal this client's own create path sends; `DAILY_SPEND` is not
+  exercised anywhere else in this repo.
+- The stale comment that cited the superseded UNVERIFIED-CONTRACT banner on
+  `GetCampaignMetrics` now says what is and is not verified: the reports operation is, the
+  campaign-list operation is not.
 
 See [internal/platform/reddit](../../../internal/platform/reddit).
 

@@ -171,6 +171,11 @@ const settingsCallTimeout = 20 * time.Second
 // applied twice is money.
 const budgetWriteCallTimeout = 45 * time.Second
 
+// bidWriteCallTimeout bounds the SYNCHRONOUS bid-write platform call. It IS the budget write's
+// ceiling, for the budget write's reasons: a read of the governing bid strategy and ad group
+// precedes the mutate, so the call is a sequence, and a timeout surfaces as UNCONFIRMED.
+const bidWriteCallTimeout = budgetWriteCallTimeout
+
 // accountsCallTimeout bounds the SYNCHRONOUS account-listing platform call, which — like
 // metrics and toggle — runs on the HTTP request goroutine. Account discovery is a pure read
 // with no cascade, so it can use the same ceiling as metrics reads.
@@ -294,8 +299,12 @@ type SettingsReader interface {
 //   - REFUSE A SHARED BUDGET. Where a platform's budget can be attached to more than one
 //     campaign, writing it through ONE campaign silently changes the others — including
 //     campaigns this service does not own and the caller cannot see. That must be refused
-//     before the mutate with ErrBudgetShared, never written. See that sentinel for why an
-//     adopted campaign is the case this guard exists for.
+//     with ErrBudgetShared, never written: from the adapter's own read before any mutate is
+//     issued, or — where the platform enforces it too (Microsoft) — because the platform
+//     DEFINITELY refused the mutate, confirming nothing was applied. Either way the sentinel
+//     means "the platform is unchanged"; an outcome the platform did not confirm is never
+//     ErrBudgetShared. See that sentinel for why an adopted campaign is the case this guard
+//     exists for.
 //
 //   - ENFORCE THE ACCOUNT-IDENTITY INVARIANT AT LEAST AS STRICTLY AS ReadSettings DOES.
 //     A platform campaign id is typically unique only within the account it was created
@@ -319,6 +328,41 @@ type BudgetWriter interface {
 	// Returns nil ONLY when the platform confirmed the change. The caller persists the new
 	// budget onto the row on nil and on nothing else.
 	WriteBudget(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, budget model.BudgetChange) error
+}
+
+// BidWriter is an OPTIONAL dispatcher capability: change an existing campaign's MANUAL max
+// cost-per-click bid ON THE AD PLATFORM. Type-asserted like BudgetWriter, so a dispatcher
+// without it yields a clean ErrBidUnsupported -> 400.
+//
+// BudgetWriter's sibling, and bound by the same three non-negotiable rules — confirm before
+// persisting, never report an unconfirmed write as success, and enforce the account-identity
+// invariant at least as strictly as ReadSettings (a missing creating account is refused, not
+// waved through). A bid moves money per click rather than per day, but it moves money.
+//
+// One rule is its own, and it is what makes the capability honest rather than merely
+// successful:
+//
+//   - NEVER WRITE A BID THE PLATFORM WILL IGNORE, AND NEVER SWITCH STRATEGY. A manual bid
+//     only means something under a bid strategy that reads it. Under an AUTOMATED strategy the
+//     platform either ignores the value (a 200 that changed nothing a caller can observe) or —
+//     on some platforms — treats the write as a request to move the campaign to manual
+//     bidding. Both are wrong answers to "set my max CPC to X". An implementation must READ
+//     the strategy that governs the bid first and refuse with ErrBidUnwritable when it is
+//     automated or unreported; it must never send a strategy field itself.
+//
+// The bid is written AT THE LEVEL THE CREATE PATH PUT IT — for the platforms wired today, the
+// one ad group (Microsoft, Reddit), ad set (Meta) or line item (X) this service created for the
+// campaign, named by the row's recorded result. A row recording none is refused rather than
+// resolved by listing children upstream: choosing which of several to re-bid is a decision this
+// endpoint does not make.
+type BidWriter interface {
+	// WriteBid sets the campaign's manual max CPC bid on the platform. campaign is the
+	// persisted row, supplied so the adapter can reach PlatformCampaignID, the creation
+	// provenance and the recorded ad group id.
+	//
+	// Returns nil ONLY when the platform confirmed the change. The caller persists the new
+	// bid onto the row on nil and on nothing else.
+	WriteBid(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, bid model.BidChange) error
 }
 
 // AccountLister is an OPTIONAL dispatcher capability: enumerate accessible ad accounts for a
@@ -607,9 +651,20 @@ var (
 	ErrBudgetShared = domain.ErrBudgetShared
 	// ErrBudgetUnwritable: the campaign's upstream budget could not be addressed for a write.
 	ErrBudgetUnwritable = domain.ErrBudgetUnwritable
-	// ErrBudgetAmountRejected: the requested amount was refused by the platform adapter's own
-	// validator, before anything was written — a permanent request fault, answered 400.
+	// ErrBudgetAmountRejected: the requested amount was refused and the platform confirmed NO
+	// change — by the platform adapter's own validator before any mutate, or (Microsoft) by the
+	// platform's definite refusal of the mutate. A permanent request fault, answered 400; an
+	// unconfirmed outcome is never this sentinel.
 	ErrBudgetAmountRejected = domain.ErrBudgetAmountRejected
+
+	// ErrBidUnsupported: the campaign's platform has no bid-write capability wired.
+	ErrBidUnsupported = domain.ErrBidUnsupported
+	// ErrBidUnwritable: the bid cannot be written as a manual bid (automated or unreported
+	// strategy, or an unaddressable ad group); the platform confirmed NO change.
+	ErrBidUnwritable = domain.ErrBidUnwritable
+	// ErrBidAmountRejected: the requested bid was refused and the platform confirmed NO
+	// change. A permanent request fault, answered 400.
+	ErrBidAmountRejected = domain.ErrBidAmountRejected
 
 	// ErrAccountsUnsupported: the platform has no account-listing capability wired.
 	ErrAccountsUnsupported = domain.ErrAccountsUnsupported
@@ -699,6 +754,11 @@ type Orchestrator struct {
 	// monitor read refuses rather than running without one.
 	accountReportsMu sync.RWMutex
 	accountReports   domain.AccountReportRepository
+	// keywordReportsMu guards keywordReports, the saved-report store behind the report-backed
+	// keyword read (SetKeywordReportStore), late-bound for the same reason. nil means no store
+	// is wired, and that read refuses rather than running without one.
+	keywordReportsMu sync.RWMutex
+	keywordReports   domain.KeywordReportRepository
 	// indexingDisabled is a CONFIGURATION fact (NATS_URL empty), not an observation of the
 	// publisher — a Noop also appears when the broker is unreachable. See DisableIndexing.
 	indexingDisabled bool
@@ -768,6 +828,7 @@ const (
 	opLookupCampaign             = "lookup_campaign"
 	opReadSettings               = "read_settings"
 	opWriteBudget                = "write_budget"
+	opWriteBid                   = "write_bid"
 	opListAccounts               = "list_accounts"
 	opListAccountCampaignMetrics = "list_account_campaign_metrics"
 	opSearchEmails               = "search_emails"
@@ -777,6 +838,7 @@ const (
 	opReadKeywords               = "read_keywords"
 	opReadAudience               = "read_audience"
 	opKeywordActions             = "keyword_actions"
+	opNegativeKeywords           = "negative_keywords"
 	opVerifyAccountOrg           = "verify_account_org"
 	opProbeConnection            = "probe_connection"
 	opListAccountCampaigns       = "list_account_campaigns"
@@ -1218,7 +1280,22 @@ func hubspotURLFromResult(result json.RawMessage) string {
 // this run writes attributes to that person: they authorized the spend, which is the question
 // created_by exists to answer, and it is not the same question as "who was authenticated when
 // some later goroutine got around to writing the row".
+// StartOptions carries the per-request choices that change WHAT a dispatch creates rather
+// than how. The zero value is the behaviour Start has always had.
+type StartOptions struct {
+	// NewVersion asks for ANOTHER campaign on each platform slot that already holds a
+	// completed one, instead of the idempotent reuse a repeat create otherwise gets. See
+	// dispatchPlatform for exactly when it applies.
+	NewVersion bool
+}
+
+// Start is StartWithOptions with the zero StartOptions: a repeat create is a retry.
 func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, approvedVersion int64, platforms []model.Provider, config json.RawMessage) (string, error) {
+	return o.StartWithOptions(ctx, brief, approvedVersion, platforms, config, StartOptions{})
+}
+
+// StartWithOptions creates the job and launches the asynchronous per-platform dispatch.
+func (o *Orchestrator) StartWithOptions(ctx context.Context, brief *model.CampaignBrief, approvedVersion int64, platforms []model.Provider, config json.RawMessage, opts StartOptions) (string, error) {
 	// Register the run with the drain WaitGroup under the lock so a concurrent
 	// Shutdown can't start waiting between the draining check and wg.Add (which
 	// would let an untracked goroutine outlive Shutdown).
@@ -1255,14 +1332,14 @@ func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, ap
 	by := attributedActor(ctx, "dispatch campaign brief")
 	go func() {
 		defer o.wg.Done()
-		o.run(dispatchCtx, job.ID, brief, platformsCopy, configCopy, by)
+		o.run(dispatchCtx, job.ID, brief, platformsCopy, configCopy, by, opts)
 	}()
 
 	return job.ID, nil
 }
 
 // run performs the parallel per-platform dispatch and finalizes the job.
-func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.CampaignBrief, platforms []model.Provider, config json.RawMessage, by *model.Actor) {
+func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.CampaignBrief, platforms []model.Provider, config json.RawMessage, by *model.Actor, opts StartOptions) {
 	// Mark the job running. Don't abort dispatch on failure (the work should still
 	// proceed and the final status write will correct it), but log it — silently
 	// dropping this can leave a job stuck at "queued" in the client's view.
@@ -1354,7 +1431,7 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 			// out of res, together with the `dispatched` flag the recover arm checks,
 			// is what stops a panic raised AFTER this point (the recording call below)
 			// from turning a created-upstream campaign into a failed result.
-			done := o.dispatchPlatform(gctx, jobID, brief, p, config, by)
+			done := o.dispatchPlatform(gctx, jobID, brief, p, config, by, opts)
 			results[i] = done
 			// Set BEFORE the recording call: it is the only code that can panic after
 			// the result is stored, and the flag is what tells the recover arm not to
@@ -1553,7 +1630,7 @@ func googleAdsChannelIsSupported(ch string) bool {
 		ch == googleAdsChannelDisplayName
 }
 
-func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage, by *model.Actor) platformResult {
+func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage, by *model.Actor, opts StartOptions) platformResult {
 	res := platformResult{Platform: string(p)}
 
 	// Fast path: if this pair already has a completed campaign (upstream id set),
@@ -1591,8 +1668,22 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		}
 		return res
 	}
+	// The lookup returns the slot's LATEST live campaign, and slotVersion is which campaign
+	// on the slot this dispatch claims: the latest one for a retry, the one after it for a
+	// deliberate new version, and the first when the slot is empty.
 	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
+	slotVersion := model.FirstSlotVersion
 	switch {
+	case lerr == nil && isReusableCampaign(existing) && opts.NewVersion:
+		// The caller asked for ANOTHER campaign and the latest one is complete, so this is
+		// the deliberate second create the slot version exists for — not a retry. Claim the
+		// next slot version; the reuse below would hand back the campaign they already have.
+		//
+		// Not idempotent across repeats by design: each new-version request that finds the
+		// latest campaign complete makes one more. Two CONCURRENT ones compute the same
+		// next version and the claim lets exactly one through (the other is skipped or
+		// reuses the winner), which is what covers a double-submitted form.
+		slotVersion = existing.SlotVersion + 1
 	case lerr == nil && isReusableCampaign(existing):
 		// A COMPLETED campaign (created / created_degraded — both terminal, since a
 		// re-dispatch can't repair a degraded sub-step). Reuse it idempotently. A
@@ -1603,6 +1694,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		res.HubspotURL = hubspotURLFromResult(existing.Result)
 		return res
 	case lerr == nil:
+		// The latest campaign is unfinished, so claim ITS slot version, new-version request
+		// or not: starting another campaign alongside an in-flight or orphaned one would
+		// spend twice while the first is still unresolved. The claim then reports it the
+		// way it always has (skipped while in flight, reconciliation required if orphaned).
+		slotVersion = existing.SlotVersion
 		// A row exists but is not a completed campaign — either it has no upstream id
 		// yet (a prior pending/failed attempt) OR it is a retained partial orphan
 		// (pending status WITH an upstream id, recorded for reconciliation after a
@@ -1630,7 +1726,16 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// Single-flight claim: atomically insert a 'pending' placeholder for (brief,
 	// platform). Exactly one worker across all replicas wins (the unique index
 	// arbitrates) — no held connection, no blocking lock.
-	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, variant, jobID, by)
+	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, variant, slotVersion, jobID, by)
+	if errors.Is(err, domain.ErrSlotVersionUnavailable) {
+		// Expected until the release after 000037 drops the old one-campaign-per-slot index,
+		// which still rejects the second campaign. Nothing was written or created, so this
+		// is a plain refusal rather than a fault.
+		slog.WarnContext(ctx, "new campaign version refused: the schema still allows one live campaign per slot",
+			"platform", p, "job_id", jobID, "project_id", brief.ProjectID, "slot_version", slotVersion)
+		res.Error = "creating another campaign on this platform for the same brief is not available yet"
+		return res
+	}
 	if err != nil {
 		slog.ErrorContext(ctx, "claim dispatch failed", "platform", p, "job_id", jobID, "error", err)
 		res.Error = "could not claim campaign dispatch"
@@ -1699,7 +1804,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// DELETE fail and leak the pending claim exactly when we most need to free it.
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimReleaseTimeout)
 		defer cancel()
-		if derr := o.campaigns.DeleteDispatchClaim(rctx, brief.ID, p, variant); derr != nil {
+		if derr := o.campaigns.DeleteDispatchClaim(rctx, brief.ID, p, variant, slotVersion); derr != nil {
 			slog.ErrorContext(rctx, "failed to release pending dispatch claim", "platform", p, "job_id", jobID, "error", derr)
 		}
 	}
@@ -1709,7 +1814,9 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// cancel still propagates, but with its own ceiling.
 	callCtx, cancelCall := context.WithTimeout(ctx, providerCallTimeout)
 	defer cancelCall()
-	campaign, derr := d.Dispatch(callCtx, brief, p, config)
+	// The slot version rides the context so a dispatcher that must give each campaign a
+	// unique upstream name can tell slot 2 from slot 1 (model.SlotNameSuffix).
+	campaign, derr := d.Dispatch(model.WithDispatchSlotVersion(callCtx, slotVersion), brief, p, config)
 	if derr != nil {
 		// A dispatch error usually does NOT prove the provider rejected the create —
 		// a timeout or dropped connection can leave a campaign created upstream — so
@@ -1853,6 +1960,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				// NormalizeVariant while the claim holds 'demand-gen' — the conflict target
 				// then misses the claimed row and INSERTs a second one.
 				campaign.Variant = variant
+				campaign.SlotVersion = slotVersion
 				campaign.BriefID = brief.ID
 				campaign.ProjectID = brief.ProjectID
 				campaign.Platform = p
@@ -1935,6 +2043,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	campaign.JobID = &jobID
 	// The SAME variant the claim used — see the retained-partial path above.
 	campaign.Variant = variant
+	campaign.SlotVersion = slotVersion
 	campaign.BriefID = brief.ID
 	campaign.ProjectID = brief.ProjectID
 	campaign.Platform = p
@@ -2152,10 +2261,14 @@ func (o *Orchestrator) WriteCampaignBudget(ctx context.Context, projectID string
 	// groups ToggleCampaignStatus documents at length above, classified identically,
 	// because this path resolves credentials through the very same credsSource.
 	//
-	// TWO further sentinels are reachable only here, and both are refusals raised BEFORE
-	// any mutate is issued, so nothing upstream has changed when a caller sees either:
+	// TWO further sentinels are reachable only here, and both mean the platform confirmed
+	// NO change, so nothing upstream has changed when a caller sees either:
 	// ErrBudgetShared (the budget is attached to campaigns this request never named) and
-	// ErrBudgetUnwritable (the budget could not be addressed at all). Both are permanent
+	// ErrBudgetUnwritable (the budget could not be addressed at all). Usually they are raised
+	// before any mutate is issued; ErrBudgetShared may also follow a mutate that was SENT and
+	// DEFINITELY refused (Microsoft's CampaignServiceCannotUpdateSharedBudget, for a budget
+	// attached between the read and the write), which applied nothing either. An outcome the
+	// platform did not confirm is never one of them — that is UNCONFIRMED. Both are permanent
 	// properties of how that budget is set up, which is why the caller answers them 409
 	// rather than 503 — there is no retry that improves them.
 	//
@@ -2169,6 +2282,31 @@ func (o *Orchestrator) WriteCampaignBudget(ctx context.Context, projectID string
 	start := time.Now()
 	werr := writer.WriteBudget(callCtx, projectID, platform, campaign, budget)
 	o.recordUpstream(ctx, platform, opWriteBudget, start, werr)
+	return werr
+}
+
+// WriteCampaignBid changes an already-created campaign's manual max CPC bid on its ad
+// platform. WriteCampaignBudget's twin in every respect — the same pre-platform guards, the
+// same classification of what the returned error can mean, the same confirm-then-persist split
+// — with ErrBidUnsupported, ErrBidUnwritable and ErrBidAmountRejected in place of the budget
+// sentinels. Request validation is the service layer's job, as there.
+func (o *Orchestrator) WriteCampaignBid(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, bid model.BidChange) error {
+	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
+		return ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return fmt.Errorf("%w: no dispatcher registered for platform %s", ErrBidUnsupported, platform)
+	}
+	writer, ok := d.(BidWriter)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrBidUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, bidWriteCallTimeout)
+	defer cancel()
+	start := time.Now()
+	werr := writer.WriteBid(callCtx, projectID, platform, campaign, bid)
+	o.recordUpstream(ctx, platform, opWriteBid, start, werr)
 	return werr
 }
 
@@ -2738,6 +2876,22 @@ type KeywordActioner interface {
 	ApplyKeywordActions(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, actions []model.KeywordAction) ([]model.KeywordActionOutcome, error)
 }
 
+// NegativeKeywordAdder is an OPTIONAL dispatcher capability: add campaign-level negative
+// keywords to an existing campaign. Type-asserted like KeywordActioner, so a dispatcher without
+// it yields a clean ErrNegativeKeywordsUnsupported → 400.
+//
+// Deliberately NOT a kind on KeywordAction. Every KeywordActioner would then receive it —
+// including adapters that predate it and have never been taught what a negative keyword is —
+// and an adapter that validates only the actions it knows would forward the rest. A separate
+// interface means only a platform that implements the add can be asked to perform it.
+type NegativeKeywordAdder interface {
+	// AddNegativeKeywords returns exactly one outcome per requested keyword, in request
+	// order, or an error when the platform answered nothing per keyword. campaign is the
+	// persisted row, so the adapter can enforce provisioning and the account-identity
+	// invariant BEFORE the platform is contacted.
+	AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error)
+}
+
 // keywordInsightsFor resolves the dispatcher's keyword-insight capability, or returns the
 // "not supported" sentinel. Shared by the two read paths so both answer identically for an
 // unregistered or non-capable platform.
@@ -2946,9 +3100,42 @@ type unconfirmedOutcomeCountError struct {
 }
 
 func (e *unconfirmedOutcomeCountError) Error() string {
-	return fmt.Sprintf("%s keyword actioner returned %d outcomes for %d requested actions; the batch is atomic, so a partial result cannot be reported as success, and the mutation may already have been applied",
+	return fmt.Sprintf("%s keyword adapter returned %d outcomes for %d requested items; the response must answer every item in request order, so it cannot be reported as success, and the mutation may already have been applied",
 		e.platform, e.got, e.want)
 }
 
 // Unconfirmed marks the outcome as ambiguous-applied for the service's verify-before-retry arm.
 func (e *unconfirmedOutcomeCountError) Unconfirmed() bool { return true }
+
+// AddNegativeKeywords adds campaign-level negative keywords to one campaign.
+//
+// Shaped like ApplyKeywordActions for the same reasons: a nil campaign is refused here, every
+// other guard — batch validation first, then provisioning — is the adapter's, in the adapter's
+// order, and the call gets the mutation timeout. The outcome-count check is the same contract:
+// one outcome per requested keyword, or the response cannot be zipped back onto the request.
+// A short slice is UNCONFIRMED, because the add was already issued when it is detected.
+func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error) {
+	if campaign == nil {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrNegativeKeywordsUnsupported, platform)
+	}
+	adder, ok := d.(NegativeKeywordAdder)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrNegativeKeywordsUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
+	defer cancel()
+	start := time.Now()
+	outcomes, aerr := adder.AddNegativeKeywords(callCtx, projectID, platform, campaign, keywords)
+	o.recordUpstream(ctx, platform, opNegativeKeywords, start, aerr)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if len(outcomes) != len(keywords) {
+		return nil, &unconfirmedOutcomeCountError{platform: string(platform), got: len(outcomes), want: len(keywords)}
+	}
+	return outcomes, nil
+}

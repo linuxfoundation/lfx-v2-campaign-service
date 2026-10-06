@@ -366,18 +366,20 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// providers.
 		{"/projects/p1/connection-hubspot/emails", true},
 		// Account-scoped monitor reads (LFX One BFF /api/campaigns/*/monitor port):
-		// ruled for exactly the five providers with a monitor dispatcher —
+		// ruled for exactly the six providers with a monitor dispatcher —
 		// google-ads, linkedin-ads, meta-ads and reddit-ads (AccountMetricsReader) and
-		// microsoft-ads (AccountReportReader, report-backed). reddit-ads gets this
-		// despite having no /accounts row above (no AccountLister, but it does have a
-		// monitor dispatcher). The twitter-ads rejected row further down pins that it
-		// has no monitor dispatcher and the alternation was not widened to it by
-		// accident.
+		// microsoft-ads and twitter-ads (AccountReportReader, report-backed). reddit-ads
+		// gets this despite having no /accounts row above (no AccountLister, but it does
+		// have a monitor dispatcher). The hubspot rejected row further down pins that the
+		// alternation was not widened to every connection provider by accident.
 		{"/projects/p1/connection-google-ads/account-monitor", true},
 		{"/projects/p1/connection-linkedin-ads/account-monitor", true},
 		{"/projects/p1/connection-meta-ads/account-monitor", true},
 		{"/projects/p1/connection-reddit-ads/account-monitor", true},
 		{"/projects/p1/connection-microsoft-ads/account-monitor", true},
+		// X joined with its report-backed monitor (LFXV2-2665): stats jobs, served from a
+		// saved copy. This row is what fails if only one chart side is edited.
+		{"/projects/p1/connection-twitter-ads/account-monitor", true},
 		{"/projects/abc-123/connection-linkedin-ads", true},
 		{"/projects/p1/connection-meta-ads/test", true},
 		{"/projects/p1/connection-reddit-ads/set-credential", true},
@@ -416,6 +418,14 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// briefs match/rule must fail here loudly rather than leave a money-moving endpoint
 		// routed-but-unauthorized, or unreachable.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/budget", true},
+		// The campaign bid write (LFXV2-2665) is the third spend-affecting mutation in this
+		// set — it changes what a live campaign pays per click — and is pinned for the budget
+		// row's reason.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/bid", true},
+		// add-negative-keywords (LFXV2-2665) is the fourth spend-affecting campaign mutation in
+		// this set, and the same shape again: it inherits the briefs match and the campaign_manager
+		// rule rather than adding its own, and this row is what fails if a narrowing drops it.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/negative-keywords", true},
 		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
 		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
 		// rule — no separate route/rule entry. These rows pin that coverage so a future
@@ -433,6 +443,11 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/google-ads/keywords", true},
 		{"/projects/p1/google-ads/audience", true},
 		{"/projects/p1/google-ads/campaign-ref", true},
+		{"/projects/p1/microsoft-ads/keywords", true},
+		{"/projects/p1/microsoft-ads/audience", false},
+		{"/projects/p1/microsoft-ads/keywords/x", false},
+		{"/projects/p1/microsoft-ads/campaign-ref", true},
+		{"/projects/p1/microsoft-ads/campaign-ref/x", false},
 		// --- accepted: event-page pre-fill (LFXV2-3043) ---
 		// A SIBLING of /briefs, not a descendant, so unlike /status and /metrics above it
 		// inherits nothing: it needs its own alternation branch in the HTTPRoute regex AND
@@ -471,10 +486,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/connection-reddit-ads/accounts", false},
 		{"/projects/p1/connection-hubspot/accounts", false},
 		{"/projects/p1/connection-google-ads/emails", false},
-		// twitter-ads has no monitor dispatcher (no rule engine, and no confirmed X Ads
-		// account-analytics read) — account-monitor must not be admitted for it even
-		// though it has the /accounts discovery path.
-		{"/projects/p1/connection-twitter-ads/account-monitor", false},
+		// hubspot has no ad account and no monitor dispatcher — account-monitor must not
+		// be admitted for it now that the monitor branch spans every ad provider with
+		// discovery.
+		{"/projects/p1/connection-hubspot/account-monitor", false},
 		// --- rejected: metrics/keywords on the wrong provider ---
 		{"/projects/p1/meta-ads/keywords", false},
 		{"/projects/p1/linkedin-ads/audience", false},

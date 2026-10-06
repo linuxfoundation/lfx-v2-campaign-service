@@ -235,6 +235,7 @@ func campaignDoc(c *briefs.Campaign) indexer.CampaignDoc {
 		PlatformCampaignID: derefStr(c.PlatformCampaignID),
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
+		SlotVersion:        c.SlotVersion,
 		Version:            c.Version,
 	}
 }
@@ -707,6 +708,17 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 		seen[prov] = struct{}{}
 		platforms = append(platforms, prov)
 	}
+	if p.Input.NewVersion {
+		// Refused for the whole request, before a job exists, rather than per platform after
+		// the 202: a provider that reuses campaigns by name would bind the "new" campaign to the
+		// existing one upstream, and that is only knowable here as a property of the provider.
+		for _, prov := range platforms {
+			if !model.ProviderSupportsSlotVersions(prov) {
+				return nil, &briefs.BadRequestError{Code: "400", Message: fmt.Sprintf(
+					"new_version is not supported for %s yet; omit new_version to retry the existing campaign", prov)}
+			}
+		}
+	}
 	config := marshalAny(p.Input.Config)
 	// Refuse a request that can never produce what it asks for BEFORE the job exists. Dispatch
 	// runs after the 202 and reports every failure as one opaque job error, so a request shape
@@ -721,7 +733,10 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 	// (which resets it to draft, bumping version) or archive committing between this
 	// read and job creation makes Start fail (domain.ErrStaleApproval → 409) rather
 	// than launching paid campaigns from a stale "approved" snapshot.
-	jobID, err := orch.Start(ctx, brief, brief.Version, platforms, config)
+	//
+	// NewVersion is what separates "make another campaign" from "retry the one I asked for":
+	// without it a repeat create is idempotent and returns the campaign the slot already has.
+	jobID, err := orch.StartWithOptions(ctx, brief, brief.Version, platforms, config, StartOptions{NewVersion: p.Input.NewVersion})
 	if err != nil {
 		return nil, mapBriefErr(err)
 	}
@@ -1366,8 +1381,14 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	// the existing ConfigSnapshot intact rather than wiping it to NULL on a
 	// name/status-only edit (the GET response doesn't expose config, so a client
 	// can't round-trip it back).
+	//
+	// The caller's config is Goa `Any` and no dispatch adapter sees it on this path, so it
+	// is redacted generically before it reaches the UNENCRYPTED config_snapshot: every
+	// string value has its links reduced exactly as the adapters' create-time scrubbing
+	// does (see redactedConfigSnapshot). The contract is unchanged — any JSON value is
+	// still accepted — only the persisted copy is redacted.
 	if p.Campaign.Config != nil {
-		existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
+		existing.ConfigSnapshot = redactedConfigSnapshot(p.Campaign.Config)
 	}
 	existing.UpdatedBy = attributedActor(ctx, "update campaign")
 	// Gate the final write on the original claimed version. The claim acquired
@@ -1965,6 +1986,7 @@ func campaignResult(c *model.Campaign) *briefs.Campaign {
 		PlatformCampaignID: optStr(c.PlatformCampaignID),
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
+		SlotVersion:        model.NormalizeSlotVersion(c.SlotVersion),
 		Version:            c.Version,
 		Etag:               optStr(briefETag(c.Version)),
 	}
@@ -2527,10 +2549,10 @@ func pacingFor(r *briefMetricsRow, now time.Time) rules.Pacing {
 	// are kept so that a future fan-out path which leaves a row unassigned degrades to "no
 	// pacing" instead of panicking a request. Reverting them fails no test, by construction.
 	if r.status != "ok" || r.metrics == nil || r.campaign == nil {
-		return rules.Pacing{Label: rules.PacingUnknown}
+		return rules.UnknownPacing()
 	}
 	if r.campaign.BudgetAmount == nil || r.campaign.BudgetType == nil {
-		return rules.Pacing{Label: rules.PacingUnknown}
+		return rules.UnknownPacing()
 	}
 	kind := rules.BudgetLifetime
 	if *r.campaign.BudgetType == model.BudgetDaily {
