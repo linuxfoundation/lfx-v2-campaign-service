@@ -206,8 +206,8 @@ type Campaign struct {
 	// other provider uses VariantDefault.
 	//
 	// Part of the campaign's identity, not its config: (BriefID, Platform, Variant)
-	// is the slot key, and with SlotVersion it is what the dispatch claim arbitrates on
-	// (migration 000037), which is what stops a retry creating a second paid campaign.
+	// is the slot key the dispatch claim arbitrates on (migration 000022), which is
+	// what stops a retry creating a second paid campaign.
 	Variant string
 	// SlotVersion counts DELIBERATE campaigns on one (BriefID, Platform, Variant) slot:
 	// 1 for the first, 2 for the one an operator asked for on top of it, and so on. It is

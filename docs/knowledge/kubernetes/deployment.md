@@ -184,4 +184,12 @@ error-surface regression. And it is not a claim that the newer schema is what ma
 old binary unsafe — the old binary's behaviour on the old schema is by definition what
 rolling back is asking for, including whatever the new constraint existed to prevent.
 
+An image-only rollback is also why a contract migration waits for the code it relies on to
+be a release old, not just present. The campaigns slot index (`000022`'s
+`uq_campaigns_brief_platform_variant_live`) is dropped one release AFTER the per-slot
+adopt/claim advisory lock ships (LFXV2-2023): the binary before the lock takes no slot lock, so
+if the drop shipped with the lock, rolling the image back would leave that binary's adopt free
+to race a slot-2 claim on a schema with nothing else to stop it. Staged a release apart, the
+binary a rollback returns to either still has the index or already takes the lock.
+
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).

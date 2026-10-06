@@ -134,11 +134,10 @@ func TestMigrateRefusesADroppedRequiredIndex(t *testing.T) {
 // TestMigrateRefusesADroppedDispatchIndex is the same state for the OTHER required index,
 // and it is the one with money attached.
 //
-// Migration 000014 dropped campaigns_brief_id_platform_key, 000024 dropped the two-column
-// index that replaced it, and 000040 dropped 000022's three-column one, so
-// uq_campaigns_brief_platform_variant_slot_version_live is the sole arbiter of slot
-// uniqueness and the thing ClaimCampaignDispatch rests on. A migration-time guard checks an
-// index's definition only once, while that migration is running. An index
+// Migration 000014 dropped campaigns_brief_id_platform_key and 000024 dropped the
+// two-column index that replaced it, so uq_campaigns_brief_platform_variant_live
+// is the sole arbiter of (brief_id, platform) uniqueness and the thing ClaimCampaignDispatch
+// rests on. 000014 guards its definition — but only once, while 000014 is running. An index
 // lost afterwards (an operator clearing invalid-index debris, a rebuild from 000013 whose
 // IF NOT EXISTS no-opped against a same-named leftover) left a schema that booted clean and
 // double-created paid campaigns under concurrency. That is exactly the silent absence the
@@ -147,7 +146,7 @@ func TestMigrateRefusesADroppedDispatchIndex(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
 
-	const idx = "uq_campaigns_brief_platform_variant_slot_version_live"
+	const idx = "uq_campaigns_brief_platform_variant_live"
 
 	t.Cleanup(func() { restoreDispatchIndex(t, pool) })
 
@@ -158,7 +157,7 @@ func TestMigrateRefusesADroppedDispatchIndex(t *testing.T) {
 	err := postgres.Migrate(dbtest.DSN())
 	if !errors.Is(err, postgres.ErrMissingRequiredIndex) {
 		t.Fatalf("Migrate after dropping %s: got %s, want ErrMissingRequiredIndex — "+
-			"succeeding here starts the service with slot uniqueness gone "+
+			"succeeding here starts the service with (brief_id, platform) uniqueness gone "+
 			"and concurrent claims free to double-create paid campaigns", idx, dbtest.SafeDSNErr(err))
 	}
 	if !strings.Contains(err.Error(), idx) {
@@ -277,9 +276,9 @@ func restoreLeaseIndex(t *testing.T, pool interface {
 			" ON campaign_audiences (brief_id, platform) WHERE status = 'building'")
 }
 
-// restoreDispatchIndex rebuilds the campaigns slot index (migration 000037). Since 000040
-// dropped 000022's three-column index this is the ONLY thing standing between two concurrent
-// claims and two paid campaigns for one slot version, so a
+// restoreDispatchIndex rebuilds the campaigns partial unique index (migration 000013).
+// Since 000014 dropped campaigns_brief_id_platform_key this is the ONLY thing standing
+// between two concurrent claims and two paid campaigns for one (brief, platform), so a
 // test that leaves it dropped does not merely dirty the database — it makes every later
 // dispatch test pass against a table that cannot enforce what they are about.
 func restoreDispatchIndex(t *testing.T, pool interface {
@@ -288,9 +287,9 @@ func restoreDispatchIndex(t *testing.T, pool interface {
 },
 ) {
 	t.Helper()
-	restoreRequiredIndex(t, pool, "uq_campaigns_brief_platform_variant_slot_version_live",
-		"CREATE UNIQUE INDEX uq_campaigns_brief_platform_variant_slot_version_live"+
-			" ON campaigns (brief_id, platform, variant, slot_version) WHERE status <> 'deleted'")
+	restoreRequiredIndex(t, pool, "uq_campaigns_brief_platform_variant_live",
+		"CREATE UNIQUE INDEX uq_campaigns_brief_platform_variant_live"+
+			" ON campaigns (brief_id, platform, variant) WHERE status <> 'deleted'")
 }
 
 func restoreRequiredIndex(t *testing.T, pool interface {

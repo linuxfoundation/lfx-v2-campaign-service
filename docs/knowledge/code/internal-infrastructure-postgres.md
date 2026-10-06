@@ -177,18 +177,23 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `uq_campaigns_brief_platform_variant_slot_version_live` as their `ON CONFLICT` arbiter;
   `GetCampaignByPlatform` returns the slot's LATEST live row (`ORDER BY slot_version DESC
   LIMIT 1`), and the claim reads back its own slot version. `000022`'s three-column index
-  stayed for one release (expand/contract) and refused a second live row per slot; `000040`
-  (the contract step, `DROP INDEX CONCURRENTLY`, alone in its file) drops it and
-  `requiredIndexes` lost its entry, so a `new_version` claim for `slot_version` 2 now succeeds
-  and `domain.ErrSlotVersionUnavailable` is gone. `000040`'s down re-creates the index exactly
-  as `000022` did and FAILS once any slot holds two live campaigns — which one stays live is a
-  data decision.
+  stays for one release (expand/contract), and while it does a claim for `slot_version` 2
+  violates it — not the arbiter, so `DO NOTHING` does not apply — and `ClaimCampaignDispatch`
+  classifies that `23505` as `domain.ErrSlotVersionUnavailable` — for slot versions above 1
+  only. Postgres pre-checks only the arbiter, so CONCURRENT slot-1 claims that do not hold the
+  slot lock (a previous binary's, during a rollout) can all pass it and the losers then hit
+  `23505` on the legacy index; at slot 1 that is a lost race and is answered like the arbiter
+  conflict (not claimed, winner's row), pinned live by
+  `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`. `AdoptCampaign` classifies `23505` by
+  index name for the same reason: the legacy slot index means `ErrConflict`, only
+  `uq_campaigns_platform_campaign_live` means `ErrPlatformCampaignAlreadyBound`. Both indexes are in
+  `requiredIndexes` until the index-drop release removes the narrower one.
 
-  **Per-slot advisory lock.** With the three-column index gone, nothing in the schema says
-  "an adopt binds only an EMPTY slot": adopt always writes `slot_version` 1, so its
-  `ON CONFLICT` arm cannot see a live version 2, and an adopt racing a `new_version` claim did
-  not conflict on any index. So `ClaimCampaignDispatch` (now a short transaction),
-  `UpsertCampaign` and `AdoptCampaign` each take
+  **Per-slot advisory lock, staged one release BEFORE the index drop.** Once the three-column
+  index is gone, nothing in the schema says "an adopt binds only an EMPTY slot": adopt always
+  writes `slot_version` 1, so its `ON CONFLICT` arm cannot see a live version 2, and an adopt
+  racing a `new_version` claim would conflict on no index. So `ClaimCampaignDispatch` (now a
+  short transaction), `UpsertCampaign` and `AdoptCampaign` each take
   `pg_advisory_xact_lock(<'slot' namespace>, hashtext(brief_id::uuid::text|platform|variant))`
   before writing, and `AdoptCampaign` then checks for ANY live row on the slot
   (`slotLiveRowExistsQuery`) and returns `ErrConflict` if one exists. The lock is held to
@@ -198,17 +203,31 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   deadlocks (Postgres aborts one with `40P01` — observed live with the adopt's lock removed).
   The two-int lock form keeps these keys out of the bigint space `hashCampaignID`'s session
   locks use; a hash collision between two slots only serializes them. Nothing does platform I/O
-  under the lock. Residual, by design: an adopt that commits FIRST on a slot whose only campaign
+  under the lock.
+
+  The lock ships FIRST and the index drop (the contract migration, plus removing
+  `uq_campaigns_brief_platform_variant_live` from `requiredIndexes`, plus retiring
+  `ErrSlotVersionUnavailable` and the legacy-index `23505` handling) ships **one release after
+  this lock is deployed**. That ordering is what makes an image-only rollback safe: reverting the
+  image does not revert the schema (see the deployment concept), and the binary before this one
+  takes no slot lock — so if the drop shipped alongside the lock, a rollback would leave that
+  lock-free binary's adopt preflight free to race a slot-2 claim and bind slot 1 beside it. With
+  the drop a release later, every binary that can run against the contracted schema, including
+  the one a rollback returns to, already takes the lock; and rolling back THIS release leaves the
+  three-column index in place, which enforces the empty-slot rule by itself. Until the drop, the
+  lock is redundant with that index for correctness, which is why it can ship alone. Residual,
+  by design, once the index is gone: an adopt that commits FIRST on a slot whose only campaign
   was just deleted, followed by a `new_version` claim computed from the pre-delete read, leaves
   the adopted version 1 plus version 2 — ordered, distinct versions, which is what
-  `new_version` asks for. The N-1 binary takes no lock, so during the rolling deploy that
-  ships `000040` the old guarantee is only the four-column index. `AdoptCampaign` still
-  classifies `23505` by index name: only `uq_campaigns_platform_campaign_live` means
-  `ErrPlatformCampaignAlreadyBound`. Pinned live by `TestLiveNewVersionCreatesSlotVersion2`,
-  `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`, `TestLiveConcurrentNewVersionClaims`,
+  `new_version` asks for. Pinned live (against the schema this release ships, with the legacy
+  index present) by `TestLiveSlotVersionDuringExpandPhase`,
+  `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`,
+  `TestLiveConcurrentNewVersionClaimsHaveOneWinner` (catches a missing lock, race-dependently:
+  unserialized, a loser can hit the legacy index and return `ErrSlotVersionUnavailable`),
   `TestLiveConcurrentClaimAndAdoptLeaveOneLiveRow`,
   `TestLiveAdoptRefusesASlotWhoseOnlyLiveCampaignIsALaterVersion` and
-  `TestLiveClaimAndAdoptWaitForTheSlotLock`.
+  `TestLiveClaimAndAdoptWaitForTheSlotLock` (deterministic: with the adopt's lock removed the
+  adopt inserts slot 1 while the lock is held and the test fails).
 
   `max_cpc_bid` (added by `000039`, `NUMERIC(18,6)`, nullable, `CHECK > 0`) records the manual
   max CPC bid most recently set through `update-campaign-bid` — a confirmed REQUEST, like
@@ -988,7 +1007,7 @@ wrong destination. A foundation with no HubSpot connection of its own now reache
 on every audience build and email dispatch, which after the fallback change is the ordinary case
 rather than the exception.
 
-**Migration 000040** creates `keyword_insight_reports`, the saved-report store behind the
+**Migration 000038** creates `keyword_insight_reports`, the saved-report store behind the
 report-backed Microsoft keyword read (see
 [Microsoft keyword insights](../architecture/microsoft-keyword-insights.md)). It is 000035's
 mechanism on a SIBLING table rather than a `kind` column on `account_monitor_reports`, because the

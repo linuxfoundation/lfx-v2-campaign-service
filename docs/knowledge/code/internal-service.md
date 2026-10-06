@@ -135,10 +135,11 @@ threaded as `StartOptions.NewVersion` (`Start` is `StartWithOptions` with the ze
 is complete, and `1` on an empty slot. An UNFINISHED latest campaign is never built on — the
 claim targets its own slot version and gets the skip / reconciliation-required answer a retry
 gets, because a second campaign beside an unresolved one would spend twice. The slot version
-reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). Since `000040`
-dropped `000022`'s three-column index the second campaign is actually created; two concurrent
-`new_version` requests compute the same next version and the claim lets one through (the other
-is a skip or a reuse). `CreateCampaigns`
+reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). While `000022`'s
+three-column index still exists, the claim returns `domain.ErrSlotVersionUnavailable` and the
+platform result is a plain "not available yet" refusal; nothing is created. That index is
+dropped one release after the per-slot adopt/claim lock ships (see the postgres concept), so an
+image-only rollback never returns to a lock-free binary on a schema without it. `CreateCampaigns`
 refuses `new_version` synchronously (400, before a job exists) for any platform outside
 `model.ProviderSupportsSlotVersions` — today Microsoft only, because the other providers reuse
 campaigns by a name that does not yet vary by slot version (see the dispatch concept).

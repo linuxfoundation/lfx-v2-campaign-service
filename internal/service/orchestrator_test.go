@@ -197,6 +197,10 @@ type fakeCampaignRepo struct {
 	// slot version has been claimed on top of them. `existing` always holds the LATEST, which
 	// is what GetCampaignByPlatform returns, so the many single-campaign fixtures are unchanged.
 	superseded map[string]*model.Campaign
+	// legacySlotIndex simulates the expand phase of 000037, when 000022's three-column index
+	// still exists: a claim for a slot version above an existing live one fails with
+	// ErrSlotVersionUnavailable, exactly as the real INSERT's unique violation is classified.
+	legacySlotIndex bool
 	// claimSlotVersions records the slotVersion argument of every ClaimCampaignDispatch call.
 	claimSlotVersions []int
 	// claimActors records the `by` argument of every ClaimCampaignDispatch call, so a
@@ -419,6 +423,9 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 				return false, c, nil
 			}
 			return false, nil, fmt.Errorf("fake: claim of superseded slot version %d with no row", slotVersion)
+		case r.legacySlotIndex:
+			// The three-column index rejects a second live row on the slot.
+			return false, nil, fmt.Errorf("claim campaign dispatch: %w", domain.ErrSlotVersionUnavailable)
 		}
 		if r.superseded == nil {
 			r.superseded = map[string]*model.Campaign{}

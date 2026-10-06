@@ -327,25 +327,44 @@ var requiredIndexes = []requiredIndex{{
 	// false alarm, on the same reasoning as 000014's guard.
 	predicate: "(status = 'building'::text)",
 }, {
+	// at most one live campaign per (brief, platform) — the arbiter of
+	// ClaimCampaignDispatch, and since 000014 dropped campaigns_brief_id_platform_key,
+	// the ONLY one. 000014's guard pins this same definition before it drops the
+	// constraint, but that guard runs once, at migration time. Nothing re-checked it
+	// afterwards, so an index dropped or replaced later — including by an operator
+	// clearing invalid-index debris and rebuilding from 000013 with IF NOT EXISTS
+	// silently no-opping against a same-named leftover — left uniqueness unenforced with
+	// a clean boot and duplicate PAID campaigns as the first symptom. Two guards on one
+	// definition is the point: a migration-time check cannot speak for the schema a year
+	// of operations later.
+	name:   "uq_campaigns_brief_platform_variant_live",
+	table:  "campaigns",
+	unique: true,
+	// (brief, platform, VARIANT) since 000022. Google's UI offers Search and Demand Gen
+	// as simultaneous checkboxes, so a brief legitimately holds several google-ads
+	// campaigns; keying on (brief, platform) alone made the second dispatch read the
+	// first's row and report a false success. Every other provider writes 'default', so
+	// the invariant is unchanged for them — one live campaign per pair, now spelled with
+	// a third column.
+	keys: []string{"brief_id", "platform", "variant"},
+	// Deparsed, and character-identical to the form 000023's guard compares against.
+	predicate: "(status <> 'deleted'::text)",
+}, {
 	// at most one live campaign per (brief, platform, variant, slot_version) — 000037. The
-	// arbiter of ClaimCampaignDispatch, UpsertCampaign and AdoptCampaign, and since 000040
-	// dropped 000022's three-column uq_campaigns_brief_platform_variant_live, the ONLY index
-	// standing between two concurrent claims of one slot version and two paid campaigns.
-	// Membership here is what re-checks it at every boot. A migration-time guard (000014's,
-	// 000023's) runs once, and an index lost afterwards — an operator clearing invalid-index
-	// debris, a rebuild whose IF NOT EXISTS no-opped against a same-named leftover — leaves a
-	// schema that boots clean with duplicate PAID campaigns as the first symptom.
+	// four-column successor to the entry above, widening the slot so a DELIBERATE second
+	// campaign on one slot is distinguishable from a RETRY of the first.
 	//
-	// The slot_version column is what lets a DELIBERATE second campaign on one
-	// (brief, platform, variant) slot coexist with the first. "An adopt binds only an empty
-	// slot", which the three-column index used to enforce, is now enforced by the per-slot
-	// advisory lock in campaign_repo.go — not by any index, so not by this check.
+	// Both entries are listed on purpose while expand/contract runs. The three-column
+	// index is what the N-1 binary's claims key on and must stay enforced through a
+	// rollout; the four-column one is what this release's claim, upsert and adopt name as
+	// their ON CONFLICT arbiter. The follow-up release drops the narrower index and this
+	// list loses the entry above with it — until then a missing EITHER index is a boot
+	// failure, because each one serializes a different binary's writes.
 	name:   "uq_campaigns_brief_platform_variant_slot_version_live",
 	table:  "campaigns",
 	unique: true,
 	keys:   []string{"brief_id", "platform", "variant", "slot_version"},
-	// Deparsed form of `WHERE status <> 'deleted'`, character-identical to what 000023's
-	// guard compared for the three-column index this one replaced.
+	// Deparsed form, matching the sibling entry above.
 	predicate: "(status <> 'deleted'::text)",
 }, {
 	// at most one live campaign per (platform, platform_campaign_id) — the guard that keeps
@@ -643,7 +662,7 @@ func describeInvalid(names []string) string {
 //
 // It is per-name and not per-message because more than one index can be reported at once
 // and they need not share an owner: `uq_campaign_audiences_brief_platform_building` comes
-// from 000018 and `uq_campaigns_platform_campaign_live` from 000020. A single
+// from 000018 and `uq_campaigns_brief_platform_variant_live` from 000022. A single
 // `force <version-1>` sentence covering both is wrong for at least one of them — an
 // operator who forces 17 replays 000018 and the campaigns index is still absent, with the
 // error now silent because the message they followed said this was the remedy. Advice
