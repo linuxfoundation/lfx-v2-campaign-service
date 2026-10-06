@@ -210,8 +210,8 @@ var (
 	// (no dispatcher, or the dispatcher is not a BidWriter). The platform is never contacted.
 	// Maps to 400, and lives here for the same reason as ErrBudgetWriteUnsupported.
 	//
-	// Microsoft Advertising and Reddit implement the capability today (LFXV2-2665); Google
-	// Ads, LinkedIn, Meta and X still answer 400. As with budgets, the service layer holds NO
+	// Microsoft Advertising, Reddit, Meta and X implement the capability today (LFXV2-2665);
+	// Google Ads and LinkedIn still answer 400. As with budgets, the service layer holds NO
 	// allowlist: what a platform supports is decided solely by whether its dispatcher is a
 	// BidWriter.
 	ErrBidUnsupported = errors.New("bid writes are not supported for this platform")
@@ -228,8 +228,8 @@ var (
 	// ErrBidAmountRejected indicates the requested BID was refused and the platform was NOT
 	// changed: by the adapter's own bounds before the mutate, or by the platform's DEFINITE
 	// refusal of the amount (Microsoft: CampaignServiceBidAmountsLessThanFloorPrice and its
-	// siblings). Maps to 400 — a permanent property of the amount against that platform's
-	// rules. Like ErrBudgetAmountRejected, the adapter's own sentence is client-safe and is
+	// siblings; Reddit, Meta and X: a definite 400 naming the bid). Maps to 400 — a permanent
+	// property of the amount against that platform's rules. Like ErrBudgetAmountRejected, the adapter's own sentence is client-safe and is
 	// returned to the caller.
 	ErrBidAmountRejected = errors.New("the requested bid amount was rejected by the platform's rules")
 

@@ -194,35 +194,47 @@ type Service interface {
 	// Microsoft Advertising: the default CpcBid of the ONE ad group this service
 	// created for the campaign (keywords are created without their own bids, so
 	// they inherit it). Reddit: the bid_value of the ONE ad group this service
-	// created. A campaign whose row records no ad group (an adopted campaign, or
-	// one whose creation never reached the ad group) is refused (409): the service
-	// will not choose which of several ad groups to re-bid. REFUSED (409) WHEN THE
-	// BID WOULD BE IGNORED. A manual bid only does something under a bid strategy
-	// that reads it — Microsoft's EnhancedCpc or ManualCpc; Reddit's
-	// MANUAL_BIDDING. Under an automated strategy (Microsoft MaxClicks,
-	// MaxConversions, TargetCpa, TargetRoas, MaxConversionValue,
-	// TargetImpressionShare, a portfolio strategy the read cannot name; Reddit
-	// BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX) the platform would ignore it or,
-	// worse, the write would be read as a request to switch strategy — and this
-	// endpoint NEVER switches strategy. An unreported strategy is refused the same
-	// way rather than assumed manual. NOTE: every Reddit campaign this service
-	// creates is BIDLESS, so the Reddit leg applies only after an operator has
-	// moved the ad group to manual bidding in Reddit Ads Manager. The amount is in
-	// the AD ACCOUNT's own currency, not USD, and this service neither knows nor
-	// converts it. Microsoft Advertising and Reddit today: a campaign on any other
+	// created. Meta: the bid_amount (a bid cap, in the account currency's minor
+	// units) of the ONE ad set this service created. X: the bid_amount_local_micro
+	// of the ONE line item this service created. A campaign whose row records none
+	// (an adopted campaign, or one whose creation never reached it) is refused
+	// (409): the service will not choose which of several to re-bid. REFUSED (409)
+	// WHEN THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only
+	// does something under a bid strategy that reads it — Microsoft's EnhancedCpc
+	// or ManualCpc; Reddit's MANUAL_BIDDING with bid_type CPC; Meta's
+	// LOWEST_COST_WITH_BID_CAP with billing_event AND optimization_goal both
+	// LINK_CLICKS (a Meta bid cap is per optimization event and, billed on
+	// impressions, per 1,000 impressions — so only that pairing is a max cost per
+	// click); X's MAX with pay_by LINK_CLICK. Under an automated or target
+	// strategy (Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas,
+	// MaxConversionValue, TargetImpressionShare, a portfolio strategy the read
+	// cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta
+	// LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO,
+	// TARGET) the platform would ignore it or, worse, the write would be read as a
+	// request to switch strategy — and this endpoint NEVER switches strategy,
+	// billing or charge unit. An unreported strategy is refused the same way
+	// rather than assumed manual. NOTE: every Reddit campaign this service creates
+	// is BIDLESS, every Meta campaign LOWEST_COST_WITHOUT_CAP billed on
+	// IMPRESSIONS, and every X campaign AUTO, so those three legs apply only after
+	// an operator has moved the ad group, ad set or line item to a manual
+	// per-click bid in the platform's own UI. The amount is in the AD ACCOUNT's
+	// own currency, not USD, and this service neither knows nor converts it.
+	// Microsoft Advertising, Reddit, Meta and X today: a campaign on any other
 	// platform is refused with 400. **409** when the change is refused BEFORE the
 	// platform is written, so nothing has changed: the campaign is unprovisioned;
 	// it belongs to a different ad account than the project's connection now
 	// resolves to, or does not record which ad account it was created under; its
-	// bid strategy is automated or unreported; or the bid could not be addressed
-	// (no recorded ad group, an ad group reporting another campaign, or one
-	// bidding in a unit other than `bid_type`). None is retryable. **400** for a
-	// request fault: a non-positive, non-finite or out-of-range bid, an unknown
-	// bid type, a platform with no bid-write capability wired, or a bid the
-	// campaign's platform refuses on its own minimum or maximum — the response
-	// names what it was. **503** when the platform could not be reached or did not
-	// confirm; the row is unchanged. Setting the same bid twice converges, but
-	// verify the bid in the ad platform before retrying.
+	// bid strategy is automated, a target, or unreported; or the bid could not be
+	// addressed (no recorded ad group, ad set or line item, one reporting another
+	// campaign or deleted, or one bidding in a unit other than `bid_type`). None
+	// is retryable. **400** for a request fault: a non-positive, non-finite or
+	// out-of-range bid, an unknown bid type, a platform with no bid-write
+	// capability wired, or a bid the campaign's platform refuses on its own
+	// minimum or maximum — the response names what it was. **503** when the
+	// platform could not be reached or did not confirm — including a throttled
+	// Meta or X write, which is never retried in-call; the row is unchanged.
+	// Setting the same bid twice converges, but verify the bid in the ad platform
+	// before retrying.
 	UpdateCampaignBid(context.Context, *UpdateCampaignBidPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads keywords on one campaign. A MUTATION on a live
 	// paid campaign: pausing or removing a keyword changes what serves, so it is
@@ -1212,7 +1224,8 @@ type UpdateCampaignBidPayload struct {
 	// Must be strictly positive.
 	Bid float64
 	// The unit the bid is expressed in. Only a max cost-per-click bid is
-	// supported; it MUST match how the ad group bids upstream.
+	// supported; it MUST match how the campaign's ad group, ad set or line item
+	// bids upstream.
 	BidType string
 }
 

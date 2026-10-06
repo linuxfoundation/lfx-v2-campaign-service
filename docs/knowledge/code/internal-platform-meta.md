@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/meta"
-description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, optional single-image ad creatives attached EITHER by URL as `link_data.picture` OR by stored bytes uploaded to `/adimages` as `link_data.image_hash` (mutually exclusive per creative, both supported), campaign status toggle cascade over ad set and ads, live campaign metrics reads, ad-set budget reads and writes in the account currency's minor units through the same currency-offset resolver and encoder the create path uses, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
+description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, optional single-image ad creatives attached EITHER by URL as `link_data.picture` OR by stored bytes uploaded to `/adimages` as `link_data.image_hash` (mutually exclusive per creative, both supported), campaign status toggle cascade over ad set and ads, live campaign metrics reads, ad-set budget reads and writes in the account currency's minor units through the same currency-offset resolver and encoder the create path uses, an ad-set bid_amount write made only when the ad set is a link-click bid cap (which no campaign this service creates is), and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
 resource: "internal/platform/meta"
 tags:
   - platform-client
@@ -432,6 +432,39 @@ guards at construction against an amount that did not come from the encoder (nam
 `ResolveBudgetMinorUnits`), and **sends no `end_time`**: it only ever writes `lifetime_budget`
 on an ad set that already reports one, which already has its end time. Its errors are returned
 unwrapped so the caller can classify them through `IsOutcomeUnconfirmed`.
+
+## Ad-set bid write (`bid_update.go`, LFXV2-2665)
+
+Backs `MetaDispatcher.WriteBid`. Source: the Marketing API Ad Set reference (Graph API v25.0),
+<https://developers.facebook.com/docs/marketing-api/reference/ad-campaign>, fetched 2026-10-05 —
+`bid_strategy` is `LOWEST_COST_WITHOUT_CAP` ("also known as automatic bidding"),
+`LOWEST_COST_WITH_BID_CAP` ("limiting actual bid to your specified amount ... you must provide a
+bid cap with the bid_amount field"), `COST_CAP` or `LOWEST_COST_WITH_MIN_ROAS`; `bid_amount` is
+"the maximum bid you want to pay for a result based on your optimization_goal", in "cents for
+currencies like USD, EUR, and the basic unit for currencies like JPY, KRW", and "for ads with
+IMPRESSION or REACH as billing_event is per 1,000 occurrences ... For ads with other
+billing_events, the bid amount is for each occurrence, and has a minimum value 1 US cents."
+
+**Decision**: a Meta bid cap is a max CPC only when `bid_strategy == LOWEST_COST_WITH_BID_CAP`
+AND `billing_event == LINK_CLICKS` AND `optimization_goal == LINK_CLICKS` (`AdSetBid.CPCBidCap`).
+An impression-billed cap is a CPM, `CLICKS` billing is any click rather than a link click,
+`COST_CAP` is a target average. **The create path sends `billing_event: IMPRESSIONS` and
+`bid_strategy: LOWEST_COST_WITHOUT_CAP`**, so every Meta campaign this service creates is refused
+(409) until an operator moves its ad set to a link-click bid cap.
+
+- `ResolveBidMinorUnits(ctx, amount)` — the account preflight plus `resolveCurrencyOffset` (the
+  create/budget scale), then `bidToMinorUnits`: finite, positive, at most 1,000,000, at least one
+  minor unit; refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`); an unknown
+  currency wraps `ErrAccountCurrencyUnresolvable`.
+- `GetAdSetBid(ctx, adSetID)` — `GET /{id}?fields=id,campaign_id,bid_strategy,billing_event,optimization_goal,bid_amount`;
+  a pure read; an answer for another ad set is an error; a non-numeric id is `ErrInvalidAdSetID`
+  before any request; a non-integer `bid_amount` sets `BidAmountUnparseable`.
+- `UpdateAdSetBid(ctx, adSetID, minor)` — `POST /{id}` with `{"bid_amount": minor}` ONLY (never
+  strategy, billing or goal). Unlike `UpdateAdSetBudget` the throttle is NOT retried in-call
+  (`do(..., retryThrottle=false)`): a 429 or HTTP-400 rate-limit code comes back as itself and is
+  UNCONFIRMED, so a refusal from a retry can never be reported as "nothing changed". A definite
+  400 code 100 whose message names the bid is a `bidAmountError` with this package's own sentence
+  (best effort; Meta's bid error is not documented field by field).
 
 ## Campaign status toggle
 

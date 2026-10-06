@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/twitter"
-description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, the campaign -> line_item -> promoted_tweet creation flow, per-client write pacing toward X's 1-write/sec account limit, the account monitor's asynchronous stats-job primitives, and a campaign budget read+write (GET then one paced, classified PUT of the daily *_local_micro amount) for the budget writer (LFXV2-2665)."
+description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, the campaign -> line_item -> promoted_tweet creation flow, per-client write pacing toward X's 1-write/sec account limit, the account monitor's asynchronous stats-job primitives, a campaign budget read+write (GET then one paced, classified PUT of the daily *_local_micro amount) for the budget writer (LFXV2-2665), and a line-item bid_amount_local_micro write made only when the line item bids MAX per link click (which no campaign this service creates does)."
 resource: "internal/platform/twitter"
 tags:
   - platform-client
@@ -803,6 +803,38 @@ Scope is deliberately **text-only**: `media_keys` (images/video) requires a prio
 chunked-upload call to a different host this client does not implement, so image
 tweets are out of scope for this path — the manual workflow remains the only way
 to attach a tweet with media, for now.
+
+## Line-item bid write (`bid_update.go`, LFXV2-2665)
+
+Backs `TwitterDispatcher.WriteBid`. Source: the X Ads API v12 Campaign Management reference,
+<https://docs.x.com/x-ads-api/campaign-management/reference> (line items: `POST` and
+`PUT accounts/:account_id/line_items/:line_item_id`), and the guide
+<https://docs.x.com/x-ads-api/campaign-management>, consulted 2026-10-05: `bid_strategy` is `AUTO`,
+`MAX` or `TARGET`; `bid_amount_local_micro` is in micro-units of the funding instrument's
+currency; `pay_by` includes `LINK_CLICK` and `IMPRESSION` (the LINK_CLICKS goal supports both,
+IMPRESSION by default); `WEBSITE_CLICKS` prices as CPLC. The reference page is too long to fetch
+whole from the authoring environment, so the enum spellings were confirmed against its search
+index and example line-item response rather than quoted in full; the guards fail closed on
+anything unrecognized.
+
+**Decision**: `bid_amount_local_micro` is a max CPC only when `bid_strategy == MAX` AND
+`pay_by == LINK_CLICK` (`LineItemBid.ManualCPC`). **The create path sends `bid_strategy: AUTO`**
+(objective `WEBSITE_CLICKS`, no bid, no `pay_by`), so every X campaign this service creates is
+refused (409) until an operator moves the line item to a manual max bid charged per link click.
+
+- `BidMicros(amount)` — positive, finite, at most 1,000,000, rounded like `toMicroCurrency`,
+  refused if it rounds to zero; refusals are `ErrBidAmountInvalid` (`BidAmountReason`).
+- `GetLineItemBid(ctx, lineItemID)` — `GET line_items/{id}?with_deleted=true`; a pure read; 404 →
+  `(nil, nil)`; reports `deleted`; an answer for another id is an error; an id failing the path
+  guard is `ErrInvalidLineItemID` before any request.
+- `UpdateLineItemBid(ctx, lineItemID, micros)` — takes a write-pacer slot, then `PUT` with ONLY
+  `bid_amount_local_micro` in the OAuth-signed query string (never `bid_strategy`/`pay_by`).
+  `idempotent=false`, so a 429 is NOT retried in-call and comes back UNCONFIRMED — no refusal
+  from a retry can be reported as "nothing changed". Transport/3xx/5xx and a 2xx echo of another
+  line item or amount are UNCONFIRMED; a definite 400 whose error code names a bid (not the
+  strategy) is a `bidAmountError` with this package's own sentence. The budget write
+  (`UpdateCampaignBudget`) takes the other route — it retries the 429 and marks a later definite
+  failure `retriedUnconfirmedError`; the bid write does not retry, so it needs neither.
 
 ## Status toggle
 

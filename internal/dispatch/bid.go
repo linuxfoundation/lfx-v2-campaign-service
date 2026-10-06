@@ -3,9 +3,9 @@
 
 package dispatch
 
-// Shared outcome types for the BidWriter adapters (microsoft_bid.go, reddit_bid.go). They are
-// the bid lever's counterparts of unconfirmedBudgetWriteError and rejectedBudgetAmountError, and
-// are separate types rather than reuses because the service detects the amount reason through a
+// Shared outcome types for the BidWriter adapters (microsoft_bid.go, reddit_bid.go, meta_bid.go,
+// twitter_bid.go). They are the bid lever's counterparts of unconfirmedBudgetWriteError and
+// rejectedBudgetAmountError, and are separate types rather than reuses because the service detects the amount reason through a
 // BEHAVIOURAL interface named for the lever (BidAmountReason), and an error carrying the budget
 // method would be read by nothing on this path.
 

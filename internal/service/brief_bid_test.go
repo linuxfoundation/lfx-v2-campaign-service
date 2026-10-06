@@ -224,11 +224,11 @@ func TestUpdateCampaignBid_RefusedStatesBeforeTheClaim(t *testing.T) {
 	}
 }
 
-// Google Ads, LinkedIn, Meta and X have no BidWriter today. A registered dispatcher without the
+// Google Ads and LinkedIn have no BidWriter today. A registered dispatcher without the
 // capability is what exercises the type assertion; each platform's real dispatcher is held to it
 // by the dispatch package's compile-time checks.
 func TestUpdateCampaignBid_UnsupportedPlatformIsBadRequest(t *testing.T) {
-	for _, p := range []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds, model.ProviderMetaAds, model.ProviderTwitterAds} {
+	for _, p := range []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds} {
 		t.Run(string(p), func(t *testing.T) {
 			camp := bidCampaign()
 			camp.Platform = p
