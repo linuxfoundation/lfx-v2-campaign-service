@@ -653,8 +653,10 @@ child-cascade contract:
     unsatisfiable BY CONSTRUCTION: it would instruct the operator to supply the very field the
     create path rejects, leaving every Demand Gen campaign this service can create permanently
     un-launchable through this service. Its targeting is audience- and creative-driven.
-  - **Video** takes the same gate as Demand Gen, for the same reason: `video.go` creates an
-    ad group and an ad, so the ad-group and ad gates are both meaningful, but keywords are
+  - **Video** takes the same gate as Demand Gen, for the same reason: a Video campaign
+    serves from an ad group with an ad under it, so the ad-group and ad gates are both
+    meaningful — they are reached by ADOPTED Video campaigns, since this service cannot
+    create one (see the Video section below) — but keywords are
     REFUSED on this channel too (the same Search-only fence), so a keyword gate here would be
     unsatisfiable by construction. `googleAdsActivationGate` says so by listing the two
     channels in one `case`, rather than by repeating the Demand Gen arm — a second copy is
@@ -1718,6 +1720,40 @@ success would not know that.
 
 
 ## Video (YouTube) campaign creation (LFXV2-2665)
+
+**CREATION IS REFUSED. The Google Ads API cannot create a Video campaign.** Google's
+[Video overview](https://developers.google.com/google-ads/api/docs/video/overview) says it
+without qualification — "You cannot create new Video campaigns or update existing ones
+using the Google Ads API", and "Video campaigns cannot be created or mutated using the
+Google Ads API" — and directs new video creation to Google Ads scripts or Demand Gen.
+FETCHING and REPORTING on Video campaigns *are* supported, which is why adoption, the
+activation gate, the variant slot and monitoring below are all untouched: only creation is
+impossible.
+
+So `CreateVideoCampaign`'s first statement returns `ErrVideoCreateUnsupported`, a sentinel
+rather than a bare `fmt.Errorf` so dispatch and its tests can tell "Google cannot do this"
+apart from "this request was malformed". The refusal is placed there and not in
+`preflightCampaignKind`/`ValidateCampaignInputKind`, because that validator runs BEFORE the
+adoption branch (`internal/dispatch/googleads.go`) and a refusal inside it would kill
+legitimate Video ADOPTION along with creation.
+
+Refusing in the FIRST statement is the whole point, and the cost of refusing one step later
+is money rather than an error: the budget is step 1 and `campaigns:mutate` is step 2, so
+every Video request would leave a real `CampaignBudget` behind on the account before
+failing — one orphaned budget per attempt — and a retry composes the same budget name and
+fails at `DUPLICATE_NAME` instead, so the retry path never reconciles the orphan it made.
+That is exactly the stranding the refuse-don't-drop doctrine exists to prevent, and it does
+not become acceptable because the refusal comes from upstream rather than from a field
+value. `TestCreateVideoCampaign_RefusesWithoutSendingAnything` fails the test if Google is
+contacted at all, and the dispatch-level test asserts `!cap.sawBudget`, because "returns an
+error" is satisfied equally well by a cascade that bought a budget first.
+
+The cascade below is RETAINED, unexported and unreachable, as
+`createVideoCampaignCascade`, and `video_test.go` still exercises it in full. It is kept
+rather than deleted so that the day Google opens creation the change is removing one block
+and re-verifying `videoBiddingStrategies` — not rebuilding a channel from the documentation
+a second time. Everything the rest of this section describes is a description of that
+retained cascade.
 
 `video.go` and `video_creative.go` add the fourth channel, and it is the first one whose
 creative costs this service **no network at all**. A YouTube video is referenced by its

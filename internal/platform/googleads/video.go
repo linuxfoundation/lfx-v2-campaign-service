@@ -5,6 +5,7 @@ package googleads
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 )
@@ -112,6 +113,56 @@ type videoAdGroupCreate struct {
 // exists so far, because returning (nil, err) would release the orchestrator's claim
 // on a campaign that exists and spends.
 func (c *Client) CreateVideoCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
+	// REFUSED BEFORE ANYTHING IS SENT. The Google Ads API cannot create a Video
+	// campaign, and this is the first statement in the function so that fact costs a
+	// caller an error rather than a budget.
+	//
+	// Google's own Video overview says it without qualification: "You cannot create new
+	// Video campaigns or update existing ones using the Google Ads API", and "Video
+	// campaigns cannot be created or mutated using the Google Ads API". The API supports
+	// FETCHING and REPORTING on Video campaigns, which is why adoption and metrics below
+	// and in the dispatch layer are untouched — only creation is impossible. Google
+	// directs new video creation to Google Ads scripts or to Demand Gen.
+	//
+	// The cost of discovering this at the mutate instead of here is money, not an error.
+	// The budget is created at step 1 and campaigns:mutate is step 2, so every Video
+	// request would have left a real CampaignBudget behind on the account before failing
+	// — one orphaned budget per attempt, and a retry composes the same budget name and
+	// fails at DUPLICATE_NAME instead, so the orphan is never even reconciled by the
+	// retry path. That is precisely the stranding the refuse-don't-drop doctrine exists
+	// to prevent, and it does not become acceptable because the refusal comes from
+	// upstream rather than from a field value.
+	//
+	// The cascade below is kept rather than deleted, and the choice is deliberate. It is
+	// the shape a Video Action campaign needs, settled against the v23 resources, and it
+	// is what the adoption and toggle paths describe when they talk about a Video
+	// campaign's ad group and ad. Deleting it would also delete the record of what this
+	// channel is, leaving the dispatch layer's Video arms referring to nothing. What the
+	// return above guarantees is that none of it executes. If Google opens creation, the
+	// change is removing this block and re-verifying videoBiddingStrategies — not
+	// rebuilding the channel.
+	_ = ctx
+	_ = in
+	return nil, ErrVideoCreateUnsupported
+}
+
+// ErrVideoCreateUnsupported is returned by CreateVideoCampaign, always.
+//
+// A sentinel rather than a bare fmt.Errorf because the dispatch layer and its tests must
+// be able to tell "Google cannot do this" apart from "this request was malformed" — the
+// two are both pre-create refusals and would otherwise be indistinguishable to a caller
+// deciding whether a retry or a corrected request could ever succeed. Nothing can: this
+// one is permanent until Google changes the API.
+var ErrVideoCreateUnsupported = errors.New("google-ads cannot create Video (YouTube) campaigns: the Google Ads API supports fetching and reporting on Video campaigns but cannot create or mutate them (see https://developers.google.com/google-ads/api/docs/video/overview) — use Demand Gen for a campaign this service can create, or build the Video campaign in the Google Ads UI and adopt it")
+
+// createVideoCampaignCascade is the Video Action create cascade, retained and unreachable.
+//
+// See CreateVideoCampaign for why it is kept rather than deleted. It is deliberately NOT
+// called from anywhere: making it reachable again is a decision about Google's API, not a
+// refactor, and a reviewer should have to delete the refusal to get here.
+//
+//nolint:unused // retained deliberately; see CreateVideoCampaign.
+func (c *Client) createVideoCampaignCascade(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
 	pf, err := c.preflightCampaignKind(campaignKindVideo, in)
 	if err != nil {
 		return nil, err // pre-create: nothing was sent

@@ -897,13 +897,27 @@ a complete asset group gets past every bound and into the fetch, with each list 
 turn producing that list's own refusal.
 
 `videoCreative` is the same shape a fourth time — a pointer, a mapper that validates nothing,
-the zero `googleads.VideoCreative` for nil — and `googleads_video_wiring_test.go` exercises the
-WHOLE cascade rather than stopping at the shell, because Video fetches nothing: there is no
-image fetch, so there is no dial guard to relax and no reason to stop short. It asserts that
-`channel: "video"` reaches the shell as `VIDEO` **with** `VIDEO_ACTION` — `VIDEO` alone is a
-different product that does not bid toward conversions — that each of the five lists lands in
-its own slot, and that omitting `callToActions` sends no `callToActions` key at all, since on
-this one list absent means Google's default while empty would mean no text.
+the zero `googleads.VideoCreative` for nil — but `googleads_video_wiring_test.go` is the one
+file of the five that cannot assert a campaign body, because **the Google Ads API cannot
+create a Video campaign at all** and dispatch refuses the channel before anything is sent
+(see `googleads.CreateVideoCampaign`). It asserts the two things that are still reachable
+and still matter. First, the refusal itself: `channel: "video"` must come back wrapping
+`googleads.ErrVideoCreateUnsupported` with a nil campaign and — the binding assertion —
+`!cap.sawBudget`, because the budget is step 1 and `campaigns:mutate` is step 2, so a
+refusal one step late leaves a real billable budget behind per attempt and a retry composes
+the same budget name and dies at `DUPLICATE_NAME` instead of reconciling it. Second, the
+mapper, proved by WHICH refusal each wire shape produces: omitting any of the four required
+lists gives that list's own validation refusal (the validator runs at
+`ValidateCampaignInputKind`, ahead of the channel refusal), while omitting the optional
+`callToActions` reaches the channel refusal instead — which is what now pins the required
+set, and keeps the validator honest while the create path is closed. The cascade's own
+payload proofs moved down into the googleads package, where `video_test.go` runs them
+against `createVideoCampaignCascade` directly.
+
+The refusal lives in the create switch rather than in `ValidateCampaignInputKind` because
+that validator runs BEFORE the adoption branch, and Video ADOPTION and reporting are
+legitimately supported — only creation is impossible, so refusing earlier would break a
+path Google does serve.
 
 `displayCreative` is the shape a fifth time, and the one that breaks the pattern:
 `longHeadline` is a SCALAR here, not a list, so a mapper copied from Performance Max or

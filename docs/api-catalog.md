@@ -306,7 +306,7 @@ The program type determines the AI brief generation strategy (copy tone, targeti
 | `search` | Search (RSA, responsive search ads) |
 | `demand-gen` | Demand Gen (YouTube, Discover, Gmail) |
 | `performance-max` | Performance Max (every Google inventory from one asset group) |
-| `video` | Video / YouTube (VIDEO_ACTION, responsive video ad) |
+| `video` | Video / YouTube — **adoption and reporting only; CREATE IS REFUSED**, because the Google Ads API cannot create or mutate Video campaigns ([Google's Video overview](https://developers.google.com/google-ads/api/docs/video/overview)) |
 | `display` | Display network (responsive display ad, no channel sub-type) |
 
 ### Campaign Goals
@@ -562,10 +562,11 @@ keyword/audience targeting attached to that ad group (GA-4) — without it, the 
 criteria and the campaign can never serve, even once a human enables it. `demand-gen` creates a
 Demand Gen campaign with an ad group and (given `demandGenCreative`) one ad; `performance-max`
 creates a Performance Max campaign with NO ad group and NO ad at all — its creative is an ASSET
-GROUP built from `performanceMaxCreative`; `video` creates a VIDEO campaign with the
-`VIDEO_ACTION` sub-type, an ad group of type `VIDEO_RESPONSIVE`, and (given `videoCreative`)
-one responsive video ad built from YouTube video ids the caller already owns — this service
-never uploads or fetches video bytes; `display` creates a DISPLAY campaign with NO channel
+GROUP built from `performanceMaxCreative`; `video` CREATES NOTHING — the Google Ads API
+supports fetching and reporting on Video campaigns but cannot create or mutate them, so a
+`video` create is REFUSED before the first budget mutate rather than stranding a paid
+budget at the campaign step (`adoptExisting` still works, and so does monitoring, because
+only creation is impossible); `display` creates a DISPLAY campaign with NO channel
 sub-type, an ad group of type `DISPLAY_STANDARD`, and (given `displayCreative`) one
 responsive display ad built from images this service fetches and uploads. **Budget is in whole units of the ad ACCOUNT's
 currency**, not USD — the service does no FX conversion (mirroring `metaConfig`).
@@ -595,6 +596,9 @@ channel?: string                — OPTIONAL which Google Ads campaign type to c
                                   Search, so absence must not repoint them. An unrecognised value is
                                   REFUSED, never defaulted — defaulting a typo'd `demandgen` to Search
                                   would spend the Demand Gen budget on Search ads and report success.
+                                  `video` is accepted and VALIDATED like any other channel but its
+                                  CREATE is refused: Google cannot create Video campaigns. It remains a
+                                  legal value because `adoptExisting` and monitoring do work on Video.
 headlines?: string[]            — Optional Responsive Search Ad headlines (≤30 WEIGHTED chars
                                   each, 3-15 after padding). Trimmed, truncated, and de-duplicated;
                                   caller-supplied entries are accepted up to 15 (later entries

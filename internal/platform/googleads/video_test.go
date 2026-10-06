@@ -6,6 +6,7 @@ package googleads
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -91,6 +92,41 @@ func mutateCreate(t *testing.T, body string) map[string]any {
 	return req.Operations[0].Create
 }
 
+// TestCreateVideoCampaign_RefusesWithoutSendingAnything is the only test in this file
+// that calls the EXPORTED entry point. Every test below it calls
+// createVideoCampaignCascade directly, because CreateVideoCampaign no longer runs the
+// cascade: the Google Ads API cannot create a Video campaign, so it refuses first and
+// the cascade is retained unreachable against the day Google opens creation. See
+// CreateVideoCampaign for the full reasoning.
+//
+// What this pins is the REFUSAL ITSELF, not just an error. The server fails the test if
+// it is contacted at all, because "returns an error" is satisfied equally well by a
+// cascade that creates a budget and then fails — which is the exact outcome the refusal
+// exists to prevent, and which costs real money per attempt.
+func TestCreateVideoCampaign_RefusesWithoutSendingAnything(t *testing.T) {
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("Google was contacted at %s; a Video create must be refused before any request", r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	c := demandGenClient(t, srv)
+
+	res, err := c.CreateVideoCampaign(context.Background(), videoInput())
+	if err == nil {
+		t.Fatal("CreateVideoCampaign returned no error; the Google Ads API cannot create Video campaigns")
+	}
+	if !errors.Is(err, ErrVideoCreateUnsupported) {
+		t.Errorf("error = %v, want it to wrap ErrVideoCreateUnsupported so dispatch can tell "+
+			"'Google cannot do this' apart from 'this request was malformed'", err)
+	}
+	// (nil, err) is the pre-create half of the partial-result contract: nothing exists
+	// upstream, so the orchestrator must RELEASE its claim rather than record an orphan.
+	// A non-nil result here would have dispatch retain a claim on a campaign that was
+	// never created and can never be created.
+	if res != nil {
+		t.Errorf("result = %+v, want nil — nothing was created, so the claim must be released", res)
+	}
+}
+
 func TestCreateVideoCampaign_HappyPath(t *testing.T) {
 	budgetH, readBudget := capturedMutate(1, videoBudgetResource)
 	campaignH, readCampaign := capturedMutate(1, videoCampaignResource)
@@ -110,7 +146,7 @@ func TestCreateVideoCampaign_HappyPath(t *testing.T) {
 	})
 	c := demandGenClient(t, srv)
 
-	res, err := c.CreateVideoCampaign(context.Background(), videoInput())
+	res, err := c.createVideoCampaignCascade(context.Background(), videoInput())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -225,7 +261,7 @@ func TestCreateVideoCampaign_NoAdWithoutACreative(t *testing.T) {
 		failHandler(t, "assets:mutate"), failHandler(t, "adGroupAds:mutate")))
 	c := demandGenClient(t, srv)
 
-	res, err := c.CreateVideoCampaign(context.Background(), demandGenInput()) // no VideoCreative
+	res, err := c.createVideoCampaignCascade(context.Background(), demandGenInput()) // no VideoCreative
 	if err != nil {
 		t.Fatalf("a Video campaign with no creative must still create: %v", err)
 	}
@@ -257,7 +293,7 @@ func TestCreateVideoCampaign_BudgetFailureReturnsNoResult(t *testing.T) {
 	})
 	c := demandGenClient(t, srv)
 
-	res, err := c.CreateVideoCampaign(context.Background(), videoInput())
+	res, err := c.createVideoCampaignCascade(context.Background(), videoInput())
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -281,7 +317,7 @@ func TestCreateVideoCampaign_AmbiguousBudgetKeepsTheClaim(t *testing.T) {
 	})
 	c := demandGenClient(t, srv)
 
-	res, err := c.CreateVideoCampaign(context.Background(), videoInput())
+	res, err := c.createVideoCampaignCascade(context.Background(), videoInput())
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -305,7 +341,7 @@ func TestCreateVideoCampaign_AdGroupFailureKeepsThePartial(t *testing.T) {
 		failHandler(t, "assets:mutate"), failHandler(t, "adGroupAds:mutate")))
 	c := demandGenClient(t, srv)
 
-	res, err := c.CreateVideoCampaign(context.Background(), videoInput())
+	res, err := c.createVideoCampaignCascade(context.Background(), videoInput())
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -335,7 +371,7 @@ func TestCreateVideoCampaign_AdFailureReportsTheAssets(t *testing.T) {
 	srv := demandGenTLSServer(t, videoCascade(t, adGroupH, assetH, serverError))
 	c := demandGenClient(t, srv)
 
-	res, err := c.CreateVideoCampaign(context.Background(), videoInput())
+	res, err := c.createVideoCampaignCascade(context.Background(), videoInput())
 	if err == nil {
 		t.Fatal("want an error")
 	}
