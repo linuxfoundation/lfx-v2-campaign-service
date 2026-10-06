@@ -422,3 +422,57 @@ func TestLiveClaimAndAdoptWaitForTheSlotLock(t *testing.T) {
 		t.Fatalf("live rows on the slot = %d, want 1 (the slot-2 claim, and no adopted slot 1)", live)
 	}
 }
+
+// TestLiveUpsertWaitsForTheSlotLock pins the third writer the per-slot lock serializes: the
+// INSERT arm of UpsertCampaign can create a live row for an empty slot, so it must wait for a
+// held slot lock exactly as a claim and an adopt do. Like the test above, the lock is held with
+// nothing inserted, so the slot lock is the only thing that can stop the upsert; removing the
+// lockCampaignSlot call from UpsertCampaign makes it finish while the lock is held.
+func TestLiveUpsertWaitsForTheSlotLock(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+	p := model.ProviderMicrosoftAds
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, liveSlotLockSQL, briefID, string(p), model.VariantDefault); err != nil {
+		t.Fatalf("take the slot lock: %v", err)
+	}
+
+	upsertDone := make(chan error, 1)
+	go func() {
+		_, uerr := repo.UpsertCampaign(ctx, &model.Campaign{
+			ProjectID: project, BriefID: briefID,
+			Platform: p, Variant: model.VariantDefault, SlotVersion: 1,
+			CampaignName: dbtest.UniqueID(t, "campaign"), Status: model.CampaignStatusCreated,
+			PlatformCampaignID: dbtest.UniqueID(t, "upstream"),
+		}, nil)
+		upsertDone <- uerr
+	}()
+
+	select {
+	case uerr := <-upsertDone:
+		t.Fatalf("upsert finished (%v) while the slot lock was held; it must wait for it", uerr)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("release the slot lock: %v", err)
+	}
+	select {
+	case uerr := <-upsertDone:
+		if uerr != nil {
+			t.Fatalf("upsert after the lock was released: %v", uerr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("upsert still blocked after the lock was released")
+	}
+	if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 1 {
+		t.Fatalf("live rows on the slot = %d, want 1 (the upserted row)", live)
+	}
+}

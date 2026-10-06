@@ -245,9 +245,14 @@ type CampaignWriter interface {
 	// one — still spending, with nothing in this service referring to it. AdoptCampaign
 	// returns ErrConflict instead and leaves the existing binding alone.
 	//
-	// The check is the INSERT itself (ON CONFLICT DO NOTHING against the live partial
-	// unique index), not a preceding read, so two concurrent adopts of the same pair cannot
-	// both observe "no campaign yet" and race. A second live index rejects binding the same
+	// The check is a read made SAFE by a lock, then the INSERT as the final guard. The
+	// implementation takes the per-slot advisory lock (brief, platform, variant) — the same lock
+	// ClaimCampaignDispatch and UpsertCampaign take — and, holding it, refuses with ErrConflict
+	// if ANY live row exists on the slot, at any slot version. That locked read is load-bearing:
+	// it is what stops an adopt from landing beside a claim of another slot version, which no
+	// unique index covers once slot versions are allowed. The INSERT keeps ON CONFLICT DO NOTHING
+	// against the live partial unique index as the final same-version guard. An implementation
+	// that drops either the lock or the any-version check reopens the race. A second live index rejects binding the same
 	// upstream campaign to a DIFFERENT brief (ErrPlatformCampaignAlreadyBound) -- in any project,
 	// not just this one, because providers like Google Ads put every project on one shared
 	// upstream account, and a project-scoped rejection would miss the collisions that follow.
