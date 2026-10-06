@@ -326,38 +326,50 @@ func TestBiddingPlan_VideoAcceptsOnlyTheDocumentedPair(t *testing.T) {
 	}
 }
 
-// The refusal must say WHY, and Video's why is not the other channels'. Every other set was
-// settled by a live validateOnly mutate; claiming that for Video would make this client
-// assert a check it never ran. The second half of this test is the regression guard: the
-// Video clause must not have been swapped IN for the other three.
-func TestBiddingPlan_VideoRefusalDoesNotClaimLiveVerification(t *testing.T) {
+// The refusal must say WHY, and the unverified channels' why is not the other channels'.
+// Demand Gen's and Performance Max's sets were settled by a live validateOnly mutate;
+// claiming that for Video or Display would make this client assert a check it never ran.
+// The second half of this test is the regression guard: the unverified clause must not have
+// been swapped IN for the channels that earned the verified one.
+func TestBiddingPlan_UnverifiedRefusalsDoNotClaimLiveVerification(t *testing.T) {
 	const (
 		verified   = "which is the only combination verified against the live API"
-		unverified = "NOT yet verified a wider set against the live API"
+		unverified = "this client has NOT yet verified it against the live API"
 	)
 
-	_, err := validateBiddingPlan(campaignKindVideo, biddingTestCustomer, CampaignInput{BiddingStrategy: biddingManualCPC})
-	if err == nil {
-		t.Fatal("accepted manual CPC on Video")
+	// Keyed by channel so a new unverified channel is added in one place, and so the
+	// listed-set check below runs against that channel's own set rather than a copy.
+	unverifiedChannels := map[string]map[string]bool{
+		campaignKindVideo:   videoBiddingStrategies,
+		campaignKindDisplay: displayBiddingStrategies,
 	}
-	if !strings.Contains(err.Error(), unverified) {
-		t.Errorf("the Video refusal %v does not say the set is unverified", err)
-	}
-	if strings.Contains(err.Error(), verified) {
-		t.Errorf("the Video refusal %v claims a live validateOnly call that was never made", err)
-	}
-	// The listed set is the channel's own, not the union — an over-wide list sends the caller
-	// to a strategy the very next call refuses. Asked with an UNKNOWN name rather than the
-	// refused one above: a channel-mismatch error echoes the strategy it refused, so that
-	// name is in the text whether or not the list carries it.
-	_, err = validateBiddingPlan(campaignKindVideo, biddingTestCustomer, CampaignInput{BiddingStrategy: "maximise-clicks"})
-	if err == nil {
-		t.Fatal("accepted an unknown bidding strategy on Video")
-	}
-	for name := range knownBiddingStrategies {
-		listed := strings.Contains(err.Error(), name)
-		if allowed := videoBiddingStrategies[name]; listed != allowed {
-			t.Errorf("strategy %q: listed=%v, allowed on %s=%v — the list must be exactly the channel's set", name, listed, campaignKindVideo, allowed)
+	for kind, allowed := range unverifiedChannels {
+		// manualCpc is refused on both: Video has no manual bidding at all, and Display
+		// has one Google accepts but this client's ad group carries no bid to send.
+		_, err := validateBiddingPlan(kind, biddingTestCustomer, CampaignInput{BiddingStrategy: biddingManualCPC})
+		if err == nil {
+			t.Fatalf("accepted manual CPC on %s", kind)
+		}
+		if !strings.Contains(err.Error(), unverified) {
+			t.Errorf("the %s refusal %v does not say the set is unverified", kind, err)
+		}
+		if strings.Contains(err.Error(), verified) {
+			t.Errorf("the %s refusal %v claims a live validateOnly call that was never made", kind, err)
+		}
+
+		// The listed set is the channel's own, not the union — an over-wide list sends the
+		// caller to a strategy the very next call refuses. Asked with an UNKNOWN name
+		// rather than the refused one above: a channel-mismatch error echoes the strategy
+		// it refused, so that name is in the text whether or not the list carries it.
+		_, err = validateBiddingPlan(kind, biddingTestCustomer, CampaignInput{BiddingStrategy: "maximise-clicks"})
+		if err == nil {
+			t.Fatalf("accepted an unknown bidding strategy on %s", kind)
+		}
+		for name := range knownBiddingStrategies {
+			listed := strings.Contains(err.Error(), name)
+			if want := allowed[name]; listed != want {
+				t.Errorf("strategy %q on %s: listed=%v, allowed=%v — the list must be exactly the channel's set", name, kind, listed, want)
+			}
 		}
 	}
 
@@ -367,10 +379,10 @@ func TestBiddingPlan_VideoRefusalDoesNotClaimLiveVerification(t *testing.T) {
 			t.Fatalf("accepted manual CPC on %s", kind)
 		}
 		if !strings.Contains(err.Error(), verified) {
-			t.Errorf("%s lost its live-verification clause when Video gained its own: %v", kind, err)
+			t.Errorf("%s lost its live-verification clause when the unverified channels gained their own: %v", kind, err)
 		}
 		if strings.Contains(err.Error(), unverified) {
-			t.Errorf("%s picked up Video's unverified clause, which is false for it: %v", kind, err)
+			t.Errorf("%s picked up the unverified clause, which is false for it: %v", kind, err)
 		}
 	}
 }

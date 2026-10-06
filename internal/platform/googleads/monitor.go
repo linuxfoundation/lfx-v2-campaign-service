@@ -96,14 +96,14 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, customerID string, da
 	// and a channel missing from this list is a campaign this service created that monitoring
 	// reports as not existing — spend accruing against a campaign the operator is never shown.
 	// A differential diff against the BFF is therefore expected to differ by exactly the
-	// Performance Max and Video rows, and only for an account that has one serving; that is the fix
+	// Performance Max, Video and Display rows, and only for an account that has one serving; that is the fix
 	// being visible, not a port defect. Every future create path must add its type here in
 	// the same commit.
 	query := fmt.Sprintf(
 		"SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, "+
 			"campaign_budget.amount_micros, metrics.impressions, metrics.clicks, metrics.cost_micros, "+
 			"metrics.conversions FROM campaign WHERE segments.date BETWEEN '%s' AND '%s' "+
-			"AND campaign.advertising_channel_type IN ('SEARCH', 'DEMAND_GEN', 'PERFORMANCE_MAX', 'VIDEO') "+
+			"AND campaign.advertising_channel_type IN ('SEARCH', 'DEMAND_GEN', 'PERFORMANCE_MAX', 'VIDEO', 'DISPLAY') "+
 			"AND campaign.status IN ('ENABLED', 'PAUSED') "+
 			"AND metrics.impressions > 0",
 		startDate, endDate,

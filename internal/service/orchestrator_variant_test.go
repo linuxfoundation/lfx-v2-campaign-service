@@ -65,6 +65,7 @@ func TestVariantForDispatch(t *testing.T) {
 		// before the dispatcher runs, so its create path is unreachable however complete it is.
 		{"performance max claims its own slot", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"performance-max"}}`, "performance-max"},
 		{"video claims its own slot", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"video"}}`, "video"},
+		{"display claims its own slot", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"display"}}`, "display"},
 		// The reserved sentinel itself, sent as a channel, must not round-trip onto its own
 		// slot either -- it is not a channel any create writes.
 		{"the invalid sentinel is not a usable channel", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"_invalid"}}`, model.VariantInvalid},

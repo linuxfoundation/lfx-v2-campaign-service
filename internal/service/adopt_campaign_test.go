@@ -573,6 +573,11 @@ func TestAdoptCampaign_OccupiedBriefReturns409WithoutPlatformCall(t *testing.T) 
 		Platform: model.ProviderGoogleAds, Variant: "video",
 		PlatformCampaignID: "8888888888", Status: model.CampaignStatusCreated,
 	}
+	camps.existing["b1|google-ads|display"] = &model.Campaign{
+		ID: "existing-display", ProjectID: "cncf", BriefID: "b1",
+		Platform: model.ProviderGoogleAds, Variant: "display",
+		PlatformCampaignID: "9999999999", Status: model.CampaignStatusCreated,
+	}
 	camps.existing["b1|google-ads"] = &model.Campaign{
 		ID:                 "existing-campaign",
 		ProjectID:          "cncf",

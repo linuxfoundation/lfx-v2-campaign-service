@@ -308,12 +308,22 @@ same five.** `portraitImages` is shared, `tallPortraitImages` does not exist on 
 group and `landscapeLogoImages` does not exist on a Demand Gen ad, so
 `googleAdsSnapshotConfig` sanitizes its own block rather than reusing the Demand Gen
 one, and `TestGoogleAdsSnapshotConfig_SanitizesEveryPerformanceMaxURLList` asserts all
-five individually for the reason the Demand Gen test gives. The early return that skips
-the whole copy names THREE fields now — sitelinks, the Demand Gen creative and the asset
-group, and deliberately NOT `videoCreative`, which carries YouTube video ids and text and no
-URL of any kind, so a config holding only a video creative has nothing to sanitize — and `TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone` pins the third,
-because a config carrying only an asset group taking that return is precisely the bug
-the condition was added to prevent.
+five individually for the reason the Demand Gen test gives.
+
+**The responsive display ad has FOUR URL lists, and they are neither of those sets.**
+There is no portrait slot on a display ad, and `squareLogoImages` exists on neither
+sibling, so `googleAdsSnapshotConfig` sanitizes a third block of its own and
+`TestGoogleAdsSnapshotConfig_SanitizesEveryDisplayURLList` asserts all four individually,
+one more time for the same reason.
+
+The early return that skips the whole copy names FOUR fields now — sitelinks, the Demand
+Gen creative, the asset group and the Display creative, and deliberately NOT
+`videoCreative`, which carries YouTube video ids and text and no URL of any kind, so a
+config holding only a video creative has nothing to sanitize — and
+`TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone` and
+`..._SanitizesTheDisplayCreativeAlone` pin the third and fourth, because a config carrying
+only one of them taking that return is precisely the bug each condition was added to
+prevent.
 
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a
 credential-SHAPED parameter because the text is about to be PUBLISHED, and it is a
@@ -580,7 +590,8 @@ whose recorded side comes from `config_snapshot` rather than from a column.
 on both the create and the adoption path, so the row DOES record which channel was asked for.
 `googleAdsRecordedChannelType` decodes it and expresses it in Google's own vocabulary —
 `search` and an ABSENT channel both map to `SEARCH` (absence has meant Search since before the
-field existed), `demand-gen` maps to `DEMAND_GEN`, `performance-max` to `PERFORMANCE_MAX` and `video` to `VIDEO`. A campaign recorded as demand-gen and
+field existed), `demand-gen` maps to `DEMAND_GEN`, `performance-max` to `PERFORMANCE_MAX`, `video` to `VIDEO` and
+`display` to `DISPLAY`. A campaign recorded as demand-gen and
 running upstream as `SEARCH` is a real misconfiguration, and passing `nil` for the recorded
 side made it permanently `unknown` — the finding could not be produced at all. The recorded
 side is still nil, and the verdict still `unknown`, where nothing interpretable was recorded:
@@ -802,6 +813,21 @@ image fetch, so there is no dial guard to relax and no reason to stop short. It 
 different product that does not bid toward conversions — that each of the five lists lands in
 its own slot, and that omitting `callToActions` sends no `callToActions` key at all, since on
 this one list absent means Google's default while empty would mean no text.
+
+`displayCreative` is the shape a fifth time, and the one that breaks the pattern:
+`longHeadline` is a SCALAR here, not a list, so a mapper copied from Performance Max or
+Video compiles and silently drops the field or keeps only its first element.
+`googleads_display_creative_test.go` pins each of the nine fields to its own slot for that
+reason. `googleads_display_wiring_test.go` goes back to the Performance Max shape rather
+than Video's — Display fetches image bytes, so the ad mutate is out of reach from here
+without opening the dial-guard hole — and asserts that `channel: "display"` reaches the
+shell as `DISPLAY` with **no** `advertisingChannelSubType` (the deliberate contrast with
+Video's pinned `VIDEO_ACTION`), with one ad group and no ad; that a complete creative gets
+past every bound and into the fetch; and that each field omitted in turn produces its own
+refusal. The two marketing arrays are omitted TOGETHER in that table, because the
+requirement is reciprocal — either one alone satisfies it — and a table that omitted just
+one would pass against a mapper that never read that array at all. The logo arrays and the
+call-to-action text are omitted together too, to prove optional means optional.
 
 One thing this layer does decide for itself is the post-create "NO geo targeting" warning,
 which is the operator's only signal that a campaign will spend wherever the ad account
@@ -2610,7 +2636,8 @@ type, so the only evidence is what the platform reports: the lookup selects
 campaign was stored as `default` whatever it was — so adopting a Demand Gen campaign left the
 `demand-gen` slot free and the next Demand Gen dispatch created a SECOND paid campaign for the
 same brief. The mapping fails CLOSED: only the types this service can create are mappable — `SEARCH`,
-`DEMAND_GEN`, `PERFORMANCE_MAX` and, since the Video path landed, `VIDEO` — while `SHOPPING`,
+`DEMAND_GEN`, `PERFORMANCE_MAX` and, since the Video and Display paths landed, `VIDEO` and
+`DISPLAY` — while `SHOPPING`,
 `HOTEL`, an unrecognised future value or an absent field are refused rather than defaulted, since
 defaulting is what produces the duplicate. `VIDEO` used to be the worked example of a refused type
 and is now one of the mappable ones, which is exactly how this list is meant to move: a type leaves

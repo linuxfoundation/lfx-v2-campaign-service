@@ -72,9 +72,9 @@ const VariantInvalid = "_invalid"
 // AdoptableVariants lists the slots a platform's adopt endpoint can bind a campaign into.
 //
 // Only Google sub-divides today: its briefs can hold a Search campaign (VariantDefault), a
-// Demand Gen one, a Performance Max one and a Video one simultaneously. Every other provider has exactly
-// one slot, because its `objective`/`channel` configures a single campaign rather than
-// multiplying it.
+// Demand Gen one, a Performance Max one, a Video one and a Display one simultaneously. Every
+// other provider has exactly one slot, because its `objective`/`channel` configures a single
+// campaign rather than multiplying it.
 //
 // This list must gain a slot for every channel the Google create path learns, in the same
 // commit: a channel missing here is one the adopt pre-check reports as having no free slot,
@@ -89,7 +89,7 @@ const VariantInvalid = "_invalid"
 // result as "cannot pre-decide" rather than as "no slots".
 func AdoptableVariants(p Provider) []string {
 	if p == ProviderGoogleAds {
-		return []string{VariantDefault, "demand-gen", "performance-max", "video"}
+		return []string{VariantDefault, "demand-gen", "performance-max", "video", "display"}
 	}
 	return []string{VariantDefault}
 }

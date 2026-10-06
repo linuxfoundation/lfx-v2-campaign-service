@@ -304,6 +304,19 @@ type CampaignInput struct {
 	// referenced by id and stays on YouTube, so nothing here is fetched. See
 	// video_creative.go.
 	VideoCreative VideoCreative
+	// DisplayCreative is the responsive display ad for a Display campaign, and is the
+	// fifth member of the same family: optional and DISPLAY ONLY, refused at preflight
+	// on every other channel.
+	//
+	// Left empty the Display cascade creates the campaign and its ad group and no ad —
+	// a campaign that cannot serve, said so in the closing steps, kept for the same
+	// reason the four above are kept: that shape is also what adoption of a campaign
+	// whose ad was built by hand upstream looks like.
+	//
+	// Like the Demand Gen and Performance Max creatives and unlike the Video one, it
+	// carries image URLs, so its bytes ARE fetched before the budget mutate. See
+	// display_creative.go.
+	DisplayCreative DisplayCreative
 }
 
 // AdGroupResult is one ad group the cascade attempted, and everything created
@@ -834,6 +847,12 @@ type campaignPreflight struct {
 	// pmax it needs no later fetch step at all, because this channel holds no binary
 	// assets. See validateVideoCreative.
 	video videoCreativePlan
+	// display is the validated responsive display ad — image URLs bucketed by slot,
+	// the short headlines, the single long headline, the descriptions and the business
+	// name. Resolved here with everything else, and like creative and pmax — but unlike
+	// video — its image bytes are fetched by the Display cascade in the same pre-budget
+	// step. See validateDisplayCreative and fetchDisplayImages.
+	display displayCreativePlan
 	// adGroups are the ad groups the cascade will create, always at least one. When
 	// the caller asked for none, it holds exactly the single group the fields above
 	// describe, so the cascade has one shape to walk rather than two. A duplicate
@@ -1003,6 +1022,10 @@ const (
 	// with sub-type VIDEO_ACTION. See video.go for why the sub-type is pinned rather
 	// than offered as an input.
 	CampaignKindVideo = "Video Campaign"
+	// CampaignKindDisplay is a standard Display campaign — advertisingChannelType
+	// DISPLAY with NO sub-type. See display.go for why omitting the sub-type is a
+	// choice rather than the oversight the Video constant above would suggest.
+	CampaignKindDisplay = "Display Campaign"
 )
 
 // Unexported aliases retained so this package's own call sites read unchanged.
@@ -1011,6 +1034,7 @@ const (
 	campaignKindDemandGen      = CampaignKindDemandGen
 	campaignKindPerformanceMax = CampaignKindPerformanceMax
 	campaignKindVideo          = CampaignKindVideo
+	campaignKindDisplay        = CampaignKindDisplay
 )
 
 // preflightCampaign validates the input and composes the names, for the given campaign
@@ -1053,6 +1077,11 @@ func budgetKindFor(campaignKind string) string {
 		// yet, so a distinct segment costs nothing and keeps a Video campaign on a brief
 		// that already has a Search one from colliding at the budget step.
 		return "Video Budget"
+	case campaignKindDisplay:
+		// Same reasoning once more: this channel has created nothing yet, so a distinct
+		// segment costs nothing and keeps a Display campaign on a brief that already has
+		// a Search one from colliding at the budget step.
+		return "Display Budget"
 	default:
 		return "Budget"
 	}
@@ -1142,6 +1171,13 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		return nil, err
 	}
 	video, err := validateVideoCreative(kind, in)
+	if err != nil {
+		return nil, err
+	}
+	// The responsive display ad is the fifth of these, and refuses off Display exactly
+	// as the four above refuse off their own channels. Its image bytes are fetched by
+	// that cascade, still before the budget mutate. See display_creative.go.
+	display, err := validateDisplayCreative(kind, in)
 	if err != nil {
 		return nil, err
 	}
@@ -1256,6 +1292,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		creative:         creative,
 		pmax:             pmax,
 		video:            video,
+		display:          display,
 		adGroups:         adGroups,
 		negativeKeywords: negativeKeywords,
 		cpcBidMicros:     cpcBidMicros,
