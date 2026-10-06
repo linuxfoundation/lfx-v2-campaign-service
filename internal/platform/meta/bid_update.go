@@ -120,6 +120,12 @@ func (c *Client) ResolveBidMinorUnits(ctx context.Context, amount float64) (int6
 	if accountID == "" {
 		return 0, fmt.Errorf("meta: an ad account must be selected to write a bid: the account's currency determines the minor-unit scale the bid is encoded in, and it cannot be assumed")
 	}
+	// The id is concatenated into the Graph path, so its SHAPE is checked before any request: a
+	// stored value carrying '/', '?' or '&' would otherwise address another node or smuggle query
+	// parameters into the preflight.
+	if err := ValidateAccountID(accountID); err != nil {
+		return 0, fmt.Errorf("meta: bid write: %w", err)
+	}
 	var acct accountPreflight
 	preflightErr := c.doRequest(ctx, http.MethodGet, "/"+accountID+"?fields=name,account_status,currency", nil, &acct)
 	if preflightErr != nil && ctx.Err() != nil {

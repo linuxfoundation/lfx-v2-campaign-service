@@ -130,12 +130,13 @@ func (s *BriefService) UpdateCampaignBid(ctx context.Context, p *briefs.UpdateCa
 			}
 			return nil, &briefs.BadRequestError{Code: "400", Message: msg}
 		case errors.Is(werr, ErrBidUnwritable):
-			// Automated, unreported or non-per-click bid strategy, or an unaddressable ad group, ad
-			// set or line item. The cause goes to the log — it names upstream configuration — and
-			// the client gets the remedy.
+			// Automated, unreported or non-per-click bidding, OR an ad group / ad set / line item that
+			// could not be confirmed (missing, deleted, owned by another campaign, unreadable). The
+			// message is NEUTRAL across both kinds — a strategy remedy would mislead the second — and
+			// the specific cause goes to the log, since it names upstream configuration.
 			slog.WarnContext(ctx, "campaign bid change refused: the bid cannot be written as a manual bid",
 				append(logArgs, "platform_campaign_id", existing.PlatformCampaignID, "error", safeErrSummary(werr))...)
-			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign's bid could not be changed as requested — its bid strategy is automated (or was not reported) or does not bid per click, so a manual max CPC bid would be ignored, or the ad group, ad set or line item this service created for it could not be addressed; this endpoint sets a manual bid and never changes the bid strategy, so change the strategy in the ad platform first"}
+			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign's bid cannot be set here: its bidding setup is not a manual per-click bid, or the ad group, ad set or line item this service created for it could not be confirmed; this endpoint never changes a bid strategy — check the campaign in the ad platform"}
 		case errors.Is(werr, domain.ErrPlatformCampaignAbsent):
 			slog.WarnContext(ctx, "campaign bid change refused: the platform holds no such campaign",
 				append(logArgs, "platform_campaign_id", existing.PlatformCampaignID)...)

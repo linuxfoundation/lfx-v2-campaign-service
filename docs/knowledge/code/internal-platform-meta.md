@@ -452,7 +452,9 @@ An impression-billed cap is a CPM, `CLICKS` billing is any click rather than a l
 `bid_strategy: LOWEST_COST_WITHOUT_CAP`**, so every Meta campaign this service creates is refused
 (409) until an operator moves its ad set to a link-click bid cap.
 
-- `ResolveBidMinorUnits(ctx, amount)` — the account preflight plus `resolveCurrencyOffset` (the
+- `ResolveBidMinorUnits(ctx, amount)` — refuses an account id that is not `act_<digits>`
+  (`ErrInvalidAccountID`) before any request, since the id is spliced into the Graph path; then
+  the account preflight plus `resolveCurrencyOffset` (the
   create/budget scale), then `bidToMinorUnits`: finite, positive, at most 1,000,000, at least one
   minor unit; refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`); an unknown
   currency wraps `ErrAccountCurrencyUnresolvable`.

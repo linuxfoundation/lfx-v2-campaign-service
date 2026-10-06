@@ -1326,13 +1326,18 @@ classified. Nothing is written until every guard has passed.
   encoded AFTER the read by `ResolveBidMinorUnits` against the account's own currency (an
   unknown currency → `ErrBidUnwritable`; under one minor unit or over 1,000,000 →
   `ErrBidAmountRejected`); a missing account selection is `ErrAccountNotSelected` before any
-  request. POST outcomes: the throttle is NOT retried in-call, so a 429 or HTTP-400 rate-limit
+  request, and a stored account id that is not `act_<digits>` (`meta.ValidateAccountID`) is
+  `ErrConnectionNotUsable` + `ErrProviderConfigInvalid` (409, system-scoped) before any request —
+  `verifyMetaAccountMatch` would otherwise read a malformed id as "unknown" and the id would be
+  spliced into the currency preflight's Graph path. POST outcomes: the throttle is NOT retried in-call, so a 429 or HTTP-400 rate-limit
   code is UNCONFIRMED; transport/3xx/5xx UNCONFIRMED; a definite 4xx whose `error_data.blame_field_specs`
   names `bid_amount` → `ErrBidAmountRejected` with this service's own sentence (the message is
   never consulted); else definite.
 - **X** (`twitter_bid.go`): writes `bid_amount_local_micro` on the line item recorded in the
   result blob (`twitterChildIDs`). Provenance is stricter than the toggle's: a row recording no
-  creating account is refused first. Reads the line item (`GetLineItemBid`, `with_deleted=true`)
+  creating account is refused first. A stored account id the client cannot put in a path is
+  `twitter.ErrInvalidAccountID`, mapped exactly as `WriteBudget` maps it: `ErrConnectionNotUsable`
+  + `ErrProviderConfigInvalid` (409, system-scoped). Reads the line item (`GetLineItemBid`, `with_deleted=true`)
   and requires: it belongs to this campaign (unreported refused), not deleted,
   `bid_strategy == MAX`, `pay_by == LINK_CLICK`, a legible bid; else `ErrBidUnwritable`. A 404 or
   deleted line item is `ErrBidUnwritable`, not `ErrPlatformCampaignAbsent`. **Every X campaign

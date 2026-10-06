@@ -826,7 +826,9 @@ refused (409) until an operator moves the line item to a manual max bid charged 
   refused if it rounds to zero; refusals are `ErrBidAmountInvalid` (`BidAmountReason`).
 - `GetLineItemBid(ctx, lineItemID)` — `GET line_items/{id}?with_deleted=true`; a pure read; 404 →
   `(nil, nil)`; reports `deleted`; an answer for another id is an error; an id failing the path
-  guard is `ErrInvalidLineItemID` before any request.
+  guard is `ErrInvalidLineItemID`, and a connection account id failing it (empty, outside
+  `accountIDRe`, or longer than `maxAccountIDLen`) is `ErrInvalidAccountID` — the sentinel
+  `campaignBudgetPath` uses — both before any request.
 - `UpdateLineItemBid(ctx, lineItemID, micros)` — takes a write-pacer slot, then `PUT` with ONLY
   `bid_amount_local_micro` in the OAuth-signed query string (never `bid_strategy`/`pay_by`).
   `idempotent=false`, so a 429 is NOT retried in-call and comes back UNCONFIRMED — no refusal

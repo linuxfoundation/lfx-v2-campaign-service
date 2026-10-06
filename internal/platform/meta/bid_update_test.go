@@ -4,6 +4,7 @@
 package meta
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -109,5 +110,12 @@ func TestGraphError_BlameFieldSpecs(t *testing.T) {
 				t.Errorf("blameFieldSpecs = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestResolveBidMinorUnits_RefusesMalformedAccountIDBeforeAnyRequest(t *testing.T) {
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1?fields=x"}, WithBaseURL("http://127.0.0.1:0"))
+	if _, err := c.ResolveBidMinorUnits(context.Background(), 2); !errors.Is(err, ErrInvalidAccountID) {
+		t.Fatalf("want ErrInvalidAccountID, got %v", err)
 	}
 }

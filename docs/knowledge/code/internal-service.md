@@ -1632,8 +1632,10 @@ What differs:
   `config_snapshot` under each platform's own key, which this layer deliberately does not patch.
 - **Sentinels**: `ErrBidUnsupported` → 400 (no `BidWriter`; Google Ads and LinkedIn today),
   `ErrBidUnwritable` → 409 (automated, unreported or non-per-click bid strategy, or an
-  unaddressable ad group, ad set or line item — the message says the strategy is never changed
-  and carries no upstream detail),
+  unaddressable ad group, ad set or line item — the message is NEUTRAL across both kinds ("its
+  bidding setup is not a manual per-click bid, or the ad group, ad set or line item this service
+  created for it could not be confirmed ... check the campaign in the ad platform"), says a bid
+  strategy is never changed, and carries no upstream detail),
   `ErrBidAmountRejected` → 400 carrying ONLY the adapter's `BidAmountReason()` sentence. Every
   connection/provenance/system arm and the UNCONFIRMED → 503 "verify the bid in the platform
   before retrying" (lock held for `unconfirmedLockCooldown`) are the budget's, verbatim in shape.

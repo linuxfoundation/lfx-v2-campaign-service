@@ -108,3 +108,12 @@ func TestParseMicros_AcceptsQuotedDigits(t *testing.T) {
 		t.Errorf("parseMicros(null) = %v, %v; want absent", got, bad)
 	}
 }
+
+func TestLineItemPath_MalformedAccountIDIsErrInvalidAccountID(t *testing.T) {
+	for _, bad := range []string{"", "acc/1", "acc?x", strings.Repeat("a", maxAccountIDLen+1)} {
+		c := &Client{account: AccountConfig{AccountID: bad}}
+		if _, _, err := c.lineItemPath("li1"); !errors.Is(err, ErrInvalidAccountID) {
+			t.Errorf("account %q: want ErrInvalidAccountID, got %v", bad, err)
+		}
+	}
+}

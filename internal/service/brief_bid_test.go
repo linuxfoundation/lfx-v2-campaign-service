@@ -343,20 +343,38 @@ func TestUpdateCampaignBid_RejectedAmountCarriesTheAdapterReasonOnly(t *testing.
 	}
 }
 
-// The 409 for an automated strategy names the remedy and no upstream ids.
-func TestUpdateCampaignBid_UnwritableMessageNamesTheRemedyOnly(t *testing.T) {
-	d := &bidWriterDispatcher{err: fmt.Errorf("campaign 555 uses the automated MaxConversions strategy: %w", ErrBidUnwritable)}
-	s, _ := budgetService(t, bidCampaign(), d)
-	_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
-	var conflict *briefs.ConflictError
-	if !errors.As(err, &conflict) {
-		t.Fatalf("expected 409, got %T: %v", err, err)
-	}
-	if !strings.Contains(conflict.Message, "never changes the bid strategy") {
-		t.Errorf("the 409 must say the strategy is never switched, got %q", conflict.Message)
-	}
-	if strings.Contains(conflict.Message, "555") || strings.Contains(conflict.Message, "MaxConversions") {
-		t.Errorf("the 409 must not carry upstream detail, got %q", conflict.Message)
+// ErrBidUnwritable covers two different kinds of refusal — a bidding setup that is not a manual
+// per-click bid, and an ad group / ad set / line item that could not be confirmed — so its 409
+// must be NEUTRAL across both (no "change the strategy" remedy that would mislead the second)
+// and carry no upstream detail.
+func TestUpdateCampaignBid_UnwritableMessageIsNeutralAndCarriesNoUpstreamDetail(t *testing.T) {
+	for _, cause := range []string{
+		"campaign 555 uses the automated MaxConversions strategy",
+		"ad set 777 bills on IMPRESSIONS",
+		"X holds no live line item li9 for campaign 555",
+	} {
+		t.Run(cause, func(t *testing.T) {
+			d := &bidWriterDispatcher{err: fmt.Errorf("%s: %w", cause, ErrBidUnwritable)}
+			s, _ := budgetService(t, bidCampaign(), d)
+			_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("expected 409, got %T: %v", err, err)
+			}
+			for _, want := range []string{"not a manual per-click bid", "could not be confirmed", "never changes a bid strategy", "check the campaign in the ad platform"} {
+				if !strings.Contains(conflict.Message, want) {
+					t.Errorf("the 409 must say %q, got %q", want, conflict.Message)
+				}
+			}
+			if strings.Contains(conflict.Message, "change the strategy") {
+				t.Errorf("the 409 must not prescribe a strategy change for every cause, got %q", conflict.Message)
+			}
+			for _, leak := range []string{"555", "777", "li9", "MaxConversions", "IMPRESSIONS"} {
+				if strings.Contains(conflict.Message, leak) {
+					t.Errorf("the 409 must not carry upstream detail %q, got %q", leak, conflict.Message)
+				}
+			}
+		})
 	}
 }
 

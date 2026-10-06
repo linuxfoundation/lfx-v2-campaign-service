@@ -254,3 +254,24 @@ func TestMeta_WriteBid_NoAccountSelectedRefusedBeforeAnyCall(t *testing.T) {
 		t.Errorf("refusal must reach no Graph endpoint, got %d request(s)", n)
 	}
 }
+
+// A stored account id that is not act_<digits> is refused as an unusable connection (409) before
+// any request. verifyMetaAccountMatch reads a malformed current id as "unknown" and proceeds, so
+// without this the id would both bypass the mismatch guard and be spliced into the currency
+// preflight's Graph path.
+func TestMeta_WriteBid_MalformedStoredAccountIDIsUnusableConnection(t *testing.T) {
+	for _, bad := range []string{"act_777/../act_999", "act_777?fields=x", "act_777&x=1", "777"} {
+		t.Run(bad, func(t *testing.T) {
+			conn := activeMetaConn(goodMetaCreds)
+			conn.AccountID = bad
+			s := newMetaBidStub(t, conn, metaLinkClickBidCap, "USD", http.StatusOK, `{"success":true}`)
+			err := writeMetaBid(s, metaBudgetCampaign(), 2)
+			if !errors.Is(err, domain.ErrConnectionNotUsable) || !errors.Is(err, domain.ErrProviderConfigInvalid) {
+				t.Fatalf("want ErrConnectionNotUsable + ErrProviderConfigInvalid, got %T: %v", err, err)
+			}
+			if n := len(s.requests()); n != 0 {
+				t.Errorf("refusal must reach no Graph endpoint, got %d request(s)", n)
+			}
+		})
+	}
+}

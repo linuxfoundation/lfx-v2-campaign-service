@@ -156,8 +156,11 @@ func parseMicros(raw json.RawMessage) (*int64, bool) {
 // lineItemPath validates both interpolated ids — the same path-injection guard
 // UpdateCampaignAndChildrenStatus applies — and returns the line item's account-scoped path.
 func (c *Client) lineItemPath(lineItemID string) (string, string, error) {
-	if !accountIDRe.MatchString(c.account.AccountID) {
-		return "", "", fmt.Errorf("twitter: account id contains characters that are not allowed in a request path")
+	// The account id is the CONNECTION's, so a malformed one is ErrInvalidAccountID — the
+	// sentinel campaignBudgetPath uses — which the dispatcher answers as an unusable connection.
+	accountID := strings.TrimSpace(c.account.AccountID)
+	if accountID == "" || !accountIDRe.MatchString(accountID) || len(accountID) > maxAccountIDLen {
+		return "", "", fmt.Errorf("twitter: line item bid: %w", ErrInvalidAccountID)
 	}
 	lineItemID = strings.TrimSpace(lineItemID)
 	if !accountIDRe.MatchString(lineItemID) {

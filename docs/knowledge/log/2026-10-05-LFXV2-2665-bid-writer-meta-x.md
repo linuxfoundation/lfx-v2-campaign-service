@@ -30,3 +30,9 @@ identity checked before any call, a read then guards then one classified mutate,
   `parameter == bid_amount_local_micro` (the envelope's bounded `parameter` is now parsed). Each →
   400 with this service's own sentence, never upstream text; any other definite refusal → 503
   "not modified".
+- **Stored account ids are shape-checked before any request** (PR #269 review): Meta requires
+  `act_<digits>` (`meta.ValidateAccountID`, in the dispatcher and again in
+  `ResolveBidMinorUnits`), X maps the client's `ErrInvalidAccountID` exactly as `WriteBudget`
+  does; both answer an unusable connection (409, system-scoped). The service's `ErrBidUnwritable`
+  409 is now neutral across a non-per-click bidding setup and an unconfirmed ad group, ad set or
+  line item, rather than prescribing a strategy change for both.

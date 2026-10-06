@@ -56,7 +56,7 @@ func (d *TwitterDispatcher) WriteBid(ctx context.Context, projectID string, plat
 		return twitterBidAmountRejected(err)
 	}
 
-	client, err := d.resolveTwitterClient(ctx, projectID, platform, campaign)
+	client, res, err := d.resolveTwitterClientWithRes(ctx, projectID, platform, campaign)
 	if err != nil {
 		return err
 	}
@@ -66,6 +66,14 @@ func (d *TwitterDispatcher) WriteBid(ctx context.Context, projectID string, plat
 
 	current, err := client.GetLineItemBid(ctx, lineItemID)
 	if err != nil {
+		// The two ids the client refuses before any request have different owners, so they are
+		// classified as WriteBudget classifies its own two: the ACCOUNT id is the connection's (an
+		// unusable connection, attributed to the system row when that is where it came from); the
+		// LINE ITEM id is the row's (a bid that cannot be addressed).
+		if errors.Is(err, twitter.ErrInvalidAccountID) {
+			return res.systemScoped(fmt.Errorf("%w: %w: write x campaign bid: the connection's ad account id cannot address an x ads request: %w",
+				domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, err))
+		}
 		if errors.Is(err, twitter.ErrInvalidLineItemID) {
 			return fmt.Errorf("write x campaign bid: the campaign row's recorded line item id cannot address an x request: %w: %w", err, domain.ErrBidUnwritable)
 		}

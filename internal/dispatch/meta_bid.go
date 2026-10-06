@@ -61,6 +61,15 @@ func (d *MetaDispatcher) WriteBid(ctx context.Context, projectID string, platfor
 	if err != nil {
 		return fmt.Errorf("write meta campaign bid: %w", err)
 	}
+	// SHAPE, BEFORE ANY REQUEST. requireMetaAccountID checks only presence, and
+	// verifyMetaAccountMatch reads a malformed current id as "unknown" and proceeds — so a stored
+	// id that is not act_<digits> would both skip the mismatch guard and be spliced into the
+	// currency preflight's Graph path. It is a defect of the CONNECTION, attributed to the system
+	// row when that is where it came from.
+	if verr := meta.ValidateAccountID(accountID); verr != nil {
+		return res.systemScoped(fmt.Errorf("%w: %w: write meta campaign bid: the connection's ad account id cannot address a meta request: %w",
+			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, verr))
+	}
 	client := d.cachedMetaClient(projectID, platform, res, creds)
 	if err := verifyMetaAccountMatch("write meta campaign bid", campaign, accountID); err != nil {
 		return err
@@ -109,6 +118,10 @@ func (d *MetaDispatcher) WriteBid(ctx context.Context, projectID string, platfor
 	// Encoded against the account's own currency — still a read, failing definitely.
 	minor, err := client.ResolveBidMinorUnits(ctx, bid.Amount)
 	if err != nil {
+		if errors.Is(err, meta.ErrInvalidAccountID) {
+			return res.systemScoped(fmt.Errorf("%w: %w: write meta campaign bid: the connection's ad account id cannot address a meta request: %w",
+				domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, err))
+		}
 		if errors.Is(err, meta.ErrAccountCurrencyUnresolvable) {
 			return fmt.Errorf("write meta campaign bid: %w: %w", err, domain.ErrBidUnwritable)
 		}

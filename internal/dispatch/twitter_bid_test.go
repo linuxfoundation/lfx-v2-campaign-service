@@ -53,6 +53,11 @@ type xBidStub struct {
 
 func newXBidStub(t *testing.T, getStatus int, getBody string, putStatus int, putBody string) *xBidStub {
 	t.Helper()
+	return newXBidStubConn(t, activeTwitterConn(goodTwitterCreds), getStatus, getBody, putStatus, putBody)
+}
+
+func newXBidStubConn(t *testing.T, conn *model.Connection, getStatus int, getBody string, putStatus int, putBody string) *xBidStub {
+	t.Helper()
 	s := &xBidStub{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -69,7 +74,7 @@ func newXBidStub(t *testing.T, getStatus int, getBody string, putStatus int, put
 		_, _ = io.WriteString(w, getBody)
 	}))
 	t.Cleanup(srv.Close)
-	s.d = NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+	s.d = NewTwitterDispatcher(fakeConnReader{conn: conn}, identityEncryptor{},
 		twitter.WithBaseURL(srv.URL), twitter.WithWriteDelay(0))
 	return s
 }
@@ -274,5 +279,28 @@ func TestTwitter_WriteBid_UnusableConnectionRefusedBeforeAnyCall(t *testing.T) {
 		model.BidChange{Amount: 2, Type: model.BidTypeCPC})
 	if !errors.Is(err, domain.ErrConnectionNotUsable) {
 		t.Fatalf("want ErrConnectionNotUsable, got %v", err)
+	}
+}
+
+// A stored account id that cannot address an X path is a defect of the CONNECTION: an unusable
+// connection (409), refused before any request — never a generic upstream failure (503). The row
+// records the same id so the account-match guard cannot be what refuses it.
+func TestTwitter_WriteBid_MalformedStoredAccountIDIsUnusableConnection(t *testing.T) {
+	for _, bad := range []string{"acc1/../acc2", "acc1?x=1", "acc 1"} {
+		t.Run(bad, func(t *testing.T) {
+			conn := activeTwitterConn(goodTwitterCreds)
+			conn.AccountID = bad
+			s := newXBidStubConn(t, conn, http.StatusOK, xManualCPCLineItem, http.StatusOK, `{"data":{}}`)
+			c := xBidCampaign()
+			blob, _ := json.Marshal(map[string]string{"AccountID": bad, "LineItemID": "li1"})
+			c.Result = blob
+			err := writeXBid(s, c, 2)
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Fatalf("want ErrConnectionNotUsable, got %T: %v", err, err)
+			}
+			if n := len(s.requests()); n != 0 {
+				t.Errorf("refusal must reach no Ads API endpoint, got %d request(s)", n)
+			}
+		})
 	}
 }
