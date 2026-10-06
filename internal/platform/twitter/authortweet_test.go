@@ -2461,9 +2461,9 @@ func TestRejectCredentialQueryParamsInText_ClockAgainstHost(t *testing.T) {
 		}
 	}
 
-	// Digits on BOTH sides is what makes it a clock. One non-digit side and it is a
-	// credential pair again — this is the coverage the narrower "numeric username"
-	// spelling would have given up.
+	// A clock needs a digit password as well as a clock-shaped username
+	// (redact.UsernameIsClock). One non-digit side and it is a credential pair again — this
+	// is the coverage the narrower "numeric username" spelling would have given up.
 	for _, text := range []string{
 		"9:PLAINTEXT@events.example is the link",
 		"ops9:PLAINTEXT@events.example/portal",

@@ -2427,13 +2427,14 @@ func findSchemelessScreenRuns(text string) []string {
 //
 // `keynote 14:00@events.example` parses as userinfo `14:00` on host `events.example`, and
 // there is no syntax that separates it from `bob:pw@events.example`. What separates them
-// is that BOTH sides of the colon are digits, and short ones: a clock, a score (`3:4`) and a
-// ratio are at most two digits a side, while `2024:1234@…` is a numeric user ID and PIN and is
-// refused. The exact rule is redact.UsernameIsClock, shared with the snapshot redactor.
+// is the shape of the pair, and the exact rule is redact.UsernameIsClock, shared with the
+// snapshot redactor: an all-digit pair of at most two digits a side (a clock, a score `3:4`,
+// a ratio), or a real clock behind any sub-delim except `+` (`Mon,9:30`). `2024:1234@…` is a
+// numeric user ID and PIN and is refused.
 //
 // The narrower test — reject when only the username is numeric — was the first spelling
-// and it gives up `9:hunter2@events.example` for nothing. Requiring both sides keeps that
-// refusal.
+// and it gives up `9:hunter2@events.example` for nothing. The password must be digits too,
+// which keeps that refusal.
 //
 // This is a REFUSAL path, so the cost direction is what decides it: a false positive here
 // blocks a working brief before anything is created, and "keynote 14:00@…" is copy an

@@ -231,17 +231,17 @@ its host before the pass responsible for queries ever saw it. The colon requirem
 same one the twitter screen carries, and for the same reason: without it, every email
 address in operator copy is erased from the snapshot.
 
-So is the second discriminator. `sanitizeUserinfoSnapshotRun` leaves a run alone when both
-sides of the colon are ASCII digits, because that makes it a clock (`keynote
-14:00@events.example`), a score or a ratio rather than a credential pair — identical to
-`userinfoRunIsClockShaped` in `internal/platform/twitter/client.go`, and deliberately so:
+So is the second discriminator. `sanitizeUserinfoSnapshotRun` leaves a run alone only when
+`redact.UsernameIsClock` calls the pair a clock (`keynote 14:00@events.example`), a score or
+a ratio: at most two digits a side, or a real clock behind any sub-delim except `+`. The X
+screen's `userinfoRunIsClockShaped` calls the same function, and deliberately so:
 a discriminator living on only one of the two patterns puts the screen and the redactor
 back out of agreement, which is the exact defect this third pass was added to fix. The
 COST direction differs and this side is the milder one — over-redacting loses a line of
 the operator's own copy from a diagnostic snapshot, where over-refusing on the twitter
 side blocks a brief before anything is created. Milder is not free, since the snapshot
-exists to be read by a human, and the clock test (`redact.UsernameIsClock`: two digits a side at most, or a real clock
-behind prose punctuation) gives up only a two-digit pair to buy it.
+exists to be read by a human, and the clock test gives up only a bounded residual to buy
+it: a pair of at most two digits a side, or a two-digit password <= 59 behind an hour.
 
 A FOURTH pass covers the last shape that reached the snapshot with its path intact: a
 scheme-less link whose secret is in the PATH and which carries no query, fragment or

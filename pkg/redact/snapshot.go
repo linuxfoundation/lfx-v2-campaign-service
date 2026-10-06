@@ -319,19 +319,19 @@ var schemelessUserinfoSnapshotRunRe = regexp.MustCompile(
 		`(?::\d+)?(?:/[^\s<>"\x60\]}|\\^]*)?`,
 )
 
-// sanitizeUserinfoSnapshotRun blanks a matched userinfo run unless both sides of the colon
-// are digits, which makes it a clock, a score or a ratio rather than a credential pair.
+// sanitizeUserinfoSnapshotRun blanks a matched userinfo run unless UsernameIsClock calls its
+// username:password pair a clock, a score or a ratio rather than a credential pair.
 //
-// The rule is deliberately identical to userinfoRunIsClockShaped in
-// internal/platform/twitter/client.go — the two patterns are documented as kept in step,
-// and a discriminator that lived on only one of them would put the screen and the redactor
+// internal/platform/twitter's userinfoRunIsClockShaped calls the same UsernameIsClock, so the
+// screen and the redactor share one discriminator; one living on only one side would put them
 // back out of agreement, which is the exact defect the third pass was added to fix.
 //
 // The COST direction differs, and it is worth being clear that this side is the milder
 // one: over-redacting here loses a line of the operator's own copy from a diagnostic
 // snapshot, where over-refusing on the twitter side blocks a brief before anything is
 // created. Milder is not free — the snapshot exists to be read by a human — and the
-// digits-both-sides test gives up no credential shape to buy it.
+// residual UsernameIsClock gives up is bounded: a two-digit password <= 59 behind a username
+// ending in an hour, or a pair of at most two digits a side.
 func sanitizeUserinfoSnapshotRun(run string) string {
 	at := strings.IndexByte(run, '@')
 	if at < 0 {

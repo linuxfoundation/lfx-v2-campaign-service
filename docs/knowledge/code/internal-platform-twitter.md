@@ -598,10 +598,11 @@ was put a false REFUSAL into the pre-create path. `keynote 14:00@events.example`
 events platform writes that sentence every day. `userinfoRunIsClockShaped` skips a run
 only when `redact.UsernameIsClock` calls its pair a clock (the exact rule is in the paragraph
 above): an all-digit pair of at most two digits a side — a clock, a score, a ratio — or a real
-clock behind any sub-delim except `+`. Digits on BOTH sides remain necessary, because the
+clock behind any sub-delim except `+`. The password must be digits too, because the
 narrower "numeric username" spelling gives up `9:hunter2@events.example` for nothing; a long
-numeric pair (`2024:1234@…`) is a user ID and PIN and is refused. The negative rows that missed this all happened to put punctuation
-between the clock and the host; hard against the host is the shape real copy has.
+numeric pair (`2024:1234@…`) is a user ID and PIN and is refused. The negative rows that
+missed this all happened to put punctuation between the clock and the host; hard against the
+host is the shape real copy has.
 
 U+FE0E is the one variation selector `emojiClusterLen` must NOT absorb. It requests TEXT
 presentation — it is the codepoint that says "do not render the one before me as an
