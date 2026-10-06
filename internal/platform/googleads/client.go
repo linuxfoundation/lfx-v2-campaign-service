@@ -43,6 +43,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 )
 
 // ---------------------------------------------------------------------------
@@ -291,6 +293,29 @@ func withRetryBaseDelay(d time.Duration) Option {
 		if d > 0 {
 			c.retryBaseDelay = d
 		}
+	}
+}
+
+// WithNAT64Prefixes supplies the deployment's operator-specific NAT64 prefixes to the
+// creative-fetch address guard, matching what the event-URL fetcher and the HubSpot image
+// download are given.
+//
+// Without it the guard judges only the well-known 64:ff9b::/96, which is NARROWER than the
+// fetcher's: an address under an operator prefix cannot be decoded, so the private IPv4 it
+// encodes is never seen and the fetch proceeds — turning the creative download into a read
+// primitive against cluster-internal endpoints and the metadata service. Any deployment that
+// sets EventURLNAT64Prefixes must pass them here too.
+//
+// Deliberately NOT the same shape as hubspot.WithNAT64Prefixes, which swaps in a whole
+// guarded client: this path needs its own transport (redirects refused with a redacted
+// target, a TLS config tests can inject), so what is swapped is the ADDRESS JUDGEMENT alone.
+// Both end at eventurl's single implementation.
+func WithNAT64Prefixes(cidrs ...string) Option {
+	return func(c *Client) {
+		if len(cidrs) == 0 {
+			return
+		}
+		c.imageDialGuard = eventurl.NewAddressGuard(eventurl.WithNAT64Prefixes(cidrs...))
 	}
 }
 

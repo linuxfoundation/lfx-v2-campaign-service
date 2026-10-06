@@ -27,6 +27,8 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 )
 
 // ---------------------------------------------------------------------------
@@ -684,41 +686,19 @@ func (c *Client) imageFetchClient() *http.Client {
 
 // checkPublicIP refuses any address that is not routable on the public internet.
 //
-// Written as an allowlist of "is this one of the known-bad classes" rather than
-// IsGlobalUnicast alone, because IsGlobalUnicast is true for RFC1918, CGNAT and
-// IPv6 ULA space — the ranges that matter most here.
-func checkPublicIP(ip net.IP) error {
-	if ip == nil {
-		return errors.New("refusing an unparseable address")
-	}
-	// An IPv4-mapped IPv6 address is unwrapped first, so ::ffff:127.0.0.1 is
-	// judged as 127.0.0.1 rather than slipping past the IPv4 checks below.
-	if v4 := ip.To4(); v4 != nil {
-		ip = v4
-	}
-	switch {
-	case ip.IsUnspecified():
-		return fmt.Errorf("refusing the unspecified address %s", ip)
-	case ip.IsLoopback():
-		return fmt.Errorf("refusing the loopback address %s", ip)
-	case ip.IsPrivate():
-		return fmt.Errorf("refusing the private address %s", ip)
-	case ip.IsLinkLocalUnicast(), ip.IsLinkLocalMulticast():
-		// 169.254.0.0/16 is also where cloud instance metadata lives.
-		return fmt.Errorf("refusing the link-local address %s", ip)
-	case ip.IsMulticast():
-		return fmt.Errorf("refusing the multicast address %s", ip)
-	case ip.IsInterfaceLocalMulticast():
-		return fmt.Errorf("refusing the interface-local address %s", ip)
-	}
-	// 100.64.0.0/10, carrier-grade NAT. net has no predicate for it and
-	// IsPrivate does not cover it, but it is as unroutable as RFC1918 and is
-	// used for internal addressing in several clusters.
-	if v4 := ip.To4(); v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
-		return fmt.Errorf("refusing the carrier-grade NAT address %s", ip)
-	}
-	return nil
-}
+// It is eventurl's judgement, not a second one. This used to be a local enumeration of
+// the known-bad classes, and the enumeration was WRONG in a way no list of predicates
+// catches: none of them decode an RFC 6052 address, so 64:ff9b::a9fe:a9fe — the
+// well-known NAT64 prefix naming 169.254.169.254, the instance metadata service — matched
+// no predicate and was allowed. That is the exact failure eventurl's package doc calls out
+// ("a second fetcher that builds its own http.Client is not a smaller version of this one
+// — it is an unguarded one"), reached here through a second GUARD rather than a second
+// client. Delegating means a range added to forbiddenNets protects this path too.
+//
+// It judges the well-known /96 alone. A deployment that configures operator-specific
+// translation prefixes must pass them in via WithNAT64Prefixes, exactly as the HubSpot
+// client requires — see that option.
+var checkPublicIP = eventurl.NewAddressGuard()
 
 // base64Image renders one image for the wire. Google's ImageAsset.data is a proto
 // bytes field, which the REST surface carries as standard base64.

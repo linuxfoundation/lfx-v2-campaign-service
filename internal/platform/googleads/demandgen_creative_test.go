@@ -403,6 +403,23 @@ func TestCheckPublicIP(t *testing.T) {
 		// matched on the first octet alone.
 		{"100.128.0.1", false},
 		{"99.255.255.255", false},
+		// The RFC 6052 well-known NAT64 prefix naming 169.254.169.254 — the cloud
+		// instance metadata service. This is the case the predicate enumeration this
+		// guard replaced got WRONG: To4 normalises only ::ffff:0:0/96, so the address
+		// matched no IPv4 range test and no IPv6 predicate, and was allowed. It has to
+		// be judged as the IPv4 it encodes.
+		{"64:ff9b::a9fe:a9fe", true},
+		{"64:ff9b::7f00:1", true}, // the same prefix naming 127.0.0.1
+		// Decoding must not become blanket refusal of the prefix: on a NAT64 network
+		// this is how a v6-only host reaches the ordinary IPv4 internet, and 8.8.8.8 is
+		// a legitimate destination. Refusing it would be exactly the over-refusal this
+		// guard must not commit.
+		{"64:ff9b::808:808", false},
+		// An operator-specific prefix is NOT decoded without configuration, and must not
+		// be, or every address under it would be judged at the wrong offset. The
+		// deployment declares it via WithNAT64Prefixes — see
+		// TestWithNAT64Prefixes_ReachesTheCreativeFetchGuard.
+		{"2a01:4f8:808:808::a9fe:a9fe", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.ip, func(t *testing.T) {
@@ -430,6 +447,44 @@ func TestImageFetchClient_DefaultsToTheRealGuard(t *testing.T) {
 	if err == nil {
 		t.Fatal("a client with no explicit guard must refuse a loopback fetch")
 	}
+}
+
+// TestWithNAT64Prefixes_ReachesTheCreativeFetchGuard pins that the option given to NewClient
+// reaches the address the creative fetch is about to dial.
+//
+// 2a01:4f8:808:808::a9fe:a9fe decodes to 169.254.169.254 at /96 — the metadata endpoint.
+// Without the prefix the address cannot be decoded, the guard sees only an ordinary-looking
+// global-unicast IPv6 address, and the fetch proceeds.
+//
+// Both halves are asserted, and the SECOND is what binds the test. A fetch of an unreachable
+// address fails either way, so "it returned an error" is true whether or not the option was
+// forwarded — a test asserting only that stays green with WithNAT64Prefixes deleted. What
+// separates refusal from a doomed dial is that refusal is immediate, so the test is written
+// against the elapsed time, the same way the HubSpot sibling is.
+func TestWithNAT64Prefixes_ReachesTheCreativeFetchGuard(t *testing.T) {
+	const encoded = "http://[2a01:4f8:808:808::a9fe:a9fe]/m.png"
+
+	t.Run("declared prefix is decoded and refused", func(t *testing.T) {
+		c := NewClient(Credentials{}, AccountConfig{}, WithNAT64Prefixes("2a01:4f8:808:808::/96"))
+		started := time.Now()
+		if _, err := c.fetchOneImage(context.Background(), demandGenImageSlots[0], encoded); err == nil {
+			t.Fatal("a declared NAT64 prefix encoding 169.254.169.254 must be refused")
+		}
+		if elapsed := time.Since(started); elapsed > 2*time.Second {
+			t.Errorf("the address was dialled rather than refused (%s elapsed): the prefix did not reach the guard", elapsed)
+		}
+	})
+
+	t.Run("an empty prefix list leaves the default guard in place", func(t *testing.T) {
+		// Not a no-op worth skipping: the option must not be able to produce a client
+		// with NO guard, which is what assigning an unconditional
+		// eventurl.NewAddressGuard(WithNAT64Prefixes()) would risk if the option ever
+		// stopped validating its input. The well-known prefix is still judged.
+		c := NewClient(Credentials{}, AccountConfig{}, WithNAT64Prefixes())
+		if err := c.imageDialGuard(net.ParseIP("64:ff9b::a9fe:a9fe")); err == nil {
+			t.Error("the well-known NAT64 prefix must still be judged after an empty WithNAT64Prefixes")
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------

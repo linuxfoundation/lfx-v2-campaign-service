@@ -1491,10 +1491,33 @@ fetches a caller-controlled address, and the transport is hardened accordingly:
 - **No redirects**, so a validated public host cannot bounce the fetch to an
   internal one.
 - **`checkPublicIP` on every dial.** Loopback, RFC1918, link-local (including
-  `169.254.169.254`, the cloud metadata address), CGNAT, multicast, ULA and their
-  IPv4-mapped IPv6 spellings are all refused. It is wired as the `Client`'s
-  `imageDialGuard` field, defaulting to the real guard, so a zero-value `Client`
-  is safe — `TestImageFetchClient_DefaultsToTheRealGuard`.
+  `169.254.169.254`, the cloud metadata address), CGNAT, multicast, ULA, the
+  reserved and documentation ranges, and their IPv4-mapped IPv6 spellings are all
+  refused. It is wired as the `Client`'s `imageDialGuard` field, defaulting to the
+  real guard, so a zero-value `Client` is safe —
+  `TestImageFetchClient_DefaultsToTheRealGuard`.
+
+  **It is `eventurl`'s judgement, not a second one.** `checkPublicIP` is
+  `eventurl.NewAddressGuard()`, so this path and the event-URL fetcher judge the
+  same address space and a range added to `forbiddenNets` protects both. It was
+  previously a local enumeration of predicates, and the enumeration was wrong in a
+  way no list of predicates catches: none of them decode an RFC 6052 address, so
+  `64:ff9b::a9fe:a9fe` — the well-known NAT64 prefix naming `169.254.169.254` —
+  matched nothing and was allowed. `TestCheckPublicIP` pins that address, and pins
+  `64:ff9b::808:808` (public `8.8.8.8`) as still ALLOWED, because decoding the
+  prefix must not become refusing it.
+
+  **Operator-specific NAT64 prefixes must be declared.** The default judges the
+  well-known `/96` alone, which is NARROWER than the fetcher's. A deployment that
+  sets `EventURLNAT64Prefixes` must pass them to `googleads.WithNAT64Prefixes`, as
+  `internal/container` does; otherwise an address under an operator prefix cannot
+  be decoded and the private IPv4 it encodes is never seen. The option swaps the
+  ADDRESS JUDGEMENT rather than the whole client — unlike
+  `hubspot.WithNAT64Prefixes` — because this path needs its own transport (redirects
+  refused with a redacted target, a TLS config the tests inject).
+  `TestWithNAT64Prefixes_ReachesTheCreativeFetchGuard` asserts on ELAPSED TIME, not
+  just on an error: an undecodable address fails either way, and only refusal is
+  immediate.
 - **5 MiB cap** via `io.LimitReader(body, max+1)`, which binds whether or not a
   `Content-Length` was declared.
 - **64 MiB running total** across every slot, checked as the walk goes rather than
