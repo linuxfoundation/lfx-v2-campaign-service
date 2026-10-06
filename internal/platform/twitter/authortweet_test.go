@@ -2397,6 +2397,12 @@ func TestRejectCredentialQueryParamsInText_SchemelessUserinfo(t *testing.T) {
 		// RFC 3986 sub-delims are legal in a username, so `!` must not end the match.
 		"admin!:PLAINTEXT@events.example/reset/TOKEN",
 		"a(b:PLAINTEXT@host.example",
+		// Sub-delims only, and numbers that are not a real clock behind punctuation or `+`.
+		"!:PLAINTEXT@host.example",
+		"$$:PLAINTEXT@host.example",
+		"alice+2024:1234@ops.example",
+		"alice+9:30@ops.example",
+		"a,2024:1234@h.example",
 	}
 	for _, text := range refused {
 		err := rejectCredentialQueryParamsInText(text)

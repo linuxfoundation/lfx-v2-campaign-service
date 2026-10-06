@@ -53,6 +53,11 @@ func TestSnapshotText(t *testing.T) {
 		{"starred clock", "*9:30@main.stage*", "*9:30@main.stage*"},
 		{"quoted clock", "'14:00@main.stage'", "'14:00@main.stage'"},
 		{"comma clock", "Mon,9:30@main.stage", "Mon,9:30@main.stage"},
+		{"sub-delims-only username", "x !:" + "pw@host.example y", "x  y"},
+		{"dollar username", "x $$:" + "pw@host.example y", "x  y"},
+		{"plus-suffixed numeric pair", "x alice+2024:" + "1234@ops.example y", "x  y"},
+		{"plus clock is not exempt", "x alice+9:" + "30@ops.example y", "x  y"},
+		{"comma then a non-clock number", "x a,2024:" + "1234@h.example y", "x  y"},
 	} {
 		if got := SnapshotText(tc.in); got != tc.want {
 			t.Errorf("%s: SnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)

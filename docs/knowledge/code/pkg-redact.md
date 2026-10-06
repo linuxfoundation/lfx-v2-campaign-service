@@ -214,9 +214,13 @@ run's bracketed-IPv6 branch consumes an optional userinfo before the `[`
 (`https://bob:pw@[2001:db8::1]/…` is dropped whole rather than leaving `]/…` behind), and the
 `user:password@` username class is RFC 3986's userinfo alphabet including the sub-delims
 `!$&'()*+,;=` (kept in step with the X screen), so `admin!:pw@host/…` is dropped too. Its
-FIRST character must still be unreserved, and the digits-both-sides clock test reads the
-username's segment after its last sub-delim, so a clock opened by prose punctuation —
-`Keynote (14:00@main.stage)`, `*9:30@…*`, `Mon,9:30@…` — is still left alone. The
+FIRST character must still be unreserved (a sub-delims-only username such as `!:pw@host` is a
+second alternative held to a colon right after it), so a clock opened by prose punctuation —
+`Keynote (14:00@main.stage)`, `*9:30@…*`, `'14:00@…'` — starts at the digit and is left alone.
+The clock exemption (`usernameIsClock`, identical on the X screen) is exactly: an all-digit
+username with an all-digit password, OR a `,` `(` `*` or `'` followed by a real clock — hour
+1–2 digits ≤ 23, password exactly two digits ≤ 59 (`Mon,9:30@…`). A `+` prefix never
+qualifies: `alice+9:30@…` and `alice+2024:1234@…` are dropped, as is `a,2024:1234@…`. The
 rationale for each pass is on the code, and the history in [internal/dispatch](internal-dispatch.md).
 
 They moved here unchanged from `internal/dispatch` (which keeps thin wrappers) so that

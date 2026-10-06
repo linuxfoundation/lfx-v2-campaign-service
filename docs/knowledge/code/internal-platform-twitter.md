@@ -584,9 +584,12 @@ dropped — without it the pattern matches `bob@events.example`, an ordinary ema
 and a screen that refuses those is worse than the hole it closes. The username before the
 colon is RFC 3986's userinfo alphabet, sub-delims `!$&'()*+,;=` included, kept in step with
 `pkg/redact`'s snapshot pattern: a narrower class let `admin!:pw@events.example` through both.
-Its first character must be unreserved and `userinfoRunIsClockShaped` judges the username's
-segment after its last sub-delim, so `Keynote (14:00@main.stage)` or `Mon,9:30@main.stage`
-is still a clock and never refuses a brief.
+Its first character must be unreserved, so `Keynote (14:00@main.stage)` starts at the digit;
+a username made only of sub-delims (`!:pw@host`) is a second alternative held to a colon right
+after it. The clock exemption (`usernameIsClock`, identical in `pkg/redact`) is exactly: an
+all-digit username with an all-digit password, OR a `,` `(` `*` or `'` followed by a real clock
+— hour 1–2 digits ≤ 23, password exactly two digits ≤ 59 (`Mon,9:30@main.stage`). A `+` prefix
+never qualifies, so `alice+9:30@ops.example` and `alice+2024:1234@ops.example` are refused.
 
 The colon is not QUITE the whole discriminator, and the round that shipped believing it
 was put a false REFUSAL into the pre-create path. `keynote 14:00@events.example` and

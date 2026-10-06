@@ -6,6 +6,7 @@ package redact
 import (
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -304,15 +305,16 @@ var schemelessSnapshotRunRe = regexp.MustCompile(
 // `admin!:pw@events.example/reset/TOKEN` was not matched here, and the path-only pass below
 // then left it whole because it contains an `@`: password and path token both persisted.
 // Kept in step with the twitter screen's class. The FIRST character must be unreserved, so a
-// clock opened by prose punctuation (`(14:00@main.stage)`) is matched from its first digit;
-// sanitizeUserinfoSnapshotRun judges the username's segment after its last sub-delim, for
-// `Mon,9:30@main.stage`, whose leftmost match starts on the letter.
+// clock opened by prose punctuation (`(14:00@main.stage)`) is matched from its first digit. A
+// username made ONLY of sub-delims (`!:pw@host`) is the second alternative, held to a colon
+// directly after it by the pattern itself (RE2 has no lookahead). See usernameIsClock for the
+// exact clock exemption.
 //
 // It is not the only discriminator needed, and the second one is kept in step too: a time
 // of day written hard against a host — `keynote 14:00@events.example` — is the userinfo
 // production byte for byte. See sanitizeUserinfoSnapshotRun.
 var schemelessUserinfoSnapshotRunRe = regexp.MustCompile(
-	`(?i)[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*:[^\s<>"\x60\]}|\\^@]*@` +
+	`(?i)(?:[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*|[!$&'()*,;=]+):[^\s<>"\x60\]}|\\^@]*@` +
 		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>"\x60\]}|\\^]*)?`,
 )
@@ -337,20 +339,42 @@ func sanitizeUserinfoSnapshotRun(run string) string {
 	}
 	userinfo := run[:at]
 	colon := strings.IndexByte(userinfo, ':')
-	if colon >= 0 && isAllASCIIDigits(afterLastSubDelim(userinfo[:colon])) && isAllASCIIDigits(userinfo[colon+1:]) {
+	if colon >= 0 && usernameIsClock(userinfo[:colon], userinfo[colon+1:]) {
 		return run
 	}
 	return ""
 }
 
-// afterLastSubDelim returns the part of a username after its last RFC 3986 sub-delim: prose
-// punctuation hard against a clock (`Mon,9:30@`) is admitted into the username by the run
-// pattern, and the clock is the segment after it. Kept in step with internal/platform/twitter.
-func afterLastSubDelim(username string) string {
-	if i := strings.LastIndexAny(username, "!$&'()*+,;="); i >= 0 {
-		return username[i+1:]
+// usernameIsClock reports whether a userinfo run's username:password pair is a time of day
+// rather than a credential. Two shapes qualify, and nothing else:
+//
+//   - an ALL-DIGIT username and an all-digit password (`14:00`, `3:4`) — the original
+//     digits-both-sides rule, unchanged;
+//   - prose punctuation hard against a REAL clock (`Mon,9:30`): the username's segment after
+//     its last `,` `(` `*` or `'` must be a 1–2 digit hour <= 23 and the password exactly two
+//     digits <= 59. A longer number after the punctuation (`a,2024:1234`) is not a clock.
+//
+// Kept in step with internal/platform/twitter.
+//
+// `+` (and every other sub-delim) is deliberately NOT a qualifying prefix: `+` is unreserved in
+// a username and common in real ones, so `alice+9:30@ops.example` and `alice+2024:1234@…` are
+// credentials. The first-character rule on the run pattern already makes `(14:00@`, `*9:30@`
+// and `'14:00@` start at the digit, so the punctuation path exists for the `Mon,9:30@` shape.
+func usernameIsClock(username, password string) bool {
+	if isAllASCIIDigits(username) {
+		return isAllASCIIDigits(password)
 	}
-	return username
+	i := strings.LastIndexAny(username, ",(*'")
+	if i < 0 {
+		return false
+	}
+	hour := username[i+1:]
+	if len(hour) < 1 || len(hour) > 2 || !isAllASCIIDigits(hour) || len(password) != 2 || !isAllASCIIDigits(password) {
+		return false
+	}
+	h, _ := strconv.Atoi(hour)
+	m, _ := strconv.Atoi(password)
+	return h <= 23 && m <= 59
 }
 
 // schemelessPathSnapshotRunRe matches a scheme-less link whose secret is in the PATH and

@@ -2356,11 +2356,12 @@ var schemelessScreenRunRe = regexp.MustCompile(
 // schemelessUserinfoSnapshotRunRe: a narrower class let `admin!:pw@events.example` through.
 // The FIRST character must be unreserved, so a clock opened by prose punctuation —
 // `Keynote (14:00@main.stage)`, `*9:30@main.stage*` — is matched from its first digit and
-// still reads as a clock; userinfoRunIsClockShaped also judges only the username's segment
-// after its last sub-delim, for the `Mon,9:30@main.stage` shape the leftmost match starts
-// on a letter.
+// still reads as a clock. A username made ONLY of sub-delims (`!:pw@host`) is the second
+// alternative, which must be followed directly by the colon — RE2 has no lookahead, so the
+// required `:` after the group is what stops `(` in `(14:00@` from starting a match there.
+// See usernameIsClock for the exact clock exemption.
 var schemelessUserinfoRunRe = regexp.MustCompile(
-	`(?i)[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*:[^\s<>@。、！？，：；]*@` +
+	`(?i)(?:[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*|[!$&'()*,;=]+):[^\s<>@。、！？，：；]*@` +
 		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>。、！？，：；]*)?`,
 )
@@ -2446,17 +2447,39 @@ func userinfoRunIsClockShaped(run string) bool {
 	if colon < 0 {
 		return false
 	}
-	return isAllASCIIDigits(afterLastSubDelim(userinfo[:colon])) && isAllASCIIDigits(userinfo[colon+1:])
+	return usernameIsClock(userinfo[:colon], userinfo[colon+1:])
 }
 
-// afterLastSubDelim returns the part of a username after its last RFC 3986 sub-delim. Prose
-// punctuation hard against a clock (`Mon,9:30@`) is admitted into the username by the run
-// pattern, and the clock is the segment after it. Kept in step with pkg/redact.
-func afterLastSubDelim(username string) string {
-	if i := strings.LastIndexAny(username, "!$&'()*+,;="); i >= 0 {
-		return username[i+1:]
+// usernameIsClock reports whether a userinfo run's username:password pair is a time of day
+// rather than a credential. Two shapes qualify, and nothing else:
+//
+//   - an ALL-DIGIT username and an all-digit password (`14:00`, `3:4`) — the original
+//     digits-both-sides rule, unchanged;
+//   - prose punctuation hard against a REAL clock (`Mon,9:30`): the username's segment after
+//     its last `,` `(` `*` or `'` must be a 1–2 digit hour <= 23 and the password exactly two
+//     digits <= 59. A longer number after the punctuation (`a,2024:1234`) is not a clock.
+//
+// Kept in step with pkg/redact.
+//
+// `+` (and every other sub-delim) is deliberately NOT a qualifying prefix: `+` is unreserved in
+// a username and common in real ones, so `alice+9:30@ops.example` and `alice+2024:1234@…` are
+// credentials. The first-character rule on the run pattern already makes `(14:00@`, `*9:30@`
+// and `'14:00@` start at the digit, so the punctuation path exists for the `Mon,9:30@` shape.
+func usernameIsClock(username, password string) bool {
+	if isAllASCIIDigits(username) {
+		return isAllASCIIDigits(password)
 	}
-	return username
+	i := strings.LastIndexAny(username, ",(*'")
+	if i < 0 {
+		return false
+	}
+	hour := username[i+1:]
+	if len(hour) < 1 || len(hour) > 2 || !isAllASCIIDigits(hour) || len(password) != 2 || !isAllASCIIDigits(password) {
+		return false
+	}
+	h, _ := strconv.Atoi(hour)
+	m, _ := strconv.Atoi(password)
+	return h <= 23 && m <= 59
 }
 
 func isAllASCIIDigits(s string) bool {
