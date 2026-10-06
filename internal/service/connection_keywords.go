@@ -31,8 +31,11 @@ var googleAdsKeywordInsights = accountDiscovery{
 // resolveInsightsWindow maps the optional caller-supplied window onto the closed
 // platform-agnostic vocabulary, defaulting to last_30_days.
 //
-// Unlike the campaign-scoped metrics read there is no platform-aware default to apply: this
-// surface is Google Ads only, and Google serves every window in the vocabulary.
+// Used by the GOOGLE keyword and audience reads only, which is why its error lists all seven
+// windows: Google serves every window in the vocabulary. The Microsoft keyword read serves a
+// subset and does NOT call this — it validates against microsoftKeywordWindows
+// (resolveMicrosoftKeywordWindow), so a Microsoft caller is never told a window it cannot use
+// is acceptable.
 //
 // The design layer already constrains this parameter with the same Enum, so an HTTP caller
 // cannot reach the error arm. It is enforced here anyway for non-HTTP callers, and because a
@@ -58,6 +61,13 @@ func resolveInsightsWindow(window *string) (model.MetricsWindow, error) {
 // identical, and a second copy is where one of those judgements quietly diverges. Only the
 // two sentinels discovery has no notion of are handled here first.
 func (s *ConnectionService) classifyInsightsError(ctx context.Context, projectID string, err error) error {
+	return s.classifyInsightsErrorFor(ctx, projectID, googleAdsKeywordInsights, err)
+}
+
+// classifyInsightsErrorFor is classifyInsightsError for any provider: d names the provider in
+// the connection-state arms it delegates to classifyDiscoveryError. The Microsoft keyword read
+// (connection_keyword_report.go) passes its own descriptor; every arm is otherwise shared.
+func (s *ConnectionService) classifyInsightsErrorFor(ctx context.Context, projectID string, d accountDiscovery, err error) error {
 	switch {
 	case errors.Is(err, domain.ErrKeywordInsightsUnsupported):
 		return &conn.BadRequestError{Code: "400", Message: "keyword and audience insights are not supported for this platform"}
@@ -88,8 +98,19 @@ func (s *ConnectionService) classifyInsightsError(ctx context.Context, projectID
 		slog.WarnContext(ctx, "keyword insights blocked: at least one campaign in scope belongs to a different ad account than the current connection",
 			"project_id", projectID, "error", safeErrSummary(err))
 		return &conn.ConflictError{Code: "409", Message: "some of this project's campaigns were created under a different ad account than its current connection — re-dispatch or reconcile those campaigns onto the connected account to read their keywords, or reconnect the account that owns all of them"}
+	case errors.Is(err, domain.ErrKeywordReportScopeTooLarge):
+		// Report-backed platforms only (Microsoft): refused before any upstream call, and
+		// permanent while the project owns that many campaigns, so a 409 rather than the 503
+		// default. The sentinel's text is fixed and client-safe.
+		return &conn.ConflictError{Code: "409", Message: domain.ErrKeywordReportScopeTooLarge.Error()}
+	case errors.Is(err, domain.ErrKeywordReportScopeInvalid):
+		// Same shape: refused locally, permanent until the stored row is corrected. The
+		// offending id stays in the log, never the body.
+		slog.WarnContext(ctx, "keyword insights blocked: a campaign in scope has a malformed platform id",
+			"project_id", projectID, "error", safeErrSummary(err))
+		return &conn.ConflictError{Code: "409", Message: domain.ErrKeywordReportScopeInvalid.Error()}
 	default:
-		return s.classifyDiscoveryError(ctx, projectID, googleAdsKeywordInsights, err)
+		return s.classifyDiscoveryError(ctx, projectID, d, err)
 	}
 }
 
