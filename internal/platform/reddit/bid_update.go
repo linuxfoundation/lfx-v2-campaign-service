@@ -22,7 +22,8 @@ import (
 // reads bid_value as the bid to pay: BIDLESS is Reddit's automatic bidding, and MAXIMIZE_VOLUME
 // and TARGET_CPX are strategy-managed. The create path (CreateCampaign) sends
 // bid_strategy=BIDLESS on both the campaign and its one ad group, so EVERY campaign this service
-// creates is refused by the dispatcher until an operator moves the ad group to manual bidding.
+// creates is refused by the dispatcher until an operator switches BOTH the campaign's bid
+// strategy (CBO is on, so the ad group must match it) and the ad group to MANUAL_BIDDING.
 //
 // Source: the official OpenAPI document this package's contract follows
 // (https://ads-api.reddit.com/api/v3/openapi.json, LFXV2-3282) and the ad-group reference at
@@ -180,8 +181,10 @@ func (c *Client) GetAdGroupBid(ctx context.Context, adGroupID string) (*AdGroupB
 // this call. The caller is responsible for having established that the ad group bids manually in
 // CPC — this function writes what it is told.
 //
-// micros must be the value BidMicros produced. The PATCH converges when repeated, so request()
-// retries a 429, as UpdateCampaignBudget does. A transport failure, 3xx, exhausted 429 or 5xx is
+// micros must be the value BidMicros produced. The PATCH converges when repeated, so a 429 is
+// retried, as UpdateCampaignBudget does — but through requestCounted, because ANY failure after
+// a retried 429 is UNCONFIRMED (retriedUnconfirmedError): the 429'd attempt may have applied, so
+// a later refusal cannot confirm nothing changed. A transport failure, 3xx, exhausted 429 or 5xx is
 // UNCONFIRMED (IsOutcomeUnconfirmed). A definite 400 carrying a STRUCTURED field error on
 // bid_value (bidValueFieldError) is returned as a bidAmountError with a generic client-safe
 // sentence — Reddit's own text is never surfaced. Any other 400, including one that merely
@@ -197,7 +200,13 @@ func (c *Client) UpdateAdGroupBid(ctx context.Context, adGroupID string, micros 
 		return &bidAmountError{msg: fmt.Sprintf("bid %d micro-units is not a valid amount; it must be a positive number of micro-units", micros)}
 	}
 	body := map[string]any{"data": map[string]any{"bid_value": micros}}
-	resp, err := c.request(ctx, http.MethodPatch, path, body)
+	resp, retries, err := c.requestCounted(ctx, http.MethodPatch, path, body)
+	if err != nil && retries > 0 && !IsOutcomeUnconfirmed(err) {
+		// A refusal that answers a PATCH RETRIED after a 429 speaks only for the last attempt:
+		// the 429'd one may have applied. It is UNCONFIRMED, never a definite (amount) refusal.
+		return &retriedUnconfirmedError{what: "ad group bid", retries: retries,
+			err: fmt.Errorf("reddit: update ad group %s bid_value to %d: %w", adGroupID, micros, err)}
+	}
 	if err != nil {
 		var ae *apiError
 		if errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest && bidValueFieldError(ae.Body) {
@@ -244,3 +253,19 @@ func bidValueFieldError(body string) bool {
 	}
 	return false
 }
+
+// retriedUnconfirmedError marks a mutation whose FINAL attempt failed after at least one earlier
+// attempt was answered 429 and retried — Microsoft's type of the same name, for the same reason.
+// The final error stays reachable through Unwrap for logging; Unconfirmed() makes
+// IsOutcomeUnconfirmed true, which callers check before any definite-refusal mapping.
+type retriedUnconfirmedError struct {
+	what    string
+	retries int
+	err     error
+}
+
+func (e *retriedUnconfirmedError) Error() string {
+	return fmt.Sprintf("reddit %s update unconfirmed: %d earlier attempt(s) were rate-limited with an unknown outcome before this failure: %s", e.what, e.retries, e.err.Error())
+}
+func (e *retriedUnconfirmedError) Unwrap() error     { return e.err }
+func (e *retriedUnconfirmedError) Unconfirmed() bool { return true }

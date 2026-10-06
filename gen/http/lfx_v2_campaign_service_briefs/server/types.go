@@ -95,8 +95,9 @@ type UpdateCampaignBidRequestBody struct {
 	// New maximum cost-per-click bid, in the AD ACCOUNT's own currency (NOT USD).
 	// Must be strictly positive.
 	Bid *float64 `form:"bid,omitempty" json:"bid,omitempty" xml:"bid,omitempty"`
-	// The unit the bid is expressed in. Only a max cost-per-click bid is
-	// supported; it MUST match how the ad group bids upstream.
+	// The unit the bid is expressed in; defaults to cpc when omitted. Only a max
+	// cost-per-click bid is supported; it MUST match how the ad group bids
+	// upstream.
 	BidType *string `form:"bid_type,omitempty" json:"bid_type,omitempty" xml:"bid_type,omitempty"`
 }
 
@@ -6886,13 +6887,8 @@ func NewUpdateCampaignBudgetPayload(body *UpdateCampaignBudgetRequestBody, proje
 // update-campaign-bid endpoint payload.
 func NewUpdateCampaignBidPayload(body *UpdateCampaignBidRequestBody, projectID string, briefID string, campaignID string, bearerToken *string, ifMatch *string) *lfxv2campaignservicebriefs.UpdateCampaignBidPayload {
 	v := &lfxv2campaignservicebriefs.UpdateCampaignBidPayload{
-		Bid: *body.Bid,
-	}
-	if body.BidType != nil {
-		v.BidType = *body.BidType
-	}
-	if body.BidType == nil {
-		v.BidType = "cpc"
+		Bid:     *body.Bid,
+		BidType: body.BidType,
 	}
 	v.ProjectID = projectID
 	v.BriefID = briefID
