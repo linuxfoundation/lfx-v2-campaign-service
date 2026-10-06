@@ -8,9 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBidToMinorUnits(t *testing.T) {
@@ -117,5 +121,43 @@ func TestResolveBidMinorUnits_RefusesMalformedAccountIDBeforeAnyRequest(t *testi
 	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1?fields=x"}, WithBaseURL("http://127.0.0.1:0"))
 	if _, err := c.ResolveBidMinorUnits(context.Background(), 2); !errors.Is(err, ErrInvalidAccountID) {
 		t.Fatalf("want ErrInvalidAccountID, got %v", err)
+	}
+}
+
+// A complete Graph envelope blaming bid_amount, followed by a connection closed on a mismatched
+// Content-Length, must still classify as an amount refusal: the truncated-body path carries the
+// same structured fields as the normal one (copyEnvelope).
+func TestUpdateAdSetBid_TruncatedEnvelopeKeepsBlame(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := `{"error":{"message":"Invalid parameter","type":"OAuthException","code":100,"error_subcode":1487851,"error_data":{"blame_field_specs":[["bid_amount"]]},"fbtrace_id":"T"}}`
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "4096")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, body)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		if hj, ok := w.(http.Hijacker); ok {
+			if conn, _, herr := hj.Hijack(); herr == nil {
+				_ = conn.Close()
+			}
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(
+		Credentials{AccessToken: "tok"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+		withSleepFn(func(context.Context, time.Duration) error { return nil }),
+	)
+	err := c.UpdateAdSetBid(context.Background(), "120000000000001", 250)
+	if err == nil {
+		t.Fatal("UpdateAdSetBid succeeded on a 400")
+	}
+	if _, ok := BidAmountReason(err); !ok {
+		t.Errorf("truncated envelope blaming bid_amount was not an amount refusal: %v", err)
+	}
+	if IsOutcomeUnconfirmed(err) {
+		t.Errorf("a definite 400 must not be unconfirmed: %v", err)
 	}
 }
