@@ -29,11 +29,11 @@ var (
 
 type msKwCall struct{ Method, Path, Body string }
 
-// msKeywordDispatcher wires a MicrosoftDispatcher against a fake Microsoft API whose answers
+// msLeverDispatcher wires a MicrosoftDispatcher against a fake Microsoft API whose answers
 // come from handle(method, path-after-v13), recording every request with its body. Token and
 // API requests are counted separately so a "refused before contacting Microsoft" test can
 // assert neither happened.
-func msKeywordDispatcher(t *testing.T, handle func(method, path string) (int, string)) (*MicrosoftDispatcher, func() []msKwCall, func() int) {
+func msLeverDispatcher(t *testing.T, handle func(method, path string) (int, string)) (*MicrosoftDispatcher, func() []msKwCall, func() int) {
 	t.Helper()
 	var (
 		mu     sync.Mutex
@@ -109,7 +109,7 @@ func msMutations(calls []msKwCall) []msKwCall {
 // ---- keyword actions ----------------------------------------------------------
 
 func TestMicrosoft_ApplyKeywordActions_HappyPathReadsThenMutates(t *testing.T) {
-	d, calls, _ := msKeywordDispatcher(t, msKeywordAPI(`{"PartialErrors":[]}`))
+	d, calls, _ := msLeverDispatcher(t, msKeywordAPI(`{"PartialErrors":[]}`))
 	out, err := d.ApplyKeywordActions(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), []model.KeywordAction{
 		{AdGroupID: "654", CriterionID: "701", Action: model.KeywordActionPause},
 		{AdGroupID: "654", CriterionID: "702", Action: model.KeywordActionRemove},
@@ -135,7 +135,7 @@ func TestMicrosoft_ApplyKeywordActions_HappyPathReadsThenMutates(t *testing.T) {
 }
 
 func TestMicrosoft_ApplyKeywordActions_PartialErrorsArePositional(t *testing.T) {
-	d, _, _ := msKeywordDispatcher(t, func(method, path string) (int, string) {
+	d, _, _ := msLeverDispatcher(t, func(method, path string) (int, string) {
 		switch {
 		case path == "Keywords/QueryByAdGroupId":
 			return http.StatusOK, msLiveKeywords
@@ -177,7 +177,7 @@ func TestMicrosoft_ApplyKeywordActions_RefusedBeforeAnyCall(t *testing.T) {
 		{"provenance unknown fails closed", foreign, []model.KeywordAction{{AdGroupID: "654", CriterionID: "701", Action: "PAUSE"}}, domain.ErrCampaignProvenanceUnknown},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d, calls, tokens := msKeywordDispatcher(t, msKeywordAPI(`{"PartialErrors":[]}`))
+			d, calls, tokens := msLeverDispatcher(t, msKeywordAPI(`{"PartialErrors":[]}`))
 			_, err := d.ApplyKeywordActions(context.Background(), "proj", model.ProviderMicrosoftAds, tc.campaign, tc.actions)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
@@ -192,7 +192,7 @@ func TestMicrosoft_ApplyKeywordActions_RefusedBeforeAnyCall(t *testing.T) {
 func TestMicrosoft_ApplyKeywordActions_AccountMismatchNeverMutates(t *testing.T) {
 	camp := msKeywordCampaign()
 	camp.Result = json.RawMessage(`{"accountId":"7654321","campaignId":"321","adGroupId":"654"}`)
-	d, calls, _ := msKeywordDispatcher(t, msKeywordAPI(`{"PartialErrors":[]}`))
+	d, calls, _ := msLeverDispatcher(t, msKeywordAPI(`{"PartialErrors":[]}`))
 	_, err := d.ApplyKeywordActions(context.Background(), "proj", model.ProviderMicrosoftAds, camp, []model.KeywordAction{{AdGroupID: "654", CriterionID: "701", Action: "REMOVE"}})
 	if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
 		t.Fatalf("err = %v, want ErrCampaignAccountMismatch", err)
@@ -207,7 +207,7 @@ func TestMicrosoft_ApplyKeywordActions_AccountMismatchNeverMutates(t *testing.T)
 func TestMicrosoft_ApplyKeywordActions_KeywordNotInAdGroupRefusedBeforeMutating(t *testing.T) {
 	for _, id := range []string{"999", "703"} {
 		t.Run(id, func(t *testing.T) {
-			d, calls, _ := msKeywordDispatcher(t, msKeywordAPI(`{"PartialErrors":[]}`))
+			d, calls, _ := msLeverDispatcher(t, msKeywordAPI(`{"PartialErrors":[]}`))
 			_, err := d.ApplyKeywordActions(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), []model.KeywordAction{
 				{AdGroupID: "654", CriterionID: "701", Action: "PAUSE"},
 				{AdGroupID: "654", CriterionID: id, Action: "REMOVE"},
@@ -225,7 +225,7 @@ func TestMicrosoft_ApplyKeywordActions_KeywordNotInAdGroupRefusedBeforeMutating(
 // A failed ownership READ is a definite failure: nothing was mutated, so it must not be
 // reported as unconfirmed.
 func TestMicrosoft_ApplyKeywordActions_ReadFailureIsDefinite(t *testing.T) {
-	d, calls, _ := msKeywordDispatcher(t, func(string, string) (int, string) { return http.StatusBadGateway, `{}` })
+	d, calls, _ := msLeverDispatcher(t, func(string, string) (int, string) { return http.StatusBadGateway, `{}` })
 	_, err := d.ApplyKeywordActions(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), []model.KeywordAction{{AdGroupID: "654", CriterionID: "701", Action: "PAUSE"}})
 	if err == nil {
 		t.Fatal("expected an error")
@@ -269,7 +269,7 @@ func TestMicrosoft_ApplyKeywordActions_AmbiguityIsUnconfirmed(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d, _, _ := msKeywordDispatcher(t, tc.answer())
+			d, _, _ := msLeverDispatcher(t, tc.answer())
 			_, err := d.ApplyKeywordActions(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), []model.KeywordAction{{AdGroupID: "654", CriterionID: "701", Action: "REMOVE"}})
 			var u interface{ Unconfirmed() bool }
 			if !errors.As(err, &u) || !u.Unconfirmed() {
@@ -282,7 +282,7 @@ func TestMicrosoft_ApplyKeywordActions_AmbiguityIsUnconfirmed(t *testing.T) {
 // ---- negative keywords --------------------------------------------------------
 
 func TestMicrosoft_AddNegativeKeywords_HappyPath(t *testing.T) {
-	d, calls, _ := msKeywordDispatcher(t, func(string, string) (int, string) {
+	d, calls, _ := msLeverDispatcher(t, func(string, string) (int, string) {
 		return http.StatusOK, `{"NegativeKeywordIds":[{"Ids":[9001,null]}],"NestedPartialErrors":[{"BatchErrors":[{"Code":4335,"Index":1}]}]}`
 	})
 	out, err := d.AddNegativeKeywords(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), []model.NegativeKeyword{
@@ -322,7 +322,7 @@ func TestMicrosoft_AddNegativeKeywords_RefusedBeforeAnyCall(t *testing.T) {
 		{"account mismatch", foreign, good, domain.ErrCampaignAccountMismatch},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d, calls, _ := msKeywordDispatcher(t, func(string, string) (int, string) { return http.StatusOK, `{}` })
+			d, calls, _ := msLeverDispatcher(t, func(string, string) (int, string) { return http.StatusOK, `{}` })
 			_, err := d.AddNegativeKeywords(context.Background(), "proj", model.ProviderMicrosoftAds, tc.campaign, tc.keywords)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
@@ -335,7 +335,7 @@ func TestMicrosoft_AddNegativeKeywords_RefusedBeforeAnyCall(t *testing.T) {
 }
 
 func TestMicrosoft_AddNegativeKeywords_AmbiguityIsUnconfirmed(t *testing.T) {
-	d, calls, _ := msKeywordDispatcher(t, func(string, string) (int, string) { return http.StatusTooManyRequests, `{}` })
+	d, calls, _ := msLeverDispatcher(t, func(string, string) (int, string) { return http.StatusTooManyRequests, `{}` })
 	_, err := d.AddNegativeKeywords(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), []model.NegativeKeyword{{Text: "free", MatchType: "Exact"}})
 	var u interface{ Unconfirmed() bool }
 	if !errors.As(err, &u) || !u.Unconfirmed() {
@@ -353,7 +353,7 @@ func TestMicrosoft_AddNegativeKeywords_AmbiguityIsUnconfirmed(t *testing.T) {
 func TestMicrosoft_ToggleStatus_SkipsKeywordsRemovedUpstream(t *testing.T) {
 	for _, status := range []string{model.CampaignRunActive, model.CampaignRunPaused} {
 		t.Run(status, func(t *testing.T) {
-			d, calls, _ := msKeywordDispatcher(t, func(_, path string) (int, string) {
+			d, calls, _ := msLeverDispatcher(t, func(_, path string) (int, string) {
 				if path == "Keywords/QueryByAdGroupId" {
 					// 702 was removed: Microsoft no longer lists it.
 					return http.StatusOK, `{"Keywords":[{"Id":701,"Status":"Paused"}]}`
@@ -378,7 +378,7 @@ func TestMicrosoft_ToggleStatus_SkipsKeywordsRemovedUpstream(t *testing.T) {
 }
 
 func TestMicrosoft_ToggleStatus_ActivateWithEveryKeywordRemovedIsNotProvisioned(t *testing.T) {
-	d, calls, _ := msKeywordDispatcher(t, func(_, path string) (int, string) {
+	d, calls, _ := msLeverDispatcher(t, func(_, path string) (int, string) {
 		if path == "Keywords/QueryByAdGroupId" {
 			return http.StatusOK, `{"Keywords":[]}`
 		}
@@ -396,7 +396,7 @@ func TestMicrosoft_ToggleStatus_ActivateWithEveryKeywordRemovedIsNotProvisioned(
 // Stopping delivery must not depend on the read: a PAUSE whose read fails still pauses, with
 // the recorded keyword ids.
 func TestMicrosoft_ToggleStatus_PauseSurvivesAFailedKeywordRead(t *testing.T) {
-	d, calls, _ := msKeywordDispatcher(t, func(_, path string) (int, string) {
+	d, calls, _ := msLeverDispatcher(t, func(_, path string) (int, string) {
 		if path == "Keywords/QueryByAdGroupId" {
 			return http.StatusBadGateway, `{}`
 		}

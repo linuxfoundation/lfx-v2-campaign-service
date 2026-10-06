@@ -90,9 +90,6 @@ const (
 	// carry before the array is treated as truncated. Each item can legitimately yield more
 	// than one error, so it is a multiple of the request cap rather than equal to it.
 	maxIndexedErrorItems = 4 * maxKeywordActions
-	// keywordStatusDeleted is the KeywordStatus a removed keyword reports, if Microsoft
-	// returns it at all.
-	keywordStatusDeleted = "Deleted"
 	// entityTypeCampaign is EntityNegativeKeyword.EntityType for a campaign-level negative
 	// ("The possible values are AdGroup and Campaign").
 	entityTypeCampaign = "Campaign"

@@ -131,7 +131,7 @@ var (
 	// ErrToggleUnsupported: a platform dispatcher can return it directly without
 	// importing the orchestration layer.
 	//
-	// Google Ads, LinkedIn, Meta, Microsoft Advertising and Reddit implement the capability
+	// Google Ads, LinkedIn, Meta, Microsoft Advertising, Reddit and X implement the capability
 	// today; every other platform still answers 400. Budget writing is added per platform, and each addition is a
 	// separate deliberate decision about that platform's budget model — not a gap to be
 	// closed mechanically. The service layer holds NO allowlist, so what a platform
@@ -155,7 +155,8 @@ var (
 	// already mirrors, so its validator is unreachable through this endpoint. Reddit's
 	// bounds (reddit.BudgetMicros: the create path's maximum and a non-zero micro amount)
 	// are likewise the service's own, so its mapping is defense in depth for a non-HTTP
-	// caller.
+	// caller; X's (twitter.BudgetMicros) are the same pair, since X publishes no per-currency
+	// minimum for its *_local_micro budget fields.
 	//
 	// The adapter's own text is safe to return to the caller: it names the amount and
 	// the platform's published minimum or documented reason, never upstream account
@@ -188,7 +189,8 @@ var (
 	// (the same shape: one Budget, named by BudgetId, drawn on by several campaigns). LinkedIn's
 	// budget is a pair of fields on the campaign itself, so there is nothing to share and
 	// the guard has no analogue; nor does Reddit's, whose budget is the campaign's own
-	// goal_value and cannot be attached to another campaign. Meta's analogue is NOT absent but is a different shape —
+	// goal_value and cannot be attached to another campaign, nor X's, whose budget is the
+	// campaign's own daily/total *_local_micro pair. Meta's analogue is NOT absent but is a different shape —
 	// Campaign Budget Optimization, where the campaign holds one amount distributed across
 	// every ad set beneath it — and that adapter refuses it with ErrBudgetUnwritable rather
 	// than this sentinel, because it is a property of the ad set's addressability, not of a
@@ -390,6 +392,21 @@ var (
 	// a platform dispatcher must be able to return it without importing the orchestration
 	// layer.
 	ErrKeywordInsightsUnsupported = errors.New("keyword and audience insights are not supported for this platform")
+
+	// ErrKeywordReportScopeTooLarge indicates a report-backed keyword read refused because the
+	// project owns more campaigns on the platform than one report can be scoped to (Microsoft's
+	// AccountThroughAdGroupReportScope holds up to 300). Refused before any upstream call, and
+	// PERMANENT while the project stays that large: widening the scope to the account would read
+	// other projects' keywords, and serving a subset would present part of the project as all of
+	// it. The message is fixed, client-safe text: it reaches the HTTP body.
+	ErrKeywordReportScopeTooLarge = errors.New("this project has more campaigns on the platform than one keyword report can be scoped to")
+
+	// ErrKeywordReportScopeInvalid indicates a report-backed keyword read refused because a
+	// campaign in the project's scope has a stored platform id that is not a valid id for the
+	// platform. Refused before any upstream call, and PERMANENT until the row is corrected —
+	// sending it would be refused by the platform on every read, and dropping it would present
+	// the rest of the project as all of it. The message is fixed, client-safe text.
+	ErrKeywordReportScopeInvalid = errors.New("a campaign in this project has a stored platform id the keyword report cannot be scoped to")
 
 	// ErrKeywordActionsUnsupported indicates the platform cannot pause or remove keywords.
 	// The platform is never contacted.

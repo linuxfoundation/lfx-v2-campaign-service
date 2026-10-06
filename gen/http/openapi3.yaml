@@ -32,7 +32,7 @@ paths:
                             $ref: '#/components/schemas/AttachExistingAudienceRequestBody'
                         example:
                             attach:
-                                brief_id: c2618438-5d7a-4fa4-b236-f40474ef9a91
+                                brief_id: eb0addc7-5d7a-4fa4-b236-f40474ef9a91
                                 inclusion_summary: Voluptas qui voluptas veniam sint voluptas.
                                 master_list_id: 2l
                                 suppression_list_ids:
@@ -48,15 +48,15 @@ paths:
                                 $ref: '#/components/schemas/AudienceAttachExistingResult'
                             example:
                                 audience:
-                                    id: Fugiat reprehenderit officiis modi quae.
-                                    platform_master_list_id: Minus et.
-                                    status: Voluptatem et culpa culpa veritatis.
-                                    version: 1301096040615853932
+                                    id: Officiis modi quae consequatur voluptatem et.
+                                    platform_master_list_id: Eum ea.
+                                    status: Culpa veritatis ut adipisci minus.
+                                    version: 4721771755854402655
                                 master:
-                                    hubspot_url: Quos provident.
-                                    list_id: Voluptates atque.
-                                    name: Consequuntur voluptates.
-                                    size: 7573547932818358075
+                                    hubspot_url: Magni et.
+                                    list_id: Facere vel quae totam et.
+                                    name: Atque consequatur consequuntur voluptates ab quos.
+                                    size: 413153877019026133
                                 suppression_list_ids:
                                     - Illo ab.
                                     - Voluptatem minus est magnam molestiae.
@@ -260,22 +260,20 @@ paths:
                             $ref: '#/components/schemas/ComposeAudienceMasterRequestBody'
                         example:
                             compose:
-                                brand_short: Numquam et natus possimus cupiditate provident molestiae.
-                                brief_id: f539cf42-2bc2-4eb9-93c4-4b8891cac146
+                                brand_short: Molestiae quia neque atque delectus.
+                                brief_id: e76a3815-95bb-4785-9bdf-ab0b2dde4754
                                 event_dates:
-                                    - Eum non ut itaque.
-                                    - Unde adipisci aut quisquam.
-                                    - Amet itaque aut.
-                                    - Eos ex laborum et doloremque.
-                                event_name: Neque atque delectus.
+                                    - Itaque voluptatem unde adipisci.
+                                    - Quisquam quod amet itaque aut praesentium eos.
+                                event_name: Repudiandae eum.
                                 exclude_list_ids:
-                                    - Saepe aut perferendis placeat earum.
-                                    - Et aperiam.
-                                    - Magni omnis dolorem earum assumenda.
-                                inclusion_summary: Vel quae totam.
+                                    - Aperiam eaque magni omnis dolorem earum.
+                                    - Quam possimus aut ipsa.
+                                    - Quae et perspiciatis numquam.
+                                inclusion_summary: Dicta consequuntur.
                                 list_ids:
-                                    - Perspiciatis nobis rerum maiores in alias.
-                                name: Possimus aut ipsa enim quae et perspiciatis.
+                                    - Placeat earum.
+                                name: Et natus possimus cupiditate.
             responses:
                 "201":
                     description: Created response.
@@ -285,24 +283,24 @@ paths:
                                 $ref: '#/components/schemas/AudienceComposeMasterResult'
                             example:
                                 audience:
-                                    id: Fugiat reprehenderit officiis modi quae.
-                                    platform_master_list_id: Minus et.
-                                    status: Voluptatem et culpa culpa veritatis.
-                                    version: 1301096040615853932
+                                    id: Officiis modi quae consequatur voluptatem et.
+                                    platform_master_list_id: Eum ea.
+                                    status: Culpa veritatis ut adipisci minus.
+                                    version: 4721771755854402655
                                 master:
-                                    hubspot_url: Quos provident.
-                                    list_id: Voluptates atque.
-                                    name: Consequuntur voluptates.
-                                    size: 7573547932818358075
+                                    hubspot_url: Magni et.
+                                    list_id: Facere vel quae totam et.
+                                    name: Atque consequatur consequuntur voluptates ab quos.
+                                    size: 413153877019026133
                                 recorded: false
                                 source_list_ids:
-                                    - Ea perspiciatis rerum occaecati incidunt deleniti sunt.
-                                    - Ea et quidem quibusdam officiis dolor.
+                                    - Occaecati incidunt deleniti sunt dolorem ea.
+                                    - Quidem quibusdam officiis dolor.
                                 suppression:
-                                    hubspot_url: Quos provident.
-                                    list_id: Voluptates atque.
-                                    name: Consequuntur voluptates.
-                                    size: 7573547932818358075
+                                    hubspot_url: Magni et.
+                                    list_id: Facere vel quae totam et.
+                                    name: Atque consequatur consequuntur voluptates ab quos.
+                                    size: 413153877019026133
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -366,17 +364,17 @@ paths:
                             example:
                                 code: "500"
                                 master:
-                                    hubspot_url: Quos provident.
-                                    list_id: Voluptates atque.
-                                    name: Consequuntur voluptates.
-                                    size: 7573547932818358075
+                                    hubspot_url: Magni et.
+                                    list_id: Facere vel quae totam et.
+                                    name: Atque consequatur consequuntur voluptates ab quos.
+                                    size: 413153877019026133
                                 master_name: Dolore voluptatem qui eveniet amet.
                                 message: Compose failed after creating or possibly creating platform state that must be reconciled before retrying.
                                 suppression:
-                                    hubspot_url: Quos provident.
-                                    list_id: Voluptates atque.
-                                    name: Consequuntur voluptates.
-                                    size: 7573547932818358075
+                                    hubspot_url: Magni et.
+                                    list_id: Facere vel quae totam et.
+                                    name: Atque consequatur consequuntur voluptates ab quos.
+                                    size: 413153877019026133
                                 suppression_name: Aut mollitia pariatur perferendis placeat dolores.
                 "503":
                     description: 'ServiceUnavailable: Service unavailable'
@@ -425,40 +423,46 @@ paths:
                                 event:
                                     brand_short: KubeCon
                                     event_dates:
-                                        - Sed perspiciatis.
-                                        - Atque laboriosam unde facilis.
-                                        - Ut quas officiis mollitia ducimus sunt repellendus.
+                                        - Est deserunt maiores consequatur.
+                                        - Ea voluptatum pariatur non.
                                     event_name: KubeCon Europe 2026
-                                inspected: 5989274059802204168
+                                inspected: 8747062743389608384
                                 lists:
-                                    - hubspot_url: Ratione quo ullam dolores.
-                                      list_id: Voluptatem optio.
-                                      list_type: Eum ea voluptatum.
-                                      name: Aliquam est autem vel eos minima.
-                                      reason: Deserunt maiores.
+                                    - hubspot_url: Et praesentium perferendis et unde beatae.
+                                      list_id: Quo ullam.
+                                      list_type: Tempore a debitis ut ea sequi quos.
+                                      name: Occaecati hic ut magnam facilis.
+                                      reason: Consectetur sed error quisquam recusandae nesciunt et.
                                       scope: current_past
-                                      signal: page_view
-                                      size: 6044780466452798197
-                                    - hubspot_url: Ratione quo ullam dolores.
-                                      list_id: Voluptatem optio.
-                                      list_type: Eum ea voluptatum.
-                                      name: Aliquam est autem vel eos minima.
-                                      reason: Deserunt maiores.
+                                      signal: added
+                                      size: 1711869619840032816
+                                    - hubspot_url: Et praesentium perferendis et unde beatae.
+                                      list_id: Quo ullam.
+                                      list_type: Tempore a debitis ut ea sequi quos.
+                                      name: Occaecati hic ut magnam facilis.
+                                      reason: Consectetur sed error quisquam recusandae nesciunt et.
                                       scope: current_past
-                                      signal: page_view
-                                      size: 6044780466452798197
-                                    - hubspot_url: Ratione quo ullam dolores.
-                                      list_id: Voluptatem optio.
-                                      list_type: Eum ea voluptatum.
-                                      name: Aliquam est autem vel eos minima.
-                                      reason: Deserunt maiores.
+                                      signal: added
+                                      size: 1711869619840032816
+                                    - hubspot_url: Et praesentium perferendis et unde beatae.
+                                      list_id: Quo ullam.
+                                      list_type: Tempore a debitis ut ea sequi quos.
+                                      name: Occaecati hic ut magnam facilis.
+                                      reason: Consectetur sed error quisquam recusandae nesciunt et.
                                       scope: current_past
-                                      signal: page_view
-                                      size: 6044780466452798197
+                                      signal: added
+                                      size: 1711869619840032816
+                                    - hubspot_url: Et praesentium perferendis et unde beatae.
+                                      list_id: Quo ullam.
+                                      list_type: Tempore a debitis ut ea sequi quos.
+                                      name: Occaecati hic ut magnam facilis.
+                                      reason: Consectetur sed error quisquam recusandae nesciunt et.
+                                      scope: current_past
+                                      signal: added
+                                      size: 1711869619840032816
                                 missing_signals:
-                                    - uncertain
-                                    - last_sent
-                                    - project_opt_in
+                                    - education_enrollment
+                                    - lf_newsletter_opt_in
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -579,18 +583,14 @@ paths:
                                 $ref: '#/components/schemas/SearchAudienceListsResponseBody'
                             example:
                                 lists:
-                                    - hubspot_url: Est est molestias reprehenderit placeat.
-                                      list_id: Qui repellendus dolore expedita commodi sit omnis.
-                                      name: Porro saepe eius earum quo porro.
-                                      size: 2286015844327380649
-                                    - hubspot_url: Est est molestias reprehenderit placeat.
-                                      list_id: Qui repellendus dolore expedita commodi sit omnis.
-                                      name: Porro saepe eius earum quo porro.
-                                      size: 2286015844327380649
-                                    - hubspot_url: Est est molestias reprehenderit placeat.
-                                      list_id: Qui repellendus dolore expedita commodi sit omnis.
-                                      name: Porro saepe eius earum quo porro.
-                                      size: 2286015844327380649
+                                    - hubspot_url: Similique sapiente ab ea pariatur deserunt.
+                                      list_id: Molestias reprehenderit.
+                                      name: Pariatur esse.
+                                      size: 643565783502436861
+                                    - hubspot_url: Similique sapiente ab ea pariatur deserunt.
+                                      list_id: Molestias reprehenderit.
+                                      name: Pariatur esse.
+                                      size: 643565783502436861
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -724,135 +724,178 @@ paths:
                                 $ref: '#/components/schemas/GetAudienceLastSentResponseBody'
                             example:
                                 emails:
-                                    - email_id: Et laborum maiores.
-                                      email_name: Sequi iste iusto reiciendis ipsa.
-                                      hubspot_url: Temporibus in qui provident corrupti ut similique.
+                                    - email_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                      email_name: Quia facere vitae aperiam.
+                                      hubspot_url: Quis impedit.
                                       included_lists:
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                      lists_unavailable: true
-                                      sent_at: Saepe beatae.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                      lists_unavailable: false
+                                      sent_at: Corrupti dicta pariatur totam quas deserunt.
                                       suppression_lists:
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                    - email_id: Et laborum maiores.
-                                      email_name: Sequi iste iusto reiciendis ipsa.
-                                      hubspot_url: Temporibus in qui provident corrupti ut similique.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                    - email_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                      email_name: Quia facere vitae aperiam.
+                                      hubspot_url: Quis impedit.
                                       included_lists:
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                      lists_unavailable: true
-                                      sent_at: Saepe beatae.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                      lists_unavailable: false
+                                      sent_at: Corrupti dicta pariatur totam quas deserunt.
                                       suppression_lists:
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                    - email_id: Et laborum maiores.
-                                      email_name: Sequi iste iusto reiciendis ipsa.
-                                      hubspot_url: Temporibus in qui provident corrupti ut similique.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                    - email_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                      email_name: Quia facere vitae aperiam.
+                                      hubspot_url: Quis impedit.
                                       included_lists:
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                      lists_unavailable: true
-                                      sent_at: Saepe beatae.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                      lists_unavailable: false
+                                      sent_at: Corrupti dicta pariatur totam quas deserunt.
                                       suppression_lists:
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
-                                        - hubspot_url: Deserunt minima quis impedit.
-                                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
                                           missing: false
-                                          name: Quia facere vitae aperiam.
-                                          resolved_from_legacy_id: Pariatur totam.
-                                          size: 877172286305806677
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                    - email_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                                      email_name: Quia facere vitae aperiam.
+                                      hubspot_url: Quis impedit.
+                                      included_lists:
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
+                                          missing: false
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
+                                          missing: false
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
+                                          missing: false
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                      lists_unavailable: false
+                                      sent_at: Corrupti dicta pariatur totam quas deserunt.
+                                      suppression_lists:
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
+                                          missing: false
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
+                                          missing: false
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
+                                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                                          list_id: Voluptate debitis.
+                                          missing: false
+                                          name: Voluptates repellat.
+                                          resolved_from_legacy_id: Ut dolorem tempore.
+                                          size: 4463156058315097988
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -964,22 +1007,14 @@ paths:
                                 $ref: '#/components/schemas/SearchAudienceListsResponseBody'
                             example:
                                 lists:
-                                    - hubspot_url: Qui quo et praesentium perferendis et unde.
-                                      list_id: Sed error quisquam recusandae nesciunt et itaque.
-                                      name: A debitis ut ea.
-                                      size: 4949368133670372217
-                                    - hubspot_url: Qui quo et praesentium perferendis et unde.
-                                      list_id: Sed error quisquam recusandae nesciunt et itaque.
-                                      name: A debitis ut ea.
-                                      size: 4949368133670372217
-                                    - hubspot_url: Qui quo et praesentium perferendis et unde.
-                                      list_id: Sed error quisquam recusandae nesciunt et itaque.
-                                      name: A debitis ut ea.
-                                      size: 4949368133670372217
-                                    - hubspot_url: Qui quo et praesentium perferendis et unde.
-                                      list_id: Sed error quisquam recusandae nesciunt et itaque.
-                                      name: A debitis ut ea.
-                                      size: 4949368133670372217
+                                    - hubspot_url: Qui qui impedit assumenda voluptas cumque.
+                                      list_id: Fuga officia nulla temporibus recusandae.
+                                      name: Nulla quam.
+                                      size: 1409764660787687915
+                                    - hubspot_url: Qui qui impedit assumenda voluptas cumque.
+                                      list_id: Fuga officia nulla temporibus recusandae.
+                                      name: Nulla quam.
+                                      size: 1409764660787687915
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -1079,9 +1114,9 @@ paths:
                             $ref: '#/components/schemas/PreviewAudienceCountRequestBody'
                         example:
                             list_ids:
-                                - Dolorem similique sapiente.
-                                - Ea pariatur.
-                                - Aut rem molestiae assumenda ea.
+                                - Assumenda ea incidunt nam.
+                                - Sequi sed qui dolor.
+                                - Facere ut voluptatem.
             responses:
                 "200":
                     description: OK response.
@@ -1090,10 +1125,10 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/AudiencePreviewCount'
                             example:
-                                count: 8087018812501874622
-                                estimate: 2774877715890332805
+                                count: 7042303861797892719
+                                estimate: 8862716294143227386
                                 exact: false
-                                reason: Sed qui dolor illo facere ut voluptatem.
+                                reason: Rerum maiores in alias est laboriosam saepe.
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -1400,26 +1435,19 @@ paths:
                             example:
                                 lists:
                                     - category: brand
-                                      hubspot_url: Nemo cum delectus laudantium.
-                                      key: Nulla quam.
-                                      label: Consequuntur qui qui impedit assumenda voluptas cumque.
-                                      list_id: Provident nostrum vel ut nulla et.
-                                      name: Dicta illum omnis magnam dolor et.
-                                      size: 1178378845745949013
+                                      hubspot_url: Iste iusto reiciendis ipsa ut saepe beatae.
+                                      key: Deleniti magnam nemo cum delectus.
+                                      label: Minus est dolor.
+                                      list_id: Et voluptatem mollitia placeat aut laudantium.
+                                      name: Ut et laborum.
+                                      size: 5629901906252153653
                                     - category: brand
-                                      hubspot_url: Nemo cum delectus laudantium.
-                                      key: Nulla quam.
-                                      label: Consequuntur qui qui impedit assumenda voluptas cumque.
-                                      list_id: Provident nostrum vel ut nulla et.
-                                      name: Dicta illum omnis magnam dolor et.
-                                      size: 1178378845745949013
-                                    - category: brand
-                                      hubspot_url: Nemo cum delectus laudantium.
-                                      key: Nulla quam.
-                                      label: Consequuntur qui qui impedit assumenda voluptas cumque.
-                                      list_id: Provident nostrum vel ut nulla et.
-                                      name: Dicta illum omnis magnam dolor et.
-                                      size: 1178378845745949013
+                                      hubspot_url: Iste iusto reiciendis ipsa ut saepe beatae.
+                                      key: Deleniti magnam nemo cum delectus.
+                                      label: Minus est dolor.
+                                      list_id: Et voluptatem mollitia placeat aut laudantium.
+                                      name: Ut et laborum.
+                                      size: 5629901906252153653
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -2417,62 +2445,30 @@ paths:
                                 $ref: '#/components/schemas/ListAudiencesResponseBody'
                             example:
                                 audiences:
-                                    - brief_id: Quo et enim totam et minima dolorem.
-                                      etag: Nesciunt qui consequuntur quia.
-                                      id: Omnis ad voluptas esse voluptates.
-                                      inclusion_summary: Ea quidem ducimus tempora ea molestias.
+                                    - brief_id: Nulla perferendis possimus deserunt iure et.
+                                      etag: Sed quo.
+                                      id: Non porro qui molestias officiis.
+                                      inclusion_summary: Sequi culpa.
                                       platform: hubspot
-                                      platform_master_list_id: Tempora qui.
-                                      project_id: Cumque mollitia.
-                                      status: failed
+                                      platform_master_list_id: Quidem ducimus tempora ea molestias quo qui.
+                                      project_id: Praesentium cumque illum pariatur odio molestias voluptatum.
+                                      status: building
                                       suppression_list_ids:
-                                        - Necessitatibus cumque non.
-                                        - Qui molestias officiis.
-                                        - Praesentium cumque illum pariatur odio molestias voluptatum.
-                                        - Nulla perferendis possimus deserunt iure et.
-                                      version: 365595311206383059
-                                    - brief_id: Quo et enim totam et minima dolorem.
-                                      etag: Nesciunt qui consequuntur quia.
-                                      id: Omnis ad voluptas esse voluptates.
-                                      inclusion_summary: Ea quidem ducimus tempora ea molestias.
+                                        - Qui consequuntur.
+                                        - Fuga atque.
+                                      version: 2794197387658860322
+                                    - brief_id: Nulla perferendis possimus deserunt iure et.
+                                      etag: Sed quo.
+                                      id: Non porro qui molestias officiis.
+                                      inclusion_summary: Sequi culpa.
                                       platform: hubspot
-                                      platform_master_list_id: Tempora qui.
-                                      project_id: Cumque mollitia.
-                                      status: failed
+                                      platform_master_list_id: Quidem ducimus tempora ea molestias quo qui.
+                                      project_id: Praesentium cumque illum pariatur odio molestias voluptatum.
+                                      status: building
                                       suppression_list_ids:
-                                        - Necessitatibus cumque non.
-                                        - Qui molestias officiis.
-                                        - Praesentium cumque illum pariatur odio molestias voluptatum.
-                                        - Nulla perferendis possimus deserunt iure et.
-                                      version: 365595311206383059
-                                    - brief_id: Quo et enim totam et minima dolorem.
-                                      etag: Nesciunt qui consequuntur quia.
-                                      id: Omnis ad voluptas esse voluptates.
-                                      inclusion_summary: Ea quidem ducimus tempora ea molestias.
-                                      platform: hubspot
-                                      platform_master_list_id: Tempora qui.
-                                      project_id: Cumque mollitia.
-                                      status: failed
-                                      suppression_list_ids:
-                                        - Necessitatibus cumque non.
-                                        - Qui molestias officiis.
-                                        - Praesentium cumque illum pariatur odio molestias voluptatum.
-                                        - Nulla perferendis possimus deserunt iure et.
-                                      version: 365595311206383059
-                                    - brief_id: Quo et enim totam et minima dolorem.
-                                      etag: Nesciunt qui consequuntur quia.
-                                      id: Omnis ad voluptas esse voluptates.
-                                      inclusion_summary: Ea quidem ducimus tempora ea molestias.
-                                      platform: hubspot
-                                      platform_master_list_id: Tempora qui.
-                                      project_id: Cumque mollitia.
-                                      status: failed
-                                      suppression_list_ids:
-                                        - Necessitatibus cumque non.
-                                        - Qui molestias officiis.
-                                        - Praesentium cumque illum pariatur odio molestias voluptatum.
-                                        - Nulla perferendis possimus deserunt iure et.
-                                      version: 365595311206383059
+                                        - Qui consequuntur.
+                                        - Fuga atque.
+                                      version: 2794197387658860322
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -2581,14 +2577,15 @@ paths:
                             $ref: '#/components/schemas/CreateAudienceRequestBody'
                         example:
                             audience:
-                                inclusion_summary: Provident porro.
+                                inclusion_summary: Illo harum et consequatur.
                                 platform: hubspot
-                                platform_master_list_id: Libero blanditiis.
-                                status: failed
+                                platform_master_list_id: Nulla sunt autem eos rerum provident dicta.
+                                status: building
                                 suppression_list_ids:
-                                    - In nulla.
-                                    - Autem eos rerum.
-                                    - Dicta tenetur voluptatem voluptate dolor.
+                                    - Voluptate dolor dolores provident porro commodi odio.
+                                    - Esse mollitia incidunt eos dolores laborum.
+                                    - Molestias veritatis itaque voluptatem.
+                                    - Quis impedit.
             responses:
                 "201":
                     description: Created response.
@@ -2605,18 +2602,18 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Audience2'
                             example:
-                                brief_id: Amet cum.
-                                id: Quis at.
-                                inclusion_summary: Sit esse ratione aliquid.
+                                brief_id: Repudiandae tenetur aperiam saepe vel.
+                                id: Omnis voluptatem rerum praesentium.
+                                inclusion_summary: Repellat eum totam voluptatem eos doloribus.
                                 platform: hubspot
-                                platform_master_list_id: Necessitatibus necessitatibus id sint dicta assumenda.
-                                project_id: Laborum veniam delectus repellendus omnis.
+                                platform_master_list_id: Sit esse ratione aliquid.
+                                project_id: Blanditiis non totam temporibus.
                                 status: built
                                 suppression_list_ids:
-                                    - Rerum praesentium voluptatem.
-                                    - Non totam temporibus in repudiandae tenetur aperiam.
-                                    - Vel aut.
-                                version: 5162175714173342640
+                                    - Est quasi dignissimos eveniet.
+                                    - Quis harum recusandae.
+                                    - Ipsum est amet quaerat.
+                                version: 3326214248236291588
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -2744,18 +2741,17 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Audience3'
                             example:
-                                brief_id: Earum doloribus.
-                                id: Distinctio repellendus.
-                                inclusion_summary: Impedit ullam eaque suscipit harum sint neque.
+                                brief_id: Impedit ullam eaque suscipit harum sint neque.
+                                id: Enim nam id.
+                                inclusion_summary: Qui mollitia et eum veniam.
                                 platform: hubspot
-                                platform_master_list_id: Accusamus pariatur saepe.
-                                project_id: Veritatis impedit aut.
-                                status: failed
+                                platform_master_list_id: Et veniam itaque optio consequatur nulla sint.
+                                project_id: Quia vero alias temporibus.
+                                status: building
                                 suppression_list_ids:
-                                    - Et ab laboriosam sunt quis.
-                                    - Animi sunt quis odio enim nam.
-                                    - Voluptatem quia vero alias temporibus.
-                                version: 7409152017782335864
+                                    - Voluptatem ut.
+                                    - Ut recusandae modi.
+                                version: 4351179561113861726
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -2883,15 +2879,13 @@ paths:
                             $ref: '#/components/schemas/UpdateAudienceRequestBody'
                         example:
                             audience:
-                                clear_suppression_lists: true
-                                inclusion_summary: Eos et quidem est.
-                                platform_master_list_id: Totam laboriosam quos omnis deserunt.
-                                status: failed
+                                clear_suppression_lists: false
+                                inclusion_summary: Atque hic quam impedit placeat.
+                                platform_master_list_id: Ex est modi cupiditate.
+                                status: built
                                 suppression_list_ids:
-                                    - Quisquam explicabo.
-                                    - Ex est modi cupiditate.
-                                    - Ducimus qui modi consequatur.
-                                    - Et et deleniti sint reiciendis.
+                                    - Qui modi consequatur molestias et.
+                                    - Deleniti sint reiciendis odit eos et quidem.
             responses:
                 "200":
                     description: OK response.
@@ -2908,18 +2902,18 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Audience4'
                             example:
-                                brief_id: Ipsum et et laudantium.
-                                id: Enim non asperiores velit aut.
-                                inclusion_summary: Ipsam eligendi est dolore.
+                                brief_id: Dolorem sit nihil enim sit.
+                                id: Alias quod minima blanditiis.
+                                inclusion_summary: Excepturi natus est est saepe doloribus unde.
                                 platform: hubspot
-                                platform_master_list_id: Dolores dolorem sit nihil enim.
-                                project_id: Quod minima.
-                                status: built
+                                platform_master_list_id: Qui quaerat qui vitae iste.
+                                project_id: Et et laudantium iure dolores.
+                                status: failed
                                 suppression_list_ids:
-                                    - Atque qui.
-                                    - Qui vitae iste.
-                                    - Non ipsam optio in ratione accusamus quasi.
-                                version: 8056921523583201894
+                                    - Ipsam optio in.
+                                    - Accusamus quasi repudiandae ipsam eligendi.
+                                    - Dolore voluptatem consequatur aut vero.
+                                version: 5452949213174073825
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -3055,17 +3049,19 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Audience5'
                             example:
-                                brief_id: Accusamus eos neque velit.
-                                id: Eum ipsum eveniet quam.
-                                inclusion_summary: Illo ut ut ut.
+                                brief_id: Ipsam aperiam et totam in.
+                                id: Accusamus eos neque velit.
+                                inclusion_summary: Dolore aliquam est autem.
                                 platform: hubspot
-                                platform_master_list_id: Iure molestiae quisquam perspiciatis.
-                                project_id: Aut amet aut voluptatum magnam.
-                                status: failed
+                                platform_master_list_id: Voluptatem maiores ipsam dicta cum odit repellat.
+                                project_id: In iure molestiae quisquam.
+                                status: built
                                 suppression_list_ids:
-                                    - Et totam in et.
-                                    - Voluptatem maiores ipsam dicta cum odit repellat.
-                                version: 8618836083038100083
+                                    - Ut ut ut nam modi nostrum.
+                                    - Alias sed perspiciatis debitis atque laboriosam unde.
+                                    - Quasi ut quas officiis mollitia ducimus.
+                                    - Repellendus aliquam voluptatem.
+                                version: 7455004804681247816
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -3745,7 +3741,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: update-campaign-budget lfx-v2-campaign-service-briefs
-            description: 'Change how much a campaign may spend, on its ad platform, then persist the new amount. A MUTATION on a live paid campaign, dispatched to the platform first. The invariant is ONE-WAY: the new amount is never persisted before the platform confirms it, so no refusal or platform failure can leave the row reporting an amount the platform was never given. The converse is not promised, because it cannot be — once the platform has confirmed, the row write can still fail, and that case answers 500 with the platform holding the new amount and the row still reporting the old one. It is logged as a divergence, the platform is authoritative, and re-applying the same amount reconciles it. Unlike update-campaign, which writes the DB row alone. AMOUNT ONLY — never the pacing model. `budget_type` must be the pacing the campaign ALREADY has upstream; a request naming the other one is refused (409) rather than translated. Switching a live campaign between daily pacing and a whole-flight cap reinterprets everything it has already spent against, and the platforms do not even name the same two ideas (Google has no LIFETIME period; its counterpart, CUSTOM_PERIOD, is a narrower thing). Change the pacing in the ad platform, then set the amount here. The amount is in the AD ACCOUNT''s own currency, not USD, and this service neither knows nor converts it. Google Ads, LinkedIn, Meta, Microsoft Advertising and Reddit today: a campaign on any other platform is refused with 400. Budget writing is added per platform, because each platform''s budget model is its own deliberate decision, and the refusals below are the union of what those models can refuse — a platform whose model has no analogue of a given refusal simply never raises it (LinkedIn budgets are fields on the campaign and cannot be shared, so the shared-budget 409 is a Google, Meta and Microsoft answer; Meta''s form of it is a campaign-level, ad-set-spanning budget, Microsoft''s a campaign attached to a shared Budget). Microsoft Search campaigns are paced DAILY only, so a lifetime request for one is the pacing refusal (409). A Reddit campaign''s budget is its campaign-level spend goal (Campaign Budget Optimization on); one whose budget is governed per ad group (CBO off) is refused (409) rather than allocated, and Reddit has no shared-budget analogue. **409** when the change is refused BEFORE the platform is written, so nothing has changed: the campaign is unprovisioned (no platform campaign id); the campaign belongs to a different ad account than the project''s connection now resolves to, or does not record which ad account it was created under; the campaign''s budget is SHARED across campaigns, where changing the amount would change the spend of campaigns this request never named — including campaigns this service does not own and cannot see (give the campaign its own budget in the ad platform, or make the change there where its full effect is visible); or the budget could not be addressed at all — the platform did not report which budget resource is attached, did not report whether it is shared, did not report its pacing, or reports a pacing this service has no mapping for. An unreported fact is refused rather than assumed: ''we could not establish that this budget is private'' and ''this budget is private'' are opposite facts, and only one of them justifies a write that could move a stranger''s spend. None of the 409s is retryable — each needs a change in the ad platform or a re-dispatch. **400** for a request fault: a non-positive, non-finite or out-of-range amount, an unknown budget type, a platform with no budget-write capability wired, or an amount the campaign''s own platform refuses on its published minimums — the service validates only the bounds every platform shares, so a platform''s stricter floor is a permanent request fault and the response names what it was. **503** when the platform could not be reached or did not confirm; the row is unchanged, and re-applying the same amount converges on the same state, so a retry is safe.'
+            description: 'Change how much a campaign may spend, on its ad platform, then persist the new amount. A MUTATION on a live paid campaign, dispatched to the platform first. The invariant is ONE-WAY: the new amount is never persisted before the platform confirms it, so no refusal or platform failure can leave the row reporting an amount the platform was never given. The converse is not promised, because it cannot be — once the platform has confirmed, the row write can still fail, and that case answers 500 with the platform holding the new amount and the row still reporting the old one. It is logged as a divergence, the platform is authoritative, and re-applying the same amount reconciles it. Unlike update-campaign, which writes the DB row alone. AMOUNT ONLY — never the pacing model. `budget_type` must be the pacing the campaign ALREADY has upstream; a request naming the other one is refused (409) rather than translated. Switching a live campaign between daily pacing and a whole-flight cap reinterprets everything it has already spent against, and the platforms do not even name the same two ideas (Google has no LIFETIME period; its counterpart, CUSTOM_PERIOD, is a narrower thing). Change the pacing in the ad platform, then set the amount here. The amount is in the AD ACCOUNT''s own currency, not USD, and this service neither knows nor converts it. Google Ads, LinkedIn, Meta, Microsoft Advertising, Reddit and X today: a campaign on any other platform is refused with 400. Budget writing is added per platform, because each platform''s budget model is its own deliberate decision, and the refusals below are the union of what those models can refuse — a platform whose model has no analogue of a given refusal simply never raises it (LinkedIn budgets are fields on the campaign and cannot be shared, so the shared-budget 409 is a Google, Meta and Microsoft answer; Meta''s form of it is a campaign-level, ad-set-spanning budget, Microsoft''s a campaign attached to a shared Budget). Microsoft Search campaigns are paced DAILY only, so a lifetime request for one is the pacing refusal (409). A Reddit campaign''s budget is its campaign-level spend goal (Campaign Budget Optimization on); one whose budget is governed per ad group (CBO off) is refused (409) rather than allocated, and Reddit has no shared-budget analogue. An X campaign''s budget is written only as its own daily_budget_amount_local_micro, and only when X reports campaign budget optimization (budget_optimization CAMPAIGN). That this is the shape campaigns created here have is inferred from the create path (a daily budget on the campaign, no budget_optimization sent) and is unverified against a live account; X''s current reference lists LINE_ITEM as the only value. A campaign reporting LINE_ITEM or omitting budget_optimization, one without a daily budget, or one that also carries a total cap is refused (409) before any write. A `lifetime` request for an X campaign is always refused (409): under campaign budget optimization X requires the daily budget, so the campaign is paced daily. X has no shared-budget analogue. **409** when the change is refused BEFORE the platform is written, so nothing has changed: the campaign is unprovisioned (no platform campaign id); the campaign belongs to a different ad account than the project''s connection now resolves to, or does not record which ad account it was created under; the campaign''s budget is SHARED across campaigns, where changing the amount would change the spend of campaigns this request never named — including campaigns this service does not own and cannot see (give the campaign its own budget in the ad platform, or make the change there where its full effect is visible); or the budget could not be addressed at all — the platform did not report which budget resource is attached, did not report whether it is shared, did not report its pacing, or reports a pacing this service has no mapping for. An unreported fact is refused rather than assumed: ''we could not establish that this budget is private'' and ''this budget is private'' are opposite facts, and only one of them justifies a write that could move a stranger''s spend. None of the 409s is retryable — each needs a change in the ad platform or a re-dispatch. **400** for a request fault: a non-positive, non-finite or out-of-range amount, an unknown budget type, a platform with no budget-write capability wired, or an amount the campaign''s own platform refuses on its published minimums — the service validates only the bounds every platform shares, so a platform''s stricter floor is a permanent request fault and the response names what it was. **503** when the platform could not be reached or did not confirm; the row is unchanged, and re-applying the same amount converges on the same state, so a retry is safe.'
             operationId: lfx-v2-campaign-service-briefs#update-campaign-budget
             parameters:
                 - name: project_id
@@ -6880,36 +6876,23 @@ paths:
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
+                                    - action: Increase daily budget or check for delivery limits
+                                      campaign_id: "24183781329"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      issue: 'Underspending: 42% of expected spend'
+                                      priority: LOW
                                 campaigns:
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
-                                      fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: overspending
-                                      pacing_pct: 87
-                                      pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
                                       clicks: 3110
@@ -6968,7 +6951,7 @@ paths:
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
                                 metrics_window_end: "2026-10-05"
-                                metrics_window_start: "2026-07-08"
+                                metrics_window_start: "2026-09-06"
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -6997,7 +6980,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError100'
+                                $ref: '#/components/schemas/UnauthorizedError101'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -7835,7 +7818,11 @@ paths:
                                       name: KubeCon NA 2026
                                       start_date: "2026-11-01"
                                       utm: kubecon-na-2026
-                                capped: false
+                                    - id: "112233445566"
+                                      name: KubeCon NA 2026
+                                      start_date: "2026-11-01"
+                                      utm: kubecon-na-2026
+                                capped: true
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -7858,7 +7845,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError98'
+                                $ref: '#/components/schemas/UnauthorizedError99'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -7958,7 +7945,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError99'
+                                $ref: '#/components/schemas/UnauthorizedError100'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8062,7 +8049,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError97'
+                                $ref: '#/components/schemas/UnauthorizedError98'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8797,17 +8784,17 @@ paths:
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                 campaigns:
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -8867,7 +8854,7 @@ paths:
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
                                 metrics_window_end: "2026-10-05"
-                                metrics_window_start: "2026-07-08"
+                                metrics_window_start: "2026-09-06"
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -8896,7 +8883,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError101'
+                                $ref: '#/components/schemas/UnauthorizedError102'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8990,7 +8977,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError94'
+                                $ref: '#/components/schemas/UnauthorizedError95'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -9731,22 +9718,17 @@ paths:
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                 campaigns:
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -9806,7 +9788,7 @@ paths:
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
                                 metrics_window_end: "2026-10-05"
-                                metrics_window_start: "2026-07-08"
+                                metrics_window_start: "2026-09-06"
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -9835,7 +9817,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError102'
+                                $ref: '#/components/schemas/UnauthorizedError103'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -9929,7 +9911,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError93'
+                                $ref: '#/components/schemas/UnauthorizedError94'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -10665,12 +10647,12 @@ paths:
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                 campaigns:
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -10712,7 +10694,7 @@ paths:
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
                                 metrics_window_end: "2026-10-05"
-                                metrics_window_start: "2026-07-08"
+                                metrics_window_start: "2026-09-06"
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -10741,7 +10723,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError104'
+                                $ref: '#/components/schemas/UnauthorizedError105'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -10835,7 +10817,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError95'
+                                $ref: '#/components/schemas/UnauthorizedError96'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -11572,13 +11554,49 @@ paths:
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                 campaigns:
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: overspending
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: overspending
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
                                       clicks: 3110
@@ -11619,7 +11637,7 @@ paths:
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
                                 metrics_window_end: "2026-10-05"
-                                metrics_window_start: "2026-07-08"
+                                metrics_window_start: "2026-09-06"
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -11648,7 +11666,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError103'
+                                $ref: '#/components/schemas/UnauthorizedError104'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -12390,17 +12408,12 @@ paths:
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                      priority: LOW
                                 campaigns:
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -12442,7 +12455,7 @@ paths:
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
                                 metrics_window_end: "2026-10-05"
-                                metrics_window_start: "2026-07-08"
+                                metrics_window_start: "2026-09-06"
                                 totals:
                                     campaign_count: 14
                                     clicks: 11420
@@ -12471,7 +12484,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError105'
+                                $ref: '#/components/schemas/UnauthorizedError106'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -12575,7 +12588,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError96'
+                                $ref: '#/components/schemas/UnauthorizedError97'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -13132,7 +13145,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError92'
+                                $ref: '#/components/schemas/UnauthorizedError93'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -13464,6 +13477,184 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/microsoft-ads/keywords:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-microsoft-ads-keywords lfx-v2-campaign-service-connections
+            description: Read Microsoft Advertising keyword performance for this project's own campaigns, in the same row shape as get-google-ads-keywords. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, and read from the project's OWN connection only (never the LF system account). Microsoft serves keyword performance only through its asynchronous Reporting service, which takes minutes, so rows come from the last finished report — see metrics_as_of and metrics_pending — while the next one builds; the first read returns no rows with metrics_pending=true. A report is served only while it covers every campaign the project owns. Saved reports are cached platform data. Off (400, not supported) unless MICROSOFT_METRICS_ENABLED is true. Audience demographics are not offered for Microsoft.
+            operationId: lfx-v2-campaign-service-connections#get-microsoft-ads-keywords
+            parameters:
+                - name: window
+                  in: query
+                  description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Microsoft.
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Microsoft.
+                    example: today
+                    enum:
+                        - today
+                        - last_7_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+                  example: today
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MicrosoftAdsKeywords'
+                            example:
+                                conversions_complete: true
+                                data_incomplete: true
+                                metrics_as_of: "2026-10-05T14:30:00Z"
+                                metrics_pending: false
+                                row_count: 50
+                                rows:
+                                    - ad_group_id: "176216228"
+                                      ad_group_name: Registration - Exact
+                                      campaign_id: "21234567890"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      clicks: 311
+                                      conversions: 12.5
+                                      cost_micros: 1284000
+                                      criterion_id: "305729261"
+                                      ctr: 0.0645
+                                      impressions: 4820
+                                      match_type: EXACT
+                                      quality_score: 7
+                                      status: ENABLED
+                                      text: kubernetes training
+                                    - ad_group_id: "176216228"
+                                      ad_group_name: Registration - Exact
+                                      campaign_id: "21234567890"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      clicks: 311
+                                      conversions: 12.5
+                                      cost_micros: 1284000
+                                      criterion_id: "305729261"
+                                      ctr: 0.0645
+                                      impressions: 4820
+                                      match_type: EXACT
+                                      quality_score: 7
+                                      status: ENABLED
+                                      text: kubernetes training
+                                    - ad_group_id: "176216228"
+                                      ad_group_name: Registration - Exact
+                                      campaign_id: "21234567890"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      clicks: 311
+                                      conversions: 12.5
+                                      cost_micros: 1284000
+                                      criterion_id: "305729261"
+                                      ctr: 0.0645
+                                      impressions: 4820
+                                      match_type: EXACT
+                                      quality_score: 7
+                                      status: ENABLED
+                                      text: kubernetes training
+                                    - ad_group_id: "176216228"
+                                      ad_group_name: Registration - Exact
+                                      campaign_id: "21234567890"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      clicks: 311
+                                      conversions: 12.5
+                                      cost_micros: 1284000
+                                      criterion_id: "305729261"
+                                      ctr: 0.0645
+                                      impressions: 4820
+                                      match_type: EXACT
+                                      quality_score: 7
+                                      status: ENABLED
+                                      text: kubernetes training
+                                truncated: false
+                                window: last_14_days
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError92'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
 components:
     schemas:
         AccessibleAccount:
@@ -13531,7 +13722,7 @@ components:
                           impressions: 48200
                           is_search_channel: true
                           name: KubeCon NA 2026 - Search
-                          pacing_label: normal
+                          pacing_label: constrained
                           pacing_pct: 87
                           pacing_unknown: false
                           platform_campaign_id: "24183781329"
@@ -13549,7 +13740,7 @@ components:
                           impressions: 48200
                           is_search_channel: true
                           name: KubeCon NA 2026 - Search
-                          pacing_label: normal
+                          pacing_label: constrained
                           pacing_pct: 87
                           pacing_unknown: false
                           platform_campaign_id: "24183781329"
@@ -13567,7 +13758,7 @@ components:
                           impressions: 48200
                           is_search_channel: true
                           name: KubeCon NA 2026 - Search
-                          pacing_label: normal
+                          pacing_label: constrained
                           pacing_pct: 87
                           pacing_unknown: false
                           platform_campaign_id: "24183781329"
@@ -13585,7 +13776,7 @@ components:
                           impressions: 48200
                           is_search_channel: true
                           name: KubeCon NA 2026 - Search
-                          pacing_label: normal
+                          pacing_label: constrained
                           pacing_pct: 87
                           pacing_unknown: false
                           platform_campaign_id: "24183781329"
@@ -13615,7 +13806,7 @@ components:
                 metrics_window_start:
                     type: string
                     description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
-                    example: "2026-07-08"
+                    example: "2026-09-06"
                     format: date
                 totals:
                     $ref: '#/components/schemas/AccountMonitorTotals'
@@ -13648,7 +13839,7 @@ components:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: normal
+                      pacing_label: constrained
                       pacing_pct: 87
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
@@ -13666,7 +13857,7 @@ components:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: normal
+                      pacing_label: constrained
                       pacing_pct: 87
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
@@ -13684,7 +13875,7 @@ components:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: normal
+                      pacing_label: constrained
                       pacing_pct: 87
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
@@ -13696,7 +13887,7 @@ components:
                 metrics_as_of: "2026-10-05T14:30:00Z"
                 metrics_pending: false
                 metrics_window_end: "2026-10-05"
-                metrics_window_start: "2026-07-08"
+                metrics_window_start: "2026-09-06"
                 totals:
                     campaign_count: 14
                     clicks: 11420
@@ -13975,7 +14166,7 @@ components:
                     $ref: '#/components/schemas/AudienceAttachExistingInput'
             example:
                 attach:
-                    brief_id: c2618438-5d7a-4fa4-b236-f40474ef9a91
+                    brief_id: eb0addc7-5d7a-4fa4-b236-f40474ef9a91
                     inclusion_summary: Voluptas qui voluptas veniam sint voluptas.
                     master_list_id: 2l
                     suppression_list_ids:
@@ -14070,7 +14261,7 @@ components:
                 id:
                     type: string
                     description: Audience UUID
-                    example: Tenetur repudiandae qui sit molestiae saepe eius.
+                    example: Molestiae saepe eius.
                 inclusion_summary:
                     type: string
                     description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
@@ -17557,22 +17748,20 @@ components:
                     $ref: '#/components/schemas/AudienceComposeMasterInput'
             example:
                 compose:
-                    brand_short: Numquam et natus possimus cupiditate provident molestiae.
-                    brief_id: f539cf42-2bc2-4eb9-93c4-4b8891cac146
+                    brand_short: Molestiae quia neque atque delectus.
+                    brief_id: e76a3815-95bb-4785-9bdf-ab0b2dde4754
                     event_dates:
-                        - Eum non ut itaque.
-                        - Unde adipisci aut quisquam.
-                        - Amet itaque aut.
-                        - Eos ex laborum et doloremque.
-                    event_name: Neque atque delectus.
+                        - Itaque voluptatem unde adipisci.
+                        - Quisquam quod amet itaque aut praesentium eos.
+                    event_name: Repudiandae eum.
                     exclude_list_ids:
-                        - Saepe aut perferendis placeat earum.
-                        - Et aperiam.
-                        - Magni omnis dolorem earum assumenda.
-                    inclusion_summary: Vel quae totam.
+                        - Aperiam eaque magni omnis dolorem earum.
+                        - Quam possimus aut ipsa.
+                        - Quae et perspiciatis numquam.
+                    inclusion_summary: Dicta consequuntur.
                     list_ids:
-                        - Perspiciatis nobis rerum maiores in alias.
-                    name: Possimus aut ipsa enim quae et perspiciatis.
+                        - Placeat earum.
+                    name: Et natus possimus cupiditate.
             required:
                 - compose
         ConflictError:
@@ -17645,14 +17834,15 @@ components:
                     $ref: '#/components/schemas/AudienceInput'
             example:
                 audience:
-                    inclusion_summary: Provident porro.
+                    inclusion_summary: Illo harum et consequatur.
                     platform: hubspot
-                    platform_master_list_id: Libero blanditiis.
-                    status: failed
+                    platform_master_list_id: Nulla sunt autem eos rerum provident dicta.
+                    status: building
                     suppression_list_ids:
-                        - In nulla.
-                        - Autem eos rerum.
-                        - Dicta tenetur voluptatem voluptate dolor.
+                        - Voluptate dolor dolores provident porro commodi odio.
+                        - Esse mollitia incidunt eos dolores laborum.
+                        - Molestias veritatis itaque voluptatem.
+                        - Quis impedit.
             required:
                 - audience
         CreateBriefRequestBody:
@@ -18148,266 +18338,266 @@ components:
                         $ref: '#/components/schemas/AudienceLastSentEmail'
                     description: Emails, most recently sent first
                     example:
-                        - email_id: Et laborum maiores.
-                          email_name: Sequi iste iusto reiciendis ipsa.
-                          hubspot_url: Temporibus in qui provident corrupti ut similique.
+                        - email_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                          email_name: Quia facere vitae aperiam.
+                          hubspot_url: Quis impedit.
                           included_lists:
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                          lists_unavailable: true
-                          sent_at: Saepe beatae.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                          lists_unavailable: false
+                          sent_at: Corrupti dicta pariatur totam quas deserunt.
                           suppression_lists:
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                        - email_id: Et laborum maiores.
-                          email_name: Sequi iste iusto reiciendis ipsa.
-                          hubspot_url: Temporibus in qui provident corrupti ut similique.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                        - email_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                          email_name: Quia facere vitae aperiam.
+                          hubspot_url: Quis impedit.
                           included_lists:
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                          lists_unavailable: true
-                          sent_at: Saepe beatae.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                          lists_unavailable: false
+                          sent_at: Corrupti dicta pariatur totam quas deserunt.
                           suppression_lists:
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                        - email_id: Et laborum maiores.
-                          email_name: Sequi iste iusto reiciendis ipsa.
-                          hubspot_url: Temporibus in qui provident corrupti ut similique.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                        - email_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                          email_name: Quia facere vitae aperiam.
+                          hubspot_url: Quis impedit.
                           included_lists:
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                          lists_unavailable: true
-                          sent_at: Saepe beatae.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                          lists_unavailable: false
+                          sent_at: Corrupti dicta pariatur totam quas deserunt.
                           suppression_lists:
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                        - email_id: Et laborum maiores.
-                          email_name: Sequi iste iusto reiciendis ipsa.
-                          hubspot_url: Temporibus in qui provident corrupti ut similique.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                        - email_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                          email_name: Quia facere vitae aperiam.
+                          hubspot_url: Quis impedit.
                           included_lists:
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                          lists_unavailable: true
-                          sent_at: Saepe beatae.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                          lists_unavailable: false
+                          sent_at: Corrupti dicta pariatur totam quas deserunt.
                           suppression_lists:
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
-                            - hubspot_url: Deserunt minima quis impedit.
-                              list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
+                            - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                              list_id: Voluptate debitis.
                               missing: false
-                              name: Quia facere vitae aperiam.
-                              resolved_from_legacy_id: Pariatur totam.
-                              size: 877172286305806677
+                              name: Voluptates repellat.
+                              resolved_from_legacy_id: Ut dolorem tempore.
+                              size: 4463156058315097988
             example:
                 emails:
-                    - email_id: Et laborum maiores.
-                      email_name: Sequi iste iusto reiciendis ipsa.
-                      hubspot_url: Temporibus in qui provident corrupti ut similique.
+                    - email_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                      email_name: Quia facere vitae aperiam.
+                      hubspot_url: Quis impedit.
                       included_lists:
-                        - hubspot_url: Deserunt minima quis impedit.
-                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                          list_id: Voluptate debitis.
                           missing: false
-                          name: Quia facere vitae aperiam.
-                          resolved_from_legacy_id: Pariatur totam.
-                          size: 877172286305806677
-                        - hubspot_url: Deserunt minima quis impedit.
-                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                          name: Voluptates repellat.
+                          resolved_from_legacy_id: Ut dolorem tempore.
+                          size: 4463156058315097988
+                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                          list_id: Voluptate debitis.
                           missing: false
-                          name: Quia facere vitae aperiam.
-                          resolved_from_legacy_id: Pariatur totam.
-                          size: 877172286305806677
-                        - hubspot_url: Deserunt minima quis impedit.
-                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                          name: Voluptates repellat.
+                          resolved_from_legacy_id: Ut dolorem tempore.
+                          size: 4463156058315097988
+                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                          list_id: Voluptate debitis.
                           missing: false
-                          name: Quia facere vitae aperiam.
-                          resolved_from_legacy_id: Pariatur totam.
-                          size: 877172286305806677
-                      lists_unavailable: true
-                      sent_at: Saepe beatae.
+                          name: Voluptates repellat.
+                          resolved_from_legacy_id: Ut dolorem tempore.
+                          size: 4463156058315097988
+                      lists_unavailable: false
+                      sent_at: Corrupti dicta pariatur totam quas deserunt.
                       suppression_lists:
-                        - hubspot_url: Deserunt minima quis impedit.
-                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                          list_id: Voluptate debitis.
                           missing: false
-                          name: Quia facere vitae aperiam.
-                          resolved_from_legacy_id: Pariatur totam.
-                          size: 877172286305806677
-                        - hubspot_url: Deserunt minima quis impedit.
-                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                          name: Voluptates repellat.
+                          resolved_from_legacy_id: Ut dolorem tempore.
+                          size: 4463156058315097988
+                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                          list_id: Voluptate debitis.
                           missing: false
-                          name: Quia facere vitae aperiam.
-                          resolved_from_legacy_id: Pariatur totam.
-                          size: 877172286305806677
-                        - hubspot_url: Deserunt minima quis impedit.
-                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                          name: Voluptates repellat.
+                          resolved_from_legacy_id: Ut dolorem tempore.
+                          size: 4463156058315097988
+                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                          list_id: Voluptate debitis.
                           missing: false
-                          name: Quia facere vitae aperiam.
-                          resolved_from_legacy_id: Pariatur totam.
-                          size: 877172286305806677
-                    - email_id: Et laborum maiores.
-                      email_name: Sequi iste iusto reiciendis ipsa.
-                      hubspot_url: Temporibus in qui provident corrupti ut similique.
+                          name: Voluptates repellat.
+                          resolved_from_legacy_id: Ut dolorem tempore.
+                          size: 4463156058315097988
+                    - email_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                      email_name: Quia facere vitae aperiam.
+                      hubspot_url: Quis impedit.
                       included_lists:
-                        - hubspot_url: Deserunt minima quis impedit.
-                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                          list_id: Voluptate debitis.
                           missing: false
-                          name: Quia facere vitae aperiam.
-                          resolved_from_legacy_id: Pariatur totam.
-                          size: 877172286305806677
-                        - hubspot_url: Deserunt minima quis impedit.
-                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                          name: Voluptates repellat.
+                          resolved_from_legacy_id: Ut dolorem tempore.
+                          size: 4463156058315097988
+                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                          list_id: Voluptate debitis.
                           missing: false
-                          name: Quia facere vitae aperiam.
-                          resolved_from_legacy_id: Pariatur totam.
-                          size: 877172286305806677
-                        - hubspot_url: Deserunt minima quis impedit.
-                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                          name: Voluptates repellat.
+                          resolved_from_legacy_id: Ut dolorem tempore.
+                          size: 4463156058315097988
+                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                          list_id: Voluptate debitis.
                           missing: false
-                          name: Quia facere vitae aperiam.
-                          resolved_from_legacy_id: Pariatur totam.
-                          size: 877172286305806677
-                      lists_unavailable: true
-                      sent_at: Saepe beatae.
+                          name: Voluptates repellat.
+                          resolved_from_legacy_id: Ut dolorem tempore.
+                          size: 4463156058315097988
+                      lists_unavailable: false
+                      sent_at: Corrupti dicta pariatur totam quas deserunt.
                       suppression_lists:
-                        - hubspot_url: Deserunt minima quis impedit.
-                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                          list_id: Voluptate debitis.
                           missing: false
-                          name: Quia facere vitae aperiam.
-                          resolved_from_legacy_id: Pariatur totam.
-                          size: 877172286305806677
-                        - hubspot_url: Deserunt minima quis impedit.
-                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                          name: Voluptates repellat.
+                          resolved_from_legacy_id: Ut dolorem tempore.
+                          size: 4463156058315097988
+                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                          list_id: Voluptate debitis.
                           missing: false
-                          name: Quia facere vitae aperiam.
-                          resolved_from_legacy_id: Pariatur totam.
-                          size: 877172286305806677
-                        - hubspot_url: Deserunt minima quis impedit.
-                          list_id: Doloremque nobis consectetur voluptas voluptas voluptatem.
+                          name: Voluptates repellat.
+                          resolved_from_legacy_id: Ut dolorem tempore.
+                          size: 4463156058315097988
+                        - hubspot_url: Repellendus dolore expedita commodi sit omnis et.
+                          list_id: Voluptate debitis.
                           missing: false
-                          name: Quia facere vitae aperiam.
-                          resolved_from_legacy_id: Pariatur totam.
-                          size: 877172286305806677
+                          name: Voluptates repellat.
+                          resolved_from_legacy_id: Ut dolorem tempore.
+                          size: 4463156058315097988
             required:
                 - emails
         GetAudienceSuppressionListsResponseBody:
@@ -18420,49 +18610,49 @@ components:
                     description: Suppression rows, standard first
                     example:
                         - category: brand
-                          hubspot_url: Nemo cum delectus laudantium.
-                          key: Nulla quam.
-                          label: Consequuntur qui qui impedit assumenda voluptas cumque.
-                          list_id: Provident nostrum vel ut nulla et.
-                          name: Dicta illum omnis magnam dolor et.
-                          size: 1178378845745949013
+                          hubspot_url: Iste iusto reiciendis ipsa ut saepe beatae.
+                          key: Deleniti magnam nemo cum delectus.
+                          label: Minus est dolor.
+                          list_id: Et voluptatem mollitia placeat aut laudantium.
+                          name: Ut et laborum.
+                          size: 5629901906252153653
                         - category: brand
-                          hubspot_url: Nemo cum delectus laudantium.
-                          key: Nulla quam.
-                          label: Consequuntur qui qui impedit assumenda voluptas cumque.
-                          list_id: Provident nostrum vel ut nulla et.
-                          name: Dicta illum omnis magnam dolor et.
-                          size: 1178378845745949013
+                          hubspot_url: Iste iusto reiciendis ipsa ut saepe beatae.
+                          key: Deleniti magnam nemo cum delectus.
+                          label: Minus est dolor.
+                          list_id: Et voluptatem mollitia placeat aut laudantium.
+                          name: Ut et laborum.
+                          size: 5629901906252153653
                         - category: brand
-                          hubspot_url: Nemo cum delectus laudantium.
-                          key: Nulla quam.
-                          label: Consequuntur qui qui impedit assumenda voluptas cumque.
-                          list_id: Provident nostrum vel ut nulla et.
-                          name: Dicta illum omnis magnam dolor et.
-                          size: 1178378845745949013
+                          hubspot_url: Iste iusto reiciendis ipsa ut saepe beatae.
+                          key: Deleniti magnam nemo cum delectus.
+                          label: Minus est dolor.
+                          list_id: Et voluptatem mollitia placeat aut laudantium.
+                          name: Ut et laborum.
+                          size: 5629901906252153653
                         - category: brand
-                          hubspot_url: Nemo cum delectus laudantium.
-                          key: Nulla quam.
-                          label: Consequuntur qui qui impedit assumenda voluptas cumque.
-                          list_id: Provident nostrum vel ut nulla et.
-                          name: Dicta illum omnis magnam dolor et.
-                          size: 1178378845745949013
+                          hubspot_url: Iste iusto reiciendis ipsa ut saepe beatae.
+                          key: Deleniti magnam nemo cum delectus.
+                          label: Minus est dolor.
+                          list_id: Et voluptatem mollitia placeat aut laudantium.
+                          name: Ut et laborum.
+                          size: 5629901906252153653
             example:
                 lists:
                     - category: brand
-                      hubspot_url: Nemo cum delectus laudantium.
-                      key: Nulla quam.
-                      label: Consequuntur qui qui impedit assumenda voluptas cumque.
-                      list_id: Provident nostrum vel ut nulla et.
-                      name: Dicta illum omnis magnam dolor et.
-                      size: 1178378845745949013
+                      hubspot_url: Iste iusto reiciendis ipsa ut saepe beatae.
+                      key: Deleniti magnam nemo cum delectus.
+                      label: Minus est dolor.
+                      list_id: Et voluptatem mollitia placeat aut laudantium.
+                      name: Ut et laborum.
+                      size: 5629901906252153653
                     - category: brand
-                      hubspot_url: Nemo cum delectus laudantium.
-                      key: Nulla quam.
-                      label: Consequuntur qui qui impedit assumenda voluptas cumque.
-                      list_id: Provident nostrum vel ut nulla et.
-                      name: Dicta illum omnis magnam dolor et.
-                      size: 1178378845745949013
+                      hubspot_url: Iste iusto reiciendis ipsa ut saepe beatae.
+                      key: Deleniti magnam nemo cum delectus.
+                      label: Minus est dolor.
+                      list_id: Et voluptatem mollitia placeat aut laudantium.
+                      name: Ut et laborum.
+                      size: 5629901906252153653
             required:
                 - lists
         GoogleAdsAudience:
@@ -20060,78 +20250,68 @@ components:
                     items:
                         $ref: '#/components/schemas/Audience'
                     example:
-                        - brief_id: Quo et enim totam et minima dolorem.
-                          etag: Nesciunt qui consequuntur quia.
-                          id: Omnis ad voluptas esse voluptates.
-                          inclusion_summary: Ea quidem ducimus tempora ea molestias.
+                        - brief_id: Nulla perferendis possimus deserunt iure et.
+                          etag: Sed quo.
+                          id: Non porro qui molestias officiis.
+                          inclusion_summary: Sequi culpa.
                           platform: hubspot
-                          platform_master_list_id: Tempora qui.
-                          project_id: Cumque mollitia.
-                          status: failed
+                          platform_master_list_id: Quidem ducimus tempora ea molestias quo qui.
+                          project_id: Praesentium cumque illum pariatur odio molestias voluptatum.
+                          status: building
                           suppression_list_ids:
-                            - Necessitatibus cumque non.
-                            - Qui molestias officiis.
-                            - Praesentium cumque illum pariatur odio molestias voluptatum.
-                            - Nulla perferendis possimus deserunt iure et.
-                          version: 365595311206383059
-                        - brief_id: Quo et enim totam et minima dolorem.
-                          etag: Nesciunt qui consequuntur quia.
-                          id: Omnis ad voluptas esse voluptates.
-                          inclusion_summary: Ea quidem ducimus tempora ea molestias.
+                            - Qui consequuntur.
+                            - Fuga atque.
+                          version: 2794197387658860322
+                        - brief_id: Nulla perferendis possimus deserunt iure et.
+                          etag: Sed quo.
+                          id: Non porro qui molestias officiis.
+                          inclusion_summary: Sequi culpa.
                           platform: hubspot
-                          platform_master_list_id: Tempora qui.
-                          project_id: Cumque mollitia.
-                          status: failed
+                          platform_master_list_id: Quidem ducimus tempora ea molestias quo qui.
+                          project_id: Praesentium cumque illum pariatur odio molestias voluptatum.
+                          status: building
                           suppression_list_ids:
-                            - Necessitatibus cumque non.
-                            - Qui molestias officiis.
-                            - Praesentium cumque illum pariatur odio molestias voluptatum.
-                            - Nulla perferendis possimus deserunt iure et.
-                          version: 365595311206383059
+                            - Qui consequuntur.
+                            - Fuga atque.
+                          version: 2794197387658860322
             example:
                 audiences:
-                    - brief_id: Quo et enim totam et minima dolorem.
-                      etag: Nesciunt qui consequuntur quia.
-                      id: Omnis ad voluptas esse voluptates.
-                      inclusion_summary: Ea quidem ducimus tempora ea molestias.
+                    - brief_id: Nulla perferendis possimus deserunt iure et.
+                      etag: Sed quo.
+                      id: Non porro qui molestias officiis.
+                      inclusion_summary: Sequi culpa.
                       platform: hubspot
-                      platform_master_list_id: Tempora qui.
-                      project_id: Cumque mollitia.
-                      status: failed
+                      platform_master_list_id: Quidem ducimus tempora ea molestias quo qui.
+                      project_id: Praesentium cumque illum pariatur odio molestias voluptatum.
+                      status: building
                       suppression_list_ids:
-                        - Necessitatibus cumque non.
-                        - Qui molestias officiis.
-                        - Praesentium cumque illum pariatur odio molestias voluptatum.
-                        - Nulla perferendis possimus deserunt iure et.
-                      version: 365595311206383059
-                    - brief_id: Quo et enim totam et minima dolorem.
-                      etag: Nesciunt qui consequuntur quia.
-                      id: Omnis ad voluptas esse voluptates.
-                      inclusion_summary: Ea quidem ducimus tempora ea molestias.
+                        - Qui consequuntur.
+                        - Fuga atque.
+                      version: 2794197387658860322
+                    - brief_id: Nulla perferendis possimus deserunt iure et.
+                      etag: Sed quo.
+                      id: Non porro qui molestias officiis.
+                      inclusion_summary: Sequi culpa.
                       platform: hubspot
-                      platform_master_list_id: Tempora qui.
-                      project_id: Cumque mollitia.
-                      status: failed
+                      platform_master_list_id: Quidem ducimus tempora ea molestias quo qui.
+                      project_id: Praesentium cumque illum pariatur odio molestias voluptatum.
+                      status: building
                       suppression_list_ids:
-                        - Necessitatibus cumque non.
-                        - Qui molestias officiis.
-                        - Praesentium cumque illum pariatur odio molestias voluptatum.
-                        - Nulla perferendis possimus deserunt iure et.
-                      version: 365595311206383059
-                    - brief_id: Quo et enim totam et minima dolorem.
-                      etag: Nesciunt qui consequuntur quia.
-                      id: Omnis ad voluptas esse voluptates.
-                      inclusion_summary: Ea quidem ducimus tempora ea molestias.
+                        - Qui consequuntur.
+                        - Fuga atque.
+                      version: 2794197387658860322
+                    - brief_id: Nulla perferendis possimus deserunt iure et.
+                      etag: Sed quo.
+                      id: Non porro qui molestias officiis.
+                      inclusion_summary: Sequi culpa.
                       platform: hubspot
-                      platform_master_list_id: Tempora qui.
-                      project_id: Cumque mollitia.
-                      status: failed
+                      platform_master_list_id: Quidem ducimus tempora ea molestias quo qui.
+                      project_id: Praesentium cumque illum pariatur odio molestias voluptatum.
+                      status: building
                       suppression_list_ids:
-                        - Necessitatibus cumque non.
-                        - Qui molestias officiis.
-                        - Praesentium cumque illum pariatur odio molestias voluptatum.
-                        - Nulla perferendis possimus deserunt iure et.
-                      version: 365595311206383059
+                        - Qui consequuntur.
+                        - Fuga atque.
+                      version: 2794197387658860322
             required:
                 - audiences
         ListGoogleAdsAccountsResponseBody:
@@ -20798,6 +20978,126 @@ components:
                 - client_secret
                 - refresh_token
                 - developer_token
+        MicrosoftAdsKeywords:
+            type: object
+            properties:
+                conversions_complete:
+                    type: boolean
+                    description: False when Microsoft reported no conversion count (a blank ConversionsQualified cell — typically an account without Universal Event Tracking) for at least one returned row; those rows carry conversions 0, which then is NOT a measurement. Do not compute CPA from them.
+                    example: true
+                data_incomplete:
+                    type: boolean
+                    description: 'True when Microsoft flagged the served report''s data as potentially incomplete ("Potential Incomplete Data" — the window''s last day, usually today, may still be aggregating): its counters may still rise. False when no report is served.'
+                    example: true
+                metrics_as_of:
+                    type: string
+                    description: When the Microsoft report these rows come from was requested (not when it was collected, which can be later). Microsoft builds keyword reports asynchronously in minutes, so the service serves the last finished report and builds the next one between requests. ABSENT when no finished report covers every campaign this project now owns — the first read, or the first after a campaign was added — and `rows` is then empty rather than a partial picture.
+                    example: "2026-10-05T14:30:00Z"
+                    format: date-time
+                metrics_pending:
+                    type: boolean
+                    description: True while a newer Microsoft report is building, so a later read will return newer rows (or the first ones, when metrics_as_of is absent).
+                    example: false
+                row_count:
+                    type: integer
+                    description: How many rows are in `rows`.
+                    example: 50
+                    format: int64
+                rows:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/GoogleAdsKeyword'
+                    description: Keyword rows from the last finished Microsoft keyword report that covers every campaign this project owns, ordered by impressions descending and capped — see `truncated`. criterion_id is the Microsoft KeywordId and ad_group_id its AdGroupId. cost_micros is Microsoft's Spend (account currency, no FX) times 10^6; ctr is clicks/impressions. Empty while no such report has finished (metrics_as_of absent).
+                    example:
+                        - ad_group_id: "176216228"
+                          ad_group_name: Registration - Exact
+                          campaign_id: "21234567890"
+                          campaign_name: KubeCon NA 2026 - Search
+                          clicks: 311
+                          conversions: 12.5
+                          cost_micros: 1284000
+                          criterion_id: "305729261"
+                          ctr: 0.0645
+                          impressions: 4820
+                          match_type: BROAD
+                          quality_score: 7
+                          status: UNKNOWN
+                          text: kubernetes training
+                        - ad_group_id: "176216228"
+                          ad_group_name: Registration - Exact
+                          campaign_id: "21234567890"
+                          campaign_name: KubeCon NA 2026 - Search
+                          clicks: 311
+                          conversions: 12.5
+                          cost_micros: 1284000
+                          criterion_id: "305729261"
+                          ctr: 0.0645
+                          impressions: 4820
+                          match_type: BROAD
+                          quality_score: 7
+                          status: UNKNOWN
+                          text: kubernetes training
+                truncated:
+                    type: boolean
+                    description: True when this project's campaigns have more keywords than were returned. The rows are the TOP ones by impressions, not the project's full keyword set.
+                    example: false
+                window:
+                    type: string
+                    description: The reporting window these counters cover
+                    example: this_month
+                    enum:
+                        - today
+                        - yesterday
+                        - last_7_days
+                        - last_14_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+            example:
+                conversions_complete: true
+                data_incomplete: true
+                metrics_as_of: "2026-10-05T14:30:00Z"
+                metrics_pending: false
+                row_count: 50
+                rows:
+                    - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
+                      campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
+                      clicks: 311
+                      conversions: 12.5
+                      cost_micros: 1284000
+                      criterion_id: "305729261"
+                      ctr: 0.0645
+                      impressions: 4820
+                      match_type: BROAD
+                      quality_score: 7
+                      status: UNKNOWN
+                      text: kubernetes training
+                    - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
+                      campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
+                      clicks: 311
+                      conversions: 12.5
+                      cost_micros: 1284000
+                      criterion_id: "305729261"
+                      ctr: 0.0645
+                      impressions: 4820
+                      match_type: BROAD
+                      quality_score: 7
+                      status: UNKNOWN
+                      text: kubernetes training
+                truncated: false
+                window: today
+            required:
+                - window
+                - rows
+                - row_count
+                - truncated
+                - metrics_pending
+                - conversions_complete
+                - data_incomplete
         NegativeKeywordInput:
             type: object
             properties:
@@ -21417,36 +21717,36 @@ components:
                         $ref: '#/components/schemas/AudienceListSearchResult'
                     description: Matching lists
                     example:
-                        - hubspot_url: Qui quo et praesentium perferendis et unde.
-                          list_id: Sed error quisquam recusandae nesciunt et itaque.
-                          name: A debitis ut ea.
-                          size: 4949368133670372217
-                        - hubspot_url: Qui quo et praesentium perferendis et unde.
-                          list_id: Sed error quisquam recusandae nesciunt et itaque.
-                          name: A debitis ut ea.
-                          size: 4949368133670372217
-                        - hubspot_url: Qui quo et praesentium perferendis et unde.
-                          list_id: Sed error quisquam recusandae nesciunt et itaque.
-                          name: A debitis ut ea.
-                          size: 4949368133670372217
-                        - hubspot_url: Qui quo et praesentium perferendis et unde.
-                          list_id: Sed error quisquam recusandae nesciunt et itaque.
-                          name: A debitis ut ea.
-                          size: 4949368133670372217
+                        - hubspot_url: Qui qui impedit assumenda voluptas cumque.
+                          list_id: Fuga officia nulla temporibus recusandae.
+                          name: Nulla quam.
+                          size: 1409764660787687915
+                        - hubspot_url: Qui qui impedit assumenda voluptas cumque.
+                          list_id: Fuga officia nulla temporibus recusandae.
+                          name: Nulla quam.
+                          size: 1409764660787687915
+                        - hubspot_url: Qui qui impedit assumenda voluptas cumque.
+                          list_id: Fuga officia nulla temporibus recusandae.
+                          name: Nulla quam.
+                          size: 1409764660787687915
+                        - hubspot_url: Qui qui impedit assumenda voluptas cumque.
+                          list_id: Fuga officia nulla temporibus recusandae.
+                          name: Nulla quam.
+                          size: 1409764660787687915
             example:
                 lists:
-                    - hubspot_url: Qui quo et praesentium perferendis et unde.
-                      list_id: Sed error quisquam recusandae nesciunt et itaque.
-                      name: A debitis ut ea.
-                      size: 4949368133670372217
-                    - hubspot_url: Qui quo et praesentium perferendis et unde.
-                      list_id: Sed error quisquam recusandae nesciunt et itaque.
-                      name: A debitis ut ea.
-                      size: 4949368133670372217
-                    - hubspot_url: Qui quo et praesentium perferendis et unde.
-                      list_id: Sed error quisquam recusandae nesciunt et itaque.
-                      name: A debitis ut ea.
-                      size: 4949368133670372217
+                    - hubspot_url: Qui qui impedit assumenda voluptas cumque.
+                      list_id: Fuga officia nulla temporibus recusandae.
+                      name: Nulla quam.
+                      size: 1409764660787687915
+                    - hubspot_url: Qui qui impedit assumenda voluptas cumque.
+                      list_id: Fuga officia nulla temporibus recusandae.
+                      name: Nulla quam.
+                      size: 1409764660787687915
+                    - hubspot_url: Qui qui impedit assumenda voluptas cumque.
+                      list_id: Fuga officia nulla temporibus recusandae.
+                      name: Nulla quam.
+                      size: 1409764660787687915
             required:
                 - lists
         SearchHubspotCampaignsResponseBody:
@@ -23885,6 +24185,24 @@ components:
             required:
                 - code
                 - message
+        UnauthorizedError106:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "401"
+                message:
+                    type: string
+                    description: Error message
+                    example: Unauthorized.
+            description: Unauthorized
+            example:
+                code: "401"
+                message: Unauthorized.
+            required:
+                - code
+                - message
         UpdateAudienceRequestBody:
             type: object
             properties:
@@ -23892,15 +24210,13 @@ components:
                     $ref: '#/components/schemas/AudienceUpdateInput'
             example:
                 audience:
-                    clear_suppression_lists: true
-                    inclusion_summary: Eos et quidem est.
-                    platform_master_list_id: Totam laboriosam quos omnis deserunt.
-                    status: failed
+                    clear_suppression_lists: false
+                    inclusion_summary: Atque hic quam impedit placeat.
+                    platform_master_list_id: Ex est modi cupiditate.
+                    status: built
                     suppression_list_ids:
-                        - Quisquam explicabo.
-                        - Ex est modi cupiditate.
-                        - Ducimus qui modi consequatur.
-                        - Et et deleniti sint reiciendis.
+                        - Qui modi consequatur molestias et.
+                        - Deleniti sint reiciendis odit eos et quidem.
             required:
                 - audience
         UpdateCampaignBudgetRequestBody:

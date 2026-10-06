@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/microsoft"
-description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), campaign-level GEO targeting that resolves ISO-2 codes to Microsoft LocationIds through the ingested, cached geographical-locations file and fails closed before any mutating call rather than creating an untargeted campaign that spends everywhere (LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260), and a campaign DAILY-budget read+write (GetCampaignsByIds then UpdateCampaigns) that reports shared, experiment and budget-type facts for the dispatcher to refuse on before the one idempotent PUT (LFXV2-2665), and keyword levers on a live campaign — pause/remove via UpdateKeywords/DeleteKeywords behind a GetKeywordsByAdGroupId ownership read, and campaign-level negatives via AddNegativeKeywordsToEntities — reported per item, positionally, because neither is atomic (LFXV2-2665)."
+description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), campaign-level GEO targeting that resolves ISO-2 codes to Microsoft LocationIds through the ingested, cached geographical-locations file and fails closed before any mutating call rather than creating an untargeted campaign that spends everywhere (LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260), and a campaign DAILY-budget read+write (GetCampaignsByIds then UpdateCampaigns) that reports shared, experiment and budget-type facts for the dispatcher to refuse on before the one idempotent PUT (LFXV2-2665), and project-scoped keyword performance as a saved asynchronous KeywordPerformanceReportRequest — submit and single-poll check primitives whose scope is the project's own campaigns only, never AccountIds (LFXV2-2665), and keyword levers on a live campaign — pause/remove via UpdateKeywords/DeleteKeywords behind a GetKeywordsByAdGroupId ownership read, and campaign-level negatives via AddNegativeKeywordsToEntities — reported per item, positionally, because neither is atomic (LFXV2-2665)."
 resource: "internal/platform/microsoft"
 tags:
   - platform-client
@@ -955,6 +955,40 @@ orchestrator saves the state between requests instead (see
   because the monitor's window always includes today.
 
 `ValidateMonitorAccountID` is the strict, Pattern-identical account-id check for this path.
+
+## Keyword report (report-backed, default-OFF, LFXV2-2665)
+
+`keyword_report.go` gives the project-scoped keyword read the account monitor's two stateless
+report primitives, for the same reason (minutes to build, 20s to answer); the orchestrator keeps
+the saved report (see [Microsoft keyword insights](../architecture/microsoft-keyword-insights.md)):
+
+- `SubmitKeywordReport(window, campaignIDs)` — a `KeywordPerformanceReportRequest`, `Summary`
+  aggregation, `ReturnOnlyCompleteData=false`, the shared `reportTime` (UTC dates, the London
+  report time zone), and a `Scope` of **`Campaigns` only** — each entry `{AccountId, CampaignId}`
+  as quoted `long`s. Never `AccountIds`: `AccountThroughAdGroupReportScope` is documented as the
+  UNION of its elements, so adding the account would read every campaign on it. An empty scope,
+  more than `MaxKeywordReportCampaigns` (300, the documented `Campaigns` ceiling) or a non-id is
+  refused before any request (`ErrKeywordReportScope`; `ValidateKeywordReportCampaignID` is the
+  exported id check the dispatcher runs first). A 2027 scope rejection wraps
+  `ErrKeywordReportScopeRejected` so the caller can treat it as permanent. Columns: `CampaignId`, `CampaignName`,
+  `AdGroupId`, `AdGroupName`, `KeywordId`, `Keyword`, `BidMatchType`, `KeywordStatus`,
+  `QualityScore`, `Impressions`, `Clicks`, `Spend`, `ConversionsQualified` — not the deprecated
+  `Conversions`, not `DeliveredMatchType` (it splits a keyword per query), and not `Ctr` /
+  `AverageCpc` (per-row ratios; recomputed from summed counters instead). No `Filter` and no
+  `MaxRows`: both would cut before the fold.
+- `CheckKeywordReport(reportID)` — exactly ONE Poll; on Success, download and fold PER
+  (ad group, keyword): counters summed with overflow checks, `Deleted` keywords dropped, a `--`
+  or off-scale `QualityScore` is nil, a blank conversion cell withdraws that keyword's
+  conversions only, an unattributable id fails the whole read. Empty or header-only is an empty
+  Success; "Potential Incomplete Data" is reported as `Partial`.
+- `ValidateKeywordReportWindow` — the clock-free window check (`reportDateRange`; `yesterday`
+  and `last_14_days` have no mapping).
+
+`metrics.go`'s report submission was split so all three report types share one tail
+(`submitReportRequest`, the fail-closed `ReportRequestId` decode) and one `reportTime`.
+Contract verified against learn.microsoft.com on 2026-10-05 (KeywordPerformanceReportRequest,
+KeywordPerformanceReportColumn, AccountThroughAdGroupReportScope, KeywordStatusReportFilter);
+NOT exercised against a live account.
 
 ## Metrics read (asynchronous, default-OFF)
 

@@ -1218,7 +1218,7 @@ var AccountMonitor = Type("account-monitor", func() {
 	})
 	Attribute("metrics_window_start", String, "Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report's own window, in the timezone the platform's report is built in — the account's timezone on X; on Microsoft Ads the report's GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.", func() {
 		Format(FormatDate)
-		Example("2026-07-08")
+		Example("2026-09-06")
 	})
 	Attribute("metrics_window_end", String, "Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.", func() {
 		Format(FormatDate)
@@ -1227,6 +1227,37 @@ var AccountMonitor = Type("account-monitor", func() {
 	Attribute("metrics_pending", Boolean, "Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.", func() { Example(false) })
 	Required("account_id", "days", "campaigns", "action_items", "totals")
 })
+
+// MicrosoftAdsKeywords is the Microsoft Advertising keyword read, scoped to the project's OWN
+// campaigns. Its rows are the Google read's row type, GoogleAdsKeyword, unchanged, so one keyword
+// table renders both platforms and acts on both through the same (ad_group_id, criterion_id)
+// handle — for Microsoft, criterion_id is the numeric KeywordId and ad_group_id the numeric
+// AdGroupId. The four envelope fields Google's carries are repeated rather than extended (no
+// other type here uses Extend), and three are added because the rows come from a SAVED
+// asynchronous report rather than a live query: metrics_as_of and metrics_pending exactly as the
+// account monitor publishes them, and conversions_complete.
+var MicrosoftAdsKeywords = Type("microsoft-ads-keywords", func() {
+	Attribute("window", String, "The reporting window these counters cover", metricsWindowEnum)
+	Attribute("rows", ArrayOf(GoogleAdsKeyword), "Keyword rows from the last finished Microsoft keyword report that covers every campaign this project owns, ordered by impressions descending and capped — see `truncated`. criterion_id is the Microsoft KeywordId and ad_group_id its AdGroupId. cost_micros is Microsoft's Spend (account currency, no FX) times 10^6; ctr is clicks/impressions. Empty while no such report has finished (metrics_as_of absent).")
+	Attribute("row_count", Int, "How many rows are in `rows`.", func() { Example(50) })
+	Attribute("truncated", Boolean, "True when this project's campaigns have more keywords than were returned. The rows are the TOP ones by impressions, not the project's full keyword set.", func() { Example(false) })
+	Attribute("metrics_as_of", String, "When the Microsoft report these rows come from was requested (not when it was collected, which can be later). Microsoft builds keyword reports asynchronously in minutes, so the service serves the last finished report and builds the next one between requests. ABSENT when no finished report covers every campaign this project now owns — the first read, or the first after a campaign was added — and `rows` is then empty rather than a partial picture.", func() {
+		Format(FormatDateTime)
+		Example("2026-10-05T14:30:00Z")
+	})
+	Attribute("metrics_pending", Boolean, "True while a newer Microsoft report is building, so a later read will return newer rows (or the first ones, when metrics_as_of is absent).", func() { Example(false) })
+	Attribute("conversions_complete", Boolean, "False when Microsoft reported no conversion count (a blank ConversionsQualified cell — typically an account without Universal Event Tracking) for at least one returned row; those rows carry conversions 0, which then is NOT a measurement. Do not compute CPA from them.", func() { Example(true) })
+	Attribute("data_incomplete", Boolean, "True when Microsoft flagged the served report's data as potentially incomplete (\"Potential Incomplete Data\" — the window's last day, usually today, may still be aggregating): its counters may still rise. False when no report is served.", func() { Example(true) })
+	Required("window", "rows", "row_count", "truncated", "metrics_pending", "conversions_complete", "data_incomplete")
+})
+
+// microsoftKeywordsWindowEnum is the subset of metricsWindowEnum the Microsoft keyword read can
+// serve: the windows the Microsoft client maps to an explicit UTC date range (reportDateRange).
+// `yesterday` and `last_14_days` have no mapping there, so they are refused by the decoder here
+// rather than reaching a runtime 400 the design did not declare.
+func microsoftKeywordsWindowEnum() {
+	Enum("today", "last_7_days", "last_30_days", "this_month", "last_month")
+}
 
 // ─── Connection service ───
 
@@ -1349,6 +1380,41 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/google-ads/audience")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("window")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("get-microsoft-ads-keywords", func() {
+		Description("Read Microsoft Advertising keyword performance for this project's own campaigns, in " +
+			"the same row shape as get-google-ads-keywords. Scoped to the campaigns this service holds for " +
+			"the project, NOT to the connected ad account, and read from the project's OWN connection only " +
+			"(never the LF system account). Microsoft serves keyword performance only through its " +
+			"asynchronous Reporting service, which takes minutes, so rows come from the last finished " +
+			"report — see metrics_as_of and metrics_pending — while the next one builds; the first read " +
+			"returns no rows with metrics_pending=true. A report is served only while it covers every " +
+			"campaign the project owns. Saved reports are cached platform data. Off (400, not supported) " +
+			"unless MICROSOFT_METRICS_ENABLED is true. Audience demographics are not offered for Microsoft.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("window", String, "Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Microsoft.", microsoftKeywordsWindowEnum)
+			Required("project_id")
+		})
+		Result(MicrosoftAdsKeywords)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("Conflict", ConflictError, "Conflict")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/microsoft-ads/keywords")
 			Header("bearer_token:Authorization")
 			connectionAuthErrorResponses()
 			Param("window")
