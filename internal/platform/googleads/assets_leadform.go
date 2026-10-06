@@ -54,10 +54,21 @@ const (
 	maxLeadFormPostHeadlineRunes     = 25
 	maxLeadFormPostDescriptionRunes  = 200
 	maxLeadFormCustomDisclosureRunes = 200
-	// A form with more field types than this is not a form a campaign brief has a
-	// use for, and the bound keeps one malformed brief from sending an
-	// unreviewable field list. A bound on this request's payload, not upstream.
-	maxLeadFormFields = 12
+	// A payload sanity bound, deliberately set FAR ABOVE Google's own ceiling so it
+	// can never be the thing that refuses a form Google would have accepted. The
+	// real ceiling is upstream and structural: fields are de-duplicated on the
+	// input type just below, so a form cannot hold more distinct fields than
+	// LeadFormFieldUserInputType has members, and that enum has well under half
+	// this many. What is left for this bound to catch is the only case the
+	// de-duplication cannot — a malformed brief sending thousands of DISTINCT
+	// shape-matching strings, which `enumShapeRE` admits because it anchors the
+	// shape and not the vocabulary.
+	//
+	// It was 12, which is roughly where a human stops wanting to fill in a form and
+	// nowhere near where Google stops accepting one. That made it an over-refusal:
+	// a thirteen-field brief Google would have taken, stopped here instead. A bound
+	// chosen for payload sanity must be set where only nonsense reaches it.
+	maxLeadFormFields = 64
 )
 
 const assetFieldLeadForm = "LEAD_FORM"

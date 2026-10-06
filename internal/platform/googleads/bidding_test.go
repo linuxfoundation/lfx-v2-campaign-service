@@ -387,35 +387,85 @@ func TestBiddingPlan_UnverifiedRefusalsDoNotClaimLiveVerification(t *testing.T) 
 	}
 }
 
-// Conversion actions are ACCEPTED on Video. VIDEO_ACTION takes
-// campaign.selective_optimization exactly as Search does, so the Search-only fence that
-// refuses them on Demand Gen would be an over-refusal here — a create Google would have
-// taken, rejected by this client for no reason. Over-refusal is the failure that matters:
-// under-refusal costs an HTTP 400, over-refusal costs a feature nobody can reach.
-func TestValidateConversionActions_AcceptedOnVideo(t *testing.T) {
-	names, err := validateConversionActions(campaignKindVideo, biddingTestCustomer, []string{"555"})
-	if err != nil {
-		t.Fatalf("refused conversion actions on Video, which takes selective_optimization: %v", err)
+// Conversion actions are ACCEPTED on Video and on Display, and the subtests run EVERY
+// admitted kind rather than one representative. campaign.selective_optimization is defined
+// for SEARCH, DISPLAY and VIDEO, so the Search-only fence that refuses them on Demand Gen
+// would be an over-refusal on either — a create Google would have taken, rejected by this
+// client for no reason. Over-refusal is the failure that matters: under-refusal costs an
+// HTTP 400, over-refusal costs a feature nobody can reach.
+//
+// One kind per subtest, because the fence is a chain of `kind !=` arms and a test that
+// exercises only Video stays green when the Display arm is deleted — the fence would then
+// refuse Display, and nothing in the suite would say so.
+func TestValidateConversionActions_AcceptedOnEveryAdmittedKind(t *testing.T) {
+	for _, kind := range []string{campaignKindSearch, campaignKindVideo, campaignKindDisplay} {
+		t.Run(kind, func(t *testing.T) {
+			names, err := validateConversionActions(kind, biddingTestCustomer, []string{"555"})
+			if err != nil {
+				t.Fatalf("refused conversion actions on %s, which takes selective_optimization: %v", kind, err)
+			}
+			if len(names) != 1 {
+				t.Fatalf("got %d resource names, want 1: %v", len(names), names)
+			}
+			if !strings.HasSuffix(names[0], "/conversionActions/555") {
+				t.Errorf("resource name %q is not the action the caller named", names[0])
+			}
+
+			// And the plan must actually CARRY them to the wire — accepting the list and then
+			// dropping it is the same silent-drop defect the Demand Gen refusal exists to prevent.
+			plan, err := validateBiddingPlan(kind, biddingTestCustomer, CampaignInput{ConversionActions: []string{"555"}})
+			if err != nil {
+				t.Fatalf("validateBiddingPlan: %v", err)
+			}
+			raw, err := json.Marshal(plan.fields())
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !strings.Contains(string(raw), "selectiveOptimization") {
+				t.Errorf("payload %s drops the conversion actions the preflight accepted", raw)
+			}
+		})
 	}
-	if len(names) != 1 {
-		t.Fatalf("got %d resource names, want 1: %v", len(names), names)
-	}
-	if !strings.HasSuffix(names[0], "/conversionActions/555") {
-		t.Errorf("resource name %q is not the action the caller named", names[0])
+}
+
+// A device BID ADJUSTMENT is refused under an automated strategy and a device EXCLUSION is
+// not, and this test is written around that distinction because collapsing the two is the
+// likely "simplification": a flat `len(in.DeviceBidModifiers) > 0` check passes the refusal
+// half of this test and fails the exclusion half, which is the point.
+//
+// The channels run here are the ones that reach the guard with an automated strategy BY
+// DEFAULT. Keying the old rule on Performance Max read as if automated bidding were a
+// Performance Max property; Video and Display bid to conversions out of the box, so the
+// adjustment is dropped on the floor there too.
+func TestBiddingPlan_DeviceAdjustmentRefusedUnderAutomatedBidding(t *testing.T) {
+	for _, kind := range []string{campaignKindVideo, campaignKindDisplay} {
+		t.Run(kind, func(t *testing.T) {
+			in := CampaignInput{DeviceBidModifiers: []DeviceBidModifier{{Device: "TABLET", BidModifier: 0.7}}}
+			_, err := validateBiddingPlan(kind, biddingTestCustomer, in)
+			if err == nil {
+				t.Fatal("accepted a device bid adjustment under an automated strategy; Google stores it and never bids it, so the operator gets no adjustment and no signal")
+			}
+			// The message has to carry the escape, or the refusal just blocks the operator:
+			// zeroing the modifier excludes the device, and manual-cpc bids by device.
+			if !strings.Contains(err.Error(), biddingManualCPC) {
+				t.Errorf("refusal %q does not name the strategy that would honour the adjustment", err)
+			}
+
+			// The EXCLUSION on the same channel must still pass. 0 is the -100% opt-out, and
+			// Google honours a device exclusion under automated bidding exactly as under
+			// manual — refusing it would be an over-refusal of a create Google would take.
+			in.DeviceBidModifiers[0].BidModifier = 0
+			if _, err := validateBiddingPlan(kind, biddingTestCustomer, in); err != nil {
+				t.Errorf("refused a device EXCLUSION on %s; 0 is the -100%% opt-out and is honoured under automated bidding: %v", kind, err)
+			}
+		})
 	}
 
-	// And the plan must actually CARRY them to the wire — accepting the list and then
-	// dropping it is the same silent-drop defect the Demand Gen refusal exists to prevent.
-	plan, err := validateBiddingPlan(campaignKindVideo, biddingTestCustomer, CampaignInput{ConversionActions: []string{"555"}})
-	if err != nil {
-		t.Fatalf("validateBiddingPlan: %v", err)
-	}
-	raw, err := json.Marshal(plan.fields())
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if !strings.Contains(string(raw), "selectiveOptimization") {
-		t.Errorf("payload %s drops the conversion actions the preflight accepted", raw)
+	// And a SEARCH campaign left on its manual default still takes the adjustment, so the
+	// guard is reading the strategy rather than refusing the field outright.
+	in := CampaignInput{DeviceBidModifiers: []DeviceBidModifier{{Device: "TABLET", BidModifier: 0.7}}}
+	if _, err := validateBiddingPlan(campaignKindSearch, biddingTestCustomer, in); err != nil {
+		t.Errorf("refused a device bid adjustment on manual-cpc Search, where Google bids it: %v", err)
 	}
 }
 
@@ -428,6 +478,7 @@ func TestBiddingPlan_DefaultsAreChannelSpecific(t *testing.T) {
 		campaignKindDemandGen:      biddingMaximizeClicks,
 		campaignKindPerformanceMax: biddingMaximizeConversions,
 		campaignKindVideo:          biddingMaximizeConversions,
+		campaignKindDisplay:        biddingMaximizeConversions,
 	} {
 		if got := defaultBiddingStrategy(kind); got != want {
 			t.Errorf("defaultBiddingStrategy(%s) = %q, want %q", kind, got, want)
@@ -652,7 +703,7 @@ func TestBiddingPlan_UnknownStrategyAdvertisesOnlyTheChannelsSet(t *testing.T) {
 // accepts that Search does not would be rejected as an unknown NAME — an over-refusal of a
 // create Google would have taken.
 func TestKnownBiddingStrategies_CoversEveryChannelsSet(t *testing.T) {
-	for _, set := range []map[string]bool{searchBiddingStrategies, demandGenBiddingStrategies, performanceMaxBiddingStrategies, videoBiddingStrategies} {
+	for _, set := range []map[string]bool{searchBiddingStrategies, demandGenBiddingStrategies, performanceMaxBiddingStrategies, videoBiddingStrategies, displayBiddingStrategies} {
 		for name := range set {
 			if !knownBiddingStrategies[name] {
 				t.Errorf("strategy %q is accepted by some channel but is not a known name", name)

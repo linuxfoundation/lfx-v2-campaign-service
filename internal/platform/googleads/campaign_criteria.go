@@ -309,6 +309,13 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 	// attach all five on their criteria step, so nothing accepted here is dropped. Widening the Demand Gen refusal to `!= Search` would
 	// have refused a campaign Google creates happily — the over-refusal these guards
 	// exist to avoid.
+	// This arm is about the CHANNEL, not about automated bidding — Performance Max takes
+	// no device criteria at all, not even the 0 exclusion, so it refuses the whole list.
+	// The adjustment-is-ignored-under-automated-bidding rule is a different rule with a
+	// different shape, it applies to Video, Display and an automated Search campaign too,
+	// and it lives in validateBiddingPlan where the strategy is actually known. Do not
+	// fold one into the other: widening this one to every automated channel would refuse
+	// device EXCLUSIONS that Google honours.
 	if kind == campaignKindPerformanceMax {
 		if len(in.DeviceBidModifiers) > 0 {
 			return criteriaPlan{}, fmt.Errorf("google-ads: device bid modifiers are not supported on %s (its automated bidding owns the bid and sets no device adjustment); omit DeviceBidModifiers, or create a Search campaign to bid by device", kind)

@@ -772,6 +772,19 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 // The Goa design now declares the same rule as a Pattern, and this check STAYS regardless:
 // Goa validates the HTTP transport only, so a row written by bootstrap, by a migration, or
 // before that pattern existed reaches this concatenation having passed nothing.
+//
+// LENGTH-AGNOSTIC, DELIBERATELY — and the name is the only thing here that suggests
+// otherwise. Despite what it is called, this is the package's general digits-only id
+// matcher: ad group and criterion ids (`keywords.go`), the asset group id
+// (`pmax_creative.go`) and campaign ids all run through it, and none of those shares a
+// customer id's width. The edit to resist is "Google customer ids are ten digits, so pin
+// the length" — a customer-id-shaped bound here would refuse every ASSET GROUP id Google
+// issued, which turns a working Performance Max activation into a local refusal of a
+// campaign that exists and is ready to serve. That is over-refusal, the one failure mode
+// this package's guards are not allowed to have. The shape is all that matters for the
+// injection this guard exists to stop: no slash, no dot, nothing that can alter a resource
+// path. If a genuine customer-id length check is ever wanted, it belongs in a separate
+// matcher used only at the customer-id call sites, never as a narrowing of this one.
 var customerIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 // ErrNotACustomerID reports that a caller-supplied account id is not a digits-only Google

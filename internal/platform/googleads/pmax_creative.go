@@ -559,7 +559,9 @@ func (c *Client) UpdateAssetGroupStatus(ctx context.Context, assetGroupID, statu
 	}
 	// Held to UpdateCampaignStatus's rule for the same reason: the id is interpolated into a
 	// resourceName, Google asset group ids are digits, and anything else could alter the
-	// resource path.
+	// resource path. `customerIDRE` is used for its SHAPE and is length-agnostic by design
+	// — an asset group id is not a customer id and does not share its width; see the
+	// matcher's own comment in client.go for why narrowing it would break this call site.
 	if !customerIDRE.MatchString(id) {
 		return fmt.Errorf("google-ads: asset group id %q is not numeric", assetGroupID)
 	}

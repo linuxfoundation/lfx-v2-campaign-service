@@ -4,6 +4,7 @@
 package googleads
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -195,9 +196,16 @@ func TestValidateLeadFormExtensions_RefusesTooManyFields(t *testing.T) {
 	f := sampleLeadForm()
 	f.Fields = make([]string, 0, maxLeadFormFields+1)
 	for i := 0; i <= maxLeadFormFields; i++ {
-		f.Fields = append(f.Fields, "FIELD_"+string(rune('A'+i)))
+		// Distinct, and distinct in a way that survives the bound being raised:
+		// "FIELD_"+rune('A'+i) leaves ASCII once the bound passes 57 and composes
+		// names enumShapeRE would refuse, so the test would start passing for the
+		// wrong reason. Repetition stays in the vocabulary at every length.
+		f.Fields = append(f.Fields, "FIELD_"+strings.Repeat("A", i+1))
 	}
-	refuseLeadForm(t, f, "at most 12 fields")
+	// Composed from the constant, not spelled out: a literal "at most 12 fields"
+	// keeps asserting the old bound after the bound moves, and the substring then
+	// matches nothing rather than failing loudly about what it is really checking.
+	refuseLeadForm(t, f, fmt.Sprintf("at most %d fields", maxLeadFormFields))
 }
 
 // The post-submit screen is optional as a GROUP, not field by field: a headline

@@ -478,6 +478,33 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 		return biddingPlan{}, fmt.Errorf("google-ads: a CPC bid is ignored by the %q bidding strategy (Google keeps the ad-group bid but never bids it while the campaign bids automatically); omit the CPC bid, or use %q", strategy, biddingManualCPC)
 	}
 
+	// A device BID ADJUSTMENT under an automated strategy is refused for the same
+	// reason, and keyed on the STRATEGY rather than the channel because that is where
+	// the constraint actually lives.
+	//
+	// campaign_criteria.go refuses device bid modifiers on Performance Max, and that
+	// arm is right for a different reason — Performance Max takes no device criteria at
+	// all, not even the exclusion. But reading it as "automated bidding is a Performance
+	// Max property" is how this got missed: Video and Display BOTH default to
+	// maximizeConversions, and a Search campaign can be switched to one. On every one of
+	// those, Google stores the adjustment and never bids it, so the operator who asked
+	// for "-30% on tablet" reads "campaign created" and gets no adjustment and no signal.
+	// That is the forgiving-upstream trap the CPC arm above names, one field over.
+	//
+	// A modifier of exactly 0 is NOT refused, and the distinction is the whole reason
+	// this cannot be a flat "no device modifiers" check: 0 is the -100% opt-out, and a
+	// device EXCLUSION is honoured under automated bidding exactly as it is under manual.
+	// Refusing it would stop a create Google would have honoured, which is the one
+	// failure these guards are not allowed to have. The escape is in the message: zero
+	// the modifier to exclude the device, or name manual-cpc to bid by device.
+	if strategy != biddingManualCPC {
+		for i, d := range in.DeviceBidModifiers {
+			if d.BidModifier != 0 {
+				return biddingPlan{}, fmt.Errorf("google-ads: device bid modifier %d adjusts the bid by %v, which the %q bidding strategy ignores (Google stores the adjustment and never bids it while the campaign bids automatically); set it to 0 to exclude the device instead, or use %q to bid by device", i, d.BidModifier, strategy, biddingManualCPC)
+			}
+		}
+	}
+
 	conversionActions, err := validateConversionActions(kind, customerID, in.ConversionActions)
 	if err != nil {
 		return biddingPlan{}, err

@@ -1344,6 +1344,21 @@ All five are refused on Demand Gen, for the reason proximity is: that channel
 attaches targeting on the ad group, and these criteria have not been verified
 there.
 
+**A device bid ADJUSTMENT is refused by the bidding strategy, not by the channel,
+and the two rules must not be folded together.** `validateBiddingPlan` refuses a
+NON-ZERO `DeviceBidModifier` whenever the strategy is anything but manual CPC: Google
+stores the adjustment and never bids it while the campaign bids automatically, so the
+operator who asked for "-30% on tablet" reads "campaign created" and gets neither the
+adjustment nor a signal. It is the `CPCBid` arm's rule one field over, and it is keyed
+on the strategy because that is where the constraint lives — Video and Display both
+default to `maximizeConversions`, and Search can be switched to one, so keying it on
+Performance Max (as the criteria-side arm reads) silently under-refused on three
+channels. A modifier of exactly `0` is NOT refused: that is the -100% opt-out, a device
+EXCLUSION is honoured under automated bidding, and refusing it would be the
+over-refusal these guards exist to avoid. The separate Performance Max arm in
+`campaign_criteria.go` stays, and is about the CHANNEL: Performance Max takes no device
+criteria at all, not even the exclusion, so it refuses the whole list.
+
 **Ad extensions (`assets.go`).** Sitelinks, callouts and structured snippets are
 created as account-level `assets:mutate` operations and then LINKED to the
 campaign by `campaignAssets:mutate` with an `AssetFieldType`. The link operation
