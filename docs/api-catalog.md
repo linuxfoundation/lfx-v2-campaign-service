@@ -1171,8 +1171,13 @@ videoCreative?:                 — OPTIONAL Video RESPONSIVE VIDEO AD (LFXV2-26
                                   list is never sent, because that would mean "no call to action".
                                   Over-long copy is REFUSED, not truncated.
 
-                                  The ad group is type `VIDEO_RESPONSIVE` and both it and the ad are
-                                  created PAUSED, like every other resource this service creates. It
+                                  The ad group is type `VIDEO_RESPONSIVE` and is created ENABLED,
+                                  exactly as Demand Gen's is; the AD is created PAUSED, as is the
+                                  campaign. Only Search creates its ad group paused. Nothing serves
+                                  either way — a paused campaign delivers nothing whatever its children
+                                  say — but a reconciler reading an ENABLED ad group under a PAUSED
+                                  campaign is looking at a correctly created Video campaign, not a
+                                  half-enabled one. It
                                   takes TWO mutates — the video assets, then the ad that references the
                                   resource names Google RETURNED, never rebuilt ones. The result carries
                                   `creativeAssetIds` and `adId`, so a failure after the assets are
@@ -1194,6 +1199,17 @@ adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When t
                                   still-live campaign the delete walked away from. With the flag off,
                                   that dispatch creates, and Google's duplicate-name response surfaces
                                   as a job failure requiring reconciliation.
+                                  On Google the adopted campaign also takes the brief SLOT its
+                                  `campaign.advertising_channel_type` maps to, and the slot is keyed on
+                                  that TYPE alone — the lookup does not read
+                                  `advertising_channel_sub_type`. So ANY `VIDEO` campaign fills the
+                                  `video` slot, including a YouTube reach, bumper or sequence campaign
+                                  this service cannot itself create, after which a later `video`
+                                  dispatch on that brief finds the slot taken. One slot per channel
+                                  type is the model — `SEARCH` has sub-types too and behaves the same
+                                  way — not a Video-specific gap. A channel type this service does not
+                                  create (`SHOPPING`, `HOTEL`, an unrecognised future value, or an
+                                  absent field) is REFUSED rather than defaulted into a slot.
 ```
 
 #### HubSpotConfig (the `hubspotConfig` object)

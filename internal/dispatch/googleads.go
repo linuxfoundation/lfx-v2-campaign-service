@@ -991,8 +991,9 @@ func googleAdsVideoCreative(in *googleAdsVideoCreativeConfig) googleads.VideoCre
 // The URLs this config carries are a sitelink's finalUrl and the image URLs of the
 // Demand Gen creative and the Performance Max asset group. The Video creative is the
 // one creative with nothing to sanitize: it references a YouTube video by bare id and
-// carries no URL field at all, which is why it is absent from the early return below. The ad copy beside them —
-// headlines, descriptions, callouts, snippet values, sitelink text — is deliberately
+// carries no URL field at all, which is why it is absent from the early return below.
+// The ad copy beside them — headlines, descriptions, callouts, snippet values,
+// sitelink text — is deliberately
 // NOT run through sanitizeSnapshotText: that helper exists for operator-authored prose
 // that routinely carries a pasted link (X's tweetText), whereas Google keeps the
 // destination in its own finalUrl field and the copy fields are short ad text. If a
@@ -2017,6 +2018,17 @@ func (d *GoogleAdsDispatcher) LookupCampaign(ctx context.Context, projectID stri
 // This list grows with the create paths, and must: PERFORMANCE_MAX and then VIDEO were each
 // unmappable until this service learned to create them, and a channel left out here is a campaign the
 // adoption path refuses even though create would have produced exactly that type.
+//
+// The slot is keyed on the channel TYPE alone, deliberately. The adopt lookup selects
+// campaign.advertising_channel_type and not advertising_channel_sub_type, so every VIDEO
+// campaign occupies the single `video` slot whether or not it is the VIDEO_ACTION sub-type
+// this service creates — a YouTube reach, bumper or sequence campaign adopted onto a brief
+// takes the slot a later Video-action dispatch would have wanted. That is the model, not an
+// oversight: SEARCH has sub-types too and has always been treated this way, and one slot per
+// advertising_channel_type is what AdoptableVariants enumerates. Narrowing it would mean
+// selecting the sub-type in the lookup and refusing a non-VIDEO_ACTION adoption, which is
+// safe to do (refusing an ADOPT is not the over-refusal of a CREATE) but is a change to the
+// slot model rather than to this function.
 func googleAdsVariantForChannelType(channelType string) (string, error) {
 	switch strings.ToUpper(strings.TrimSpace(channelType)) {
 	case googleAdsChannelTypeSearch:

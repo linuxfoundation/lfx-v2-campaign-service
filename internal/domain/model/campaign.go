@@ -72,7 +72,7 @@ const VariantInvalid = "_invalid"
 // AdoptableVariants lists the slots a platform's adopt endpoint can bind a campaign into.
 //
 // Only Google sub-divides today: its briefs can hold a Search campaign (VariantDefault), a
-// Demand Gen one and a Performance Max one simultaneously. Every other provider has exactly
+// Demand Gen one, a Performance Max one and a Video one simultaneously. Every other provider has exactly
 // one slot, because its `objective`/`channel` configures a single campaign rather than
 // multiplying it.
 //
@@ -117,7 +117,7 @@ type Campaign struct {
 	Platform  Provider
 	// Variant is the sub-division of Platform this campaign is: which of that
 	// platform's campaign types it represents. Google has several (search,
-	// demand-gen, performance-max) and its UI offers them as simultaneous
+	// demand-gen, performance-max, video) and its UI offers them as simultaneous
 	// checkboxes, so one brief can hold more than one google-ads campaign; every
 	// other provider uses VariantDefault.
 	//

@@ -6,9 +6,11 @@ alone covers reach and view products that bid toward entirely different things, 
 is part of the identity of what is created, not a decoration, and the wiring test asserts both.
 The creative is a `VIDEO_RESPONSIVE` ad assembled over two mutates: each YouTube video id
 becomes a `youtubeVideoAsset` in one `assets:mutate` read against the same POSITIONAL response
-contract Performance Max uses, then one `adGroupAds:mutate` builds the ad. Ad group and ad are
-created PAUSED like everything else this client creates, and both ids are reported even when
-the ad create fails, under the partial-result contract.
+contract Performance Max uses, then one `adGroupAds:mutate` builds the ad. The AD is created
+PAUSED and the AD GROUP ENABLED, exactly as Demand Gen does it — Search is the only channel
+here that pauses its ad group, so "paused like everything else" would have been false in both
+directions. The campaign is PAUSED regardless, so nothing serves. Both ids are reported even
+when the ad create fails, under the partial-result contract.
 
 **Note** — Video is the first channel whose creative costs this service **no network at all**.
 A YouTube video is referenced by the id the caller already owns and Google already hosts, so
