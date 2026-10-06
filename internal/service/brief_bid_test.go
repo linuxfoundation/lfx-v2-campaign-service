@@ -9,9 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	goahttp "goa.design/goa/v3/http"
+
+	briefsserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -44,9 +49,10 @@ func bidCampaign() *model.Campaign {
 
 func bidPayload(amount float64, bidType string, ifMatch string) *briefs.UpdateCampaignBidPayload {
 	im := ifMatch
+	bt := bidType
 	return &briefs.UpdateCampaignBidPayload{
 		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
-		IfMatch: &im, Bid: amount, BidType: bidType,
+		IfMatch: &im, Bid: amount, BidType: &bt,
 	}
 }
 
@@ -95,16 +101,25 @@ func TestUpdateCampaignBid_HappyPathPersistsBidAndLeavesEverythingElseAlone(t *t
 	}
 }
 
-// bid_type is optional with a design default of "cpc"; a direct caller leaving it empty gets the
-// default rather than a 400.
-func TestUpdateCampaignBid_EmptyBidTypeDefaultsToCPC(t *testing.T) {
-	d := &bidWriterDispatcher{}
-	s, _ := budgetService(t, bidCampaign(), d)
-	if _, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "", "3")); err != nil {
-		t.Fatalf("UpdateCampaignBid: %v", err)
-	}
-	if d.gotChange.Type != model.BidTypeCPC {
-		t.Errorf("dispatcher got type %q, want cpc", d.gotChange.Type)
+// bid_type is optional and the SERVICE applies the cpc default (the design has none, so the
+// generated CLI accepts an omitted value): omitted (nil) and empty both mean cpc.
+func TestUpdateCampaignBid_OmittedOrEmptyBidTypeDefaultsToCPC(t *testing.T) {
+	omitted := bidPayload(1, "", "3")
+	omitted.BidType = nil
+	for name, p := range map[string]*briefs.UpdateCampaignBidPayload{
+		"omitted": omitted,
+		"empty":   bidPayload(1, "", "3"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := &bidWriterDispatcher{}
+			s, _ := budgetService(t, bidCampaign(), d)
+			if _, err := s.UpdateCampaignBid(context.Background(), p); err != nil {
+				t.Fatalf("UpdateCampaignBid: %v", err)
+			}
+			if d.gotChange.Type != model.BidTypeCPC {
+				t.Errorf("dispatcher got type %q, want cpc", d.gotChange.Type)
+			}
+		})
 	}
 }
 
@@ -170,7 +185,7 @@ func TestUpdateCampaignBid_MissingIfMatchIsPreconditionRequired(t *testing.T) {
 	d := &bidWriterDispatcher{}
 	s, _ := budgetService(t, bidCampaign(), d)
 	_, err := s.UpdateCampaignBid(context.Background(), &briefs.UpdateCampaignBidPayload{
-		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Bid: 1, BidType: "cpc",
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Bid: 1,
 	})
 	var required *briefs.PreconditionRequiredError
 	if !errors.As(err, &required) {
@@ -370,5 +385,41 @@ func TestUpdateCampaignBid_UnconfirmedHoldsTheLockAndDoesNotPersist(t *testing.T
 	}
 	if camps.releases != 0 || len(camps.cooldowns) != 1 || camps.cooldowns[0] != unconfirmedLockCooldown {
 		t.Errorf("want the lock held for one cooldown of %v, got releases=%d cooldowns=%v", unconfirmedLockCooldown, camps.releases, camps.cooldowns)
+	}
+}
+
+// TestUpdateCampaignBidDecoder_AcceptsAnOmittedBidType pins the PR #264 fix through the REAL
+// generated server decoder: with no Goa Default on bid_type, a body naming only the bid decodes
+// to a nil BidType (which the service defaults to cpc), and an unknown bid_type is still refused
+// by the decoder's Enum.
+func TestUpdateCampaignBidDecoder_AcceptsAnOmittedBidType(t *testing.T) {
+	mux := goahttp.NewMuxer()
+	decode := briefsserver.DecodeUpdateCampaignBidRequest(mux, goahttp.RequestDecoder)
+	var routed *http.Request
+	mux.Handle(http.MethodPatch, "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/bid", func(_ http.ResponseWriter, rr *http.Request) {
+		routed = rr
+	})
+	route := func(t *testing.T, body string) *http.Request {
+		t.Helper()
+		routed = nil
+		req := httptest.NewRequest(http.MethodPatch, "/projects/cncf/briefs/11111111-1111-4111-8111-111111111111/campaigns/22222222-2222-4222-8222-222222222222/bid", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("If-Match", `"3"`)
+		mux.ServeHTTP(httptest.NewRecorder(), req)
+		if routed == nil {
+			t.Fatal("request was not routed")
+		}
+		return routed
+	}
+
+	p, err := decode(route(t, `{"bid":2.5}`))
+	if err != nil {
+		t.Fatalf("a body without bid_type must decode: %v", err)
+	}
+	if p.Bid != 2.5 || p.BidType != nil {
+		t.Errorf("decoded bid=%v bid_type=%v, want 2.5 and nil", p.Bid, p.BidType)
+	}
+	if _, err := decode(route(t, `{"bid":2.5,"bid_type":"cpm"}`)); err == nil {
+		t.Error("an unknown bid_type must still be refused by the decoder's Enum")
 	}
 }

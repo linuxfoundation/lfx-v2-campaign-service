@@ -383,7 +383,7 @@ single-campaign GET on that path, whether it reports `is_campaign_budget_optimiz
 (BIDLESS, MANUAL_BIDDING, MAXIMIZE_VOLUME, TARGET_CPX), `bid_type` (CPC, CPM, CPV, ...) and
 `bid_value` in micro-units; only MANUAL_BIDDING pays the `bid_value` given. **The create path
 sends `bid_strategy: "BIDLESS"` on the campaign and the ad group**, so every campaign this
-service creates is refused by the dispatcher until an operator switches it to manual bidding.
+service creates is refused by the dispatcher until an operator switches BOTH the campaign's bid strategy (Campaign Budget Optimization is on for every campaign this service creates, so the ad group must match it) AND the ad group to `MANUAL_BIDDING` in Reddit Ads Manager — the adapter checks the campaign first, then the ad group.
 The field names and enum follow the OpenAPI document this package already cites
 (`https://ads-api.reddit.com/api/v3/openapi.json`); it could not be re-fetched when this was
 written (the host refuses automated fetches), so the guards fail closed on anything they do not
@@ -401,8 +401,11 @@ recognize.
   a STRUCTURED field error, `{"error":{"fields":[{"field":"bid_value"}]}}`
   (`bidValueFieldError`), is a `bidAmountError` with this package's own sentence; a body that
   mentions `bid_value` anywhere else (a strategy race, an echoed payload) stays a definite
-  refusal. Known gap shared with the budget write: a definite 4xx after a retried 429 is
-  classified definite rather than unconfirmed.
+  refusal. The PATCH goes through `requestCounted` (`request()` plus the number of 429s retried;
+  every other caller keeps `request()` unchanged), and ANY failure after a retried 429 is a
+  `retriedUnconfirmedError` (UNCONFIRMED) before any amount mapping — the 429'd attempt may have
+  applied. Known gap, the budget write only: `UpdateCampaignBudget` still classifies a definite
+  4xx after a retried 429 as definite.
 - `CheckAdGroupID(id)` — the path guard alone, so the dispatcher refuses a corrupt recorded id
   before its first request. `GetCampaignBudget` now also reports the campaign's `bid_strategy`
   (`CampaignBudget.BidStrategy`), which the bid write needs under CBO.
