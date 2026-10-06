@@ -136,7 +136,17 @@ func parseMicros(raw json.RawMessage) (*int64, bool) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, false
 	}
-	v, err := strconv.ParseInt(string(raw), 10, 64)
+	s := string(raw)
+	// X documents the field as an integer, but a JSON string holding the same digits is accepted
+	// too (mirroring meta.parseBidAmount), so a serialisation change cannot refuse every write.
+	if raw[0] == '"' {
+		var str string
+		if err := json.Unmarshal(raw, &str); err != nil {
+			return nil, true
+		}
+		s = strings.TrimSpace(str)
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
 		return nil, true
 	}

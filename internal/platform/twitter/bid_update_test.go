@@ -4,6 +4,7 @@
 package twitter
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"strings"
@@ -86,5 +87,24 @@ func TestLineItemBid_ManualCPC(t *testing.T) {
 		if b.ManualCPC() {
 			t.Errorf("%+v must not be a manual CPC", b)
 		}
+	}
+}
+
+// A quoted numeric amount reads like the integer form (X documents an integer; a string of the
+// same digits must not make every write fail closed), while a quoted non-number stays unreadable.
+func TestParseMicros_AcceptsQuotedDigits(t *testing.T) {
+	for in, want := range map[string]int64{`1500000`: 1500000, `"1500000"`: 1500000, `" 42 "`: 42} {
+		got, bad := parseMicros(json.RawMessage(in))
+		if bad || got == nil || *got != want {
+			t.Errorf("parseMicros(%s) = %v, %v; want %d", in, got, bad, want)
+		}
+	}
+	for _, in := range []string{`"abc"`, `"1.5"`, `true`} {
+		if _, bad := parseMicros(json.RawMessage(in)); !bad {
+			t.Errorf("parseMicros(%s) should be unreadable", in)
+		}
+	}
+	if got, bad := parseMicros(json.RawMessage(`null`)); got != nil || bad {
+		t.Errorf("parseMicros(null) = %v, %v; want absent", got, bad)
 	}
 }
