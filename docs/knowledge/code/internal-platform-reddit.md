@@ -644,8 +644,10 @@ request can address. The dispatcher settles it instead, with `accountIDNotUsable
 `GetAdGroupTargeting` reads the ad group's `targeting` object (the GET `GetAdGroupBid` makes),
 keeping every member as raw bytes, returning `targeting.keywords` and a `Revision` — `sha256:` of
 the object's canonical JSON. An absent, null or non-object targeting, or a `keywords` that is not
-a string array, is `ErrTargetingUnreadable`. `ReplaceAdGroupKeywords` PATCHes `targeting` back
-with every read member unchanged and only `keywords` replaced, because Reddit replaces the
+a string array (null elements are kept, not keywords), is `ErrTargetingUnreadable`.
+`RemoveAdGroupKeywords` PATCHes `targeting` back with every read member — and every keyword element
+it does not remove — unchanged, matching keywords exactly and sending the body pre-encoded with
+HTML escaping off (`preEncodedBody`, honoured by the request loop), because Reddit replaces the
 targeting object as a whole (secondary sources; the OpenAPI document cannot be fetched from the
 authoring environment). Its classification is `UpdateAdGroupBid`'s, including
 `retriedUnconfirmedError` after a retried 429, plus an UNCONFIRMED echo naming another keyword

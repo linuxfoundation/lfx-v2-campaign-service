@@ -35,12 +35,20 @@ type xKWTStub struct {
 	d        *TwitterDispatcher
 	mu       sync.Mutex
 	lineItem string
-	criteria string
+	// criteria answers the targeting_criteria lists in order; the last entry repeats.
+	criteria []string
 	deletes  map[string]kwtReply
 	seen     []xBidRequest
 }
 
 func newXKWTStub(t *testing.T, lineItem, criteria string, deletes map[string]kwtReply) *xKWTStub {
+	t.Helper()
+	return newXKWTStubSeq(t, lineItem, []string{criteria}, deletes)
+}
+
+// newXKWTStubSeq answers successive targeting_criteria lists from criteria, so a test can make
+// the targeting change between the guard's read and a later re-read.
+func newXKWTStubSeq(t *testing.T, lineItem string, criteria []string, deletes map[string]kwtReply) *xKWTStub {
 	t.Helper()
 	s := &xKWTStub{lineItem: lineItem, criteria: criteria, deletes: deletes}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +67,13 @@ func newXKWTStub(t *testing.T, lineItem, criteria string, deletes map[string]kwt
 			w.WriteHeader(reply.status)
 			_, _ = io.WriteString(w, reply.body)
 		case strings.HasSuffix(r.URL.Path, "/targeting_criteria"):
-			_, _ = io.WriteString(w, s.criteria)
+			s.mu.Lock()
+			body := s.criteria[0]
+			if len(s.criteria) > 1 {
+				s.criteria = s.criteria[1:]
+			}
+			s.mu.Unlock()
+			_, _ = io.WriteString(w, body)
 		default:
 			_, _ = io.WriteString(w, s.lineItem)
 		}
@@ -70,11 +84,16 @@ func newXKWTStub(t *testing.T, lineItem, criteria string, deletes map[string]kwt
 	return s
 }
 
-func (s *xKWTStub) deleted() []string {
+// requests is a locked snapshot of every request the handler recorded.
+func (s *xKWTStub) requests() []xBidRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return append([]xBidRequest(nil), s.seen...)
+}
+
+func (s *xKWTStub) deleted() []string {
 	var out []string
-	for _, r := range s.seen {
+	for _, r := range s.requests() {
 		if r.Method == http.MethodDelete {
 			out = append(out, r.Path)
 		}
@@ -83,9 +102,7 @@ func (s *xKWTStub) deleted() []string {
 }
 
 func (s *xKWTStub) count() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.seen)
+	return len(s.requests())
 }
 
 func removeX(s *xKWTStub, c *model.Campaign, ids ...string) ([]model.KeywordTargetingOutcome, error) {
@@ -109,13 +126,13 @@ func TestTwitter_ReadKeywordTargeting_ListsOnlyPositiveKeywordCriteriaOfTheLineI
 		t.Errorf("keyword[1] = %+v", k)
 	}
 	var listed bool
-	for _, r := range s.seen {
+	for _, r := range s.requests() {
 		if strings.HasSuffix(r.Path, "/12/accounts/acc1/targeting_criteria") {
 			listed = strings.Contains(r.Query, "line_item_ids=li1") && strings.Contains(r.Query, "with_deleted=false")
 		}
 	}
 	if !listed {
-		t.Errorf("the list was not scoped to the line item: %+v", s.seen)
+		t.Errorf("the list was not scoped to the line item: %+v", s.requests())
 	}
 	if len(s.deleted()) != 0 {
 		t.Fatal("a read must not write")
@@ -242,5 +259,46 @@ func TestTwitter_RemoveKeywordTargeting_RefusalsDeleteNothing(t *testing.T) {
 				t.Fatalf("a local refusal reached X (%d requests)", s.count())
 			}
 		})
+	}
+}
+
+const xTwoKeywords = `{"data":[
+ {"id":"c1","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"kubernetes","operator_type":"EQ"},
+ {"id":"c2","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"ebpf","operator_type":"EQ"}
+],"next_cursor":null}`
+
+const xOnlyC1 = `{"data":[
+ {"id":"c1","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"kubernetes","operator_type":"EQ"}
+],"next_cursor":null}`
+
+// The race the per-DELETE re-list closes: live = {c1, c2}; this request removes c1 while a
+// concurrent removal of c2 lands between the guard's list and this DELETE. Both requests passed
+// the one-shot guard; without the re-list they would together empty the line item.
+func TestTwitter_RemoveKeywordTargeting_ConcurrentRemovalCannotEmptyTheLineItem(t *testing.T) {
+	s := newXKWTStubSeq(t, xKWTLineItem, []string{xTwoKeywords, xOnlyC1}, nil)
+	out, err := removeX(s, xBidCampaign(), "c1")
+	if err != nil {
+		t.Fatalf("RemoveKeywordTargeting: %v", err)
+	}
+	if len(out) != 1 || out[0].Outcome != model.KeywordOutcomeFailed || out[0].ErrorCode != model.KeywordTargetingErrWouldEmpty {
+		t.Fatalf("outcomes = %+v, want FAILED/WOULD_EMPTY", out)
+	}
+	if d := s.deleted(); len(d) != 0 {
+		t.Fatalf("the DELETE that would empty the line item was sent: %v", d)
+	}
+}
+
+// A criterion removed concurrently is reported NOT_FOUND without a DELETE being sent.
+func TestTwitter_RemoveKeywordTargeting_CriterionGoneBeforeItsDeleteIsNotSent(t *testing.T) {
+	s := newXKWTStubSeq(t, xKWTLineItem, []string{xCriteria, `{"data":[
+ {"id":"k1","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"kubernetes","operator_type":"EQ"},
+ {"id":"k3","line_item_id":"li1","targeting_type":"EXACT_KEYWORD","targeting_value":"ebpf","operator_type":"EQ"}
+],"next_cursor":null}`}, nil)
+	out, err := removeX(s, xBidCampaign(), "k2")
+	if err != nil {
+		t.Fatalf("RemoveKeywordTargeting: %v", err)
+	}
+	if out[0].Outcome != model.KeywordOutcomeFailed || out[0].ErrorCode != model.KeywordTargetingErrNotFound || len(s.deleted()) != 0 {
+		t.Fatalf("outcomes = %+v, deletes %v", out, s.deleted())
 	}
 }

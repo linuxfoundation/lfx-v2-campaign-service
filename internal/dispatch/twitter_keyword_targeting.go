@@ -116,8 +116,11 @@ func (d *TwitterDispatcher) ReadKeywordTargeting(ctx context.Context, projectID 
 // positive keyword criterion OF THAT LINE ITEM (read, so an id from any other line item in the
 // account is refused rather than deleted); and at least one keyword criterion must remain.
 //
-// The DELETEs are not atomic. Each is APPLIED, FAILED (NOT_FOUND, REJECTED, or NOT_SENT when the
-// deadline ran out before it was sent) or UNCONFIRMED (a transport failure, 3xx, 5xx, 429, or a
+// The DELETEs are not atomic, and the targeting is RE-LISTED before each one: an item whose
+// criterion has meanwhile gone is FAILED/NOT_FOUND, and one that is now the line item's last
+// positive keyword is FAILED/WOULD_EMPTY — neither is sent. Each sent item is APPLIED, FAILED
+// (NOT_FOUND, REJECTED, or NOT_SENT when the deadline ran out or the re-list failed before it was
+// sent) or UNCONFIRMED (a transport failure, 3xx, 5xx, 429, or a
 // 2xx that does not report this criterion deleted). The call errors only when no item got a
 // definite answer from X.
 func (d *TwitterDispatcher) RemoveKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, removals []model.KeywordTargetingRemoval, revision string) ([]model.KeywordTargetingOutcome, error) {
@@ -157,6 +160,41 @@ func (d *TwitterDispatcher) RemoveKeywordTargeting(ctx context.Context, projectI
 			out = append(out, o)
 			continue
 		}
+		// RE-LIST BEFORE EACH DELETE. The guard above read the targeting once; a concurrent
+		// removal (another request, or an operator in X Ads Manager) may since have taken other
+		// keywords away, and two removals of DIFFERENT criteria would each pass that guard and
+		// together empty the line item. So the last-keyword rule is re-applied against a fresh
+		// list immediately before every DELETE. The window between this list and the DELETE
+		// remains — X has no conditional delete — and is documented, not hidden.
+		now, lerr := liveTwitterKeywords(ctx, op, client, lineItemID)
+		if lerr != nil {
+			// Nothing was sent for this item: a definite FAILED, never UNCONFIRMED.
+			o.Outcome, o.ErrorCode = model.KeywordOutcomeFailed, model.KeywordTargetingErrNotSent
+			lastDefinite = lerr
+			out = append(out, o)
+			continue
+		}
+		stillThere := false
+		for _, tc := range now {
+			if tc.ID == id {
+				stillThere = true
+				break
+			}
+		}
+		switch {
+		case !stillThere:
+			// Already gone — removed concurrently. Not sent; this request changed nothing.
+			o.Outcome, o.ErrorCode = model.KeywordOutcomeFailed, model.KeywordTargetingErrNotFound
+			definite = true
+			out = append(out, o)
+			continue
+		case len(now) <= 1:
+			// It is the last positive keyword left: deleting it would widen delivery.
+			o.Outcome, o.ErrorCode = model.KeywordOutcomeFailed, model.KeywordTargetingErrWouldEmpty
+			definite = true
+			out = append(out, o)
+			continue
+		}
 		derr := client.DeleteTargetingCriterion(ctx, id)
 		switch {
 		case derr == nil:
@@ -190,8 +228,8 @@ func (d *TwitterDispatcher) RemoveKeywordTargeting(ctx context.Context, projectI
 	return out, nil
 }
 
-// validateTwitterKeywordRemovals checks the batch shape X needs and returns the criterion ids,
-// trimmed, in request order.
+// validateTwitterKeywordRemovals checks the batch shape X needs and returns the criterion ids in
+// request order, unchanged (an id with surrounding whitespace is malformed, not trimmed).
 func validateTwitterKeywordRemovals(removals []model.KeywordTargetingRemoval, revision string) ([]string, error) {
 	if len(removals) == 0 || len(removals) > maxKeywordTargetingRemovals {
 		return nil, fmt.Errorf("%w: send 1 to %d removals, got %d", domain.ErrKeywordTargetingInvalid, maxKeywordTargetingRemovals, len(removals))
@@ -202,8 +240,8 @@ func validateTwitterKeywordRemovals(removals []model.KeywordTargetingRemoval, re
 	seen := make(map[string]bool, len(removals))
 	out := make([]string, 0, len(removals))
 	for i, r := range removals {
-		id := strings.TrimSpace(r.CriterionID)
-		if !twitterEntityIDRE.MatchString(id) || strings.TrimSpace(r.Keyword) != "" {
+		id := r.CriterionID
+		if !twitterEntityIDRE.MatchString(id) || r.Keyword != "" {
 			return nil, fmt.Errorf("%w: removal %d must name a well-formed criterion id and no keyword on x", domain.ErrKeywordTargetingInvalid, i)
 		}
 		if seen[id] {

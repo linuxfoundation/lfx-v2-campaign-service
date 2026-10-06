@@ -58,7 +58,17 @@ type AdGroupTargeting struct {
 
 	// members is the targeting object member by member, raw bytes as Reddit sent them.
 	members map[string]json.RawMessage
+	// keywordElems is the `keywords` array element by element, raw, so a write keeps every
+	// element it does not remove exactly as read (a null element included); nil when the
+	// member was absent or null.
+	keywordElems []json.RawMessage
 }
+
+// preEncodedBody is a request body that is already JSON and is sent byte for byte. The keyword
+// write needs it: json.Marshal HTML-escapes '<', '>' and '&' inside every string — RawMessage
+// members included — so a targeting member read as "a<b&c" would go back as "a\u003cb\u0026c".
+// Semantically the same string, but not the bytes that were read.
+type preEncodedBody []byte
 
 // OtherDimensionsFingerprint fingerprints every targeting member EXCEPT `keywords`, so a re-read
 // after a keyword write can prove nothing else moved.
@@ -102,33 +112,47 @@ type adGroupTargetingWire struct {
 	Targeting  json.RawMessage `json:"targeting"`
 }
 
-// decodeTargeting turns a raw targeting object into its members and keyword list. A targeting
-// that is absent, null or not an object, or whose `keywords` is not an array of strings, is
+// decodeTargeting turns a raw targeting object into its members, its keyword list and the raw
+// keyword elements. A targeting that is absent, null or not an object, or whose `keywords` is not
+// an array of strings (a null element is kept as-is and is not a keyword), is
 // ErrTargetingUnreadable.
-func decodeTargeting(raw json.RawMessage) (map[string]json.RawMessage, []string, error) {
+func decodeTargeting(raw json.RawMessage) (map[string]json.RawMessage, []string, []json.RawMessage, error) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" || raw[0] != '{' {
-		return nil, nil, ErrTargetingUnreadable
+		return nil, nil, nil, ErrTargetingUnreadable
 	}
 	var members map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &members); err != nil || members == nil {
-		return nil, nil, ErrTargetingUnreadable
+		return nil, nil, nil, ErrTargetingUnreadable
 	}
 	keywords := []string{}
+	var elems []json.RawMessage
 	if kw, ok := members["keywords"]; ok {
 		kw = bytes.TrimSpace(kw)
 		if len(kw) > 0 && string(kw) != "null" {
 			if kw[0] != '[' {
-				return nil, nil, ErrTargetingUnreadable
+				return nil, nil, nil, ErrTargetingUnreadable
 			}
-			var list []string
-			if err := json.Unmarshal(kw, &list); err != nil {
-				return nil, nil, ErrTargetingUnreadable
+			if err := json.Unmarshal(kw, &elems); err != nil {
+				return nil, nil, nil, ErrTargetingUnreadable
 			}
-			keywords = append(keywords, list...)
+			for _, e := range elems {
+				e = bytes.TrimSpace(e)
+				if string(e) == "null" {
+					continue
+				}
+				if len(e) == 0 || e[0] != '"' {
+					return nil, nil, nil, ErrTargetingUnreadable
+				}
+				var k string
+				if err := json.Unmarshal(e, &k); err != nil {
+					return nil, nil, nil, ErrTargetingUnreadable
+				}
+				keywords = append(keywords, k)
+			}
 		}
 	}
-	return members, keywords, nil
+	return members, keywords, elems, nil
 }
 
 // GetAdGroupTargeting reads one ad group's targeting via GET /ad_accounts/{account}/ad_groups/{id}
@@ -161,7 +185,7 @@ func (c *Client) GetAdGroupTargeting(ctx context.Context, adGroupID string) (*Ad
 		}
 		return nil, fmt.Errorf("reddit: read ad group %s targeting returned %s instead", adGroupID, got)
 	}
-	members, keywords, err := decodeTargeting(wire.Targeting)
+	members, keywords, elems, err := decodeTargeting(wire.Targeting)
 	if err != nil {
 		return nil, fmt.Errorf("reddit: read ad group %s targeting: %w", adGroupID, err)
 	}
@@ -170,71 +194,111 @@ func (c *Client) GetAdGroupTargeting(ctx context.Context, adGroupID string) (*Ad
 		return nil, fmt.Errorf("reddit: read ad group %s targeting: %w", adGroupID, ErrTargetingUnreadable)
 	}
 	return &AdGroupTargeting{
-		AdGroupID:  adGroupID,
-		CampaignID: strings.TrimSpace(wire.CampaignID),
-		Keywords:   keywords,
-		Revision:   rev,
-		members:    members,
+		AdGroupID:    adGroupID,
+		CampaignID:   strings.TrimSpace(wire.CampaignID),
+		Keywords:     keywords,
+		Revision:     rev,
+		members:      members,
+		keywordElems: elems,
 	}, nil
 }
 
-// ReplaceAdGroupKeywords writes base's targeting back with `keywords` set to keywords, via
-// PATCH /ad_accounts/{account}/ad_groups/{id} with {"data":{"targeting":{...}}}. Every other
-// member is sent exactly as base read it. base MUST be the read of this same ad group the caller
-// validated; keywords must be non-empty (an empty list would stop the ad group being keyword
-// targeted at all — the dispatcher refuses that before calling here, and so does this).
+// RemoveAdGroupKeywords writes base's targeting back without the keywords in remove, via
+// PATCH /ad_accounts/{account}/ad_groups/{id} with {"data":{"targeting":{...}}}, and returns the
+// keywords the write leaves. Every other targeting member, and every keyword element it does not
+// remove (a null one included), is sent exactly as base read it (compacted, never re-escaped:
+// preEncodedBody). A keyword is removed when its value equals an entry of remove EXACTLY — no
+// trimming, no case folding — and every occurrence of it goes. base MUST be the read of this
+// same ad group the caller validated. A write that would leave no keyword is refused before any
+// request: it would stop the ad group being keyword targeted at all.
 //
 // Classification mirrors UpdateAdGroupBid: a transport failure, 3xx, exhausted 429 or 5xx is
 // UNCONFIRMED (IsOutcomeUnconfirmed); ANY failure after a retried 429 is UNCONFIRMED
 // (retriedUnconfirmedError); any other 4xx is a definite refusal — the ad group unchanged. A 2xx
-// echo naming another ad group, or a keyword list other than the one sent, is UNCONFIRMED.
-func (c *Client) ReplaceAdGroupKeywords(ctx context.Context, adGroupID string, base *AdGroupTargeting, keywords []string) error {
+// echo naming another ad group, or a keyword list other than the one left, is UNCONFIRMED.
+func (c *Client) RemoveAdGroupKeywords(ctx context.Context, adGroupID string, base *AdGroupTargeting, remove []string) ([]string, error) {
 	path, adGroupID, err := c.adGroupBidPath(adGroupID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if base == nil || base.members == nil || base.AdGroupID != adGroupID {
-		return fmt.Errorf("reddit: replace ad group %s keywords: no targeting read of this ad group to write back: %w", adGroupID, ErrTargetingUnreadable)
+		return nil, fmt.Errorf("reddit: remove ad group %s keywords: no targeting read of this ad group to write back: %w", adGroupID, ErrTargetingUnreadable)
 	}
-	if len(keywords) == 0 {
-		return fmt.Errorf("reddit: replace ad group %s keywords: refusing to write an empty keyword list", adGroupID)
+	drop := make(map[string]bool, len(remove))
+	for _, k := range remove {
+		drop[k] = true
 	}
-	kw, err := json.Marshal(keywords)
+	kept := make([]json.RawMessage, 0, len(base.keywordElems))
+	remaining := make([]string, 0, len(base.keywordElems))
+	for _, e := range base.keywordElems {
+		if string(bytes.TrimSpace(e)) == "null" {
+			kept = append(kept, e)
+			continue
+		}
+		var k string
+		if err := json.Unmarshal(e, &k); err != nil {
+			return nil, fmt.Errorf("reddit: remove ad group %s keywords: %w", adGroupID, ErrTargetingUnreadable)
+		}
+		if drop[k] {
+			continue
+		}
+		kept = append(kept, e)
+		remaining = append(remaining, k)
+	}
+	if len(remaining) == 0 {
+		return nil, fmt.Errorf("reddit: remove ad group %s keywords: refusing to leave the ad group with no keyword", adGroupID)
+	}
+	kw, err := encodeNoEscape(kept)
 	if err != nil {
-		return fmt.Errorf("reddit: replace ad group %s keywords: %w", adGroupID, err)
+		return nil, fmt.Errorf("reddit: remove ad group %s keywords: %w", adGroupID, err)
 	}
 	targeting := make(map[string]json.RawMessage, len(base.members)+1)
 	for k, v := range base.members {
 		targeting[k] = v
 	}
 	targeting["keywords"] = kw
-	body := map[string]any{"data": map[string]any{"targeting": targeting}}
+	encoded, err := encodeNoEscape(map[string]any{"data": map[string]any{"targeting": targeting}})
+	if err != nil {
+		return nil, fmt.Errorf("reddit: remove ad group %s keywords: %w", adGroupID, err)
+	}
 
-	resp, retries, err := c.requestCounted(ctx, http.MethodPatch, path, body)
+	resp, retries, err := c.requestCounted(ctx, http.MethodPatch, path, preEncodedBody(encoded))
 	if err != nil && retries > 0 && !IsOutcomeUnconfirmed(err) {
-		return &retriedUnconfirmedError{what: "ad group targeting", retries: retries,
-			err: fmt.Errorf("reddit: replace ad group %s keywords: %w", adGroupID, err)}
+		return nil, &retriedUnconfirmedError{what: "ad group targeting", retries: retries,
+			err: fmt.Errorf("reddit: remove ad group %s keywords: %w", adGroupID, err)}
 	}
 	if err != nil {
-		return fmt.Errorf("reddit: replace ad group %s keywords: %w", adGroupID, err)
+		return nil, fmt.Errorf("reddit: remove ad group %s keywords: %w", adGroupID, err)
 	}
 	if resp == nil || len(resp.Data) == 0 || string(resp.Data) == "null" {
-		return nil
+		return remaining, nil
 	}
 	var echo adGroupTargetingWire
 	if jerr := json.Unmarshal(resp.Data, &echo); jerr != nil {
-		return &transportError{Method: http.MethodPatch, Path: "ad group targeting", Err: fmt.Errorf("decode 2xx targeting update response for ad group %s: not an ad group object", adGroupID)}
+		return nil, &transportError{Method: http.MethodPatch, Path: "ad group targeting", Err: fmt.Errorf("decode 2xx targeting update response for ad group %s: not an ad group object", adGroupID)}
 	}
 	if got := strings.TrimSpace(echo.ID); got != "" && got != adGroupID {
-		return &transportError{Method: http.MethodPatch, Path: "ad group targeting", Err: fmt.Errorf("targeting update for ad group %s was acknowledged for ad group %s", adGroupID, got)}
+		return nil, &transportError{Method: http.MethodPatch, Path: "ad group targeting", Err: fmt.Errorf("targeting update for ad group %s was acknowledged for ad group %s", adGroupID, got)}
 	}
 	if t := bytes.TrimSpace(echo.Targeting); len(t) > 0 && string(t) != "null" {
-		_, got, derr := decodeTargeting(t)
-		if derr != nil || !SameKeywords(got, keywords) {
-			return &transportError{Method: http.MethodPatch, Path: "ad group targeting", Err: fmt.Errorf("targeting update for ad group %s was acknowledged with a keyword list other than the one sent", adGroupID)}
+		_, got, _, derr := decodeTargeting(t)
+		if derr != nil || !SameKeywords(got, remaining) {
+			return nil, &transportError{Method: http.MethodPatch, Path: "ad group targeting", Err: fmt.Errorf("targeting update for ad group %s was acknowledged with a keyword list other than the one sent", adGroupID)}
 		}
 	}
-	return nil
+	return remaining, nil
+}
+
+// encodeNoEscape is json.Marshal without HTML escaping (and without the Encoder's trailing
+// newline), so RawMessage values keep the bytes they were read with, compacted.
+func encodeNoEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 // SameKeywords reports whether a and b hold the same keywords the same number of times, in any

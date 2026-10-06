@@ -502,6 +502,9 @@ const (
 	KeywordTargetingErrNotSent  = "NOT_SENT"
 	KeywordTargetingErrNotFound = "NOT_FOUND"
 	KeywordTargetingErrRejected = "REJECTED"
+	// KeywordTargetingErrWouldEmpty: not sent, because a fresh read showed the item is now the
+	// last keyword targeted (another removal landed meanwhile).
+	KeywordTargetingErrWouldEmpty = "WOULD_EMPTY"
 )
 
 // NegativeKeyword is one requested campaign-level negative keyword. MatchType is the

@@ -4,6 +4,7 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,8 +24,27 @@ import (
 
 // redditTargetingAdGroup is an ad group of campaign t3_c whose targeting carries the dimensions
 // the create path sets, plus keywords.
+//
+// It also carries the shapes the whole-object rewrite must not disturb: an integer beyond float64
+// and int64 precision, a decimal with a trailing zero, an explicit null, a nested object and an
+// unknown member holding HTML-significant characters.
 func redditTargetingBody(keywords string) string {
-	return `{"data":{"id":"t5_ag","campaign_id":"t3_c","targeting":{"geolocations":["US"],"locations":["FEED","COMMENTS_PAGE"],"platforms":["ALL"],"expand_targeting":true,"communities":["kubernetes"],"keywords":` + keywords + `}}}`
+	return `{"data":{"id":"t5_ag","campaign_id":"t3_c","targeting":` + redditTargetingObject(keywords) + `}}`
+}
+
+func redditTargetingObject(keywords string) string {
+	return `{"geolocations":["US"],"locations":["FEED","COMMENTS_PAGE"],"platforms":["ALL"],"expand_targeting":true,"communities":["kubernetes"],` +
+		`"bid_cap":12345678901234567890,"ratio":1.10,"interests":null,"geo":{"include":[{"id":"US-CA","n":1}]},"x_unknown":"a<b&c",` +
+		`"keywords":` + keywords + `}`
+}
+
+func compactRaw(t *testing.T, raw []byte) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, raw); err != nil {
+		t.Fatalf("compact %s: %v", raw, err)
+	}
+	return buf.String()
 }
 
 type kwtReply struct {
@@ -202,16 +222,55 @@ func TestReddit_RemoveKeywordTargeting_WritesBackEveryOtherDimensionThenConfirms
 		t.Errorf("keywords sent = %s", tg["keywords"])
 	}
 	// Every other member goes back exactly as read — the write replaces the whole object.
-	for k, want := range map[string]string{
-		"geolocations": `["US"]`, "locations": `["FEED","COMMENTS_PAGE"]`, "platforms": `["ALL"]`,
-		"expand_targeting": `true`, "communities": `["kubernetes"]`,
-	} {
-		if string(tg[k]) != want {
-			t.Errorf("%s sent = %s, want %s", k, tg[k], want)
+	// Compared after json.Compact: semantically equal, number spellings and string bytes kept.
+	var read map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(redditTargetingObject(`["kubernetes","cloud native","ebpf"]`)), &read); err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range read {
+		if k == "keywords" {
+			continue
+		}
+		got, ok := tg[k]
+		if !ok {
+			t.Errorf("member %s was read but not sent", k)
+			continue
+		}
+		if g, w := compactRaw(t, got), compactRaw(t, v); g != w {
+			t.Errorf("%s sent = %s, read %s", k, g, w)
 		}
 	}
-	if len(tg) != 6 {
-		t.Errorf("sent %d targeting members, want the 6 read", len(tg))
+	if string(tg["interests"]) != "null" {
+		t.Errorf("a null member must stay null, sent %s", tg["interests"])
+	}
+	if _, ok := tg["excluded_keywords"]; ok {
+		t.Error("a member absent when read must stay absent")
+	}
+	if len(tg) != len(read) {
+		t.Errorf("sent %d targeting members, want the %d read", len(tg), len(read))
+	}
+}
+
+// The keyword is matched and echoed EXACTLY as sent: no trimming, no case folding.
+func TestReddit_RemoveKeywordTargeting_MatchesAndEchoesTheRawKeyword(t *testing.T) {
+	t.Setenv(constants.EnvRedditKeywordTargetingWritesEnabled, "true")
+	rev := readRedditRevision(t, `["Kubernetes"," ebpf","x"]`)
+	s := newRedditKWTStub(t, kwtReply{http.StatusOK, `{"data":{"id":"t5_ag"}}`},
+		kwtReply{http.StatusOK, redditTargetingBody(`["Kubernetes"," ebpf","x"]`)},
+		kwtReply{http.StatusOK, redditTargetingBody(`["Kubernetes","x"]`)},
+	)
+	out, err := removeReddit(s, redditBudgetCampaign(), rev, " ebpf")
+	if err != nil {
+		t.Fatalf("RemoveKeywordTargeting: %v", err)
+	}
+	if len(out) != 1 || out[0].Keyword != " ebpf" || out[0].Outcome != model.KeywordOutcomeApplied {
+		t.Fatalf("outcomes = %+v (the keyword must be echoed unchanged)", out)
+	}
+	for _, inexact := range []string{"ebpf", "kubernetes"} {
+		s := newRedditKWTStub(t, kwtReply{http.StatusOK, `{}`}, kwtReply{http.StatusOK, redditTargetingBody(`["Kubernetes"," ebpf","x"]`)})
+		if _, err := removeReddit(s, redditBudgetCampaign(), rev, inexact); !errors.Is(err, domain.ErrKeywordTargetingInvalid) || len(s.patches()) != 0 {
+			t.Errorf("%q must not match: %v", inexact, err)
+		}
 	}
 }
 
@@ -228,6 +287,7 @@ func TestReddit_RemoveKeywordTargeting_RefusalsWriteNothing(t *testing.T) {
 	}{
 		{"revision missing", redditBudgetCampaign(), "", []string{"a"}, domain.ErrKeywordTargetingInvalid, true},
 		{"duplicate keyword", redditBudgetCampaign(), rev, []string{"a", "a"}, domain.ErrKeywordTargetingInvalid, true},
+		{"all-whitespace keyword", redditBudgetCampaign(), rev, []string{"  "}, domain.ErrKeywordTargetingInvalid, true},
 		{"provenance unknown", &model.Campaign{ID: "camp-1", Platform: model.ProviderRedditAds, PlatformCampaignID: "t3_c",
 			Result: json.RawMessage(`{"adGroupId":"t5_ag"}`)}, rev, []string{"a"}, domain.ErrCampaignProvenanceUnknown, true},
 		{"targeting changed since read", redditBudgetCampaign(), "sha256:stale", []string{"a"}, domain.ErrKeywordTargetingChanged, false},

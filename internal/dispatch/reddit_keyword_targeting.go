@@ -166,17 +166,19 @@ func (d *RedditDispatcher) RemoveKeywordTargeting(ctx context.Context, projectID
 			return nil, fmt.Errorf("%w: removal %d names a keyword ad group %s does not target", domain.ErrKeywordTargetingInvalid, i, adGroupID)
 		}
 	}
+	// The last-keyword guard runs here, BEFORE the write is built, so it is the dispatcher's
+	// refusal (409) rather than the client's; the client refuses the same case again.
 	drop := make(map[string]bool, len(requested))
 	for _, k := range requested {
 		drop[k] = true
 	}
-	remaining := make([]string, 0, len(current.Keywords))
+	left := 0
 	for _, k := range current.Keywords {
 		if !drop[k] {
-			remaining = append(remaining, k)
+			left++
 		}
 	}
-	if len(remaining) == 0 {
+	if left == 0 {
 		return nil, fmt.Errorf("%s: removing these keywords would leave ad group %s with none: %w", op, adGroupID, domain.ErrKeywordTargetingWouldEmpty)
 	}
 	before, err := current.OtherDimensionsFingerprint()
@@ -184,7 +186,8 @@ func (d *RedditDispatcher) RemoveKeywordTargeting(ctx context.Context, projectID
 		return nil, fmt.Errorf("%s: %w: %w", op, reddit.ErrTargetingUnreadable, domain.ErrKeywordTargetingUnaddressable)
 	}
 
-	if err := client.ReplaceAdGroupKeywords(ctx, adGroupID, current, remaining); err != nil {
+	remaining, err := client.RemoveAdGroupKeywords(ctx, adGroupID, current, requested)
+	if err != nil {
 		werr := fmt.Errorf("%s for ad group %s: %w", op, adGroupID, err)
 		if reddit.IsOutcomeUnconfirmed(err) {
 			return nil, &unconfirmedKeywordLeverError{err: werr}
@@ -219,8 +222,10 @@ func (d *RedditDispatcher) RemoveKeywordTargeting(ctx context.Context, projectID
 	return out, nil
 }
 
-// validateRedditKeywordRemovals checks the batch shape Reddit needs and returns the keywords,
-// trimmed, in request order.
+// validateRedditKeywordRemovals checks the batch shape Reddit needs and returns the keywords in
+// request order, UNCHANGED: a keyword is compared with the targeting exactly as sent (no
+// trimming, no case folding) and echoed exactly as sent. An all-whitespace keyword can name no
+// keyword anyone meant and is refused.
 func validateRedditKeywordRemovals(removals []model.KeywordTargetingRemoval, revision string) ([]string, error) {
 	if len(removals) == 0 || len(removals) > maxKeywordTargetingRemovals {
 		return nil, fmt.Errorf("%w: send 1 to %d removals, got %d", domain.ErrKeywordTargetingInvalid, maxKeywordTargetingRemovals, len(removals))
@@ -231,9 +236,9 @@ func validateRedditKeywordRemovals(removals []model.KeywordTargetingRemoval, rev
 	seen := make(map[string]bool, len(removals))
 	out := make([]string, 0, len(removals))
 	for i, r := range removals {
-		k := strings.TrimSpace(r.Keyword)
-		if k == "" || strings.TrimSpace(r.CriterionID) != "" {
-			return nil, fmt.Errorf("%w: removal %d must name a keyword and no criterion id on reddit", domain.ErrKeywordTargetingInvalid, i)
+		k := r.Keyword
+		if strings.TrimSpace(k) == "" || r.CriterionID != "" {
+			return nil, fmt.Errorf("%w: removal %d must name a non-blank keyword and no criterion id on reddit", domain.ErrKeywordTargetingInvalid, i)
 		}
 		if seen[k] {
 			return nil, fmt.Errorf("%w: removal %d repeats a keyword", domain.ErrKeywordTargetingInvalid, i)

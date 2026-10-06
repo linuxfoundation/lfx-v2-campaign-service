@@ -4,7 +4,9 @@
 package reddit
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -82,30 +84,137 @@ func readTargeting(t *testing.T) *AdGroupTargeting {
 	return got
 }
 
-func TestReplaceAdGroupKeywords_SendsTheWholeTargetingWithOnlyKeywordsChanged(t *testing.T) {
-	base := readTargeting(t)
+// richTargeting carries the shapes the whole-object rewrite must not disturb: an integer beyond
+// float64 and int64 precision, a decimal with a trailing zero, an explicit null, a nested object,
+// an unknown member holding HTML-significant characters, and a null keyword element.
+const richTargeting = `{"geolocations":["US"],"bid_cap":12345678901234567890,"ratio":1.10,"interests":null,"geo":{"include":[{"id":"US-CA","n":1}]},"x_unknown":"a<b&c","keywords":["a",null,"b"]}`
+
+func richAdGroup(targeting string) string {
+	return `{"data":{"id":"t5_ag","campaign_id":"t3_c","targeting":` + targeting + `}}`
+}
+
+func compactJSON(t *testing.T, raw []byte) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, raw); err != nil {
+		t.Fatalf("compact %s: %v", raw, err)
+	}
+	return buf.String()
+}
+
+func TestRemoveAdGroupKeywords_RoundTripsEveryOtherMemberExactly(t *testing.T) {
+	rc, _ := budgetTestClient(t, http.StatusOK, richAdGroup(richTargeting))
+	base, err := rc.GetAdGroupTargeting(context.Background(), "t5_ag")
+	if err != nil {
+		t.Fatalf("GetAdGroupTargeting: %v", err)
+	}
+	if len(base.Keywords) != 2 || base.Keywords[0] != "a" || base.Keywords[1] != "b" {
+		t.Fatalf("keywords = %q (a null element is not a keyword)", base.Keywords)
+	}
+	before, err := base.OtherDimensionsFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	c, seen := budgetTestClient(t, http.StatusOK, `{"data":{"id":"t5_ag"}}`)
-	if err := c.ReplaceAdGroupKeywords(context.Background(), "t5_ag", base, []string{"b"}); err != nil {
-		t.Fatalf("ReplaceAdGroupKeywords: %v", err)
+	remaining, err := c.RemoveAdGroupKeywords(context.Background(), "t5_ag", base, []string{"a"})
+	if err != nil {
+		t.Fatalf("RemoveAdGroupKeywords: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0] != "b" {
+		t.Errorf("remaining = %q", remaining)
 	}
 	reqs := seen()
-	want := `PATCH /api/v3/ad_accounts/t2_test/ad_groups/t5_ag {"data":{"targeting":{"expand_targeting":true,"geolocations":["US"],"keywords":["b"]}}}`
-	if len(reqs) != 1 || reqs[0] != want {
-		t.Errorf("request = %v\nwant      %s", reqs, want)
+	prefix := "PATCH /api/v3/ad_accounts/t2_test/ad_groups/t5_ag "
+	if len(reqs) != 1 || !strings.HasPrefix(reqs[0], prefix) {
+		t.Fatalf("want one PATCH of the ad group, got %v", reqs)
+	}
+	var sent struct {
+		Data struct {
+			Targeting map[string]json.RawMessage `json:"targeting"`
+		} `json:"data"`
+	}
+	sentBody := strings.TrimPrefix(reqs[0], prefix)
+	if err := json.Unmarshal([]byte(sentBody), &sent); err != nil {
+		t.Fatalf("PATCH body: %v", err)
+	}
+	var read map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(richTargeting), &read); err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range read {
+		if k == "keywords" {
+			continue
+		}
+		got, ok := sent.Data.Targeting[k]
+		if !ok {
+			t.Errorf("member %s was read but not sent", k)
+			continue
+		}
+		if g, w := compactJSON(t, got), compactJSON(t, v); g != w {
+			t.Errorf("member %s sent as %s, read as %s", k, g, w)
+		}
+	}
+	if string(sent.Data.Targeting["interests"]) != "null" {
+		t.Errorf("a null member must stay null, sent %s", sent.Data.Targeting["interests"])
+	}
+	for _, absent := range []string{"communities", "excluded_keywords"} {
+		if _, ok := sent.Data.Targeting[absent]; ok {
+			t.Errorf("member %s was absent when read and must stay absent", absent)
+		}
+	}
+	if len(sent.Data.Targeting) != len(read) {
+		t.Errorf("sent %d members, read %d", len(sent.Data.Targeting), len(read))
+	}
+	// The un-removed keyword elements go back as read, the null one included.
+	if g := compactJSON(t, sent.Data.Targeting["keywords"]); g != `[null,"b"]` {
+		t.Errorf("keywords sent = %s, want [null,\"b\"]", g)
+	}
+
+	// read → write → read: re-reading what was written fingerprints every other dimension the same.
+	written, _ := json.Marshal(sent.Data.Targeting)
+	ac, _ := budgetTestClient(t, http.StatusOK, richAdGroup(string(written)))
+	after, err := ac.GetAdGroupTargeting(context.Background(), "t5_ag")
+	if err != nil {
+		t.Fatalf("re-read: %v", err)
+	}
+	if got, _ := after.OtherDimensionsFingerprint(); got != before {
+		t.Errorf("other-dimension fingerprint changed across read → write → read: %s → %s", before, got)
+	}
+	if !SameKeywords(after.Keywords, remaining) {
+		t.Errorf("re-read keywords %q, want %q", after.Keywords, remaining)
 	}
 }
 
-func TestReplaceAdGroupKeywords_Classification(t *testing.T) {
+func TestRemoveAdGroupKeywords_ComparesExactly(t *testing.T) {
+	rc, _ := budgetTestClient(t, http.StatusOK, richAdGroup(`{"keywords":["Kubernetes"," ebpf","x"]}`))
+	base, err := rc.GetAdGroupTargeting(context.Background(), "t5_ag")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := budgetTestClient(t, http.StatusOK, `{}`)
+	// Neither a case-folded nor a trimmed spelling names a keyword.
+	remaining, err := c.RemoveAdGroupKeywords(context.Background(), "t5_ag", base, []string{"kubernetes", "ebpf"})
+	if err != nil || !SameKeywords(remaining, []string{"Kubernetes", " ebpf", "x"}) {
+		t.Errorf("inexact spellings removed something: %q, %v", remaining, err)
+	}
+	remaining, err = c.RemoveAdGroupKeywords(context.Background(), "t5_ag", base, []string{" ebpf"})
+	if err != nil || !SameKeywords(remaining, []string{"Kubernetes", "x"}) {
+		t.Errorf("the exact spelling must remove it: %q, %v", remaining, err)
+	}
+}
+
+func TestRemoveAdGroupKeywords_Classification(t *testing.T) {
 	base := readTargeting(t)
-	t.Run("an empty list is refused before any request", func(t *testing.T) {
+	t.Run("removing every keyword is refused before any request", func(t *testing.T) {
 		c, seen := budgetTestClient(t, http.StatusOK, `{}`)
-		if err := c.ReplaceAdGroupKeywords(context.Background(), "t5_ag", base, nil); err == nil || len(seen()) != 0 {
+		if _, err := c.RemoveAdGroupKeywords(context.Background(), "t5_ag", base, []string{"a", "b"}); err == nil || len(seen()) != 0 {
 			t.Fatalf("want a local refusal, got %v after %d requests", err, len(seen()))
 		}
 	})
 	t.Run("a read of another ad group is refused", func(t *testing.T) {
 		c, seen := budgetTestClient(t, http.StatusOK, `{}`)
-		if err := c.ReplaceAdGroupKeywords(context.Background(), "t5_other", base, []string{"a"}); err == nil || len(seen()) != 0 {
+		if _, err := c.RemoveAdGroupKeywords(context.Background(), "t5_other", base, []string{"a"}); err == nil || len(seen()) != 0 {
 			t.Fatalf("want a local refusal, got %v", err)
 		}
 	})
@@ -123,7 +232,7 @@ func TestReplaceAdGroupKeywords_Classification(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := budgetTestClient(t, tc.status, tc.body)
-			err := c.ReplaceAdGroupKeywords(context.Background(), "t5_ag", base, []string{"b"})
+			_, err := c.RemoveAdGroupKeywords(context.Background(), "t5_ag", base, []string{"a"})
 			if tc.status == http.StatusOK && !tc.unconfirmed {
 				if err != nil {
 					t.Fatalf("want success, got %v", err)
@@ -144,10 +253,10 @@ func TestSameKeywords(t *testing.T) {
 }
 
 // A refusal answering a PATCH retried after a 429 cannot speak for the 429'd attempt.
-func TestReplaceAdGroupKeywords_RefusalAfterARetried429IsUnconfirmed(t *testing.T) {
+func TestRemoveAdGroupKeywords_RefusalAfterARetried429IsUnconfirmed(t *testing.T) {
 	base := readTargeting(t)
 	c, calls := throttledThenClient(t, http.StatusBadRequest, `{"error":{}}`)
-	err := c.ReplaceAdGroupKeywords(context.Background(), "t5_ag", base, []string{"b"})
+	_, err := c.RemoveAdGroupKeywords(context.Background(), "t5_ag", base, []string{"a"})
 	if !IsOutcomeUnconfirmed(err) {
 		t.Fatalf("want UNCONFIRMED, got %v", err)
 	}

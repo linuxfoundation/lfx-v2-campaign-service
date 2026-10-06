@@ -62,6 +62,21 @@ exact `targeting_criteria` list envelope are taken from the SDK and docs, not ob
   window; a re-read afterwards must show exactly the written keywords and an unchanged
   fingerprint of every other member, or the outcome is UNCONFIRMED (and logged at ERROR when a
   non-keyword dimension moved).
+- **X concurrency.** The guard's list is not enough on its own: two removals of DIFFERENT
+  criteria (two requests, or a request and an operator in X Ads Manager) would each pass it and
+  together empty the line item. So the targeting is re-listed immediately before EACH DELETE: an
+  item whose criterion has meanwhile gone is FAILED/`NOT_FOUND`, and one that is now the last
+  positive keyword is FAILED/`WOULD_EMPTY` — neither is sent. X offers no conditional delete, so
+  the moment between that re-list and the DELETE remains a window, as Reddit's does; a concurrent
+  removal landing exactly there can still leave the line item without keywords.
+- **Keywords are matched exactly.** A Reddit removal names the keyword as the read reported it
+  and is compared byte for byte — no trimming, no case folding — and echoed back unchanged; an
+  all-whitespace keyword is a 400. X criterion ids are never trimmed either.
+- **The Reddit write keeps what it read.** Every other targeting member, and every keyword element
+  it does not remove (a `null` element included), is sent back exactly as read: compacted, never
+  re-escaped (`json.Marshal` would rewrite `<`, `>` and `&` inside strings, so the body is encoded
+  with HTML escaping off and sent pre-encoded), numbers keeping their spelling (a 20-digit integer,
+  `1.10`), an explicit `null` staying `null`, an absent member staying absent.
 - **Reddit writes are default-off** (`REDDIT_KEYWORD_TARGETING_WRITES_ENABLED`, exact `"true"`):
   a read representation the write interprets differently would change geo, community or
   interest targeting on a live, spending ad group. The read is not gated.
@@ -78,7 +93,7 @@ exact `targeting_criteria` list envelope are taken from the SDK and docs, not ob
 ## Code
 
 - `internal/platform/reddit/keyword_targeting.go` — `GetAdGroupTargeting`,
-  `ReplaceAdGroupKeywords`, `SameKeywords`.
+  `RemoveAdGroupKeywords`, `SameKeywords`.
 - `internal/platform/twitter/keyword_targeting.go` — `ListLineItemTargetingCriteria`,
   `DeleteTargetingCriterion`.
 - `internal/dispatch/reddit_keyword_targeting.go`, `internal/dispatch/twitter_keyword_targeting.go`.

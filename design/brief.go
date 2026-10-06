@@ -917,7 +917,7 @@ var KeywordTargetingRemovalInput = Type("keyword-targeting-removal-input", func(
 	// Never sent upstream: on Reddit the keyword is only COMPARED with the targeting the service
 	// read, and what is written back is that read list minus the matches. So the bound is a
 	// sanity cap, not a platform limit.
-	Attribute("keyword", String, "Reddit: the keyword to remove, exactly as get-keyword-targeting reported it (compared exactly, case included).", func() {
+	Attribute("keyword", String, "Reddit: the keyword to remove, exactly as get-keyword-targeting reported it. Compared exactly — case and any surrounding whitespace included, nothing trimmed — and echoed back unchanged; an all-whitespace keyword is refused.", func() {
 		MinLength(1)
 		MaxLength(200)
 		Example("kubernetes")
@@ -936,14 +936,14 @@ var KeywordTargetingRemovalResult = Type("keyword-targeting-removal-result", fun
 	Attribute("keyword", String, "Reddit: the keyword this result answers, as requested", func() { Example("kubernetes") })
 	Attribute("criterion_id", String, "X: the targeting criterion this result answers, as requested", func() { Example("2kzxf") })
 	Attribute("outcome", String, "APPLIED — the keyword is no longer targeted; FAILED — definitely not removed (see error_code); UNCONFIRMED — may have been removed, read the targeting again before retrying.", keywordItemOutcomeEnum)
-	Attribute("error_code", String, "For a FAILED or UNCONFIRMED item: NOT_SENT (the request carrying it was never sent), NOT_FOUND (X holds no such live criterion any more), or REJECTED (the platform refused it). The platform's own text is never returned.", func() { Example("NOT_SENT") })
+	Attribute("error_code", String, "For a FAILED or UNCONFIRMED item: NOT_SENT (the request carrying it was never sent), NOT_FOUND (X holds no such live criterion any more), WOULD_EMPTY (X only: not sent, because a fresh read just before it showed it is now the last keyword targeted), or REJECTED (the platform refused it). The platform's own text is never returned.", func() { Example("NOT_SENT") })
 	Required("outcome")
 })
 
 // KeywordTargetingRemovals is the outcome of a remove-keyword-targeting request.
 var KeywordTargetingRemovals = Type("keyword-targeting-removals", func() {
 	Attribute("campaign_id", String, "The campaign whose targeting was changed", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
-	Attribute("results", ArrayOf(KeywordTargetingRemovalResult), "Exactly one entry per requested removal, in request order, so results[i] answers keywords[i]. Reddit: one write carries every removal, so all entries share one outcome. X: one DELETE per criterion, each with its own outcome.")
+	Attribute("results", ArrayOf(KeywordTargetingRemovalResult), "Exactly one entry per requested removal, in request order, so results[i] answers keywords[i]. Reddit: one write carries every removal, so all entries share one outcome. X: one DELETE per criterion, each with its own outcome; the targeting is re-read before each, and an item that would now remove the last keyword is not sent (WOULD_EMPTY).")
 	Attribute("applied_count", Int, "How many results are APPLIED.", func() { Example(2) })
 	Required("campaign_id", "results", "applied_count")
 })
@@ -2031,7 +2031,10 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"platform), because the write replaces the whole targeting object and has not yet been exercised " +
 			"against a live ad account. " +
 			"X: items name `criterion_id`; each is one DELETE of that targeting criterion, in request order, with its " +
-			"own outcome; `revision` must be absent. " +
+			"own outcome; `revision` must be absent. The targeting is re-read before EACH delete, and an item whose " +
+			"criterion has meanwhile gone (NOT_FOUND) or that is now the last keyword (WOULD_EMPTY) is not sent — a " +
+			"concurrent removal can no longer combine with this one to empty the line item, though X offers no " +
+			"conditional delete, so the moment between that re-read and the DELETE remains. " +
 			"Removing a keyword cannot be undone here: re-add it in the platform. " +
 			"**400** for a malformed batch (empty or over 20, an item naming the wrong field for the platform, the " +
 			"same keyword twice, a keyword not in the current targeting, a missing Reddit revision) or an " +

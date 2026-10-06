@@ -354,14 +354,19 @@ type Service interface {
 	// replaces the whole targeting object and has not yet been exercised against a
 	// live ad account. X: items name `criterion_id`; each is one DELETE of that
 	// targeting criterion, in request order, with its own outcome; `revision` must
-	// be absent. Removing a keyword cannot be undone here: re-add it in the
-	// platform. **400** for a malformed batch (empty or over 20, an item naming
-	// the wrong field for the platform, the same keyword twice, a keyword not in
-	// the current targeting, a missing Reddit revision) or an unsupported
-	// platform. **409** as for the read, plus a changed Reddit targeting and the
-	// every-keyword refusal. **503** only when no item was answered. Its MESSAGE
-	// separates a DEFINITE failure (nothing was removed — retry) from an
-	// UNCONFIRMED one (read the targeting again before retrying).
+	// be absent. The targeting is re-read before EACH delete, and an item whose
+	// criterion has meanwhile gone (NOT_FOUND) or that is now the last keyword
+	// (WOULD_EMPTY) is not sent — a concurrent removal can no longer combine with
+	// this one to empty the line item, though X offers no conditional delete, so
+	// the moment between that re-read and the DELETE remains. Removing a keyword
+	// cannot be undone here: re-add it in the platform. **400** for a malformed
+	// batch (empty or over 20, an item naming the wrong field for the platform,
+	// the same keyword twice, a keyword not in the current targeting, a missing
+	// Reddit revision) or an unsupported platform. **409** as for the read, plus a
+	// changed Reddit targeting and the every-keyword refusal. **503** only when no
+	// item was answered. Its MESSAGE separates a DEFINITE failure (nothing was
+	// removed — retry) from an UNCONFIRMED one (read the targeting again before
+	// retrying).
 	RemoveKeywordTargeting(context.Context, *RemoveKeywordTargetingPayload) (res *KeywordTargetingRemovals, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the
@@ -1271,8 +1276,9 @@ type KeywordTargetingEntry struct {
 }
 
 type KeywordTargetingRemovalInput struct {
-	// Reddit: the keyword to remove, exactly as get-keyword-targeting reported it
-	// (compared exactly, case included).
+	// Reddit: the keyword to remove, exactly as get-keyword-targeting reported it.
+	// Compared exactly — case and any surrounding whitespace included, nothing
+	// trimmed — and echoed back unchanged; an all-whitespace keyword is refused.
 	Keyword *string
 	// X: the targeting criterion id to delete, as get-keyword-targeting reported
 	// it.
@@ -1289,9 +1295,10 @@ type KeywordTargetingRemovalResult struct {
 	// again before retrying.
 	Outcome string
 	// For a FAILED or UNCONFIRMED item: NOT_SENT (the request carrying it was
-	// never sent), NOT_FOUND (X holds no such live criterion any more), or
-	// REJECTED (the platform refused it). The platform's own text is never
-	// returned.
+	// never sent), NOT_FOUND (X holds no such live criterion any more),
+	// WOULD_EMPTY (X only: not sent, because a fresh read just before it showed it
+	// is now the last keyword targeted), or REJECTED (the platform refused it).
+	// The platform's own text is never returned.
 	ErrorCode *string
 }
 
@@ -1302,7 +1309,9 @@ type KeywordTargetingRemovals struct {
 	CampaignID string
 	// Exactly one entry per requested removal, in request order, so results[i]
 	// answers keywords[i]. Reddit: one write carries every removal, so all entries
-	// share one outcome. X: one DELETE per criterion, each with its own outcome.
+	// share one outcome. X: one DELETE per criterion, each with its own outcome;
+	// the targeting is re-read before each, and an item that would now remove the
+	// last keyword is not sent (WOULD_EMPTY).
 	Results []*KeywordTargetingRemovalResult
 	// How many results are APPLIED.
 	AppliedCount int

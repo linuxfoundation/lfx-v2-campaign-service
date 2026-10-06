@@ -823,7 +823,9 @@ type RemoveKeywordTargetingResponseBody struct {
 	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
 	// Exactly one entry per requested removal, in request order, so results[i]
 	// answers keywords[i]. Reddit: one write carries every removal, so all entries
-	// share one outcome. X: one DELETE per criterion, each with its own outcome.
+	// share one outcome. X: one DELETE per criterion, each with its own outcome;
+	// the targeting is re-read before each, and an item that would now remove the
+	// last keyword is not sent (WOULD_EMPTY).
 	Results []*KeywordTargetingRemovalResultResponseBody `form:"results" json:"results" xml:"results"`
 	// How many results are APPLIED.
 	AppliedCount int `form:"applied_count" json:"applied_count" xml:"applied_count"`
@@ -3787,9 +3789,10 @@ type KeywordTargetingRemovalResultResponseBody struct {
 	// again before retrying.
 	Outcome string `form:"outcome" json:"outcome" xml:"outcome"`
 	// For a FAILED or UNCONFIRMED item: NOT_SENT (the request carrying it was
-	// never sent), NOT_FOUND (X holds no such live criterion any more), or
-	// REJECTED (the platform refused it). The platform's own text is never
-	// returned.
+	// never sent), NOT_FOUND (X holds no such live criterion any more),
+	// WOULD_EMPTY (X only: not sent, because a fresh read just before it showed it
+	// is now the last keyword targeted), or REJECTED (the platform refused it).
+	// The platform's own text is never returned.
 	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
 }
 
@@ -3917,8 +3920,9 @@ type NegativeKeywordInputRequestBody struct {
 // KeywordTargetingRemovalInputRequestBody is used to define fields on request
 // body types.
 type KeywordTargetingRemovalInputRequestBody struct {
-	// Reddit: the keyword to remove, exactly as get-keyword-targeting reported it
-	// (compared exactly, case included).
+	// Reddit: the keyword to remove, exactly as get-keyword-targeting reported it.
+	// Compared exactly — case and any surrounding whitespace included, nothing
+	// trimmed — and echoed back unchanged; an all-whitespace keyword is refused.
 	Keyword *string `form:"keyword,omitempty" json:"keyword,omitempty" xml:"keyword,omitempty"`
 	// X: the targeting criterion id to delete, as get-keyword-targeting reported
 	// it.

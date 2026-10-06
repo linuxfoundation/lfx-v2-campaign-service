@@ -3591,7 +3591,7 @@ refuses a removal that would leave no keyword (`ErrKeywordTargetingWouldEmpty`),
 `unconfirmedKeywordLeverError` for ambiguous outcomes. Reddit's removal is gated by
 `REDDIT_KEYWORD_TARGETING_WRITES_ENABLED`, compares the caller's `revision` with a fresh read
 (`ErrKeywordTargetingChanged`), writes the whole targeting back, and re-reads to confirm. X's
-deletes one criterion at a time with per-item outcomes. See
+deletes one criterion at a time with per-item outcomes, re-listing the targeting before each DELETE so a concurrent removal cannot combine with it to empty the line item (`WOULD_EMPTY`). See
 [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
 
 ## Also here: the audience EXPLORER (LFXV2-2770)
