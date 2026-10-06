@@ -16,6 +16,7 @@ import (
 
 	goahttp "goa.design/goa/v3/http"
 
+	briefsclient "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/client"
 	briefsserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -239,11 +240,11 @@ func TestUpdateCampaignBid_RefusedStatesBeforeTheClaim(t *testing.T) {
 	}
 }
 
-// Google Ads, LinkedIn, Meta and X have no BidWriter today. A registered dispatcher without the
+// Google Ads and LinkedIn have no BidWriter today. A registered dispatcher without the
 // capability is what exercises the type assertion; each platform's real dispatcher is held to it
 // by the dispatch package's compile-time checks.
 func TestUpdateCampaignBid_UnsupportedPlatformIsBadRequest(t *testing.T) {
-	for _, p := range []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds, model.ProviderMetaAds, model.ProviderTwitterAds} {
+	for _, p := range []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds} {
 		t.Run(string(p), func(t *testing.T) {
 			camp := bidCampaign()
 			camp.Platform = p
@@ -342,20 +343,38 @@ func TestUpdateCampaignBid_RejectedAmountCarriesTheAdapterReasonOnly(t *testing.
 	}
 }
 
-// The 409 for an automated strategy names the remedy and no upstream ids.
-func TestUpdateCampaignBid_UnwritableMessageNamesTheRemedyOnly(t *testing.T) {
-	d := &bidWriterDispatcher{err: fmt.Errorf("campaign 555 uses the automated MaxConversions strategy: %w", ErrBidUnwritable)}
-	s, _ := budgetService(t, bidCampaign(), d)
-	_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
-	var conflict *briefs.ConflictError
-	if !errors.As(err, &conflict) {
-		t.Fatalf("expected 409, got %T: %v", err, err)
-	}
-	if !strings.Contains(conflict.Message, "never changes the bid strategy") {
-		t.Errorf("the 409 must say the strategy is never switched, got %q", conflict.Message)
-	}
-	if strings.Contains(conflict.Message, "555") || strings.Contains(conflict.Message, "MaxConversions") {
-		t.Errorf("the 409 must not carry upstream detail, got %q", conflict.Message)
+// ErrBidUnwritable covers two different kinds of refusal — a bidding setup that is not a manual
+// per-click bid, and an ad group / ad set / line item that could not be confirmed — so its 409
+// must be NEUTRAL across both (no "change the strategy" remedy that would mislead the second)
+// and carry no upstream detail.
+func TestUpdateCampaignBid_UnwritableMessageIsNeutralAndCarriesNoUpstreamDetail(t *testing.T) {
+	for _, cause := range []string{
+		"campaign 555 uses the automated MaxConversions strategy",
+		"ad set 777 bills on IMPRESSIONS",
+		"X holds no live line item li9 for campaign 555",
+	} {
+		t.Run(cause, func(t *testing.T) {
+			d := &bidWriterDispatcher{err: fmt.Errorf("%s: %w", cause, ErrBidUnwritable)}
+			s, _ := budgetService(t, bidCampaign(), d)
+			_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("expected 409, got %T: %v", err, err)
+			}
+			for _, want := range []string{"not a manual per-click bid", "could not be confirmed", "never changes a bid strategy", "check the campaign in the ad platform"} {
+				if !strings.Contains(conflict.Message, want) {
+					t.Errorf("the 409 must say %q, got %q", want, conflict.Message)
+				}
+			}
+			if strings.Contains(conflict.Message, "change the strategy") {
+				t.Errorf("the 409 must not prescribe a strategy change for every cause, got %q", conflict.Message)
+			}
+			for _, leak := range []string{"555", "777", "li9", "MaxConversions", "IMPRESSIONS"} {
+				if strings.Contains(conflict.Message, leak) {
+					t.Errorf("the 409 must not carry upstream detail %q, got %q", leak, conflict.Message)
+				}
+			}
+		})
 	}
 }
 
@@ -421,5 +440,21 @@ func TestUpdateCampaignBidDecoder_AcceptsAnOmittedBidType(t *testing.T) {
 	}
 	if _, err := decode(route(t, `{"bid":2.5,"bid_type":"cpm"}`)); err == nil {
 		t.Error("an unknown bid_type must still be refused by the decoder's Enum")
+	}
+}
+
+// TestBuildUpdateCampaignBidPayload_AcceptsAnOmittedBidType pins the CLIENT half of the PR #264
+// fix. The server decoder above already accepted a body without bid_type; what failed was the
+// generated CLI builder, which — with a Goa Default plus Enum — validated the empty value before
+// applying the default. A body naming only the bid must build, leaving BidType nil for the
+// service to default to cpc.
+func TestBuildUpdateCampaignBidPayload_AcceptsAnOmittedBidType(t *testing.T) {
+	p, err := briefsclient.BuildUpdateCampaignBidPayload(`{"bid":2.5}`, "cncf",
+		"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "token", `"3"`)
+	if err != nil {
+		t.Fatalf("a body without bid_type must build: %v", err)
+	}
+	if p.Bid != 2.5 || p.BidType != nil {
+		t.Errorf("built bid=%v bid_type=%v, want 2.5 and nil", p.Bid, p.BidType)
 	}
 }

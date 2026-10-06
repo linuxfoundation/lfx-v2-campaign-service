@@ -1702,34 +1702,46 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"ONE MANUAL CPC BID, AT THE LEVEL THIS SERVICE'S CREATE PATH PUTS IT — never a bid strategy. " +
 			"Microsoft Advertising: the default CpcBid of the ONE ad group this service created for the " +
 			"campaign (keywords are created without their own bids, so they inherit it). Reddit: the " +
-			"bid_value of the ONE ad group this service created. A campaign whose row records no ad group " +
-			"(an adopted campaign, or one whose creation never reached the ad group) is refused (409): the " +
-			"service will not choose which of several ad groups to re-bid. " +
-			"REFUSED (409) WHEN THE BID WOULD BE IGNORED. A manual bid only does something under a bid " +
-			"strategy that reads it — Microsoft's EnhancedCpc or ManualCpc; Reddit's MANUAL_BIDDING. Under " +
-			"an automated strategy (Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas, " +
-			"MaxConversionValue, TargetImpressionShare, a portfolio strategy the read cannot name; Reddit " +
-			"BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX) the platform would ignore it or, worse, the write would " +
-			"be read as a request to switch strategy — and this endpoint NEVER switches strategy. An " +
-			"unreported strategy is refused the same way rather than assumed manual. On Reddit the CAMPAIGN's " +
-			"strategy is checked first and then the ad group's: with Campaign Budget Optimization on (as on " +
-			"every campaign this service creates) the ad group's strategy must match the campaign's, so both " +
-			"must be MANUAL_BIDDING. NOTE: every Reddit campaign this service creates is BIDLESS on both the " +
-			"campaign and its ad group, so the Reddit leg applies only after an operator has switched BOTH the " +
-			"campaign's bid strategy and the ad group to MANUAL_BIDDING in Reddit Ads Manager. " +
+			"bid_value of the ONE ad group this service created. Meta: the bid_amount (a bid cap, in the " +
+			"account currency's minor units) of the ONE ad set this service created. X: the " +
+			"bid_amount_local_micro of the ONE line item this service created. A campaign whose row " +
+			"records none (an adopted campaign, or one whose creation never reached it) is refused (409): " +
+			"the service will not choose which of several to re-bid. " +
+			"REFUSED (409) WHEN THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only does " +
+			"something under a bid strategy that reads it — Microsoft's EnhancedCpc or ManualCpc; Reddit's " +
+			"MANUAL_BIDDING with bid_type CPC; Meta's LOWEST_COST_WITH_BID_CAP with billing_event AND " +
+			"optimization_goal both LINK_CLICKS (a Meta bid cap is per optimization event and, billed on " +
+			"impressions, per 1,000 impressions — so only that pairing is a max cost per click); X's MAX " +
+			"with pay_by LINK_CLICK. Under an automated or target strategy (Microsoft MaxClicks, " +
+			"MaxConversions, TargetCpa, TargetRoas, MaxConversionValue, TargetImpressionShare, a portfolio " +
+			"strategy the read cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta " +
+			"LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO, TARGET) the platform " +
+			"would ignore it or, worse, the write would be read as a request to switch strategy — and this " +
+			"endpoint NEVER switches strategy, billing or charge unit. An unreported strategy is refused " +
+			"the same way rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked first " +
+			"and then the ad group's: with Campaign Budget Optimization on (as on every campaign this " +
+			"service creates) the ad group's strategy must match the campaign's, so both must be " +
+			"MANUAL_BIDDING. NOTE: every Reddit campaign this service creates is BIDLESS on both the " +
+			"campaign and its ad group, every Meta campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, " +
+			"and every X campaign AUTO, so those three legs apply only after an operator has moved the " +
+			"Reddit campaign and ad group, the Meta ad set or the X line item to a manual per-click bid in " +
+			"the platform's own UI. " +
 			"The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor " +
 			"converts it. " +
-			"Microsoft Advertising and Reddit today: a campaign on any other platform is refused with 400. " +
+			"Microsoft Advertising, Reddit, Meta and X today: a campaign on any other platform is refused " +
+			"with 400. " +
 			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: the " +
 			"campaign is unprovisioned; it belongs to a different ad account than the project's connection " +
 			"now resolves to, or does not record which ad account it was created under; its bid strategy is " +
-			"automated or unreported; or the bid could not be addressed (no recorded ad group, an ad group " +
-			"reporting another campaign, or one bidding in a unit other than `bid_type`). None is retryable. " +
+			"automated, a target, or unreported; or the bid could not be addressed (no recorded ad group, ad " +
+			"set or line item, one reporting another campaign or deleted, or one bidding in a unit other " +
+			"than `bid_type`). None is retryable. " +
 			"**400** for a request fault: a non-positive, non-finite or out-of-range bid, an unknown bid type, " +
 			"a platform with no bid-write capability wired, or a bid the campaign's platform refuses on its " +
 			"own minimum or maximum — the response names what it was. " +
-			"**503** when the platform could not be reached or did not confirm; the row is unchanged. Setting " +
-			"the same bid twice converges, but verify the bid in the ad platform before retrying.")
+			"**503** when the platform could not be reached or did not confirm — including a throttled Meta " +
+			"or X write, which is never retried in-call; the row is unchanged. Setting the same bid twice " +
+			"converges, but verify the bid in the ad platform before retrying.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -1738,9 +1750,9 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			ifMatchAttr()
 			// Minimum is ONE MICRO for the reason update-campaign-budget's is: Goa's Minimum
 			// is inclusive, zero is not a bid, and a micro is the finest unit any supported
-			// platform bills in (Reddit sets bid_value in micro-units). Each platform's own,
-			// stricter floor — Microsoft's 0.01 in the account currency, for one — is applied
-			// by its adapter and answered 400 with the reason. The maximum is the CONTRACT's
+			// platform bills in (Reddit and X set bids in micro-units). Each platform's own,
+			// stricter floor — Microsoft's 0.01 in the account currency, Meta's one minor unit
+			// — is applied by its adapter and answered 400 with the reason. The maximum is the CONTRACT's
 			// ceiling, deliberately loose enough for high-unit currencies (JPY, KRW, IDR);
 			// each adapter applies the platform's own, lower one.
 			Attribute("bid", Float64, "New maximum cost-per-click bid, in the AD ACCOUNT's own currency (NOT USD). Must be strictly positive.", func() {
@@ -1750,14 +1762,15 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			})
 			// Optional, unlike budget_type: there is only one value today, and it exists so the
 			// contract names the unit the amount is in. An ad group bidding in another unit (a
-			// Reddit CPM ad group) is refused 409 rather than re-bid in a unit the caller never
-			// named — the same "never translate" rule budget_type follows.
+			// Reddit CPM ad group, a Meta cap billed on impressions, an X line item charged per
+			// impression) is refused 409 rather than re-bid in a unit the caller never named — the
+			// same "never translate" rule budget_type follows.
 			//
 			// NO Goa Default: with Default plus Enum, the generated CLI validates the empty value
 			// before applying the default, so a body without bid_type fails there. Without a
 			// Default the field is an optional pointer, validated only when present, and the
 			// service applies the cpc default (nil or empty → cpc).
-			Attribute("bid_type", String, "The unit the bid is expressed in; defaults to cpc when omitted. Only a max cost-per-click bid is supported; it MUST match how the ad group bids upstream.", func() {
+			Attribute("bid_type", String, "The unit the bid is expressed in; defaults to cpc when omitted. Only a max cost-per-click bid is supported; it MUST match how the campaign's ad group, ad set or line item bids upstream.", func() {
 				Enum("cpc")
 				Example("cpc")
 			})

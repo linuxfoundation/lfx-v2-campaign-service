@@ -270,7 +270,7 @@ Actions to adjust running campaigns.
 - **Keyword Management** (Google Ads) — bulk pause underperforming keywords, bulk remove irrelevant keywords
 - **Campaign Status Toggle** (Reddit, Meta, LinkedIn, X/Twitter, Google Ads, Microsoft Ads) — ACTIVE ↔ PAUSED
 - **Campaign Budget** (Google Ads, LinkedIn, Meta, Microsoft Ads, Reddit, X/Twitter) — change the amount, never the pacing model
-- **Max CPC Bid** (Microsoft Ads, Reddit) — set the manual bid on the ad group this service created; refused (409) under an automated bid strategy, never a strategy switch
+- **Max CPC Bid** (Microsoft Ads, Reddit, Meta, X) — set the manual per-click bid on the ad group, ad set or line item this service created; refused (409) under an automated, target or non-per-click bid strategy, never a strategy switch
 
 **Tentative:**
 - **Budget & Bidding** — adjust daily/lifetime budget, change bid strategy, update keyword bids

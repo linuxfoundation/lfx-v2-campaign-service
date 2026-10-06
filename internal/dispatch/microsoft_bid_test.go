@@ -26,18 +26,18 @@ import (
 var (
 	_ service.BidWriter = (*MicrosoftDispatcher)(nil)
 	_ service.BidWriter = (*RedditDispatcher)(nil)
+	_ service.BidWriter = (*MetaDispatcher)(nil)
+	_ service.BidWriter = (*TwitterDispatcher)(nil)
 )
 
-// TestBidWriter_OnlyMicrosoftAndRedditImplementIt pins the other half: Google Ads, LinkedIn, Meta,
-// X and HubSpot are NOT BidWriters today, so the orchestrator answers ErrBidUnsupported (400) for
+// TestBidWriter_OnlyMicrosoftRedditMetaAndXImplementIt pins the other half: Google Ads, LinkedIn
+// and HubSpot are NOT BidWriters today, so the orchestrator answers ErrBidUnsupported (400) for
 // them. A platform gaining the capability is a deliberate decision about its bid model, and this
 // test is where that decision is made visible.
-func TestBidWriter_OnlyMicrosoftAndRedditImplementIt(t *testing.T) {
+func TestBidWriter_OnlyMicrosoftRedditMetaAndXImplementIt(t *testing.T) {
 	for name, d := range map[string]any{
 		"google-ads":   (*GoogleAdsDispatcher)(nil),
 		"linkedin-ads": (*LinkedInDispatcher)(nil),
-		"meta-ads":     (*MetaDispatcher)(nil),
-		"twitter-ads":  (*TwitterDispatcher)(nil),
 		"hubspot":      (*HubSpotDispatcher)(nil),
 	} {
 		if _, ok := d.(service.BidWriter); ok {

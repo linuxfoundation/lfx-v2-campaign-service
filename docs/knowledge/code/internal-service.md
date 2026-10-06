@@ -1630,9 +1630,12 @@ What differs:
   lever's twin of `budget_amount`: a REQUEST the platform confirmed, never an observation. NULL
   means "never set through this endpoint", not "no bid" — a create-time bid lives in
   `config_snapshot` under each platform's own key, which this layer deliberately does not patch.
-- **Sentinels**: `ErrBidUnsupported` → 400 (no `BidWriter`; Google Ads, LinkedIn, Meta and X
-  today), `ErrBidUnwritable` → 409 (automated or unreported bid strategy, or an unaddressable ad
-  group — the message says the strategy is never changed and carries no upstream detail),
+- **Sentinels**: `ErrBidUnsupported` → 400 (no `BidWriter`; Google Ads and LinkedIn today),
+  `ErrBidUnwritable` → 409 (automated, unreported or non-per-click bid strategy, or an
+  unaddressable ad group, ad set or line item — the message is NEUTRAL across both kinds ("its
+  bidding setup is not a manual per-click bid, or the ad group, ad set or line item this service
+  created for it could not be confirmed ... check the campaign in the ad platform"), says a bid
+  strategy is never changed, and carries no upstream detail),
   `ErrBidAmountRejected` → 400 carrying ONLY the adapter's `BidAmountReason()` sentence. Every
   connection/provenance/system arm and the UNCONFIRMED → 503 "verify the bid in the platform
   before retrying" (lock held for `unconfirmedLockCooldown`) are the budget's, verbatim in shape.
@@ -1641,8 +1644,9 @@ What differs:
 - **`BidWriter`** (orchestrator.go) carries the budget's three rules plus its own: never write a
   bid the platform will ignore, and never switch strategy — read the governing strategy first and
   refuse an automated or unreported one with `ErrBidUnwritable`; never send a strategy field.
-  The bid goes to the level the create path put it (the one ad group this service created); a
-  row recording no ad group is refused rather than resolved upstream.
+  The bid goes to the level the create path put it (the one ad group — Microsoft, Reddit — ad set
+  — Meta — or line item — X — this service created); a row recording none is refused rather than
+  resolved upstream.
 
 ## Campaign delete
 

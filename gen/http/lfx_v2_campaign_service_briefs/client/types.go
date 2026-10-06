@@ -96,8 +96,8 @@ type UpdateCampaignBidRequestBody struct {
 	// Must be strictly positive.
 	Bid float64 `form:"bid" json:"bid" xml:"bid"`
 	// The unit the bid is expressed in; defaults to cpc when omitted. Only a max
-	// cost-per-click bid is supported; it MUST match how the ad group bids
-	// upstream.
+	// cost-per-click bid is supported; it MUST match how the campaign's ad group,
+	// ad set or line item bids upstream.
 	BidType *string `form:"bid_type,omitempty" json:"bid_type,omitempty" xml:"bid_type,omitempty"`
 }
 
