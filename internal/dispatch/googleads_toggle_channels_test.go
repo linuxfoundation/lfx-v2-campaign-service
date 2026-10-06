@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -243,6 +244,83 @@ func TestToggleStatus_LegacyRowKeepsTheSearchGate(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "keyword targeting") {
 		t.Errorf("want the Search keyword refusal, got: %v", err)
+	}
+}
+
+// pmaxCampaignWithLinks is pmaxCampaign plus the recorded asset-link count, so the three
+// states of that field can be told apart: absent (a row predating it), a recorded zero, and
+// a recorded positive count.
+func pmaxCampaignWithLinks(assetGroupID string, links int) *model.Campaign {
+	camp := pmaxCampaign(assetGroupID)
+	camp.Result = []byte(`{"assetGroupId":"` + assetGroupID + `","assetGroupAssetLinks":` +
+		strconv.Itoa(links) + `,"googleAdsUrl":"https://ads.google.com/"}`)
+	return camp
+}
+
+// TestToggleStatus_EmptyAssetGroupIsRefused is the gate's real question: an asset group ID is
+// not a serving campaign. The group is created BEFORE its asset links, so a failed or
+// unconfirmed assetGroupAssets:mutate leaves the id recorded with nothing attached — and the
+// id is deliberately kept on the result, because an empty asset group looks finished in the
+// Google Ads UI and is the state that most needs finding. A gate reading only the id reads
+// that kept id as "provisioned", un-pauses a campaign that cannot serve, and reports success.
+func TestToggleStatus_EmptyAssetGroupIsRefused(t *testing.T) {
+	d, rec := toggleDispatcher(t)
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, pmaxCampaignWithLinks("4242", 0), model.CampaignRunActive)
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+		t.Fatalf("an asset group with no assets linked must be refused, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "no assets linked") {
+		t.Errorf("the refusal must name the empty asset group rather than read as a missing one, got: %v", err)
+	}
+	// The id is still named, because the operator's next move is to open that exact group in
+	// the Google Ads UI.
+	if !strings.Contains(err.Error(), "4242") {
+		t.Errorf("the refusal must name the asset group the operator has to go and look at, got: %v", err)
+	}
+	if paths, _ := rec.seen(); len(paths) != 0 {
+		t.Errorf("the refusal is a local state check and must contact nothing, got %v", paths)
+	}
+}
+
+// TestToggleStatus_LinkedAssetGroupActivates is the over-refusal guard, and it is the half
+// that matters most: a gate that refuses the campaigns it was meant to protect is a worse
+// bug than the one it fixes. A recorded POSITIVE count is a fully provisioned Performance Max
+// campaign and must still activate.
+func TestToggleStatus_LinkedAssetGroupActivates(t *testing.T) {
+	d, rec := toggleDispatcher(t)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, pmaxCampaignWithLinks("4242", 7), model.CampaignRunActive); err != nil {
+		t.Fatalf("an asset group with assets linked must activate: %v", err)
+	}
+	if paths, _ := rec.seen(); len(paths) == 0 {
+		t.Fatal("the activate must reach Google")
+	}
+}
+
+// TestToggleStatus_AssetGroupWithoutARecordedCountActivates pins the backward-compatibility
+// half, which is why the field is a POINTER. Every Performance Max campaign created before
+// the count was recorded has no such key, and reading that absence as zero would refuse
+// activation on campaigns that are provisioned correctly — an over-refusal introduced by a
+// fix, which is the one outcome this change may not have.
+func TestToggleStatus_AssetGroupWithoutARecordedCountActivates(t *testing.T) {
+	d, rec := toggleDispatcher(t)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, pmaxCampaign("4242"), model.CampaignRunActive); err != nil {
+		t.Fatalf("a row predating the link count must keep activating: %v", err)
+	}
+	if paths, _ := rec.seen(); len(paths) == 0 {
+		t.Fatal("the activate must reach Google")
+	}
+}
+
+// TestToggleStatus_EmptyAssetGroupStillPauses is the direction check. The gate is an
+// ACTIVATION gate: a half-built campaign must still be pausable, because refusing to pause is
+// refusing to stop spend.
+func TestToggleStatus_EmptyAssetGroupStillPauses(t *testing.T) {
+	d, rec := toggleDispatcher(t)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, pmaxCampaignWithLinks("4242", 0), model.CampaignRunPaused); err != nil {
+		t.Fatalf("a half-built campaign must still be pausable: %v", err)
+	}
+	if paths, _ := rec.seen(); len(paths) == 0 {
+		t.Fatal("the pause must reach Google")
 	}
 }
 

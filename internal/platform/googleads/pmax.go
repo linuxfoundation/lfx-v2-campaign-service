@@ -214,6 +214,13 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		assetIDs, groupID, links, agErr := c.createPerformanceMaxAssetGroup(ctx, campaignResource, campaignID, pf.finalURL, pf.pmax, images)
 		res.CreativeAssetIDs = assetIDs
 		res.AssetGroupID = groupID
+		// Recorded on BOTH paths, and recorded even when it is zero. The group id is kept on
+		// a failure so an operator can find an empty asset group; the count is what stops the
+		// activation gate from reading that same kept id as "ready to serve". On the error
+		// path createPerformanceMaxAssetGroup returns 0 both when the link mutate definitely
+		// failed and when its outcome is unconfirmed — see the field's doc for why zero is
+		// the right record for the ambiguous case too.
+		res.AssetGroupAssetLinks = &links
 		if agErr != nil {
 			return res, agErr
 		}

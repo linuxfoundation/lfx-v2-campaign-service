@@ -117,6 +117,15 @@ func TestCreatePerformanceMaxCampaign_HappyPath(t *testing.T) {
 	if len(res.CreativeAssetIDs) != pmaxAssetCount {
 		t.Errorf("CreativeAssetIDs = %d, want %d", len(res.CreativeAssetIDs), pmaxAssetCount)
 	}
+	// The count the activation gate reads, on the path where everything worked. It is
+	// what Google CONFIRMED, not what was sent, so it is asserted against the number of
+	// link results the server returned.
+	if res.AssetGroupAssetLinks == nil {
+		t.Fatal("AssetGroupAssetLinks is nil after a successful link mutate; the activation gate needs a recorded count")
+	}
+	if *res.AssetGroupAssetLinks != pmaxAssetCount {
+		t.Errorf("AssetGroupAssetLinks = %d, want %d — one per confirmed link", *res.AssetGroupAssetLinks, pmaxAssetCount)
+	}
 	// Performance Max has no ad group and no ad, so neither id may be invented.
 	if res.AdGroupID != "" || res.AdID != "" {
 		t.Errorf("AdGroupID = %q, AdID = %q — Performance Max has neither", res.AdGroupID, res.AdID)
@@ -253,6 +262,51 @@ func TestCreatePerformanceMaxCampaign_LinkFailureStillReportsWhatExists(t *testi
 	}
 	if res.CampaignID == "" {
 		t.Error("CampaignID must be carried on the partial result")
+	}
+	// And the count that tells the ACTIVATION GATE those two facts apart. The group id above
+	// is kept deliberately, so the gate cannot read it as "ready to serve" — a RECORDED zero
+	// is what distinguishes "the group exists and is empty" from "no group was created".
+	// Nil here would be read as a row predating the field and the campaign would activate
+	// with nothing attached.
+	if res.AssetGroupAssetLinks == nil {
+		t.Fatal("AssetGroupAssetLinks is nil on a failed link mutate; nil means 'not recorded' and the activation gate would let this campaign activate empty")
+	}
+	if *res.AssetGroupAssetLinks != 0 {
+		t.Errorf("AssetGroupAssetLinks = %d, want 0 — no link was confirmed", *res.AssetGroupAssetLinks)
+	}
+}
+
+// TestCreatePerformanceMaxCampaign_ShortLinkResponseRecordsZero covers the AMBIGUOUS
+// half of the link outcome: a 2xx that describes fewer links than were sent. Some links
+// may well exist, but this client cannot say which, and "cannot say" must record zero
+// rather than nothing — recording nothing would be indistinguishable from a row written
+// before the field existed, and the activation gate would let the campaign serve on the
+// strength of a group whose contents nobody has confirmed.
+func TestCreatePerformanceMaxCampaign_ShortLinkResponseRecordsZero(t *testing.T) {
+	assetH, _ := okPMaxAssets()
+	groupH, _ := okPMaxGroup()
+	shortLinkH := func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]string{{"resourceName": "customers/1234567890/assetGroupAssets/555~900~HEADLINE"}},
+		})
+	}
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH, shortLinkH))
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("a short link mutate response must be reported, not treated as success")
+	}
+	if res == nil {
+		t.Fatal("past the campaign create the error must come ALONGSIDE a result, never (nil, err)")
+	}
+	if res.AssetGroupAssetLinks == nil {
+		t.Fatal("AssetGroupAssetLinks is nil on an unconfirmed link mutate; the ambiguous case must record zero, not nothing")
+	}
+	if *res.AssetGroupAssetLinks != 0 {
+		t.Errorf("AssetGroupAssetLinks = %d, want 0 — nothing was confirmed", *res.AssetGroupAssetLinks)
 	}
 }
 

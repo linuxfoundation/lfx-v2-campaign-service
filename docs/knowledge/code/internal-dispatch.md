@@ -3086,6 +3086,23 @@ unaffected: the gate runs only on ACTIVATE, and pausing the campaign resource al
 stops delivery. An adapter that returns an empty
 variant is refused by the service layer too, so a contract violation cannot fall back to `default`.
 
+**A Performance Max asset group id is not a serving campaign, and the gate stopped treating it as
+one.** `createPerformanceMaxAssetGroup` returns the group id even when the LINK mutate fails,
+deliberately — a group that exists with no assets attached is the state an operator most needs to
+find, and clearing the id would hide it. But the activation gate used to key on that id alone, so
+exactly the campaign that cannot serve was the one it called provisioned: it un-paused a campaign
+whose asset group was empty and reported success. The gate now reads a second recorded fact,
+`CampaignResult.AssetGroupAssetLinks`, the number of `assetGroupAssets` links Google CONFIRMED,
+which `googleAdsToggleAssetGroup` decodes from the same `Result` blob as the id. Zero links refuses
+with `domain.ErrCampaignNotProvisioned` and sends the operator to the Google Ads UI. The field is a
+`*int` and the distinction is the whole point: **nil is not zero.** Every Performance Max row
+written before the field existed has no such key, and reading absence as zero would refuse
+activation on campaigns that are provisioned correctly — an over-refusal, the one failure mode
+these gates must never have. Nil therefore activates, a recorded zero refuses. An UNCONFIRMED link
+mutate records zero rather than nothing, also deliberately: links may exist, this client cannot say
+they do, and the safe reading of "cannot say" is the UI rather than a claimed launch. PAUSE is
+untouched by all of it — refusing to pause is refusing to stop spend.
+
 The Google dispatcher resolves the CHANNEL before it composes the campaign name, before adoption
 looks anything up, and before any create. Each of those depends on which campaign type is being
 dispatched, and doing it last meant all three ran assuming Search: `adoptExisting` on a Demand Gen

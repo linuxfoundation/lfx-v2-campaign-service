@@ -473,9 +473,27 @@ type CampaignResult struct {
 	// returned error means the group exists but some or all of its asset LINKS do not
 	// — the state that most needs finding, because an empty asset group looks
 	// finished in the Google Ads UI.
-	AssetGroupID string   `json:"assetGroupId,omitempty"`
-	GoogleAdsURL string   `json:"googleAdsUrl"`
-	Steps        []string `json:"steps"`
+	AssetGroupID string `json:"assetGroupId,omitempty"`
+	// AssetGroupAssetLinks is how many assetGroupAssets links Google CONFIRMED, and it
+	// exists because AssetGroupID alone cannot answer "can this campaign serve?".
+	//
+	// The group is created before its links, so the field above is set — and the id
+	// deliberately kept on the result, because an empty asset group is the state that most
+	// needs finding — even when the link mutate then fails and NOTHING is attached. An
+	// activation gate reading only AssetGroupID therefore says "provisioned" about a group
+	// with zero assets, un-pauses a campaign that cannot serve, and reports success.
+	//
+	// A POINTER, not a bare int, and the distinction is the whole value of the field. Nil
+	// means "this row predates the field" — every Performance Max campaign created before
+	// it has no such key, and reading absence as zero would refuse activation on campaigns
+	// that are provisioned correctly. Non-nil zero means "this client asked and Google
+	// confirmed none", which is the refusal. An ambiguous link mutate records zero rather
+	// than nothing, deliberately: links may exist, this client cannot say they do, and the
+	// safe reading of "cannot say" is to send the operator to the Google Ads UI rather than
+	// to claim a launch.
+	AssetGroupAssetLinks *int     `json:"assetGroupAssetLinks,omitempty"`
+	GoogleAdsURL         string   `json:"googleAdsUrl"`
+	Steps                []string `json:"steps"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.

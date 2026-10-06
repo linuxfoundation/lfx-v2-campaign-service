@@ -2086,11 +2086,11 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 	// at create and Performance Max has neither ad groups nor keywords. Both inputs come from
 	// the persisted Result blob — keywordsProvisioned from KeywordCriteriaIDs (empty means
 	// keyword targeting was never attempted, or failed before any criterion resource name
-	// could be parsed), assetGroupID from the Performance Max creative.
+	// could be parsed), assetGroupID and its link count from the Performance Max creative.
 	targets, keywordsProvisioned, incompleteGroups := googleAdsToggleTargets(campaign)
-	assetGroupID := googleAdsToggleAssetGroup(campaign)
+	assetGroupID, assetGroupLinks := googleAdsToggleAssetGroup(campaign)
 	if gaStatus == googleads.StatusEnabled {
-		if gErr := googleAdsActivationGate(campaign, targets, keywordsProvisioned, assetGroupID); gErr != nil {
+		if gErr := googleAdsActivationGate(campaign, targets, keywordsProvisioned, assetGroupID, assetGroupLinks); gErr != nil {
 			return gErr
 		}
 	}
@@ -2558,7 +2558,7 @@ func googleAdsCampaignAdGroupIDs(campaign *model.Campaign) map[string]bool {
 // hunting a provisioning failure in this service's records for a campaign this service never
 // created. The refusal itself is right: a cascade can only act on resources the blob recorded,
 // and for an adopted row that set is empty, so un-pausing happens in Google Ads.
-func googleAdsActivationGate(campaign *model.Campaign, targets []googleads.AdGroupStatusTarget, keywordsProvisioned bool, assetGroupID string) error {
+func googleAdsActivationGate(campaign *model.Campaign, targets []googleads.AdGroupStatusTarget, keywordsProvisioned bool, assetGroupID string, assetGroupLinks *int) error {
 	switch model.NormalizeVariant(campaign.Variant) {
 	case googleAdsChannelPerformanceMax:
 		// Named for what Performance Max actually has. The ad-group wording below would send
@@ -2566,6 +2566,19 @@ func googleAdsActivationGate(campaign *model.Campaign, targets []googleads.AdGro
 		// creates.
 		if assetGroupID == "" {
 			return fmt.Errorf("%w: google ads campaign %s cannot be activated because this service has no record of its Performance Max asset group (a Performance Max campaign has no ad groups; the asset group is what serves) — either the creative never completed, or the campaign was ADOPTED, which records no serving resources at all and leaves un-pausing to the Google Ads UI", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		// A group id is NOT a serving campaign. The group is created before its links, so a
+		// failed or unconfirmed assetGroupAssets:mutate leaves the id recorded with nothing
+		// attached — and an empty asset group looks finished in the Google Ads UI, which is
+		// exactly why the id is kept on the result rather than cleared. Activating on the id
+		// alone would un-pause a campaign that cannot serve and report success.
+		//
+		// nil is NOT zero: a row written before this field was recorded cannot distinguish
+		// "no links" from "not recorded", and refusing those would break activation on
+		// Performance Max campaigns that are provisioned correctly. Only a recorded zero
+		// refuses.
+		if assetGroupLinks != nil && *assetGroupLinks == 0 {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its Performance Max asset group %s has no assets linked to it (the group exists but the asset links failed or could not be confirmed, and an asset group with no assets cannot serve — verify the group in Google Ads and finish it there, or recreate the campaign)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID, assetGroupID)
 		}
 		return nil
 	case googleAdsChannelDemandGen, googleAdsChannelVideo, googleAdsChannelDisplay:
@@ -2589,18 +2602,24 @@ func googleAdsActivationGate(campaign *model.Campaign, targets []googleads.AdGro
 }
 
 // googleAdsToggleAssetGroup is the persisted Performance Max asset group id, or "" on every
-// other channel and on a Performance Max campaign whose creative never completed. Read from
-// the same Result blob googleAdsToggleTargets reads, and for the same reason: the blob
-// records what was actually CREATED, which is what a cascade can act on.
-func googleAdsToggleAssetGroup(campaign *model.Campaign) string {
+// other channel and on a Performance Max campaign whose creative never completed, together
+// with the number of asset LINKS the create confirmed. Read from the same Result blob
+// googleAdsToggleTargets reads, and for the same reason: the blob records what was actually
+// CREATED, which is what a cascade can act on.
+//
+// Both values, from one decode, because the gate needs both and they answer different
+// questions: the id says a group exists, the count says it can serve. A nil count is a row
+// written before the field existed — see CampaignResult.AssetGroupAssetLinks for why that
+// must not read as zero.
+func googleAdsToggleAssetGroup(campaign *model.Campaign) (string, *int) {
 	if campaign == nil || len(campaign.Result) == 0 {
-		return ""
+		return "", nil
 	}
 	var result googleads.CampaignResult
 	if err := json.Unmarshal(campaign.Result, &result); err != nil {
-		return ""
+		return "", nil
 	}
-	return strings.TrimSpace(result.AssetGroupID)
+	return strings.TrimSpace(result.AssetGroupID), result.AssetGroupAssetLinks
 }
 
 // googleAdsHasToggleChildren reports whether this campaign has any serving resource beneath

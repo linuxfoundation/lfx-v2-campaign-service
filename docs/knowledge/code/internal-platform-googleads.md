@@ -664,7 +664,14 @@ child-cascade contract:
   - **Performance Max** has no ad groups and no ads at all, so the ad-group gate can never pass
     and the resource whose absence means nothing can serve is the ASSET GROUP. The refusal names
     the asset group in those words rather than describing an ad-group provisioning failure that
-    cannot have happened on this channel.
+    cannot have happened on this channel. **An asset group id is not enough**: the group is
+    created before its links, so a failed link mutate leaves an id recorded on a group with
+    nothing attached, and a gate reading only the id would un-pause a campaign that cannot
+    serve. It also reads `assetGroupAssetLinks` — the confirmed link count, written by the
+    create path on both its success and its failure arms — and refuses on a recorded zero. Nil
+    is NOT zero: a row written before the field existed cannot distinguish "no links" from "not
+    recorded", and refusing it would be an over-refusal on a campaign that is provisioned fine,
+    so absence activates.
 
 - **The Performance Max asset group cascades like an ad group, through its own mutate.**
   Asset groups are created PAUSED (`performanceMaxAssetGroupPaused`), for the same reason every
@@ -1717,6 +1724,21 @@ An EMPTY creative is a supported input, not a half-finished one: the campaign is
 created with no asset group and the closing step says `NO ASSET GROUP` loudly, because
 a Performance Max campaign without one cannot serve and an operator reading a quiet
 success would not know that.
+
+**A group id alone cannot answer "can this campaign serve?", so the result carries the
+LINK COUNT too.** `createPerformanceMaxAssetGroup` returns the group id even when the
+link mutate fails — an empty group is the state most worth finding, and clearing the id
+would hide it — but that left the one campaign that cannot serve looking, to the
+activation gate, exactly like one that can. `CampaignResult.AssetGroupAssetLinks` records
+how many `assetGroupAssets` links Google CONFIRMED, written on BOTH paths in `pmax.go`
+and written even when it is zero, which is what lets the gate tell the two apart. It is a
+`*int`: **nil means "this row predates the field"** — every Performance Max campaign
+created before it has no such key, and reading absence as zero would refuse activation on
+correctly provisioned campaigns, which is an over-refusal and the one failure mode these
+guards must never have. A non-nil zero is the refusal. An UNCONFIRMED link mutate —
+a 2xx with a short or malformed mutate response — records zero rather than nothing:
+links may exist, this client cannot say they do, and "cannot say" belongs in the Google
+Ads UI, not in a claimed launch.
 
 
 ## Video (YouTube) campaign creation (LFXV2-2665)
