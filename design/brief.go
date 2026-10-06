@@ -881,6 +881,73 @@ var NegativeKeywords = Type("negative-keywords", func() {
 	Required("campaign_id", "results", "applied_count")
 })
 
+// ─── Keyword TARGETING on Reddit and X (LFXV2-2665) ───
+//
+// On Reddit and X a keyword is not a criterion with its own status, as it is on Google Ads and
+// Microsoft Advertising: it is one entry in the TARGETING of the ad group (Reddit) or line item
+// (X). It cannot be paused, only taken out of the targeting. So these are their own methods
+// rather than new kinds on apply-keyword-actions, whose ids are digits-only (X ids are base-36,
+// and a Reddit keyword has no id at all — it is identified by its text) and whose PAUSE has no
+// meaning here. See docs/knowledge/architecture/keyword-targeting-reddit-x.md.
+
+// KeywordTargetingEntry is one keyword the ad group / line item currently targets.
+var KeywordTargetingEntry = Type("keyword-targeting-entry", func() {
+	Attribute("keyword", String, "The keyword as the platform reports it.", func() { Example("kubernetes") })
+	Attribute("criterion_id", String, "X only: the targeting criterion id that holds this keyword — what remove-keyword-targeting takes for X. Absent on Reddit, where a keyword has no id of its own.", func() { Example("2kzxf") })
+	Attribute("match_type", String, "X only: the keyword targeting type X reports (BROAD_KEYWORD, PHRASE_KEYWORD, EXACT_KEYWORD or UNORDERED_KEYWORD). Absent on Reddit.", func() { Example("BROAD_KEYWORD") })
+	Required("keyword")
+})
+
+// KeywordTargeting is the current keyword targeting of a campaign's ONE ad group or line item.
+var KeywordTargeting = Type("keyword-targeting", func() {
+	Attribute("campaign_id", String, "The campaign whose targeting was read", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("platform", String, "The campaign's platform", func() {
+		Enum("reddit-ads", "twitter-ads")
+		Example("reddit-ads")
+	})
+	Attribute("targeting_entity_id", String, "The ad group (Reddit) or line item (X) this service created for the campaign, whose targeting this is.", func() { Example("t5_ag") })
+	Attribute("keywords", ArrayOf(KeywordTargetingEntry), "The POSITIVE keywords the ad group / line item targets now, in the order the platform reported them. Empty when it targets none (every X campaign this service creates targets none: only an operator can add them, in X Ads Manager). Negative / excluded keywords are not listed.")
+	Attribute("revision", String, "Reddit only: a fingerprint of the ad group's WHOLE targeting as read. remove-keyword-targeting requires it back and refuses (409) when the targeting has changed since, so a removal is never applied to a targeting the caller did not see. Absent on X.", func() { Example("sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c") })
+	Required("campaign_id", "platform", "targeting_entity_id", "keywords")
+})
+
+// KeywordTargetingRemovalInput names one keyword to take out of the targeting. Exactly one field
+// applies per platform; the adapter refuses an item that names the other.
+var KeywordTargetingRemovalInput = Type("keyword-targeting-removal-input", func() {
+	// Never sent upstream: on Reddit the keyword is only COMPARED with the targeting the service
+	// read, and what is written back is that read list minus the matches. So the bound is a
+	// sanity cap, not a platform limit.
+	Attribute("keyword", String, "Reddit: the keyword to remove, exactly as get-keyword-targeting reported it (compared exactly, case included).", func() {
+		MinLength(1)
+		MaxLength(200)
+		Example("kubernetes")
+	})
+	// Base-36 alphanumerics, the shape of every X entity id: interpolated into the DELETE path,
+	// so the Pattern is the transport's half of the path-injection guard the client repeats.
+	Attribute("criterion_id", String, "X: the targeting criterion id to delete, as get-keyword-targeting reported it.", func() {
+		Pattern(`^[A-Za-z0-9]+$`)
+		MaxLength(32)
+		Example("2kzxf")
+	})
+})
+
+// KeywordTargetingRemovalResult is one removal's outcome.
+var KeywordTargetingRemovalResult = Type("keyword-targeting-removal-result", func() {
+	Attribute("keyword", String, "Reddit: the keyword this result answers, as requested", func() { Example("kubernetes") })
+	Attribute("criterion_id", String, "X: the targeting criterion this result answers, as requested", func() { Example("2kzxf") })
+	Attribute("outcome", String, "APPLIED — the keyword is no longer targeted; FAILED — definitely not removed (see error_code); UNCONFIRMED — may have been removed, read the targeting again before retrying.", keywordItemOutcomeEnum)
+	Attribute("error_code", String, "For a FAILED or UNCONFIRMED item: NOT_SENT (the request carrying it was never sent), NOT_FOUND (X holds no such live criterion any more), or REJECTED (the platform refused it). The platform's own text is never returned.", func() { Example("NOT_SENT") })
+	Required("outcome")
+})
+
+// KeywordTargetingRemovals is the outcome of a remove-keyword-targeting request.
+var KeywordTargetingRemovals = Type("keyword-targeting-removals", func() {
+	Attribute("campaign_id", String, "The campaign whose targeting was changed", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("results", ArrayOf(KeywordTargetingRemovalResult), "Exactly one entry per requested removal, in request order, so results[i] answers keywords[i]. Reddit: one write carries every removal, so all entries share one outcome. X: one DELETE per criterion, each with its own outcome.")
+	Attribute("applied_count", Int, "How many results are APPLIED.", func() { Example(2) })
+	Required("campaign_id", "results", "applied_count")
+})
+
 // EmailCopySection is one ordered block of AI-generated email copy. Replaces a single flat
 // `body` HTML blob with the same rich_text/button/divider decomposition the reference
 // implementation's prompt already asks the model to produce (see
@@ -1908,6 +1975,93 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/negative-keywords")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("get-keyword-targeting", func() {
+		Description("Read the keyword TARGETING of a Reddit or X campaign (LFXV2-2665): the positive keywords " +
+			"on the ONE ad group (Reddit) or line item (X) this service created for it, read live from the " +
+			"platform and never persisted. On these two platforms a keyword is an entry in the targeting, not " +
+			"a criterion with its own status, so it cannot be paused — only removed (remove-keyword-targeting). " +
+			"Reddit: the keywords in the ad group's targeting, which the create path sets from redditConfig.keywords; " +
+			"the response also carries `revision`, a fingerprint of the ad group's whole targeting, which a removal " +
+			"must send back. X: the line item's keyword targeting criteria (BROAD/PHRASE/EXACT/UNORDERED_KEYWORD, " +
+			"not negated). The X create path sets NO targeting criteria, so a campaign this service created reports " +
+			"an empty list until an operator adds keywords in X Ads Manager. " +
+			"Before the platform is read, the ad group / line item must be one the row records, and the campaign's " +
+			"ad account must match the project's connection; the platform must then report it under THIS campaign. " +
+			"Any other platform is **400**. **409** when the campaign is unprovisioned, records no ad group / line " +
+			"item, belongs to a different ad account, the ad group / line item is gone or reports another campaign, " +
+			"or its targeting could not be read as a keyword list. **503** when the platform could not be read.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			Required("project_id", "brief_id", "campaign_id")
+		})
+		Result(KeywordTargeting)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("remove-keyword-targeting", func() {
+		Description("Remove keywords from the keyword TARGETING of a Reddit or X campaign (LFXV2-2665). A MUTATION " +
+			"on a live paid campaign, guarded like the keyword actions: the batch, the campaign's provisioning, its " +
+			"recorded ad account (a row that records none is refused, never assumed) and the account's match with " +
+			"the project's connection are all checked before the platform is contacted; the ad group / line item is " +
+			"then read and must report THIS campaign, and every named keyword must be in its current targeting, " +
+			"before anything is changed. It persists nothing, so it takes no If-Match. " +
+			"REFUSED (409) WHEN IT WOULD REMOVE EVERY KEYWORD: with no keyword left the ad group / line item stops " +
+			"being keyword-targeted at all and serves to its other targeting alone — a widening, not a reduction. " +
+			"Remove the last keyword in the platform's own UI if that is intended. " +
+			"REDDIT: items name `keyword`. Reddit has no per-keyword write — the ad group's targeting is replaced as " +
+			"a whole — so the service re-reads the targeting, refuses (409) unless its fingerprint still equals the " +
+			"`revision` the caller sends (from get-keyword-targeting), and writes back exactly what it read with the " +
+			"named keywords taken out, then reads it again to confirm. All items share one outcome. Reddit writes are " +
+			"OFF until REDDIT_KEYWORD_TARGETING_WRITES_ENABLED is \"true\" (answered 400 like an unsupported " +
+			"platform), because the write replaces the whole targeting object and has not yet been exercised " +
+			"against a live ad account. " +
+			"X: items name `criterion_id`; each is one DELETE of that targeting criterion, in request order, with its " +
+			"own outcome; `revision` must be absent. " +
+			"Removing a keyword cannot be undone here: re-add it in the platform. " +
+			"**400** for a malformed batch (empty or over 20, an item naming the wrong field for the platform, the " +
+			"same keyword twice, a keyword not in the current targeting, a missing Reddit revision) or an " +
+			"unsupported platform. **409** as for the read, plus a changed Reddit targeting and the every-keyword " +
+			"refusal. **503** only when no item was answered. Its MESSAGE separates a DEFINITE failure (nothing was " +
+			"removed — retry) from an UNCONFIRMED one (read the targeting again before retrying).")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			// One explicit example, for the reason apply-keyword-actions has one: Goa's fabricated
+			// sample repeats the element example, which this endpoint refuses as a duplicate.
+			Attribute("keywords", ArrayOf(KeywordTargetingRemovalInput), "The keywords to remove: `keyword` items on Reddit, `criterion_id` items on X.", func() {
+				MinLength(1)
+				MaxLength(20)
+				Example([]map[string]any{
+					{"keyword": "kubernetes"},
+				})
+			})
+			Attribute("revision", String, "Reddit: the revision get-keyword-targeting returned. Required on Reddit; must be absent on X.", func() {
+				MaxLength(128)
+				Example("sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c")
+			})
+			Required("project_id", "brief_id", "campaign_id", "keywords")
+		})
+		Result(KeywordTargetingRemovals)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting/removals")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()

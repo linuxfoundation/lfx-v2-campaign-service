@@ -1938,3 +1938,15 @@ the report's Partial flag, and classifies through `classifyInsightsErrorFor` wit
 Google path's `classifyInsightsError` now delegates to it unchanged, and the one new arm
 (`ErrKeywordReportScopeTooLarge` / `ErrKeywordReportScopeInvalid` → 409) are unreachable from Google. See
 [Microsoft keyword insights](../architecture/microsoft-keyword-insights.md).
+
+## Reddit and X keyword targeting (`brief_keyword_targeting.go`, LFXV2-2665)
+
+`GetKeywordTargeting` and `RemoveKeywordTargeting` serve `get-keyword-targeting` and
+`remove-keyword-targeting`. Like the other keyword levers they persist nothing (no If-Match, no
+ETag, no write lock), refuse any platform but Reddit and X with 400 before the orchestrator, and
+map failures through `classifyKeywordTargetingError` — the keyword-action arms plus the four
+targeting sentinels — with fixed messages; adapter text is only logged. An outcome the adapter
+did not name renders UNCONFIRMED. The orchestrator's `ReadKeywordTargeting` /
+`RemoveKeywordTargeting` type-assert the capabilities, instrument `read_keyword_targeting` /
+`remove_keyword_targeting`, and treat a short outcome slice as UNCONFIRMED. See
+[Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).

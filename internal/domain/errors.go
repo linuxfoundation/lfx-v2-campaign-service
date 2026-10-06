@@ -471,6 +471,38 @@ var (
 	// unsupported match type, or the same keyword twice. A permanent input fault → 400.
 	ErrNegativeKeywordInvalid = errors.New("the negative keyword batch is not valid")
 
+	// ErrKeywordTargetingUnsupported indicates the platform has no keyword-TARGETING read or
+	// removal wired (LFXV2-2665: Reddit and X only), or that the capability is switched off for
+	// this deployment. The platform is never contacted; mapped to 400.
+	//
+	// Separate from ErrKeywordActionsUnsupported: a Reddit or X keyword is an entry in an ad
+	// group's or line item's targeting, not a criterion that can be paused, so the two
+	// capabilities are disjoint by platform and must not answer for each other.
+	ErrKeywordTargetingUnsupported = errors.New("keyword targeting is not supported for this platform")
+
+	// ErrKeywordTargetingInvalid indicates a keyword-targeting removal was refused as a permanent
+	// input fault: empty or over-long, an item naming the wrong field for the platform, the same
+	// keyword twice, a keyword the current targeting does not contain, or a missing or misplaced
+	// revision. Mapped to 400. Some of these are decided only after a READ of the targeting, so
+	// the platform may have been contacted, but nothing was changed.
+	ErrKeywordTargetingInvalid = errors.New("the keyword targeting removal is not valid")
+
+	// ErrKeywordTargetingUnaddressable indicates the campaign's keyword targeting cannot be
+	// addressed safely: the row records no ad group / line item, the platform no longer holds it,
+	// it reports a different campaign or none, or its targeting is not a legible keyword list.
+	// A state fault the caller cannot fix by retrying; mapped to 409 with nothing changed.
+	ErrKeywordTargetingUnaddressable = errors.New("the campaign's keyword targeting cannot be addressed")
+
+	// ErrKeywordTargetingChanged indicates a Reddit removal whose revision no longer matches the
+	// ad group's targeting: someone changed it since the caller read it. Nothing was written;
+	// mapped to 409 — read the targeting again and decide afresh.
+	ErrKeywordTargetingChanged = errors.New("the keyword targeting changed since it was read")
+
+	// ErrKeywordTargetingWouldEmpty indicates a removal that would leave the ad group / line item
+	// with no keyword at all. That stops it being keyword-targeted and WIDENS delivery to its
+	// other targeting, which this reduce-only surface never does. Mapped to 409, nothing changed.
+	ErrKeywordTargetingWouldEmpty = errors.New("the removal would leave no keyword targeted")
+
 	// ErrKeyUnavailable indicates this service could not obtain the JWT signing keys
 	// (Heimdall's JWKS) needed to check a bearer token. It is NOT a verdict on the token:
 	// nothing was learned about it, because it was never checked.

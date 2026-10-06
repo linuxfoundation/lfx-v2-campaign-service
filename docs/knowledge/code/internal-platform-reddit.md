@@ -638,3 +638,15 @@ this package's own path guard before anything is sent, so Reddit never evaluated
 claiming a rejection would send an operator to re-authorise a connection whose credential is
 fine, and the inconclusive default would blame an unreachable platform for an id no Reddit
 request can address. The dispatcher settles it instead, with `accountIDNotUsable`.
+
+## Ad-group keyword targeting (`keyword_targeting.go`, LFXV2-2665)
+
+`GetAdGroupTargeting` reads the ad group's `targeting` object (the GET `GetAdGroupBid` makes),
+keeping every member as raw bytes, returning `targeting.keywords` and a `Revision` — `sha256:` of
+the object's canonical JSON. An absent, null or non-object targeting, or a `keywords` that is not
+a string array, is `ErrTargetingUnreadable`. `ReplaceAdGroupKeywords` PATCHes `targeting` back
+with every read member unchanged and only `keywords` replaced, because Reddit replaces the
+targeting object as a whole (secondary sources; the OpenAPI document cannot be fetched from the
+authoring environment). Its classification is `UpdateAdGroupBid`'s, including
+`retriedUnconfirmedError` after a retried 429, plus an UNCONFIRMED echo naming another keyword
+list. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).

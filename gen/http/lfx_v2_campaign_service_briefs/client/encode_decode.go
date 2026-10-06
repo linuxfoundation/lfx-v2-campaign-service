@@ -4723,6 +4723,428 @@ func DecodeAddNegativeKeywordsResponse(decoder func(*http.Response) goahttp.Deco
 	}
 }
 
+// BuildGetKeywordTargetingRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "get-keyword-targeting" endpoint
+func (c *Client) BuildGetKeywordTargetingRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID  string
+		briefID    string
+		campaignID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.GetKeywordTargetingPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "get-keyword-targeting", "*lfxv2campaignservicebriefs.GetKeywordTargetingPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		campaignID = p.CampaignID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetKeywordTargetingLfxV2CampaignServiceBriefsPath(projectID, briefID, campaignID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "get-keyword-targeting", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGetKeywordTargetingRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs get-keyword-targeting server.
+func EncodeGetKeywordTargetingRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.GetKeywordTargetingPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "get-keyword-targeting", "*lfxv2campaignservicebriefs.GetKeywordTargetingPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeGetKeywordTargetingResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-briefs get-keyword-targeting endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeGetKeywordTargetingResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeGetKeywordTargetingResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GetKeywordTargetingResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			err = ValidateGetKeywordTargetingResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			res := NewGetKeywordTargetingKeywordTargetingOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetKeywordTargetingBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			err = ValidateGetKeywordTargetingBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			return nil, NewGetKeywordTargetingBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GetKeywordTargetingConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			err = ValidateGetKeywordTargetingConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			return nil, NewGetKeywordTargetingConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GetKeywordTargetingServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			err = ValidateGetKeywordTargetingServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			return nil, NewGetKeywordTargetingServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GetKeywordTargetingInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			err = ValidateGetKeywordTargetingInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			return nil, NewGetKeywordTargetingInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GetKeywordTargetingNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			err = ValidateGetKeywordTargetingNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			return nil, NewGetKeywordTargetingNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetKeywordTargetingPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			err = ValidateGetKeywordTargetingPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			return nil, NewGetKeywordTargetingPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetKeywordTargetingUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			err = ValidateGetKeywordTargetingUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+			}
+			return nil, NewGetKeywordTargetingUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "get-keyword-targeting", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildRemoveKeywordTargetingRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "remove-keyword-targeting" endpoint
+func (c *Client) BuildRemoveKeywordTargetingRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID  string
+		briefID    string
+		campaignID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.RemoveKeywordTargetingPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", "*lfxv2campaignservicebriefs.RemoveKeywordTargetingPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		campaignID = p.CampaignID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: RemoveKeywordTargetingLfxV2CampaignServiceBriefsPath(projectID, briefID, campaignID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeRemoveKeywordTargetingRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-briefs remove-keyword-targeting server.
+func EncodeRemoveKeywordTargetingRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.RemoveKeywordTargetingPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", "*lfxv2campaignservicebriefs.RemoveKeywordTargetingPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewRemoveKeywordTargetingRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+		}
+		return nil
+	}
+}
+
+// DecodeRemoveKeywordTargetingResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-briefs remove-keyword-targeting
+// endpoint. restoreBody controls whether the response body should be restored
+// after having been read.
+// DecodeRemoveKeywordTargetingResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeRemoveKeywordTargetingResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body RemoveKeywordTargetingResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			err = ValidateRemoveKeywordTargetingResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			res := NewRemoveKeywordTargetingKeywordTargetingRemovalsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body RemoveKeywordTargetingBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			err = ValidateRemoveKeywordTargetingBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			return nil, NewRemoveKeywordTargetingBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body RemoveKeywordTargetingConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			err = ValidateRemoveKeywordTargetingConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			return nil, NewRemoveKeywordTargetingConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body RemoveKeywordTargetingServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			err = ValidateRemoveKeywordTargetingServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			return nil, NewRemoveKeywordTargetingServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body RemoveKeywordTargetingInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			err = ValidateRemoveKeywordTargetingInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			return nil, NewRemoveKeywordTargetingInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body RemoveKeywordTargetingNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			err = ValidateRemoveKeywordTargetingNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			return nil, NewRemoveKeywordTargetingNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body RemoveKeywordTargetingPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			err = ValidateRemoveKeywordTargetingPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			return nil, NewRemoveKeywordTargetingPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body RemoveKeywordTargetingUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			err = ValidateRemoveKeywordTargetingUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+			}
+			return nil, NewRemoveKeywordTargetingUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildDeleteCampaignRequest instantiates a HTTP request object with method
 // and path set to call the "lfx-v2-campaign-service-briefs" service
 // "delete-campaign" endpoint
@@ -7165,6 +7587,59 @@ func unmarshalNegativeKeywordResultResponseBodyToLfxv2campaignservicebriefsNegat
 		Outcome:           *v.Outcome,
 		NegativeKeywordID: v.NegativeKeywordID,
 		ErrorCode:         v.ErrorCode,
+	}
+
+	return res
+}
+
+// unmarshalKeywordTargetingEntryResponseBodyToLfxv2campaignservicebriefsKeywordTargetingEntry
+// builds a value of type *lfxv2campaignservicebriefs.KeywordTargetingEntry
+// from a value of type *KeywordTargetingEntryResponseBody.
+func unmarshalKeywordTargetingEntryResponseBodyToLfxv2campaignservicebriefsKeywordTargetingEntry(v *KeywordTargetingEntryResponseBody) *lfxv2campaignservicebriefs.KeywordTargetingEntry {
+	res := &lfxv2campaignservicebriefs.KeywordTargetingEntry{
+		Keyword:     *v.Keyword,
+		CriterionID: v.CriterionID,
+		MatchType:   v.MatchType,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsKeywordTargetingRemovalInputToKeywordTargetingRemovalInputRequestBody
+// builds a value of type *KeywordTargetingRemovalInputRequestBody from a value
+// of type *lfxv2campaignservicebriefs.KeywordTargetingRemovalInput.
+func marshalLfxv2campaignservicebriefsKeywordTargetingRemovalInputToKeywordTargetingRemovalInputRequestBody(v *lfxv2campaignservicebriefs.KeywordTargetingRemovalInput) *KeywordTargetingRemovalInputRequestBody {
+	res := &KeywordTargetingRemovalInputRequestBody{
+		Keyword:     v.Keyword,
+		CriterionID: v.CriterionID,
+	}
+
+	return res
+}
+
+// marshalKeywordTargetingRemovalInputRequestBodyToLfxv2campaignservicebriefsKeywordTargetingRemovalInput
+// builds a value of type
+// *lfxv2campaignservicebriefs.KeywordTargetingRemovalInput from a value of
+// type *KeywordTargetingRemovalInputRequestBody.
+func marshalKeywordTargetingRemovalInputRequestBodyToLfxv2campaignservicebriefsKeywordTargetingRemovalInput(v *KeywordTargetingRemovalInputRequestBody) *lfxv2campaignservicebriefs.KeywordTargetingRemovalInput {
+	res := &lfxv2campaignservicebriefs.KeywordTargetingRemovalInput{
+		Keyword:     v.Keyword,
+		CriterionID: v.CriterionID,
+	}
+
+	return res
+}
+
+// unmarshalKeywordTargetingRemovalResultResponseBodyToLfxv2campaignservicebriefsKeywordTargetingRemovalResult
+// builds a value of type
+// *lfxv2campaignservicebriefs.KeywordTargetingRemovalResult from a value of
+// type *KeywordTargetingRemovalResultResponseBody.
+func unmarshalKeywordTargetingRemovalResultResponseBodyToLfxv2campaignservicebriefsKeywordTargetingRemovalResult(v *KeywordTargetingRemovalResultResponseBody) *lfxv2campaignservicebriefs.KeywordTargetingRemovalResult {
+	res := &lfxv2campaignservicebriefs.KeywordTargetingRemovalResult{
+		Keyword:     v.Keyword,
+		CriterionID: v.CriterionID,
+		Outcome:     *v.Outcome,
+		ErrorCode:   v.ErrorCode,
 	}
 
 	return res

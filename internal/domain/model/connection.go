@@ -461,6 +461,49 @@ func NegativeKeywordPresent(outcome string) bool {
 	return outcome == KeywordOutcomeApplied || outcome == KeywordOutcomeAlreadyPresent
 }
 
+// KeywordTargeting is the current POSITIVE keyword targeting of a campaign's one ad group
+// (Reddit) or line item (X), read live (LFXV2-2665).
+type KeywordTargeting struct {
+	// EntityID is the ad group (Reddit) or line item (X) the targeting belongs to.
+	EntityID string
+	// Keywords is never nil on success: an empty slice is "targets no keyword".
+	Keywords []KeywordTargetingEntry
+	// Revision is Reddit's fingerprint of the ad group's whole targeting; "" on X.
+	Revision string
+}
+
+// KeywordTargetingEntry is one targeted keyword. CriterionID and MatchType are X's; both are
+// empty on Reddit, where a keyword has no id.
+type KeywordTargetingEntry struct {
+	Keyword     string
+	CriterionID string
+	MatchType   string
+}
+
+// KeywordTargetingRemoval names one keyword to take out of the targeting: Keyword on Reddit,
+// CriterionID on X.
+type KeywordTargetingRemoval struct {
+	Keyword     string
+	CriterionID string
+}
+
+// KeywordTargetingOutcome is one removal's outcome, positionally aligned with the request.
+// Outcome is always one of APPLIED, FAILED or UNCONFIRMED.
+type KeywordTargetingOutcome struct {
+	Keyword     string
+	CriterionID string
+	Outcome     string
+	ErrorCode   string
+}
+
+// Error codes a keyword-targeting removal may carry. Fixed vocabulary: the platform's own text
+// is never returned.
+const (
+	KeywordTargetingErrNotSent  = "NOT_SENT"
+	KeywordTargetingErrNotFound = "NOT_FOUND"
+	KeywordTargetingErrRejected = "REJECTED"
+)
+
 // NegativeKeyword is one requested campaign-level negative keyword. MatchType is the
 // platform-neutral "Exact" or "Phrase".
 type NegativeKeyword struct {

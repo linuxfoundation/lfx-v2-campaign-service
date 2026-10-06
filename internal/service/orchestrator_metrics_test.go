@@ -380,6 +380,26 @@ func (d upstreamCapableDispatcher) AddNegativeKeywords(_ context.Context, _ stri
 	return out, nil
 }
 
+// ReadKeywordTargeting and RemoveKeywordTargeting (LFXV2-2665): the removal returns ONE outcome
+// per requested removal, for ApplyKeywordActions' reason below.
+func (d upstreamCapableDispatcher) ReadKeywordTargeting(context.Context, string, model.Provider, *model.Campaign) (*model.KeywordTargeting, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.KeywordTargeting{EntityID: "ag"}, nil
+}
+
+func (d upstreamCapableDispatcher) RemoveKeywordTargeting(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, removals []model.KeywordTargetingRemoval, _ string) ([]model.KeywordTargetingOutcome, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	out := make([]model.KeywordTargetingOutcome, 0, len(removals))
+	for _, r := range removals {
+		out = append(out, model.KeywordTargetingOutcome{Keyword: r.Keyword, Outcome: model.KeywordOutcomeApplied})
+	}
+	return out, nil
+}
+
 // ApplyKeywordActions returns ONE outcome per requested action, which is the contract the
 // orchestrator enforces. A fake returning an empty slice makes every "success" call fail with
 // unconfirmedOutcomeCountError, so a test that does not assert the success arm's error would
@@ -541,6 +561,22 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opNegativeKeywords,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.AddNegativeKeywords(ctx, "p1", platform, campaign, []model.NegativeKeyword{{Text: "free", MatchType: "Exact"}})
+				return err
+			},
+		},
+		{
+			name: "read keyword targeting",
+			op:   opReadKeywordTargeting,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadKeywordTargeting(ctx, "p1", platform, campaign)
+				return err
+			},
+		},
+		{
+			name: "remove keyword targeting",
+			op:   opRemoveKeywordTargeting,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.RemoveKeywordTargeting(ctx, "p1", platform, campaign, []model.KeywordTargetingRemoval{{Keyword: "k"}}, "rev")
 				return err
 			},
 		},

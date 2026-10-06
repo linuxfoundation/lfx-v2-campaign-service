@@ -1242,3 +1242,15 @@ discovered one), and the dispatcher answers the sentinel as `accountIDNotUsable`
 pre-send verdict, not a credential rejection and not the inconclusive default.
 `TestVerifyAccountRejectsAnUnusableAccountIDBeforeAnyRequest` asserts the CALL COUNT, because a
 test that only checked the error would still pass if the request were made and discarded.
+
+## Line-item keyword targeting (`keyword_targeting.go`, LFXV2-2665)
+
+`ListLineItemTargetingCriteria` lists a line item's targeting criteria
+(`targeting_criteria?line_item_ids=…&with_deleted=false&count=1000`, cursor-walked through
+`cursorVerdict` like `findByName`) and is all-or-error: no result set, a criterion without a
+usable id or under another line item, an unusable cursor on a full page, or the page cap is
+`ErrTargetingUnreadable`. `DeleteTargetingCriterion` takes a write-pacer slot (a wait cut short is
+`ErrWriteNotSent`), sends one DELETE with the 429 never retried, maps 404 to
+`ErrTargetingCriterionNotFound`, and accepts a 2xx only when it names the criterion with
+`deleted: true` — anything else is an UNCONFIRMED `transportError`. The create path sets no
+targeting criteria. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
