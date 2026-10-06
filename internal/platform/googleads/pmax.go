@@ -83,9 +83,19 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	// The asset-group images are downloaded BEFORE the first mutate, exactly as the
 	// Demand Gen cascade downloads its creative's, and through the same hardened
 	// fetcher. A 404 or an image that misses Google's minimum therefore costs nothing.
-	images, err := c.fetchSlotImages(ctx, performanceMaxImageSlots, pf.pmax.urls)
-	if err != nil {
-		return nil, err // pre-create: nothing was sent
+	//
+	// Guarded on `present` the way Demand Gen and Display guard theirs: with no asset
+	// group asked for there are no URLs, and the fetch would be a walk over an empty
+	// slot list whose only effect is to spend the caller's deadline before the budget
+	// mutate. The guard is also what keeps this call and the Step 5 `pf.pmax.present`
+	// arm reading off the SAME condition — fetching unconditionally for a group that is
+	// never created is the shape that invites someone to make the two disagree.
+	var images []fetchedImage
+	if pf.pmax.present {
+		images, err = c.fetchSlotImages(ctx, performanceMaxImageSlots, pf.pmax.urls)
+		if err != nil {
+			return nil, err // pre-create: nothing was sent
+		}
 	}
 
 	campaignName := pf.campaignName
@@ -205,6 +215,15 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		}
 		steps = append(steps, fmt.Sprintf("Campaign targeting applied: %d criteria (%s)", len(critIDs), criteriaStep(pf.criteria)))
 		res.Steps = steps
+	}
+
+	// The gate Video and Display both carry, and the one this cascade was missing. The
+	// campaign exists and is billable from here on, so a context that has already been
+	// cancelled must be reported ALONGSIDE the result rather than discovered halfway
+	// through the asset-group mutates — where it would strand a group with some of its
+	// assets linked and a count the activation gate then has to interpret.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return res, fmt.Errorf("google-ads performance max creation aborted after campaign %s created (context done before asset group create): %w", campaignID, ctxErr)
 	}
 
 	// Step 5: the asset group — assets, the group, then the links. Like the Demand Gen

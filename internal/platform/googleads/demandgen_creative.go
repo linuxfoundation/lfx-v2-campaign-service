@@ -139,6 +139,18 @@ const (
 	// run out of time, because that is the half that creates things.
 	creativeImageFetchDeadlineShare = 2
 
+	// maxCreativeImageFetchWall is the ABSOLUTE ceiling on the fetch phase, and it exists
+	// because the share above is conditional on the caller having a deadline at all. With
+	// no deadline — a background reconcile, a test harness, any call site that passes
+	// context.Background() — the share does nothing and the bound reverts to the one the
+	// walk implies: 25 images times demandGenImageFetchTimeout, which is over eight
+	// minutes of wall time chosen by whoever supplied the URLs. A host that accepts the
+	// connection and then trickles bytes just under the per-image timeout spends all of
+	// it. The share is still applied when there is a deadline and the SMALLER of the two
+	// wins, so this never widens the caller's budget — it only puts a floor under the
+	// case where there was no budget to divide.
+	maxCreativeImageFetchWall = 90 * time.Second
+
 	// demandGenAspectTolerance is Google's own "+-1%" on every documented ratio.
 	demandGenAspectTolerance = 0.01
 )
@@ -346,6 +358,16 @@ func validateDemandGenCreative(kind string, in CampaignInput) (demandGenCreative
 // Demand Gen copy is written by a human for a reason, and silently shipping a
 // headline cut mid-word is worse than refusing it while nothing has been paid for.
 func validateCreativeText(channel, label string, in []string, min, max, maxWeight int) ([]string, error) {
+	// The count bound is checked BEFORE the loop as well as after it. Checking it only
+	// after meant a caller could send a million strings and have every one of them
+	// trimmed, display-width-measured and hashed into `seen` — per-element work, and a
+	// map sized from the caller's own length — before being told the list was too long
+	// by two. The post-loop check stays because it is the one that reports the SURVIVING
+	// count, which de-duplication could in principle lower; this one just stops the walk
+	// from being the expensive part of a refusal that was certain from the length alone.
+	if len(in) > max {
+		return nil, fmt.Errorf("google-ads %s accepts at most %d %ss, got %d", channel, max, label, len(in))
+	}
 	out := make([]string, 0, len(in))
 	seen := make(map[string]struct{}, len(in))
 	for i, rawText := range in {
@@ -474,6 +496,28 @@ func (c *Client) fetchDemandGenImages(ctx context.Context, plan demandGenCreativ
 // A second copy would be a second place for one of those to lapse. What IS channel
 // specific is the slot table, which carries the ratios, the minimums and the labels, and
 // that is the parameter.
+// creativeFetchBudget is how long the fetch phase may run: the SMALLER of the caller's
+// share and the absolute ceiling.
+//
+// It is a function rather than four lines inline because the property worth testing is
+// arithmetic, and the alternative — proving the ceiling by letting a test actually wait
+// out a slow host — is a ninety-second test nobody will keep. Starting from the ceiling
+// rather than from the caller's deadline is what makes the no-deadline case bounded: there
+// is always a number, and a caller who has a deadline only ever narrows it.
+//
+// A non-positive result means the caller's deadline has already passed; the caller leaves
+// the context alone in that case, so the expiry is reported as the CALLER's rather than as
+// the fetch phase overrunning its share.
+func creativeFetchBudget(ctx context.Context) time.Duration {
+	budget := maxCreativeImageFetchWall
+	if deadline, ok := ctx.Deadline(); ok {
+		if share := time.Until(deadline) / creativeImageFetchDeadlineShare; share < budget {
+			budget = share
+		}
+	}
+	return budget
+}
+
 func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls [][]string) ([]fetchedImage, error) {
 	total := 0
 	for _, u := range urls {
@@ -494,12 +538,10 @@ func (c *Client) fetchSlotImages(ctx context.Context, slots []imageSlot, urls []
 	// and refusing a create Google would have accepted is the worse failure. A caller
 	// with no deadline at all keeps the behaviour it had.
 	fetchCtx := ctx
-	if deadline, ok := ctx.Deadline(); ok {
-		if remaining := time.Until(deadline); remaining > 0 {
-			var cancel context.CancelFunc
-			fetchCtx, cancel = context.WithTimeout(ctx, remaining/creativeImageFetchDeadlineShare)
-			defer cancel()
-		}
+	if budget := creativeFetchBudget(ctx); budget > 0 {
+		var cancel context.CancelFunc
+		fetchCtx, cancel = context.WithTimeout(ctx, budget)
+		defer cancel()
 	}
 	// Checked as a RUNNING total, not after the loop: the point is to stop reading
 	// before the whole set is resident, so an oversized creative never allocates the
@@ -783,8 +825,18 @@ type demandGenAdGroupAdCreate struct {
 // the later stage, because assets created without an ad to reference them are
 // account-level litter the operator can find and remove.
 func (c *Client) createDemandGenAd(ctx context.Context, adGroupResource, adGroupID, finalURL string, plan demandGenCreativePlan, images []fetchedImage) (assetIDs []string, adID string, err error) {
+	// Reached only when the preflight said a creative is PRESENT, so an empty image set
+	// here is an internal inconsistency rather than a caller's choice — and returning
+	// (nil, "", nil) for it was reporting that inconsistency as success. The caller then
+	// appended `"Demand Gen ad created: %s"` with an empty id, writing an audit step that
+	// says an ad was created and names no ad. A contradictory audit trail is worse than a
+	// refusal, because the refusal is the only one of the two anybody acts on.
+	//
+	// (nil, "", err) is contract-correct: nothing has been sent at this point, so the
+	// orchestrator may release its claim. The campaign above it still exists and is still
+	// reported by the cascade's own partial result.
 	if len(images) == 0 {
-		return nil, "", nil
+		return nil, "", fmt.Errorf("google-ads: demand gen creative is present but no images were fetched for it; refusing to create an ad with no assets")
 	}
 
 	assetOps := make([]mutateOperation, 0, len(images))
