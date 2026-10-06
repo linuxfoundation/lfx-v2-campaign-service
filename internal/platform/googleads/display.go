@@ -40,6 +40,23 @@ type displayCampaignCreate struct {
 	AdvertisingChannelType         string `json:"advertisingChannelType"`
 	CampaignBudget                 string `json:"campaignBudget"`
 	ContainsEuPoliticalAdvertising string `json:"containsEuPoliticalAdvertising"`
+	// NetworkSettings is REQUIRED here, and Display is the only non-Search channel that
+	// takes it. Demand Gen, Performance Max and Video all REJECT the field — their
+	// network is implied by the channel and has no knobs — which makes the obvious
+	// inference ("Display is not Search, so omit it like the other three") exactly
+	// wrong. An omitted networkSettings is not "Google picks a sensible default": the
+	// flags are proto3 bools, so absent resolves to a campaign targeting NO network,
+	// and Google rejects that with CampaignError.CAMPAIGN_MUST_TARGET_AT_LEAST_ONE_NETWORK
+	// — AFTER the budget mutate has committed. That is the orphan this cascade's whole
+	// ordering exists to avoid, and a retry composes the same budget name and dies at
+	// DUPLICATE_NAME, so it never reconciles itself.
+	//
+	// targetContentNetwork is the one true flag: the Google Display Network IS the
+	// content network, and targetGoogleSearch/targetSearchNetwork stay false because a
+	// Display campaign has no business opting itself into Search inventory. This is what
+	// the Google Ads API team tells callers to send for a DISPLAY campaign, rather than
+	// something inferred from the Search shape.
+	NetworkSettings networkSettings `json:"networkSettings"`
 	// biddingFields is embedded ANONYMOUSLY, as on all four sibling payloads, so the
 	// oneof invariant keeps one definition. Which strategies may be sent is
 	// channel-specific and lives in validateBiddingPlan — here, the four portfolio
@@ -169,6 +186,7 @@ func (c *Client) CreateDisplayCampaign(ctx context.Context, in CampaignInput) (*
 		AdvertisingChannelType:         advertisingChannelDisplay,
 		CampaignBudget:                 budgetResource,
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
+		NetworkSettings:                networkSettings{TargetContentNetwork: true},
 		GeoTargetTypeSetting:           geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
 		StartDateTime:                  pf.startDateTime,
 		EndDateTime:                    pf.endDateTime,

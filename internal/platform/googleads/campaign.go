@@ -667,9 +667,14 @@ type targetRestriction struct {
 	BidOnly            bool   `json:"bidOnly"`
 }
 
-// networkSettings selects which networks a campaign's ads serve on. For a SEARCH
-// campaign, targetGoogleSearch MUST be true (see campaignCreate). The remaining flags
-// are sent explicitly as false rather than omitted so the payload is unambiguous.
+// networkSettings selects which networks a campaign's ads serve on. Exactly TWO of this
+// client's five channels send it: SEARCH, where targetGoogleSearch MUST be true (see
+// campaignCreate), and DISPLAY, where targetContentNetwork must be (see
+// displayCampaignCreate). The other three — Demand Gen, Performance Max and Video —
+// REJECT the field outright, because their network is implied by the channel. The
+// remaining flags are sent explicitly as false rather than omitted so the payload is
+// unambiguous, and because an all-false networkSettings is itself an error
+// (CAMPAIGN_MUST_TARGET_AT_LEAST_ONE_NETWORK) rather than a harmless default.
 type networkSettings struct {
 	TargetGoogleSearch   bool `json:"targetGoogleSearch"`
 	TargetSearchNetwork  bool `json:"targetSearchNetwork"`

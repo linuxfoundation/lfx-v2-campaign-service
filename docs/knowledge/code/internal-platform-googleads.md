@@ -335,7 +335,8 @@ omitted `networkSettings` resolves to (proto3 bools default false) — is reject
 committed, an avoidable orphan. Google Search only is the conservative choice for a
 PAUSED broker shell; `targetSearchNetwork` stays false because true would opt into
 Search Partners (and requires `targetGoogleSearch`), which a generic broker shouldn't
-assume. Both resource ids are
+assume. (Search is not the only channel that sends this field — Display does too, and the
+other three reject it; see the Display section for the full matrix.) Both resource ids are
 surfaced (`campaignBudgetId` + `campaignId`) via `firstResourceName`, which decodes
 `results[0].resourceName` and returns both the resource name and its trailing-id
 segment. It errors when the body is malformed, carries no result/resourceName, OR
@@ -1840,6 +1841,24 @@ the Video shell would send a sub-type Google reads as a different product. The c
 bids `maximizeConversions` by default. The ad group is typed `DISPLAY_STANDARD`
 (`adGroupTypeDisplayStandard`) and is created ENABLED, as Demand Gen's and Video's are;
 the AD is created PAUSED and the campaign is PAUSED, so nothing serves either way.
+
+**Display is the ONLY non-Search channel that sends `networkSettings`, and the obvious
+inference is the wrong one.** Exactly two of the five channels carry the field: SEARCH with
+`targetGoogleSearch: true`, and DISPLAY with `targetContentNetwork: true` — the Google
+Display Network *is* the content network. Demand Gen, Performance Max and Video all REJECT
+it outright, because their network is implied by the channel and has no knobs, and each of
+those three has a test asserting the field is ABSENT from its campaign create. So "Display
+is not Search, therefore omit it like the other three" reads as the consistent choice and
+is a shipping defect: an omitted `networkSettings` is not a benign default. The flags are
+proto3 bools, so absent resolves to a campaign targeting NO network, which Google rejects
+with `CampaignError.CAMPAIGN_MUST_TARGET_AT_LEAST_ONE_NETWORK` — AFTER the budget mutate
+has committed. That is a stranded billable budget, exactly the orphan this cascade's
+ordering exists to prevent, and it never reconciles itself: a retry composes the same
+budget name and dies at `DUPLICATE_NAME`. `targetGoogleSearch` and `targetSearchNetwork`
+stay explicitly false, because a Display campaign has no business opting itself into Search
+inventory. `TestCreateDisplayCampaign_HappyPath` asserts all three flags by name rather
+than the field's mere presence, so a later "simplify" that flips one fails locally instead
+of at Google.
 
 **`longHeadline` is a SCALAR, and it is the one place this channel's shape departs from
 its siblings.** A responsive display ad takes exactly one long headline, not a list, so

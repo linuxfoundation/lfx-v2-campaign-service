@@ -165,6 +165,27 @@ func TestCreateDisplayCampaign_HappyPath(t *testing.T) {
 	if _, ok := campaign["geoTargetTypeSetting"]; !ok {
 		t.Errorf("campaign create carries no geoTargetTypeSetting: %v", campaign)
 	}
+	// networkSettings, and the exact flags — Display is the ONLY non-Search channel that
+	// sends this, and omitting it is not a harmless default. The flags are proto3 bools,
+	// so an absent networkSettings is a campaign targeting NO network, which Google
+	// refuses with CAMPAIGN_MUST_TARGET_AT_LEAST_ONE_NETWORK *after* the budget mutate
+	// has committed — a stranded billable budget on every Display create, and a retry
+	// composes the same budget name and dies at DUPLICATE_NAME. Asserted field by field
+	// rather than just "is present": a Display campaign that quietly opted itself into
+	// Search inventory would spend on the wrong network, and all-false would present as
+	// present-and-correct while being exactly the rejected state.
+	network, ok := campaign["networkSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("campaign create carries no networkSettings; an omitted one targets NO network and strands the budget: %v", campaign)
+	}
+	if network["targetContentNetwork"] != true {
+		t.Errorf("targetContentNetwork = %v, want true — the Display Network IS the content network", network["targetContentNetwork"])
+	}
+	for _, off := range []string{"targetGoogleSearch", "targetSearchNetwork"} {
+		if network[off] != false {
+			t.Errorf("%s = %v, want false — a Display campaign must not opt itself into Search inventory", off, network[off])
+		}
+	}
 
 	// The ad group must be typed, or the responsive display ad lands in a group that
 	// refuses it — three resources after the mistake was made.
