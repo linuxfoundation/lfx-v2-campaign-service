@@ -264,3 +264,143 @@ func TestGoogleAdsConfig_DecodesTheNewExtensionKeys(t *testing.T) {
 		t.Errorf("prices = %+v", cfg.Prices)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Lead forms
+// ---------------------------------------------------------------------------
+
+const signedPolicyURL = "https://policy.example.org/privacy?sig=policy-s3cr3t"
+
+func fullLeadFormConfig() googleAdsLeadFormConfig {
+	return googleAdsLeadFormConfig{
+		BusinessName:               "Linux Foundation",
+		Headline:                   "Register for KubeCon",
+		Description:                "Four days of cloud native talks and workshops.",
+		CallToActionType:           "SIGN_UP",
+		CallToActionDescription:    "Save your seat today",
+		PrivacyPolicyURL:           signedPolicyURL,
+		Fields:                     []string{"FULL_NAME", "EMAIL"},
+		PostSubmitHeadline:         "You are registered",
+		PostSubmitDescription:      "Your confirmation is on its way.",
+		PostSubmitCallToActionType: "VISIT_SITE",
+		DesiredIntent:              "HIGH_INTENT",
+		CustomDisclosure:           "Shared with the event organiser.",
+	}
+}
+
+func TestGoogleAdsLeadForms_MapsEveryField(t *testing.T) {
+	got := googleAdsLeadForms([]googleAdsLeadFormConfig{fullLeadFormConfig()})
+	want := []googleads.LeadFormExtension{{
+		BusinessName:               "Linux Foundation",
+		Headline:                   "Register for KubeCon",
+		Description:                "Four days of cloud native talks and workshops.",
+		CallToActionType:           "SIGN_UP",
+		CallToActionDescription:    "Save your seat today",
+		PrivacyPolicyURL:           signedPolicyURL,
+		Fields:                     []string{"FULL_NAME", "EMAIL"},
+		PostSubmitHeadline:         "You are registered",
+		PostSubmitDescription:      "Your confirmation is on its way.",
+		PostSubmitCallToActionType: "VISIT_SITE",
+		DesiredIntent:              "HIGH_INTENT",
+		CustomDisclosure:           "Shared with the event organiser.",
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("googleAdsLeadForms:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+// A whole-struct comparison passes for a field the mapper never read whenever
+// the fixture happens to leave it at its zero value. Dropping any single field
+// from the config must change the mapped result.
+func TestGoogleAdsLeadForms_EachFieldIsActuallyRead(t *testing.T) {
+	droppers := map[string]func(c *googleAdsLeadFormConfig){
+		"businessName":               func(c *googleAdsLeadFormConfig) { c.BusinessName = "" },
+		"headline":                   func(c *googleAdsLeadFormConfig) { c.Headline = "" },
+		"description":                func(c *googleAdsLeadFormConfig) { c.Description = "" },
+		"callToActionType":           func(c *googleAdsLeadFormConfig) { c.CallToActionType = "" },
+		"callToActionDescription":    func(c *googleAdsLeadFormConfig) { c.CallToActionDescription = "" },
+		"privacyPolicyUrl":           func(c *googleAdsLeadFormConfig) { c.PrivacyPolicyURL = "" },
+		"fields":                     func(c *googleAdsLeadFormConfig) { c.Fields = nil },
+		"postSubmitHeadline":         func(c *googleAdsLeadFormConfig) { c.PostSubmitHeadline = "" },
+		"postSubmitDescription":      func(c *googleAdsLeadFormConfig) { c.PostSubmitDescription = "" },
+		"postSubmitCallToActionType": func(c *googleAdsLeadFormConfig) { c.PostSubmitCallToActionType = "" },
+		"desiredIntent":              func(c *googleAdsLeadFormConfig) { c.DesiredIntent = "" },
+		"customDisclosure":           func(c *googleAdsLeadFormConfig) { c.CustomDisclosure = "" },
+	}
+	full := googleAdsLeadForms([]googleAdsLeadFormConfig{fullLeadFormConfig()})
+	for name, drop := range droppers {
+		t.Run(name, func(t *testing.T) {
+			cfg := fullLeadFormConfig()
+			drop(&cfg)
+			if reflect.DeepEqual(googleAdsLeadForms([]googleAdsLeadFormConfig{cfg}), full) {
+				t.Errorf("dropping %s changed nothing; the mapper never reads it", name)
+			}
+		})
+	}
+}
+
+// The fields slice must be copied, not aliased: the snapshot and the create path
+// both hold the mapped value, and a shared array makes one able to edit the other.
+func TestGoogleAdsLeadForms_CopiesTheFieldsSlice(t *testing.T) {
+	cfg := fullLeadFormConfig()
+	got := googleAdsLeadForms([]googleAdsLeadFormConfig{cfg})
+	got[0].Fields[0] = "MUTATED"
+	if cfg.Fields[0] != "FULL_NAME" {
+		t.Errorf("the caller's fields slice was mutated to %q", cfg.Fields[0])
+	}
+}
+
+func TestGoogleAdsLeadForms_EmptyInputIsNil(t *testing.T) {
+	if got := googleAdsLeadForms(nil); got != nil {
+		t.Errorf("lead forms = %+v, want nil", got)
+	}
+}
+
+// A privacy-policy URL is caller-supplied and persisted in the same plaintext
+// column every other URL here is, so it is reduced the same way — and a config
+// carrying ONLY a lead form must not take the early return.
+func TestGoogleAdsSnapshotConfig_SanitizesTheLeadFormPrivacyPolicyURL(t *testing.T) {
+	forms := []googleAdsLeadFormConfig{fullLeadFormConfig()}
+	cfg := googleAdsConfig{LeadForms: forms}
+
+	snapshot := googleAdsSnapshotConfig(cfg)
+	got := snapshot.LeadForms[0].PrivacyPolicyURL
+	if strings.Contains(got, "s3cr3t") {
+		t.Errorf("snapshot still carries the signing query: %q", got)
+	}
+	if !strings.HasPrefix(got, "https://policy.example.org") {
+		t.Errorf("snapshot lost the host: %q", got)
+	}
+	// The FULL url must still reach the client — Google requires it on the form.
+	if forms[0].PrivacyPolicyURL != signedPolicyURL {
+		t.Errorf("the caller's lead form was mutated to %q", forms[0].PrivacyPolicyURL)
+	}
+}
+
+func TestGoogleAdsConfig_DecodesTheLeadFormKeys(t *testing.T) {
+	raw := `{
+	  "leadForms": [{"businessName": "Linux Foundation", "headline": "Register",
+	                 "description": "Four days of talks", "callToActionType": "SIGN_UP",
+	                 "callToActionDescription": "Save your seat",
+	                 "privacyPolicyUrl": "https://policy.example.org/privacy",
+	                 "fields": ["FULL_NAME", "EMAIL"],
+	                 "postSubmitHeadline": "Done", "postSubmitDescription": "Check your inbox",
+	                 "postSubmitCallToActionType": "VISIT_SITE",
+	                 "desiredIntent": "HIGH_INTENT", "customDisclosure": "Shared with the organiser"}]
+	}`
+	var cfg googleAdsConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(cfg.LeadForms) != 1 {
+		t.Fatalf("leadForms = %+v", cfg.LeadForms)
+	}
+	f := cfg.LeadForms[0]
+	if f.BusinessName != "Linux Foundation" || f.CallToActionType != "SIGN_UP" ||
+		f.PrivacyPolicyURL != "https://policy.example.org/privacy" ||
+		len(f.Fields) != 2 || f.Fields[1] != "EMAIL" ||
+		f.PostSubmitCallToActionType != "VISIT_SITE" || f.DesiredIntent != "HIGH_INTENT" ||
+		f.CustomDisclosure != "Shared with the organiser" {
+		t.Errorf("leadForms[0] = %+v", f)
+	}
+}

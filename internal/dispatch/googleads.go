@@ -171,6 +171,27 @@ type googleAdsPriceConfig struct {
 	Offerings      []googleAdsPriceOfferingConfig `json:"offerings"`
 }
 
+// googleAdsLeadFormConfig is a lead form shown with the ad. It is the one
+// extension that changes WHERE THE LEAD GOES — the user's details are collected
+// inside Google rather than at the registration URL — so a brief that sets it is
+// changing what a conversion means for the campaign, not just adding a line to
+// the ad. `privacyPolicyUrl` is required by Google, and `fields` names the inputs
+// (FULL_NAME, EMAIL, …). At most one per campaign.
+type googleAdsLeadFormConfig struct {
+	BusinessName               string   `json:"businessName"`
+	Headline                   string   `json:"headline"`
+	Description                string   `json:"description"`
+	CallToActionType           string   `json:"callToActionType"`
+	CallToActionDescription    string   `json:"callToActionDescription"`
+	PrivacyPolicyURL           string   `json:"privacyPolicyUrl"`
+	Fields                     []string `json:"fields"`
+	PostSubmitHeadline         string   `json:"postSubmitHeadline"`
+	PostSubmitDescription      string   `json:"postSubmitDescription"`
+	PostSubmitCallToActionType string   `json:"postSubmitCallToActionType"`
+	DesiredIntent              string   `json:"desiredIntent"`
+	CustomDisclosure           string   `json:"customDisclosure"`
+}
+
 // googleAdsAdConfig is one responsive search ad inside an ad group. Both lists are
 // optional in exactly the way the campaign-level headlines/descriptions are — the
 // client pads missing slots to Google's minimums.
@@ -410,6 +431,9 @@ type googleAdsConfig struct {
 	CallExtensions []googleAdsCallExtensionConfig `json:"callExtensions"`
 	Promotions     []googleAdsPromotionConfig     `json:"promotions"`
 	Prices         []googleAdsPriceConfig         `json:"prices"`
+	// LeadForms is the seventh extension type and is also SEARCH ONLY. Unlike the
+	// six above it changes the campaign's destination: see googleAdsLeadFormConfig.
+	LeadForms []googleAdsLeadFormConfig `json:"leadForms"`
 	// AdGroups splits the campaign into one ad group per theme, each with its own
 	// keywords and up to three responsive search ads. Search only.
 	//
@@ -588,6 +612,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		CallExtensions:         googleAdsCallExtensions(cfg.CallExtensions),
 		Promotions:             googleAdsPromotions(cfg.Promotions),
 		Prices:                 googleAdsPrices(cfg.Prices),
+		LeadForms:              googleAdsLeadForms(cfg.LeadForms),
 		AdGroups:               googleAdsAdGroups(cfg.AdGroups),
 		DemandGenCreative:      googleAdsDemandGenCreative(cfg.DemandGenCreative),
 		PerformanceMaxCreative: googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
@@ -994,6 +1019,33 @@ func googleAdsDemandGenCreative(in *googleAdsDemandGenCreativeConfig) googleads.
 	}
 }
 
+// googleAdsLeadForms maps the lead form config into the client's shape. Every
+// field is forwarded verbatim; the client owns every refusal, including the
+// one-per-campaign limit and the post-submit all-or-nothing pair.
+func googleAdsLeadForms(in []googleAdsLeadFormConfig) []googleads.LeadFormExtension {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.LeadFormExtension, len(in))
+	for i, f := range in {
+		out[i] = googleads.LeadFormExtension{
+			BusinessName:               f.BusinessName,
+			Headline:                   f.Headline,
+			Description:                f.Description,
+			CallToActionType:           f.CallToActionType,
+			CallToActionDescription:    f.CallToActionDescription,
+			PrivacyPolicyURL:           f.PrivacyPolicyURL,
+			Fields:                     append([]string(nil), f.Fields...),
+			PostSubmitHeadline:         f.PostSubmitHeadline,
+			PostSubmitDescription:      f.PostSubmitDescription,
+			PostSubmitCallToActionType: f.PostSubmitCallToActionType,
+			DesiredIntent:              f.DesiredIntent,
+			CustomDisclosure:           f.CustomDisclosure,
+		}
+	}
+	return out
+}
+
 // googleAdsAdGroups maps the per-theme ad group list, reusing googleAdsKeywords for
 // each group's keywords so a group's keyword vocabulary cannot drift from the
 // campaign-level one. An empty per-group list stays nil, which is what the client
@@ -1198,7 +1250,8 @@ func googleAdsDisplayCreative(in *googleAdsDisplayCreativeConfig) googleads.Disp
 // link-bearing free-text field is ever added here, it needs that helper.
 func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 	if len(cfg.Sitelinks) == 0 && len(cfg.Promotions) == 0 && len(cfg.Prices) == 0 &&
-		cfg.DemandGenCreative == nil && cfg.PerformanceMaxCreative == nil && cfg.DisplayCreative == nil {
+		len(cfg.LeadForms) == 0 && cfg.DemandGenCreative == nil &&
+		cfg.PerformanceMaxCreative == nil && cfg.DisplayCreative == nil {
 		return cfg
 	}
 	snapshot := cfg
@@ -1237,6 +1290,16 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 				offerings[j].FinalURL = sanitizeSnapshotURL(offerings[j].FinalURL)
 			}
 			snapshot.Prices[i].Offerings = offerings
+		}
+	}
+	// A lead form's privacy-policy URL is caller-supplied and is NOT a destination
+	// this client tags, but it is persisted in exactly the same plaintext column, so
+	// it is reduced on a copied slice like every other caller URL here.
+	if len(cfg.LeadForms) > 0 {
+		snapshot.LeadForms = make([]googleAdsLeadFormConfig, len(cfg.LeadForms))
+		copy(snapshot.LeadForms, cfg.LeadForms)
+		for i := range snapshot.LeadForms {
+			snapshot.LeadForms[i].PrivacyPolicyURL = sanitizeSnapshotURL(snapshot.LeadForms[i].PrivacyPolicyURL)
 		}
 	}
 	// Every creative image URL is sanitized for the same reason the sitelink URL and

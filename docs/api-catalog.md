@@ -1095,15 +1095,52 @@ prices?:                        — OPTIONAL price extensions (LFXV2-2665): a ta
                                   clickable destination. Headers are de-duplicated case-insensitively;
                                   Google serves one row per header. At most 10 price extensions.
 
-                                  All six extension fields are SEARCH ONLY and are REFUSED, not
+leadForms?:                     — OPTIONAL lead form (LFXV2-2665). The one extension that changes WHERE
+  {businessName, headline,        THE LEAD GOES: the user's details are collected inside Google rather
+   description,                   than at the registration URL, so a campaign that sets one is changing
+   callToActionType,              what a conversion means for it. AT MOST ONE per campaign — Google
+   callToActionDescription,       links a single lead form, so a second is refused here rather than
+   privacyPolicyUrl,              created as an account-level asset and then rejected at the link.
+   fields: string[],
+   postSubmitHeadline?,           Required: `businessName` (≤25 runes), `headline` (≤30),
+   postSubmitDescription?,        `description` (≤200), `callToActionDescription` (≤30),
+   postSubmitCallToActionType?,   `callToActionType` (the button label, e.g. `SIGN_UP`),
+   desiredIntent?,                `privacyPolicyUrl`, and at least one entry in `fields` — a form that
+   customDisclosure?}[]           collects nothing cannot generate a lead. 1..12 `fields`, each an
+                                  input-type name (`FULL_NAME`, `EMAIL`, …), de-duplicated on the type
+                                  because Google renders one input per type.
+
+                                  `privacyPolicyUrl` is required BY GOOGLE and is the one caller URL
+                                  this client validates but does NOT UTM-tag: it is a link Google
+                                  renders inside the form, not an ad destination, so tagging it would
+                                  attribute a policy read as an ad click. It is otherwise held to the
+                                  same checks as every destination — http(s) only, host required, no
+                                  embedded credentials, ≤2084 bytes — and is reduced to scheme+host in
+                                  `config_snapshot`.
+
+                                  `postSubmitHeadline` (≤25 runes) and `postSubmitDescription` (≤200)
+                                  are ALL-OR-NOTHING: one without the other renders a half-written
+                                  thank-you screen. `postSubmitCallToActionType` stands alone — Google
+                                  renders it on its own default screen too.
+
+                                  `callToActionType`, `postSubmitCallToActionType`, `desiredIntent`
+                                  (e.g. `HIGH_INTENT`) and every `fields` entry are SHAPE-checked only
+                                  (`^[A-Z][A-Z0-9_]*$`), like `occasion` above. `customDisclosure`
+                                  (≤200 runes) is only permitted on accounts Google has allow-listed
+                                  for it, which this client cannot check — an account without the
+                                  allow-list is refused at the mutate.
+
+                                  All seven extension fields are SEARCH ONLY and are REFUSED, not
                                   ignored, on every other channel. Omitted/empty, no assets are created
                                   and the ad serves with no extensions — the pre-LFXV2-2665 behaviour.
 
-                                  IMAGE and LOCATION extensions are NOT supported. An image extension
-                                  carries bytes, which would give the Search create path a network
-                                  fetch phase it does not have today; a location extension cannot be
-                                  created through this API at all — it is derived from a Business
-                                  Profile linked to the account.
+                                  IMAGE and LOCATION extensions, and the lead form's optional
+                                  BACKGROUND IMAGE, are NOT supported. Each of the first two carries
+                                  bytes — as does the background image — which would give the Search
+                                  create path a network fetch phase it does not have today; a location
+                                  extension cannot be created through this API at all — it is derived
+                                  from a Business Profile linked to the account. A lead form without a
+                                  background image renders on Google's default and is servable.
 adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-2665), each with its own
   {name, cpcBid?, keywords?,      keywords and up to 3 Responsive Search Ads. SEARCH ONLY and REFUSED on
    audienceSegments?,             every other `channel`: Demand Gen creates its own single ad group,

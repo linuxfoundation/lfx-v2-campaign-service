@@ -432,8 +432,8 @@ func TestValidateMoney_RejectsNonFiniteAmounts(t *testing.T) {
 
 // The field type is carried positionally and cannot be read back off a created
 // asset, so a plan whose two slices drift links every asset under the wrong slot.
-// This asserts the pairing across all SIX extension types at once.
-func TestValidateAssetPlan_PairsTheThreeNewTypesWithTheirFieldTypes(t *testing.T) {
+// This asserts the pairing across all SEVEN extension types at once.
+func TestValidateAssetPlan_PairsEveryTypeWithItsFieldType(t *testing.T) {
 	in := sampleInput()
 	in.Sitelinks = []Sitelink{sampleSitelink()}
 	in.Callouts = []string{"Free to attend"}
@@ -441,6 +441,7 @@ func TestValidateAssetPlan_PairsTheThreeNewTypesWithTheirFieldTypes(t *testing.T
 	in.CallExtensions = []CallExtension{sampleCallExtension()}
 	in.Promotions = []PromotionExtension{samplePromotion()}
 	in.Prices = []PriceExtension{samplePrice()}
+	in.LeadForms = []LeadFormExtension{sampleLeadForm()}
 
 	plan, err := validateAssetPlan(campaignKindSearch, in)
 	if err != nil {
@@ -451,7 +452,7 @@ func TestValidateAssetPlan_PairsTheThreeNewTypesWithTheirFieldTypes(t *testing.T
 	}
 	want := []string{
 		assetFieldSitelink, assetFieldCallout, assetFieldStructuredSnippet,
-		assetFieldCall, assetFieldPromotion, assetFieldPrice,
+		assetFieldCall, assetFieldPromotion, assetFieldPrice, assetFieldLeadForm,
 	}
 	if len(plan.fieldTypes) != len(want) {
 		t.Fatalf("got %d field types, want %d", len(plan.fieldTypes), len(want))
@@ -461,11 +462,11 @@ func TestValidateAssetPlan_PairsTheThreeNewTypesWithTheirFieldTypes(t *testing.T
 			t.Errorf("fieldTypes[%d] = %q, want %q", i, plan.fieldTypes[i], want[i])
 		}
 	}
-	if plan.calls != 1 || plan.promotions != 1 || plan.prices != 1 {
-		t.Errorf("counts = %d/%d/%d, want 1/1/1", plan.calls, plan.promotions, plan.prices)
+	if plan.calls != 1 || plan.promotions != 1 || plan.prices != 1 || plan.leadForms != 1 {
+		t.Errorf("counts = %d/%d/%d/%d, want 1/1/1/1", plan.calls, plan.promotions, plan.prices, plan.leadForms)
 	}
 	step := assetStep(plan)
-	for _, want := range []string{"1 call extensions", "1 promotions", "1 prices"} {
+	for _, want := range []string{"1 call extensions", "1 promotions", "1 prices", "1 lead forms"} {
 		if !strings.Contains(step, want) {
 			t.Errorf("assetStep %q is missing %q", step, want)
 		}
@@ -490,7 +491,7 @@ func TestAssetStep_OmitsTheNewClausesWhenUnasked(t *testing.T) {
 // A type wired into validateAssetPlan but missing from assetStep creates paid
 // assets the campaign result never mentions — and a type missing from the
 // `asked` count takes the zero-asked early return and is silently dropped.
-func TestValidateAssetPlan_CountsAndNamesAllSixExtensionTypes(t *testing.T) {
+func TestValidateAssetPlan_CountsAndNamesAllSevenExtensionTypes(t *testing.T) {
 	in := CampaignInput{
 		Sitelinks:          []Sitelink{sampleSitelink()},
 		Callouts:           []string{"Free workshops"},
@@ -498,18 +499,19 @@ func TestValidateAssetPlan_CountsAndNamesAllSixExtensionTypes(t *testing.T) {
 		CallExtensions:     []CallExtension{sampleCallExtension()},
 		Promotions:         []PromotionExtension{samplePromotion()},
 		Prices:             []PriceExtension{samplePrice()},
+		LeadForms:          []LeadFormExtension{sampleLeadForm()},
 	}
 	plan, err := validateAssetPlan(campaignKindSearch, in)
 	if err != nil {
 		t.Fatalf("validateAssetPlan: %v", err)
 	}
-	if plan.count() != 6 {
-		t.Errorf("plan holds %d assets, want 6: %+v", plan.count(), plan)
+	if plan.count() != 7 {
+		t.Errorf("plan holds %d assets, want 7: %+v", plan.count(), plan)
 	}
 	if len(plan.fieldTypes) != plan.count() {
 		t.Errorf("assets and fieldTypes are positionally paired; got %d and %d", plan.count(), len(plan.fieldTypes))
 	}
-	want := "1 sitelinks, 1 callouts, 1 structured snippets, 1 call extensions, 1 promotions, 1 prices"
+	want := "1 sitelinks, 1 callouts, 1 structured snippets, 1 call extensions, 1 promotions, 1 prices, 1 lead forms"
 	if got := assetStep(plan); got != want {
 		t.Errorf("assetStep = %q, want %q", got, want)
 	}
@@ -523,6 +525,7 @@ func TestValidateAssetPlan_EachNewTypeAloneIsPlanned(t *testing.T) {
 		"call extensions": func(in *CampaignInput) { in.CallExtensions = []CallExtension{sampleCallExtension()} },
 		"promotions":      func(in *CampaignInput) { in.Promotions = []PromotionExtension{samplePromotion()} },
 		"prices":          func(in *CampaignInput) { in.Prices = []PriceExtension{samplePrice()} },
+		"lead forms":      func(in *CampaignInput) { in.LeadForms = []LeadFormExtension{sampleLeadForm()} },
 	}
 	for name, set := range cases {
 		t.Run(name, func(t *testing.T) {

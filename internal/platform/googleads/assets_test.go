@@ -397,6 +397,7 @@ func TestValidateAssetPlan_RefusesEveryExtensionOnDemandGen(t *testing.T) {
 		"call extensions": func(in *CampaignInput) { in.CallExtensions = []CallExtension{sampleCallExtension()} },
 		"promotions":      func(in *CampaignInput) { in.Promotions = []PromotionExtension{samplePromotion()} },
 		"prices":          func(in *CampaignInput) { in.Prices = []PriceExtension{samplePrice()} },
+		"lead forms":      func(in *CampaignInput) { in.LeadForms = []LeadFormExtension{sampleLeadForm()} },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

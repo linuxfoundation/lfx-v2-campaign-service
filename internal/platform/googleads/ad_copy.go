@@ -264,35 +264,9 @@ func buildAdFinalURL(registrationURL, eventSlug, eventName, project, nameSuffix 
 // differs. Keeping one implementation is what stops sitelink URLs from drifting
 // into a second, laxer set of checks.
 func buildTaggedFinalURL(noun, registrationURL, eventSlug, eventName, project, nameSuffix string) (string, error) {
-	registrationURL = strings.TrimSpace(registrationURL)
-	if registrationURL == "" {
-		return "", fmt.Errorf("%s is empty", noun)
-	}
-	u, err := url.Parse(registrationURL)
+	u, err := validateServableURL(noun, registrationURL)
 	if err != nil {
-		// Do NOT echo the raw URL or wrap err (both may carry secrets in
-		// userinfo/query/fragment) — this message and its wrapped url.Error
-		// can both be logged or persisted in a result step/snapshot.
-		return "", fmt.Errorf("%s %q is not a valid URL", noun, redactURLForError(registrationURL))
-	}
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return "", fmt.Errorf("%s %q must be http(s), got scheme %q", noun, redactURLForError(registrationURL), capForError(u.Scheme))
-	}
-	if u.Hostname() == "" {
-		return "", fmt.Errorf("%s %q has no host", noun, redactURLForError(registrationURL))
-	}
-	// Reject embedded userinfo (user[:password]@host): an ad destination never
-	// needs URL credentials, and forwarding them downstream would leak a
-	// basic-auth secret. Mirrors the twitter/reddit/meta clients' validators.
-	if u.User != nil {
-		return "", fmt.Errorf("%s %q must not contain embedded credentials (userinfo)", noun, redactURLForError(registrationURL))
-	}
-	// Validate the existing query before merging in utm_* params: a malformed
-	// percent-escape in RawQuery is silently dropped by u.Query(), which would
-	// alter the destination the ad actually points to.
-	if _, err := url.ParseQuery(u.RawQuery); err != nil {
-		return "", fmt.Errorf("%s %q has a malformed query string", noun, redactURLForError(registrationURL))
+		return "", err
 	}
 
 	campaign := sanitizeNamePart(eventSlug)
@@ -318,6 +292,52 @@ func buildTaggedFinalURL(noun, registrationURL, eventSlug, eventName, project, n
 	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
+}
+
+// validateServableURL is the half of buildTaggedFinalURL that decides whether a
+// caller-supplied URL is one this client is willing to send at all, split out so
+// a URL that must NOT be UTM-tagged still passes exactly the same checks.
+//
+// The lead form's privacy-policy URL is the case that needs it: it is a link
+// Google renders inside the form, not an ad destination, so tagging it with this
+// campaign's utm_* parameters would attribute a privacy-policy read as an ad
+// click and could break a URL whose query the policy host parses itself. What it
+// must still be is servable and secret-free, and that is this function. Keeping
+// one implementation is what stops a second, laxer set of URL checks appearing.
+//
+// Returns the PARSED url so the tagging caller does not parse twice.
+func validateServableURL(noun, raw string) (*url.URL, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("%s is empty", noun)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		// Do NOT echo the raw URL or wrap err (both may carry secrets in
+		// userinfo/query/fragment) — this message and its wrapped url.Error
+		// can both be logged or persisted in a result step/snapshot.
+		return nil, fmt.Errorf("%s %q is not a valid URL", noun, redactURLForError(raw))
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return nil, fmt.Errorf("%s %q must be http(s), got scheme %q", noun, redactURLForError(raw), capForError(u.Scheme))
+	}
+	if u.Hostname() == "" {
+		return nil, fmt.Errorf("%s %q has no host", noun, redactURLForError(raw))
+	}
+	// Reject embedded userinfo (user[:password]@host): an ad destination never
+	// needs URL credentials, and forwarding them downstream would leak a
+	// basic-auth secret. Mirrors the twitter/reddit/meta clients' validators.
+	if u.User != nil {
+		return nil, fmt.Errorf("%s %q must not contain embedded credentials (userinfo)", noun, redactURLForError(raw))
+	}
+	// Validate the query before anything merges into it: a malformed
+	// percent-escape in RawQuery is silently dropped by u.Query(), which would
+	// alter the destination the ad actually points to.
+	if _, err := url.ParseQuery(u.RawQuery); err != nil {
+		return nil, fmt.Errorf("%s %q has a malformed query string", noun, redactURLForError(raw))
+	}
+	return u, nil
 }
 
 // setIfAbsent sets key=value in q only when key is not already present, so a

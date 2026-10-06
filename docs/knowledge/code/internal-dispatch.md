@@ -327,14 +327,25 @@ reason the creative-list tests give. Call extensions are NOT sanitized and NOT p
 the early return's condition set: a phone number is not a URL and carries no query to
 strip.
 
-The early return that skips the whole copy names SIX fields now — sitelinks, promotions,
-prices, the Demand Gen creative, the asset group and the Display creative, and
-deliberately NOT `videoCreative`, which carries YouTube video ids and text and no URL of
-any kind, so a config holding only a video creative has nothing to sanitize — and
-`TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone`,
-`..._SanitizesTheDisplayCreativeAlone` and `..._SanitizesEachNewExtensionAlone` pin the
-last four, because a config carrying only one of them taking that return is precisely the
-bug each condition was added to prevent.
+**A lead form carries a URL that is never tagged, and is persisted all the same.** The
+privacy-policy URL is the one caller URL the client validates but deliberately does not
+UTM-tag, because it is a link Google renders inside the form rather than an ad
+destination. That changes nothing here: `config_snapshot` is plaintext either way, so
+`googleAdsSnapshotConfig` reduces it on a copied slice like every other caller URL, and
+`TestGoogleAdsSnapshotConfig_SanitizesTheLeadFormPrivacyPolicyURL` pins both halves —
+the snapshot loses the signing query, and the caller's config keeps the full URL Google
+requires. A shallow slice copy suffices here; only the price extension's nested
+`Offerings` needs the deep one.
+
+The early return that skips the whole copy names SEVEN fields now — sitelinks,
+promotions, prices, lead forms, the Demand Gen creative, the asset group and the Display
+creative, and deliberately NOT `videoCreative`, which carries YouTube video ids and text
+and no URL of any kind, so a config holding only a video creative has nothing to
+sanitize — and `TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone`,
+`..._SanitizesTheDisplayCreativeAlone`, `..._SanitizesEachNewExtensionAlone` and
+`..._SanitizesTheLeadFormPrivacyPolicyURL` pin the last five, because a config carrying
+only one of them taking that return is precisely the bug each condition was added to
+prevent.
 
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a
 credential-SHAPED parameter because the text is about to be PUBLISHED, and it is a

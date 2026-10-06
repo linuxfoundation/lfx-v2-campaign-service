@@ -130,6 +130,7 @@ type assetCreate struct {
 	CallAsset      *callAsset      `json:"callAsset,omitempty"`
 	PromotionAsset *promotionAsset `json:"promotionAsset,omitempty"`
 	PriceAsset     *priceAsset     `json:"priceAsset,omitempty"`
+	LeadFormAsset  *leadFormAsset  `json:"leadFormAsset,omitempty"`
 }
 
 // campaignAssetCreate links an already-created asset to the campaign. FieldType
@@ -159,6 +160,7 @@ type assetPlan struct {
 	calls      int
 	promotions int
 	prices     int
+	leadForms  int
 }
 
 func (p assetPlan) empty() bool { return len(p.assets) == 0 }
@@ -171,7 +173,7 @@ func (p assetPlan) count() int { return len(p.assets) }
 // sitelink with no destination fails while nothing has been paid for.
 func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
 	asked := len(in.Sitelinks) + len(in.Callouts) + len(in.StructuredSnippets) +
-		len(in.CallExtensions) + len(in.Promotions) + len(in.Prices)
+		len(in.CallExtensions) + len(in.Promotions) + len(in.Prices) + len(in.LeadForms)
 	if asked == 0 {
 		return assetPlan{}, nil
 	}
@@ -179,7 +181,7 @@ func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
 	// not take campaign-level extension assets, so sending them would fail
 	// upstream after the campaign exists.
 	if kind != campaignKindSearch {
-		return assetPlan{}, fmt.Errorf("google-ads ad extensions (sitelinks, callouts, structured snippets, call extensions, promotions, prices) are supported on Search campaigns only, not on %s", kind)
+		return assetPlan{}, fmt.Errorf("google-ads ad extensions (sitelinks, callouts, structured snippets, call extensions, promotions, prices, lead forms) are supported on Search campaigns only, not on %s", kind)
 	}
 
 	var plan assetPlan
@@ -243,6 +245,16 @@ func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
 		plan.fieldTypes = append(plan.fieldTypes, assetFieldPrice)
 	}
 	plan.prices = len(prices)
+
+	leadForms, err := validateLeadFormExtensions(in)
+	if err != nil {
+		return assetPlan{}, err
+	}
+	for i := range leadForms {
+		plan.assets = append(plan.assets, leadForms[i])
+		plan.fieldTypes = append(plan.fieldTypes, assetFieldLeadForm)
+	}
+	plan.leadForms = len(leadForms)
 
 	return plan, nil
 }
@@ -387,7 +399,7 @@ func validateStructuredSnippets(snippets []StructuredSnippet) ([]assetCreate, er
 // requested. A clause about callouts on a campaign with no callout assets is a
 // lie about a paid resource.
 func assetStep(plan assetPlan) string {
-	parts := make([]string, 0, 6)
+	parts := make([]string, 0, 7)
 	if plan.sitelinks > 0 {
 		parts = append(parts, fmt.Sprintf("%d sitelinks", plan.sitelinks))
 	}
@@ -405,6 +417,9 @@ func assetStep(plan assetPlan) string {
 	}
 	if plan.prices > 0 {
 		parts = append(parts, fmt.Sprintf("%d prices", plan.prices))
+	}
+	if plan.leadForms > 0 {
+		parts = append(parts, fmt.Sprintf("%d lead forms", plan.leadForms))
 	}
 	return strings.Join(parts, ", ")
 }

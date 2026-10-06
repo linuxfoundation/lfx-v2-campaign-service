@@ -269,6 +269,11 @@ type CampaignInput struct {
 	CallExtensions []CallExtension
 	Promotions     []PromotionExtension
 	Prices         []PriceExtension
+	// LeadForms is the seventh extension type, and the only one that changes
+	// WHERE THE LEAD GOES: a lead form collects the user's details inside Google
+	// instead of sending them to the registration URL. Optional, SEARCH ONLY,
+	// and at most one per campaign — see assets_leadform.go.
+	LeadForms []LeadFormExtension
 	// AdGroups splits the campaign into one ad group per theme, each with its own
 	// keywords, bid and up to three responsive search ads. Optional and SEARCH
 	// ONLY (refused at preflight on Demand Gen, which builds its own ad group and
