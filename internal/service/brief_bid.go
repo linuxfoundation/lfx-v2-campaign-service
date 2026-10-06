@@ -65,11 +65,11 @@ func (s *BriefService) UpdateCampaignBid(ctx context.Context, p *briefs.UpdateCa
 	if math.Round(bid*microsPerCurrencyUnit) < 1 {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "bid is too small to set; it rounds to zero micros (one micro is 0.000001 of the account's currency, and this amount is under half of one), which no ad platform accepts"}
 	}
-	// bid_type is optional with a design default of "cpc"; an empty value from a direct
-	// (non-HTTP) caller takes the same default rather than being refused.
+	// bid_type is optional and defaults to "cpc" HERE, not in the design: a Goa Default plus
+	// Enum makes the generated CLI reject an omitted value. Omitted (nil) or empty → cpc.
 	bidType := model.BidTypeCPC
-	if p.BidType != "" {
-		bidType = model.BidType(p.BidType)
+	if p.BidType != nil && *p.BidType != "" {
+		bidType = model.BidType(*p.BidType)
 	}
 	if bidType != model.BidTypeCPC {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "bid_type must be 'cpc'"}

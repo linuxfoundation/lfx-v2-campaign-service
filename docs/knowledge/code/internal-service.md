@@ -1570,8 +1570,9 @@ unchanged and is not repeated.
 What differs:
 
 - **Body**: `bid` (Float64, account currency, contract `Minimum` one micro / `Maximum` 1,000,000)
-  and an OPTIONAL `bid_type` (enum `cpc`, default `cpc`; an empty value from a direct caller takes
-  the default). One unit exists today; it is named so an ad group bidding in another unit is
+  and an OPTIONAL `bid_type` (enum `cpc`, NO Goa default — with `Default` plus `Enum` the
+  generated CLI validated the empty value before defaulting and rejected `{"bid":2.5}` — so the
+  service defaults it: omitted (nil) or empty → `cpc`). One unit exists today; it is named so an ad group bidding in another unit is
   refused rather than re-bid in a unit nobody asked for.
 - **Persisted to `max_cpc_bid`** (migration `000039`, `model.Campaign.MaxCPCBid`), the bid
   lever's twin of `budget_amount`: a REQUEST the platform confirmed, never an observation. NULL

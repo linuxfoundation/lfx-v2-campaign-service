@@ -23,9 +23,11 @@ import (
 // without one is refused rather than resolved by listing ad groups.
 //
 // WHAT THE CREATE PATH SENDS MAKES THIS LEG NARROW, and that is stated rather than hidden:
-// CreateCampaign sends bid_strategy=BIDLESS — Reddit's automatic bidding — so every Reddit
-// campaign this service creates is refused here (ErrBidUnwritable, 409) until an operator moves
-// its ad group to MANUAL_BIDDING in Reddit Ads Manager. Writing a bid_value under BIDLESS would
+// CreateCampaign sends bid_strategy=BIDLESS — Reddit's automatic bidding — on BOTH the campaign
+// and its ad group, with Campaign Budget Optimization on, so every Reddit campaign this service
+// creates is refused here (ErrBidUnwritable, 409) until an operator switches BOTH the campaign's
+// bid strategy and the ad group to MANUAL_BIDDING in Reddit Ads Manager (the campaign is
+// checked first, then the ad group). Writing a bid_value under BIDLESS would
 // be ignored, or read as a request to switch strategy; this path never sends bid_strategy.
 //
 // READ-THEN-WRITE. The CAMPAIGN read establishes that its own bid strategy is compatible with a
@@ -149,7 +151,7 @@ func (d *RedditDispatcher) WriteBid(ctx context.Context, projectID string, platf
 		if reported == "" {
 			reported = "no bid_strategy"
 		}
-		return fmt.Errorf("write reddit campaign bid: ad group %s reports %s, so a manual bid would be ignored (BIDLESS, MAXIMIZE_VOLUME and TARGET_CPX are managed by Reddit); this endpoint never changes a bid strategy — move the ad group to manual bidding in Reddit Ads Manager first: %w",
+		return fmt.Errorf("write reddit campaign bid: ad group %s reports %s, so a manual bid would be ignored (BIDLESS, MAXIMIZE_VOLUME and TARGET_CPX are managed by Reddit); this endpoint never changes a bid strategy — switch the ad group (and, under CBO, its campaign) to manual bidding in Reddit Ads Manager first: %w",
 			adGroupID, reported, domain.ErrBidUnwritable)
 	}
 	// GUARD 3 — THE UNIT MUST BE CPC.

@@ -5,10 +5,14 @@ package reddit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -150,5 +154,53 @@ func TestGetCampaignBudget_ReportsTheCampaignBidStrategy(t *testing.T) {
 	}
 	if got.BidStrategy != "BIDLESS" {
 		t.Errorf("BidStrategy = %q, want BIDLESS", got.BidStrategy)
+	}
+}
+
+// throttledThenClient answers the FIRST request with a 429 and every later one with
+// (status, body), counting attempts.
+func throttledThenClient(t *testing.T, status int, body string) (*Client, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(api.Close)
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	t.Cleanup(tok.Close)
+	return NewClient(testCreds, testAccount, WithBaseURL(api.URL+"/api/v3"), WithTokenURL(tok.URL),
+		WithNowFunc(fixedRedditClock()), withRetryBaseDelay(tinyBackoff)), &calls
+}
+
+// A refusal that answers a PATCH retried after a 429 cannot speak for the 429'd attempt, which
+// may have applied: even a structured bid_value 400 is UNCONFIRMED, never an amount refusal.
+func TestUpdateAdGroupBid_RefusalAfterARetried429IsUnconfirmed(t *testing.T) {
+	c, calls := throttledThenClient(t, http.StatusBadRequest, `{"error":{"fields":[{"field":"bid_value"}]}}`)
+	err := c.UpdateAdGroupBid(context.Background(), "t5_ag", 2_000_000)
+	if err == nil || !IsOutcomeUnconfirmed(err) {
+		t.Fatalf("want UNCONFIRMED, got %v", err)
+	}
+	if errors.Is(err, ErrBidAmountInvalid) {
+		t.Errorf("a refusal after a retried 429 must not be an amount refusal: %v", err)
+	}
+	if n := calls.Load(); n != 2 {
+		t.Errorf("want the 429 retried once (2 attempts), got %d", n)
+	}
+}
+
+func TestUpdateAdGroupBid_SuccessAfterARetried429IsASuccess(t *testing.T) {
+	c, calls := throttledThenClient(t, http.StatusOK, `{"data":{"id":"t5_ag","bid_value":2000000}}`)
+	if err := c.UpdateAdGroupBid(context.Background(), "t5_ag", 2_000_000); err != nil {
+		t.Fatalf("a throttled-then-accepted PATCH must succeed: %v", err)
+	}
+	if n := calls.Load(); n != 2 {
+		t.Errorf("want 2 attempts, got %d", n)
 	}
 }

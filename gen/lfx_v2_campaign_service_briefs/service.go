@@ -213,10 +213,14 @@ type Service interface {
 	// TARGET) the platform would ignore it or, worse, the write would be read as a
 	// request to switch strategy — and this endpoint NEVER switches strategy,
 	// billing or charge unit. An unreported strategy is refused the same way
-	// rather than assumed manual. NOTE: every Reddit campaign this service creates
-	// is BIDLESS, every Meta campaign LOWEST_COST_WITHOUT_CAP billed on
-	// IMPRESSIONS, and every X campaign AUTO, so those three legs apply only after
-	// an operator has moved the ad group, ad set or line item to a manual
+	// rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked
+	// first and then the ad group's: with Campaign Budget Optimization on (as on
+	// every campaign this service creates) the ad group's strategy must match the
+	// campaign's, so both must be MANUAL_BIDDING. NOTE: every Reddit campaign this
+	// service creates is BIDLESS on both the campaign and its ad group, every Meta
+	// campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, and every X campaign
+	// AUTO, so those three legs apply only after an operator has moved the Reddit
+	// campaign and ad group, the Meta ad set or the X line item to a manual
 	// per-click bid in the platform's own UI. The amount is in the AD ACCOUNT's
 	// own currency, not USD, and this service neither knows nor converts it.
 	// Microsoft Advertising, Reddit, Meta and X today: a campaign on any other
@@ -1223,10 +1227,10 @@ type UpdateCampaignBidPayload struct {
 	// New maximum cost-per-click bid, in the AD ACCOUNT's own currency (NOT USD).
 	// Must be strictly positive.
 	Bid float64
-	// The unit the bid is expressed in. Only a max cost-per-click bid is
-	// supported; it MUST match how the campaign's ad group, ad set or line item
-	// bids upstream.
-	BidType string
+	// The unit the bid is expressed in; defaults to cpc when omitted. Only a max
+	// cost-per-click bid is supported; it MUST match how the campaign's ad group,
+	// ad set or line item bids upstream.
+	BidType *string
 }
 
 // UpdateCampaignBudgetPayload is the payload type of the

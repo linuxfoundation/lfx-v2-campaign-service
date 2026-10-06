@@ -95,10 +95,10 @@ type UpdateCampaignBidRequestBody struct {
 	// New maximum cost-per-click bid, in the AD ACCOUNT's own currency (NOT USD).
 	// Must be strictly positive.
 	Bid float64 `form:"bid" json:"bid" xml:"bid"`
-	// The unit the bid is expressed in. Only a max cost-per-click bid is
-	// supported; it MUST match how the campaign's ad group, ad set or line item
-	// bids upstream.
-	BidType string `form:"bid_type" json:"bid_type" xml:"bid_type"`
+	// The unit the bid is expressed in; defaults to cpc when omitted. Only a max
+	// cost-per-click bid is supported; it MUST match how the campaign's ad group,
+	// ad set or line item bids upstream.
+	BidType *string `form:"bid_type,omitempty" json:"bid_type,omitempty" xml:"bid_type,omitempty"`
 }
 
 // ApplyKeywordActionsRequestBody is the type of the
@@ -3647,12 +3647,6 @@ func NewUpdateCampaignBidRequestBody(p *lfxv2campaignservicebriefs.UpdateCampaig
 	body := &UpdateCampaignBidRequestBody{
 		Bid:     p.Bid,
 		BidType: p.BidType,
-	}
-	{
-		var zero string
-		if body.BidType == zero {
-			body.BidType = "cpc"
-		}
 	}
 	return body
 }
