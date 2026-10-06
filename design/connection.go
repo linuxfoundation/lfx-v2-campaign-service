@@ -1487,6 +1487,57 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
+	// The Microsoft Advertising twin of resolve-google-ads-campaign, with the same payload, the
+	// same result type and the same error set. A separate method rather than a platform path
+	// parameter on the Google route, so that route — its path, operation id, generated client and
+	// HTTPRoute/RuleSet entries — stays byte-identical for the callers already using it.
+	Method("resolve-microsoft-ads-campaign", func() {
+		Description("Resolve one Microsoft Advertising campaign id to this service's own campaign and brief. " +
+			"The Microsoft twin of resolve-google-ads-campaign: a caller holding a row from " +
+			"get-microsoft-ads-keywords has Microsoft's numeric CampaignId, while apply-keyword-actions " +
+			"and add-negative-keywords are keyed by this service's campaign UUID under its brief. " +
+			"A pure READ of this service's own tables: Microsoft is never contacted, no connection is " +
+			"resolved, and nothing is mutated. Scoped to the project's own campaigns by the same " +
+			"`project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. " +
+			"**An unowned id is 200 with an empty `matches`, not 404.** " +
+			"**`matches` CAN hold more than one entry here, unlike Google:** Microsoft campaign ids are " +
+			"minted per ad account, so migration 000020's unique index deliberately covers Google Ads " +
+			"only, and a project whose connection was re-pointed between accounts can hold two live rows " +
+			"with the same id. A caller receiving more than one must refuse rather than choose. " +
+			"Not a list endpoint under rule 3: a keyed lookup for one supplied id.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			// Same bound as the Google method: a Microsoft CampaignId is a `long`, so the
+			// int64 decimal rule is exactly right, and a non-canonical spelling would only
+			// come back as a confident "not yours".
+			Attribute("platform_campaign_id", String, "The Microsoft Advertising campaign id to resolve. Digits only, no leading zero, and within int64.", func() {
+				Pattern(`^[1-9][0-9]{0,18}$`)
+				MaxLength(19)
+				Example("413296582")
+			})
+			Required("project_id", "platform_campaign_id")
+		})
+		Result(PlatformCampaignResolution)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		// The same 503 as the Google method, for the same reason: resolveBackendWithOrch
+		// refuses while storage and the orchestrator are not wired, which in no-database mode
+		// lasts for the life of the process.
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/microsoft-ads/campaign-ref")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("platform_campaign_id")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
 	Method("list-meta-ads-accounts", func() {
 		Description("Enumerate the Meta ad accounts accessible via the stored connection credential. " +
 			"Returns act_-prefixed account ids, ready to store as the connection's account_id. " +
