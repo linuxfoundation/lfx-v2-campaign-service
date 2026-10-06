@@ -760,13 +760,20 @@ without one are refused, exactly as an orphan ad is.
   NOT a strict leaf-to-root walk: Ads is deeper than AdGroups in the tree, yet AdGroups PUTs first.
   The campaign is only un-gated once its children are already serving; the reverse would briefly
   serve nothing under a live campaign.
-- **Keyword ids are narrowed to the LIVE ones first** (LFXV2-2665, dispatcher side). Keyword
-  REMOVE deletes keywords without touching the row, so the recorded `keywordIds` can name a
-  deleted keyword, which UpdateKeywords would reject and turn every later toggle into an
-  unconfirmed partial cascade. `ToggleStatus` reads `GetAdGroupKeywords` and passes only ids still
-  present and not `Deleted`. On ACTIVATE a failed read refuses (definite — nothing changed yet) and
-  an emptied set is `ErrCampaignNotProvisioned`; on PAUSE a failed read falls back to the recorded
-  ids, so stopping delivery never depends on a read. **⚠️ Known limitation (documented, not
+- **On ACTIVATE, keyword ids are narrowed to the LIVE ones first** (LFXV2-2665, dispatcher side).
+  Keyword REMOVE deletes keywords without touching the row, so the recorded `keywordIds` can name
+  a deleted keyword, which UpdateKeywords would reject. `ToggleStatus` reads `GetAdGroupKeywords`
+  under its OWN sub-budget (`microsoftActivateKeywordReadBudget`, 10s of the toggle's 45s, so a
+  slow or throttled read cannot leave the four PUTs without time) and passes only ids still
+  present and not `Deleted`; a failed or timed-out read refuses DEFINITELY (nothing changed yet)
+  and an emptied set is `ErrCampaignNotProvisioned`.
+- **PAUSE never reads** — stopping delivery must not wait on, or be starved by, a read (an earlier
+  revision read on pause too and could exhaust the toggle deadline before the gate was sent). The
+  recorded ids are sent as they are; the gate flips FIRST, and a failure at the trailing KEYWORD
+  stage after the gate, ad group and ad were confirmed Paused is marked
+  (`IsPausedBeforeKeywordStage`) and reported by the dispatcher as a successful pause with a
+  warning — Microsoft confirmed nothing under the gate can serve. A failure at the gate, ad group
+  or ad stage is reported exactly as before. **⚠️ Known limitation (documented, not
   fixed — see [internal/dispatch](internal-dispatch.md), "Microsoft keyword levers"): ACTIVATE
   re-enables a keyword an operator PAUSED through keyword-actions — nothing records that pause.**
 - **Unknown children are SKIPPED, not guessed**, with direction-dependent rules. An ad can only be

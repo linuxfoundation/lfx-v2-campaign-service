@@ -92,7 +92,9 @@ type UpdateCampaignBudgetRequestBody struct {
 // "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
 // HTTP request body.
 type ApplyKeywordActionsRequestBody struct {
-	// The keyword mutations to apply, all-or-nothing.
+	// The keyword mutations to apply. Google Ads applies them all-or-nothing;
+	// Microsoft Advertising applies each independently and reports a per-action
+	// outcome.
 	Actions []*KeywordActionInputRequestBody `form:"actions,omitempty" json:"actions,omitempty" xml:"actions,omitempty"`
 }
 

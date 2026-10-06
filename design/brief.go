@@ -1691,9 +1691,9 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		Description("Pause or remove Google Ads or Microsoft Advertising keywords on one campaign. " +
 			"A MUTATION on a live paid campaign: pausing or removing a keyword changes what serves, so it " +
 			"is validated exactly like a create. The batch's syntax, the campaign's provisioning and the " +
-			"campaign's ad account are checked against the project's current connection BEFORE Google is " +
-			"contacted at all; each criterion is then resolved on the platform and confirmed to be a " +
-			"POSITIVE keyword in this campaign's ad group BEFORE THE MUTATE is issued — a read, so nothing " +
+			"campaign's ad account are checked against the project's current connection BEFORE the ad " +
+			"platform is contacted at all; each keyword is then resolved on the platform and confirmed to be a " +
+			"live POSITIVE keyword in this campaign's ad group BEFORE ANY MUTATION is issued — a read, so nothing " +
 			"has changed if that check refuses. " +
 			"GOOGLE ADS IS ALL-OR-NOTHING: the batch is one atomic adGroupCriteria:mutate with partial failure disabled, " +
 			"so either every action applied or none did. A caller is never left working out which half of " +
@@ -1742,7 +1742,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// criterion twice — a batch ValidateKeywordActions rejects with a 400, so anyone
 			// pasting the documented example got an error. One action, so the sample is
 			// valid by construction rather than by two ids happening to differ.
-			Attribute("actions", ArrayOf(KeywordActionInput), "The keyword mutations to apply, all-or-nothing.", func() {
+			Attribute("actions", ArrayOf(KeywordActionInput), "The keyword mutations to apply. Google Ads applies them all-or-nothing; Microsoft Advertising applies each independently and reports a per-action outcome.", func() {
 				MinLength(1)
 				MaxLength(60)
 				Example([]map[string]any{

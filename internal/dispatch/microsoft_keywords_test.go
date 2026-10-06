@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -349,31 +350,27 @@ func TestMicrosoft_AddNegativeKeywords_AmbiguityIsUnconfirmed(t *testing.T) {
 // ---- interaction with the status cascade -------------------------------------
 
 // A keyword removed through ApplyKeywordActions stays in the row's keywordIds (nothing is
-// persisted). The cascade must skip it, or every later toggle would be a partial cascade.
-func TestMicrosoft_ToggleStatus_SkipsKeywordsRemovedUpstream(t *testing.T) {
-	for _, status := range []string{model.CampaignRunActive, model.CampaignRunPaused} {
-		t.Run(status, func(t *testing.T) {
-			d, calls, _ := msLeverDispatcher(t, func(_, path string) (int, string) {
-				if path == "Keywords/QueryByAdGroupId" {
-					// 702 was removed: Microsoft no longer lists it.
-					return http.StatusOK, `{"Keywords":[{"Id":701,"Status":"Paused"}]}`
-				}
-				return http.StatusOK, `{"PartialErrors":[]}`
-			})
-			if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), status); err != nil {
-				t.Fatalf("ToggleStatus: %v", err)
-			}
-			var kwPut *msKwCall
-			for _, c := range calls() {
-				if c.Method == http.MethodPut && c.Path == "Keywords" {
-					c := c
-					kwPut = &c
-				}
-			}
-			if kwPut == nil || strings.Contains(kwPut.Body, "702") || !strings.Contains(kwPut.Body, "701") {
-				t.Fatalf("keyword PUT = %+v, want only the live keyword 701", kwPut)
-			}
-		})
+// persisted). ACTIVATE must skip it, or every later activation would fail on it.
+func TestMicrosoft_ToggleStatus_ActivateSkipsKeywordsRemovedUpstream(t *testing.T) {
+	d, calls, _ := msLeverDispatcher(t, func(_, path string) (int, string) {
+		if path == "Keywords/QueryByAdGroupId" {
+			// 702 was removed: Microsoft no longer lists it.
+			return http.StatusOK, `{"Keywords":[{"Id":701,"Status":"Paused"}]}`
+		}
+		return http.StatusOK, `{"PartialErrors":[]}`
+	})
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), model.CampaignRunActive); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	var kwPut *msKwCall
+	for _, c := range calls() {
+		if c.Method == http.MethodPut && c.Path == "Keywords" {
+			c := c
+			kwPut = &c
+		}
+	}
+	if kwPut == nil || strings.Contains(kwPut.Body, "702") || !strings.Contains(kwPut.Body, "701") {
+		t.Fatalf("keyword PUT = %+v, want only the live keyword 701", kwPut)
 	}
 }
 
@@ -393,25 +390,95 @@ func TestMicrosoft_ToggleStatus_ActivateWithEveryKeywordRemovedIsNotProvisioned(
 	}
 }
 
-// Stopping delivery must not depend on the read: a PAUSE whose read fails still pauses, with
-// the recorded keyword ids.
-func TestMicrosoft_ToggleStatus_PauseSurvivesAFailedKeywordRead(t *testing.T) {
+// The activate read runs under its own sub-budget: a read that never answers is a DEFINITE
+// refusal (nothing was changed), not an unconfirmed toggle, and no mutation is sent.
+func TestMicrosoft_ToggleStatus_ActivateReadTimeoutIsDefiniteAndChangesNothing(t *testing.T) {
+	prev := microsoftActivateKeywordReadBudget
+	microsoftActivateKeywordReadBudget = 50 * time.Millisecond
+	t.Cleanup(func() { microsoftActivateKeywordReadBudget = prev })
+	release := make(chan struct{})
 	d, calls, _ := msLeverDispatcher(t, func(_, path string) (int, string) {
 		if path == "Keywords/QueryByAdGroupId" {
-			return http.StatusBadGateway, `{}`
+			<-release
+		}
+		return http.StatusOK, `{"PartialErrors":[]}`
+	})
+	// Registered AFTER the servers, so it runs BEFORE their Close (cleanups are LIFO) and
+	// unblocks the hanging handler rather than deadlocking on it.
+	t.Cleanup(func() { close(release) })
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("an activate whose keyword read timed out must be refused")
+	}
+	var u interface{ Unconfirmed() bool }
+	if errors.As(err, &u) && u.Unconfirmed() {
+		t.Errorf("nothing was changed, so the refusal must be definite, got %v", err)
+	}
+	if m := msMutations(calls()); len(m) != 0 {
+		t.Errorf("a mutation was sent: %+v", m)
+	}
+}
+
+// PAUSE never reads: a keyword read that would hang cannot starve the campaign gate.
+func TestMicrosoft_ToggleStatus_PauseIssuesNoReadAndPausesTheGate(t *testing.T) {
+	release := make(chan struct{})
+	d, calls, _ := msLeverDispatcher(t, func(_, path string) (int, string) {
+		if path == "Keywords/QueryByAdGroupId" {
+			<-release
+		}
+		return http.StatusOK, `{"PartialErrors":[]}`
+	})
+	// Registered AFTER the servers, so it runs BEFORE their Close (cleanups are LIFO) and
+	// unblocks the hanging handler rather than deadlocking on it.
+	t.Cleanup(func() { close(release) })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := d.ToggleStatus(ctx, "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), model.CampaignRunPaused); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	cs := calls()
+	for _, c := range cs {
+		if c.Path == "Keywords/QueryByAdGroupId" {
+			t.Fatalf("PAUSE issued the keyword read: %+v", cs)
+		}
+	}
+	if len(cs) == 0 || cs[0].Method != http.MethodPut || cs[0].Path != "Campaigns" || !strings.Contains(cs[0].Body, `"Paused"`) {
+		t.Fatalf("the campaign gate must be paused FIRST, got %+v", cs)
+	}
+}
+
+// A removed keyword's rejection at the trailing keyword stage of a PAUSE does not make the
+// campaign "not paused": Microsoft confirmed the gate first, so the pause is reported as done.
+func TestMicrosoft_ToggleStatus_PauseKeywordStageRejectionStillReportsPaused(t *testing.T) {
+	d, calls, _ := msLeverDispatcher(t, func(method, path string) (int, string) {
+		if method == http.MethodPut && path == "Keywords" {
+			return http.StatusOK, `{"PartialErrors":[{"Code":1501,"ErrorCode":"CampaignServiceInvalidKeywordId","Index":1}]}`
 		}
 		return http.StatusOK, `{"PartialErrors":[]}`
 	})
 	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), model.CampaignRunPaused); err != nil {
-		t.Fatalf("ToggleStatus: %v", err)
+		t.Fatalf("the gate was confirmed paused, so the toggle must succeed, got %v", err)
 	}
-	sawCampaignPause := false
+	sawGate := false
 	for _, c := range calls() {
 		if c.Method == http.MethodPut && c.Path == "Campaigns" && strings.Contains(c.Body, `"Paused"`) {
-			sawCampaignPause = true
+			sawGate = true
 		}
 	}
-	if !sawCampaignPause {
-		t.Error("the campaign gate must still be paused")
+	if !sawGate {
+		t.Error("the campaign gate was not paused")
+	}
+}
+
+// A failure BEFORE the gate is confirmed is still not reported as a pause.
+func TestMicrosoft_ToggleStatus_PauseGateFailureIsNotSuccess(t *testing.T) {
+	d, _, _ := msLeverDispatcher(t, func(method, path string) (int, string) {
+		if method == http.MethodPut && path == "Campaigns" {
+			return http.StatusBadGateway, `{}`
+		}
+		return http.StatusOK, `{"PartialErrors":[]}`
+	})
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), model.CampaignRunPaused); err == nil {
+		t.Fatal("a pause whose gate PUT failed must not be reported as done")
 	}
 }

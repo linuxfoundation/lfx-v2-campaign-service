@@ -3467,9 +3467,11 @@ implements the add can be asked to perform it, and every other platform answers
 `ErrNegativeKeywordsUnsupported` → 400.
 
 **Interaction with the status cascade.** Nothing about a keyword action is persisted, so after a
-REMOVE the row's `keywordIds` still names the deleted keyword. `ToggleStatus` therefore narrows
-them to the live ones (`microsoftLiveKeywordIDs`) before the cascade — see
-[internal/platform/microsoft](internal-platform-microsoft.md), "Status toggle".
+REMOVE the row's `keywordIds` still names the deleted keyword. On ACTIVATE `ToggleStatus` therefore
+narrows them to the live ones (`microsoftLiveKeywordIDs`, under a bounded 10s sub-budget) before
+the cascade; PAUSE never reads, and a keyword-stage rejection after the confirmed gate is reported
+as a successful pause — see [internal/platform/microsoft](internal-platform-microsoft.md),
+"Status toggle".
 
 **⚠️ Known limitation, documented rather than fixed: ACTIVATE re-enables a keyword an operator
 PAUSED through keyword-actions.** The cascade enables every recorded, live keyword, and keywords

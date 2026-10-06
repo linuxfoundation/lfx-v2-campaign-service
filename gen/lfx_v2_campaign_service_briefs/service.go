@@ -188,47 +188,48 @@ type Service interface {
 	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword
 	// changes what serves, so it is validated exactly like a create. The batch's
 	// syntax, the campaign's provisioning and the campaign's ad account are
-	// checked against the project's current connection BEFORE Google is contacted
-	// at all; each criterion is then resolved on the platform and confirmed to be
-	// a POSITIVE keyword in this campaign's ad group BEFORE THE MUTATE is issued —
-	// a read, so nothing has changed if that check refuses. GOOGLE ADS IS
-	// ALL-OR-NOTHING: the batch is one atomic adGroupCriteria:mutate with partial
-	// failure disabled, so either every action applied or none did. A caller is
-	// never left working out which half of a spend-stopping request took effect.
-	// MICROSOFT ADVERTISING IS NOT: PAUSE is one UpdateKeywords call and REMOVE
-	// one DeleteKeywords call, and Microsoft applies each item independently. The
-	// same ownership guards run first (each keyword id must be a live keyword in
-	// THIS campaign's ad group, read before anything is changed), and the 200 then
-	// carries one result per action, in request order, each with its own outcome —
-	// APPLIED, FAILED or UNCONFIRMED — and applied_count counts only APPLIED. A
-	// Microsoft request answers 503 only when no call was answered item by item.
-	// KNOWN LIMITATION (Microsoft Advertising): a keyword PAUSED here is
-	// RE-ENABLED by the next activation of the campaign through the status
-	// endpoint, because that cascade enables every keyword the campaign was
-	// created with and this endpoint persists nothing that distinguishes an
-	// operator's pause from the Paused state keywords are created in. Pause it
-	// again after activating, or pause it in Microsoft Advertising. There is no
-	// ENABLE action: a paused keyword is un-paused by activating the campaign or
-	// in Microsoft Advertising. A REMOVED keyword is never re-created. REMOVE IS
-	// IRREVERSIBLE on both platforms — a removed keyword cannot be re-enabled,
-	// only re-created with a new id. Any other platform is refused with 400.
-	// **409** when the change is refused before the ad platform is contacted: the
-	// campaign is unprovisioned (no platform campaign id, or no ad group), the
-	// campaign belongs to a different ad account than the project's connection now
-	// resolves to, the campaign does not record which ad account it was created
-	// under (it must be re-dispatched before its keywords can be acted on — a
-	// different remedy from reconnecting, which is why it is reported separately),
-	// or the connection row itself is unusable. Those are non-retryable, which is
-	// why none of them is a 503. A malformed batch is **400 even when the campaign
-	// is also unprovisioned**: a permanent input fault the caller must fix
-	// dominates a contingent state fault they can only wait on, matching the order
-	// the adapter validates in. **503** carries two distinct outcomes and the
-	// MESSAGE separates them, so do not branch on the status alone: a DEFINITE
-	// failure (nothing was applied — retry), and an UNCONFIRMED one where the
-	// mutate may ALREADY have been applied (a short or mismatched mutate response,
-	// a 5xx, a timeout). The unconfirmed message tells the caller to VERIFY the
-	// campaign's keywords in the platform before retrying, because retrying an
-	// irreversible REMOVE that already ran cannot undo it.
+	// checked against the project's current connection BEFORE the ad platform is
+	// contacted at all; each keyword is then resolved on the platform and
+	// confirmed to be a live POSITIVE keyword in this campaign's ad group BEFORE
+	// ANY MUTATION is issued — a read, so nothing has changed if that check
+	// refuses. GOOGLE ADS IS ALL-OR-NOTHING: the batch is one atomic
+	// adGroupCriteria:mutate with partial failure disabled, so either every action
+	// applied or none did. A caller is never left working out which half of a
+	// spend-stopping request took effect. MICROSOFT ADVERTISING IS NOT: PAUSE is
+	// one UpdateKeywords call and REMOVE one DeleteKeywords call, and Microsoft
+	// applies each item independently. The same ownership guards run first (each
+	// keyword id must be a live keyword in THIS campaign's ad group, read before
+	// anything is changed), and the 200 then carries one result per action, in
+	// request order, each with its own outcome — APPLIED, FAILED or UNCONFIRMED —
+	// and applied_count counts only APPLIED. A Microsoft request answers 503 only
+	// when no call was answered item by item. KNOWN LIMITATION (Microsoft
+	// Advertising): a keyword PAUSED here is RE-ENABLED by the next activation of
+	// the campaign through the status endpoint, because that cascade enables every
+	// keyword the campaign was created with and this endpoint persists nothing
+	// that distinguishes an operator's pause from the Paused state keywords are
+	// created in. Pause it again after activating, or pause it in Microsoft
+	// Advertising. There is no ENABLE action: a paused keyword is un-paused by
+	// activating the campaign or in Microsoft Advertising. A REMOVED keyword is
+	// never re-created. REMOVE IS IRREVERSIBLE on both platforms — a removed
+	// keyword cannot be re-enabled, only re-created with a new id. Any other
+	// platform is refused with 400. **409** when the change is refused before the
+	// ad platform is contacted: the campaign is unprovisioned (no platform
+	// campaign id, or no ad group), the campaign belongs to a different ad account
+	// than the project's connection now resolves to, the campaign does not record
+	// which ad account it was created under (it must be re-dispatched before its
+	// keywords can be acted on — a different remedy from reconnecting, which is
+	// why it is reported separately), or the connection row itself is unusable.
+	// Those are non-retryable, which is why none of them is a 503. A malformed
+	// batch is **400 even when the campaign is also unprovisioned**: a permanent
+	// input fault the caller must fix dominates a contingent state fault they can
+	// only wait on, matching the order the adapter validates in. **503** carries
+	// two distinct outcomes and the MESSAGE separates them, so do not branch on
+	// the status alone: a DEFINITE failure (nothing was applied — retry), and an
+	// UNCONFIRMED one where the mutate may ALREADY have been applied (a short or
+	// mismatched mutate response, a 5xx, a timeout). The unconfirmed message tells
+	// the caller to VERIFY the campaign's keywords in the platform before
+	// retrying, because retrying an irreversible REMOVE that already ran cannot
+	// undo it.
 	ApplyKeywordActions(context.Context, *ApplyKeywordActionsPayload) (res *KeywordActions, err error)
 	// Add campaign-level negative keywords to one live campaign. Microsoft
 	// Advertising only (AddNegativeKeywordsToEntities, EntityType Campaign); a
@@ -369,7 +370,9 @@ type ApplyKeywordActionsPayload struct {
 	BriefID string
 	// Campaign UUID
 	CampaignID string
-	// The keyword mutations to apply, all-or-nothing.
+	// The keyword mutations to apply. Google Ads applies them all-or-nothing;
+	// Microsoft Advertising applies each independently and reports a per-action
+	// outcome.
 	Actions []*KeywordActionInput
 }
 
