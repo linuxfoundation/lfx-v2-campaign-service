@@ -37,6 +37,14 @@ window this read refuses. The RESPONSE's `window` uses the same five-value enum,
 generated contract never advertises `yesterday` or `last_14_days` as a value this read can
 return. It deliberately does not go through the Google reads' window helper.
 
+**Two refusal messages are a cross-repo contract.** lfx-self-serve's Microsoft keyword table
+shows "not connected" rather than a read failure on exactly two campaign-service messages: the
+404 `no microsoft ads connection configured for this project` and the 400 `keyword and audience
+insights are not supported for this platform` (also returned while `MICROSOFT_METRICS_ENABLED`
+is off). Neither carries another discriminator, so
+`TestGetMicrosoftAdsKeywords_PinsTheNotConnectedMessages` pins both strings; rewording either
+needs the matcher there changed in step.
+
 **Audience demographics are not offered.** Microsoft's `AgeGenderAudienceReportRequest` carries
 age and gender but no device dimension, so the age/gender/device answer would need a second
 report per key and could be half-finished; `Orchestrator.ReadAudienceInsights` answers 400 "not

@@ -467,3 +467,34 @@ func TestGetMicrosoftAdsKeywords_ClassifiesErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestGetMicrosoftAdsKeywords_PinsTheNotConnectedMessages pins the exact wording of the two
+// refusals lfx-self-serve's Microsoft keyword table reads as "not connected" rather than as a
+// read failure (microsoft-keywords-table.component.ts, isNotConnectedError). Those messages
+// carry no other discriminator, so rewording either one here changes what operators see on
+// every project without a Microsoft connection — update that matcher in the same change.
+func TestGetMicrosoftAdsKeywords_PinsTheNotConnectedMessages(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{domain.ErrKeywordInsightsUnsupported, "keyword and audience insights are not supported for this platform"},
+		{domain.ErrNotFound, "no microsoft ads connection configured for this project"},
+	} {
+		_, err := microsoftKeywordService([]string{"111"}, &fakeKeywordReader{accountErr: fmt.Errorf("x: %w", tc.err)}, &fakeKeywordStore{}).
+			GetMicrosoftAdsKeywords(context.Background(), &conn.GetMicrosoftAdsKeywordsPayload{ProjectID: "p"})
+		var got string
+		switch e := err.(type) {
+		case *conn.BadRequestError:
+			got = e.Message
+		case *conn.NotFoundError:
+			got = e.Message
+		default:
+			t.Errorf("%v: got %T (%v), want a 400 or 404", tc.err, err, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%v: message = %q, want %q", tc.err, got, tc.want)
+		}
+	}
+}
