@@ -63,6 +63,8 @@ func TestSnapshotText(t *testing.T) {
 		{"one-digit minute after punctuation is not a clock", "x Mon,9:" + "5@main.stage y", "x  y"},
 		{"last minute of the day is a clock", "Mon,23:59@main.stage", "Mon,23:59@main.stage"},
 		{"two-digit score is exempt", "finals 3:4@events.example", "finals 3:4@events.example"},
+		{"semicolon clock", "Session;9:30@main.stage", "Session;9:30@main.stage"},
+		{"leading sub-delim numeric pair", "x !2024:" + "1234@ops.example y", "x ! y"},
 		{"numeric user id and pin", "x 2024:" + "1234@ops.example y", "x  y"},
 		{"long numeric pair", "x 12345:" + "67890@host.example y", "x  y"},
 	} {
@@ -83,7 +85,7 @@ func TestUsernameIsClock(t *testing.T) {
 		{"2024", "1234", false}, {"12345", "67890", false}, {"123", "4", false}, {"1", "234", false},
 		{"Mon,23", "59", true}, {"Mon,0", "00", true},
 		{"Mon,24", "00", false}, {"Mon,9", "60", false}, {"Mon,9", "5", false}, {"Mon,123", "00", false},
-		{"alice+9", "30", false}, {"a!9", "30", false}, {"", "00", false}, {"14", "", false},
+		{"alice+9", "30", false}, {"a!9", "30", true}, {"Session;9", "30", true}, {"!2024", "1234", false}, {"x=24", "00", false}, {"", "00", false}, {"14", "", false},
 	} {
 		if got := UsernameIsClock(tc.user, tc.pass); got != tc.want {
 			t.Errorf("UsernameIsClock(%q, %q) = %v, want %v", tc.user, tc.pass, got, tc.want)

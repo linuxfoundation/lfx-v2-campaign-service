@@ -588,7 +588,7 @@ Its first character must be unreserved, so `Keynote (14:00@main.stage)` starts a
 a username made only of sub-delims (`!:pw@host`) is a second alternative held to a colon right
 after it. The clock exemption is `redact.UsernameIsClock` — one copy, shared with the snapshot
 redactor — and is exactly: an all-digit pair of at most two digits a side (`14:00`, `3:4`), so
-`2024:1234@ops.example` is refused, OR a `,` `(` `*` or `'` followed by a real clock
+`2024:1234@ops.example` is refused, OR any sub-delim except `+` (`Mon,9:30`, `Session;9:30`) followed by a real clock
 — hour 1–2 digits ≤ 23, password exactly two digits ≤ 59 (`Mon,9:30@main.stage`). A `+` prefix
 never qualifies, so `alice+9:30@ops.example` and `alice+2024:1234@ops.example` are refused.
 
@@ -596,11 +596,11 @@ The colon is not QUITE the whole discriminator, and the round that shipped belie
 was put a false REFUSAL into the pre-create path. `keynote 14:00@events.example` and
 `session 9:30@main.stage` are the RFC 3986 userinfo production byte for byte, and an
 events platform writes that sentence every day. `userinfoRunIsClockShaped` skips a run
-whose colon has ASCII digits on BOTH sides — a clock, a score, a ratio. Both sides,
-because the narrower "numeric username" spelling gives up `9:hunter2@events.example` for
-nothing, and because a digits-only password behind a digits-only username is a shape
-nothing here produces and the scheme-ful screen still catches the moment the operator
-writes the `https://`. The negative rows that missed this all happened to put punctuation
+only when `redact.UsernameIsClock` calls its pair a clock (the exact rule is in the paragraph
+above): an all-digit pair of at most two digits a side — a clock, a score, a ratio — or a real
+clock behind any sub-delim except `+`. Digits on BOTH sides remain necessary, because the
+narrower "numeric username" spelling gives up `9:hunter2@events.example` for nothing; a long
+numeric pair (`2024:1234@…`) is a user ID and PIN and is refused. The negative rows that missed this all happened to put punctuation
 between the clock and the host; hard against the host is the shape real copy has.
 
 U+FE0E is the one variation selector `emojiClusterLen` must NOT absorb. It requests TEXT

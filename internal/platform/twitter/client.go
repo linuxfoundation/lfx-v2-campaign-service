@@ -2427,10 +2427,9 @@ func findSchemelessScreenRuns(text string) []string {
 //
 // `keynote 14:00@events.example` parses as userinfo `14:00` on host `events.example`, and
 // there is no syntax that separates it from `bob:pw@events.example`. What separates them
-// is that BOTH sides of the colon are digits. A clock, a score (`3:4`) and a ratio are all
-// digits either side; a password that is also all digits sitting behind a username that is
-// also all digits is a shape nothing in this service produces, and one the scheme-ful
-// screen still catches the moment the operator writes the `https://`.
+// is that BOTH sides of the colon are digits, and short ones: a clock, a score (`3:4`) and a
+// ratio are at most two digits a side, while `2024:1234@…` is a numeric user ID and PIN and is
+// refused. The exact rule is redact.UsernameIsClock, shared with the snapshot redactor.
 //
 // The narrower test — reject when only the username is numeric — was the first spelling
 // and it gives up `9:hunter2@events.example` for nothing. Requiring both sides keeps that

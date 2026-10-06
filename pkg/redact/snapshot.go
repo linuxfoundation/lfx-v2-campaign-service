@@ -349,25 +349,32 @@ func sanitizeUserinfoSnapshotRun(run string) string {
 // score or ratio rather than a credential. Two shapes qualify, and nothing else:
 //
 //   - an ALL-DIGIT pair of at most two digits a side (`14:00`, `9:30`, `3:4`). Longer digit
-//     runs (`2024:1234`, `12345:67890`) are a numeric user ID and PIN, not prose, and are
-//     caught. Two short digit pairs stay exempt on purpose: "finals 3:4@events.example" is
-//     ordinary event copy, and refusing it on the X screen blocks a working brief;
-//   - prose punctuation hard against a REAL clock (`Mon,9:30`): the username's segment after
-//     its last `,` `(` `*` or `'` must be a 1–2 digit hour <= 23 and the password exactly two
-//     digits <= 59. A longer number after the punctuation (`a,2024:1234`) is not a clock.
+//     runs (`2024:1234`, `12345:67890`, and `!2024:1234`, whose match starts at the digit) are
+//     a numeric user ID and PIN, not prose, and are caught. Two short digit pairs stay exempt
+//     on purpose: "finals 3:4@events.example" is ordinary event copy, and refusing it on the X
+//     screen blocks a working brief;
+//   - any sub-delim EXCEPT `+` hard against a REAL clock (`Mon,9:30`, `Session;9:30`,
+//     `Join!9:30`): the username's segment after its last such sub-delim must be a 1–2 digit
+//     hour <= 23 and the password exactly two digits <= 59. A longer number after the
+//     punctuation (`a,2024:1234`, `!2024:1234`) is not a clock.
+//
+// The residual is deliberate and bounded: a credential whose password is two digits <= 59 and
+// whose username ends in punctuation plus an hour. Every other numeric shape is caught.
 //
 // This is the single copy: internal/platform/twitter's tweet screen calls it, so the snapshot
 // redactor and the X screen cannot drift apart.
 //
-// `+` (and every other sub-delim) is deliberately NOT a qualifying prefix: `+` is unreserved in
-// a username and common in real ones, so `alice+9:30@ops.example` and `alice+2024:1234@…` are
-// credentials. The first-character rule on the run pattern already makes `(14:00@`, `*9:30@`
-// and `'14:00@` start at the digit, so the punctuation path exists for the `Mon,9:30@` shape.
+// `+` is deliberately NOT a qualifying prefix: it is unreserved in a username and common in
+// real ones, so `alice+9:30@ops.example` and `alice+2024:1234@…` are credentials.
+// clockPrefixDelims are the RFC 3986 sub-delims that may sit hard against a clock in prose:
+// every sub-delim except `+`.
+const clockPrefixDelims = "!$&'()*,;="
+
 func UsernameIsClock(username, password string) bool {
 	if isAllASCIIDigits(username) {
 		return len(username) <= 2 && len(password) <= 2 && isAllASCIIDigits(password)
 	}
-	i := strings.LastIndexAny(username, ",(*'")
+	i := strings.LastIndexAny(username, clockPrefixDelims)
 	if i < 0 {
 		return false
 	}

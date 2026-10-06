@@ -2408,6 +2408,7 @@ func TestRejectCredentialQueryParamsInText_SchemelessUserinfo(t *testing.T) {
 		"Mon,9:60@main.stage",
 		"2024:1234@ops.example",
 		"12345:67890@host.example",
+		"!2024:1234@ops.example",
 	}
 	for _, text := range refused {
 		err := rejectCredentialQueryParamsInText(text)
@@ -2453,6 +2454,7 @@ func TestRejectCredentialQueryParamsInText_ClockAgainstHost(t *testing.T) {
 		"'14:00@main.stage'",
 		"Mon,9:30@main.stage",
 		"Mon,23:59@main.stage",
+		"Session;9:30@main.stage",
 	} {
 		if err := rejectCredentialQueryParamsInText(text); err != nil {
 			t.Errorf("ordinary tweet copy %q was refused: %v", text, err)
