@@ -879,10 +879,10 @@ func currencyOffsetFor(currency string) (int64, bool) {
 	return off, ok
 }
 
-// copyEnvelope carries a parsed Graph error's structured fields onto e. It is the ONE place both
-// non-2xx paths do this — the normal one and the truncated-body one (a complete envelope followed
-// by a connection closed on a mismatched Content-Length) — so neither can drop a field the other
-// keeps: a bid refusal blaming bid_amount must classify the same whether or not the read ended
+// copyEnvelope carries a parsed Graph error's structured fields onto e. It is the ONE place every
+// non-2xx path does this — the normal one, the truncated-body one (a complete envelope followed by
+// a connection closed on a mismatched Content-Length) and the Retry-After-over-cap abort — so none
+// can drop a field another keeps: a bid refusal blaming bid_amount must classify the same whether or not the read ended
 // cleanly. Message is deliberately not copied; each path sets it.
 func (e *APIError) copyEnvelope(g *graphError) {
 	e.Type = g.Type
@@ -1759,9 +1759,7 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 						Message: fmt.Sprintf("rate-limit reset (Retry-After: %q) exceeds max wait %s; aborting", rawRetryAfter, maxRetryWait),
 					}
 					if env.Error != nil {
-						abortErr.Type = env.Error.Type
-						abortErr.Code = env.Error.Code
-						abortErr.FBTraceID = env.Error.FBTraceID
+						abortErr.copyEnvelope(env.Error)
 						if env.Error.Message != "" {
 							abortErr.Message = fmt.Sprintf("%s (Graph: %s)", abortErr.Message, env.Error.Message)
 						}
