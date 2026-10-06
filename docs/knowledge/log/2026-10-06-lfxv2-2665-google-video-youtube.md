@@ -1,5 +1,12 @@
 # 2026-10-06 — LFXV2-2665 Video (YouTube) campaign creation
 
+> **SUPERSEDED in part by
+> [`2026-10-06-lfxv2-2665-video-create-refused.md`](2026-10-06-lfxv2-2665-video-create-refused.md).**
+> The Google Ads API cannot create a Video campaign, so `CreateVideoCampaign` now refuses in its
+> first statement and the cascade described below is retained unexported and unreachable. Everything
+> here still describes the Video SHAPE accurately — it is what adoption validates against and what
+> would ship the day Google supports creation — but no part of it is reached by a create today.
+
 **Creation** — `video.go` and `video_creative.go` add the fourth Google Ads channel. The shell
 is `advertisingChannelType: VIDEO` **with** `advertisingChannelSubType: VIDEO_ACTION` — `VIDEO`
 alone covers reach and view products that bid toward entirely different things, so the sub-type

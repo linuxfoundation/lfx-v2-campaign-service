@@ -711,3 +711,105 @@ func TestUpdateAdGroupsAndAdsStatus(t *testing.T) {
 		}
 	})
 }
+
+// ---- checkStatusMutateResults -----------------------------------------------
+
+// The set match is the whole point of this guard, and nothing bound it. Every cascade
+// test above echoes one result per operation naming the resource that operation
+// addressed — which a COUNT check satisfies exactly as well as the set check does. So
+// reverting this function to `len(mr.Results) < len(want)` left the suite green while
+// removing the only thing it does that a count cannot.
+//
+// These cases are the ones a count check gets wrong, in both directions: a response with
+// the right number of results that accounts for only one of two resources must be
+// UNCONFIRMED, and a response with MORE results than operations — or with a name this
+// client never asked about among them — must be accepted.
+func TestCheckStatusMutateResults_MatchesNamesNotCounts(t *testing.T) {
+	c := NewClient(testCreds(), testAccount(), WithClock(fixedClock()))
+
+	const (
+		groupA  = "customers/1234567890/adGroups/111"
+		groupB  = "customers/1234567890/adGroups/112"
+		foreign = "customers/9999999999/adGroups/113"
+	)
+	resp := func(names ...string) []byte {
+		parts := make([]string, 0, len(names))
+		for _, n := range names {
+			parts = append(parts, `{"resourceName":"`+n+`"}`)
+		}
+		return []byte(`{"results":[` + strings.Join(parts, ",") + `]}`)
+	}
+
+	cases := []struct {
+		name    string
+		results []byte
+		want    []string
+		wantErr bool
+	}{
+		{
+			// The case the count check cannot see: two results for two operations, both
+			// naming the SAME ad group, so the second group was never accounted for.
+			name:    "right count, one resource unaccounted for",
+			results: resp(groupA, groupA),
+			want:    []string{groupA, groupB},
+			wantErr: true,
+		},
+		{
+			name:    "every resource accounted for",
+			results: resp(groupA, groupB),
+			want:    []string{groupA, groupB},
+		},
+		{
+			// Extra results are Google reporting extra work. Failing a correct toggle
+			// over them is the over-refusal this guard must not commit.
+			name:    "more results than operations is not a failure",
+			results: resp(groupA, groupB, "customers/1234567890/adGroups/113"),
+			want:    []string{groupA},
+		},
+		{
+			// A name from another account is ignored like any other extra, because it is
+			// not evidence either way — but it cannot stand in for a name that is missing.
+			name:    "a foreign-account name is ignored, not counted",
+			results: resp(groupA, foreign),
+			want:    []string{groupA, groupB},
+			wantErr: true,
+		},
+		{
+			name:    "a foreign-account extra alongside a complete set is tolerated",
+			results: resp(groupA, groupB, foreign),
+			want:    []string{groupA, groupB},
+		},
+		{
+			// Wrong resource TYPE, right account: an adGroupAds name is no evidence that
+			// an adGroups operation applied.
+			name:    "a name of another resource kind cannot account for an operation",
+			results: resp(groupA, "customers/1234567890/adGroupAds/111~222"),
+			want:    []string{groupA, groupB},
+			wantErr: true,
+		},
+		{
+			name:    "an unparseable response is unconfirmed",
+			results: []byte(`{"results":`),
+			want:    []string{groupA},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := c.checkStatusMutateResults(tc.results, "adGroups", "ad group", tc.want, true)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("want UNCONFIRMED, got nil")
+				}
+				if !strings.Contains(err.Error(), "UNCONFIRMED") {
+					t.Errorf("error does not report the outcome as unconfirmed: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}

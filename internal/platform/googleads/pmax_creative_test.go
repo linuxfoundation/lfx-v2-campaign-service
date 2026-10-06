@@ -4,6 +4,7 @@
 package googleads
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -189,8 +190,16 @@ func TestValidatePerformanceMaxCreative_CountsAreNotDemandGensCounts(t *testing.
 	}
 	c := fullPMaxCreative()
 	c.Headlines = []string{"Join us at KubeCon"} // legal for Demand Gen
-	if _, err := validatePerformanceMaxCreative(campaignKindPerformanceMax, pmaxInput(c)); err == nil {
-		t.Error("one headline is legal for Demand Gen and must still be refused for Performance Max")
+	_, err := validatePerformanceMaxCreative(campaignKindPerformanceMax, pmaxInput(c))
+	if err == nil {
+		t.Fatal("one headline is legal for Demand Gen and must still be refused for Performance Max")
+	}
+	// The MESSAGE, not just the error: this fixture is a whole asset group, and an
+	// "it errored" assertion would pass if the headline minimum were deleted and some
+	// unrelated clause refused it instead — which is the only way this test can fail
+	// usefully at all.
+	if !strings.Contains(err.Error(), "needs at least 3 headline") {
+		t.Errorf("refused by the wrong rule: got %q, want the headline minimum", err)
 	}
 }
 
@@ -233,8 +242,14 @@ func TestValidatePerformanceMaxCreative_MarketingCeilingIsCombined(t *testing.T)
 	c.MarketingImages = fill("m", 7)
 	c.SquareMarketingImages = fill("s", 7)
 	c.PortraitImages = fill("p", 7) // 21 combined, none over 20 alone
-	if _, err := validatePerformanceMaxCreative(campaignKindPerformanceMax, pmaxInput(c)); err == nil {
+	_, err := validatePerformanceMaxCreative(campaignKindPerformanceMax, pmaxInput(c))
+	if err == nil {
 		t.Fatal("21 marketing images across the three shapes must be refused")
+	}
+	// Same reason as above: a per-shape ceiling of 20 would also refuse SOMETHING here
+	// if the shapes were filled differently, so the combined clause has to be named.
+	if !strings.Contains(err.Error(), "at most 20 marketing images across all three shapes") {
+		t.Errorf("refused by the wrong rule: got %q, want the combined ceiling", err)
 	}
 	c.PortraitImages = fill("p", 6) // exactly 20
 	if _, err := validatePerformanceMaxCreative(campaignKindPerformanceMax, pmaxInput(c)); err != nil {
@@ -329,8 +344,15 @@ func TestValidateYouTubeVideoIDs_DoesNotPinTheLength(t *testing.T) {
 	if len(got) != 2 {
 		t.Errorf("got %v, want both ids", got)
 	}
-	if _, err := validateYouTubeVideoIDs("Performance Max", "Performance Max asset group", maxPerformanceMaxVideos, []string{"has space"}); err == nil {
-		t.Error("a space is not a YouTube id character and must be refused")
+	_, err = validateYouTubeVideoIDs("Performance Max", "Performance Max asset group", maxPerformanceMaxVideos, []string{"has space"})
+	if err == nil {
+		t.Fatal("a space is not a YouTube id character and must be refused")
+	}
+	// The character rule by name: "has space" is also not a URL and not a duplicate,
+	// so an unbound assertion would stay green if the character walk were replaced by
+	// any other refusal — including a length bound, the very rule this test denies.
+	if !strings.Contains(err.Error(), "contains ' ', which is not a YouTube id character") {
+		t.Errorf("refused by the wrong rule: got %q, want the character rule", err)
 	}
 }
 
@@ -461,15 +483,29 @@ func TestBuildPerformanceMaxAssets_ImageAssetsCarryNoName(t *testing.T) {
 		{slot: pmaxSlotLogo, url: "https://cdn.example.org/logo.png", data: []byte("l")},
 	}
 
-	for i, a := range buildPerformanceMaxAssets(plan, images) {
+	assets := buildPerformanceMaxAssets(plan, images)
+	for i, a := range assets {
 		if a.create.ImageAsset == nil {
 			continue
 		}
 		if a.create.Name != "" {
 			t.Errorf("image asset %d carries a name %q; Google names it, and any name we build from caller input is a leak or an unbounded string", i, a.create.Name)
 		}
-		if strings.Contains(a.create.Name, "SECRETSIGNATURE") {
-			t.Errorf("image asset %d carries the signed query string from the source URL", i)
+	}
+
+	// Against the MARSHALLED operation, not against the name field: the name is already
+	// asserted empty above, so a second check on it can never fire. What has to be true
+	// is that the signed query string reaches Google in NO field — a description, a
+	// tracking template or a future field added beside them would carry it just as far.
+	// pendingAsset.create is unexported, so the slice itself marshals to [{},{}] — the
+	// creates are marshalled individually, which is what actually goes on the wire.
+	for i, a := range assets {
+		body, err := json.Marshal(a.create)
+		if err != nil {
+			t.Fatalf("marshalling asset %d: %v", i, err)
+		}
+		if strings.Contains(string(body), "SECRETSIGNATURE") {
+			t.Errorf("asset %d carries the signed query string from the source URL: %s", i, body)
 		}
 	}
 }

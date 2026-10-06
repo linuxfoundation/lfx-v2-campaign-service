@@ -51,63 +51,67 @@ func TestValidateVideoCreative_Bounds(t *testing.T) {
 	// Each case mutates the valid fixture in exactly one way, so a failure names the
 	// bound that moved rather than "the fixture is invalid".
 	fifteen := strings.Repeat("a", maxVideoHeadlineWeight)
+	// wantSub, not a bool: a bare "it errored" cannot tell the bound under test from
+	// any OTHER refusal the same mutation trips, and several of these mutations trip
+	// two rules at once — an over-long headline is also, to a count check, a headline.
+	// An empty wantSub means the case must be ACCEPTED.
 	cases := []struct {
 		name    string
 		mutate  func(*VideoCreative)
-		wantErr bool
+		wantSub string
 	}{
-		{"the fixture itself is valid", func(*VideoCreative) {}, false},
-		{"headline at the limit", func(v *VideoCreative) { v.Headlines = []string{fifteen} }, false},
-		{"headline one over", func(v *VideoCreative) { v.Headlines = []string{fifteen + "a"} }, true},
+		{"the fixture itself is valid", func(*VideoCreative) {}, ""},
+		{"headline at the limit", func(v *VideoCreative) { v.Headlines = []string{fifteen} }, ""},
+		{"headline one over", func(v *VideoCreative) { v.Headlines = []string{fifteen + "a"} }, "a display width of 16, exceeding the 15 limit"},
 		{"long headline at the limit", func(v *VideoCreative) {
 			v.LongHeadlines = []string{strings.Repeat("a", maxVideoLongHeadlineWeight)}
-		}, false},
+		}, ""},
 		{"long headline one over", func(v *VideoCreative) {
 			v.LongHeadlines = []string{strings.Repeat("a", maxVideoLongHeadlineWeight+1)}
-		}, true},
+		}, "a display width of 91, exceeding the 90 limit"},
 		{"description at the limit", func(v *VideoCreative) {
 			v.Descriptions = []string{strings.Repeat("a", maxVideoDescriptionWeight)}
-		}, false},
+		}, ""},
 		{"description one over", func(v *VideoCreative) {
 			v.Descriptions = []string{strings.Repeat("a", maxVideoDescriptionWeight+1)}
-		}, true},
+		}, "a display width of 71, exceeding the 70 limit"},
 		{"call to action at the limit", func(v *VideoCreative) {
 			v.CallToActions = []string{strings.Repeat("a", maxVideoCallToActionWeight)}
-		}, false},
+		}, ""},
 		{"call to action one over", func(v *VideoCreative) {
 			v.CallToActions = []string{strings.Repeat("a", maxVideoCallToActionWeight+1)}
-		}, true},
+		}, "a display width of 11, exceeding the 10 limit"},
 		// A responsive video ad with no short headline, no long headline or no
 		// description does not assemble into any format Google serves.
-		{"no headlines", func(v *VideoCreative) { v.Headlines = nil }, true},
-		{"no long headlines", func(v *VideoCreative) { v.LongHeadlines = nil }, true},
-		{"no descriptions", func(v *VideoCreative) { v.Descriptions = nil }, true},
+		{"no headlines", func(v *VideoCreative) { v.Headlines = nil }, "needs at least 1 headline, got 0"},
+		{"no long headlines", func(v *VideoCreative) { v.LongHeadlines = nil }, "needs at least 1 long headline, got 0"},
+		{"no descriptions", func(v *VideoCreative) { v.Descriptions = nil }, "needs at least 1 description, got 0"},
 		// Calls to action are the one optional list — Google picks a default button.
-		{"no calls to action", func(v *VideoCreative) { v.CallToActions = nil }, false},
+		{"no calls to action", func(v *VideoCreative) { v.CallToActions = nil }, ""},
 		{"too many headlines", func(v *VideoCreative) {
 			v.Headlines = repeatText("hi", maxVideoHeadlines+1)
-		}, true},
+		}, "accepts at most 5 headlines, got 6"},
 		{"too many descriptions", func(v *VideoCreative) {
 			v.Descriptions = repeatText("a description", maxVideoDescriptions+1)
-		}, true},
+		}, "accepts at most 5 descriptions, got 6"},
 		{"too many calls to action", func(v *VideoCreative) {
 			v.CallToActions = repeatText("Register", maxVideoCallToActions+1)
-		}, true},
+		}, "accepts at most 5 call to actions, got 6"},
 		{"videos at the limit", func(v *VideoCreative) {
 			v.YouTubeVideoIDs = videoIDs(maxVideoAdVideos)
-		}, false},
+		}, ""},
 		{"too many videos", func(v *VideoCreative) {
 			v.YouTubeVideoIDs = videoIDs(maxVideoAdVideos + 1)
-		}, true},
+		}, "accepts at most 5 YouTube videos, got 6"},
 		// A share URL is refused rather than parsed: guessing which substring of a link
 		// is the id would send a wrong id to an assets:mutate that runs after the
 		// campaign exists.
 		{"a URL instead of a bare id", func(v *VideoCreative) {
 			v.YouTubeVideoIDs = []string{"https://www.youtube.com/watch?v=dQw4w9WgXcQ"}
-		}, true},
+		}, "looks like a URL"},
 		// Text supplied with no video: the creative is PRESENT, so the missing video is
 		// a refusal rather than the absent-creative path.
-		{"text but no video", func(v *VideoCreative) { v.YouTubeVideoIDs = nil }, true},
+		{"text but no video", func(v *VideoCreative) { v.YouTubeVideoIDs = nil }, "needs at least 1 YouTube video, got 0"},
 	}
 
 	for _, tc := range cases {
@@ -115,11 +119,17 @@ func TestValidateVideoCreative_Bounds(t *testing.T) {
 			creative := videoCreativeFixture()
 			tc.mutate(&creative)
 			_, err := validateVideoCreative(campaignKindVideo, CampaignInput{VideoCreative: creative})
-			if tc.wantErr && err == nil {
+			if tc.wantSub == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v — over-refusal is the one failure mode this preflight may not have", err)
+				}
+				return
+			}
+			if err == nil {
 				t.Fatal("want an error, got none — accepting here means failing AFTER the budget, campaign and ad group have committed")
 			}
-			if !tc.wantErr && err != nil {
-				t.Fatalf("unexpected error: %v — over-refusal is the one failure mode this preflight may not have", err)
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("refused by the wrong rule: got %q, want it to mention %q", err, tc.wantSub)
 			}
 		})
 	}

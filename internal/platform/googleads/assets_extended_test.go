@@ -64,8 +64,15 @@ func TestValidateCallExtensions_RejectsBadInput(t *testing.T) {
 	cases := map[string][]CallExtension{
 		"no country":        {{PhoneNumber: "4155550147"}},
 		"country not ISO-2": {{CountryCode: "USA", PhoneNumber: "4155550147"}},
-		"country not ASCII": {{CountryCode: "ÜS", PhoneNumber: "4155550147"}},
-		"no number":         {{CountryCode: "US"}},
+		// "ÜS" is THREE bytes, so the length clause refuses it and isASCIILetters is
+		// never reached — the case that looked like it covered the ASCII rule covered
+		// the length rule twice. These two are the ones that reach it: "Ü" is two bytes
+		// of one non-ASCII rune, and "1S" is two ASCII bytes that are not both letters.
+		// Delete isASCIILetters from the condition and both of these stop being refused.
+		"country not ASCII":                     {{CountryCode: "ÜS", PhoneNumber: "4155550147"}},
+		"country two bytes, one non-ASCII rune": {{CountryCode: "Ü", PhoneNumber: "4155550147"}},
+		"country right length, not letters":     {{CountryCode: "1S", PhoneNumber: "4155550147"}},
+		"no number":                             {{CountryCode: "US"}},
 		// Google rejects vanity numbers on call assets, so a caller who typed one
 		// is told here rather than after the campaign exists.
 		"vanity number":  {{CountryCode: "US", PhoneNumber: "1-800-FLOWERS"}},
@@ -232,44 +239,56 @@ func TestValidatePromotions_AcceptsAnUnknownOccasionOfTheRightShape(t *testing.T
 }
 
 func TestValidatePromotions_RejectsBadInput(t *testing.T) {
-	cases := map[string]func(p *PromotionExtension){
-		"no target":        func(p *PromotionExtension) { p.PromotionTarget = "" },
-		"target too long":  func(p *PromotionExtension) { p.PromotionTarget = strings.Repeat("x", maxPromotionTargetRunes+1) },
-		"no discount":      func(p *PromotionExtension) { p.DiscountPercent = 0 },
-		"both discounts":   func(p *PromotionExtension) { p.DiscountAmount = 10; p.CurrencyCode = "USD" },
-		"percent over 100": func(p *PromotionExtension) { p.DiscountPercent = 101 },
-		"percent zero-ish": func(p *PromotionExtension) { p.DiscountPercent = 0.000001 },
-		"money with no currency": func(p *PromotionExtension) {
+	// Each case names the clause it is aimed at, not just "it errored". Eighteen
+	// mutations into one validator that has eighteen refusals is exactly the table that
+	// stays green when a mutation starts tripping the WRONG guard — a bad currency code
+	// caught by the no-discount clause reads identically to a bad currency code caught
+	// by the currency clause, and only one of the two means the validator works.
+	cases := map[string]struct {
+		mutate  func(p *PromotionExtension)
+		wantSub string
+	}{
+		"no target":        {func(p *PromotionExtension) { p.PromotionTarget = "" }, "has no promotion target"},
+		"target too long":  {func(p *PromotionExtension) { p.PromotionTarget = strings.Repeat("x", maxPromotionTargetRunes+1) }, "target is 26 characters"},
+		"no discount":      {func(p *PromotionExtension) { p.DiscountPercent = 0 }, "sets neither a percentage nor a money discount"},
+		"both discounts":   {func(p *PromotionExtension) { p.DiscountAmount = 10; p.CurrencyCode = "USD" }, "sets both a percentage and a money discount"},
+		"percent over 100": {func(p *PromotionExtension) { p.DiscountPercent = 101 }, "must be greater than 0 and at most 100"},
+		"percent zero-ish": {func(p *PromotionExtension) { p.DiscountPercent = 0.000001 }, "too small to express"},
+		"money with no currency": {func(p *PromotionExtension) {
 			p.DiscountPercent, p.DiscountAmount = 0, 10
-		},
-		"bad currency": func(p *PromotionExtension) {
+		}, "an amount but no currency code"},
+		"bad currency": {func(p *PromotionExtension) {
 			p.DiscountPercent, p.DiscountAmount, p.CurrencyCode = 0, 10, "dollars"
-		},
-		"both eligibility arms": func(p *PromotionExtension) {
+		}, "must be a three-letter ISO 4217 code"},
+		"both eligibility arms": {func(p *PromotionExtension) {
 			p.PromotionCode, p.OrdersOverAmount, p.CurrencyCode = "X", 10, "USD"
-		},
-		"code too long":      func(p *PromotionExtension) { p.PromotionCode = strings.Repeat("x", maxPromotionCodeRunes+1) },
-		"lowercase occasion": func(p *PromotionExtension) { p.Occasion = "black_friday" },
-		"occasion as prose":  func(p *PromotionExtension) { p.Occasion = "Black Friday" },
-		"bad language":       func(p *PromotionExtension) { p.LanguageCode = "english!" },
-		"no destination":     func(p *PromotionExtension) { p.FinalURL = "" },
-		"bad date":           func(p *PromotionExtension) { p.StartDate = "01/11/2026" },
-		"impossible date":    func(p *PromotionExtension) { p.StartDate = "2026-02-31" },
-		"window backwards": func(p *PromotionExtension) {
+		}, "both a promotion code and a minimum order amount"},
+		"code too long":      {func(p *PromotionExtension) { p.PromotionCode = strings.Repeat("x", maxPromotionCodeRunes+1) }, "promotion code is 21 characters"},
+		"lowercase occasion": {func(p *PromotionExtension) { p.Occasion = "black_friday" }, `occasion "black_friday" is not an occasion name`},
+		"occasion as prose":  {func(p *PromotionExtension) { p.Occasion = "Black Friday" }, `occasion "Black Friday" is not an occasion name`},
+		"bad language":       {func(p *PromotionExtension) { p.LanguageCode = "english!" }, "is not a language tag"},
+		"no destination":     {func(p *PromotionExtension) { p.FinalURL = "" }, "destination URL is empty"},
+		"bad date":           {func(p *PromotionExtension) { p.StartDate = "01/11/2026" }, "is not in YYYY-MM-DD format"},
+		"impossible date":    {func(p *PromotionExtension) { p.StartDate = "2026-02-31" }, "is not a valid calendar date"},
+		"window backwards": {func(p *PromotionExtension) {
 			p.StartDate, p.EndDate = "2026-11-30", "2026-11-01"
-		},
-		"redemption window backwards": func(p *PromotionExtension) {
+		}, "serving window end date 2026-11-01 must not be before start date"},
+		"redemption window backwards": {func(p *PromotionExtension) {
 			p.RedemptionStartDate, p.RedemptionEndDate = "2026-11-30", "2026-11-01"
-		},
+		}, "redemption window end date 2026-11-01 must not be before start date"},
 	}
 	in := sampleInput()
-	for name, mutate := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			p := samplePromotion()
-			mutate(&p)
+			tc.mutate(&p)
 			in.Promotions = []PromotionExtension{p}
-			if _, err := validatePromotionExtensions(in); err == nil {
+			_, err := validatePromotionExtensions(in)
+			if err == nil {
 				t.Fatalf("%s must be refused", name)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("refused by the wrong clause: got %q, want it to mention %q", err, tc.wantSub)
 			}
 		})
 	}
@@ -366,44 +385,56 @@ func TestValidatePrices_OmitsUnsetOptionalKeys(t *testing.T) {
 }
 
 func TestValidatePrices_RejectsBadInput(t *testing.T) {
-	cases := map[string]func(p *PriceExtension){
-		"no type":           func(p *PriceExtension) { p.Type = "" },
-		"type as prose":     func(p *PriceExtension) { p.Type = "Events" },
-		"bad qualifier":     func(p *PriceExtension) { p.PriceQualifier = "from" },
-		"no language":       func(p *PriceExtension) { p.LanguageCode = "" },
-		"bad language":      func(p *PriceExtension) { p.LanguageCode = "english!" },
-		"too few offerings": func(p *PriceExtension) { p.Offerings = p.Offerings[:2] },
-		"too many offerings": func(p *PriceExtension) {
+	// Named clauses rather than a bare "it errored", for the reason the promotion table
+	// above gives: these mutations each cross one offering-level or table-level rule,
+	// and several of them would still produce SOME error if the rule they are aimed at
+	// were deleted — a header mutation trips the duplicate-header rule, an offering-count
+	// mutation trips a per-offering rule on the row it added.
+	cases := map[string]struct {
+		mutate  func(p *PriceExtension)
+		wantSub string
+	}{
+		"no type":           {func(p *PriceExtension) { p.Type = "" }, "has no type"},
+		"type as prose":     {func(p *PriceExtension) { p.Type = "Events" }, `type "Events" is not a type name`},
+		"bad qualifier":     {func(p *PriceExtension) { p.PriceQualifier = "from" }, "is not a qualifier name"},
+		"no language":       {func(p *PriceExtension) { p.LanguageCode = "" }, "has no language code"},
+		"bad language":      {func(p *PriceExtension) { p.LanguageCode = "english!" }, "is not a language tag"},
+		"too few offerings": {func(p *PriceExtension) { p.Offerings = p.Offerings[:2] }, "has 2 offerings; Google requires between 3 and 8"},
+		"too many offerings": {func(p *PriceExtension) {
 			for len(p.Offerings) <= maxPriceOfferings {
 				o := p.Offerings[0]
 				o.Header = o.Header + strings.Repeat("x", len(p.Offerings))
 				p.Offerings = append(p.Offerings, o)
 			}
-		},
-		"no header":        func(p *PriceExtension) { p.Offerings[0].Header = "" },
-		"header too long":  func(p *PriceExtension) { p.Offerings[0].Header = strings.Repeat("x", maxPriceHeaderRunes+1) },
-		"duplicate header": func(p *PriceExtension) { p.Offerings[1].Header = "attendee" },
-		"no description":   func(p *PriceExtension) { p.Offerings[0].Description = "" },
-		"description too long": func(p *PriceExtension) {
+		}, "has 9 offerings; Google requires between 3 and 8"},
+		"no header":        {func(p *PriceExtension) { p.Offerings[0].Header = "" }, "offering 0 has no header"},
+		"header too long":  {func(p *PriceExtension) { p.Offerings[0].Header = strings.Repeat("x", maxPriceHeaderRunes+1) }, "header is 26 characters"},
+		"duplicate header": {func(p *PriceExtension) { p.Offerings[1].Header = "attendee" }, `lists the header "attendee" more than once`},
+		"no description":   {func(p *PriceExtension) { p.Offerings[0].Description = "" }, "offering 0 has no description"},
+		"description too long": {func(p *PriceExtension) {
 			p.Offerings[0].Description = strings.Repeat("x", maxPriceDescRunes+1)
-		},
-		"zero price":      func(p *PriceExtension) { p.Offerings[0].Amount = 0 },
-		"negative price":  func(p *PriceExtension) { p.Offerings[0].Amount = -1 },
-		"sub-micro price": func(p *PriceExtension) { p.Offerings[0].Amount = 0.0000001 },
-		"no currency":     func(p *PriceExtension) { p.Offerings[0].CurrencyCode = "" },
-		"bad unit":        func(p *PriceExtension) { p.Offerings[0].Unit = "per day" },
-		"no destination":  func(p *PriceExtension) { p.Offerings[0].FinalURL = "" },
+		}, "description is 26 characters"},
+		"zero price":      {func(p *PriceExtension) { p.Offerings[0].Amount = 0 }, "price must be > 0 (rounds to 0 micros)"},
+		"negative price":  {func(p *PriceExtension) { p.Offerings[0].Amount = -1 }, "price must be > 0 (rounds to -1000000 micros)"},
+		"sub-micro price": {func(p *PriceExtension) { p.Offerings[0].Amount = 0.0000001 }, "price must be > 0 (rounds to 0 micros)"},
+		"no currency":     {func(p *PriceExtension) { p.Offerings[0].CurrencyCode = "" }, "an amount but no currency code"},
+		"bad unit":        {func(p *PriceExtension) { p.Offerings[0].Unit = "per day" }, `unit "per day" is not a unit name`},
+		"no destination":  {func(p *PriceExtension) { p.Offerings[0].FinalURL = "" }, "destination URL is empty"},
 	}
 	in := sampleInput()
-	for name, mutate := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			p := samplePrice()
 			// Deep-copy the offerings so one case's mutation cannot reach another's.
 			p.Offerings = append([]PriceOffering(nil), p.Offerings...)
-			mutate(&p)
+			tc.mutate(&p)
 			in.Prices = []PriceExtension{p}
-			if _, err := validatePriceExtensions(in); err == nil {
+			_, err := validatePriceExtensions(in)
+			if err == nil {
 				t.Fatalf("%s must be refused", name)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("refused by the wrong clause: got %q, want it to mention %q", err, tc.wantSub)
 			}
 		})
 	}

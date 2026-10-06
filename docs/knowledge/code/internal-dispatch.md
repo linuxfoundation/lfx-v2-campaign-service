@@ -3063,13 +3063,17 @@ type, so the only evidence is what the platform reports: the lookup selects
 `PlatformCampaignRef.Variant`, which the adopt path persists. Before this, every adopted Google
 campaign was stored as `default` whatever it was — so adopting a Demand Gen campaign left the
 `demand-gen` slot free and the next Demand Gen dispatch created a SECOND paid campaign for the
-same brief. The mapping fails CLOSED: only the types this service can create are mappable — `SEARCH`,
+same brief. The mapping fails CLOSED: only the types this service can create OR ADOPT are mappable — `SEARCH`,
 `DEMAND_GEN`, `PERFORMANCE_MAX` and, since the Video and Display paths landed, `VIDEO` and
 `DISPLAY` — while `SHOPPING`,
 `HOTEL`, an unrecognised future value or an absent field are refused rather than defaulted, since
-defaulting is what produces the duplicate. `VIDEO` used to be the worked example of a refused type
-and is now one of the mappable ones, which is exactly how this list is meant to move: a type leaves
-the refused set the moment a create path for it lands, and never before. The mappable set is one of the SIX places the channel list is
+defaulting is what produces the duplicate. **`VIDEO` is ADOPT-ONLY**, and it is why the invariant
+reads "create or adopt" rather than "create": the Google Ads API cannot create a Video campaign at
+all, so `CreateVideoCampaign` refuses before sending anything — but a Video campaign built in the
+Google Ads UI is a real campaign this service must be able to adopt, and adopting it into the
+`default` slot is the very duplicate this mapping exists to prevent. A type leaves the refused set
+the moment this service can PLACE it, which a create path or an adoption path each establish on
+their own. The mappable set is one of the SIX places the channel list is
 duplicated and has to grow together; see `googleAdsChannelIsSupported`, `AdoptableVariants`,
 `googleAdsRecordedChannelType`, the dispatch create switch and the monitor GAQL's
 `advertising_channel_type IN (...)` list.

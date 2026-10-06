@@ -417,21 +417,35 @@ func TestPreflightPerformanceMaxSplitsTheCriteria(t *testing.T) {
 		})
 	}
 
-	refused := map[string]func(*CampaignInput){
-		"device bid modifiers": func(in *CampaignInput) {
+	// wantSub, not a bare "it errored": this preflight refuses for a dozen reasons and
+	// the fixture it mutates is a whole campaign input, so an unbound assertion stays
+	// green if the narrowing under test is deleted and some unrelated clause refuses
+	// instead — which is exactly the regression this test exists to catch.
+	refused := map[string]struct {
+		mutate  func(*CampaignInput)
+		wantSub string
+	}{
+		"device bid modifiers": {func(in *CampaignInput) {
 			in.DeviceBidModifiers = []DeviceBidModifier{{Device: "MOBILE", BidModifier: 1.2}}
-		},
-		"excluded age ranges": func(in *CampaignInput) { in.ExcludedAgeRanges = []string{"AGE_RANGE_18_24"} },
-		"excluded genders":    func(in *CampaignInput) { in.ExcludedGenders = []string{"MALE"} },
-		"ad groups":           func(in *CampaignInput) { in.AdGroups = []AdGroupSpec{{Name: "extra"}} },
+		}, "device bid modifiers are not supported on PerformanceMax Campaign"},
+		"excluded age ranges": {func(in *CampaignInput) { in.ExcludedAgeRanges = []string{"AGE_RANGE_18_24"} },
+			"campaign-level demographic exclusions are not supported on PerformanceMax Campaign"},
+		"excluded genders": {func(in *CampaignInput) { in.ExcludedGenders = []string{"MALE"} },
+			"campaign-level demographic exclusions are not supported on PerformanceMax Campaign"},
+		"ad groups": {func(in *CampaignInput) { in.AdGroups = []AdGroupSpec{{Name: "extra"}} },
+			"multiple ad groups are a SEARCH capability"},
 	}
-	for name, mutate := range refused {
+	for name, tc := range refused {
 		t.Run("refused/"+name, func(t *testing.T) {
 			in := demandGenInput()
 			in.PerformanceMaxCreative = fullPMaxCreative()
-			mutate(&in)
-			if _, err := c.preflightCampaignKind(campaignKindPerformanceMax, in); err == nil {
+			tc.mutate(&in)
+			_, err := c.preflightCampaignKind(campaignKindPerformanceMax, in)
+			if err == nil {
 				t.Fatalf("Performance Max accepted %s; it must refuse rather than drop", name)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("refused by the wrong rule: got %q, want it to mention %q", err, tc.wantSub)
 			}
 		})
 	}
