@@ -1727,15 +1727,10 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 	// keyword targeting was never attempted or failed before any criterion resource name
 	// could be parsed.
 	targets, keywordsProvisioned, incompleteGroups := googleAdsToggleTargets(campaign)
+	assetGroupID := googleAdsToggleAssetGroup(campaign)
 	if gaStatus == googleads.StatusEnabled {
-		// Refuse ACTIVATE if no ad group was fully provisioned: a duplicate-name orphan or
-		// unconfirmed create (see createAdGroupAndAd) leaves no id to cascade to, so
-		// enabling just the campaign would report success while nothing can serve.
-		if len(targets) == 0 {
-			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its ad group/ad were not fully provisioned", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
-		}
-		if !keywordsProvisioned {
-			return fmt.Errorf("%w: google ads campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword criterion is required)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		if gErr := googleAdsActivationGate(campaign, targets, keywordsProvisioned, assetGroupID); gErr != nil {
+			return gErr
 		}
 	}
 	// A group recorded but not toggleable is reported, never silently skipped. The toggle
@@ -1779,12 +1774,12 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 		if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {
 			return wrapUnconfirmed(uerr)
 		}
-		// If no ad group/ad ids were recorded (e.g. a campaign shell with no fully-created
+		// If no child ids were recorded (e.g. a campaign shell with no fully-created
 		// children), there is nothing to pause downstream — only the campaign is toggled.
-		if len(targets) == 0 {
+		if !googleAdsHasToggleChildren(targets, assetGroupID) {
 			return nil
 		}
-		if uerr := client.UpdateAdGroupsAndAdsStatus(ctx, targets, gaStatus); uerr != nil {
+		if uerr := googleAdsToggleChildren(ctx, client, targets, assetGroupID, gaStatus); uerr != nil {
 			// After the campaign status succeeds, a child failure (even a definite 4xx) is a
 			// partial cascade: the parent changed but the child's outcome is unknown. Wrap it
 			// as Unconfirmed so the caller knows to verify the state before retry.
@@ -1793,10 +1788,10 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 		return nil
 	}
 
-	// ACTIVATE: children first (at least one group is confirmed fully provisioned, and
-	// keyword targeting is confirmed provisioned, by the guard above), campaign last — so
-	// the campaign only reports ENABLED once its ad groups/ads already do.
-	if uerr := client.UpdateAdGroupsAndAdsStatus(ctx, targets, gaStatus); uerr != nil {
+	// ACTIVATE: children first (googleAdsActivationGate above has confirmed this channel's
+	// creative is fully provisioned), campaign last — so the campaign only reports ENABLED
+	// once the resources that actually serve already do.
+	if uerr := googleAdsToggleChildren(ctx, client, targets, assetGroupID, gaStatus); uerr != nil {
 		// UpdateAdGroupsAndAdsStatus flips every ad group first, then every ad
 		// (children-first ordering). A definite first-stage failure (4xx from
 		// adGroups:mutate) is NOT a partial cascade (nothing changed). A definite
@@ -2180,6 +2175,90 @@ func googleAdsCampaignAdGroupIDs(campaign *model.Campaign) map[string]bool {
 //
 // Falls back to the scalar pair when AdGroups is absent: rows written before that field
 // existed are single-group by construction, so the pair IS the whole campaign there.
+// googleAdsActivationGate refuses an ACTIVATE that would report a launch the campaign
+// cannot deliver. What counts as "fully provisioned" is CHANNEL-SPECIFIC, because the three
+// channels this dispatcher creates do not have the same serving resources:
+//
+//   - Search serves through an ad group + ad, and cannot deliver without at least one
+//     keyword criterion. Both are required, as they always have been.
+//   - Demand Gen serves through an ad group + ad, and its targeting is audience- and
+//     creative-driven. Keywords are REFUSED on this channel (campaign.go's Search-only
+//     fence), so demanding a keyword criterion here would be unsatisfiable by construction —
+//     the gate would instruct the operator to supply the very field the create path rejects.
+//   - Performance Max has no ad groups and no ads at all. Its creative is an ASSET GROUP,
+//     and that is the resource whose absence means nothing can serve.
+//
+// Keyed on the campaign's Variant, which is part of its identity rather than its config, so
+// a row cannot drift into the wrong arm through a config edit. A row written before variants
+// existed normalises to VariantDefault and keeps the Search rules it was created under.
+func googleAdsActivationGate(campaign *model.Campaign, targets []googleads.AdGroupStatusTarget, keywordsProvisioned bool, assetGroupID string) error {
+	switch model.NormalizeVariant(campaign.Variant) {
+	case googleAdsChannelPerformanceMax:
+		// Named for what Performance Max actually has. The ad-group wording below would send
+		// an operator looking for a provisioning failure in a resource this channel never
+		// creates.
+		if assetGroupID == "" {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its Performance Max asset group was not fully provisioned (a Performance Max campaign has no ad groups; the asset group is what serves)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		return nil
+	case googleAdsChannelDemandGen:
+		if len(targets) == 0 {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its ad group/ad were not fully provisioned", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		// Deliberately no keyword gate — see the doc comment above.
+		return nil
+	default:
+		// Refuse ACTIVATE if no ad group was fully provisioned: a duplicate-name orphan or
+		// unconfirmed create (see createAdGroupAndAd) leaves no id to cascade to, so
+		// enabling just the campaign would report success while nothing can serve.
+		if len(targets) == 0 {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its ad group/ad were not fully provisioned", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		if !keywordsProvisioned {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword criterion is required)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		return nil
+	}
+}
+
+// googleAdsToggleAssetGroup is the persisted Performance Max asset group id, or "" on every
+// other channel and on a Performance Max campaign whose creative never completed. Read from
+// the same Result blob googleAdsToggleTargets reads, and for the same reason: the blob
+// records what was actually CREATED, which is what a cascade can act on.
+func googleAdsToggleAssetGroup(campaign *model.Campaign) string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var result googleads.CampaignResult
+	if err := json.Unmarshal(campaign.Result, &result); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(result.AssetGroupID)
+}
+
+// googleAdsHasToggleChildren reports whether this campaign has any serving resource beneath
+// the campaign for a status flip to cascade to.
+func googleAdsHasToggleChildren(targets []googleads.AdGroupStatusTarget, assetGroupID string) bool {
+	return assetGroupID != "" || len(targets) > 0
+}
+
+// googleAdsToggleChildren flips whichever serving resources this campaign actually has.
+//
+// The asset group is checked FIRST and returns on its own: a Performance Max campaign has an
+// asset group and no ad groups, and every other channel has ad groups and no asset group, so
+// the two are mutually exclusive by construction. Keying on what the Result blob recorded
+// rather than on the variant keeps this consistent with googleAdsToggleTargets, which has
+// always derived the cascade from what was created rather than from what was asked for.
+func googleAdsToggleChildren(ctx context.Context, client *googleads.Client, targets []googleads.AdGroupStatusTarget, assetGroupID, gaStatus string) error {
+	if assetGroupID != "" {
+		return client.UpdateAssetGroupStatus(ctx, assetGroupID, gaStatus)
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	return client.UpdateAdGroupsAndAdsStatus(ctx, targets, gaStatus)
+}
+
 func googleAdsToggleTargets(campaign *model.Campaign) (targets []googleads.AdGroupStatusTarget, keywordsProvisioned bool, incomplete []string) {
 	if campaign == nil || len(campaign.Result) == 0 {
 		return nil, false, nil

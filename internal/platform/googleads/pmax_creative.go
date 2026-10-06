@@ -476,6 +476,74 @@ type assetGroupCreate struct {
 	Path2     string   `json:"path2,omitempty"`
 }
 
+// assetGroupStatusUpdate flips an existing asset group's status. Separate from
+// assetGroupCreate because a :mutate operation carries exactly one of create/update/remove
+// and an update must send ONLY the masked field — sending the create shape with its
+// required name/campaign/finalUrls would either be rejected or, worse, rewrite them.
+type assetGroupStatusUpdate struct {
+	ResourceName string `json:"resourceName"`
+	Status       string `json:"status"`
+}
+
+// unconfirmedAssetGroupStatusError marks an asset group status mutate Google ACCEPTED but
+// did not acknowledge usably, the Performance Max counterpart of
+// unconfirmedCampaignStatusError and satisfying the same Unconfirmed() interface
+// IsOutcomeUnconfirmed honors. The flip may well have been applied, so the dispatcher must
+// carry it through as "verify upstream before retrying" rather than "nothing was modified".
+type unconfirmedAssetGroupStatusError struct{ err error }
+
+func (e *unconfirmedAssetGroupStatusError) Error() string     { return e.err.Error() }
+func (e *unconfirmedAssetGroupStatusError) Unwrap() error     { return e.err }
+func (e *unconfirmedAssetGroupStatusError) Unconfirmed() bool { return true }
+
+// UpdateAssetGroupStatus flips one Performance Max asset group between ENABLED and PAUSED.
+//
+// It exists because Performance Max has no ad groups and no ads: its creative is an asset
+// group, created PAUSED by buildPerformanceMaxCreative for the same reason every other
+// create in this client is paused — nothing serves until a human enables it. Without this
+// method the campaign resource could be flipped to ENABLED while the asset group stayed
+// PAUSED, which reports a launch that cannot deliver. That is precisely the false success
+// ErrCampaignNotProvisioned exists to prevent, so the one channel whose creative this
+// client creates paused must also be the channel it can un-pause.
+//
+// Held to the same standard as UpdateCampaignStatus, and for the same reasons: the mutate
+// is sent idempotent because re-applying the same ENABLED/PAUSED converges on identical
+// state, so declining bounded 429 retries would turn ordinary throttling into an avoidable
+// UNCONFIRMED; and a 2xx that does not acknowledge the one operation is UNCONFIRMED rather
+// than assumed applied.
+func (c *Client) UpdateAssetGroupStatus(ctx context.Context, assetGroupID, status string) error {
+	if err := c.validateAccountIDs(); err != nil {
+		return err
+	}
+	if status != StatusEnabled && status != StatusPaused {
+		return fmt.Errorf("google-ads: unsupported asset group status %q (want %s or %s)", status, StatusEnabled, StatusPaused)
+	}
+	id := strings.TrimSpace(assetGroupID)
+	if id == "" {
+		return fmt.Errorf("google-ads: asset group status update needs an asset group id")
+	}
+	// Held to UpdateCampaignStatus's rule for the same reason: the id is interpolated into a
+	// resourceName, Google asset group ids are digits, and anything else could alter the
+	// resource path.
+	if !customerIDRE.MatchString(id) {
+		return fmt.Errorf("google-ads: asset group id %q is not numeric", assetGroupID)
+	}
+
+	groupResource := "customers/" + c.account.CustomerID + "/assetGroups/" + id
+	req := mutateRequest{Operations: []mutateOperation{{
+		Update:     assetGroupStatusUpdate{ResourceName: groupResource, Status: status},
+		UpdateMask: "status",
+	}}}
+	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("assetGroups:mutate"), req, true)
+	if err != nil {
+		return fmt.Errorf("google-ads asset group %s status update to %s failed: %w", id, status, err)
+	}
+	if cErr := c.checkStatusMutateResults(resp, "assetGroups", "asset group", []string{groupResource}, true); cErr != nil {
+		return &unconfirmedAssetGroupStatusError{err: fmt.Errorf("google-ads asset group %s status update to %s: %w", id, status, cErr)}
+	}
+	return nil
+}
+
 // assetGroupAssetCreate links one already-created asset to the asset group under a field
 // type. The link is a separate resource from both ends, which is why the cascade needs a
 // third mutate.

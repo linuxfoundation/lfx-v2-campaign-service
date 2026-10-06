@@ -475,11 +475,6 @@ func (c *Client) createCampaignAssets(ctx context.Context, campaignResource, cam
 	return ids, linkIDs, nil
 }
 
-// assetID applies to an Asset resource name the same four checks
-// campaignCriterionID applies to a criterion: exactly four segments, the
-// "assets" kind, THIS client's customer id, and a numeric trailing id. Returns
-// "" for anything else — a 2xx naming another account's asset, another resource
-// kind, or "garbage/4242" is not proof the asset this run asked for exists.
 // parsedAssetIDs is every well-formed asset id in a mutate response, in order, skipping
 // any resource name assetID refuses. It exists for the arms that return an UNCONFIRMED
 // error over a response that nonetheless PARSED: the ids in it are the only handle an
@@ -495,6 +490,11 @@ func (c *Client) parsedAssetIDs(resp mutateResponse) []string {
 	return out
 }
 
+// assetID applies to an Asset resource name the same four checks
+// campaignCriterionID applies to a criterion: exactly four segments, the
+// "assets" kind, THIS client's customer id, and a numeric trailing id. Returns
+// "" for anything else — a 2xx naming another account's asset, another resource
+// kind, or "garbage/4242" is not proof the asset this run asked for exists.
 func (c *Client) assetID(resourceName string) string {
 	pathParts := strings.Split(resourceName, "/")
 	if len(pathParts) != 4 || pathParts[0] != "customers" || pathParts[2] != "assets" {
