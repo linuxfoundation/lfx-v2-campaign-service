@@ -37,6 +37,12 @@ import (
 // it first and keys the saved report by the account it returns. Submit and Check re-run the
 // connection and account checks themselves, so the boundary does not rest on the caller.
 type KeywordReportReader interface {
+	// KeywordReportEnabled refuses a read this platform will not serve AT ALL — its rollout gate
+	// is off, or window is not one it can report on — whatever the project's campaigns are. It
+	// needs neither a connection nor a scope and never contacts the platform, so the orchestrator
+	// calls it FIRST: a gated-off read must answer the same refusal for a project with no
+	// campaigns as for one with many, rather than an empty success that depends on project data.
+	KeywordReportEnabled(window model.MetricsWindow) error
 	// KeywordReportAccount validates window and scope against the project's own connection and
 	// returns the ad account the read will be scoped to. It never contacts the platform.
 	KeywordReportAccount(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (accountID string, err error)
@@ -74,6 +80,8 @@ func (o *Orchestrator) keywordReportStore() domain.KeywordReportRepository {
 
 // ReadReportedKeywordPerformance is the keyword read for a report-backed platform. In order:
 //
+//  0. KeywordReportEnabled: the platform's rollout gate and window, refused whatever the
+//     project's campaigns are;
 //  1. resolve the project's campaign scope from the database; an EMPTY scope answers an empty
 //     result with no upstream call, exactly as ReadKeywordPerformance does;
 //  2. KeywordReportAccount: every trust-boundary refusal, before anything upstream;
@@ -104,6 +112,11 @@ func (o *Orchestrator) ReadReportedKeywordPerformance(ctx context.Context, proje
 	store := o.keywordReportStore()
 	if store == nil {
 		return nil, fmt.Errorf("%s keyword read: saved-report store is not configured", platform)
+	}
+	// Before the scope: the rollout gate and the window are properties of the platform, not of
+	// the project, so the empty-scope success below must not bypass them.
+	if err := reader.KeywordReportEnabled(window); err != nil {
+		return nil, err
 	}
 	scope, err := o.projectCampaignScope(ctx, projectID, platform)
 	if err != nil {

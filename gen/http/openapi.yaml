@@ -9250,10 +9250,11 @@ paths:
                 "409":
                     description: Conflict response.
                     schema:
-                        $ref: '#/definitions/ConflictError'
+                        $ref: '#/definitions/AccountMonitorConflictError'
                         required:
                             - code
                             - message
+                            - reason
                 "413":
                     description: Request Entity Too Large response.
                     schema:
@@ -10517,6 +10518,34 @@ definitions:
             - fetch_failed
             - pacing_pct
             - pacing_label
+    AccountMonitorConflictError:
+        title: AccountMonitorConflictError
+        type: object
+        properties:
+            code:
+                type: string
+                description: HTTP status code
+                example: "409"
+            message:
+                type: string
+                description: Error message
+                example: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)
+            reason:
+                type: string
+                description: 'Why the account cannot be monitored as it stands: account_too_many_active_campaigns (more campaigns active in the window than one report covers) or account_timezone_unsupported (the account''s timezone does not start its days on a whole UTC hour).'
+                example: account_too_many_active_campaigns
+                enum:
+                    - account_too_many_active_campaigns
+                    - account_timezone_unsupported
+        description: 'The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)'
+        example:
+            code: "409"
+            message: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)
+            reason: account_too_many_active_campaigns
+        required:
+            - code
+            - message
+            - reason
     AccountMonitorTotals:
         title: AccountMonitorTotals
         type: object
@@ -12881,8 +12910,6 @@ definitions:
                     - already_exists
                     - audience_provenance_immutable
                     - ab_test_unsupported_send_type
-                    - account_too_many_active_campaigns
-                    - account_timezone_unsupported
         description: Conflict
         example:
             code: "409"
@@ -13829,7 +13856,7 @@ definitions:
             job_id:
                 type: string
                 description: Job UUID
-                example: Commodi impedit praesentium voluptatem est illo sunt.
+                example: Aut repudiandae commodi impedit praesentium voluptatem est.
             result:
                 type: array
                 items:
@@ -13854,7 +13881,7 @@ definitions:
             status:
                 type: string
                 description: Job status
-                example: succeeded
+                example: queued
                 enum:
                     - queued
                     - running
@@ -14045,12 +14072,6 @@ definitions:
                     - criterion_id: 2kzxf
                       keyword: kubernetes
                       match_type: BROAD_KEYWORD
-                    - criterion_id: 2kzxf
-                      keyword: kubernetes
-                      match_type: BROAD_KEYWORD
-                    - criterion_id: 2kzxf
-                      keyword: kubernetes
-                      match_type: BROAD_KEYWORD
             platform:
                 type: string
                 description: The campaign's platform
@@ -14149,7 +14170,7 @@ definitions:
             outcome:
                 type: string
                 description: APPLIED — the keyword is no longer targeted; FAILED — definitely not removed (see error_code); UNCONFIRMED — may have been removed, read the targeting again before retrying.
-                example: FAILED
+                example: UNCONFIRMED
                 enum:
                     - APPLIED
                     - FAILED
@@ -14158,7 +14179,7 @@ definitions:
             criterion_id: 2kzxf
             error_code: NOT_SENT
             keyword: kubernetes
-            outcome: UNCONFIRMED
+            outcome: FAILED
         required:
             - outcome
     KeywordTargetingRemovals:
@@ -14200,14 +14221,10 @@ definitions:
             applied_count: 2
             campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
             results:
-                - criterion_id: 2kzxf
-                  error_code: NOT_SENT
-                  keyword: kubernetes
-                  outcome: FAILED
-                - criterion_id: 2kzxf
-                  error_code: NOT_SENT
-                  keyword: kubernetes
-                  outcome: FAILED
+                - keyword: kubernetes
+                  outcome: APPLIED
+                - keyword: service mesh
+                  outcome: APPLIED
         required:
             - campaign_id
             - results
@@ -16435,9 +16452,7 @@ definitions:
                 example: last_7_days
                 enum:
                     - today
-                    - yesterday
                     - last_7_days
-                    - last_14_days
                     - last_30_days
                     - this_month
                     - last_month
@@ -16477,7 +16492,7 @@ definitions:
                   status: PAUSED
                   text: kubernetes training
             truncated: false
-            window: last_7_days
+            window: this_month
         required:
             - window
             - rows
@@ -16585,16 +16600,13 @@ definitions:
             applied_count: 2
             campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
             results:
-                - error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                  match_type: Phrase
+                - match_type: Phrase
                   negative_keyword_id: "8475612390"
                   outcome: APPLIED
                   text: free download
-                - error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                  match_type: Phrase
-                  negative_keyword_id: "8475612390"
-                  outcome: APPLIED
-                  text: free download
+                - match_type: Exact
+                  outcome: ALREADY_PRESENT
+                  text: torrent
         required:
             - campaign_id
             - results
@@ -16675,7 +16687,7 @@ definitions:
             campaign_id:
                 type: string
                 description: Upstream platform campaign id. Present when ok; also set on the specific failure where the upstream campaign was created but recording it failed, so the orphaned id isn't lost.
-                example: Placeat nihil harum sed.
+                example: Sint in placeat nihil harum sed.
             error:
                 type: string
                 description: Failure reason (present when not ok)
@@ -16691,7 +16703,7 @@ definitions:
             platform:
                 type: string
                 description: Platform this result is for
-                example: Qui nisi iste deserunt assumenda sed.
+                example: Dolorum natus qui nisi iste deserunt.
         example:
             campaign_id: Voluptas tempore totam.
             error: Nostrum sit maxime dolorum repudiandae accusantium.

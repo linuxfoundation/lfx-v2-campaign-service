@@ -212,10 +212,13 @@ func (c *Client) GetAdGroupTargeting(ctx context.Context, adGroupID string) (*Ad
 // same ad group the caller validated. A write that would leave no keyword is refused before any
 // request: it would stop the ad group being keyword targeted at all.
 //
-// Classification mirrors UpdateAdGroupBid: a transport failure, 3xx, exhausted 429 or 5xx is
-// UNCONFIRMED (IsOutcomeUnconfirmed); ANY failure after a retried 429 is UNCONFIRMED
-// (retriedUnconfirmedError); any other 4xx is a definite refusal — the ad group unchanged. A 2xx
-// echo naming another ad group, or a keyword list other than the one left, is UNCONFIRMED.
+// The PATCH is sent ONCE: a 429 is NOT retried. This write replaces the WHOLE targeting from a
+// pre-read snapshot, so it does not converge the way a bid or budget write does — if a throttled
+// attempt committed and an operator then changed another targeting dimension, a retry would
+// overwrite that change, and the final comparison against the same stale snapshot would pass.
+// A 429 is therefore UNCONFIRMED at once (IsOutcomeUnconfirmed), as are a transport failure, 3xx
+// or 5xx; any other 4xx is a definite refusal — the ad group unchanged. A 2xx echo naming another
+// ad group, or a keyword list other than the one left, is UNCONFIRMED.
 func (c *Client) RemoveAdGroupKeywords(ctx context.Context, adGroupID string, base *AdGroupTargeting, remove []string) ([]string, error) {
 	path, adGroupID, err := c.adGroupBidPath(adGroupID)
 	if err != nil {
@@ -262,11 +265,7 @@ func (c *Client) RemoveAdGroupKeywords(ctx context.Context, adGroupID string, ba
 		return nil, fmt.Errorf("reddit: remove ad group %s keywords: %w", adGroupID, err)
 	}
 
-	resp, retries, err := c.requestCounted(ctx, http.MethodPatch, path, preEncodedBody(encoded))
-	if err != nil && retries > 0 && !IsOutcomeUnconfirmed(err) {
-		return nil, &retriedUnconfirmedError{what: "ad group targeting", retries: retries,
-			err: fmt.Errorf("reddit: remove ad group %s keywords: %w", adGroupID, err)}
-	}
+	resp, err := c.requestNoThrottleRetry(ctx, http.MethodPatch, path, preEncodedBody(encoded))
 	if err != nil {
 		return nil, fmt.Errorf("reddit: remove ad group %s keywords: %w", adGroupID, err)
 	}

@@ -5075,16 +5075,6 @@ type MonitorMicrosoftAdsAccountUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
-// MonitorTwitterAdsAccountBadRequestResponseBody is the type of the
-// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
-// endpoint HTTP response body for the "BadRequest" error.
-type MonitorTwitterAdsAccountBadRequestResponseBody struct {
-	// HTTP status code
-	Code string `form:"code" json:"code" xml:"code"`
-	// Error message
-	Message string `form:"message" json:"message" xml:"message"`
-}
-
 // MonitorTwitterAdsAccountConflictResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
 // endpoint HTTP response body for the "Conflict" error.
@@ -5093,9 +5083,21 @@ type MonitorTwitterAdsAccountConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
-	// Stable machine-readable discriminator, present only where an endpoint
-	// returns more than one kind of conflict. Absent means unspecified.
-	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+	// Why the account cannot be monitored as it stands:
+	// account_too_many_active_campaigns (more campaigns active in the window than
+	// one report covers) or account_timezone_unsupported (the account's timezone
+	// does not start its days on a whole UTC hour).
+	Reason string `form:"reason" json:"reason" xml:"reason"`
+}
+
+// MonitorTwitterAdsAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body for the "BadRequest" error.
+type MonitorTwitterAdsAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
 }
 
 // MonitorTwitterAdsAccountServiceUnavailableResponseBody is the type of the
@@ -10685,6 +10687,18 @@ func NewMonitorMicrosoftAdsAccountUnauthorizedResponseBody(res *lfxv2campaignser
 	return body
 }
 
+// NewMonitorTwitterAdsAccountConflictResponseBody builds the HTTP response
+// body from the result of the "monitor-twitter-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorTwitterAdsAccountConflictResponseBody(res *lfxv2campaignserviceconnections.AccountMonitorConflictError) *MonitorTwitterAdsAccountConflictResponseBody {
+	body := &MonitorTwitterAdsAccountConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
 // NewMonitorTwitterAdsAccountBadRequestResponseBody builds the HTTP response
 // body from the result of the "monitor-twitter-ads-account" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -10692,18 +10706,6 @@ func NewMonitorTwitterAdsAccountBadRequestResponseBody(res *lfxv2campaignservice
 	body := &MonitorTwitterAdsAccountBadRequestResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
-	}
-	return body
-}
-
-// NewMonitorTwitterAdsAccountConflictResponseBody builds the HTTP response
-// body from the result of the "monitor-twitter-ads-account" endpoint of the
-// "lfx-v2-campaign-service-connections" service.
-func NewMonitorTwitterAdsAccountConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *MonitorTwitterAdsAccountConflictResponseBody {
-	body := &MonitorTwitterAdsAccountConflictResponseBody{
-		Code:    res.Code,
-		Message: res.Message,
-		Reason:  res.Reason,
 	}
 	return body
 }

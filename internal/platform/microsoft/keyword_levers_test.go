@@ -147,11 +147,19 @@ func TestGetAdGroupKeywords_ReadsIdsAndStatus(t *testing.T) {
 	}
 }
 
-// A body that never answered (no Keywords field) is an error, not an empty ad group.
+// A body that never answered (no Keywords field, or a null one) is an error, not an empty ad
+// group; only `[]` confirms emptiness.
 func TestGetAdGroupKeywords_MissingFieldIsAnError(t *testing.T) {
-	c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, `{}` })
-	if _, err := c.GetAdGroupKeywords(context.Background(), "654"); err == nil {
-		t.Fatal("a response with no Keywords field must not read as an empty ad group")
+	for _, body := range []string{`{}`, `{"Keywords":null}`} {
+		c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+		if _, err := c.GetAdGroupKeywords(context.Background(), "654"); err == nil {
+			t.Errorf("%s must not read as an empty ad group", body)
+		}
+	}
+	c, _ := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, `{"Keywords":[]}` })
+	got, err := c.GetAdGroupKeywords(context.Background(), "654")
+	if err != nil || len(got) != 0 {
+		t.Errorf(`{"Keywords":[]} = %v, %v; want an empty ad group`, got, err)
 	}
 }
 
@@ -241,6 +249,9 @@ func TestApplyKeywordActions_WholeCallAmbiguityIsUnconfirmed(t *testing.T) {
 		{"5xx", http.StatusBadGateway, `{}`},
 		{"200 without PartialErrors", http.StatusOK, `{}`},
 		{"undecodable 200", http.StatusOK, `not json`},
+		// Present and non-empty, but naming no rejection: not the [] that affirms none.
+		{"PartialErrors of null placeholders only", http.StatusOK, `{"PartialErrors":[null]}`},
+		{"PartialErrors of code-less entries only", http.StatusOK, `{"PartialErrors":[{}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := kwRecorder(t, func(string, string) (int, string) { return tc.status, tc.body })

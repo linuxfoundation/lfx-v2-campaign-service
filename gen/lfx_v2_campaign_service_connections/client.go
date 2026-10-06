@@ -1251,7 +1251,7 @@ func (c *Client) MonitorMicrosoftAdsAccount(ctx context.Context, p *MonitorMicro
 // the "lfx-v2-campaign-service-connections" service.
 // MonitorTwitterAdsAccount may return the following errors:
 //   - "NotFound" (type *NotFoundError): Resource not found
-//   - "Conflict" (type *ConflictError): The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)
+//   - "Conflict" (type *AccountMonitorConflictError): The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)
 //   - "BadRequest" (type *BadRequestError): Bad request
 //   - "Unauthorized" (type *UnauthorizedError): Unauthorized
 //   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large

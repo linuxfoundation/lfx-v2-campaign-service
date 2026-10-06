@@ -130,16 +130,28 @@ func microsoftKeywordScope(scope []model.ProjectCampaignScope, accountID string)
 	return ids, nil
 }
 
+// KeywordReportEnabled implements service.KeywordReportReader: the MICROSOFT_METRICS_ENABLED
+// gate and the window, with no connection, no scope and no upstream call. The orchestrator calls
+// it before resolving the project's scope, so a gated-off read is refused even for a project
+// with no Microsoft campaigns (whose read would otherwise be an empty 200).
+func (d *MicrosoftDispatcher) KeywordReportEnabled(window model.MetricsWindow) error {
+	if err := microsoftKeywordsEnabled(); err != nil {
+		return err
+	}
+	if err := microsoft.ValidateKeywordReportWindow(window); err != nil {
+		return fmt.Errorf("read microsoft keyword performance: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
+	}
+	return nil
+}
+
 // KeywordReportAccount implements service.KeywordReportReader. NO upstream call: the gate, the
 // window, the scope ceiling, the connection and the provenance check are all local.
 func (d *MicrosoftDispatcher) KeywordReportAccount(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (string, error) {
-	if err := microsoftKeywordsEnabled(); err != nil {
-		return "", err
-	}
 	// Window and scope size before the connection: both are permanent faults of the request or
-	// of the project, and must answer the same way whatever state the connection is in.
-	if err := microsoft.ValidateKeywordReportWindow(window); err != nil {
-		return "", fmt.Errorf("read microsoft keyword performance: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
+	// of the project, and must answer the same way whatever state the connection is in. The gate
+	// and window are re-checked here so this method's refusals do not rest on the caller.
+	if err := d.KeywordReportEnabled(window); err != nil {
+		return "", err
 	}
 	if _, err := microsoftKeywordScopeIDs(scope); err != nil {
 		return "", err

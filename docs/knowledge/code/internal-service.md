@@ -318,7 +318,12 @@ in the keys). Numbers, booleans and null pass through untouched; structure is pr
 Two keys can redact to the same string (`https://a.example/x?t=1` and `https://a.example/y`).
 Nothing is silently merged or dropped: original keys are processed in sorted order, the first
 keeps the redacted key and each later one is stored as `<redacted>#2`, `#3`, … (lowest free
-suffix), so the output is stable across runs. The only reader of `config_snapshot`
+suffix), so the output is stable across runs. The next suffix to try is remembered per redacted
+base, so N keys sharing one host cost linear, not quadratic, work under the campaign lock
+(`TestRedactedConfigSnapshot_ManyCollisionsAreLinear`); the occupied-key probe stays, since a
+suffixed candidate can still be taken by a key whose own redaction produced that literal.
+`SnapshotText` also covers non-http schemes, bracketed-IPv6 userinfo and sub-delim usernames
+(see [pkg/redact](pkg-redact.md)), for keys and values alike. The only reader of `config_snapshot`
 (`googleAdsRecordedChannelType`) reads the literal key `channel`, which redaction leaves alone.
 
 The contract is deliberately NOT tightened: a non-object config (a bare string or array) is
@@ -606,7 +611,11 @@ The orchestrator applies the same mutation timeout and the same outcome-count ch
 (`unconfirmedOutcomeCountError`, whose message no longer claims every batch is atomic), and
 records the `negative_keywords` upstream op. `classifyNegativeKeywordError` mirrors the keyword
 actions' arms in the same order; `applied_count` counts `APPLIED` and `ALREADY_PRESENT`, and an
-outcome an adapter left empty is rendered `UNCONFIRMED`, never success.
+outcome an adapter left empty is rendered `UNCONFIRMED`, never success. A credential-decrypt
+failure is logged against the row that FAILED (`credentialOwnerProject`: the LF system project
+when the error carries `domain.ErrSystemConnectionOrigin`) with `requested_by_project_id`
+beside it, as the bid and budget handlers log it; `ApplyKeywordActions` and the keyword-targeting
+handlers use the same helper, so one corrupt system row reads as one incident.
 
 ## Campaign adoption
 
@@ -1891,8 +1900,9 @@ lack of budget (`domain.ErrAccountReportBudgetTooShort`) is logged at info as a 
 failure. A PERMANENT refusal — `domain.ErrAccountTooManyActiveCampaigns` or
 `domain.ErrAccountTimezoneUnsupported` (`isPermanentReportRefusal`; X is the producer) — instead
 fails the read, since no later read could submit either, and `classifyDiscoveryError` answers
-it with a 409 `ConflictError` whose `reason` is `account_too_many_active_campaigns` or
-`account_timezone_unsupported` (`TestReadReported_PermanentRefusalFailsTheRead`,
+it with a 409 `AccountMonitorConflictError` (that method's own body, so the published example
+is a refusal it can return; `reason` is required) whose `reason` is
+`account_too_many_active_campaigns` or `account_timezone_unsupported` (`TestReadReported_PermanentRefusalFailsTheRead`,
 `TestMonitorTwitterAdsAccount_PermanentRefusalsAre409`). `mergeAccountReport` also carries the finished report's calendar window as
 `ReportedAccountRead.MetricsWindowStart/End`, and `monitorReportedAccount`'s evaluate callback
 now receives the whole read, so `MonitorTwitterAdsAccount` evaluates X's rules on the report's

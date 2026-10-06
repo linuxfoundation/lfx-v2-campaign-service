@@ -33,7 +33,17 @@ reports `--`. The envelope repeats Google's four fields and adds three:
 `window` accepts `today`, `last_7_days`, `last_30_days` (default), `this_month`, `last_month` —
 the windows the Microsoft client maps to a UTC date range; the decoder refuses the other two, and
 the service's own 400 (for a non-HTTP caller) is built from the same set, so it never lists a
-window this read refuses. It deliberately does not go through the Google reads' window helper.
+window this read refuses. The RESPONSE's `window` uses the same five-value enum, so the
+generated contract never advertises `yesterday` or `last_14_days` as a value this read can
+return. It deliberately does not go through the Google reads' window helper.
+
+**Two refusal messages are a cross-repo contract.** lfx-self-serve's Microsoft keyword table
+shows "not connected" rather than a read failure on exactly two campaign-service messages: the
+404 `no microsoft ads connection configured for this project` and the 400 `keyword and audience
+insights are not supported for this platform` (also returned while `MICROSOFT_METRICS_ENABLED`
+is off). Neither carries another discriminator, so
+`TestGetMicrosoftAdsKeywords_PinsTheNotConnectedMessages` pins both strings; rewording either
+needs the matcher there changed in step.
 
 **Audience demographics are not offered.** Microsoft's `AgeGenderAudienceReportRequest` carries
 age and gender but no device dimension, so the age/gender/device answer would need a second
@@ -65,7 +75,10 @@ different type. See [internal/infrastructure/postgres](../code/internal-infrastr
 - The project's OWN Microsoft connection only (`resolveOwned`; a project with none is 404, never
   served from the LF system account), and only the account it is bound to.
 - The scope is the project's own campaigns, read from this service's database by `project_id`;
-  an empty scope answers an empty result without touching the dispatcher or the store.
+  an empty scope answers an empty result without touching the store or any upstream call. The
+  rollout gate and the window are checked FIRST, by `KeywordReportEnabled` (no connection, no
+  scope), so with `MICROSOFT_METRICS_ENABLED` off a project with no Microsoft campaigns gets
+  the same 400 as one with many, not an empty 200 that depends on project data.
 - The report `Scope` is `Campaigns` only — never `AccountIds`, because Microsoft documents the
   scope as the UNION of its elements.
 - Provenance: if ANY campaign in scope records a creation account other than the bound one, the
@@ -80,7 +93,8 @@ different type. See [internal/infrastructure/postgres](../code/internal-infrastr
 - Microsoft rejecting the campaign-only scope itself (error 2027) is the same rejection on every
   read, so it is tagged `ErrServiceDefect` (a logged 500) and fails the read, instead of being
   logged as a transient submit failure forever. The scope is not widened to `AccountIds`.
-- Every refusal happens in `KeywordReportAccount`, before the store or any upstream call.
+- Every other refusal happens in `KeywordReportAccount` (which re-checks the gate and window),
+  before the store or any upstream call.
 - Off unless `MICROSOFT_METRICS_ENABLED=true` (400 "not supported"), like the other Microsoft
   reporting reads, because the Reporting contract has not been exercised against a live account.
 

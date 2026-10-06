@@ -216,9 +216,25 @@ var NotFoundError = Type("not-found-error", func() {
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
 	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
-		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported")
+		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type")
 		Example("already_exists")
 	})
+})
+
+// AccountMonitorConflictError is the 409 body of monitor-twitter-ads-account, the one endpoint
+// that refuses an account as it stands. It has its OWN type rather than reusing ConflictError
+// because ConflictError's published example is a connection collision (`already_exists`, "A
+// connection for this provider already exists") — reusing it advertised, in the generated
+// contract, a response this method can never return. Here the example is one of the method's
+// two real refusals, and `reason` is REQUIRED with exactly those two values: every 409 this
+// method answers sets one, so a client never has to fall back to the message.
+var AccountMonitorConflictError = Type("account-monitor-conflict-error", func() {
+	errorAttrs("409", "the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)")
+	Attribute("reason", String, "Why the account cannot be monitored as it stands: account_too_many_active_campaigns (more campaigns active in the window than one report covers) or account_timezone_unsupported (the account's timezone does not start its days on a whole UTC hour).", func() {
+		Enum("account_too_many_active_campaigns", "account_timezone_unsupported")
+		Example("account_too_many_active_campaigns")
+	})
+	Required("reason")
 })
 
 var PreconditionFailedError = Type("precondition-failed-error", func() {
@@ -1237,7 +1253,9 @@ var AccountMonitor = Type("account-monitor", func() {
 // asynchronous report rather than a live query: metrics_as_of and metrics_pending exactly as the
 // account monitor publishes them, and conversions_complete.
 var MicrosoftAdsKeywords = Type("microsoft-ads-keywords", func() {
-	Attribute("window", String, "The reporting window these counters cover", metricsWindowEnum)
+	// The Microsoft-specific subset, as on the request: the read refuses yesterday and
+	// last_14_days, so the response can never carry them and must not advertise them.
+	Attribute("window", String, "The reporting window these counters cover", microsoftKeywordsWindowEnum)
 	Attribute("rows", ArrayOf(GoogleAdsKeyword), "Keyword rows from the last finished Microsoft keyword report that covers every campaign this project owns, ordered by impressions descending and capped — see `truncated`. criterion_id is the Microsoft KeywordId and ad_group_id its AdGroupId. cost_micros is Microsoft's Spend (account currency, no FX) times 10^6; ctr is clicks/impressions. Empty while no such report has finished (metrics_as_of absent).")
 	Attribute("row_count", Int, "How many rows are in `rows`.", func() { Example(50) })
 	Attribute("truncated", Boolean, "True when this project's campaigns have more keywords than were returned. The rows are the TOP ones by impressions, not the project's full keyword set.", func() { Example(false) })
@@ -2159,7 +2177,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("Conflict", ConflictError, "The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)")
+		Error("Conflict", AccountMonitorConflictError, "The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")

@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -169,5 +171,67 @@ func TestRedactedConfigSnapshot_KeyCollisions(t *testing.T) {
 		if got := string(redactedConfigSnapshot(in)); got != want {
 			t.Fatalf("got  %s\nwant %s", got, want)
 		}
+	}
+}
+
+// Links the http-only passes did not recognise reach neither the stored values nor the stored
+// keys (PR #267 review): a non-http scheme with an authority, a host-less file URL, userinfo in
+// front of a bracketed IPv6 host, and a username carrying RFC 3986 sub-delims.
+func TestRedactedConfigSnapshot_NonHTTPAndUserinfoShapes(t *testing.T) {
+	// Spliced so the literals are not credential-shaped fixtures for the secret scanners.
+	bracketUserinfo := "https://bob:" + "pw@[2001:db8::1]/reset/SECRET_PATH?token=SECRET_QUERY"
+	bangUserinfo := "admin!:" + "pw@events.example/reset/SECRET_TOKEN"
+	for _, tc := range []struct{ name, in, want string }{
+		{"ftp ipv6", "ftp://[2001:db8::1]/reset/SECRET?token=SECRET", "ftp://[2001:db8::1]"},
+		{"file url", "file:///private/RESET_SECRET", ""},
+		{"ftp in prose", "get ftp://files.example.org/reset/SECRET now", "get ftp://files.example.org now"},
+		{"userinfo before bracketed host", bracketUserinfo, ""},
+		{"sub-delim username", bangUserinfo, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// As a value.
+			got := string(redactedConfigSnapshot(map[string]any{"v": tc.in}))
+			if strings.Contains(got, "SECRET") || strings.Contains(got, "pw") {
+				t.Errorf("value: snapshot still carries the secret: %s", got)
+			}
+			wantJSON, _ := json.Marshal(map[string]any{"v": tc.want})
+			if got != string(wantJSON) {
+				t.Errorf("value: got %s, want %s", got, wantJSON)
+			}
+			// As an object key.
+			got = string(redactedConfigSnapshot(map[string]any{tc.in: 1}))
+			if strings.Contains(got, "SECRET") || strings.Contains(got, "pw") {
+				t.Errorf("key: snapshot still carries the secret: %s", got)
+			}
+			wantJSON, _ = json.Marshal(map[string]any{tc.want: 1})
+			if got != string(wantJSON) {
+				t.Errorf("key: got %s, want %s", got, wantJSON)
+			}
+		})
+	}
+}
+
+// Many keys redacting to one base must not cost quadratic work (PR #267 review): 20,000 keys
+// sharing a host finish quickly and every value survives under its own suffix.
+func TestRedactedConfigSnapshot_ManyCollisionsAreLinear(t *testing.T) {
+	const n = 20000
+	in := make(map[string]any, n)
+	for i := 0; i < n; i++ {
+		in["https://a.example/"+strconv.Itoa(i)] = float64(i)
+	}
+	start := time.Now()
+	raw := redactedConfigSnapshot(in)
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("redacting %d colliding keys took %v", n, d)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n {
+		t.Fatalf("got %d keys, want %d: a colliding value was merged or dropped", len(got), n)
+	}
+	if _, ok := got["https://a.example#"+strconv.Itoa(n)]; !ok {
+		t.Errorf("the last colliding key should carry suffix #%d", n)
 	}
 }

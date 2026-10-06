@@ -2350,8 +2350,17 @@ var schemelessScreenRunRe = regexp.MustCompile(
 // copy walks into constantly: a clock. `keynote 14:00@events.example` and
 // `session 9:30@main.stage` are the userinfo production byte for byte, and an events
 // platform writes that sentence every day. See userinfoRunIsClockShaped.
+//
+// The username class before the colon is RFC 3986's userinfo alphabet (unreserved,
+// pct-encoded and the sub-delims `!$&'()*+,;=`), kept in step with pkg/redact's
+// schemelessUserinfoSnapshotRunRe: a narrower class let `admin!:pw@events.example` through.
+// The FIRST character must be unreserved, so a clock opened by prose punctuation —
+// `Keynote (14:00@main.stage)`, `*9:30@main.stage*` — is matched from its first digit and
+// still reads as a clock; userinfoRunIsClockShaped also judges only the username's segment
+// after its last sub-delim, for the `Mon,9:30@main.stage` shape the leftmost match starts
+// on a letter.
 var schemelessUserinfoRunRe = regexp.MustCompile(
-	`(?i)[a-z0-9._~%+-]+:[^\s<>@。、！？，：；]*@` +
+	`(?i)[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*:[^\s<>@。、！？，：；]*@` +
 		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>。、！？，：；]*)?`,
 )
@@ -2437,7 +2446,17 @@ func userinfoRunIsClockShaped(run string) bool {
 	if colon < 0 {
 		return false
 	}
-	return isAllASCIIDigits(userinfo[:colon]) && isAllASCIIDigits(userinfo[colon+1:])
+	return isAllASCIIDigits(afterLastSubDelim(userinfo[:colon])) && isAllASCIIDigits(userinfo[colon+1:])
+}
+
+// afterLastSubDelim returns the part of a username after its last RFC 3986 sub-delim. Prose
+// punctuation hard against a clock (`Mon,9:30@`) is admitted into the username by the run
+// pattern, and the clock is the segment after it. Kept in step with pkg/redact.
+func afterLastSubDelim(username string) string {
+	if i := strings.LastIndexAny(username, "!$&'()*+,;="); i >= 0 {
+		return username[i+1:]
+	}
+	return username
 }
 
 func isAllASCIIDigits(s string) bool {

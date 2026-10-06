@@ -649,6 +649,9 @@ a string array (null elements are kept, not keywords), is `ErrTargetingUnreadabl
 it does not remove — unchanged, matching keywords exactly and sending the body pre-encoded with
 HTML escaping off (`preEncodedBody`, honoured by the request loop), because Reddit replaces the
 targeting object as a whole (secondary sources; the OpenAPI document cannot be fetched from the
-authoring environment). Its classification is `UpdateAdGroupBid`'s, including
-`retriedUnconfirmedError` after a retried 429, plus an UNCONFIRMED echo naming another keyword
-list. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+authoring environment). The PATCH is sent ONCE (`requestNoThrottleRetry`): unlike a bid write it
+replaces the WHOLE targeting from a pre-read snapshot, so a retry after a committed-but-throttled
+first attempt could overwrite an operator's later change to another dimension and still pass the
+final comparison against that stale snapshot. A 429 is therefore UNCONFIRMED at once; otherwise
+the classification is `UpdateAdGroupBid`'s (transport, 3xx, 5xx UNCONFIRMED; any other 4xx
+definite), plus an UNCONFIRMED echo naming another keyword list. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
