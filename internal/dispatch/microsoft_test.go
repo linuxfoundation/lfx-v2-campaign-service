@@ -419,6 +419,11 @@ func TestMicrosoft_ToggleStatus_ActivateOrdersChildrenFirst(t *testing.T) {
 		paths = append(paths, r.URL.Path)
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		// The live-keyword read (LFXV2-2665) answers the recorded keyword as still live.
+		if strings.HasSuffix(r.URL.Path, "Keywords/QueryByAdGroupId") {
+			_, _ = io.WriteString(w, `{"Keywords":[{"Id":555,"Status":"Paused"}]}`)
+			return
+		}
 		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
 	}))
 	defer apiSrv.Close()
@@ -433,11 +438,13 @@ func TestMicrosoft_ToggleStatus_ActivateOrdersChildrenFirst(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	// Keywords are enabled BEFORE the campaign gate, alongside the other descendants: the gate
-	// must flip last so the campaign never reports Active while something under it is Paused.
-	if len(paths) != 4 || !strings.HasSuffix(paths[0], "AdGroups") || !strings.HasSuffix(paths[1], "Ads") ||
-		!strings.HasSuffix(paths[2], "Keywords") || !strings.HasSuffix(paths[3], "Campaigns") {
-		t.Errorf("activate order = %v, want [AdGroups Ads Keywords Campaigns] (descendants first, gate last)", paths)
+	// The live-keyword READ comes first and mutates nothing; then keywords are enabled BEFORE
+	// the campaign gate, alongside the other descendants: the gate must flip last so the
+	// campaign never reports Active while something under it is Paused.
+	if len(paths) != 5 || !strings.HasSuffix(paths[0], "Keywords/QueryByAdGroupId") ||
+		!strings.HasSuffix(paths[1], "AdGroups") || !strings.HasSuffix(paths[2], "Ads") ||
+		!strings.HasSuffix(paths[3], "Keywords") || !strings.HasSuffix(paths[4], "Campaigns") {
+		t.Errorf("activate order = %v, want [Keywords/QueryByAdGroupId AdGroups Ads Keywords Campaigns] (read, descendants, gate last)", paths)
 	}
 }
 

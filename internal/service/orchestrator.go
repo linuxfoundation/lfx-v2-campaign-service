@@ -838,6 +838,7 @@ const (
 	opReadKeywords               = "read_keywords"
 	opReadAudience               = "read_audience"
 	opKeywordActions             = "keyword_actions"
+	opNegativeKeywords           = "negative_keywords"
 	opVerifyAccountOrg           = "verify_account_org"
 	opProbeConnection            = "probe_connection"
 	opListAccountCampaigns       = "list_account_campaigns"
@@ -2852,6 +2853,22 @@ type KeywordActioner interface {
 	ApplyKeywordActions(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, actions []model.KeywordAction) ([]model.KeywordActionOutcome, error)
 }
 
+// NegativeKeywordAdder is an OPTIONAL dispatcher capability: add campaign-level negative
+// keywords to an existing campaign. Type-asserted like KeywordActioner, so a dispatcher without
+// it yields a clean ErrNegativeKeywordsUnsupported → 400.
+//
+// Deliberately NOT a kind on KeywordAction. Every KeywordActioner would then receive it —
+// including adapters that predate it and have never been taught what a negative keyword is —
+// and an adapter that validates only the actions it knows would forward the rest. A separate
+// interface means only a platform that implements the add can be asked to perform it.
+type NegativeKeywordAdder interface {
+	// AddNegativeKeywords returns exactly one outcome per requested keyword, in request
+	// order, or an error when the platform answered nothing per keyword. campaign is the
+	// persisted row, so the adapter can enforce provisioning and the account-identity
+	// invariant BEFORE the platform is contacted.
+	AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error)
+}
+
 // keywordInsightsFor resolves the dispatcher's keyword-insight capability, or returns the
 // "not supported" sentinel. Shared by the two read paths so both answer identically for an
 // unregistered or non-capable platform.
@@ -3060,9 +3077,42 @@ type unconfirmedOutcomeCountError struct {
 }
 
 func (e *unconfirmedOutcomeCountError) Error() string {
-	return fmt.Sprintf("%s keyword actioner returned %d outcomes for %d requested actions; the batch is atomic, so a partial result cannot be reported as success, and the mutation may already have been applied",
+	return fmt.Sprintf("%s keyword adapter returned %d outcomes for %d requested items; the response must answer every item in request order, so it cannot be reported as success, and the mutation may already have been applied",
 		e.platform, e.got, e.want)
 }
 
 // Unconfirmed marks the outcome as ambiguous-applied for the service's verify-before-retry arm.
 func (e *unconfirmedOutcomeCountError) Unconfirmed() bool { return true }
+
+// AddNegativeKeywords adds campaign-level negative keywords to one campaign.
+//
+// Shaped like ApplyKeywordActions for the same reasons: a nil campaign is refused here, every
+// other guard — batch validation first, then provisioning — is the adapter's, in the adapter's
+// order, and the call gets the mutation timeout. The outcome-count check is the same contract:
+// one outcome per requested keyword, or the response cannot be zipped back onto the request.
+// A short slice is UNCONFIRMED, because the add was already issued when it is detected.
+func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error) {
+	if campaign == nil {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrNegativeKeywordsUnsupported, platform)
+	}
+	adder, ok := d.(NegativeKeywordAdder)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrNegativeKeywordsUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
+	defer cancel()
+	start := time.Now()
+	outcomes, aerr := adder.AddNegativeKeywords(callCtx, projectID, platform, campaign, keywords)
+	o.recordUpstream(ctx, platform, opNegativeKeywords, start, aerr)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if len(outcomes) != len(keywords) {
+		return nil, &unconfirmedOutcomeCountError{platform: string(platform), got: len(outcomes), want: len(keywords)}
+	}
+	return outcomes, nil
+}

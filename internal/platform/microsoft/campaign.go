@@ -1330,6 +1330,9 @@ type partialCascadeError struct {
 	applied string
 	stage   string
 	err     error
+	// pausedKeywordStage marks a PAUSE whose campaign gate, ad group and ad were all paused and
+	// only the trailing KEYWORD housekeeping failed (LFXV2-2665). See IsPausedBeforeKeywordStage.
+	pausedKeywordStage bool
 }
 
 func (e *partialCascadeError) Error() string {
@@ -1339,6 +1342,21 @@ func (e *partialCascadeError) Unwrap() error { return e.err }
 
 // Unconfirmed marks the outcome as ambiguous-applied for IsOutcomeUnconfirmed.
 func (e *partialCascadeError) Unconfirmed() bool { return true }
+
+// IsPausedBeforeKeywordStage reports whether err is a PAUSE cascade that confirmed the campaign
+// gate — and every other non-keyword entity it addressed — Paused, and failed only at the
+// trailing keyword stage.
+//
+// That failure does not make "the campaign is paused" untrue: the gate flips FIRST on pause and
+// Microsoft confirmed it, so nothing under it can serve. The keyword PUT on pause is
+// housekeeping that keeps the tree in the all-Paused create shape, and it is the stage a keyword
+// deleted upstream (keyword REMOVE, which persists nothing) is rejected at. Reporting such a
+// pause as unconfirmed would tell the operator their campaign might still be spending when
+// Microsoft has confirmed it is not.
+func IsPausedBeforeKeywordStage(err error) bool {
+	var pc *partialCascadeError
+	return errors.As(err, &pc) && pc.pausedKeywordStage
+}
 
 // putStatus issues one status-only PUT and folds Microsoft's 200-with-PartialErrors contract
 // into an ordinary error, so callers can't mistake a rejected update for a success.
@@ -1616,11 +1634,13 @@ func (c *Client) UpdateCampaignAndChildrenStatus(ctx context.Context, campaignID
 	// housekeeping that leaves the tree in the same all-Paused shape CreateCampaign produces
 	// — which is what makes a later re-activate symmetric with a fresh create.
 	if len(keywordStatuses) > 0 {
+		// Reached only after every addressed non-keyword entity was confirmed Paused, so a
+		// failure here is marked as such (IsPausedBeforeKeywordStage).
 		if err := ctx.Err(); err != nil {
-			return &partialCascadeError{applied: applied, stage: "keywords", err: err}
+			return &partialCascadeError{applied: applied, stage: "keywords", err: err, pausedKeywordStage: true}
 		}
 		if err := c.putStatus(ctx, "Keywords", keywordReq, "keywords"); err != nil {
-			return &partialCascadeError{applied: applied, stage: "keywords", err: err}
+			return &partialCascadeError{applied: applied, stage: "keywords", err: err, pausedKeywordStage: true}
 		}
 	}
 	return nil

@@ -420,10 +420,60 @@ const (
 	KeywordActionRemove = "REMOVE"
 )
 
-// KeywordActionOutcome is one applied keyword mutation.
+// KeywordActionOutcome is one keyword mutation's outcome, positionally aligned with the
+// request.
+//
+// Outcome and ErrorCode are EMPTY for a platform whose batch is atomic (Google Ads): every
+// outcome it returns was applied, and the service renders them exactly as before. A
+// non-atomic platform (Microsoft Advertising) sets Outcome to one of the KeywordOutcome*
+// values on every entry, because there each action can land or fail independently.
+// ResourceName is Google's; it is empty on platforms that have no resource names.
 type KeywordActionOutcome struct {
 	AdGroupID    string
 	CriterionID  string
 	Action       string
 	ResourceName string
+	Outcome      string
+	ErrorCode    string
+}
+
+// Per-item outcomes a NON-atomic keyword lever reports. An empty Outcome means "applied by an
+// atomic batch" and is rendered as no outcome at all.
+const (
+	KeywordOutcomeApplied        = "APPLIED"
+	KeywordOutcomeAlreadyPresent = "ALREADY_PRESENT"
+	KeywordOutcomeFailed         = "FAILED"
+	KeywordOutcomeUnconfirmed    = "UNCONFIRMED"
+)
+
+// KeywordActionApplied reports whether a keyword ACTION outcome was applied: the empty outcome
+// an atomic batch (Google Ads) reports for every applied action, or APPLIED from a non-atomic
+// platform. This is what keyword actions' applied_count counts.
+func KeywordActionApplied(outcome string) bool {
+	return outcome == "" || outcome == KeywordOutcomeApplied
+}
+
+// NegativeKeywordPresent reports whether a NEGATIVE keyword outcome leaves the keyword on the
+// campaign: APPLIED (added now) or ALREADY_PRESENT. Every negative-keyword adapter names each
+// outcome, so the empty outcome is NOT counted. This is what add-negative-keywords'
+// applied_count counts.
+func NegativeKeywordPresent(outcome string) bool {
+	return outcome == KeywordOutcomeApplied || outcome == KeywordOutcomeAlreadyPresent
+}
+
+// NegativeKeyword is one requested campaign-level negative keyword. MatchType is the
+// platform-neutral "Exact" or "Phrase".
+type NegativeKeyword struct {
+	Text      string
+	MatchType string
+}
+
+// NegativeKeywordOutcome is one negative keyword's outcome, positionally aligned with the
+// request. NegativeKeywordID is set only when the platform created it in this request.
+type NegativeKeywordOutcome struct {
+	Text              string
+	MatchType         string
+	Outcome           string
+	NegativeKeywordID string
+	ErrorCode         string
 }

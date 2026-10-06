@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -789,6 +790,12 @@ func verifyMicrosoftAccountMatch(op string, campaign *model.Campaign, client *mi
 		op, campaign.PlatformCampaignID, created, client.AccountID(), domain.ErrCampaignAccountMismatch)
 }
 
+// microsoftActivateKeywordReadBudget bounds the live-keyword read ACTIVATE makes before its
+// cascade. It is a slice of toggleCallTimeout (45s, internal/service), deliberately well under
+// half of it, so the read — one attempt plus any 429 retries — can never leave the four status
+// PUTs without time to run.
+var microsoftActivateKeywordReadBudget = 10 * time.Second // a var only so tests can shorten it
+
 // microsoftKeywordIDs pulls the persisted keyword ids out of the result blob, using the same
 // lowerCamel json tags campaignFromMicrosoft marshalled (pinned by a round-trip test). Empty
 // means keyword targeting was never provisioned — either none was supplied or the step failed
@@ -863,7 +870,40 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	// Keyword ids come from the SAME persisted result blob as the child ids. They are passed
 	// on BOTH the activate and pause paths: keywords are created Paused, so an activate that
 	// skipped them would enable a campaign with nothing eligible to match a query.
-	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, microsoftKeywordIDs(campaign), msStatus); uerr != nil {
+	//
+	// On ACTIVATE they are first narrowed to the keywords still LIVE in the ad group
+	// (LFXV2-2665): keyword REMOVE deletes keywords upstream without touching this row, and a
+	// deleted id in the cascade's UpdateKeywords would fail every later activation. The read
+	// runs under its OWN bounded sub-budget (microsoftActivateKeywordReadBudget), so a slow or
+	// throttled read cannot consume the toggle's deadline the mutations need; a failed or
+	// timed-out read REFUSES the activate — definite, because nothing has been changed yet.
+	//
+	// PAUSE NEVER READS. Stopping delivery must not wait on, or be starved by, a read: the
+	// recorded ids are sent as they are, the campaign gate flips FIRST, and a keyword-stage
+	// failure after it (a deleted keyword's rejection among them) is handled below.
+	keywordIDs := microsoftKeywordIDs(campaign)
+	if msStatus == microsoft.StatusActive && len(keywordIDs) > 0 && adGroupID != "" {
+		readCtx, cancel := context.WithTimeout(ctx, microsoftActivateKeywordReadBudget)
+		live, lerr := microsoftLiveKeywordIDs(readCtx, client, adGroupID, keywordIDs)
+		cancel()
+		if lerr != nil {
+			return fmt.Errorf("toggle microsoft campaign status: read the ad group's keywords before activating (nothing was changed): %w", lerr)
+		}
+		if len(live) == 0 {
+			return fmt.Errorf("%w: microsoft campaign %s cannot be activated because every keyword it was created with has since been removed (at least one keyword is required for a search campaign to serve)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		keywordIDs = live
+	}
+	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, keywordIDs, msStatus); uerr != nil {
+		// A PAUSE whose gate (and ad group and ad) Microsoft confirmed Paused, failing only at
+		// the trailing keyword housekeeping, IS a paused campaign: nothing under the gate can
+		// serve. Reported as success, with the keyword failure logged, rather than as an
+		// unconfirmed toggle that would tell the operator it might still be spending.
+		if microsoft.IsPausedBeforeKeywordStage(uerr) {
+			slog.WarnContext(ctx, "microsoft campaign paused; the keyword status update after the campaign gate did not complete (a keyword removed upstream is rejected here) — delivery is stopped by the paused campaign",
+				"project_id", projectID, "platform_campaign_id", campaign.PlatformCampaignID, "error", uerr.Error())
+			return nil
+		}
 		if microsoft.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}

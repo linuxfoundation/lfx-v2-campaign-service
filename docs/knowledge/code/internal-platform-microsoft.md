@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/microsoft"
-description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), campaign-level GEO targeting that resolves ISO-2 codes to Microsoft LocationIds through the ingested, cached geographical-locations file and fails closed before any mutating call rather than creating an untargeted campaign that spends everywhere (LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260), and a campaign DAILY-budget read+write (GetCampaignsByIds then UpdateCampaigns) that reports shared, experiment and budget-type facts for the dispatcher to refuse on before the one idempotent PUT (LFXV2-2665), and project-scoped keyword performance as a saved asynchronous KeywordPerformanceReportRequest — submit and single-poll check primitives whose scope is the project's own campaigns only, never AccountIds (LFXV2-2665), and an ad-group CpcBid write (UpdateAdGroups) made only after the same read shows the campaign's own EnhancedCpc or ManualCpc strategy (LFXV2-2665)."
+description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), campaign-level GEO targeting that resolves ISO-2 codes to Microsoft LocationIds through the ingested, cached geographical-locations file and fails closed before any mutating call rather than creating an untargeted campaign that spends everywhere (LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260), and a campaign DAILY-budget read+write (GetCampaignsByIds then UpdateCampaigns) that reports shared, experiment and budget-type facts for the dispatcher to refuse on before the one idempotent PUT (LFXV2-2665), and project-scoped keyword performance as a saved asynchronous KeywordPerformanceReportRequest — submit and single-poll check primitives whose scope is the project's own campaigns only, never AccountIds (LFXV2-2665), and an ad-group CpcBid write (UpdateAdGroups) made only after the same read shows the campaign's own EnhancedCpc or ManualCpc strategy (LFXV2-2665), and keyword levers on a live campaign — pause/remove via UpdateKeywords/DeleteKeywords behind a GetKeywordsByAdGroupId ownership read, and campaign-level negatives via AddNegativeKeywordsToEntities — reported per item, positionally, because neither is atomic (LFXV2-2665)."
 resource: "internal/platform/microsoft"
 tags:
   - platform-client
@@ -734,7 +734,8 @@ which the client forwards verbatim without validating it against the enum, so it
 link's path can carry a token as readily as its query, so the snapshot is a redacted record
 (`k8s.io/docs tutorial` is stored as `k8s.io tutorial`), while what Microsoft receives is not
 snapshot-redacted (only the client's own trim / match-type / de-duplication validation applies).
-The values sent to Microsoft are untouched. `CampaignResult` (the persisted `result`) carries
+The snapshot redaction never reaches the values sent to Microsoft, which differ from the caller's
+only by that validation. `CampaignResult` (the persisted `result`) carries
 no caller URL: names, ids, `Steps` (none of which interpolate a URL) and the service-composed
 `microsoftAdsUrl` deep link, whose `?aid=` is the account id.
 
@@ -759,6 +760,22 @@ without one are refused, exactly as an orphan ad is.
   NOT a strict leaf-to-root walk: Ads is deeper than AdGroups in the tree, yet AdGroups PUTs first.
   The campaign is only un-gated once its children are already serving; the reverse would briefly
   serve nothing under a live campaign.
+- **On ACTIVATE, keyword ids are narrowed to the LIVE ones first** (LFXV2-2665, dispatcher side).
+  Keyword REMOVE deletes keywords without touching the row, so the recorded `keywordIds` can name
+  a deleted keyword, which UpdateKeywords would reject. `ToggleStatus` reads `GetAdGroupKeywords`
+  under its OWN sub-budget (`microsoftActivateKeywordReadBudget`, 10s of the toggle's 45s, so a
+  slow or throttled read cannot leave the four PUTs without time) and passes only ids still
+  present and not `Deleted`; a failed or timed-out read refuses DEFINITELY (nothing changed yet)
+  and an emptied set is `ErrCampaignNotProvisioned`.
+- **PAUSE never reads** — stopping delivery must not wait on, or be starved by, a read (an earlier
+  revision read on pause too and could exhaust the toggle deadline before the gate was sent). The
+  recorded ids are sent as they are; the gate flips FIRST, and a failure at the trailing KEYWORD
+  stage after the gate, ad group and ad were confirmed Paused is marked
+  (`IsPausedBeforeKeywordStage`) and reported by the dispatcher as a successful pause with a
+  warning — Microsoft confirmed nothing under the gate can serve. A failure at the gate, ad group
+  or ad stage is reported exactly as before. **⚠️ Known limitation (documented, not
+  fixed — see [internal/dispatch](internal-dispatch.md), "Microsoft keyword levers"): ACTIVATE
+  re-enables a keyword an operator PAUSED through keyword-actions — nothing records that pause.**
 - **Unknown children are SKIPPED, not guessed**, with direction-dependent rules. An ad can only be
   addressed when its parent ad-group id is also known. **ACTIVATE requires both child ids** — if
   either `adGroupId` or `adId` is missing, it is refused locally with `ErrCampaignNotProvisioned`
@@ -864,6 +881,67 @@ numeric `Code` matched beside each symbolic name (1100, 1106, 1123, 1159) was ch
 that error-code list on 2026-10-05 and is cited in `budget.go`; a wrong number would misclassify
 a refusal (1100 as "deleted upstream", 1159 as the shared-budget 409). None has been exercised against a live Microsoft Advertising account; the transport (PUT `Campaigns`,
 the `PartialErrors` envelope) is the one the status toggle already uses.
+
+## Keyword levers on a live campaign (LFXV2-2665)
+
+`keyword_levers.go` serves `MicrosoftDispatcher.ApplyKeywordActions` and
+`MicrosoftDispatcher.AddNegativeKeywords` (see [internal/dispatch](internal-dispatch.md),
+"Microsoft keyword levers"). Endpoints, all Campaign Management v13 REST on the usual host and
+request layer, checked against Microsoft's reference on 2026-10-05:
+
+| Operation | Wire | Reference |
+|---|---|---|
+| GetKeywordsByAdGroupId | `POST Keywords/QueryByAdGroupId` `{AdGroupId}` | learn.microsoft.com/en-us/advertising/campaign-management-service/getkeywordsbyadgroupid |
+| UpdateKeywords | `PUT Keywords` `{AdGroupId, Keywords:[{Id, Status:"Paused"}]}` (≤1,000) | …/updatekeywords, …/keyword |
+| DeleteKeywords | `DELETE Keywords` `{AdGroupId, KeywordIds}` (≤1,000) | …/deletekeywords |
+| AddNegativeKeywordsToEntities | `POST EntityNegativeKeywords` `{EntityNegativeKeywords:[{EntityId, EntityType:"Campaign", NegativeKeywords:[{MatchType, Text}]}]}` (one entity per call) | …/addnegativekeywordstoentities, …/entitynegativekeyword, …/negativekeyword |
+
+- **NOT ATOMIC, so reported per item.** Microsoft answers each batch 200 with `PartialErrors`
+  (keywords) or `NestedPartialErrors[].BatchErrors` (negatives) naming, by `Index`, the items it
+  did NOT apply; every other item in the call DID apply. Outcomes are therefore positional
+  (`APPLIED` / `ALREADY_PRESENT` / `FAILED` / `UNCONFIRMED`) and the error return is reserved for
+  "no call was answered per item". Errors are decoded by a dedicated `indexedErrors` (bounded at
+  4× the request cap, truncation recorded) because `boundedErrorItems` keeps no `Index` and
+  retains only 16 entries. An error with a null/absent/out-of-range `Index`, or a truncated
+  array, makes every UN-named item `UNCONFIRMED` — an error that could be any item's means no
+  un-named item can be called applied. `Index` is a pointer so "absent" is never read as item 0.
+- **PAUSE first, then REMOVE**, as two calls: the reversible half lands first. The DELETE is
+  sent only when the PAUSE call was answered item by item and the caller's context is still live;
+  after a whole-call PAUSE failure (definite OR unconfirmed) its items are `FAILED` with
+  `error_code` `NOT_SENT` (definitely not applied), so a failure never leaves only the
+  irreversible half applied. One call answered and the other ambiguous yields a 200
+  with the second call's items `UNCONFIRMED` — never a whole-request error hiding the pauses
+  that did land.
+- **Update/Delete are IDEMPOTENT (429 retried); a refusal after a retry is UNCONFIRMED** — the
+  `putUpdate` rule (PR #255): a whole-call refusal becomes `retriedUnconfirmedError`, and a
+  per-item `FAILED` becomes `UNCONFIRMED`, because the earlier rate-limited attempt may have
+  applied it. A 200 that omits `PartialErrors` or will not decode is UNCONFIRMED.
+- **The negative add is NOT retried on 429** (`idempotent=false`, the create rule): a 429, 5xx,
+  transport failure or unreadable 200 is UNCONFIRMED. Per item: an id → `APPLIED` (with
+  `NegativeKeywordID`); an already-exists as the item's ONLY error → `ALREADY_PRESENT` (the
+  requested state holds) — matched strictly: a present symbolic `ErrorCode` must be
+  `CampaignServiceNegativeKeywordAlreadyExists`, and the numeric `4335` counts only when
+  `ErrorCode` is absent; any other attributed error → `FAILED`; neither → `UNCONFIRMED`. An
+  ENTITY-level error on the collection (the campaign itself refused) is a DEFINITE whole-call
+  failure (`negativeKeywordEntityError`) ONLY when no id came back at all: a zero or empty
+  collection `Code` is absent (the field is a non-nullable int), and an entity code alongside a real
+  id falls through to per-item attribution rather than discarding ids for negatives that exist. 4335 was confirmed
+  from the operation-error-codes reference via search on 2026-10-05; the full table page did not
+  render past code 2946 in the fetch tool, so the number is the least-verified constant here.
+- **Validation before any request.** `ValidateKeywordActions` mirrors the google-ads rules
+  (canonical positive int64 ids, PAUSE/REMOVE, ≤60, no keyword twice). `ValidateNegativeKeywords`:
+  1–60; text trimmed, whitespace collapsed, ≤100 runes (Microsoft's NegativeKeyword.Text limit);
+  letters, marks, digits, spaces and `& ' - .` only, no two punctuation characters adjacent
+  (Microsoft's text policy: about.ads.microsoft.com/en-us/policies/text-guidelines); match type
+  `Exact`/`Phrase` in any casing (Broad is not a negative match type upstream and is refused, not
+  mapped); the same (match type, case-folded text) twice is REFUSED, not de-duplicated, because
+  de-duplication would shift every later positional result.
+- **`GetAdGroupKeywords` refuses a body without `Keywords`** — Microsoft documents an empty array
+  for an empty ad group, so absence is an unanswered read, not "no keywords". Entries carry `Id`
+  and `Status`; `IsDeleted()` reads `Status == "Deleted"`.
+
+None of the four has been exercised against a live Microsoft Advertising account; the transport
+and the 200-with-PartialErrors envelope are the ones the status toggle and creates already use.
 
 ## Ad-group max CPC bid read + write (LFXV2-2665)
 

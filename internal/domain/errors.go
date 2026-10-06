@@ -457,6 +457,20 @@ var (
 	// to retry it.
 	ErrKeywordActionInvalid = errors.New("the keyword action batch is not valid")
 
+	// ErrNegativeKeywordsUnsupported indicates the platform has no negative-keyword add wired
+	// for a live campaign. The platform is never contacted; mapped to 400.
+	//
+	// A SEPARATE capability and sentinel from ErrKeywordActionsUnsupported, deliberately:
+	// adding a negative keyword is not a kind of keyword action, and folding it into that
+	// enum would route it to every adapter that implements keyword actions — including ones
+	// that have never been taught what a negative keyword is.
+	ErrNegativeKeywordsUnsupported = errors.New("negative keywords are not supported for this platform")
+
+	// ErrNegativeKeywordInvalid indicates a negative-keyword batch was rejected BEFORE the
+	// platform was contacted: empty or over-long, a text the platform's limits refuse, an
+	// unsupported match type, or the same keyword twice. A permanent input fault → 400.
+	ErrNegativeKeywordInvalid = errors.New("the negative keyword batch is not valid")
+
 	// ErrKeyUnavailable indicates this service could not obtain the JWT signing keys
 	// (Heimdall's JWKS) needed to check a bearer token. It is NOT a verdict on the token:
 	// nothing was learned about it, because it was never checked.

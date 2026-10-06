@@ -13,7 +13,8 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// ApplyKeywordActions pauses or removes Google Ads keywords on one campaign.
+// ApplyKeywordActions pauses or removes Google Ads or Microsoft Advertising keywords on one
+// campaign.
 //
 // This MUTATES a live paid campaign: pausing or removing a keyword changes what serves. It is
 // therefore validated like a create — everything that can be refused locally is refused
@@ -43,12 +44,13 @@ func (s *BriefService) ApplyKeywordActions(ctx context.Context, p *briefs.ApplyK
 	}
 
 	// Platform-independent refusals first, before anything upstream is resolved or contacted.
-	// Google Ads is the only platform that models keywords as addressable criteria, so any
-	// other campaign is a permanent caller error rather than a transient failure.
-	if existing.Platform != model.ProviderGoogleAds {
+	// Google Ads and Microsoft Advertising are the platforms whose keywords this service can
+	// address, so any other campaign is a permanent caller error rather than a transient
+	// failure.
+	if existing.Platform != model.ProviderGoogleAds && existing.Platform != model.ProviderMicrosoftAds {
 		return nil, &briefs.BadRequestError{
 			Code:    "400",
-			Message: "keyword actions apply to Google Ads campaigns only",
+			Message: "keyword actions apply to Google Ads and Microsoft Advertising campaigns only",
 		}
 	}
 	// Goa enforces MinLength(1) for HTTP callers; repeated here so a direct (non-HTTP) caller
@@ -75,22 +77,42 @@ func (s *BriefService) ApplyKeywordActions(ctx context.Context, p *briefs.ApplyK
 	}
 
 	results := make([]*briefs.KeywordActionResult, 0, len(outcomes))
+	applied := 0
 	for _, o := range outcomes {
+		// The three optional fields are rendered ONLY when the adapter set them. Google's
+		// adapter sets ResourceName on every outcome and never sets Outcome/ErrorCode, so a
+		// Google response is byte-for-byte what it was before these fields existed; Microsoft
+		// sets Outcome on every outcome and has no resource name.
 		results = append(results, &briefs.KeywordActionResult{
 			AdGroupID:    o.AdGroupID,
 			CriterionID:  o.CriterionID,
 			Action:       o.Action,
-			ResourceName: o.ResourceName,
+			ResourceName: optionalString(o.ResourceName),
+			Outcome:      optionalString(o.Outcome),
+			ErrorCode:    optionalString(o.ErrorCode),
 		})
+		if model.KeywordActionApplied(o.Outcome) {
+			applied++
+		}
 	}
 	return &briefs.KeywordActions{
 		CampaignID: p.CampaignID,
 		Results:    results,
-		// Always equal to the number requested: the batch is atomic upstream, so a partial
-		// application is not a representable outcome. Reported anyway so a consumer can assert
-		// it rather than assume it.
-		AppliedCount: len(results),
+		// Google Ads: always equal to the number requested — the batch is atomic upstream, so
+		// every outcome it returns (with no Outcome set) was applied. Microsoft Advertising:
+		// only the outcomes it reports APPLIED, which can be fewer, because its batch is not
+		// atomic. Counted from the outcomes either way, never echoed from the request.
+		AppliedCount: applied,
 	}, nil
+}
+
+// optionalString renders an adapter field the generated type models as optional: absent when
+// empty, so a field one platform never sets never appears in its responses.
+func optionalString(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
 }
 
 // classifyKeywordActionError maps an orchestrator failure onto this service's error set.
@@ -173,7 +195,7 @@ func (s *BriefService) classifyKeywordActionError(ctx context.Context, p *briefs
 		// rather than to wait. Deliberately not a 409, which would name a scope they do not own.
 		slog.WarnContext(ctx, "keyword actions blocked: no connection configured for this project and provider",
 			"project_id", p.ProjectID, "platform", platform)
-		return &briefs.NotFoundError{Code: "404", Message: "no google ads connection is configured for this project"}
+		return &briefs.NotFoundError{Code: "404", Message: "no " + keywordPlatformLabel(platform) + " connection is configured for this project"}
 	case errors.Is(aerr, domain.ErrConnectionNotUsable):
 		// The connection exists but cannot be used as it stands. The platform is never
 		// contacted and none of these improve with time, so a 503 would be a false promise.
@@ -181,10 +203,7 @@ func (s *BriefService) classifyKeywordActionError(ctx context.Context, p *briefs
 		// this arm is detected by decoding the DECRYPTED credential blob.
 		slog.WarnContext(ctx, "connection is not usable for keyword actions",
 			"project_id", p.ProjectID, "platform", platform, "reason", unusableConnectionReason(aerr))
-		return &briefs.ConflictError{
-			Code:    "409",
-			Message: "the stored google ads connection cannot be used as configured: check that it is active, that the stored credential is valid json with every field set, and that login_customer_id is digits only",
-		}
+		return &briefs.ConflictError{Code: "409", Message: keywordConnectionUnusableMessage(platform)}
 	case errors.As(aerr, &unconfirmed) && unconfirmed.Unconfirmed():
 		// UNCONFIRMED: the mutate MAY already have been applied upstream — a short or
 		// mismatched mutate response, a 5xx, a timeout. This must sit ABOVE the default,
@@ -217,4 +236,23 @@ func (s *BriefService) classifyKeywordActionError(ctx context.Context, p *briefs
 			"platform", platform, "error", safeErrSummary(aerr))
 		return &briefs.ConnServiceUnavailableError{Code: "503", Message: "the keyword actions could not be applied"}
 	}
+}
+
+// keywordPlatformLabel names a keyword-lever platform in a caller-facing message. Google Ads
+// keeps the exact wording it has always had.
+func keywordPlatformLabel(platform model.Provider) string {
+	if platform == model.ProviderMicrosoftAds {
+		return "microsoft advertising"
+	}
+	return "google ads"
+}
+
+// keywordConnectionUnusableMessage is the 409 for an unusable connection on a keyword lever.
+// The Google Ads text is unchanged; Microsoft's names its own stored fields instead of
+// login_customer_id, which a Microsoft connection does not have.
+func keywordConnectionUnusableMessage(platform model.Provider) string {
+	if platform == model.ProviderMicrosoftAds {
+		return "the stored microsoft advertising connection cannot be used as configured: check that it is active, that the stored credential is valid json with every field set (clientId, clientSecret, developerToken, refreshToken), and that an ad account is selected"
+	}
+	return "the stored google ads connection cannot be used as configured: check that it is active, that the stored credential is valid json with every field set, and that login_customer_id is digits only"
 }
