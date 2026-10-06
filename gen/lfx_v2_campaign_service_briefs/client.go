@@ -33,6 +33,7 @@ type Client struct {
 	UpdateCampaignEndpoint        goa.Endpoint
 	ToggleCampaignStatusEndpoint  goa.Endpoint
 	UpdateCampaignBudgetEndpoint  goa.Endpoint
+	UpdateCampaignBidEndpoint     goa.Endpoint
 	ApplyKeywordActionsEndpoint   goa.Endpoint
 	AddNegativeKeywordsEndpoint   goa.Endpoint
 	DeleteCampaignEndpoint        goa.Endpoint
@@ -49,7 +50,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, updateCampaignBudget, applyKeywordActions, addNegativeKeywords, deleteCampaign, getJob, startEmailWizardPlan, planEmailWizard, generateWizardContent, updateWizardSections, cloneWizardEmail, setWizardSendList, chatWizardTurn, getWizardSession goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, updateCampaignBudget, updateCampaignBid, applyKeywordActions, addNegativeKeywords, deleteCampaign, getJob, startEmailWizardPlan, planEmailWizard, generateWizardContent, updateWizardSections, cloneWizardEmail, setWizardSendList, chatWizardTurn, getWizardSession goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:           createBrief,
 		FindBriefEndpoint:             findBrief,
@@ -69,6 +70,7 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 		UpdateCampaignEndpoint:        updateCampaign,
 		ToggleCampaignStatusEndpoint:  toggleCampaignStatus,
 		UpdateCampaignBudgetEndpoint:  updateCampaignBudget,
+		UpdateCampaignBidEndpoint:     updateCampaignBid,
 		ApplyKeywordActionsEndpoint:   applyKeywordActions,
 		AddNegativeKeywordsEndpoint:   addNegativeKeywords,
 		DeleteCampaignEndpoint:        deleteCampaign,
@@ -444,6 +446,28 @@ func (c *Client) ToggleCampaignStatus(ctx context.Context, p *ToggleCampaignStat
 func (c *Client) UpdateCampaignBudget(ctx context.Context, p *UpdateCampaignBudgetPayload) (res *Campaign, err error) {
 	var ires any
 	ires, err = c.UpdateCampaignBudgetEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*Campaign), nil
+}
+
+// UpdateCampaignBid calls the "update-campaign-bid" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// UpdateCampaignBid may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
+//   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
+//   - error: internal error
+func (c *Client) UpdateCampaignBid(ctx context.Context, p *UpdateCampaignBidPayload) (res *Campaign, err error) {
+	var ires any
+	ires, err = c.UpdateCampaignBidEndpoint(ctx, p)
 	if err != nil {
 		return
 	}

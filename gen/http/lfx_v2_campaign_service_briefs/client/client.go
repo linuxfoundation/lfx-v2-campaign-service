@@ -90,6 +90,10 @@ type Client struct {
 	// update-campaign-budget endpoint.
 	UpdateCampaignBudgetDoer goahttp.Doer
 
+	// UpdateCampaignBid Doer is the HTTP client used to make requests to the
+	// update-campaign-bid endpoint.
+	UpdateCampaignBidDoer goahttp.Doer
+
 	// ApplyKeywordActions Doer is the HTTP client used to make requests to the
 	// apply-keyword-actions endpoint.
 	ApplyKeywordActionsDoer goahttp.Doer
@@ -176,6 +180,7 @@ func NewClient(
 		UpdateCampaignDoer:        doer,
 		ToggleCampaignStatusDoer:  doer,
 		UpdateCampaignBudgetDoer:  doer,
+		UpdateCampaignBidDoer:     doer,
 		ApplyKeywordActionsDoer:   doer,
 		AddNegativeKeywordsDoer:   doer,
 		DeleteCampaignDoer:        doer,
@@ -623,6 +628,30 @@ func (c *Client) UpdateCampaignBudget() goa.Endpoint {
 		resp, err := c.UpdateCampaignBudgetDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "update-campaign-budget", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// UpdateCampaignBid returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service update-campaign-bid server.
+func (c *Client) UpdateCampaignBid() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeUpdateCampaignBidRequest(c.encoder)
+		decodeResponse = DecodeUpdateCampaignBidResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildUpdateCampaignBidRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.UpdateCampaignBidDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "update-campaign-bid", err)
 		}
 		return decodeResponse(resp)
 	}

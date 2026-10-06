@@ -418,7 +418,11 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// briefs match/rule must fail here loudly rather than leave a money-moving endpoint
 		// routed-but-unauthorized, or unreachable.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/budget", true},
-		// add-negative-keywords (LFXV2-2665) is the third spend-affecting campaign mutation in
+		// The campaign bid write (LFXV2-2665) is the third spend-affecting mutation in this
+		// set — it changes what a live campaign pays per click — and is pinned for the budget
+		// row's reason.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/bid", true},
+		// add-negative-keywords (LFXV2-2665) is the fourth spend-affecting campaign mutation in
 		// this set, and the same shape again: it inherits the briefs match and the campaign_manager
 		// rule rather than adding its own, and this row is what fails if a narrowing drops it.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/negative-keywords", true},

@@ -1578,6 +1578,41 @@ compensating rollback. The write is gated on the originally claimed version — 
 the lock but does not bump — so `ReplaceCampaign` co-commits the index event as every campaign
 write does.
 
+## Campaign bid write (LFXV2-2665)
+
+`BriefService.UpdateCampaignBid` (`brief_bid.go`, backing `PATCH .../campaigns/{id}/bid`) sets a
+campaign's MANUAL max cost-per-click bid on its ad platform, then persists it. It is
+`UpdateCampaignBudget`'s twin step for step — validation before load and claim (NaN first,
+`> 0`, `<= maxCampaignBid` = 1,000,000, and the same half-a-micro rounding cutoff), `If-Match`
+428/412 against the loaded row, `created_degraded` allowed, the email channel 400 and an empty
+platform id 409 before the claim, platform FIRST then `ReplaceCampaign` on a cancel-detached
+bounded context, and a success log — so the reasoning in the budget section above applies here
+unchanged and is not repeated.
+
+What differs:
+
+- **Body**: `bid` (Float64, account currency, contract `Minimum` one micro / `Maximum` 1,000,000)
+  and an OPTIONAL `bid_type` (enum `cpc`, default `cpc`; an empty value from a direct caller takes
+  the default). One unit exists today; it is named so an ad group bidding in another unit is
+  refused rather than re-bid in a unit nobody asked for.
+- **Persisted to `max_cpc_bid`** (migration `000039`, `model.Campaign.MaxCPCBid`), the bid
+  lever's twin of `budget_amount`: a REQUEST the platform confirmed, never an observation. NULL
+  means "never set through this endpoint", not "no bid" — a create-time bid lives in
+  `config_snapshot` under each platform's own key, which this layer deliberately does not patch.
+- **Sentinels**: `ErrBidUnsupported` → 400 (no `BidWriter`; Google Ads, LinkedIn, Meta and X
+  today), `ErrBidUnwritable` → 409 (automated or unreported bid strategy, or an unaddressable ad
+  group — the message says the strategy is never changed and carries no upstream detail),
+  `ErrBidAmountRejected` → 400 carrying ONLY the adapter's `BidAmountReason()` sentence. Every
+  connection/provenance/system arm and the UNCONFIRMED → 503 "verify the bid in the platform
+  before retrying" (lock held for `unconfirmedLockCooldown`) are the budget's, verbatim in shape.
+- **`Orchestrator.WriteCampaignBid`** is `WriteCampaignBudget`'s twin: the same pre-platform
+  guards, `bidWriteCallTimeout` (= `budgetWriteCallTimeout`), upstream metric op `write_bid`.
+- **`BidWriter`** (orchestrator.go) carries the budget's three rules plus its own: never write a
+  bid the platform will ignore, and never switch strategy — read the governing strategy first and
+  refuse an automated or unreported one with `ErrBidUnwritable`; never send a strategy field.
+  The bid goes to the level the create path put it (the one ad group this service created); a
+  row recording no ad group is refused rather than resolved upstream.
+
 ## Campaign delete
 
 `BriefService.DeleteCampaign` (backing `DELETE .../campaigns/{id}`, `If-Match` required)

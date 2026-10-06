@@ -206,6 +206,33 @@ var (
 	// Maps to 409 for the same reason: no retry improves it.
 	ErrBudgetUnwritable = errors.New("the campaign's budget could not be addressed for a write")
 
+	// ErrBidUnsupported indicates the campaign's platform has no bid-write capability wired
+	// (no dispatcher, or the dispatcher is not a BidWriter). The platform is never contacted.
+	// Maps to 400, and lives here for the same reason as ErrBudgetWriteUnsupported.
+	//
+	// Microsoft Advertising and Reddit implement the capability today (LFXV2-2665); Google
+	// Ads, LinkedIn, Meta and X still answer 400. As with budgets, the service layer holds NO
+	// allowlist: what a platform supports is decided solely by whether its dispatcher is a
+	// BidWriter.
+	ErrBidUnsupported = errors.New("bid writes are not supported for this platform")
+
+	// ErrBidUnwritable indicates the campaign's bid cannot be written as a manual max CPC bid,
+	// and the platform was NOT changed: the bid strategy is AUTOMATED (or unreported), so a
+	// manual bid would be ignored or read as a request to switch strategy — which this service
+	// never does; or the bid could not be addressed at all (no recorded ad group, an ad group
+	// reporting another campaign, an ad group bidding in a unit other than the one requested).
+	// Maps to 409: each is a property of how the campaign is set up, so no retry improves it.
+	// An outcome the platform did not confirm is never this sentinel.
+	ErrBidUnwritable = errors.New("the campaign's bid could not be written as a manual bid")
+
+	// ErrBidAmountRejected indicates the requested BID was refused and the platform was NOT
+	// changed: by the adapter's own bounds before the mutate, or by the platform's DEFINITE
+	// refusal of the amount (Microsoft: CampaignServiceBidAmountsLessThanFloorPrice and its
+	// siblings). Maps to 400 — a permanent property of the amount against that platform's
+	// rules. Like ErrBudgetAmountRejected, the adapter's own sentence is client-safe and is
+	// returned to the caller.
+	ErrBidAmountRejected = errors.New("the requested bid amount was rejected by the platform's rules")
+
 	// ErrMetricsWindowUnsupported indicates the requested window is one of the seven
 	// closed model.MetricsWindow values but this platform's MetricsReader does not
 	// support it (e.g. X Ads caps windows at 7 days and rejects last_30_days). This is

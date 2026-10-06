@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/microsoft"
-description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), campaign-level GEO targeting that resolves ISO-2 codes to Microsoft LocationIds through the ingested, cached geographical-locations file and fails closed before any mutating call rather than creating an untargeted campaign that spends everywhere (LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260), and a campaign DAILY-budget read+write (GetCampaignsByIds then UpdateCampaigns) that reports shared, experiment and budget-type facts for the dispatcher to refuse on before the one idempotent PUT (LFXV2-2665), and project-scoped keyword performance as a saved asynchronous KeywordPerformanceReportRequest — submit and single-poll check primitives whose scope is the project's own campaigns only, never AccountIds (LFXV2-2665), and keyword levers on a live campaign — pause/remove via UpdateKeywords/DeleteKeywords behind a GetKeywordsByAdGroupId ownership read, and campaign-level negatives via AddNegativeKeywordsToEntities — reported per item, positionally, because neither is atomic (LFXV2-2665)."
+description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), campaign-level GEO targeting that resolves ISO-2 codes to Microsoft LocationIds through the ingested, cached geographical-locations file and fails closed before any mutating call rather than creating an untargeted campaign that spends everywhere (LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260), and a campaign DAILY-budget read+write (GetCampaignsByIds then UpdateCampaigns) that reports shared, experiment and budget-type facts for the dispatcher to refuse on before the one idempotent PUT (LFXV2-2665), and project-scoped keyword performance as a saved asynchronous KeywordPerformanceReportRequest — submit and single-poll check primitives whose scope is the project's own campaigns only, never AccountIds (LFXV2-2665), and an ad-group CpcBid write (UpdateAdGroups) made only after the same read shows the campaign's own EnhancedCpc or ManualCpc strategy (LFXV2-2665), and keyword levers on a live campaign — pause/remove via UpdateKeywords/DeleteKeywords behind a GetKeywordsByAdGroupId ownership read, and campaign-level negatives via AddNegativeKeywordsToEntities — reported per item, positionally, because neither is atomic (LFXV2-2665)."
 resource: "internal/platform/microsoft"
 tags:
   - platform-client
@@ -942,6 +942,34 @@ request layer, checked against Microsoft's reference on 2026-10-05:
 
 None of the four has been exercised against a live Microsoft Advertising account; the transport
 and the 200-with-PartialErrors envelope are the ones the status toggle and creates already use.
+
+## Ad-group max CPC bid read + write (LFXV2-2665)
+
+`bid.go` backs `MicrosoftDispatcher.WriteBid`. The bid lives on the AD GROUP (`AdGroup.CpcBid`,
+the default bid for its keywords); the STRATEGY lives on the CAMPAIGN (since April 2021 ad group
+and keyword strategies are ignored). Only `EnhancedCpc` and `ManualCpc` use the ad group bid;
+for the automated types "your bid and ad rotation settings are ignored". Citations are in the
+file header (learn.microsoft.com: adgroup, campaign, biddingscheme, enhancedcpcbiddingscheme,
+manualcpcbiddingscheme, updateadgroups, operation-error-codes).
+
+- `GetCampaignBidStrategy(ctx, campaignID)` — the SAME `Campaigns/QueryByIds` read and answer
+  validation as `GetCampaignBudget`, now shared through `queryCampaignByID`. `BiddingScheme` and
+  `BidStrategyId` are decoded RAW in the shared struct, so an unexpected shape can fail only the
+  bid guard, never the budget read. Both `EnhancedCpc` and `EnhancedCpcBiddingScheme` spellings
+  are recognized (Microsoft documents both). `BidStrategyId` is a CampaignAdditionalField —
+  returned only when requested — so this read sends `ReturnAdditionalFields: "BidStrategyId"`
+  (the budget read's body is unchanged); once requested, an absent/null value is Microsoft's
+  documented "not using a portfolio bid strategy". `UsesAdGroupBid()` is true only for the campaign's
+  OWN EnhancedCpc/ManualCpc — an absent scheme (Microsoft omits it for MaxConversionValue and
+  TargetImpressionShare), an unreadable one, or any portfolio is false.
+- `ValidateMaxCPCBid(amount)` — the create path's `[minCpcBid, maxCpcBid]` (0.01–1000) with no
+  "zero = unset" case; refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`).
+- `UpdateAdGroupCpcBid(ctx, campaignID, adGroupID, amount)` — `PUT AdGroups` naming ONLY `Id`
+  and `CpcBid` (plus `UpdateAudienceAdsBidAdjustment`/`ReturnInheritedBidStrategyTypes` false),
+  through `putUpdate`, so the outcome rules — and the retried-429 → unconfirmed rule — are the
+  budget PUT's. Floor (602/1515), ceiling (1516) and invalid-bid (633/1017/1538) codes →
+  `bidAmountError`; 1229 CannotSetSearchBidOnAdGroup and 605/1201 invalid ad group →
+  `ErrBidNotSettable`.
 
 ## Account monitor (report-backed, default-OFF)
 

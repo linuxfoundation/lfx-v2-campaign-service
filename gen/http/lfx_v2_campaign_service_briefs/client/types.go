@@ -88,6 +88,18 @@ type UpdateCampaignBudgetRequestBody struct {
 	BudgetType string `form:"budget_type" json:"budget_type" xml:"budget_type"`
 }
 
+// UpdateCampaignBidRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-bid" endpoint HTTP
+// request body.
+type UpdateCampaignBidRequestBody struct {
+	// New maximum cost-per-click bid, in the AD ACCOUNT's own currency (NOT USD).
+	// Must be strictly positive.
+	Bid float64 `form:"bid" json:"bid" xml:"bid"`
+	// The unit the bid is expressed in. Only a max cost-per-click bid is
+	// supported; it MUST match how the ad group bids upstream.
+	BidType string `form:"bid_type" json:"bid_type" xml:"bid_type"`
+}
+
 // ApplyKeywordActionsRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
 // HTTP request body.
@@ -690,6 +702,32 @@ type ToggleCampaignStatusResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "update-campaign-budget" endpoint
 // HTTP response body.
 type UpdateCampaignBudgetResponseBody struct {
+	// Campaign UUID
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Owning project
+	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
+	// Parent brief
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
+	// Channel
+	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
+	// ID returned by the ad platform
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Campaign name
+	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
+	// Campaign status
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Which campaign this is among the brief's campaigns on the same platform and
+	// channel: 1 for the first, 2 for one created on top of it with new_version,
+	// and so on. Unrelated to version.
+	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// Optimistic-concurrency version
+	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
+}
+
+// UpdateCampaignBidResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-bid" endpoint HTTP
+// response body.
+type UpdateCampaignBidResponseBody struct {
 	// Campaign UUID
 	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
 	// Owning project
@@ -2326,6 +2364,99 @@ type UpdateCampaignBudgetUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// UpdateCampaignBidBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-bid" endpoint HTTP
+// response body for the "BadRequest" error.
+type UpdateCampaignBidBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UpdateCampaignBidConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-bid" endpoint HTTP
+// response body for the "Conflict" error.
+type UpdateCampaignBidConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// UpdateCampaignBidServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-bid" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type UpdateCampaignBidServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UpdateCampaignBidInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-bid" endpoint HTTP
+// response body for the "InternalServerError" error.
+type UpdateCampaignBidInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UpdateCampaignBidNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-bid" endpoint HTTP
+// response body for the "NotFound" error.
+type UpdateCampaignBidNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UpdateCampaignBidPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-bid" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type UpdateCampaignBidPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UpdateCampaignBidPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-bid" endpoint HTTP
+// response body for the "PreconditionFailed" error.
+type UpdateCampaignBidPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UpdateCampaignBidPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-bid" endpoint HTTP
+// response body for the "PreconditionRequired" error.
+type UpdateCampaignBidPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UpdateCampaignBidUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "update-campaign-bid" endpoint HTTP
+// response body for the "Unauthorized" error.
+type UpdateCampaignBidUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ApplyKeywordActionsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -3647,6 +3778,23 @@ func NewUpdateCampaignBudgetRequestBody(p *lfxv2campaignservicebriefs.UpdateCamp
 	body := &UpdateCampaignBudgetRequestBody{
 		Budget:     p.Budget,
 		BudgetType: p.BudgetType,
+	}
+	return body
+}
+
+// NewUpdateCampaignBidRequestBody builds the HTTP request body from the
+// payload of the "update-campaign-bid" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUpdateCampaignBidRequestBody(p *lfxv2campaignservicebriefs.UpdateCampaignBidPayload) *UpdateCampaignBidRequestBody {
+	body := &UpdateCampaignBidRequestBody{
+		Bid:     p.Bid,
+		BidType: p.BidType,
+	}
+	{
+		var zero string
+		if body.BidType == zero {
+			body.BidType = "cpc"
+		}
 	}
 	return body
 }
@@ -5751,6 +5899,130 @@ func NewUpdateCampaignBudgetUnauthorized(body *UpdateCampaignBudgetUnauthorizedR
 	return v
 }
 
+// NewUpdateCampaignBidCampaignOK builds a "lfx-v2-campaign-service-briefs"
+// service "update-campaign-bid" endpoint result from a HTTP "OK" response.
+func NewUpdateCampaignBidCampaignOK(body *UpdateCampaignBidResponseBody, etag *string) *lfxv2campaignservicebriefs.Campaign {
+	v := &lfxv2campaignservicebriefs.Campaign{
+		ID:                 *body.ID,
+		ProjectID:          *body.ProjectID,
+		BriefID:            *body.BriefID,
+		Platform:           *body.Platform,
+		PlatformCampaignID: body.PlatformCampaignID,
+		CampaignName:       *body.CampaignName,
+		Status:             *body.Status,
+		SlotVersion:        *body.SlotVersion,
+		Version:            *body.Version,
+	}
+	v.Etag = etag
+
+	return v
+}
+
+// NewUpdateCampaignBidBadRequest builds a lfx-v2-campaign-service-briefs
+// service update-campaign-bid endpoint BadRequest error.
+func NewUpdateCampaignBidBadRequest(body *UpdateCampaignBidBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUpdateCampaignBidConflict builds a lfx-v2-campaign-service-briefs service
+// update-campaign-bid endpoint Conflict error.
+func NewUpdateCampaignBidConflict(body *UpdateCampaignBidConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewUpdateCampaignBidServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service update-campaign-bid endpoint
+// ServiceUnavailable error.
+func NewUpdateCampaignBidServiceUnavailable(body *UpdateCampaignBidServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUpdateCampaignBidInternalServerError builds a
+// lfx-v2-campaign-service-briefs service update-campaign-bid endpoint
+// InternalServerError error.
+func NewUpdateCampaignBidInternalServerError(body *UpdateCampaignBidInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUpdateCampaignBidNotFound builds a lfx-v2-campaign-service-briefs service
+// update-campaign-bid endpoint NotFound error.
+func NewUpdateCampaignBidNotFound(body *UpdateCampaignBidNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUpdateCampaignBidPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service update-campaign-bid endpoint PayloadTooLarge error.
+func NewUpdateCampaignBidPayloadTooLarge(body *UpdateCampaignBidPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUpdateCampaignBidPreconditionFailed builds a
+// lfx-v2-campaign-service-briefs service update-campaign-bid endpoint
+// PreconditionFailed error.
+func NewUpdateCampaignBidPreconditionFailed(body *UpdateCampaignBidPreconditionFailedResponseBody) *lfxv2campaignservicebriefs.PreconditionFailedError {
+	v := &lfxv2campaignservicebriefs.PreconditionFailedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUpdateCampaignBidPreconditionRequired builds a
+// lfx-v2-campaign-service-briefs service update-campaign-bid endpoint
+// PreconditionRequired error.
+func NewUpdateCampaignBidPreconditionRequired(body *UpdateCampaignBidPreconditionRequiredResponseBody) *lfxv2campaignservicebriefs.PreconditionRequiredError {
+	v := &lfxv2campaignservicebriefs.PreconditionRequiredError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUpdateCampaignBidUnauthorized builds a lfx-v2-campaign-service-briefs
+// service update-campaign-bid endpoint Unauthorized error.
+func NewUpdateCampaignBidUnauthorized(body *UpdateCampaignBidUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewApplyKeywordActionsKeywordActionsOK builds a
 // "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
 // result from a HTTP "OK" response.
@@ -7605,6 +7877,41 @@ func ValidateToggleCampaignStatusResponseBody(body *ToggleCampaignStatusResponse
 // ValidateUpdateCampaignBudgetResponseBody runs the validations defined on
 // Update-Campaign-BudgetResponseBody
 func ValidateUpdateCampaignBudgetResponseBody(body *UpdateCampaignBudgetResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.ProjectID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("project_id", "body"))
+	}
+	if body.BriefID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_id", "body"))
+	}
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", "body"))
+	}
+	if body.CampaignName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_name", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.SlotVersion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("slot_version", "body"))
+	}
+	if body.Version == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	if body.SlotVersion != nil {
+		if *body.SlotVersion < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.slot_version", *body.SlotVersion, 1, true))
+		}
+	}
+	return
+}
+
+// ValidateUpdateCampaignBidResponseBody runs the validations defined on
+// Update-Campaign-BidResponseBody
+func ValidateUpdateCampaignBidResponseBody(body *UpdateCampaignBidResponseBody) (err error) {
 	if body.ID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
 	}
@@ -9633,6 +9940,119 @@ func ValidateUpdateCampaignBudgetPreconditionRequiredResponseBody(body *UpdateCa
 // ValidateUpdateCampaignBudgetUnauthorizedResponseBody runs the validations
 // defined on update-campaign-budget_Unauthorized_response_body
 func ValidateUpdateCampaignBudgetUnauthorizedResponseBody(body *UpdateCampaignBudgetUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUpdateCampaignBidBadRequestResponseBody runs the validations defined
+// on update-campaign-bid_BadRequest_response_body
+func ValidateUpdateCampaignBidBadRequestResponseBody(body *UpdateCampaignBidBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUpdateCampaignBidConflictResponseBody runs the validations defined
+// on update-campaign-bid_Conflict_response_body
+func ValidateUpdateCampaignBidConflictResponseBody(body *UpdateCampaignBidConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		}
+	}
+	return
+}
+
+// ValidateUpdateCampaignBidServiceUnavailableResponseBody runs the validations
+// defined on update-campaign-bid_ServiceUnavailable_response_body
+func ValidateUpdateCampaignBidServiceUnavailableResponseBody(body *UpdateCampaignBidServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUpdateCampaignBidInternalServerErrorResponseBody runs the
+// validations defined on update-campaign-bid_InternalServerError_response_body
+func ValidateUpdateCampaignBidInternalServerErrorResponseBody(body *UpdateCampaignBidInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUpdateCampaignBidNotFoundResponseBody runs the validations defined
+// on update-campaign-bid_NotFound_response_body
+func ValidateUpdateCampaignBidNotFoundResponseBody(body *UpdateCampaignBidNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUpdateCampaignBidPayloadTooLargeResponseBody runs the validations
+// defined on update-campaign-bid_PayloadTooLarge_response_body
+func ValidateUpdateCampaignBidPayloadTooLargeResponseBody(body *UpdateCampaignBidPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUpdateCampaignBidPreconditionFailedResponseBody runs the validations
+// defined on update-campaign-bid_PreconditionFailed_response_body
+func ValidateUpdateCampaignBidPreconditionFailedResponseBody(body *UpdateCampaignBidPreconditionFailedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUpdateCampaignBidPreconditionRequiredResponseBody runs the
+// validations defined on update-campaign-bid_PreconditionRequired_response_body
+func ValidateUpdateCampaignBidPreconditionRequiredResponseBody(body *UpdateCampaignBidPreconditionRequiredResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUpdateCampaignBidUnauthorizedResponseBody runs the validations
+// defined on update-campaign-bid_Unauthorized_response_body
+func ValidateUpdateCampaignBidUnauthorizedResponseBody(body *UpdateCampaignBidUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
