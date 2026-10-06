@@ -275,6 +275,9 @@ func TestValidateLeadFormExtensions_RefusesMisshapenEnums(t *testing.T) {
 // a signed query string, and this error is persisted and logged.
 func TestValidateLeadFormExtensions_RefusesAndRedactsAnUnservablePrivacyPolicy(t *testing.T) {
 	cases := map[string]string{
+		// Synthetic, on an .example host, and the embedded userinfo is the case under
+		// test: strip it and this row stops testing anything.
+		// secretlint-disable-next-line
 		"embedded userinfo": "https://alice:s3cr3t@policy.example.org/privacy",
 		"wrong scheme":      "ftp://policy.example.org/privacy",
 		"no host":           "https:///privacy",

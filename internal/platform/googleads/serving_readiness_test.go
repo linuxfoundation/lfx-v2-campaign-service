@@ -762,7 +762,10 @@ func TestValidateCPCBid_CeilingClearsLowUnitCurrencies(t *testing.T) {
 // Written as one table over every non-Search kind on purpose: the fences are
 // spelled `!= campaignKindSearch` precisely so the next channel added inherits
 // them, and a test naming only Demand Gen would not have noticed a fence that
-// silently admitted Performance Max.
+// silently admitted Performance Max. EVERY non-Search kind means every one: the
+// loop below must list Demand Gen, Performance Max, Video and Display, and a kind
+// added to `campaign.go` without being added here is a channel whose fences nobody
+// is checking.
 func TestPreflightRefusesSearchOnlyTargetingOffSearch(t *testing.T) {
 	c := &Client{account: AccountConfig{CustomerID: "1234567890"}}
 
@@ -788,7 +791,7 @@ func TestPreflightRefusesSearchOnlyTargetingOffSearch(t *testing.T) {
 		},
 	}
 
-	for _, kind := range []string{campaignKindDemandGen, campaignKindPerformanceMax, campaignKindVideo} {
+	for _, kind := range []string{campaignKindDemandGen, campaignKindPerformanceMax, campaignKindVideo, campaignKindDisplay} {
 		for name, tc := range cases {
 			t.Run(kind+"/"+name, func(t *testing.T) {
 				in := demandGenInput()

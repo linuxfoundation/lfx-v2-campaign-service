@@ -1,6 +1,6 @@
 # 2026-10-06 — LFXV2-2665 Local-review fixes, round 2
 
-Six findings from the local pre-PR review of `f1b888ee..ffacbe65`, all Important, none
+**Fix** — Six findings from the local pre-PR review of `f1b888ee..ffacbe65`, all Important, none
 Critical. The review also confirmed no over-refusal was introduced by the two earlier
 rounds — the one failure mode this preflight is not allowed to have.
 

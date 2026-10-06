@@ -281,6 +281,9 @@ func TestValidatePromotions_RejectsBadInput(t *testing.T) {
 func TestValidatePromotions_ErrorDoesNotEchoTheRawURL(t *testing.T) {
 	in := sampleInput()
 	p := samplePromotion()
+	// A synthetic fixture on an .example destination, and the embedded userinfo IS the
+	// thing under test — a URL without it does not exercise the refusal at all.
+	// secretlint-disable-next-line
 	p.FinalURL = "https://user:SECRETVALUE@events.example.org/register"
 	in.Promotions = []PromotionExtension{p}
 	_, err := validatePromotionExtensions(in)

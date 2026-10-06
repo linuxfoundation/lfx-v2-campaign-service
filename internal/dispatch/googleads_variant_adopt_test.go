@@ -25,6 +25,7 @@ func TestGoogleAdsVariantForChannelType(t *testing.T) {
 		{"demand gen maps to its own slot", "DEMAND_GEN", "demand-gen"},
 		{"performance max maps to its own slot", "PERFORMANCE_MAX", "performance-max"},
 		{"video maps to its own slot", "VIDEO", "video"},
+		{"display maps to its own slot", "DISPLAY", "display"},
 		// Google's enum arrives uppercase, but a mapping that depends on the platform's
 		// exact casing is one response-format change away from failing closed on a campaign
 		// type it does support.

@@ -206,7 +206,7 @@ type Campaign struct {
 	Platform  Provider
 	// Variant is the sub-division of Platform this campaign is: which of that
 	// platform's campaign types it represents. Google has several (search,
-	// demand-gen, performance-max, video) and its UI offers them as simultaneous
+	// demand-gen, performance-max, video, display) and its UI offers them as simultaneous
 	// checkboxes, so one brief can hold more than one google-ads campaign; every
 	// other provider uses VariantDefault.
 	//
