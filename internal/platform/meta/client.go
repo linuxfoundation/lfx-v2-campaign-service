@@ -882,8 +882,8 @@ func currencyOffsetFor(currency string) (int64, bool) {
 // copyEnvelope carries a parsed Graph error's structured fields onto e. It is the ONE place every
 // non-2xx path does this — the normal one, the truncated-body one (a complete envelope followed by
 // a connection closed on a mismatched Content-Length) and the Retry-After-over-cap abort — so none
-// can drop a field another keeps: a bid refusal blaming bid_amount must classify the same whether or not the read ended
-// cleanly. Message is deliberately not copied; each path sets it.
+// can drop a field another keeps: a bid refusal blaming bid_amount must classify the same whether
+// or not the read ended cleanly. Message is deliberately not copied; each path sets it.
 func (e *APIError) copyEnvelope(g *graphError) {
 	e.Type = g.Type
 	e.Code = g.Code
