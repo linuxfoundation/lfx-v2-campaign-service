@@ -312,6 +312,62 @@ type Service interface {
 	// rate limit, an unreadable answer — verify the campaign's negative keywords
 	// before retrying).
 	AddNegativeKeywords(context.Context, *AddNegativeKeywordsPayload) (res *NegativeKeywords, err error)
+	// Read the keyword TARGETING of a Reddit or X campaign (LFXV2-2665): the
+	// positive keywords on the ONE ad group (Reddit) or line item (X) this service
+	// created for it, read live from the platform and never persisted. On these
+	// two platforms a keyword is an entry in the targeting, not a criterion with
+	// its own status, so it cannot be paused — only removed
+	// (remove-keyword-targeting). Reddit: the keywords in the ad group's
+	// targeting, which the create path sets from redditConfig.keywords; the
+	// response also carries `revision`, a fingerprint of the ad group's whole
+	// targeting, which a removal must send back. X: the line item's keyword
+	// targeting criteria (BROAD/PHRASE/EXACT/UNORDERED_KEYWORD, not negated). The
+	// X create path sets NO targeting criteria, so a campaign this service created
+	// reports an empty list until an operator adds keywords in X Ads Manager.
+	// Before the platform is read, the ad group / line item must be one the row
+	// records, and the campaign's ad account must match the project's connection;
+	// the platform must then report it under THIS campaign. Any other platform is
+	// **400**. **409** when the campaign is unprovisioned, records no ad group /
+	// line item, belongs to a different ad account, the ad group / line item is
+	// gone or reports another campaign, or its targeting could not be read as a
+	// keyword list. **503** when the platform could not be read.
+	GetKeywordTargeting(context.Context, *GetKeywordTargetingPayload) (res *KeywordTargeting, err error)
+	// Remove keywords from the keyword TARGETING of a Reddit or X campaign
+	// (LFXV2-2665). A MUTATION on a live paid campaign, guarded like the keyword
+	// actions: the batch, the campaign's provisioning, its recorded ad account (a
+	// row that records none is refused, never assumed) and the account's match
+	// with the project's connection are all checked before the platform is
+	// contacted; the ad group / line item is then read and must report THIS
+	// campaign, and every named keyword must be in its current targeting, before
+	// anything is changed. It persists nothing, so it takes no If-Match. REFUSED
+	// (409) WHEN IT WOULD REMOVE EVERY KEYWORD: with no keyword left the ad group
+	// / line item stops being keyword-targeted at all and serves to its other
+	// targeting alone — a widening, not a reduction. Remove the last keyword in
+	// the platform's own UI if that is intended. REDDIT: items name `keyword`.
+	// Reddit has no per-keyword write — the ad group's targeting is replaced as a
+	// whole — so the service re-reads the targeting, refuses (409) unless its
+	// fingerprint still equals the `revision` the caller sends (from
+	// get-keyword-targeting), and writes back exactly what it read with the named
+	// keywords taken out, then reads it again to confirm. All items share one
+	// outcome. Reddit writes are OFF until REDDIT_KEYWORD_TARGETING_WRITES_ENABLED
+	// is "true" (answered 400 like an unsupported platform), because the write
+	// replaces the whole targeting object and has not yet been exercised against a
+	// live ad account. X: items name `criterion_id`; each is one DELETE of that
+	// targeting criterion, in request order, with its own outcome; `revision` must
+	// be absent. The targeting is re-read before EACH delete, and an item whose
+	// criterion has meanwhile gone (NOT_FOUND) or that is now the last keyword
+	// (WOULD_EMPTY) is not sent — a concurrent removal can no longer combine with
+	// this one to empty the line item, though X offers no conditional delete, so
+	// the moment between that re-read and the DELETE remains. Removing a keyword
+	// cannot be undone here: re-add it in the platform. **400** for a malformed
+	// batch (empty or over 20, an item naming the wrong field for the platform,
+	// the same keyword twice, a keyword not in the current targeting, a missing
+	// Reddit revision) or an unsupported platform. **409** as for the read, plus a
+	// changed Reddit targeting and the every-keyword refusal. **503** only when no
+	// item was answered. Its MESSAGE separates a DEFINITE failure (nothing was
+	// removed — retry) from an UNCONFIRMED one (read the targeting again before
+	// retrying).
+	RemoveKeywordTargeting(context.Context, *RemoveKeywordTargetingPayload) (res *KeywordTargetingRemovals, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the
 	// brief can be re-dispatched to that platform. It does NOT delete, pause, or
@@ -383,7 +439,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [31]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [33]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AddNegativeKeywordsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service add-negative-keywords method.
@@ -1084,6 +1140,19 @@ type GetJobPayload struct {
 	JobID string
 }
 
+// GetKeywordTargetingPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service get-keyword-targeting method.
+type GetKeywordTargetingPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+}
+
 // GetWizardSessionPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service get-wizard-session method.
 type GetWizardSessionPayload struct {
@@ -1172,6 +1241,82 @@ type KeywordActions struct {
 	AppliedCount int
 }
 
+// KeywordTargeting is the result type of the lfx-v2-campaign-service-briefs
+// service get-keyword-targeting method.
+type KeywordTargeting struct {
+	// The campaign whose targeting was read
+	CampaignID string
+	// The campaign's platform
+	Platform string
+	// The ad group (Reddit) or line item (X) this service created for the
+	// campaign, whose targeting this is.
+	TargetingEntityID string
+	// The POSITIVE keywords the ad group / line item targets now, in the order the
+	// platform reported them. Empty when it targets none (every X campaign this
+	// service creates targets none: only an operator can add them, in X Ads
+	// Manager). Negative / excluded keywords are not listed.
+	Keywords []*KeywordTargetingEntry
+	// Reddit only: a fingerprint of the ad group's WHOLE targeting as read.
+	// remove-keyword-targeting requires it back and refuses (409) when the
+	// targeting has changed since, so a removal is never applied to a targeting
+	// the caller did not see. Absent on X.
+	Revision *string
+}
+
+type KeywordTargetingEntry struct {
+	// The keyword as the platform reports it.
+	Keyword string
+	// X only: the targeting criterion id that holds this keyword — what
+	// remove-keyword-targeting takes for X. Absent on Reddit, where a keyword has
+	// no id of its own.
+	CriterionID *string
+	// X only: the keyword targeting type X reports (BROAD_KEYWORD, PHRASE_KEYWORD,
+	// EXACT_KEYWORD or UNORDERED_KEYWORD). Absent on Reddit.
+	MatchType *string
+}
+
+type KeywordTargetingRemovalInput struct {
+	// Reddit: the keyword to remove, exactly as get-keyword-targeting reported it.
+	// Compared exactly — case and any surrounding whitespace included, nothing
+	// trimmed — and echoed back unchanged; an all-whitespace keyword is refused.
+	Keyword *string
+	// X: the targeting criterion id to delete, as get-keyword-targeting reported
+	// it.
+	CriterionID *string
+}
+
+type KeywordTargetingRemovalResult struct {
+	// Reddit: the keyword this result answers, as requested
+	Keyword *string
+	// X: the targeting criterion this result answers, as requested
+	CriterionID *string
+	// APPLIED — the keyword is no longer targeted; FAILED — definitely not removed
+	// (see error_code); UNCONFIRMED — may have been removed, read the targeting
+	// again before retrying.
+	Outcome string
+	// For a FAILED or UNCONFIRMED item: NOT_SENT (the request carrying it was
+	// never sent), NOT_FOUND (X holds no such live criterion any more),
+	// WOULD_EMPTY (X only: not sent, because a fresh read just before it showed it
+	// is now the last keyword targeted), or REJECTED (the platform refused it).
+	// The platform's own text is never returned.
+	ErrorCode *string
+}
+
+// KeywordTargetingRemovals is the result type of the
+// lfx-v2-campaign-service-briefs service remove-keyword-targeting method.
+type KeywordTargetingRemovals struct {
+	// The campaign whose targeting was changed
+	CampaignID string
+	// Exactly one entry per requested removal, in request order, so results[i]
+	// answers keywords[i]. Reddit: one write carries every removal, so all entries
+	// share one outcome. X: one DELETE per criterion, each with its own outcome;
+	// the targeting is re-read before each, and an item that would now remove the
+	// last keyword is not sent (WOULD_EMPTY).
+	Results []*KeywordTargetingRemovalResult
+	// How many results are APPLIED.
+	AppliedCount int
+}
+
 type NegativeKeywordInput struct {
 	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
 	// 100 characters.
@@ -1249,6 +1394,24 @@ type PlatformResult struct {
 	// the email (HubSpot) channel, and only once the portal that created it is
 	// known.
 	HubspotURL *string
+}
+
+// RemoveKeywordTargetingPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service remove-keyword-targeting method.
+type RemoveKeywordTargetingPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// The keywords to remove: `keyword` items on Reddit, `criterion_id` items on X.
+	Keywords []*KeywordTargetingRemovalInput
+	// Reddit: the revision get-keyword-targeting returned. Required on Reddit;
+	// must be absent on X.
+	Revision *string
 }
 
 // SetWizardSendListPayload is the payload type of the

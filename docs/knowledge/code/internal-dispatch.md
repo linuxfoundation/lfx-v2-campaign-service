@@ -3581,6 +3581,19 @@ here; the operator remedy is to pause the keyword again after activating.
 (`MICROSOFT_METRICS_ENABLED`) gates only the unverified Reporting reads, and no Microsoft WRITE —
 create, toggle, budget — is gated. Both levers follow the writes.
 
+## Reddit and X keyword targeting (LFXV2-2665)
+
+`RedditDispatcher` and `TwitterDispatcher` implement `service.KeywordTargetingReader` and
+`KeywordTargetingRemover` (`reddit_keyword_targeting.go`, `twitter_keyword_targeting.go`). Both
+address only the ONE ad group / line item the row recorded and prove from the platform that it is
+this campaign's before returning or changing anything; the removal fails closed on provenance,
+refuses a removal that would leave no keyword (`ErrKeywordTargetingWouldEmpty`), and reuses
+`unconfirmedKeywordLeverError` for ambiguous outcomes. Reddit's removal is gated by
+`REDDIT_KEYWORD_TARGETING_WRITES_ENABLED`, compares the caller's `revision` with a fresh read
+(`ErrKeywordTargetingChanged`), writes the whole targeting back, and re-reads to confirm. X's
+deletes one criterion at a time with per-item outcomes, re-listing the targeting before each DELETE so a concurrent removal cannot combine with it to empty the line item (`WOULD_EMPTY`). See
+[Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+
 ## Also here: the audience EXPLORER (LFXV2-2770)
 
 `AudienceExplorer` (`audience_explorer.go`) is a SEPARATE type from `AudienceBuilder` even though

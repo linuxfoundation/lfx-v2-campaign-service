@@ -116,6 +116,16 @@ func AddNegativeKeywordsLfxV2CampaignServiceBriefsPath(projectID string, briefID
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/negative-keywords", projectID, briefID, campaignID)
 }
 
+// GetKeywordTargetingLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service get-keyword-targeting HTTP endpoint.
+func GetKeywordTargetingLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/keyword-targeting", projectID, briefID, campaignID)
+}
+
+// RemoveKeywordTargetingLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service remove-keyword-targeting HTTP endpoint.
+func RemoveKeywordTargetingLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/keyword-targeting/removals", projectID, briefID, campaignID)
+}
+
 // DeleteCampaignLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service delete-campaign HTTP endpoint.
 func DeleteCampaignLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v", projectID, briefID, campaignID)

@@ -426,6 +426,12 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// this set, and the same shape again: it inherits the briefs match and the campaign_manager
 		// rule rather than adding its own, and this row is what fails if a narrowing drops it.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/negative-keywords", true},
+		// The Reddit / X keyword-TARGETING read and its removal (LFXV2-2665), the fifth
+		// spend-affecting campaign mutation in this set — the removal is the only one two segments
+		// below the campaign. Both inherit the briefs match and the campaign_manager rule; these
+		// rows fail if a narrowing drops either.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/keyword-targeting", true},
+		{"/projects/p1/briefs/b-42/campaigns/c-9/keyword-targeting/removals", true},
 		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
 		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
 		// rule — no separate route/rule entry. These rows pin that coverage so a future

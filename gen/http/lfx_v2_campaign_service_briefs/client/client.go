@@ -102,6 +102,14 @@ type Client struct {
 	// add-negative-keywords endpoint.
 	AddNegativeKeywordsDoer goahttp.Doer
 
+	// GetKeywordTargeting Doer is the HTTP client used to make requests to the
+	// get-keyword-targeting endpoint.
+	GetKeywordTargetingDoer goahttp.Doer
+
+	// RemoveKeywordTargeting Doer is the HTTP client used to make requests to the
+	// remove-keyword-targeting endpoint.
+	RemoveKeywordTargetingDoer goahttp.Doer
+
 	// DeleteCampaign Doer is the HTTP client used to make requests to the
 	// delete-campaign endpoint.
 	DeleteCampaignDoer goahttp.Doer
@@ -162,42 +170,44 @@ func NewClient(
 	restoreBody bool,
 ) *Client {
 	return &Client{
-		CreateBriefDoer:           doer,
-		FindBriefDoer:             doer,
-		GetBriefDoer:              doer,
-		UpdateBriefDoer:           doer,
-		ApproveBriefDoer:          doer,
-		DeleteBriefDoer:           doer,
-		FetchEventURLDoer:         doer,
-		UploadCreativeAssetDoer:   doer,
-		CreateCampaignsDoer:       doer,
-		AdoptCampaignDoer:         doer,
-		GetCampaignDoer:           doer,
-		GetCampaignMetricsDoer:    doer,
-		GetCampaignSettingsDoer:   doer,
-		GetBriefMetricsDoer:       doer,
-		GenerateEmailCopyDoer:     doer,
-		UpdateCampaignDoer:        doer,
-		ToggleCampaignStatusDoer:  doer,
-		UpdateCampaignBudgetDoer:  doer,
-		UpdateCampaignBidDoer:     doer,
-		ApplyKeywordActionsDoer:   doer,
-		AddNegativeKeywordsDoer:   doer,
-		DeleteCampaignDoer:        doer,
-		GetJobDoer:                doer,
-		StartEmailWizardPlanDoer:  doer,
-		PlanEmailWizardDoer:       doer,
-		GenerateWizardContentDoer: doer,
-		UpdateWizardSectionsDoer:  doer,
-		CloneWizardEmailDoer:      doer,
-		SetWizardSendListDoer:     doer,
-		ChatWizardTurnDoer:        doer,
-		GetWizardSessionDoer:      doer,
-		RestoreResponseBody:       restoreBody,
-		scheme:                    scheme,
-		host:                      host,
-		decoder:                   dec,
-		encoder:                   enc,
+		CreateBriefDoer:            doer,
+		FindBriefDoer:              doer,
+		GetBriefDoer:               doer,
+		UpdateBriefDoer:            doer,
+		ApproveBriefDoer:           doer,
+		DeleteBriefDoer:            doer,
+		FetchEventURLDoer:          doer,
+		UploadCreativeAssetDoer:    doer,
+		CreateCampaignsDoer:        doer,
+		AdoptCampaignDoer:          doer,
+		GetCampaignDoer:            doer,
+		GetCampaignMetricsDoer:     doer,
+		GetCampaignSettingsDoer:    doer,
+		GetBriefMetricsDoer:        doer,
+		GenerateEmailCopyDoer:      doer,
+		UpdateCampaignDoer:         doer,
+		ToggleCampaignStatusDoer:   doer,
+		UpdateCampaignBudgetDoer:   doer,
+		UpdateCampaignBidDoer:      doer,
+		ApplyKeywordActionsDoer:    doer,
+		AddNegativeKeywordsDoer:    doer,
+		GetKeywordTargetingDoer:    doer,
+		RemoveKeywordTargetingDoer: doer,
+		DeleteCampaignDoer:         doer,
+		GetJobDoer:                 doer,
+		StartEmailWizardPlanDoer:   doer,
+		PlanEmailWizardDoer:        doer,
+		GenerateWizardContentDoer:  doer,
+		UpdateWizardSectionsDoer:   doer,
+		CloneWizardEmailDoer:       doer,
+		SetWizardSendListDoer:      doer,
+		ChatWizardTurnDoer:         doer,
+		GetWizardSessionDoer:       doer,
+		RestoreResponseBody:        restoreBody,
+		scheme:                     scheme,
+		host:                       host,
+		decoder:                    dec,
+		encoder:                    enc,
 	}
 }
 
@@ -700,6 +710,54 @@ func (c *Client) AddNegativeKeywords() goa.Endpoint {
 		resp, err := c.AddNegativeKeywordsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetKeywordTargeting returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service get-keyword-targeting server.
+func (c *Client) GetKeywordTargeting() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetKeywordTargetingRequest(c.encoder)
+		decodeResponse = DecodeGetKeywordTargetingResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetKeywordTargetingRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetKeywordTargetingDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "get-keyword-targeting", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// RemoveKeywordTargeting returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service remove-keyword-targeting server.
+func (c *Client) RemoveKeywordTargeting() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeRemoveKeywordTargetingRequest(c.encoder)
+		decodeResponse = DecodeRemoveKeywordTargetingResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildRemoveKeywordTargetingRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.RemoveKeywordTargetingDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
 		}
 		return decodeResponse(resp)
 	}
