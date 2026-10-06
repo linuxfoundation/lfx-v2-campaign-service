@@ -2396,6 +2396,7 @@ func TestRejectCredentialQueryParamsInText_SchemelessUserinfo(t *testing.T) {
 		"admin:PLAINTEXT@198.51.100.7:8443/portal",
 		// RFC 3986 sub-delims are legal in a username, so `!` must not end the match.
 		"admin!:PLAINTEXT@events.example/reset/TOKEN",
+		"a(b:PLAINTEXT@host.example",
 	}
 	for _, text := range refused {
 		err := rejectCredentialQueryParamsInText(text)
@@ -2435,6 +2436,11 @@ func TestRejectCredentialQueryParamsInText_ClockAgainstHost(t *testing.T) {
 		"keynote 14:00@events.example",
 		"finals 3:4@events.example/bracket",
 		"doors 09:00@events.example/r?utm_source=x",
+		// A clock opened by prose punctuation is still a clock, not a sub-delim username.
+		"Keynote (14:00@main.stage)",
+		"*9:30@main.stage*",
+		"'14:00@main.stage'",
+		"Mon,9:30@main.stage",
 	} {
 		if err := rejectCredentialQueryParamsInText(text); err != nil {
 			t.Errorf("ordinary tweet copy %q was refused: %v", text, err)

@@ -584,6 +584,9 @@ dropped — without it the pattern matches `bob@events.example`, an ordinary ema
 and a screen that refuses those is worse than the hole it closes. The username before the
 colon is RFC 3986's userinfo alphabet, sub-delims `!$&'()*+,;=` included, kept in step with
 `pkg/redact`'s snapshot pattern: a narrower class let `admin!:pw@events.example` through both.
+Its first character must be unreserved and `userinfoRunIsClockShaped` judges the username's
+segment after its last sub-delim, so `Keynote (14:00@main.stage)` or `Mon,9:30@main.stage`
+is still a clock and never refuses a brief.
 
 The colon is not QUITE the whole discriminator, and the round that shipped believing it
 was put a false REFUSAL into the pre-create path. `keynote 14:00@events.example` and

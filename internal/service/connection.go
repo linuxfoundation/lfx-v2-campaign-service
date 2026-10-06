@@ -692,6 +692,11 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		// caller keys on; the message is the sentinel's fixed text plus the limit. The body is
 		// that method's own AccountMonitorConflictError, not the shared ConflictError, so the
 		// published 409 example is one this method can actually return.
+		//
+		// INVARIANT: only a method that declares AccountMonitorConflictError as its Conflict
+		// (today monitor-twitter-ads-account alone) may receive these two sentinels. A method
+		// declaring the shared ConflictError instead would not encode this type as its 409.
+		// Before letting another producer return them, declare this type on its method.
 		return &conn.AccountMonitorConflictError{
 			Code:    "409",
 			Reason:  "account_too_many_active_campaigns",

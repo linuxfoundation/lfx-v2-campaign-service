@@ -303,13 +303,16 @@ var schemelessSnapshotRunRe = regexp.MustCompile(
 // pct-encoded and the sub-delims `!$&'()*+,;=`. It used to stop at the unreserved set, so
 // `admin!:pw@events.example/reset/TOKEN` was not matched here, and the path-only pass below
 // then left it whole because it contains an `@`: password and path token both persisted.
-// Kept in step with the twitter screen's class.
+// Kept in step with the twitter screen's class. The FIRST character must be unreserved, so a
+// clock opened by prose punctuation (`(14:00@main.stage)`) is matched from its first digit;
+// sanitizeUserinfoSnapshotRun judges the username's segment after its last sub-delim, for
+// `Mon,9:30@main.stage`, whose leftmost match starts on the letter.
 //
 // It is not the only discriminator needed, and the second one is kept in step too: a time
 // of day written hard against a host — `keynote 14:00@events.example` — is the userinfo
 // production byte for byte. See sanitizeUserinfoSnapshotRun.
 var schemelessUserinfoSnapshotRunRe = regexp.MustCompile(
-	`(?i)[a-z0-9._~%+!$&'()*,;=-]+:[^\s<>"\x60\]}|\\^@]*@` +
+	`(?i)[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*:[^\s<>"\x60\]}|\\^@]*@` +
 		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>"\x60\]}|\\^]*)?`,
 )
@@ -334,10 +337,20 @@ func sanitizeUserinfoSnapshotRun(run string) string {
 	}
 	userinfo := run[:at]
 	colon := strings.IndexByte(userinfo, ':')
-	if colon >= 0 && isAllASCIIDigits(userinfo[:colon]) && isAllASCIIDigits(userinfo[colon+1:]) {
+	if colon >= 0 && isAllASCIIDigits(afterLastSubDelim(userinfo[:colon])) && isAllASCIIDigits(userinfo[colon+1:]) {
 		return run
 	}
 	return ""
+}
+
+// afterLastSubDelim returns the part of a username after its last RFC 3986 sub-delim: prose
+// punctuation hard against a clock (`Mon,9:30@`) is admitted into the username by the run
+// pattern, and the clock is the segment after it. Kept in step with internal/platform/twitter.
+func afterLastSubDelim(username string) string {
+	if i := strings.LastIndexAny(username, "!$&'()*+,;="); i >= 0 {
+		return username[i+1:]
+	}
+	return username
 }
 
 // schemelessPathSnapshotRunRe matches a scheme-less link whose secret is in the PATH and

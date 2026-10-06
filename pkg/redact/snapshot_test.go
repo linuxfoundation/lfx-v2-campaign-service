@@ -48,6 +48,11 @@ func TestSnapshotText(t *testing.T) {
 		{"host-less file url", "see file:///private/RESET_TOKEN now", "see  now"},
 		{"userinfo before ipv6 host", "x https://bob:" + "pw@[2001:db8::1]/reset/SECRET_PATH?token=SECRET_QUERY y", "x  y"},
 		{"sub-delim username", "x admin!:" + "pw@events.example/reset/TOKEN y", "x  y"},
+		{"sub-delim inside username", "x a(b:" + "pw@host.example y", "x  y"},
+		{"parenthesised clock", "Keynote (14:00@main.stage)", "Keynote (14:00@main.stage)"},
+		{"starred clock", "*9:30@main.stage*", "*9:30@main.stage*"},
+		{"quoted clock", "'14:00@main.stage'", "'14:00@main.stage'"},
+		{"comma clock", "Mon,9:30@main.stage", "Mon,9:30@main.stage"},
 	} {
 		if got := SnapshotText(tc.in); got != tc.want {
 			t.Errorf("%s: SnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)

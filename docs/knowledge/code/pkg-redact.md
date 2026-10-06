@@ -213,7 +213,10 @@ opening with `scheme://` that will not reduce to scheme+host, not only on http(s
 run's bracketed-IPv6 branch consumes an optional userinfo before the `[`
 (`https://bob:pw@[2001:db8::1]/…` is dropped whole rather than leaving `]/…` behind), and the
 `user:password@` username class is RFC 3986's userinfo alphabet including the sub-delims
-`!$&'()*+,;=` (kept in step with the X screen), so `admin!:pw@host/…` is dropped too. The
+`!$&'()*+,;=` (kept in step with the X screen), so `admin!:pw@host/…` is dropped too. Its
+FIRST character must still be unreserved, and the digits-both-sides clock test reads the
+username's segment after its last sub-delim, so a clock opened by prose punctuation —
+`Keynote (14:00@main.stage)`, `*9:30@…*`, `Mon,9:30@…` — is still left alone. The
 rationale for each pass is on the code, and the history in [internal/dispatch](internal-dispatch.md).
 
 They moved here unchanged from `internal/dispatch` (which keeps thin wrappers) so that
