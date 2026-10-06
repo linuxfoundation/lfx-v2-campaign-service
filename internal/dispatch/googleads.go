@@ -148,11 +148,13 @@ const (
 	googleAdsChannelSearch         = "search"
 	googleAdsChannelDemandGen      = "demand-gen"
 	googleAdsChannelPerformanceMax = "performance-max"
+	googleAdsChannelVideo          = "video"
 	// Google's own advertising_channel_type enum spellings, the vocabulary the settings
 	// readback compares in. googleAdsVariantForChannelType maps these back the other way.
 	googleAdsChannelTypeSearch         = "SEARCH"
 	googleAdsChannelTypeDemandGen      = "DEMAND_GEN"
 	googleAdsChannelTypePerformanceMax = "PERFORMANCE_MAX"
+	googleAdsChannelTypeVideo          = "VIDEO"
 )
 
 // googleAdsConfig is the per-platform campaign config the caller passes for Google Ads
@@ -370,6 +372,13 @@ type googleAdsConfig struct {
 	// hand upstream looks like. That campaign cannot serve until a group exists; the
 	// result's closing step says so.
 	PerformanceMaxCreative *googleAdsPerformanceMaxCreativeConfig `json:"performanceMaxCreative"`
+	// VideoCreative is the responsive video ad for a Video (YouTube) campaign, the
+	// fourth member of the same family and VIDEO ONLY.
+	//
+	// Left empty the campaign and its ad group are created with no ad — the same shape
+	// a Demand Gen campaign without a creative has, and it cannot serve until someone
+	// builds an ad in the Google Ads UI. The result's closing step says so.
+	VideoCreative *googleAdsVideoCreativeConfig `json:"videoCreative"`
 	// AdoptExisting opts THIS dispatch in to adopting a campaign that already carries the
 	// composed name instead of creating one. It defaults to FALSE, and the default is the
 	// safety property, not a convenience: ComposeName is deterministic in
@@ -509,6 +518,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		AdGroups:               googleAdsAdGroups(cfg.AdGroups),
 		DemandGenCreative:      googleAdsDemandGenCreative(cfg.DemandGenCreative),
 		PerformanceMaxCreative: googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
+		VideoCreative:          googleAdsVideoCreative(cfg.VideoCreative),
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
 		// with the same suffix is rejected by whichever family it reaches first —
@@ -558,8 +568,10 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		campaignKind = googleads.CampaignKindDemandGen
 	case googleAdsChannelPerformanceMax:
 		campaignKind = googleads.CampaignKindPerformanceMax
+	case googleAdsChannelVideo:
+		campaignKind = googleads.CampaignKindVideo
 	default:
-		return nil, notCreated(fmt.Errorf("google ads: unsupported channel %q (want %q, %q or %q)", cfg.Channel, googleAdsChannelSearch, googleAdsChannelDemandGen, googleAdsChannelPerformanceMax))
+		return nil, notCreated(fmt.Errorf("google ads: unsupported channel %q (want %q, %q, %q or %q)", cfg.Channel, googleAdsChannelSearch, googleAdsChannelDemandGen, googleAdsChannelPerformanceMax, googleAdsChannelVideo))
 	}
 	// Validate the input BEFORE adoption, and note this is not merely tidy ordering.
 	// Adoption returns before CreateCampaign runs its preflight, so without this call the
@@ -633,8 +645,10 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		result, cerr = client.CreateDemandGenCampaign(ctx, in)
 	case googleAdsChannelPerformanceMax:
 		result, cerr = client.CreatePerformanceMaxCampaign(ctx, in)
+	case googleAdsChannelVideo:
+		result, cerr = client.CreateVideoCampaign(ctx, in)
 	default:
-		// Unreachable: the resolution above admits only these three. Refuse rather than fall
+		// Unreachable: the resolution above admits only these four. Refuse rather than fall
 		// through to a create, so a future channel added there but not here cannot spend one
 		// channel's budget on another.
 		return nil, notCreated(fmt.Errorf("google ads: channel %q resolved but has no create path", channel))
@@ -930,6 +944,44 @@ func googleAdsPerformanceMaxCreative(in *googleAdsPerformanceMaxCreativeConfig) 
 	}
 }
 
+// googleAdsVideoCreativeConfig is the responsive video ad for the "video" channel.
+//
+// Unlike its three siblings it carries NO URLs at all. A YouTube video is referenced by
+// its bare id and stays on YouTube, so there is nothing here for googleAdsSnapshotConfig
+// to sanitize — which is why that function's early return does not mention this field.
+// Should an image field ever be added (companion banners are the obvious candidate, and
+// are deliberately out of scope — see video_creative.go), both this comment and that
+// early return have to change together.
+type googleAdsVideoCreativeConfig struct {
+	// YouTubeVideoIDs are BARE video ids, not watch URLs — the client refuses a URL
+	// rather than guessing which part of it is the id. At least one is required for an
+	// ad to be created at all.
+	YouTubeVideoIDs []string `json:"youtubeVideoIds"`
+	// The four text field types a videoResponsiveAd carries. Headlines, long headlines
+	// and descriptions are each required when a creative is supplied; call-to-action
+	// text is optional and Google supplies a default when it is omitted.
+	Headlines     []string `json:"headlines"`
+	LongHeadlines []string `json:"longHeadlines"`
+	Descriptions  []string `json:"descriptions"`
+	CallToActions []string `json:"callToActions"`
+}
+
+// googleAdsVideoCreative maps the video-ad config to the client input, validating
+// nothing — every rule lives in the client's preflight, so the two paths cannot drift.
+// A nil pointer maps to the zero value, which the client reads as "no ad asked for".
+func googleAdsVideoCreative(in *googleAdsVideoCreativeConfig) googleads.VideoCreative {
+	if in == nil {
+		return googleads.VideoCreative{}
+	}
+	return googleads.VideoCreative{
+		YouTubeVideoIDs: in.YouTubeVideoIDs,
+		Headlines:       in.Headlines,
+		LongHeadlines:   in.LongHeadlines,
+		Descriptions:    in.Descriptions,
+		CallToActions:   in.CallToActions,
+	}
+}
+
 // googleAdsSnapshotConfig returns cfg with every caller-supplied URL reduced to
 // scheme+host, for storage in config_snapshot — which is persisted UNENCRYPTED in
 // Postgres. Same reason and same helper as campaignFromMeta's ImageURL and
@@ -937,7 +989,9 @@ func googleAdsPerformanceMaxCreative(in *googleAdsPerformanceMaxCreativeConfig) 
 // path, query or fragment, and the snapshot is the copy that persists.
 //
 // The URLs this config carries are a sitelink's finalUrl and the image URLs of the
-// Demand Gen creative and the Performance Max asset group. The ad copy beside them —
+// Demand Gen creative and the Performance Max asset group. The Video creative is the
+// one creative with nothing to sanitize: it references a YouTube video by bare id and
+// carries no URL field at all, which is why it is absent from the early return below. The ad copy beside them —
 // headlines, descriptions, callouts, snippet values, sitelink text — is deliberately
 // NOT run through sanitizeSnapshotText: that helper exists for operator-authored prose
 // that routinely carries a pasted link (X's tweetText), whereas Google keeps the
@@ -1955,13 +2009,13 @@ func (d *GoogleAdsDispatcher) LookupCampaign(ctx context.Context, projectID stri
 // that grows without our involvement, and the mapping is the point at which this service
 // decides whether it can represent a campaign at all.
 //
-// Only the types this service can CREATE are mappable. Anything else — VIDEO, SHOPPING,
+// Only the types this service can CREATE are mappable. Anything else — SHOPPING, HOTEL,
 // a value Google adds next quarter, or an empty string from a response that omitted the
 // field — is refused. Adopting one would file it under some existing slot and leave that
 // campaign type's real slot open for a duplicate.
 //
-// This list grows with the create paths, and must: PERFORMANCE_MAX was unmappable until
-// this service learned to create it, and a channel left out here is a campaign the
+// This list grows with the create paths, and must: PERFORMANCE_MAX and then VIDEO were each
+// unmappable until this service learned to create them, and a channel left out here is a campaign the
 // adoption path refuses even though create would have produced exactly that type.
 func googleAdsVariantForChannelType(channelType string) (string, error) {
 	switch strings.ToUpper(strings.TrimSpace(channelType)) {
@@ -1973,6 +2027,8 @@ func googleAdsVariantForChannelType(channelType string) (string, error) {
 		return model.NormalizeVariant(googleAdsChannelDemandGen), nil
 	case googleAdsChannelTypePerformanceMax:
 		return model.NormalizeVariant(googleAdsChannelPerformanceMax), nil
+	case googleAdsChannelTypeVideo:
+		return model.NormalizeVariant(googleAdsChannelVideo), nil
 	case "":
 		return "", fmt.Errorf("google ads: the campaign lookup returned no advertising channel type, so which campaign type this is cannot be established; refusing to adopt rather than assume")
 	default:
@@ -2072,6 +2128,8 @@ func googleAdsRecordedChannelType(ctx context.Context, campaign *model.Campaign)
 		return strPtr(googleAdsChannelTypeDemandGen)
 	case googleAdsChannelPerformanceMax:
 		return strPtr(googleAdsChannelTypePerformanceMax)
+	case googleAdsChannelVideo:
+		return strPtr(googleAdsChannelTypeVideo)
 	default:
 		return nil
 	}
@@ -2155,7 +2213,7 @@ func googleAdsCampaignAdGroupIDs(campaign *model.Campaign) map[string]bool {
 }
 
 // googleAdsActivationGate refuses an ACTIVATE that would report a launch the campaign
-// cannot deliver. What counts as "fully provisioned" is CHANNEL-SPECIFIC, because the three
+// cannot deliver. What counts as "fully provisioned" is CHANNEL-SPECIFIC, because the four
 // channels this dispatcher creates do not have the same serving resources:
 //
 //   - Search serves through an ad group + ad, and cannot deliver without at least one
@@ -2164,6 +2222,9 @@ func googleAdsCampaignAdGroupIDs(campaign *model.Campaign) map[string]bool {
 //     creative-driven. Keywords are REFUSED on this channel (campaign.go's Search-only
 //     fence), so demanding a keyword criterion here would be unsatisfiable by construction —
 //     the gate would instruct the operator to supply the very field the create path rejects.
+//   - Video serves through an ad group + ad like Demand Gen, and keywords are refused on it
+//     by the same Search-only fence, so it takes exactly Demand Gen's gate — which is why
+//     the two share an arm rather than each getting an identical one.
 //   - Performance Max has no ad groups and no ads at all. Its creative is an ASSET GROUP,
 //     and that is the resource whose absence means nothing can serve.
 //
@@ -2188,11 +2249,11 @@ func googleAdsActivationGate(campaign *model.Campaign, targets []googleads.AdGro
 			return fmt.Errorf("%w: google ads campaign %s cannot be activated because this service has no record of its Performance Max asset group (a Performance Max campaign has no ad groups; the asset group is what serves) — either the creative never completed, or the campaign was ADOPTED, which records no serving resources at all and leaves un-pausing to the Google Ads UI", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
 		return nil
-	case googleAdsChannelDemandGen:
+	case googleAdsChannelDemandGen, googleAdsChannelVideo:
 		if len(targets) == 0 {
 			return fmt.Errorf("%w: google ads campaign %s cannot be activated because this service has no record of its ad group/ad — either they were never fully provisioned, or the campaign was ADOPTED, which records no serving resources at all and leaves un-pausing to the Google Ads UI", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
-		// Deliberately no keyword gate — see the doc comment above.
+		// Deliberately no keyword gate on either channel — see the doc comment above.
 		return nil
 	default:
 		// Refuse ACTIVATE if no ad group was fully provisioned: a duplicate-name orphan or

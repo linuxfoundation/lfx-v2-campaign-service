@@ -290,6 +290,14 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 	// asset-group signals rather than campaign criteria. Both are refused, not dropped,
 	// so an operator never reads "campaign created" while an exclusion they asked for
 	// is nowhere upstream.
+	// Video takes the UN-NARROWED set — every one of the five kinds, exactly as Search
+	// does — and that is why the Demand Gen fence above still names one channel rather
+	// than every non-Search one. A VIDEO campaign carries LANGUAGE, AD_SCHEDULE, DEVICE
+	// (with a bid modifier) and campaign-level AGE_RANGE/GENDER exclusions as campaign
+	// criteria, and video.go attaches all five on its criteria step, so nothing
+	// accepted here is dropped. Widening the Demand Gen refusal to `!= Search` would
+	// have refused a campaign Google creates happily — the over-refusal these guards
+	// exist to avoid.
 	if kind == campaignKindPerformanceMax {
 		if len(in.DeviceBidModifiers) > 0 {
 			return criteriaPlan{}, fmt.Errorf("google-ads: device bid modifiers are not supported on %s (its automated bidding owns the bid and sets no device adjustment); omit DeviceBidModifiers, or create a Search campaign to bid by device", kind)

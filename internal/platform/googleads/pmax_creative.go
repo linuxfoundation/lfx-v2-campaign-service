@@ -326,7 +326,7 @@ func validatePerformanceMaxCreative(kind string, in CampaignInput) (performanceM
 	}
 	plan.businessName = name
 
-	videos, err := validateYouTubeVideoIDs(p.YouTubeVideoIDs)
+	videos, err := validateYouTubeVideoIDs("Performance Max", "Performance Max asset group", maxPerformanceMaxVideos, p.YouTubeVideoIDs)
 	if err != nil {
 		return performanceMaxPlan{}, err
 	}
@@ -390,7 +390,8 @@ func isYouTubeIDRune(r rune) bool {
 	return false
 }
 
-// validateYouTubeVideoIDs checks the SHAPE of each id. Whether the video exists, is
+// validateYouTubeVideoIDs checks the SHAPE of each id, for whichever channel is
+// asking. Whether the video exists, is
 // public, and belongs to a channel the account may advertise is Google's to judge — this
 // client has no YouTube credentials and inventing a lookup here would make
 // ValidateCampaignInput send a request, which its contract forbids.
@@ -406,16 +407,26 @@ func isYouTubeIDRune(r rune) bool {
 // the database to tell the caller something scheme+host+path already tells them. Every
 // other arm caps the value instead: those have established it is NOT a URL, but nothing
 // bounds its length.
-func validateYouTubeVideoIDs(in []string) ([]string, error) {
+//
+// The two labels and the ceiling are PARAMETERS because two channels now reference
+// YouTube videos and they do not share a vocabulary: a Performance Max video hangs
+// off an asset group, a Video campaign's hangs off a responsive video ad, and the
+// ceilings are each channel's own. The labels were literals while Performance Max
+// was the only caller, and reusing the helper unchanged would have told a Video
+// caller their "Performance Max YouTube video" was malformed — a helper answering
+// for a channel it was not called about. `channel` names the owner in the per-item
+// errors, `owner` the container in the count error, exactly as validateCreativeText
+// splits its own two labels.
+func validateYouTubeVideoIDs(channel, owner string, maxVideos int, in []string) ([]string, error) {
 	out := make([]string, 0, len(in))
 	seen := make(map[string]struct{}, len(in))
 	for i, raw := range in {
 		id := strings.TrimSpace(raw)
 		if id == "" {
-			return nil, fmt.Errorf("google-ads Performance Max YouTube video %d is empty", i)
+			return nil, fmt.Errorf("google-ads %s YouTube video %d is empty", channel, i)
 		}
 		if strings.Contains(id, "/") || strings.Contains(id, ":") || strings.Contains(id, "?") {
-			return nil, fmt.Errorf("google-ads Performance Max YouTube video %d looks like a URL (%q); supply the bare video id instead, because this client will not guess which part of a URL is the id", i, redactURLForError(id))
+			return nil, fmt.Errorf("google-ads %s YouTube video %d looks like a URL (%q); supply the bare video id instead, because this client will not guess which part of a URL is the id", channel, i, redactURLForError(id))
 		}
 		// The id alphabet is YouTube's own: unreserved base64url characters. Length is
 		// deliberately NOT pinned to 11 — that is the length every id has had, not a
@@ -423,17 +434,17 @@ func validateYouTubeVideoIDs(in []string) ([]string, error) {
 		// would have accepted.
 		for _, r := range id {
 			if !isYouTubeIDRune(r) {
-				return nil, fmt.Errorf("google-ads Performance Max YouTube video %q contains %q, which is not a YouTube id character", capForError(id), r)
+				return nil, fmt.Errorf("google-ads %s YouTube video %q contains %q, which is not a YouTube id character", channel, capForError(id), r)
 			}
 		}
 		if _, dup := seen[id]; dup {
-			return nil, fmt.Errorf("google-ads Performance Max YouTube video %q is listed more than once", capForError(id))
+			return nil, fmt.Errorf("google-ads %s YouTube video %q is listed more than once", channel, capForError(id))
 		}
 		seen[id] = struct{}{}
 		out = append(out, id)
 	}
-	if len(out) > maxPerformanceMaxVideos {
-		return nil, fmt.Errorf("google-ads Performance Max asset group accepts at most %d YouTube videos, got %d", maxPerformanceMaxVideos, len(out))
+	if len(out) > maxVideos {
+		return nil, fmt.Errorf("google-ads %s accepts at most %d YouTube videos, got %d", owner, maxVideos, len(out))
 	}
 	return out, nil
 }

@@ -232,8 +232,8 @@ type CampaignInput struct {
 	//
 	// Refused at preflight on DEMAND GEN only, because that channel attaches location
 	// criteria at the ad group level and this client has not verified a proximity
-	// criterion there. Accepted on Search and on Performance Max, both of which attach
-	// location at the campaign level. Refusing locally is free; discovering it after the
+	// criterion there. Accepted on Search, on Performance Max and on Video, all three
+	// of which attach location at the campaign level. Refusing locally is free; discovering it after the
 	// campaign exists is not. See validateGeoPlan.
 	ProximityTargets []ProximityTarget
 	// Languages are the languages a Search campaign serves in, as ISO 639-1 codes
@@ -291,6 +291,19 @@ type CampaignInput struct {
 	// kept rather than refused because it is also what ADOPTION of a campaign whose
 	// asset group was built by hand upstream looks like. See pmax_creative.go.
 	PerformanceMaxCreative PerformanceMaxCreative
+	// VideoCreative is the responsive video ad for a Video (YouTube) campaign, and
+	// is the fourth member of the same family: optional and VIDEO ONLY, refused at
+	// preflight on every other channel.
+	//
+	// Left empty the Video cascade creates the campaign and its ad group and no ad —
+	// a campaign that cannot serve, said so in the closing steps, kept for the same
+	// reason the three above are kept: that shape is also what adoption of a campaign
+	// whose ad was built by hand upstream looks like.
+	//
+	// Unlike its three siblings it carries no image URLs at all: a YouTube video is
+	// referenced by id and stays on YouTube, so nothing here is fetched. See
+	// video_creative.go.
+	VideoCreative VideoCreative
 }
 
 // AdGroupResult is one ad group the cascade attempted, and everything created
@@ -816,6 +829,11 @@ type campaignPreflight struct {
 	// creative is, and its image bytes are fetched by the Performance Max cascade in
 	// the same pre-budget step. See validatePerformanceMaxCreative.
 	pmax performanceMaxPlan
+	// video is the validated responsive video ad — YouTube video ids and the four
+	// text field types. Resolved here with everything else, and unlike creative and
+	// pmax it needs no later fetch step at all, because this channel holds no binary
+	// assets. See validateVideoCreative.
+	video videoCreativePlan
 	// adGroups are the ad groups the cascade will create, always at least one. When
 	// the caller asked for none, it holds exactly the single group the fields above
 	// describe, so the cascade has one shape to walk rather than two. A duplicate
@@ -949,7 +967,11 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 // ad-group list, the CPC bid, keywords and audience segments. Performance Max refuses
 // only the half it genuinely cannot carry — device bid modifiers and campaign-level
 // demographic exclusions, plus the Search-only targeting fields — and accepts proximity,
-// languages and ad schedules at the campaign level like Search. So a Demand Gen request
+// languages and ad schedules at the campaign level like Search. Video refuses the
+// narrowest set of the four — the Search-only targeting fields (keywords, audience
+// segments, the CPC bid, negative keywords, the extension assets and the ad-group
+// list) and nothing else, because it carries its location and its other campaign
+// criteria at the campaign level exactly as Search does. So a Demand Gen request
 // carrying one of those validates clean as Search and is then refused by
 // CreateDemandGenCampaign. On the create path
 // that is merely a late error; on the ADOPTION path, which returns before any create
@@ -977,6 +999,10 @@ const (
 	CampaignKindSearch         = "Search Campaign"
 	CampaignKindDemandGen      = "DemandGen Campaign"
 	CampaignKindPerformanceMax = "PerformanceMax Campaign"
+	// CampaignKindVideo is a Video (YouTube) campaign — advertisingChannelType VIDEO
+	// with sub-type VIDEO_ACTION. See video.go for why the sub-type is pinned rather
+	// than offered as an input.
+	CampaignKindVideo = "Video Campaign"
 )
 
 // Unexported aliases retained so this package's own call sites read unchanged.
@@ -984,6 +1010,7 @@ const (
 	campaignKindSearch         = CampaignKindSearch
 	campaignKindDemandGen      = CampaignKindDemandGen
 	campaignKindPerformanceMax = CampaignKindPerformanceMax
+	campaignKindVideo          = CampaignKindVideo
 )
 
 // preflightCampaign validates the input and composes the names, for the given campaign
@@ -1021,6 +1048,11 @@ func budgetKindFor(campaignKind string) string {
 		// Search: nothing has been created under this name yet, so it is free to take a
 		// distinct one, and sharing Search's would make the two collide on one brief.
 		return "PerformanceMax Budget"
+	case campaignKindVideo:
+		// Same reasoning again, and the same freedom: this channel has created nothing
+		// yet, so a distinct segment costs nothing and keeps a Video campaign on a brief
+		// that already has a Search one from colliding at the budget step.
+		return "Video Budget"
 	default:
 		return "Budget"
 	}
@@ -1106,6 +1138,10 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// theirs. Its image bytes are fetched by that cascade, still before the budget
 	// mutate. See pmax_creative.go.
 	pmax, err := validatePerformanceMaxCreative(kind, in)
+	if err != nil {
+		return nil, err
+	}
+	video, err := validateVideoCreative(kind, in)
 	if err != nil {
 		return nil, err
 	}
@@ -1219,6 +1255,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		assets:           assets,
 		creative:         creative,
 		pmax:             pmax,
+		video:            video,
 		adGroups:         adGroups,
 		negativeKeywords: negativeKeywords,
 		cpcBidMicros:     cpcBidMicros,

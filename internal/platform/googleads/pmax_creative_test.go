@@ -286,14 +286,14 @@ func TestValidatePerformanceMaxCreative_AssetGroupNameDefaultsToTheEvent(t *test
 // video Google would have accepted. Over-refusal is the failure mode these guards
 // exist to avoid.
 func TestValidateYouTubeVideoIDs_DoesNotPinTheLength(t *testing.T) {
-	got, err := validateYouTubeVideoIDs([]string{"dQw4w9WgXcQ", "a-longer_id-than-eleven"})
+	got, err := validateYouTubeVideoIDs("Performance Max", "Performance Max asset group", maxPerformanceMaxVideos, []string{"dQw4w9WgXcQ", "a-longer_id-than-eleven"})
 	if err != nil {
 		t.Fatalf("an id longer than 11 characters must be accepted: %v", err)
 	}
 	if len(got) != 2 {
 		t.Errorf("got %v, want both ids", got)
 	}
-	if _, err := validateYouTubeVideoIDs([]string{"has space"}); err == nil {
+	if _, err := validateYouTubeVideoIDs("Performance Max", "Performance Max asset group", maxPerformanceMaxVideos, []string{"has space"}); err == nil {
 		t.Error("a space is not a YouTube id character and must be refused")
 	}
 }
@@ -452,7 +452,7 @@ func TestBuildPerformanceMaxAssets_EmptyPlanBuildsNothing(t *testing.T) {
 // tracking or signing query into the database. scheme+host+path already tells the caller
 // everything the message needs to.
 func TestValidateYouTubeVideoIDs_URLRefusalRedactsTheQuery(t *testing.T) {
-	_, err := validateYouTubeVideoIDs([]string{"https://youtu.be/dQw4w9WgXcQ?si=SECRET-SHARE-TOKEN"})
+	_, err := validateYouTubeVideoIDs("Performance Max", "Performance Max asset group", maxPerformanceMaxVideos, []string{"https://youtu.be/dQw4w9WgXcQ?si=SECRET-SHARE-TOKEN"})
 	if err == nil {
 		t.Fatal("a URL must be refused")
 	}
@@ -469,7 +469,7 @@ func TestValidateYouTubeVideoIDs_URLRefusalRedactsTheQuery(t *testing.T) {
 // bounds its length, and the error is emitted in exactly the case the value is unbounded.
 func TestValidateYouTubeVideoIDs_NonURLValuesAreBounded(t *testing.T) {
 	long := strings.Repeat("A", 5000) + "!"
-	_, err := validateYouTubeVideoIDs([]string{long})
+	_, err := validateYouTubeVideoIDs("Performance Max", "Performance Max asset group", maxPerformanceMaxVideos, []string{long})
 	if err == nil {
 		t.Fatal("a non-id character must be refused")
 	}

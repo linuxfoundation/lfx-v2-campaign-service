@@ -200,6 +200,13 @@ func defaultBiddingStrategy(kind string) string {
 		return biddingMaximizeClicks
 	case campaignKindPerformanceMax:
 		return biddingMaximizeConversions
+	case campaignKindVideo:
+		// Same situation as Performance Max — nothing has been created on this channel, so
+		// there is no prior literal to preserve — and the same answer: a VIDEO_ACTION
+		// campaign exists to buy a conversion on the landing page, and maximize-conversions
+		// is the strategy Google's own create flow starts it from. See
+		// videoBiddingStrategies for why the set around it is deliberately narrow.
+		return biddingMaximizeConversions
 	default:
 		return biddingManualCPC
 	}
@@ -235,6 +242,30 @@ var performanceMaxBiddingStrategies = map[string]bool{
 	biddingTargetROAS:              true,
 }
 
+// videoBiddingStrategies is the set this client will send on VIDEO (VIDEO_ACTION).
+//
+// NOT LIVE-VERIFIED, and that is why it is the narrowest set of the four rather than the
+// widest. Every other set here was settled by running a validateOnly campaigns:mutate
+// against the live API — demandGenBiddingStrategies records the exact call, its date and
+// its two HTTP codes. No such call has been made for VIDEO_ACTION, because the only
+// reachable Google account is a production one and a validateOnly mutate is still a POST
+// to it.
+//
+// So the set is chosen the way an unverified set has to be: the two strategies Google's
+// published VIDEO_ACTION documentation names — maximize conversions, and target CPA, the
+// same strategy with a target attached — and nothing else. The error for the rest is
+// explicit and lands at preflight, before any mutate, which costs a caller one clear
+// message. Guessing wider costs them an HTTP 400 AFTER the budget has been created and
+// paid for, which is exactly what Demand Gen's recorded 400 was.
+//
+// Widening this set is a live-API question, not a code-reading one: run a validateOnly
+// campaigns:mutate for VIDEO/VIDEO_ACTION with the candidate strategy on a non-production
+// account and record the result here, as demandgen.go does for its own.
+var videoBiddingStrategies = map[string]bool{
+	biddingMaximizeConversions: true,
+	biddingTargetCPA:           true,
+}
+
 // searchBiddingStrategies is the set this client will send on SEARCH — every strategy it
 // offers. Search is the channel the manual and the automated strategies were both designed
 // for, and `manualCpc` is what this client has always sent there.
@@ -257,7 +288,7 @@ var searchBiddingStrategies = map[string]bool{
 // first strategy a channel accepts that Search does not would have been reported as an
 // unknown NAME, which is an over-refusal of a create Google would have taken. The union
 // cannot under-report, and it cannot drift, because there is no second list to maintain.
-var knownBiddingStrategies = unionStrategies(searchBiddingStrategies, demandGenBiddingStrategies, performanceMaxBiddingStrategies)
+var knownBiddingStrategies = unionStrategies(searchBiddingStrategies, demandGenBiddingStrategies, performanceMaxBiddingStrategies, videoBiddingStrategies)
 
 // unionStrategies collects every name in the given sets into a new map. A new map, not one of
 // the inputs: the result is a distinct concept from any single channel's set, and sharing
@@ -315,6 +346,8 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 		allowed = demandGenBiddingStrategies
 	case campaignKindPerformanceMax:
 		allowed = performanceMaxBiddingStrategies
+	case campaignKindVideo:
+		allowed = videoBiddingStrategies
 	default:
 		allowed = searchBiddingStrategies
 	}
@@ -323,7 +356,16 @@ func validateBiddingPlan(kind, customerID string, in CampaignInput) (biddingPlan
 		return biddingPlan{}, fmt.Errorf("google-ads: unknown bidding strategy %q; supported on %s: %s", capForError(in.BiddingStrategy), kind, strings.Join(sortedKeys(allowed), ", "))
 	}
 	if !allowed[strategy] {
-		return biddingPlan{}, fmt.Errorf("google-ads: bidding strategy %q is not supported on %s (this client sends only %s there, which is the only combination verified against the live API; the others were rejected AFTER the budget was created); omit BiddingStrategy for the channel default, or create a Search campaign", strategy, kind, strings.Join(sortedKeys(allowed), ", "))
+		// The parenthetical differs on Video because the claim behind it does. Every
+		// other channel's set was settled by a live validateOnly mutate, and saying so is
+		// what tells a caller the refusal is evidence rather than caution. Video's was
+		// not, and repeating the sentence there would make this client assert a check it
+		// never ran. See videoBiddingStrategies.
+		reason := "which is the only combination verified against the live API; the others were rejected AFTER the budget was created"
+		if kind == campaignKindVideo {
+			reason = "the narrowest set Google's VIDEO_ACTION documentation names; this client has NOT yet verified a wider set against the live API, and sending an unverified strategy fails AFTER the budget is created"
+		}
+		return biddingPlan{}, fmt.Errorf("google-ads: bidding strategy %q is not supported on %s (this client sends only %s there, %s); omit BiddingStrategy for the channel default, or create a Search campaign", strategy, kind, strings.Join(sortedKeys(allowed), ", "), reason)
 	}
 
 	// The two targets are validated against the strategy that can carry them, and REFUSED
@@ -465,15 +507,19 @@ func validateConversionActions(kind, customerID string, actions []string) ([]str
 	if len(actions) == 0 {
 		return nil, nil
 	}
-	// Refused on Performance Max as well, and for a reason worth distinguishing from
-	// Demand Gen's: selective_optimization exists for Display, Video and App campaigns,
-	// and Performance Max selects its conversions through CAMPAIGN CONVERSION GOALS
-	// instead — a separate resource addressed by a name containing the campaign id, so
-	// it needs a mutate after the campaign exists. That is the same known gap Demand
-	// Gen's goals are, refused rather than dropped for the same reason: a campaign that
-	// silently bid toward the account's default goals while the operator believed it
-	// was bidding toward the ones they named is worse than one that would not create.
-	if kind != campaignKindSearch {
+	// ADMITTED on Video, refused on Demand Gen and Performance Max. The split is not
+	// Search-versus-the-rest, however much the earlier `!= campaignKindSearch` looked
+	// like it: campaign.selective_optimization is defined for SEARCH, DISPLAY, VIDEO and
+	// APP campaigns, so a VIDEO campaign carrying it is a payload Google accepts, and
+	// refusing it would have been over-refusal — the one failure mode this preflight is
+	// not allowed to have. Demand Gen has no selective_optimization at all, and
+	// Performance Max selects its conversions through CAMPAIGN CONVERSION GOALS instead
+	// — a separate resource addressed by a name containing the campaign id, so it needs
+	// a mutate after the campaign exists. Those two are the same known gap, refused
+	// rather than dropped for the same reason: a campaign that silently bid toward the
+	// account's default goals while the operator believed it was bidding toward the ones
+	// they named is worse than one that would not create.
+	if kind != campaignKindSearch && kind != campaignKindVideo {
 		return nil, fmt.Errorf("google-ads: conversion actions are not supported on %s (this client attaches them through campaign.selective_optimization, which %s does not accept); omit ConversionActions, or create a Search campaign to optimize toward specific conversions", kind, kind)
 	}
 	if len(actions) > maxConversionActions {

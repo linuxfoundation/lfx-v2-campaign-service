@@ -1457,6 +1457,10 @@ const googleAdsChannelDemandGenName = "demand-gen"
 // commit as its dispatch arm.
 const googleAdsChannelPerformanceMaxName = "performance-max"
 
+// googleAdsChannelVideoName mirrors internal/dispatch's googleAdsChannelVideo, under the
+// same rule the comment above states.
+const googleAdsChannelVideoName = "video"
+
 // variantForDispatch reads WHICH of a platform's campaign types this dispatch is for,
 // out of the same config envelope the dispatcher will read.
 //
@@ -1540,7 +1544,8 @@ func googleAdsChannelIsSupported(ch string) bool {
 	return ch == "" ||
 		ch == googleAdsChannelSearchName ||
 		ch == googleAdsChannelDemandGenName ||
-		ch == googleAdsChannelPerformanceMaxName
+		ch == googleAdsChannelPerformanceMaxName ||
+		ch == googleAdsChannelVideoName
 }
 
 func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage, by *model.Actor) platformResult {

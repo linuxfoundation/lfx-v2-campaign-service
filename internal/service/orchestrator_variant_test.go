@@ -59,11 +59,12 @@ func TestVariantForDispatch(t *testing.T) {
 		// ran, so its "unsupported channel" error never reached the caller, who was told a
 		// campaign it never validly asked for had been created.
 		{"reserved slot name does not claim the search slot", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"default"}}`, model.VariantInvalid},
-		{"an unknown channel does not claim a real slot", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"video"}}`, model.VariantInvalid},
+		{"an unknown channel does not claim a real slot", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"shopping"}}`, model.VariantInvalid},
 		// Each channel the dispatcher creates gets its OWN slot here. A supported channel
 		// missing from googleAdsChannelIsSupported resolves to VariantInvalid and is refused
 		// before the dispatcher runs, so its create path is unreachable however complete it is.
 		{"performance max claims its own slot", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"performance-max"}}`, "performance-max"},
+		{"video claims its own slot", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"video"}}`, "video"},
 		// The reserved sentinel itself, sent as a channel, must not round-trip onto its own
 		// slot either -- it is not a channel any create writes.
 		{"the invalid sentinel is not a usable channel", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"_invalid"}}`, model.VariantInvalid},
@@ -173,7 +174,7 @@ func TestOrchestrator_InvalidVariantIsRefusedAndClaimsNoSlot(t *testing.T) {
 	})
 	brief := &model.CampaignBrief{ID: "b-invalid", ProjectID: "cncf"}
 	// Valid JSON, unsupported Google channel -> VariantInvalid.
-	cfg := json.RawMessage(`{"googleAdsConfig":{"channel":"video"}}`)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"channel":"shopping"}}`)
 
 	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, cfg)
 	if err != nil {
@@ -201,7 +202,7 @@ func TestOrchestrator_InvalidVariantNamesTheActualCause(t *testing.T) {
 		want   string
 	}{
 		{"undecodable config", `{not json`, "could not be decoded"},
-		{"decoded but unsupported channel", `{"googleAdsConfig":{"channel":"video"}}`, "unsupported channel"},
+		{"decoded but unsupported channel", `{"googleAdsConfig":{"channel":"shopping"}}`, "unsupported channel"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

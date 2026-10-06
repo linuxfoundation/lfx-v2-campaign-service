@@ -24,6 +24,7 @@ func TestGoogleAdsVariantForChannelType(t *testing.T) {
 		{"search maps to the default slot", "SEARCH", model.VariantDefault},
 		{"demand gen maps to its own slot", "DEMAND_GEN", "demand-gen"},
 		{"performance max maps to its own slot", "PERFORMANCE_MAX", "performance-max"},
+		{"video maps to its own slot", "VIDEO", "video"},
 		// Google's enum arrives uppercase, but a mapping that depends on the platform's
 		// exact casing is one response-format change away from failing closed on a campaign
 		// type it does support.
@@ -45,12 +46,13 @@ func TestGoogleAdsVariantForChannelType(t *testing.T) {
 // The fail-closed half, and the half that matters most. A campaign type this service cannot
 // CREATE has no slot to adopt into, so mapping it onto an existing slot would both mis-file
 // that campaign and leave the real slot open for a duplicate. PERFORMANCE_MAX used to be the
-// example here and is now a creatable type with its own slot, which is exactly how this list
-// is meant to move: a type leaves it the moment a create path for it lands, and never before.
-// VIDEO and SHOPPING are the current live examples; the same must hold for a type Google adds
-// that nobody here has heard of yet, and for a response that omits the field entirely.
+// example here, then VIDEO was, and both are now creatable types with their own slots — which
+// is exactly how this list is meant to move: a type leaves it the moment a create path for it
+// lands, and never before. SHOPPING and HOTEL are the current live examples; the same must
+// hold for a type Google adds that nobody here has heard of yet, and for a response that omits
+// the field entirely.
 func TestGoogleAdsVariantForChannelTypeFailsClosed(t *testing.T) {
-	for _, channelType := range []string{"VIDEO", "SHOPPING", "SOMETHING_NEW", ""} {
+	for _, channelType := range []string{"SHOPPING", "HOTEL", "SOMETHING_NEW", ""} {
 		t.Run("refuses "+channelType, func(t *testing.T) {
 			got, err := googleAdsVariantForChannelType(channelType)
 			if err == nil {
@@ -71,7 +73,7 @@ func TestGoogleAdsVariantRefusalIsNotASlot(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for an unmappable channel type")
 	}
-	for _, slot := range []string{model.VariantDefault, "demand-gen", "performance-max"} {
+	for _, slot := range []string{model.VariantDefault, "demand-gen", "performance-max", "video"} {
 		if strings.TrimSpace(err.Error()) == slot {
 			t.Errorf("the refusal error reads exactly like the slot %q", slot)
 		}

@@ -295,14 +295,127 @@ func TestBiddingPlan_PerformanceMaxRefusesManualBidding(t *testing.T) {
 	}
 }
 
+// Video is the narrowest of the four sets, and narrow ON PURPOSE: nothing has been run
+// against the live API for VIDEO_ACTION, so the set is the two strategies Google's published
+// documentation names and nothing else. Pinning it here is what keeps a later widening
+// honest — a strategy added to videoBiddingStrategies without a recorded validateOnly call
+// fails this test, which is the whole point.
+func TestBiddingPlan_VideoAcceptsOnlyTheDocumentedPair(t *testing.T) {
+	for strategy := range knownBiddingStrategies {
+		in := CampaignInput{BiddingStrategy: strategy}
+		switch strategy {
+		case biddingTargetCPA:
+			in.TargetCPA = 20
+		case biddingTargetROAS:
+			in.TargetROAS = 4
+		}
+		_, err := validateBiddingPlan(campaignKindVideo, biddingTestCustomer, in)
+		if strategy == biddingMaximizeConversions || strategy == biddingTargetCPA {
+			if err != nil {
+				t.Errorf("%s refused on Video, but it is one of the two strategies VIDEO_ACTION documents: %v", strategy, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("%s accepted on Video; this client has not verified it there, and an unverified strategy fails AFTER the budget mutate", strategy)
+			continue
+		}
+		if !strings.Contains(err.Error(), "not supported on") {
+			t.Errorf("%s: error %v reads as a typo rather than a channel mismatch", strategy, err)
+		}
+	}
+}
+
+// The refusal must say WHY, and Video's why is not the other channels'. Every other set was
+// settled by a live validateOnly mutate; claiming that for Video would make this client
+// assert a check it never ran. The second half of this test is the regression guard: the
+// Video clause must not have been swapped IN for the other three.
+func TestBiddingPlan_VideoRefusalDoesNotClaimLiveVerification(t *testing.T) {
+	const (
+		verified   = "which is the only combination verified against the live API"
+		unverified = "NOT yet verified a wider set against the live API"
+	)
+
+	_, err := validateBiddingPlan(campaignKindVideo, biddingTestCustomer, CampaignInput{BiddingStrategy: biddingManualCPC})
+	if err == nil {
+		t.Fatal("accepted manual CPC on Video")
+	}
+	if !strings.Contains(err.Error(), unverified) {
+		t.Errorf("the Video refusal %v does not say the set is unverified", err)
+	}
+	if strings.Contains(err.Error(), verified) {
+		t.Errorf("the Video refusal %v claims a live validateOnly call that was never made", err)
+	}
+	// The listed set is the channel's own, not the union — an over-wide list sends the caller
+	// to a strategy the very next call refuses. Asked with an UNKNOWN name rather than the
+	// refused one above: a channel-mismatch error echoes the strategy it refused, so that
+	// name is in the text whether or not the list carries it.
+	_, err = validateBiddingPlan(campaignKindVideo, biddingTestCustomer, CampaignInput{BiddingStrategy: "maximise-clicks"})
+	if err == nil {
+		t.Fatal("accepted an unknown bidding strategy on Video")
+	}
+	for name := range knownBiddingStrategies {
+		listed := strings.Contains(err.Error(), name)
+		if allowed := videoBiddingStrategies[name]; listed != allowed {
+			t.Errorf("strategy %q: listed=%v, allowed on %s=%v — the list must be exactly the channel's set", name, listed, campaignKindVideo, allowed)
+		}
+	}
+
+	for _, kind := range []string{campaignKindDemandGen, campaignKindPerformanceMax} {
+		_, err := validateBiddingPlan(kind, biddingTestCustomer, CampaignInput{BiddingStrategy: biddingManualCPC})
+		if err == nil {
+			t.Fatalf("accepted manual CPC on %s", kind)
+		}
+		if !strings.Contains(err.Error(), verified) {
+			t.Errorf("%s lost its live-verification clause when Video gained its own: %v", kind, err)
+		}
+		if strings.Contains(err.Error(), unverified) {
+			t.Errorf("%s picked up Video's unverified clause, which is false for it: %v", kind, err)
+		}
+	}
+}
+
+// Conversion actions are ACCEPTED on Video. VIDEO_ACTION takes
+// campaign.selective_optimization exactly as Search does, so the Search-only fence that
+// refuses them on Demand Gen would be an over-refusal here — a create Google would have
+// taken, rejected by this client for no reason. Over-refusal is the failure that matters:
+// under-refusal costs an HTTP 400, over-refusal costs a feature nobody can reach.
+func TestValidateConversionActions_AcceptedOnVideo(t *testing.T) {
+	names, err := validateConversionActions(campaignKindVideo, biddingTestCustomer, []string{"555"})
+	if err != nil {
+		t.Fatalf("refused conversion actions on Video, which takes selective_optimization: %v", err)
+	}
+	if len(names) != 1 {
+		t.Fatalf("got %d resource names, want 1: %v", len(names), names)
+	}
+	if !strings.HasSuffix(names[0], "/conversionActions/555") {
+		t.Errorf("resource name %q is not the action the caller named", names[0])
+	}
+
+	// And the plan must actually CARRY them to the wire — accepting the list and then
+	// dropping it is the same silent-drop defect the Demand Gen refusal exists to prevent.
+	plan, err := validateBiddingPlan(campaignKindVideo, biddingTestCustomer, CampaignInput{ConversionActions: []string{"555"}})
+	if err != nil {
+		t.Fatalf("validateBiddingPlan: %v", err)
+	}
+	raw, err := json.Marshal(plan.fields())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), "selectiveOptimization") {
+		t.Errorf("payload %s drops the conversion actions the preflight accepted", raw)
+	}
+}
+
 // The DEFAULT differs per channel and is the thing most likely to be copied wrong:
 // Demand Gen bids to clicks (the live API rejected maximizeConversions there with a
-// shared budget), Performance Max to conversions, Search manually.
+// shared budget), Performance Max and Video to conversions, Search manually.
 func TestBiddingPlan_DefaultsAreChannelSpecific(t *testing.T) {
 	for kind, want := range map[string]string{
 		campaignKindSearch:         biddingManualCPC,
 		campaignKindDemandGen:      biddingMaximizeClicks,
 		campaignKindPerformanceMax: biddingMaximizeConversions,
+		campaignKindVideo:          biddingMaximizeConversions,
 	} {
 		if got := defaultBiddingStrategy(kind); got != want {
 			t.Errorf("defaultBiddingStrategy(%s) = %q, want %q", kind, got, want)
@@ -527,7 +640,7 @@ func TestBiddingPlan_UnknownStrategyAdvertisesOnlyTheChannelsSet(t *testing.T) {
 // accepts that Search does not would be rejected as an unknown NAME — an over-refusal of a
 // create Google would have taken.
 func TestKnownBiddingStrategies_CoversEveryChannelsSet(t *testing.T) {
-	for _, set := range []map[string]bool{searchBiddingStrategies, demandGenBiddingStrategies, performanceMaxBiddingStrategies} {
+	for _, set := range []map[string]bool{searchBiddingStrategies, demandGenBiddingStrategies, performanceMaxBiddingStrategies, videoBiddingStrategies} {
 		for name := range set {
 			if !knownBiddingStrategies[name] {
 				t.Errorf("strategy %q is accepted by some channel but is not a known name", name)

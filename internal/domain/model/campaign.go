@@ -89,7 +89,7 @@ const VariantInvalid = "_invalid"
 // result as "cannot pre-decide" rather than as "no slots".
 func AdoptableVariants(p Provider) []string {
 	if p == ProviderGoogleAds {
-		return []string{VariantDefault, "demand-gen", "performance-max"}
+		return []string{VariantDefault, "demand-gen", "performance-max", "video"}
 	}
 	return []string{VariantDefault}
 }

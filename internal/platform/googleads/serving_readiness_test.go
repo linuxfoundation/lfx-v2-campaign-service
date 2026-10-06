@@ -759,7 +759,7 @@ func TestValidateCPCBid_CeilingClearsLowUnitCurrencies(t *testing.T) {
 // positive keyword/audience criteria. All three are attached only on the Search
 // cascade, so every other channel would have validated them and thrown them away.
 //
-// Written as one table over both non-Search kinds on purpose: the fences are
+// Written as one table over every non-Search kind on purpose: the fences are
 // spelled `!= campaignKindSearch` precisely so the next channel added inherits
 // them, and a test naming only Demand Gen would not have noticed a fence that
 // silently admitted Performance Max.
@@ -788,7 +788,7 @@ func TestPreflightRefusesSearchOnlyTargetingOffSearch(t *testing.T) {
 		},
 	}
 
-	for _, kind := range []string{campaignKindDemandGen, campaignKindPerformanceMax} {
+	for _, kind := range []string{campaignKindDemandGen, campaignKindPerformanceMax, campaignKindVideo} {
 		for name, tc := range cases {
 			t.Run(kind+"/"+name, func(t *testing.T) {
 				in := demandGenInput()

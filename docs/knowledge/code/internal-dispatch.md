@@ -310,7 +310,8 @@ group and `landscapeLogoImages` does not exist on a Demand Gen ad, so
 one, and `TestGoogleAdsSnapshotConfig_SanitizesEveryPerformanceMaxURLList` asserts all
 five individually for the reason the Demand Gen test gives. The early return that skips
 the whole copy names THREE fields now — sitelinks, the Demand Gen creative and the asset
-group — and `TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone` pins the third,
+group, and deliberately NOT `videoCreative`, which carries YouTube video ids and text and no
+URL of any kind, so a config holding only a video creative has nothing to sanitize — and `TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone` pins the third,
 because a config carrying only an asset group taking that return is precisely the bug
 the condition was added to prevent.
 
@@ -579,7 +580,7 @@ whose recorded side comes from `config_snapshot` rather than from a column.
 on both the create and the adoption path, so the row DOES record which channel was asked for.
 `googleAdsRecordedChannelType` decodes it and expresses it in Google's own vocabulary —
 `search` and an ABSENT channel both map to `SEARCH` (absence has meant Search since before the
-field existed), `demand-gen` maps to `DEMAND_GEN` and `performance-max` to `PERFORMANCE_MAX`. A campaign recorded as demand-gen and
+field existed), `demand-gen` maps to `DEMAND_GEN`, `performance-max` to `PERFORMANCE_MAX` and `video` to `VIDEO`. A campaign recorded as demand-gen and
 running upstream as `SEARCH` is a real misconfiguration, and passing `nil` for the recorded
 side made it permanently `unknown` — the finding could not be produced at all. The recorded
 side is still nil, and the verdict still `unknown`, where nothing interpretable was recorded:
@@ -792,6 +793,15 @@ be opened for a test. It asserts instead that `channel: "performance-max"` reach
 campaign shell (`PERFORMANCE_MAX`, `maximizeConversions`, no ad group and no ad) and that
 a complete asset group gets past every bound and into the fetch, with each list omitted in
 turn producing that list's own refusal.
+
+`videoCreative` is the same shape a fourth time — a pointer, a mapper that validates nothing,
+the zero `googleads.VideoCreative` for nil — and `googleads_video_wiring_test.go` exercises the
+WHOLE cascade rather than stopping at the shell, because Video fetches nothing: there is no
+image fetch, so there is no dial guard to relax and no reason to stop short. It asserts that
+`channel: "video"` reaches the shell as `VIDEO` **with** `VIDEO_ACTION` — `VIDEO` alone is a
+different product that does not bid toward conversions — that each of the five lists lands in
+its own slot, and that omitting `callToActions` sends no `callToActions` key at all, since on
+this one list absent means Google's default while empty would mean no text.
 
 One thing this layer does decide for itself is the post-create "NO geo targeting" warning,
 which is the operator's only signal that a campaign will spend wherever the ad account
@@ -2600,9 +2610,11 @@ type, so the only evidence is what the platform reports: the lookup selects
 campaign was stored as `default` whatever it was — so adopting a Demand Gen campaign left the
 `demand-gen` slot free and the next Demand Gen dispatch created a SECOND paid campaign for the
 same brief. The mapping fails CLOSED: only the types this service can create are mappable — `SEARCH`,
-`DEMAND_GEN` and, since Performance Max creation landed, `PERFORMANCE_MAX` — while `VIDEO`, an
-unrecognised future value or an absent field are refused rather than defaulted, since defaulting
-is what produces the duplicate. The mappable set is one of the SIX places the channel list is
+`DEMAND_GEN`, `PERFORMANCE_MAX` and, since the Video path landed, `VIDEO` — while `SHOPPING`,
+`HOTEL`, an unrecognised future value or an absent field are refused rather than defaulted, since
+defaulting is what produces the duplicate. `VIDEO` used to be the worked example of a refused type
+and is now one of the mappable ones, which is exactly how this list is meant to move: a type leaves
+the refused set the moment a create path for it lands, and never before. The mappable set is one of the SIX places the channel list is
 duplicated and has to grow together; see `googleAdsChannelIsSupported`, `AdoptableVariants`,
 `googleAdsRecordedChannelType`, the dispatch create switch and the monitor GAQL's
 `advertising_channel_type IN (...)` list.
