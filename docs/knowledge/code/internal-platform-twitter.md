@@ -831,8 +831,14 @@ refused (409) until an operator moves the line item to a manual max bid charged 
   `bid_amount_local_micro` in the OAuth-signed query string (never `bid_strategy`/`pay_by`).
   `idempotent=false`, so a 429 is NOT retried in-call and comes back UNCONFIRMED — no refusal
   from a retry can be reported as "nothing changed". Transport/3xx/5xx and a 2xx echo of another
-  line item or amount are UNCONFIRMED; a definite 400 whose error code names a bid (not the
-  strategy) is a `bidAmountError` with this package's own sentence. The budget write
+  line item or amount are UNCONFIRMED; a definite 400 is an amount refusal (`bidAmountError`,
+  this package's own sentence) ONLY when an error is `INVALID_PARAMETER` with `"parameter":
+  "bid_amount_local_micro"` — the shape the X Ads error reference
+  (<https://docs.x.com/x-ads-api/fundamentals/error-codes-and-responses>) documents. That
+  reference lists no bid-specific code, so there is no code allow-list; a code substring match
+  would also catch `FORBIDDEN` or a bid-unit mismatch. `apiError` now carries an unexported
+  `errorParams` — the envelope's (code, parameter) pairs, bounded like `ErrorCodes` and never
+  rendered by `Error()`. The budget write
   (`UpdateCampaignBudget`) takes the other route — it retries the 429 and marks a later definite
   failure `retriedUnconfirmedError`; the bid write does not retry, so it needs neither.
 

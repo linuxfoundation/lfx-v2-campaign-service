@@ -16,6 +16,7 @@ import (
 
 	goahttp "goa.design/goa/v3/http"
 
+	briefsclient "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/client"
 	briefsserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -421,5 +422,21 @@ func TestUpdateCampaignBidDecoder_AcceptsAnOmittedBidType(t *testing.T) {
 	}
 	if _, err := decode(route(t, `{"bid":2.5,"bid_type":"cpm"}`)); err == nil {
 		t.Error("an unknown bid_type must still be refused by the decoder's Enum")
+	}
+}
+
+// TestBuildUpdateCampaignBidPayload_AcceptsAnOmittedBidType pins the CLIENT half of the PR #264
+// fix. The server decoder above already accepted a body without bid_type; what failed was the
+// generated CLI builder, which — with a Goa Default plus Enum — validated the empty value before
+// applying the default. A body naming only the bid must build, leaving BidType nil for the
+// service to default to cpc.
+func TestBuildUpdateCampaignBidPayload_AcceptsAnOmittedBidType(t *testing.T) {
+	p, err := briefsclient.BuildUpdateCampaignBidPayload(`{"bid":2.5}`, "cncf",
+		"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "token", `"3"`)
+	if err != nil {
+		t.Fatalf("a body without bid_type must build: %v", err)
+	}
+	if p.Bid != 2.5 || p.BidType != nil {
+		t.Errorf("built bid=%v bid_type=%v, want 2.5 and nil", p.Bid, p.BidType)
 	}
 }

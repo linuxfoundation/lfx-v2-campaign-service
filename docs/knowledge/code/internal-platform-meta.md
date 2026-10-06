@@ -463,8 +463,17 @@ An impression-billed cap is a CPM, `CLICKS` billing is any click rather than a l
   strategy, billing or goal). Unlike `UpdateAdSetBudget` the throttle is NOT retried in-call
   (`do(..., retryThrottle=false)`): a 429 or HTTP-400 rate-limit code comes back as itself and is
   UNCONFIRMED, so a refusal from a retry can never be reported as "nothing changed". A definite
-  400 code 100 whose message names the bid is a `bidAmountError` with this package's own sentence
-  (best effort; Meta's bid error is not documented field by field).
+  4xx is an amount refusal (`bidAmountError`, this package's own sentence) ONLY when it is
+  structured as one: `error.error_data.blame_field_specs` names `bid_amount` — the field-blame
+  shape the Marketing API error reference
+  (<https://developers.facebook.com/docs/marketing-api/error-reference>) documents, e.g.
+  `[["daily_budget"]]`; a JSON-encoded-string `error_data` is accepted too. The message is never
+  consulted (free text naming "bid" also matches a `bid_strategy` refusal, and a real floor can
+  carry a generic message), and no subcode is matched because that reference lists no
+  bid-AMOUNT subcode (its one bid subcode, 1885204, is a strategy refusal). To support this,
+  `graphError` now parses `error_subcode` and `error_data`, and `APIError` carries
+  `ErrorSubcode` plus an unexported, bounded `blameFields` (at most 16 specs, depth 8, names of
+  at most 128 bytes) that `Error()` never renders.
 
 ## Campaign status toggle
 

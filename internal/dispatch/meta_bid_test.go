@@ -202,7 +202,11 @@ func TestMeta_WriteBid_WriteOutcomes(t *testing.T) {
 		unconfirmed bool
 		want        error
 	}{
-		{"definite invalid-parameter naming the bid is an amount refusal", http.StatusBadRequest, `{"error":{"message":"Bid amount too low for this ad set","code":100}}`, false, domain.ErrBidAmountRejected},
+		{"blame_field_specs naming bid_amount is an amount refusal", http.StatusBadRequest, `{"error":{"message":"Your bid is too low","code":100,"error_subcode":1234567,"error_data":{"blame_field_specs":[["bid_amount"]]}}}`, false, domain.ErrBidAmountRejected},
+		{"blame_field_specs as a JSON-encoded string", http.StatusBadRequest, `{"error":{"message":"Invalid parameter","code":100,"error_data":"{\"blame_field_specs\":[[\"bid_amount\"]]}"}}`, false, domain.ErrBidAmountRejected},
+		{"blame on another field is not an amount refusal", http.StatusBadRequest, `{"error":{"message":"Invalid bid amount","code":100,"error_data":{"blame_field_specs":[["daily_budget"]]}}}`, false, nil},
+		{"bid_strategy refusal mentioning bid is not an amount refusal", http.StatusBadRequest, `{"error":{"message":"The bid_strategy LOWEST_COST_WITH_BID_CAP cannot be used","code":100}}`, false, nil},
+		{"forbidden message is not an amount refusal", http.StatusBadRequest, `{"error":{"message":"Forbidden: bid change not allowed","code":100}}`, false, nil},
 		{"definite invalid-parameter about something else", http.StatusBadRequest, `{"error":{"message":"Invalid targeting","code":100}}`, false, nil},
 		{"definite 403", http.StatusForbidden, `{"error":{"message":"denied","code":200}}`, false, nil},
 		{"5xx is ambiguous", http.StatusBadGateway, `{}`, true, nil},
@@ -227,7 +231,7 @@ func TestMeta_WriteBid_WriteOutcomes(t *testing.T) {
 			}
 			if tc.want == domain.ErrBidAmountRejected {
 				var r interface{ BidAmountReason() string }
-				if !errors.As(err, &r) || strings.Contains(r.BidAmountReason(), "too low") {
+				if !errors.As(err, &r) || (strings.Contains(r.BidAmountReason(), "too low") || strings.Contains(r.BidAmountReason(), "Invalid parameter")) {
 					t.Errorf("the reason must be this service's sentence, never Meta's text: %v", err)
 				}
 			}

@@ -6,7 +6,9 @@ package meta
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -84,3 +86,28 @@ func TestAdSetBid_CPCBidCap(t *testing.T) {
 }
 
 func bidPtr(v int64) *int64 { return &v }
+
+func TestGraphError_BlameFieldSpecs(t *testing.T) {
+	long := strings.Repeat("x", maxBlameFieldNameSize+1)
+	for _, tc := range []struct {
+		name string
+		data string
+		want [][]string
+	}{
+		{"object", `{"blame_field_specs":[["bid_amount"]]}`, [][]string{{"bid_amount"}}},
+		{"nested path", `{"blame_field_specs":[["targeting_spec","interested_in"],["bid_amount"]]}`, [][]string{{"targeting_spec", "interested_in"}, {"bid_amount"}}},
+		{"json-encoded string", `"{\"blame_field_specs\":[[\"bid_amount\"]]}"`, [][]string{{"bid_amount"}}},
+		{"absent", ``, nil},
+		{"not an object", `[1]`, nil},
+		{"over-long name dropped", `{"blame_field_specs":[["` + long + `"],["bid_amount"]]}`, [][]string{{"bid_amount"}}},
+		{"non-string spec dropped", `{"blame_field_specs":[[1],["bid_amount"]]}`, [][]string{{"bid_amount"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := &graphError{ErrorData: json.RawMessage(tc.data)}
+			got := g.blameFieldSpecs()
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("blameFieldSpecs = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

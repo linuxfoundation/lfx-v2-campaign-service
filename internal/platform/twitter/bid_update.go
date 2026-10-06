@@ -61,7 +61,7 @@ const twitterMaxBid = 1_000_000.0
 var ErrInvalidLineItemID = errors.New("twitter: line item id must be non-empty and contain only letters and digits")
 
 // ErrBidAmountInvalid marks a bid refused because of the AMOUNT — by BidMicros, or by X's
-// definite refusal naming the bid. Read the client-safe sentence with BidAmountReason.
+// definite INVALID_PARAMETER refusal of bid_amount_local_micro. Read the client-safe sentence with BidAmountReason.
 var ErrBidAmountInvalid = errors.New("twitter: bid amount is not acceptable")
 
 // bidAmountError carries ONLY a client-safe sentence: X's own error text is never placed in it.
@@ -213,11 +213,11 @@ func (c *Client) GetLineItemBid(ctx context.Context, lineItemID string) (*LineIt
 // (UpdateCampaignBudget in budget.go takes the other route — it retries the 429 and marks a
 // later definite failure retriedUnconfirmedError; this path does not retry, so needs neither.)
 //
-// A transport failure, 3xx, 5xx or 429 is UNCONFIRMED (IsOutcomeUnconfirmed). A definite 400
-// whose machine-readable error code names a bid (and not the strategy) is returned as a
-// bidAmountError with this service's own sentence — X's text is never surfaced; X does not
-// document its bid error codes field by field, so this is a best-effort match whose miss is
-// still truthful (a definite failure: the line item unchanged). A 2xx echo naming another line
+// A transport failure, 3xx, 5xx or 429 is UNCONFIRMED (IsOutcomeUnconfirmed). A definite 400 is
+// an AMOUNT refusal only when it is STRUCTURED as one — an INVALID_PARAMETER error whose
+// "parameter" is bid_amount_local_micro (bidAmountRefused) — and is then returned as a
+// bidAmountError with this service's own sentence; X's text is never surfaced. Every other
+// definite 4xx stays a definite failure: the line item unchanged. A 2xx echo naming another line
 // item or another amount is UNCONFIRMED.
 func (c *Client) UpdateLineItemBid(ctx context.Context, lineItemID string, micros int64) error {
 	path, lineItemID, err := c.lineItemPath(lineItemID)
@@ -235,7 +235,7 @@ func (c *Client) UpdateLineItemBid(ctx context.Context, lineItemID string, micro
 		false /* a 429 is unconfirmed, never retried: see above */)
 	if err != nil {
 		var ae *apiError
-		if errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest && bidAmountErrorCode(ae.ErrorCodes) {
+		if errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest && bidAmountRefused(ae.errorParams) {
 			return &bidAmountError{msg: "X refused this max CPC bid for the line item; it is outside the range X accepts in the account's currency (a bid may not exceed the campaign's budget)"}
 		}
 		return fmt.Errorf("twitter: update line item %s bid_amount_local_micro to %d: %w", lineItemID, micros, err)
@@ -256,12 +256,15 @@ func (c *Client) UpdateLineItemBid(ctx context.Context, lineItemID string, micro
 	return nil
 }
 
-// bidAmountErrorCode reports whether X's machine-readable error codes name the bid amount — a
-// code containing BID that is not about the bid STRATEGY.
-func bidAmountErrorCode(codes []string) bool {
-	for _, code := range codes {
-		u := strings.ToUpper(code)
-		if strings.Contains(u, "BID") && !strings.Contains(u, "STRATEGY") {
+// bidAmountRefused reports whether X's structured errors name the bid AMOUNT: an
+// INVALID_PARAMETER error (documented with a "parameter" field in the X Ads error reference,
+// https://docs.x.com/x-ads-api/fundamentals/error-codes-and-responses) whose parameter is
+// bid_amount_local_micro. That reference lists no bid-specific error codes, so there is no
+// code allow-list: matching on a code substring would also catch FORBIDDEN or a bid-unit
+// mismatch, neither of which is a statement about the amount.
+func bidAmountRefused(params []xErrorParam) bool {
+	for _, p := range params {
+		if p.Code == "INVALID_PARAMETER" && p.Parameter == "bid_amount_local_micro" {
 			return true
 		}
 	}

@@ -24,5 +24,9 @@ identity checked before any call, a read then guards then one classified mutate,
   code) is UNCONFIRMED (503) and no refusal returned by a retry can be reported as "nothing
   changed". The X budget write (`UpdateCampaignBudget`) instead retries the 429 and marks a
   later definite failure `retriedUnconfirmedError`; the bid write needs neither.
-- Platform refusals of the amount (Meta code 100 naming the bid; an X error code naming a bid)
-  → 400 with this service's own sentence, never upstream text.
+- Platform refusals of the amount are matched STRUCTURALLY, never on free text or a code
+  substring: Meta — a 4xx whose `error_data.blame_field_specs` names `bid_amount` (the Graph
+  envelope now parses `error_subcode` and a bounded `error_data`); X — `INVALID_PARAMETER` with
+  `parameter == bid_amount_local_micro` (the envelope's bounded `parameter` is now parsed). Each →
+  400 with this service's own sentence, never upstream text; any other definite refusal → 503
+  "not modified".

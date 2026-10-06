@@ -228,8 +228,10 @@ var (
 	// ErrBidAmountRejected indicates the requested BID was refused and the platform was NOT
 	// changed: by the adapter's own bounds before the mutate, or by the platform's DEFINITE
 	// refusal of the amount (Microsoft: CampaignServiceBidAmountsLessThanFloorPrice and its
-	// siblings; Reddit, Meta and X: a definite 400 naming the bid). Maps to 400 — a permanent
-	// property of the amount against that platform's rules. Like ErrBudgetAmountRejected, the adapter's own sentence is client-safe and is
+	// siblings; Reddit, Meta and X: a definite refusal STRUCTURED as naming the bid field —
+	// Reddit's error.fields, Meta's error_data.blame_field_specs, X's INVALID_PARAMETER
+	// parameter). Maps to 400 — a permanent property of the amount against that platform's
+	// rules. Like ErrBudgetAmountRejected, the adapter's own sentence is client-safe and is
 	// returned to the caller.
 	ErrBidAmountRejected = errors.New("the requested bid amount was rejected by the platform's rules")
 

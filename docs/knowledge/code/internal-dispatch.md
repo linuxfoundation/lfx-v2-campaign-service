@@ -1313,8 +1313,9 @@ classified. Nothing is written until every guard has passed.
   unknown currency → `ErrBidUnwritable`; under one minor unit or over 1,000,000 →
   `ErrBidAmountRejected`); a missing account selection is `ErrAccountNotSelected` before any
   request. POST outcomes: the throttle is NOT retried in-call, so a 429 or HTTP-400 rate-limit
-  code is UNCONFIRMED; transport/3xx/5xx UNCONFIRMED; a definite 400 code 100 whose message names
-  the bid → `ErrBidAmountRejected` with this service's own sentence; else definite.
+  code is UNCONFIRMED; transport/3xx/5xx UNCONFIRMED; a definite 4xx whose `error_data.blame_field_specs`
+  names `bid_amount` → `ErrBidAmountRejected` with this service's own sentence (the message is
+  never consulted); else definite.
 - **X** (`twitter_bid.go`): writes `bid_amount_local_micro` on the line item recorded in the
   result blob (`twitterChildIDs`). Provenance is stricter than the toggle's: a row recording no
   creating account is refused first. Reads the line item (`GetLineItemBid`, `with_deleted=true`)
@@ -1324,8 +1325,9 @@ classified. Nothing is written until every guard has passed.
   this service creates is `AUTO`**, so this leg refuses them until an operator moves the line
   item to a manual max bid charged per link click. Amount via `twitter.BidMicros` before any call.
   PUT outcomes: the 429 is NOT retried in-call (UNCONFIRMED); transport/3xx/5xx and a 2xx echo of
-  another line item or amount UNCONFIRMED; a definite 400 whose error code names a bid (not the
-  strategy) → `ErrBidAmountRejected`; else definite.
+  another line item or amount UNCONFIRMED; a definite 400 carrying `INVALID_PARAMETER` with
+  `parameter == bid_amount_local_micro` → `ErrBidAmountRejected`; else definite (a code merely
+  containing "BID" is not an amount refusal).
 
 ## Metrics read (optional capability)
 

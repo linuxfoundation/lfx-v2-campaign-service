@@ -224,8 +224,10 @@ func TestTwitter_WriteBid_WriteOutcomes(t *testing.T) {
 		unconfirmed bool
 		want        error
 	}{
-		{"definite 400 naming the bid is an amount refusal", http.StatusBadRequest, `{"errors":[{"code":"INVALID_BID_AMOUNT","message":"too low"}]}`, false, domain.ErrBidAmountRejected},
-		{"definite 400 naming the strategy is not an amount refusal", http.StatusBadRequest, `{"errors":[{"code":"INVALID_BID_STRATEGY"}]}`, false, nil},
+		{"INVALID_PARAMETER on bid_amount_local_micro is an amount refusal", http.StatusBadRequest, `{"errors":[{"code":"INVALID_PARAMETER","parameter":"bid_amount_local_micro","message":"too low"}]}`, false, domain.ErrBidAmountRejected},
+		{"a bid-looking code with no parameter is not an amount refusal", http.StatusBadRequest, `{"errors":[{"code":"INVALID_BID_AMOUNT","message":"too low"}]}`, false, nil},
+		{"a bid-unit code is not an amount refusal", http.StatusBadRequest, `{"errors":[{"code":"INVALID_BID_TYPE"}]}`, false, nil},
+		{"FORBIDDEN is not an amount refusal", http.StatusBadRequest, `{"errors":[{"code":"FORBIDDEN","parameter":"bid_amount_local_micro"}]}`, false, nil},
 		{"definite 400 about something else", http.StatusBadRequest, `{"errors":[{"code":"INVALID_PARAMETER"}]}`, false, nil},
 		{"definite 403", http.StatusForbidden, `{}`, false, nil},
 		{"5xx is ambiguous", http.StatusBadGateway, `{}`, true, nil},

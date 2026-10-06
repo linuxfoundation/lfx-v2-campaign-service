@@ -241,10 +241,14 @@ func (c *Client) GetAdSetBid(ctx context.Context, adSetID string) (*AdSetBid, er
 // changed", because there is no retry to produce one.
 //
 // A transport failure, 3xx, 5xx or throttle is UNCONFIRMED (IsOutcomeUnconfirmed). A definite
-// 400 invalid-parameter refusal whose message names the bid is returned as a bidAmountError
-// carrying this service's own sentence — Meta's text is never surfaced. Meta does not document
-// its bid-floor error field by field, so this match is best effort; a miss is still truthful (a
-// definite failure: the ad set unchanged).
+// 4xx is an AMOUNT refusal only when it is STRUCTURED as one: the envelope's
+// error_data.blame_field_specs names bid_amount as the field at fault (see blameFieldSpecs for
+// the cited shape). That is returned as a bidAmountError carrying this service's own sentence —
+// Meta's text is never surfaced. The message is never consulted: free text mentioning "bid"
+// would also match a bid_strategy refusal, and a real floor can carry a generic message. The
+// Marketing API error reference documents no bid-AMOUNT error_subcode (its one bid subcode,
+// 1885204, is a strategy refusal), so no subcode is matched. Every other definite 4xx — including
+// one whose blame names another field — stays a definite failure: the ad set unchanged.
 func (c *Client) UpdateAdSetBid(ctx context.Context, adSetID string, minor int64) error {
 	adSetID, err := validAdSetID(adSetID)
 	if err != nil {
@@ -256,8 +260,9 @@ func (c *Client) UpdateAdSetBid(ctx context.Context, adSetID string, minor int64
 	body := map[string]any{"bid_amount": minor}
 	if err := c.do(ctx, http.MethodPost, "/"+adSetID, body, nil, false /* a throttle is unconfirmed, never retried: see above */); err != nil {
 		var ae *APIError
-		if errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest && ae.Code == 100 &&
-			!ae.EnvelopeUnreadable && strings.Contains(strings.ToLower(ae.Message), "bid") {
+		if errors.As(err, &ae) && ae.StatusCode >= 400 && ae.StatusCode < 500 &&
+			ae.StatusCode != http.StatusTooManyRequests && !graphRateLimitCodes[ae.Code] &&
+			ae.blamesField("bid_amount") {
 			return &bidAmountError{msg: "Meta refused this max CPC bid for the ad set; it is outside the range Meta accepts in the ad account's currency"}
 		}
 		return fmt.Errorf("meta: update ad set %s bid_amount to %d: %w", adSetID, minor, err)

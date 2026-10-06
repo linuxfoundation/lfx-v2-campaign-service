@@ -6,6 +6,7 @@ package twitter
 import (
 	"errors"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -41,17 +42,34 @@ func TestBidMicros(t *testing.T) {
 	}
 }
 
-func TestBidAmountErrorCode(t *testing.T) {
-	for codes, want := range map[string]bool{
-		"INVALID_BID_AMOUNT":   true,
-		"BID_TOO_LOW":          true,
-		"INVALID_BID_STRATEGY": false,
-		"INVALID_PARAMETER":    false,
-		"":                     false,
+func TestBidAmountRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"INVALID_PARAMETER on bid_amount_local_micro", `{"errors":[{"code":"INVALID_PARAMETER","parameter":"bid_amount_local_micro","message":"too low"}]}`, true},
+		{"INVALID_PARAMETER on another parameter", `{"errors":[{"code":"INVALID_PARAMETER","parameter":"start_time"}]}`, false},
+		{"FORBIDDEN", `{"errors":[{"code":"FORBIDDEN","parameter":"bid_amount_local_micro"}]}`, false},
+		{"a bid-unit code", `{"errors":[{"code":"INVALID_BID_TYPE"}]}`, false},
+		{"a bid-amount-looking code with no parameter", `{"errors":[{"code":"INVALID_BID_AMOUNT"}]}`, false},
+		{"MISSING_PARAMETER on the bid", `{"errors":[{"code":"MISSING_PARAMETER","parameter":"bid_amount_local_micro"}]}`, false},
+		{"not an envelope", `nope`, false},
 	} {
-		if got := bidAmountErrorCode([]string{codes}); got != want {
-			t.Errorf("bidAmountErrorCode(%q) = %v, want %v", codes, got, want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bidAmountRefused(parseErrorParams([]byte(tc.body))); got != tc.want {
+				t.Errorf("bidAmountRefused = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseErrorParams_Bounded(t *testing.T) {
+	long := strings.Repeat("A", maxErrorCodeCodeLength+1)
+	body := `{"errors":[{"code":"` + long + `","parameter":"x"},{"code":"INVALID_PARAMETER","parameter":"` + long + `"},{"code":"INVALID_PARAMETER","parameter":"bid_amount_local_micro"}]}`
+	got := parseErrorParams([]byte(body))
+	if len(got) != 1 || got[0].Parameter != "bid_amount_local_micro" {
+		t.Fatalf("over-long entries must be dropped, got %+v", got)
 	}
 }
 
