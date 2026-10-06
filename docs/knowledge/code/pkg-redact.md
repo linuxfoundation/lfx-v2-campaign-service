@@ -199,11 +199,30 @@ this function, so the value being rejected is the one logged. Such a URI now ren
 elsewhere because they are a URL's diagnostic value, and an opaque URI has neither as far as
 `net/url` is concerned. For the case that motivates it, the scheme *is* the diagnosis.
 
+## Snapshot redaction (`snapshot.go`)
+
+`SnapshotURL` and `SnapshotText` reduce caller-supplied links before they are persisted in
+`campaigns.config_snapshot`, which is stored UNENCRYPTED and indexed. They are a different
+contract from the log-safe entry points above: a snapshot keeps only SCHEME AND HOST of a
+link (the path, query and fragment go, and a run carrying userinfo is dropped whole), and
+`SnapshotText` applies that to every link found inside free text — scheme-ful runs,
+scheme-less runs with a query or fragment, `user:password@host` runs, and scheme-less
+path-only runs, in that order. The rationale for each pass is on the code, and the history in
+[internal/dispatch](internal-dispatch.md).
+
+They moved here unchanged from `internal/dispatch` (which keeps thin wrappers) so that
+`internal/service` — which cannot import `internal/dispatch` without an import cycle — redacts
+the caller config on the update-campaign path — every string value and every object key —
+with the same rules rather than a second copy. `snapshot_test.go` pins a representative set of
+cases here; the exhaustive ones stay in `internal/dispatch/creds_test.go`.
+
 ## Callers
 
 `internal/infrastructure/config` (`Config.String`/`GoString`, for `JWKS_URL` and `NATS_URL`)
 and `internal/infrastructure/auth` (the startup URL validation and every `jwksStatusGuard`
-error and debug line). One implementation in one place is the point: the defect that produced
+error and debug line); `internal/dispatch` (the per-adapter `config_snapshot` scrubbing,
+via `SnapshotURL`/`SnapshotText`) and `internal/service` (`UpdateCampaign`'s generic config
+redaction, via `SnapshotText`). One implementation in one place is the point: the defect that produced
 this package was two formatting sites in different packages disagreeing about what "redacted"
 meant.
 

@@ -1381,8 +1381,14 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	// the existing ConfigSnapshot intact rather than wiping it to NULL on a
 	// name/status-only edit (the GET response doesn't expose config, so a client
 	// can't round-trip it back).
+	//
+	// The caller's config is Goa `Any` and no dispatch adapter sees it on this path, so it
+	// is redacted generically before it reaches the UNENCRYPTED config_snapshot: every
+	// string value has its links reduced exactly as the adapters' create-time scrubbing
+	// does (see redactedConfigSnapshot). The contract is unchanged — any JSON value is
+	// still accepted — only the persisted copy is redacted.
 	if p.Campaign.Config != nil {
-		existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
+		existing.ConfigSnapshot = redactedConfigSnapshot(p.Campaign.Config)
 	}
 	existing.UpdatedBy = attributedActor(ctx, "update campaign")
 	// Gate the final write on the original claimed version. The claim acquired
