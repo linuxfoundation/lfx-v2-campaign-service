@@ -508,7 +508,7 @@ func validateMoney(label string, amount float64, currencyCode string) (money, er
 		return money{}, fmt.Errorf("google-ads %s has an amount but no currency code; Google cannot interpret a bare number", label)
 	}
 	if !currencyCodeRE.MatchString(currency) {
-		return money{}, fmt.Errorf("google-ads %s currency code %q must be a three-letter ISO 4217 code such as USD", label, currencyCode)
+		return money{}, fmt.Errorf("google-ads %s currency code %q must be a three-letter ISO 4217 code such as USD", label, capForError(currency))
 	}
 	if math.IsNaN(amount) || math.IsInf(amount, 0) {
 		return money{}, fmt.Errorf("google-ads %s must be a finite number, got %v", label, amount)
@@ -534,18 +534,18 @@ func validateAssetDateWindow(label, startDate, endDate string) (string, string, 
 	endDate = strings.TrimSpace(endDate)
 	if startDate != "" {
 		if !campaignDateRE.MatchString(startDate) {
-			return "", "", fmt.Errorf("google-ads %s start date %q is not in YYYY-MM-DD format", label, startDate)
+			return "", "", fmt.Errorf("google-ads %s start date %q is not in YYYY-MM-DD format", label, capForError(startDate))
 		}
 		if start, err = time.Parse(campaignDateOnlyLayout, startDate); err != nil {
-			return "", "", fmt.Errorf("google-ads %s start date %q is not a valid calendar date: %w", label, startDate, err)
+			return "", "", fmt.Errorf("google-ads %s start date %q is not a valid calendar date: %w", label, capForError(startDate), err)
 		}
 	}
 	if endDate != "" {
 		if !campaignDateRE.MatchString(endDate) {
-			return "", "", fmt.Errorf("google-ads %s end date %q is not in YYYY-MM-DD format", label, endDate)
+			return "", "", fmt.Errorf("google-ads %s end date %q is not in YYYY-MM-DD format", label, capForError(endDate))
 		}
 		if end, err = time.Parse(campaignDateOnlyLayout, endDate); err != nil {
-			return "", "", fmt.Errorf("google-ads %s end date %q is not a valid calendar date: %w", label, endDate, err)
+			return "", "", fmt.Errorf("google-ads %s end date %q is not a valid calendar date: %w", label, capForError(endDate), err)
 		}
 	}
 	if startDate != "" && endDate != "" && end.Before(start) {

@@ -191,7 +191,10 @@ func validateLeadFormExtensions(in CampaignInput) ([]assetCreate, error) {
 				return nil, fmt.Errorf("google-ads lead form %d field %q is not a field name; Google spells these in upper case with underscores, such as FULL_NAME or EMAIL", i, capForError(raw))
 			}
 			if _, dup := seenField[input]; dup {
-				return nil, fmt.Errorf("google-ads lead form %d asks for %q twice; Google renders one input per field type", i, input)
+				// Capped like every other caller-echoing arm: `enumShapeRE` anchors the
+				// SHAPE, not the length, so a 20k-character run of underscores reaches
+				// here having matched.
+				return nil, fmt.Errorf("google-ads lead form %d asks for %q twice; Google renders one input per field type", i, capForError(input))
 			}
 			seenField[input] = struct{}{}
 			asset.Fields = append(asset.Fields, leadFormField{InputType: input})
