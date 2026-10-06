@@ -227,7 +227,7 @@ type Campaign struct {
 	BudgetAmount       *float64
 	BudgetType         *BudgetType
 	// MaxCPCBid is the manual max cost-per-click bid most recently SET through the
-	// update-campaign-bid endpoint, in the ad account's own currency (migration 000038). Like
+	// update-campaign-bid endpoint, in the ad account's own currency (migration 000039). Like
 	// BudgetAmount it records a REQUEST the platform confirmed, never an observation. nil means
 	// "never set through that endpoint" — NOT "no bid": a bid given at creation lives in the
 	// dispatch config (ConfigSnapshot), and a bid changed in the platform's own UI is not

@@ -753,6 +753,11 @@ type Orchestrator struct {
 	// monitor read refuses rather than running without one.
 	accountReportsMu sync.RWMutex
 	accountReports   domain.AccountReportRepository
+	// keywordReportsMu guards keywordReports, the saved-report store behind the report-backed
+	// keyword read (SetKeywordReportStore), late-bound for the same reason. nil means no store
+	// is wired, and that read refuses rather than running without one.
+	keywordReportsMu sync.RWMutex
+	keywordReports   domain.KeywordReportRepository
 	// indexingDisabled is a CONFIGURATION fact (NATS_URL empty), not an observation of the
 	// publisher — a Noop also appears when the broker is unreachable. See DisableIndexing.
 	indexingDisabled bool

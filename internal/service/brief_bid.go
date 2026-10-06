@@ -29,7 +29,7 @@ const maxCampaignBid = 1_000_000.0
 // of the budget ones. Read that method's comments for the reasoning behind each step; this one
 // states only where the two differ.
 //
-// WHAT IS PERSISTED is the requested bid, onto max_cpc_bid (migration 000038) — the bid
+// WHAT IS PERSISTED is the requested bid, onto max_cpc_bid (migration 000039) — the bid
 // lever's twin of budget_amount, recording a request the platform confirmed, never an
 // observation.
 //

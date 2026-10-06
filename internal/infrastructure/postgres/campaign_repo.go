@@ -623,7 +623,7 @@ const claimCampaignExistsQuery = `SELECT EXISTS (
 const replaceCampaignQuery = `UPDATE campaigns SET
 	campaign_name=$1, status=$2, budget_amount=$3, budget_type=$4, start_date=$5, end_date=$6,
 	config_snapshot=$7, result=$8,
-	-- max_cpc_bid (000038) is written from the loaded row, so every caller that does not
+	-- max_cpc_bid (000039) is written from the loaded row, so every caller that does not
 	-- change the bid writes back exactly what it read. Only update-campaign-bid changes it.
 	max_cpc_bid=$14,
 	-- Same COALESCE reasoning as the upsert's conflict arm: an update whose caller had no

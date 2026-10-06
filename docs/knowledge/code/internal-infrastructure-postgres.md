@@ -188,7 +188,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `uq_campaigns_platform_campaign_live` means `ErrPlatformCampaignAlreadyBound`. Both indexes are in
   `requiredIndexes` until the follow-up release drops the narrower one.
 
-  `max_cpc_bid` (added by `000038`, `NUMERIC(18,6)`, nullable, `CHECK > 0`) records the manual
+  `max_cpc_bid` (added by `000039`, `NUMERIC(18,6)`, nullable, `CHECK > 0`) records the manual
   max CPC bid most recently set through `update-campaign-bid` — a confirmed REQUEST, like
   `budget_amount`, never an observation. It is in `campaignCols`/`scanCampaign` (cast
   `::float8`) and in `replaceCampaignQuery`'s SET list (every other caller writes back the value
@@ -965,6 +965,21 @@ before the column existed records nothing, and the dispatch guard reads that abs
 wrong destination. A foundation with no HubSpot connection of its own now reaches the probe
 on every audience build and email dispatch, which after the fallback change is the ordinary case
 rather than the exception.
+
+**Migration 000038** creates `keyword_insight_reports`, the saved-report store behind the
+report-backed Microsoft keyword read (see
+[Microsoft keyword insights](../architecture/microsoft-keyword-insights.md)). It is 000035's
+mechanism on a SIBLING table rather than a `kind` column on `account_monitor_reports`, because the
+key differs (a reporting WINDOW, not `days` — and `days` is in 000035's PRIMARY KEY with
+`CHECK (days BETWEEN 7 AND 90)`, so adding a kind means replacing a primary key the N-1 binary's
+`ON CONFLICT` names: a contract change, not an expansion), each half records the campaign scope it
+was built for (`ready_campaign_ids` / `pending_campaign_ids`, `TEXT[]`), and the rows are a
+different type. Key (project_id, platform, account_id, report_window), `report_window` CHECKed to
+the seven-value window vocabulary; halves all-or-nothing by CHECK; `ready_rows` a JSON array.
+A new table, so expand-only; no FK and no `requiredIndexes` entry, for 000035's reasons.
+`KeywordReportRepo` is `AccountReportRepo` statement for statement — first mark wins,
+Complete/Fail compare-and-set on `pending_report_id`, Fail never touches the ready half, empty
+rows stored as `[]` — and reuses its window/date/failure-text helpers.
 
 **Migration 000035** creates `account_monitor_reports`, the saved-report store behind the
 report-backed account monitor (Microsoft; see

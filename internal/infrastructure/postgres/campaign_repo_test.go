@@ -84,7 +84,7 @@ func TestCampaignRepo_OnConflictCarriesLivePredicate(t *testing.T) {
 // the earlier. Asserted against the SQL text because this package has no live-database
 // harness in CI.
 // TestReplaceCampaignWritesTheBidColumn pins that the full-row replace carries max_cpc_bid
-// (000038). update-campaign-bid persists through ReplaceCampaign; a SET list without the column
+// (000039). update-campaign-bid persists through ReplaceCampaign; a SET list without the column
 // would answer 200 and a bumped ETag while recording nothing, and every other caller writes back
 // the value it loaded, so including it costs them nothing.
 func TestReplaceCampaignWritesTheBidColumn(t *testing.T) {
@@ -608,7 +608,7 @@ func TestScanCampaign_MapsEachColumnToItsField(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "c1", c.ID)
-	// max_cpc_bid (000038) and budget_amount are both *float64, so a destination swap would
+	// max_cpc_bid (000039) and budget_amount are both *float64, so a destination swap would
 	// scan cleanly; distinct values (1.75 vs 250.5) are what make it visible.
 	require.NotNil(t, c.MaxCPCBid)
 	assert.InDelta(t, 1.75, *c.MaxCPCBid, 0.000001)

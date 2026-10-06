@@ -13,7 +13,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
 )
 
-// TestLiveReplaceCampaignRoundTripsMaxCPCBid pins migration 000038 against the real schema and
+// TestLiveReplaceCampaignRoundTripsMaxCPCBid pins migration 000039 against the real schema and
 // repository: update-campaign-bid persists through ReplaceCampaign, so the column must exist,
 // keep micro precision (NUMERIC(18,6), not budget_amount's two places), read back through
 // scanCampaign, and survive a later replace that carries it unchanged — the path every other

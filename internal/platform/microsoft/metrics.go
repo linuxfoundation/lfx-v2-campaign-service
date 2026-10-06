@@ -333,42 +333,16 @@ func (c *Client) submitReportDefinition(ctx context.Context, scope map[string]an
 				"CampaignId", "Impressions", "Clicks", "Spend", "ConversionsQualified",
 			},
 			"Scope": scope,
-			"Time": map[string]any{
-				// toMSDate/msDate already exist in campaign.go for exactly this: Microsoft
-				// rejects an ISO-8601 string for a date field and requires the
-				// {Month,Day,Year} object.
-				"CustomDateRangeStart": toMSDate(start),
-				"CustomDateRangeEnd":   toMSDate(end),
-				// ReportTimeZone is REQUIRED here even though it looks optional: Microsoft
-				// defaults it to Pacific, so a UTC-computed window would aggregate a
-				// different day than the dates above name. That is a silent off-by-one-day
-				// on every window, rendered as a measurement.
-				//
-				// This value is the CLOSEST to UTC the enum offers; it is not UTC. It maps
-				// to Europe/London, which observes British Summer Time, so from late March
-				// to late October it is UTC+1 and the report day boundary sits one hour
-				// before ours. reportDateRange computes calendar dates in UTC and toMSDate
-				// sends bare Y/M/D, so during BST the window Microsoft aggregates is shifted
-				// one hour earlier than the window this service names.
-				//
-				// No fixed-offset UTC value exists to use instead. The published
-				// ReportTimeZone value set has 75 entries and contains no "UTC",
-				// "Coordinated Universal Time" or Reykjavik member; the only other UTC+0
-				// entry, CasablancaMonrovia, maps to Africa/Casablanca, which observes its
-				// own offset changes and is therefore strictly worse. So this is the best
-				// available approximation, chosen knowingly, and NOT a UTC guarantee.
-				//
-				// The residual error is bounded at one hour at a day boundary, which can
-				// move a click or an impression between two adjacent days. It cannot lose
-				// one: the range is aggregated as a whole, so a shift moves the edge of the
-				// window, it does not drop anything inside it. Totals over a multi-day
-				// window are affected only at the two ends. If per-day exactness is ever
-				// required, the fix is not another enum value — it is to convert the window
-				// to Europe/London before calling toMSDate.
-				"ReportTimeZone": "GreenwichMeanTimeDublinEdinburghLisbonLondon",
-			},
+			"Time":  reportTime(start, end),
 		},
 	}
+	return c.submitReportRequest(ctx, body)
+}
+
+// submitReportRequest posts a fully built ReportRequest body to GenerateReport/Submit and
+// returns its ReportRequestId. Shared by every report type this client submits, so the
+// retry policy and the fail-closed id decode below are written once.
+func (c *Client) submitReportRequest(ctx context.Context, body map[string]any) (string, error) {
 	// Submit is a POST that CREATES a report request, but it is safe to retry: a duplicate
 	// submission costs an extra report build and returns a fresh id, it does not mutate
 	// anything the caller can observe. idempotent=true buys the shared 429 policy.
@@ -390,6 +364,46 @@ func (c *Client) submitReportDefinition(ctx context.Context, scope map[string]an
 		return "", fmt.Errorf("microsoft report submit returned no ReportRequestId")
 	}
 	return *resp.ReportRequestID, nil
+}
+
+// reportTime is the ReportTime object every report request here sends: an explicit UTC-computed
+// date range and the fixed ReportTimeZone reasoned below. Shared by the campaign, account and
+// keyword reports so none of them can drift onto a different day boundary.
+func reportTime(start, end time.Time) map[string]any {
+	return map[string]any{
+		// toMSDate/msDate already exist in campaign.go for exactly this: Microsoft
+		// rejects an ISO-8601 string for a date field and requires the
+		// {Month,Day,Year} object.
+		"CustomDateRangeStart": toMSDate(start),
+		"CustomDateRangeEnd":   toMSDate(end),
+		// ReportTimeZone is REQUIRED here even though it looks optional: Microsoft
+		// defaults it to Pacific, so a UTC-computed window would aggregate a
+		// different day than the dates above name. That is a silent off-by-one-day
+		// on every window, rendered as a measurement.
+		//
+		// This value is the CLOSEST to UTC the enum offers; it is not UTC. It maps
+		// to Europe/London, which observes British Summer Time, so from late March
+		// to late October it is UTC+1 and the report day boundary sits one hour
+		// before ours. reportDateRange computes calendar dates in UTC and toMSDate
+		// sends bare Y/M/D, so during BST the window Microsoft aggregates is shifted
+		// one hour earlier than the window this service names.
+		//
+		// No fixed-offset UTC value exists to use instead. The published
+		// ReportTimeZone value set has 75 entries and contains no "UTC",
+		// "Coordinated Universal Time" or Reykjavik member; the only other UTC+0
+		// entry, CasablancaMonrovia, maps to Africa/Casablanca, which observes its
+		// own offset changes and is therefore strictly worse. So this is the best
+		// available approximation, chosen knowingly, and NOT a UTC guarantee.
+		//
+		// The residual error is bounded at one hour at a day boundary, which can
+		// move a click or an impression between two adjacent days. It cannot lose
+		// one: the range is aggregated as a whole, so a shift moves the edge of the
+		// window, it does not drop anything inside it. Totals over a multi-day
+		// window are affected only at the two ends. If per-day exactness is ever
+		// required, the fix is not another enum value — it is to convert the window
+		// to Europe/London before calling toMSDate.
+		"ReportTimeZone": "GreenwichMeanTimeDublinEdinburghLisbonLondon",
+	}
 }
 
 // pollReport polls until the report succeeds, fails, or the budget expires. It returns the

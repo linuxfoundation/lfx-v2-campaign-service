@@ -1573,7 +1573,7 @@ What differs:
   and an OPTIONAL `bid_type` (enum `cpc`, default `cpc`; an empty value from a direct caller takes
   the default). One unit exists today; it is named so an ad group bidding in another unit is
   refused rather than re-bid in a unit nobody asked for.
-- **Persisted to `max_cpc_bid`** (migration `000038`, `model.Campaign.MaxCPCBid`), the bid
+- **Persisted to `max_cpc_bid`** (migration `000039`, `model.Campaign.MaxCPCBid`), the bid
   lever's twin of `budget_amount`: a REQUEST the platform confirmed, never an observation. NULL
   means "never set through this endpoint", not "no bid" — a create-time bid lives in
   `config_snapshot` under each platform's own key, which this layer deliberately does not patch.
@@ -1851,3 +1851,33 @@ own `operation: "account monitor"` descriptor (`microsoftAdsMonitorDiscovery`,
 `twitterAdsMonitorDiscovery`). No new upstream-call operation tokens: X's three calls record as
 `list_account_campaigns` / `submit_account_report` / `check_account_report` like Microsoft's. See
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md#microsoft-a-report-backed-monitor).
+
+## Report-backed keyword read (`keyword_report.go`, LFXV2-2665)
+
+`KeywordReportReader` is `AccountReportReader`'s counterpart for the project-scoped keyword read
+(Microsoft today): `KeywordReportAccount` (every trust-boundary refusal, no upstream call),
+`SubmitKeywordReport`, `CheckKeywordReport`. `Orchestrator.ReadReportedKeywordPerformance`
+resolves the project's campaign scope from the database (empty → empty result, no dispatcher or
+store call, like `ReadKeywordPerformance`), asks the dispatcher for the bound account, and then
+runs `ReadReportedAccountCampaigns`' sequence over `domain.KeywordReportRepository`
+(`keyword_insight_reports`, keyed by project, platform, account and WINDOW): check a pending
+report once, submit when nothing is building and the last finished report is missing, older than
+`accountReportFreshFor`, or does NOT cover every campaign the project now owns; same
+`accountsCallTimeout`, same detached `accountReportMarkTimeout` for the mark, same abandon rule.
+A permanent refusal at submission (`isPermanentKeywordRefusal`: too-large or invalid scope,
+unsupported window, account mismatch, service defect) fails the read; anything else is logged. `mergeKeywordReport` serves the ready report ONLY if it covers the current scope (the
+response has no partial-coverage field), confined to the scope's campaigns, impressions-descending,
+capped at `keywordReportRowCap` (50, Google's cap) with `Truncated`; cost is `Spend`×10⁶, `Ctr` a
+fraction as on the Google read, and a nil conversion count publishes 0 with
+`ConversionsComplete=false`. New upstream tokens `submit_keyword_report` / `check_keyword_report`.
+`SetKeywordReportStore` is wired through `Container.newOrchestrator`'s new parameter.
+
+`ConnectionService.GetMicrosoftAdsKeywords` (`connection_keyword_report.go`) maps the read onto
+the Google row type plus `metrics_as_of`, `metrics_pending` and `conversions_complete`; it refuses
+the reserved system scope and windows outside `today|last_7_days|last_30_days|this_month|last_month`
+with 400 (`resolveMicrosoftKeywordWindow`, whose message is built from `microsoftKeywordWindows`
+— not `resolveInsightsWindow`, whose message lists all seven), publishes `data_incomplete` from
+the report's Partial flag, and classifies through `classifyInsightsErrorFor` with its own descriptor — the
+Google path's `classifyInsightsError` now delegates to it unchanged, and the one new arm
+(`ErrKeywordReportScopeTooLarge` / `ErrKeywordReportScopeInvalid` → 409) are unreachable from Google. See
+[Microsoft keyword insights](../architecture/microsoft-keyword-insights.md).

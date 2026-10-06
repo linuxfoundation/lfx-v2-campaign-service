@@ -247,7 +247,7 @@ func BuildPreviewAudienceCountPayload(lfxV2CampaignServiceAudienceBuilderPreview
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ids\": [\n         \"Dolorem similique sapiente.\",\n         \"Ea pariatur.\",\n         \"Aut rem molestiae assumenda ea.\"\n      ]\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ids\": [\n         \"Assumenda ea incidunt nam.\",\n         \"Sequi sed qui dolor.\",\n         \"Facere ut voluptatem.\"\n      ]\n   }'")
 		}
 		if body.ListIds == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("list_ids", "body"))
@@ -296,7 +296,7 @@ func BuildComposeAudienceMasterPayload(lfxV2CampaignServiceAudienceBuilderCompos
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Numquam et natus possimus cupiditate provident molestiae.\",\n         \"brief_id\": \"f539cf42-2bc2-4eb9-93c4-4b8891cac146\",\n         \"event_dates\": [\n            \"Eum non ut itaque.\",\n            \"Unde adipisci aut quisquam.\",\n            \"Amet itaque aut.\",\n            \"Eos ex laborum et doloremque.\"\n         ],\n         \"event_name\": \"Neque atque delectus.\",\n         \"exclude_list_ids\": [\n            \"Saepe aut perferendis placeat earum.\",\n            \"Et aperiam.\",\n            \"Magni omnis dolorem earum assumenda.\"\n         ],\n         \"inclusion_summary\": \"Vel quae totam.\",\n         \"list_ids\": [\n            \"Perspiciatis nobis rerum maiores in alias.\"\n         ],\n         \"name\": \"Possimus aut ipsa enim quae et perspiciatis.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Molestiae quia neque atque delectus.\",\n         \"brief_id\": \"e76a3815-95bb-4785-9bdf-ab0b2dde4754\",\n         \"event_dates\": [\n            \"Itaque voluptatem unde adipisci.\",\n            \"Quisquam quod amet itaque aut praesentium eos.\"\n         ],\n         \"event_name\": \"Repudiandae eum.\",\n         \"exclude_list_ids\": [\n            \"Aperiam eaque magni omnis dolorem earum.\",\n            \"Quam possimus aut ipsa.\",\n            \"Quae et perspiciatis numquam.\"\n         ],\n         \"inclusion_summary\": \"Dicta consequuntur.\",\n         \"list_ids\": [\n            \"Placeat earum.\"\n         ],\n         \"name\": \"Et natus possimus cupiditate.\"\n      }\n   }'")
 		}
 		if body.Compose == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("compose", "body"))
@@ -339,7 +339,7 @@ func BuildAttachExistingAudiencePayload(lfxV2CampaignServiceAudienceBuilderAttac
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"attach\": {\n         \"brief_id\": \"c2618438-5d7a-4fa4-b236-f40474ef9a91\",\n         \"inclusion_summary\": \"Voluptas qui voluptas veniam sint voluptas.\",\n         \"master_list_id\": \"2l\",\n         \"suppression_list_ids\": [\n            \"Dolor molestiae quia voluptatem deserunt libero.\",\n            \"Eveniet aliquid quia aut impedit a veritatis.\",\n            \"Consequuntur sed ea sunt debitis.\"\n         ]\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"attach\": {\n         \"brief_id\": \"eb0addc7-5d7a-4fa4-b236-f40474ef9a91\",\n         \"inclusion_summary\": \"Voluptas qui voluptas veniam sint voluptas.\",\n         \"master_list_id\": \"2l\",\n         \"suppression_list_ids\": [\n            \"Dolor molestiae quia voluptatem deserunt libero.\",\n            \"Eveniet aliquid quia aut impedit a veritatis.\",\n            \"Consequuntur sed ea sunt debitis.\"\n         ]\n      }\n   }'")
 		}
 		if body.Attach == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("attach", "body"))

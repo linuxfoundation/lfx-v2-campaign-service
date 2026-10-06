@@ -261,6 +261,39 @@ func (d upstreamCapableDispatcher) SubmitAccountReport(context.Context, string, 
 	return &model.AccountReportSubmission{ReportID: "r1"}, nil
 }
 
+// upstreamKeywordReader is upstreamReportReader for the report-backed keyword read.
+func upstreamKeywordReader(o *Orchestrator, p model.Provider) KeywordReportReader {
+	r, ok := o.dispatchers[p].(KeywordReportReader)
+	if !ok {
+		panic("upstreamCapableDispatcher must implement KeywordReportReader")
+	}
+	return r
+}
+
+func keywordReportKey(p model.Provider) model.KeywordReportKey {
+	return model.KeywordReportKey{ProjectID: "p1", Platform: p, AccountID: "acct-1", Window: model.MetricsWindowLast30Days}
+}
+
+// KeywordReportAccount makes no upstream call, so it never fails here: the keyword cases
+// below drive submit and check directly.
+func (d upstreamCapableDispatcher) KeywordReportAccount(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (string, error) {
+	return "acct-1", nil
+}
+
+func (d upstreamCapableDispatcher) SubmitKeywordReport(context.Context, string, model.Provider, string, model.MetricsWindow, []model.ProjectCampaignScope) (*model.KeywordReportSubmission, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.KeywordReportSubmission{ReportID: "k1", CampaignIDs: []string{"555"}}, nil
+}
+
+func (d upstreamCapableDispatcher) CheckKeywordReport(context.Context, string, model.Provider, string, string) (*model.KeywordReportCheck, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.KeywordReportCheck{Status: model.AccountReportPending}, nil
+}
+
 func (d upstreamCapableDispatcher) CheckAccountReport(context.Context, string, model.Provider, string, string) (*model.AccountReportCheck, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -550,6 +583,24 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opSubmitAccountReport,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.submitAccountReport(ctx, ctx, upstreamReportReader(o, platform), reportKey(platform))
+				return err
+			},
+		},
+		// The report-backed keyword read's two upstream calls, driven directly for the same
+		// one-call-per-case reason as the account report's (TestReadKeywords_* covers sequencing).
+		{
+			name: "check keyword report",
+			op:   opCheckKeywordReport,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.checkKeywordReport(ctx, ctx, upstreamKeywordReader(o, platform), keywordReportKey(platform), "k1")
+				return err
+			},
+		},
+		{
+			name: "submit keyword report",
+			op:   opSubmitKeywordReport,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.submitKeywordReport(ctx, ctx, upstreamKeywordReader(o, platform), keywordReportKey(platform), []model.ProjectCampaignScope{{PlatformCampaignID: "555"}})
 				return err
 			},
 		},

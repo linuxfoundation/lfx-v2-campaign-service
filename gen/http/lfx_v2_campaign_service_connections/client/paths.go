@@ -236,6 +236,11 @@ func GetGoogleAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string) s
 	return fmt.Sprintf("/projects/%v/google-ads/audience", projectID)
 }
 
+// GetMicrosoftAdsKeywordsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-microsoft-ads-keywords HTTP endpoint.
+func GetMicrosoftAdsKeywordsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/microsoft-ads/keywords", projectID)
+}
+
 // ResolveGoogleAdsCampaignLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service resolve-google-ads-campaign HTTP endpoint.
 func ResolveGoogleAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/google-ads/campaign-ref", projectID)

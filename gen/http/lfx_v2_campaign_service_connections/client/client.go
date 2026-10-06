@@ -198,6 +198,10 @@ type Client struct {
 	// get-google-ads-audience endpoint.
 	GetGoogleAdsAudienceDoer goahttp.Doer
 
+	// GetMicrosoftAdsKeywords Doer is the HTTP client used to make requests to the
+	// get-microsoft-ads-keywords endpoint.
+	GetMicrosoftAdsKeywordsDoer goahttp.Doer
+
 	// ResolveGoogleAdsCampaign Doer is the HTTP client used to make requests to
 	// the resolve-google-ads-campaign endpoint.
 	ResolveGoogleAdsCampaignDoer goahttp.Doer
@@ -320,6 +324,7 @@ func NewClient(
 		ListGoogleAdsAccountsDoer:      doer,
 		GetGoogleAdsKeywordsDoer:       doer,
 		GetGoogleAdsAudienceDoer:       doer,
+		GetMicrosoftAdsKeywordsDoer:    doer,
 		ResolveGoogleAdsCampaignDoer:   doer,
 		ListMetaAdsAccountsDoer:        doer,
 		ListLinkedinAdsAccountsDoer:    doer,
@@ -1420,6 +1425,31 @@ func (c *Client) GetGoogleAdsAudience() goa.Endpoint {
 		resp, err := c.GetGoogleAdsAudienceDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-google-ads-audience", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetMicrosoftAdsKeywords returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
+// server.
+func (c *Client) GetMicrosoftAdsKeywords() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetMicrosoftAdsKeywordsRequest(c.encoder)
+		decodeResponse = DecodeGetMicrosoftAdsKeywordsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetMicrosoftAdsKeywordsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetMicrosoftAdsKeywordsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
 		}
 		return decodeResponse(resp)
 	}
