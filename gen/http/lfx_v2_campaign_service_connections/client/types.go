@@ -878,9 +878,26 @@ type ResolveGoogleAdsCampaignResponseBody struct {
 	// The upstream id that was resolved, echoed back.
 	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
 	// Every live campaign this project holds for that upstream id. Empty when the
-	// project owns none. A unique index makes more than one impossible in a valid
-	// database; the array shape exists so that case is refusable rather than
-	// silently resolved.
+	// project owns none. For Google Ads a unique index makes more than one
+	// impossible in a valid database; Microsoft Advertising ids are minted per ad
+	// account and no index makes them single. Either way, more than one match must
+	// be refused rather than silently resolved.
+	Matches []*CampaignRefResponseBody `form:"matches,omitempty" json:"matches,omitempty" xml:"matches,omitempty"`
+	// How many matches were found.
+	MatchCount *int `form:"match_count,omitempty" json:"match_count,omitempty" xml:"match_count,omitempty"`
+}
+
+// ResolveMicrosoftAdsCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-microsoft-ads-campaign" endpoint HTTP response body.
+type ResolveMicrosoftAdsCampaignResponseBody struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none. For Google Ads a unique index makes more than one
+	// impossible in a valid database; Microsoft Advertising ids are minted per ad
+	// account and no index makes them single. Either way, more than one match must
+	// be refused rather than silently resolved.
 	Matches []*CampaignRefResponseBody `form:"matches,omitempty" json:"matches,omitempty" xml:"matches,omitempty"`
 	// How many matches were found.
 	MatchCount *int `form:"match_count,omitempty" json:"match_count,omitempty" xml:"match_count,omitempty"`
@@ -4260,6 +4277,72 @@ type ResolveGoogleAdsCampaignPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body for the "Unauthorized" error.
 type ResolveGoogleAdsCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveMicrosoftAdsCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-microsoft-ads-campaign" endpoint HTTP response body for the
+// "BadRequest" error.
+type ResolveMicrosoftAdsCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveMicrosoftAdsCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-microsoft-ads-campaign" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ResolveMicrosoftAdsCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveMicrosoftAdsCampaignInternalServerErrorResponseBody is the type of
+// the "lfx-v2-campaign-service-connections" service
+// "resolve-microsoft-ads-campaign" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ResolveMicrosoftAdsCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveMicrosoftAdsCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-microsoft-ads-campaign" endpoint HTTP response body for the
+// "NotFound" error.
+type ResolveMicrosoftAdsCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveMicrosoftAdsCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-microsoft-ads-campaign" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ResolveMicrosoftAdsCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveMicrosoftAdsCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-microsoft-ads-campaign" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ResolveMicrosoftAdsCampaignUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -9854,6 +9937,99 @@ func NewResolveGoogleAdsCampaignUnauthorized(body *ResolveGoogleAdsCampaignUnaut
 	return v
 }
 
+// NewResolveMicrosoftAdsCampaignPlatformCampaignResolutionOK builds a
+// "lfx-v2-campaign-service-connections" service
+// "resolve-microsoft-ads-campaign" endpoint result from a HTTP "OK" response.
+func NewResolveMicrosoftAdsCampaignPlatformCampaignResolutionOK(body *ResolveMicrosoftAdsCampaignResponseBody) *lfxv2campaignserviceconnections.PlatformCampaignResolution {
+	v := &lfxv2campaignserviceconnections.PlatformCampaignResolution{
+		PlatformCampaignID: *body.PlatformCampaignID,
+		MatchCount:         *body.MatchCount,
+	}
+	v.Matches = make([]*lfxv2campaignserviceconnections.CampaignRef, len(body.Matches))
+	for i, val := range body.Matches {
+		if val == nil {
+			v.Matches[i] = nil
+			continue
+		}
+		v.Matches[i] = unmarshalCampaignRefResponseBodyToLfxv2campaignserviceconnectionsCampaignRef(val)
+	}
+
+	return v
+}
+
+// NewResolveMicrosoftAdsCampaignBadRequest builds a
+// lfx-v2-campaign-service-connections service resolve-microsoft-ads-campaign
+// endpoint BadRequest error.
+func NewResolveMicrosoftAdsCampaignBadRequest(body *ResolveMicrosoftAdsCampaignBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveMicrosoftAdsCampaignServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service resolve-microsoft-ads-campaign
+// endpoint ServiceUnavailable error.
+func NewResolveMicrosoftAdsCampaignServiceUnavailable(body *ResolveMicrosoftAdsCampaignServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveMicrosoftAdsCampaignInternalServerError builds a
+// lfx-v2-campaign-service-connections service resolve-microsoft-ads-campaign
+// endpoint InternalServerError error.
+func NewResolveMicrosoftAdsCampaignInternalServerError(body *ResolveMicrosoftAdsCampaignInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveMicrosoftAdsCampaignNotFound builds a
+// lfx-v2-campaign-service-connections service resolve-microsoft-ads-campaign
+// endpoint NotFound error.
+func NewResolveMicrosoftAdsCampaignNotFound(body *ResolveMicrosoftAdsCampaignNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveMicrosoftAdsCampaignPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service resolve-microsoft-ads-campaign
+// endpoint PayloadTooLarge error.
+func NewResolveMicrosoftAdsCampaignPayloadTooLarge(body *ResolveMicrosoftAdsCampaignPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveMicrosoftAdsCampaignUnauthorized builds a
+// lfx-v2-campaign-service-connections service resolve-microsoft-ads-campaign
+// endpoint Unauthorized error.
+func NewResolveMicrosoftAdsCampaignUnauthorized(body *ResolveMicrosoftAdsCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListMetaAdsAccountsResultOK builds a
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint result from a HTTP "OK" response.
@@ -11918,6 +12094,28 @@ func ValidateGetMicrosoftAdsKeywordsResponseBody(body *GetMicrosoftAdsKeywordsRe
 // ValidateResolveGoogleAdsCampaignResponseBody runs the validations defined on
 // Resolve-Google-Ads-CampaignResponseBody
 func ValidateResolveGoogleAdsCampaignResponseBody(body *ResolveGoogleAdsCampaignResponseBody) (err error) {
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.Matches == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("matches", "body"))
+	}
+	if body.MatchCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("match_count", "body"))
+	}
+	for _, e := range body.Matches {
+		if e != nil {
+			if err2 := ValidateCampaignRefResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateResolveMicrosoftAdsCampaignResponseBody runs the validations defined
+// on Resolve-Microsoft-Ads-CampaignResponseBody
+func ValidateResolveMicrosoftAdsCampaignResponseBody(body *ResolveMicrosoftAdsCampaignResponseBody) (err error) {
 	if body.PlatformCampaignID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
 	}
@@ -16004,6 +16202,83 @@ func ValidateResolveGoogleAdsCampaignPayloadTooLargeResponseBody(body *ResolveGo
 // ValidateResolveGoogleAdsCampaignUnauthorizedResponseBody runs the
 // validations defined on resolve-google-ads-campaign_Unauthorized_response_body
 func ValidateResolveGoogleAdsCampaignUnauthorizedResponseBody(body *ResolveGoogleAdsCampaignUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveMicrosoftAdsCampaignBadRequestResponseBody runs the
+// validations defined on
+// resolve-microsoft-ads-campaign_BadRequest_response_body
+func ValidateResolveMicrosoftAdsCampaignBadRequestResponseBody(body *ResolveMicrosoftAdsCampaignBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveMicrosoftAdsCampaignServiceUnavailableResponseBody runs the
+// validations defined on
+// resolve-microsoft-ads-campaign_ServiceUnavailable_response_body
+func ValidateResolveMicrosoftAdsCampaignServiceUnavailableResponseBody(body *ResolveMicrosoftAdsCampaignServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveMicrosoftAdsCampaignInternalServerErrorResponseBody runs the
+// validations defined on
+// resolve-microsoft-ads-campaign_InternalServerError_response_body
+func ValidateResolveMicrosoftAdsCampaignInternalServerErrorResponseBody(body *ResolveMicrosoftAdsCampaignInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveMicrosoftAdsCampaignNotFoundResponseBody runs the validations
+// defined on resolve-microsoft-ads-campaign_NotFound_response_body
+func ValidateResolveMicrosoftAdsCampaignNotFoundResponseBody(body *ResolveMicrosoftAdsCampaignNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveMicrosoftAdsCampaignPayloadTooLargeResponseBody runs the
+// validations defined on
+// resolve-microsoft-ads-campaign_PayloadTooLarge_response_body
+func ValidateResolveMicrosoftAdsCampaignPayloadTooLargeResponseBody(body *ResolveMicrosoftAdsCampaignPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveMicrosoftAdsCampaignUnauthorizedResponseBody runs the
+// validations defined on
+// resolve-microsoft-ads-campaign_Unauthorized_response_body
+func ValidateResolveMicrosoftAdsCampaignUnauthorizedResponseBody(body *ResolveMicrosoftAdsCampaignUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

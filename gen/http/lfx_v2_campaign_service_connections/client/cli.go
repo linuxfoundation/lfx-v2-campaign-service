@@ -1599,6 +1599,40 @@ func BuildResolveGoogleAdsCampaignPayload(lfxV2CampaignServiceConnectionsResolve
 	return v, nil
 }
 
+// BuildResolveMicrosoftAdsCampaignPayload builds the payload for the
+// lfx-v2-campaign-service-connections resolve-microsoft-ads-campaign endpoint
+// from CLI flags.
+func BuildResolveMicrosoftAdsCampaignPayload(lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignProjectID string, lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignPlatformCampaignID string, lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignBearerToken string) (*lfxv2campaignserviceconnections.ResolveMicrosoftAdsCampaignPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignProjectID
+	}
+	var platformCampaignID string
+	{
+		platformCampaignID = lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignPlatformCampaignID
+		err = goa.MergeErrors(err, goa.ValidatePattern("platform_campaign_id", platformCampaignID, "^[1-9][0-9]{0,18}$"))
+		if utf8.RuneCountInString(platformCampaignID) > 19 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("platform_campaign_id", platformCampaignID, utf8.RuneCountInString(platformCampaignID), 19, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ResolveMicrosoftAdsCampaignPayload{}
+	v.ProjectID = projectID
+	v.PlatformCampaignID = platformCampaignID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildListMetaAdsAccountsPayload builds the payload for the
 // lfx-v2-campaign-service-connections list-meta-ads-accounts endpoint from CLI
 // flags.

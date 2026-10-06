@@ -32,9 +32,9 @@ func TestGoogleAdsCampaignIDRejectsNonCanonicalIDs(t *testing.T) {
 	}
 	for _, tc := range rejected {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateGoogleAdsCampaignID(tc.id)
+			err := validatePlatformCampaignID(tc.id)
 			if err == nil {
-				t.Fatalf("validateGoogleAdsCampaignID(%q) = nil; want a 400. This id reaches SQL and "+
+				t.Fatalf("validatePlatformCampaignID(%q) = nil; want a 400. This id reaches SQL and "+
 					"returns a misleading 200 'unowned' answer instead of the declared 400.", tc.id)
 			}
 			// Read Message, not Error(): Goa's generated BadRequestError.Error() returns the
@@ -42,13 +42,13 @@ func TestGoogleAdsCampaignIDRejectsNonCanonicalIDs(t *testing.T) {
 			// all — including none.
 			bad, ok := err.(*conn.BadRequestError)
 			if !ok {
-				t.Fatalf("validateGoogleAdsCampaignID(%q) returned %T; want *conn.BadRequestError", tc.id, err)
+				t.Fatalf("validatePlatformCampaignID(%q) returned %T; want *conn.BadRequestError", tc.id, err)
 			}
 			if bad.Code != "400" {
 				t.Errorf("code = %q; want 400", bad.Code)
 			}
 			if !strings.Contains(bad.Message, "leading zero") {
-				t.Errorf("validateGoogleAdsCampaignID(%q) message = %q; want it to name the constraint", tc.id, bad.Message)
+				t.Errorf("validatePlatformCampaignID(%q) message = %q; want it to name the constraint", tc.id, bad.Message)
 			}
 		})
 	}
@@ -67,8 +67,8 @@ func TestGoogleAdsCampaignIDAcceptsRealIDs(t *testing.T) {
 	}
 	for _, tc := range accepted {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := validateGoogleAdsCampaignID(tc.id); err != nil {
-				t.Fatalf("validateGoogleAdsCampaignID(%q) = %v; want nil", tc.id, err)
+			if err := validatePlatformCampaignID(tc.id); err != nil {
+				t.Fatalf("validatePlatformCampaignID(%q) = %v; want nil", tc.id, err)
 			}
 		})
 	}

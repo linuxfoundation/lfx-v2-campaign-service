@@ -679,10 +679,16 @@ var CampaignRef = Type("campaign-ref", func() {
 
 // PlatformCampaignResolution answers "which of my campaigns is this platform id?".
 //
-// `matches` is an ARRAY, but a valid database can never return more than one entry: migration
-// 000020's uq_campaigns_platform_campaign_live is a UNIQUE index on
+// For GOOGLE ADS, `matches` is an ARRAY, but a valid database can never return more than one
+// entry: migration 000020's uq_campaigns_platform_campaign_live is a UNIQUE index on
 // (platform, platform_campaign_id) over every live Google Ads row, and it is global rather than
 // per-project, so scoping to a project can only narrow one row to zero or one.
+//
+// For MICROSOFT ADVERTISING (resolve-microsoft-ads-campaign) no index makes it single: 000020's
+// WHERE clause deliberately excludes Microsoft, whose campaign ids are minted per ad account, so
+// one project whose connection was re-pointed between accounts can hold two live rows for the
+// same id. There the array is not defensive but load-bearing, and a caller must refuse more than
+// one match.
 //
 // It stays an array rather than an optional single ref because the shape should not encode an
 // invariant it cannot enforce. If that index were ever dropped or its predicate narrowed, a
@@ -699,7 +705,7 @@ var PlatformCampaignResolution = Type("platform-campaign-resolution", func() {
 	// Goa's synthesised array example repeats the element type's example twice, which shows a
 	// duplicate for an id a unique index makes single — wrong in the per-property schema even
 	// though the composite example is right.
-	Attribute("matches", ArrayOf(CampaignRef), "Every live campaign this project holds for that upstream id. Empty when the project owns none. A unique index makes more than one impossible in a valid database; the array shape exists so that case is refusable rather than silently resolved.", func() {
+	Attribute("matches", ArrayOf(CampaignRef), "Every live campaign this project holds for that upstream id. Empty when the project owns none. For Google Ads a unique index makes more than one impossible in a valid database; Microsoft Advertising ids are minted per ad account and no index makes them single. Either way, more than one match must be refused rather than silently resolved.", func() {
 		Example([]map[string]any{
 			{
 				"campaign_id": "6f9619ff-8b86-d011-b42d-00c04fc964ff",

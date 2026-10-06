@@ -7051,7 +7051,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError102'
+                                $ref: '#/components/schemas/UnauthorizedError103'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -7912,7 +7912,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError100'
+                                $ref: '#/components/schemas/UnauthorizedError101'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8012,7 +8012,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError101'
+                                $ref: '#/components/schemas/UnauthorizedError102'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8116,7 +8116,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError99'
+                                $ref: '#/components/schemas/UnauthorizedError100'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8945,7 +8945,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError103'
+                                $ref: '#/components/schemas/UnauthorizedError104'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -9039,7 +9039,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError96'
+                                $ref: '#/components/schemas/UnauthorizedError97'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -9874,7 +9874,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError104'
+                                $ref: '#/components/schemas/UnauthorizedError105'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -9968,7 +9968,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError95'
+                                $ref: '#/components/schemas/UnauthorizedError96'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -10826,7 +10826,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError106'
+                                $ref: '#/components/schemas/UnauthorizedError107'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -10920,7 +10920,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError97'
+                                $ref: '#/components/schemas/UnauthorizedError98'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -11733,7 +11733,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError105'
+                                $ref: '#/components/schemas/UnauthorizedError106'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -12561,7 +12561,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError107'
+                                $ref: '#/components/schemas/UnauthorizedError108'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -12665,7 +12665,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError98'
+                                $ref: '#/components/schemas/UnauthorizedError99'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -13530,6 +13530,112 @@ paths:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
                                 reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/microsoft-ads/campaign-ref:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: resolve-microsoft-ads-campaign lfx-v2-campaign-service-connections
+            description: 'Resolve one Microsoft Advertising campaign id to this service''s own campaign and brief. The Microsoft twin of resolve-google-ads-campaign: a caller holding a row from get-microsoft-ads-keywords has Microsoft''s numeric CampaignId, while apply-keyword-actions and add-negative-keywords are keyed by this service''s campaign UUID under its brief. A pure READ of this service''s own tables: Microsoft is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project''s own campaigns by the same `project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `matches`, not 404.** **`matches` CAN hold more than one entry here, unlike Google:** Microsoft campaign ids are minted per ad account, so migration 000020''s unique index deliberately covers Google Ads only, and a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. Not a list endpoint under rule 3: a keyed lookup for one supplied id.'
+            operationId: lfx-v2-campaign-service-connections#resolve-microsoft-ads-campaign
+            parameters:
+                - name: platform_campaign_id
+                  in: query
+                  description: The Microsoft Advertising campaign id to resolve. Digits only, no leading zero, and within int64.
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: string
+                    description: The Microsoft Advertising campaign id to resolve. Digits only, no leading zero, and within int64.
+                    example: "413296582"
+                    pattern: ^[1-9][0-9]{0,18}$
+                    maxLength: 19
+                  example: "413296582"
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PlatformCampaignResolution'
+                            example:
+                                match_count: 1
+                                matches:
+                                    - brief_id: 2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c
+                                      campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                                platform_campaign_id: "24183781329"
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError95'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
                     content:
@@ -21504,7 +21610,7 @@ components:
                     type: array
                     items:
                         $ref: '#/components/schemas/CampaignRef'
-                    description: Every live campaign this project holds for that upstream id. Empty when the project owns none. A unique index makes more than one impossible in a valid database; the array shape exists so that case is refusable rather than silently resolved.
+                    description: Every live campaign this project holds for that upstream id. Empty when the project owns none. For Google Ads a unique index makes more than one impossible in a valid database; Microsoft Advertising ids are minted per ad account and no index makes them single. Either way, more than one match must be refused rather than silently resolved.
                     example:
                         - brief_id: 2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c
                           campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
@@ -24407,6 +24513,24 @@ components:
                 - code
                 - message
         UnauthorizedError107:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "401"
+                message:
+                    type: string
+                    description: Error message
+                    example: Unauthorized.
+            description: Unauthorized
+            example:
+                code: "401"
+                message: Unauthorized.
+            required:
+                - code
+                - message
+        UnauthorizedError108:
             type: object
             properties:
                 code:

@@ -9766,6 +9766,90 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/microsoft-ads/campaign-ref:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: resolve-microsoft-ads-campaign lfx-v2-campaign-service-connections
+            description: 'Resolve one Microsoft Advertising campaign id to this service''s own campaign and brief. The Microsoft twin of resolve-google-ads-campaign: a caller holding a row from get-microsoft-ads-keywords has Microsoft''s numeric CampaignId, while apply-keyword-actions and add-negative-keywords are keyed by this service''s campaign UUID under its brief. A pure READ of this service''s own tables: Microsoft is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project''s own campaigns by the same `project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `matches`, not 404.** **`matches` CAN hold more than one entry here, unlike Google:** Microsoft campaign ids are minted per ad account, so migration 000020''s unique index deliberately covers Google Ads only, and a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. Not a list endpoint under rule 3: a keyed lookup for one supplied id.'
+            operationId: lfx-v2-campaign-service-connections#resolve-microsoft-ads-campaign
+            parameters:
+                - name: platform_campaign_id
+                  in: query
+                  description: The Microsoft Advertising campaign id to resolve. Digits only, no leading zero, and within int64.
+                  required: true
+                  type: string
+                  maxLength: 19
+                  pattern: ^[1-9][0-9]{0,18}$
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/PlatformCampaignResolution'
+                        required:
+                            - platform_campaign_id
+                            - matches
+                            - match_count
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/microsoft-ads/keywords:
         get:
             tags:
@@ -16129,7 +16213,7 @@ definitions:
                 type: array
                 items:
                     $ref: '#/definitions/CampaignRef'
-                description: Every live campaign this project holds for that upstream id. Empty when the project owns none. A unique index makes more than one impossible in a valid database; the array shape exists so that case is refusable rather than silently resolved.
+                description: Every live campaign this project holds for that upstream id. Empty when the project owns none. For Google Ads a unique index makes more than one impossible in a valid database; Microsoft Advertising ids are minted per ad account and no index makes them single. Either way, more than one match must be refused rather than silently resolved.
                 example:
                     - brief_id: 2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c
                       campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff

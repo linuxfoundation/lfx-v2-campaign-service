@@ -84,6 +84,28 @@ different type. See [internal/infrastructure/postgres](../code/internal-infrastr
 - Off unless `MICROSOFT_METRICS_ENABLED=true` (400 "not supported"), like the other Microsoft
   reporting reads, because the Reporting contract has not been exercised against a live account.
 
+## Acting on a row: the Microsoft campaign-ref lookup
+
+A row's `campaign_id` is Microsoft's numeric CampaignId, while the Microsoft keyword levers
+(`apply-keyword-actions`, `add-negative-keywords`) are keyed by this service's campaign UUID
+under its brief. `GET /projects/{project_id}/microsoft-ads/campaign-ref?platform_campaign_id=`
+(`resolve-microsoft-ads-campaign`, `campaign_manager`, LFXV2-2665) bridges the two, as
+`google-ads/campaign-ref` does for Google:
+
+- Same payload (digits only, no leading zero, within int64), same `platform-campaign-resolution`
+  result and same errors as the Google method; both call one helper,
+  `resolvePlatformCampaignRef` in `internal/service/connection_keywords.go`, with the platform
+  fixed by the route, so one route never answers for the other platform's id space.
+- A pure read of this service's own `campaigns` rows (`CampaignRepo.ResolvePlatformCampaign`,
+  project-scoped in SQL, soft-deleted rows excluded). Microsoft is never contacted and the route
+  is not gated on `MICROSOFT_METRICS_ENABLED`; the lever it addresses runs its own ad-account
+  and connection guards.
+- Unowned id: 200 with an empty `matches`. Storage fault: 500. Backend not wired: 503.
+- **More than one match is reachable here**, unlike Google: migration 000020's unique index is
+  scoped to `google-ads` because Microsoft ids are minted per ad account, so a project
+  re-pointed between accounts can hold two live rows for the same id. Every match is returned and
+  the caller must refuse rather than pick.
+
 ## Sources
 
 Verified 2026-10-05 against learn.microsoft.com (Reporting v13):
