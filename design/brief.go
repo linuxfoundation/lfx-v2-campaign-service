@@ -879,6 +879,17 @@ var NegativeKeywords = Type("negative-keywords", func() {
 	Attribute("results", ArrayOf(NegativeKeywordResult), "Exactly one entry per requested negative keyword, in request order, so results[i] answers negative_keywords[i].")
 	Attribute("applied_count", Int, "How many requested negative keywords are now on the campaign: results whose outcome is APPLIED or ALREADY_PRESENT.", func() { Example(2) })
 	Required("campaign_id", "results", "applied_count")
+	// A type-level example, because Goa otherwise fills `results` and `applied_count`
+	// independently and can publish a count that disagrees with the list beside it. Two
+	// results, both now on the campaign, so applied_count is 2.
+	Example(map[string]any{
+		"campaign_id": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+		"results": []map[string]any{
+			{"text": "free download", "match_type": "Phrase", "outcome": "APPLIED", "negative_keyword_id": "8475612390"},
+			{"text": "torrent", "match_type": "Exact", "outcome": "ALREADY_PRESENT"},
+		},
+		"applied_count": 2,
+	})
 })
 
 // ─── Keyword TARGETING on Reddit and X (LFXV2-2665) ───
@@ -946,6 +957,17 @@ var KeywordTargetingRemovals = Type("keyword-targeting-removals", func() {
 	Attribute("results", ArrayOf(KeywordTargetingRemovalResult), "Exactly one entry per requested removal, in request order, so results[i] answers keywords[i]. Reddit: one write carries every removal, so all entries share one outcome. X: one DELETE per criterion, each with its own outcome; the targeting is re-read before each, and an item that would now remove the last keyword is not sent (WOULD_EMPTY).")
 	Attribute("applied_count", Int, "How many results are APPLIED.", func() { Example(2) })
 	Required("campaign_id", "results", "applied_count")
+	// A type-level example, for the reason NegativeKeywords has one: two APPLIED results, so
+	// applied_count is 2. Reddit-shaped (keyword, no criterion_id), as one request is one
+	// platform's.
+	Example(map[string]any{
+		"campaign_id": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+		"results": []map[string]any{
+			{"keyword": "kubernetes", "outcome": "APPLIED"},
+			{"keyword": "service mesh", "outcome": "APPLIED"},
+		},
+		"applied_count": 2,
+	})
 })
 
 // EmailCopySection is one ordered block of AI-generated email copy. Replaces a single flat

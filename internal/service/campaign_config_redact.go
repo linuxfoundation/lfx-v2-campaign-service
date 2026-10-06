@@ -77,6 +77,11 @@ func redactSnapshotValue(v any) any {
 // sorted order, the first to produce a redacted key keeps it, and each later one is stored
 // under `<redacted>#2`, `#3`, … (the lowest suffix not already taken). Sorting first makes the
 // output stable across runs regardless of Go's map iteration order.
+//
+// Object keys and string values both go through redact.SnapshotText, which also reduces
+// NON-http links (`ftp://host/…` → `ftp://host`) and drops one with no host to keep
+// (`file:///private/TOKEN`), so a caller cannot route a secret past the http-only passes by
+// choosing another scheme.
 func redactSnapshotObject(in map[string]any) map[string]any {
 	keys := make([]string, 0, len(in))
 	for k := range in {
@@ -84,12 +89,25 @@ func redactSnapshotObject(in map[string]any) map[string]any {
 	}
 	sort.Strings(keys)
 	out := make(map[string]any, len(in))
+	// nextSuffix remembers, per redacted base, the lowest suffix not yet TRIED, so a run of
+	// collisions costs O(1) amortised per key instead of rescanning from #2 every time —
+	// which made N keys sharing one host O(N²) candidate strings and map probes, enough for a
+	// body well under the request cap to hold the campaign lock and a pooled connection for a
+	// long time. The occupied-key probe stays: a suffixed candidate can still be taken by a
+	// key whose own redaction produced that literal string.
+	nextSuffix := map[string]int{}
 	for _, k := range keys {
 		rk := redact.SnapshotText(k)
 		if _, taken := out[rk]; taken {
-			for n := 2; ; n++ {
+			n := nextSuffix[rk]
+			if n < 2 {
+				n = 2
+			}
+			for {
 				candidate := rk + "#" + strconv.Itoa(n)
+				n++
 				if _, taken := out[candidate]; !taken {
+					nextSuffix[rk] = n
 					rk = candidate
 					break
 				}

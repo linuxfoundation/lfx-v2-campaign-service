@@ -9266,6 +9266,19 @@ func EncodeMonitorTwitterAdsAccountError(encoder func(context.Context, http.Resp
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "Conflict":
+			var res *lfxv2campaignserviceconnections.AccountMonitorConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewMonitorTwitterAdsAccountConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
 		case "BadRequest":
 			var res *lfxv2campaignserviceconnections.BadRequestError
 			errors.As(v, &res)
@@ -9278,19 +9291,6 @@ func EncodeMonitorTwitterAdsAccountError(encoder func(context.Context, http.Resp
 			}
 			w.Header().Set("goa-error", res.GoaErrorName())
 			w.WriteHeader(http.StatusBadRequest)
-			return enc.Encode(body)
-		case "Conflict":
-			var res *lfxv2campaignserviceconnections.ConflictError
-			errors.As(v, &res)
-			enc := encoder(ctx, w)
-			var body any
-			if formatter != nil {
-				body = formatter(ctx, res)
-			} else {
-				body = NewMonitorTwitterAdsAccountConflictResponseBody(res)
-			}
-			w.Header().Set("goa-error", res.GoaErrorName())
-			w.WriteHeader(http.StatusConflict)
 			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError

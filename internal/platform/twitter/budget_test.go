@@ -191,6 +191,8 @@ func TestUpdateCampaignBudget_OutcomeClassification(t *testing.T) {
 		{"429 then 2xx confirmed", []budgetReply{{http.StatusTooManyRequests, ``}, {http.StatusOK, `{}`}}, false, false, 2},
 		{"2xx echoing another campaign", []budgetReply{{http.StatusOK, `{"data":{"id":"cmp2"}}`}}, true, true, 1},
 		{"2xx echoing another amount", []budgetReply{{http.StatusOK, `{"data":{"id":"cmp1","daily_budget_amount_local_micro":1}}`}}, true, true, 1},
+		{"2xx echoing a null amount", []budgetReply{{http.StatusOK, `{"data":{"id":"cmp1","daily_budget_amount_local_micro":null}}`}}, true, true, 1},
+		{"2xx echoing the id but omitting the amount", []budgetReply{{http.StatusOK, `{"data":{"id":"cmp1"}}`}}, false, false, 1},
 		{"2xx whose data is not an object", []budgetReply{{http.StatusOK, `{"data":[1]}`}}, true, true, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

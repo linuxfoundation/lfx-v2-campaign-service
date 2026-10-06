@@ -2394,6 +2394,8 @@ func TestRejectCredentialQueryParamsInText_SchemelessUserinfo(t *testing.T) {
 		"bob:PLAINTEXT@events.example is the link",
 		"bob:PLAINTEXT@events.example/r?utm_source=x",
 		"admin:PLAINTEXT@198.51.100.7:8443/portal",
+		// RFC 3986 sub-delims are legal in a username, so `!` must not end the match.
+		"admin!:PLAINTEXT@events.example/reset/TOKEN",
 	}
 	for _, text := range refused {
 		err := rejectCredentialQueryParamsInText(text)

@@ -80,9 +80,11 @@ exact `targeting_criteria` list envelope are taken from the SDK and docs, not ob
 - **Reddit writes are default-off** (`REDDIT_KEYWORD_TARGETING_WRITES_ENABLED`, exact `"true"`):
   a read representation the write interprets differently would change geo, community or
   interest targeting on a live, spending ad group. The read is not gated.
-- **Outcomes.** Reddit: one PATCH, so every item shares its outcome (all APPLIED, or the call
-  errors). X: one DELETE per item in request order, never retried on a 429; APPLIED, FAILED
-  (`NOT_FOUND`, `REJECTED`, `NOT_SENT`) or UNCONFIRMED (transport, 3xx, 5xx, 429, or a 2xx not
+- **Outcomes.** Reddit: one PATCH, sent once and never retried on a 429 (a retry from the stale
+  pre-read could overwrite a later change; a 429 is UNCONFIRMED), so every item shares its outcome
+  (all APPLIED, or the call errors). X: one DELETE per item in request order, never retried on a
+  429; APPLIED, FAILED (`NOT_FOUND`, `REJECTED`, `NOT_SENT` — the pacer wait cut short, or a
+  DNS/connect failure proving the DELETE never left) or UNCONFIRMED (transport, 3xx, 5xx, 429, or a 2xx not
   reporting this criterion deleted). The call errors only when no item got a definite answer.
   A short outcome slice from an adapter is UNCONFIRMED (`unconfirmedOutcomeCountError`).
 - **Errors** never carry platform text: the service maps the domain sentinels

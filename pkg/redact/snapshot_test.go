@@ -21,6 +21,9 @@ func TestSnapshotURL(t *testing.T) {
 		{"t3_abc123", "t3_abc123"},
 		{"not a url?token=SECRET", "not a url"},
 		{"example.org/reset/SECRET", "example.org"},
+		// Any scheme with an authority reduces to scheme+host, or is dropped with no host.
+		{"ftp://[2001:db8::1]/reset/SECRET?token=SECRET", "ftp://[2001:db8::1]"},
+		{"file:///private/RESET_TOKEN", ""},
 	} {
 		if got := SnapshotURL(tc.in); got != tc.want {
 			t.Errorf("SnapshotURL(%q) = %q, want %q", tc.in, got, tc.want)
@@ -41,6 +44,10 @@ func TestSnapshotText(t *testing.T) {
 		{"schemeless path", "see example.org/reset/SECRET now", "see example.org now"},
 		{"schemeless userinfo", "bob:pw@a.example", ""}, // secretlint-disable-line -- fixture asserting userinfo is dropped
 		{"clock is not userinfo", "keynote 14:00@events.example", "keynote 14:00@events.example"},
+		{"non-http scheme", "see ftp://[2001:db8::1]/reset/SECRET?token=SECRET now", "see ftp://[2001:db8::1] now"},
+		{"host-less file url", "see file:///private/RESET_TOKEN now", "see  now"},
+		{"userinfo before ipv6 host", "x https://bob:" + "pw@[2001:db8::1]/reset/SECRET_PATH?token=SECRET_QUERY y", "x  y"},
+		{"sub-delim username", "x admin!:" + "pw@events.example/reset/TOKEN y", "x  y"},
 	} {
 		if got := SnapshotText(tc.in); got != tc.want {
 			t.Errorf("%s: SnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)

@@ -4422,14 +4422,10 @@ paths:
                                 applied_count: 2
                                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                 results:
-                                    - criterion_id: 2kzxf
-                                      error_code: NOT_SENT
-                                      keyword: kubernetes
-                                      outcome: FAILED
-                                    - criterion_id: 2kzxf
-                                      error_code: NOT_SENT
-                                      keyword: kubernetes
-                                      outcome: FAILED
+                                    - keyword: kubernetes
+                                      outcome: APPLIED
+                                    - keyword: service mesh
+                                      outcome: APPLIED
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -4712,21 +4708,13 @@ paths:
                                 applied_count: 2
                                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                                 results:
-                                    - error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                                      match_type: Phrase
+                                    - match_type: Phrase
                                       negative_keyword_id: "8475612390"
                                       outcome: APPLIED
                                       text: free download
-                                    - error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                                      match_type: Phrase
-                                      negative_keyword_id: "8475612390"
-                                      outcome: APPLIED
-                                      text: free download
-                                    - error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                                      match_type: Phrase
-                                      negative_keyword_id: "8475612390"
-                                      outcome: APPLIED
-                                      text: free download
+                                    - match_type: Exact
+                                      outcome: ALREADY_PRESENT
+                                      text: torrent
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -12873,11 +12861,11 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/ConflictError'
+                                $ref: '#/components/schemas/AccountMonitorConflictError'
                             example:
                                 code: "409"
-                                message: A connection for this provider already exists on the project.
-                                reason: already_exists
+                                message: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)
+                                reason: account_too_many_active_campaigns
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
                     content:
@@ -14057,7 +14045,7 @@ paths:
                                       status: PAUSED
                                       text: kubernetes training
                                 truncated: false
-                                window: yesterday
+                                window: today
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -14487,6 +14475,32 @@ components:
                 - fetch_failed
                 - pacing_pct
                 - pacing_label
+        AccountMonitorConflictError:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "409"
+                message:
+                    type: string
+                    description: Error message
+                    example: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)
+                reason:
+                    type: string
+                    description: 'Why the account cannot be monitored as it stands: account_too_many_active_campaigns (more campaigns active in the window than one report covers) or account_timezone_unsupported (the account''s timezone does not start its days on a whole UTC hour).'
+                    example: account_too_many_active_campaigns
+                    enum:
+                        - account_too_many_active_campaigns
+                        - account_timezone_unsupported
+            example:
+                code: "409"
+                message: the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)
+                reason: account_too_many_active_campaigns
+            required:
+                - code
+                - message
+                - reason
         AccountMonitorTotals:
             type: object
             properties:
@@ -18163,18 +18177,18 @@ components:
                 campaign_name:
                     type: string
                     description: Campaign name
-                    example: Vero similique quibusdam praesentium ipsum occaecati.
+                    example: Deleniti autem autem facilis.
                 config:
                     description: Campaign configuration snapshot
-                    example: Maiores quia exercitationem officia.
+                    example: Molestiae vero similique quibusdam praesentium ipsum occaecati.
                 status:
                     type: string
                     description: Campaign status
-                    example: Ex quos omnis.
+                    example: Harum vel asperiores molestiae omnis quo.
             example:
-                campaign_name: Alias minima laboriosam.
-                config: Velit quae in fuga.
-                status: Et est ratione.
+                campaign_name: Ex quos omnis.
+                config: Alias minima laboriosam.
+                status: Maiores quia exercitationem officia.
             required:
                 - campaign_name
                 - status
@@ -18283,8 +18297,6 @@ components:
                         - already_exists
                         - audience_provenance_immutable
                         - ab_test_unsupported_send_type
-                        - account_too_many_active_campaigns
-                        - account_timezone_unsupported
             example:
                 code: "409"
                 message: A connection for this provider already exists on the project.
@@ -18558,16 +18570,16 @@ components:
                 brief_id:
                     type: string
                     description: Parent brief
-                    example: Quia et eum.
+                    example: Consequatur officiis.
                 byte_size:
                     type: integer
                     description: Size of the stored image in bytes
-                    example: 4441321658653354076
+                    example: 5165003240170761544
                     format: int64
                 checksum:
                     type: string
                     description: Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a brief
-                    example: Eos eligendi sed quam voluptas aut cumque.
+                    example: Et cum atque dolorum.
                 created:
                     type: string
                     description: '"true" when this request stored the asset; "false" when an identical upload already existed. Set only on the upload response, where it selects 201 vs 200.'
@@ -18578,27 +18590,27 @@ components:
                 id:
                     type: string
                     description: Creative asset UUID
-                    example: 7acb7206-92c8-48ad-9ee2-14c7ade1fd5f
+                    example: 7acb7206-92c8-4280-bcdf-1aa9ae6023bf
                     format: uuid
                 mime_type:
                     type: string
                     description: Stored image MIME type, as verified from the bytes (not merely the declared header)
-                    example: image/png
+                    example: image/jpeg
                     enum:
                         - image/png
                         - image/jpeg
                 project_id:
                     type: string
                     description: Owning project
-                    example: Cum atque.
+                    example: Sit hic.
             example:
-                brief_id: Ipsa odit ea eveniet architecto molestias.
-                byte_size: 4440841730145664636
-                checksum: Eveniet ab rerum cupiditate est rerum.
+                brief_id: Eveniet officia blanditiis earum unde.
+                byte_size: 3483947487381944028
+                checksum: Sint voluptatem dolorum.
                 created: "true"
-                id: b618b5d2-3bbb-44a7-8ea7-1569d676c18c
-                mime_type: image/png
-                project_id: Voluptas sint voluptatem dolorum dolor veritatis et.
+                id: 611b6844-db32-485a-9dfa-ae4cc4fc3c54
+                mime_type: image/jpeg
+                project_id: Nam aut odit neque ut eum.
             required:
                 - id
                 - project_id
@@ -18651,6 +18663,10 @@ components:
             example:
                 preheader: Register now and shape the future of cloud native computing
                 sections:
+                    - html: <p>We're excited to invite you...</p>
+                      text: Register Now
+                      type: rich_text
+                      url: https://example.com/register
                     - html: <p>We're excited to invite you...</p>
                       text: Register Now
                       type: rich_text
@@ -18755,11 +18771,11 @@ components:
                 description:
                     type: string
                     description: Event description
-                    example: Repellendus aspernatur hic autem quaerat voluptatem iusto.
+                    example: Aspernatur hic.
                 end_date:
                     type: string
                     description: Event end date, same caveat as start_date
-                    example: Occaecati tempore.
+                    example: Ab qui exercitationem.
                 event_name:
                     type: string
                     description: Event name
@@ -18767,7 +18783,7 @@ components:
                 extracted_from:
                     type: string
                     description: Which strategy produced this record — the whole record came from exactly one of them
-                    example: jsonld
+                    example: fallback
                     enum:
                         - jsonld
                         - opengraph
@@ -18775,28 +18791,28 @@ components:
                 image:
                     type: string
                     description: Event image URL
-                    example: Itaque dolores facilis veritatis repellat possimus.
+                    example: Quod occaecati.
                 location:
                     type: string
                     description: Event location as written on the page — free text, not a resolved place
-                    example: Ut facere ab qui exercitationem quibusdam quod.
+                    example: Quaerat voluptatem.
                 start_date:
                     type: string
                     description: Event start date exactly as the page states it; NOT normalised to RFC 3339, because the source rarely is
-                    example: Facilis saepe.
+                    example: Ea ut.
                 url:
                     type: string
                     description: 'The event''s own landing page, as the page declares it (JSON-LD url / og:url), falling back to the URL that was fetched when it declares none. NOT necessarily the fetched URL: a caller commonly pastes a link carrying tracking parameters, and the page''s declared canonical is the better destination for an ad'
-                    example: Saepe nemo illo quis autem.
+                    example: Saepe id occaecati.
             example:
-                description: Aut et maiores.
-                end_date: Qui possimus incidunt dolor.
+                description: Itaque dolores facilis veritatis repellat possimus.
+                end_date: Corrupti dolorum earum.
                 event_name: KubeCon + CloudNativeCon Europe 2026
                 extracted_from: jsonld
-                image: Quis deleniti autem autem facilis.
-                location: Corrupti dolorum earum.
-                start_date: Consectetur in voluptatem eius dicta.
-                url: Harum vel asperiores molestiae omnis quo.
+                image: Consectetur in voluptatem eius dicta.
+                location: Saepe nemo illo quis autem.
+                start_date: Ex aut et maiores.
+                url: Qui possimus incidunt dolor.
             required:
                 - extracted_from
         FetchEventURLRequestBody:
@@ -20298,16 +20314,16 @@ components:
                         $ref: '#/components/schemas/PlatformResult'
                     description: Per-platform results, written once when the job reaches a terminal state
                     example:
-                        - campaign_id: A necessitatibus molestiae.
-                          error: Unde dicta autem dolorem qui explicabo.
-                          hubspot_url: Repellat non suscipit veritatis sit tempore.
+                        - campaign_id: Velit eum et.
+                          error: Corrupti eos qui a necessitatibus.
+                          hubspot_url: Qui unde dicta autem dolorem qui explicabo.
                           ok: false
-                          platform: Eos velit eum et sint corrupti.
-                        - campaign_id: A necessitatibus molestiae.
-                          error: Unde dicta autem dolorem qui explicabo.
-                          hubspot_url: Repellat non suscipit veritatis sit tempore.
+                          platform: Doloribus omnis neque autem.
+                        - campaign_id: Velit eum et.
+                          error: Corrupti eos qui a necessitatibus.
+                          hubspot_url: Qui unde dicta autem dolorem qui explicabo.
                           ok: false
-                          platform: Eos velit eum et sint corrupti.
+                          platform: Doloribus omnis neque autem.
                 status:
                     type: string
                     description: Job status
@@ -20322,21 +20338,21 @@ components:
                 error: Est cumque consequatur qui consequatur consequatur aut.
                 job_id: Natus atque repudiandae.
                 result:
-                    - campaign_id: A necessitatibus molestiae.
-                      error: Unde dicta autem dolorem qui explicabo.
-                      hubspot_url: Repellat non suscipit veritatis sit tempore.
+                    - campaign_id: Velit eum et.
+                      error: Corrupti eos qui a necessitatibus.
+                      hubspot_url: Qui unde dicta autem dolorem qui explicabo.
                       ok: false
-                      platform: Eos velit eum et sint corrupti.
-                    - campaign_id: A necessitatibus molestiae.
-                      error: Unde dicta autem dolorem qui explicabo.
-                      hubspot_url: Repellat non suscipit veritatis sit tempore.
+                      platform: Doloribus omnis neque autem.
+                    - campaign_id: Velit eum et.
+                      error: Corrupti eos qui a necessitatibus.
+                      hubspot_url: Qui unde dicta autem dolorem qui explicabo.
                       ok: false
-                      platform: Eos velit eum et sint corrupti.
-                    - campaign_id: A necessitatibus molestiae.
-                      error: Unde dicta autem dolorem qui explicabo.
-                      hubspot_url: Repellat non suscipit veritatis sit tempore.
+                      platform: Doloribus omnis neque autem.
+                    - campaign_id: Velit eum et.
+                      error: Corrupti eos qui a necessitatibus.
+                      hubspot_url: Qui unde dicta autem dolorem qui explicabo.
                       ok: false
-                      platform: Eos velit eum et sint corrupti.
+                      platform: Doloribus omnis neque autem.
                 status: queued
             required:
                 - job_id
@@ -20491,6 +20507,9 @@ components:
                         - criterion_id: 2kzxf
                           keyword: kubernetes
                           match_type: BROAD_KEYWORD
+                        - criterion_id: 2kzxf
+                          keyword: kubernetes
+                          match_type: BROAD_KEYWORD
                 platform:
                     type: string
                     description: The campaign's platform
@@ -20509,9 +20528,6 @@ components:
             example:
                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                 keywords:
-                    - criterion_id: 2kzxf
-                      keyword: kubernetes
-                      match_type: BROAD_KEYWORD
                     - criterion_id: 2kzxf
                       keyword: kubernetes
                       match_type: BROAD_KEYWORD
@@ -20592,7 +20608,7 @@ components:
                 criterion_id: 2kzxf
                 error_code: NOT_SENT
                 keyword: kubernetes
-                outcome: APPLIED
+                outcome: UNCONFIRMED
             required:
                 - outcome
         KeywordTargetingRemovals:
@@ -20616,30 +20632,18 @@ components:
                         - criterion_id: 2kzxf
                           error_code: NOT_SENT
                           keyword: kubernetes
-                          outcome: APPLIED
+                          outcome: FAILED
                         - criterion_id: 2kzxf
                           error_code: NOT_SENT
                           keyword: kubernetes
-                          outcome: APPLIED
-                        - criterion_id: 2kzxf
-                          error_code: NOT_SENT
-                          keyword: kubernetes
-                          outcome: APPLIED
-                        - criterion_id: 2kzxf
-                          error_code: NOT_SENT
-                          keyword: kubernetes
-                          outcome: APPLIED
+                          outcome: FAILED
             example:
                 applied_count: 2
                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                 results:
-                    - criterion_id: 2kzxf
-                      error_code: NOT_SENT
-                      keyword: kubernetes
+                    - keyword: kubernetes
                       outcome: APPLIED
-                    - criterion_id: 2kzxf
-                      error_code: NOT_SENT
-                      keyword: kubernetes
+                    - keyword: service mesh
                       outcome: APPLIED
             required:
                 - campaign_id
@@ -21800,12 +21804,10 @@ components:
                 window:
                     type: string
                     description: The reporting window these counters cover
-                    example: yesterday
+                    example: last_month
                     enum:
                         - today
-                        - yesterday
                         - last_7_days
-                        - last_14_days
                         - last_30_days
                         - this_month
                         - last_month
@@ -21873,7 +21875,7 @@ components:
                       status: UNKNOWN
                       text: kubernetes training
                 truncated: false
-                window: last_14_days
+                window: today
             required:
                 - window
                 - rows
@@ -21965,39 +21967,36 @@ components:
                     description: Exactly one entry per requested negative keyword, in request order, so results[i] answers negative_keywords[i].
                     example:
                         - error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                          match_type: Exact
+                          match_type: Phrase
                           negative_keyword_id: "8475612390"
-                          outcome: ALREADY_PRESENT
+                          outcome: FAILED
                           text: free download
                         - error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                          match_type: Exact
+                          match_type: Phrase
                           negative_keyword_id: "8475612390"
-                          outcome: ALREADY_PRESENT
+                          outcome: FAILED
                           text: free download
                         - error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                          match_type: Exact
+                          match_type: Phrase
                           negative_keyword_id: "8475612390"
-                          outcome: ALREADY_PRESENT
+                          outcome: FAILED
                           text: free download
                         - error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                          match_type: Exact
+                          match_type: Phrase
                           negative_keyword_id: "8475612390"
-                          outcome: ALREADY_PRESENT
+                          outcome: FAILED
                           text: free download
             example:
                 applied_count: 2
                 campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                 results:
-                    - error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                      match_type: Exact
+                    - match_type: Phrase
                       negative_keyword_id: "8475612390"
-                      outcome: ALREADY_PRESENT
+                      outcome: APPLIED
                       text: free download
-                    - error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                      match_type: Exact
-                      negative_keyword_id: "8475612390"
+                    - match_type: Exact
                       outcome: ALREADY_PRESENT
-                      text: free download
+                      text: torrent
             required:
                 - campaign_id
                 - results
@@ -25401,27 +25400,29 @@ components:
                 body_html:
                     type: string
                     description: Reference variant body-only HTML
-                    example: Consequuntur ut inventore quia quisquam.
+                    example: Porro nam.
                 html:
                     type: string
                     description: Reference variant full preview HTML
-                    example: Nam animi aliquid autem est ipsum.
+                    example: At nihil vero.
                 preview_text:
                     type: string
                     description: Reference variant preview text
-                    example: A at nihil vero praesentium.
+                    example: Aut quas eligendi nihil non accusamus.
                 sections:
                     type: array
                     items:
-                        example: Accusamus quod.
+                        example: Aliquid autem est ipsum.
                     description: Reference variant editable content blocks
                     example:
+                        - Ut inventore quia.
+                        - Et accusamus quod facere.
                         - Voluptatum eaque culpa aliquid itaque eligendi.
                         - Architecto veniam necessitatibus aut nemo in.
                 session_id:
                     type: string
                     description: Wizard session UUID
-                    example: 17bd5396-5402-499d-9a77-6988e3efb132
+                    example: b16480cb-3bd4-4442-a614-648d41f2d9e5
                     format: uuid
                 sponsors:
                     type: array
@@ -25429,22 +25430,22 @@ components:
                         $ref: '#/components/schemas/WizardSponsor'
                     description: Sponsor logos scraped from the event page
                     example:
-                        - logo_url: Dolor corporis consequatur voluptatem voluptates sed.
-                          name: Ex aut quia distinctio consequatur.
-                          tier: Magnam quisquam et consequuntur ut sunt.
-                          url: Provident repudiandae sit qui aut aut.
-                        - logo_url: Dolor corporis consequatur voluptatem voluptates sed.
-                          name: Ex aut quia distinctio consequatur.
-                          tier: Magnam quisquam et consequuntur ut sunt.
-                          url: Provident repudiandae sit qui aut aut.
-                        - logo_url: Dolor corporis consequatur voluptatem voluptates sed.
-                          name: Ex aut quia distinctio consequatur.
-                          tier: Magnam quisquam et consequuntur ut sunt.
-                          url: Provident repudiandae sit qui aut aut.
+                        - logo_url: Debitis nam.
+                          name: Qui temporibus quis iste eaque.
+                          tier: Consequatur dolore dolor corporis consequatur voluptatem voluptates.
+                          url: Delectus ex aut quia.
+                        - logo_url: Debitis nam.
+                          name: Qui temporibus quis iste eaque.
+                          tier: Consequatur dolore dolor corporis consequatur voluptatem voluptates.
+                          url: Delectus ex aut quia.
+                        - logo_url: Debitis nam.
+                          name: Qui temporibus quis iste eaque.
+                          tier: Consequatur dolore dolor corporis consequatur voluptatem voluptates.
+                          url: Delectus ex aut quia.
                 subject:
                     type: string
                     description: Reference variant subject line
-                    example: Quis eligendi aut quas eligendi nihil non.
+                    example: Libero autem ut ipsam laborum quis.
                 variant_a_banner_url:
                     type: string
                     description: Stage variant banner image URL
@@ -25492,24 +25493,24 @@ components:
                 sections:
                     - Explicabo provident pariatur est.
                     - Qui id praesentium recusandae aut at.
-                session_id: a4c020ea-54bf-4138-bb86-03ce855589e5
+                session_id: 4aa13d27-8c0f-4138-bb86-03ce855589e5
                 sponsors:
-                    - logo_url: Dolor corporis consequatur voluptatem voluptates sed.
-                      name: Ex aut quia distinctio consequatur.
-                      tier: Magnam quisquam et consequuntur ut sunt.
-                      url: Provident repudiandae sit qui aut aut.
-                    - logo_url: Dolor corporis consequatur voluptatem voluptates sed.
-                      name: Ex aut quia distinctio consequatur.
-                      tier: Magnam quisquam et consequuntur ut sunt.
-                      url: Provident repudiandae sit qui aut aut.
-                    - logo_url: Dolor corporis consequatur voluptatem voluptates sed.
-                      name: Ex aut quia distinctio consequatur.
-                      tier: Magnam quisquam et consequuntur ut sunt.
-                      url: Provident repudiandae sit qui aut aut.
-                    - logo_url: Dolor corporis consequatur voluptatem voluptates sed.
-                      name: Ex aut quia distinctio consequatur.
-                      tier: Magnam quisquam et consequuntur ut sunt.
-                      url: Provident repudiandae sit qui aut aut.
+                    - logo_url: Debitis nam.
+                      name: Qui temporibus quis iste eaque.
+                      tier: Consequatur dolore dolor corporis consequatur voluptatem voluptates.
+                      url: Delectus ex aut quia.
+                    - logo_url: Debitis nam.
+                      name: Qui temporibus quis iste eaque.
+                      tier: Consequatur dolore dolor corporis consequatur voluptatem voluptates.
+                      url: Delectus ex aut quia.
+                    - logo_url: Debitis nam.
+                      name: Qui temporibus quis iste eaque.
+                      tier: Consequatur dolore dolor corporis consequatur voluptatem voluptates.
+                      url: Delectus ex aut quia.
+                    - logo_url: Debitis nam.
+                      name: Qui temporibus quis iste eaque.
+                      tier: Consequatur dolore dolor corporis consequatur voluptatem voluptates.
+                      url: Delectus ex aut quia.
                 subject: Amet pariatur quis.
                 variant_a_banner_url: Maxime laborum laboriosam dicta.
                 variant_a_body_html: Inventore dolorem sit sequi error est aperiam.
@@ -25540,93 +25541,93 @@ components:
                 banner_url:
                     type: string
                     description: Hero/banner image URL
-                    example: Accusantium ea.
+                    example: Et dignissimos rerum sunt numquam.
                 body_html:
                     type: string
                     description: Body-only HTML, written into the HubSpot draft's first rich-text block
-                    example: Dolorem quis sit modi maxime deserunt.
+                    example: Tempora molestiae omnis facilis nihil repudiandae.
                 error:
                     type: string
                     description: Why this variant failed, set only when mode is "failed"
-                    example: Laudantium perferendis autem.
+                    example: Non et accusantium neque deleniti et eveniet.
                 html:
                     type: string
                     description: Full rendered email HTML, for preview
-                    example: Dignissimos iure.
+                    example: Ipsa dolore.
                 mode:
                     type: string
                     description: Generation outcome for this variant
-                    example: ai-generated
+                    example: failed
                     enum:
                         - ai-generated
                         - failed
                 preview_text:
                     type: string
                     description: Inbox preview/preheader text
-                    example: Tempora molestiae omnis facilis nihil repudiandae.
+                    example: Aliquid doloremque dolorum doloremque repudiandae aliquid possimus.
                 sections:
                     type: array
                     items:
-                        example: Rerum quas.
+                        example: Dignissimos iure.
                     description: Editable content blocks, in render order
                     example:
-                        - Voluptas sunt sunt et et.
-                        - Rerum sunt numquam consectetur consequatur omnis aperiam.
-                        - Sit consequatur aliquam.
+                        - Quis sit modi maxime.
+                        - Velit rerum.
+                        - Perferendis nulla voluptas sunt.
                 sponsors:
                     type: array
                     items:
                         $ref: '#/components/schemas/WizardSponsor'
                     description: Sponsor logos scraped from the event page
                     example:
-                        - logo_url: Dolor corporis consequatur voluptatem voluptates sed.
-                          name: Ex aut quia distinctio consequatur.
-                          tier: Magnam quisquam et consequuntur ut sunt.
-                          url: Provident repudiandae sit qui aut aut.
-                        - logo_url: Dolor corporis consequatur voluptatem voluptates sed.
-                          name: Ex aut quia distinctio consequatur.
-                          tier: Magnam quisquam et consequuntur ut sunt.
-                          url: Provident repudiandae sit qui aut aut.
+                        - logo_url: Debitis nam.
+                          name: Qui temporibus quis iste eaque.
+                          tier: Consequatur dolore dolor corporis consequatur voluptatem voluptates.
+                          url: Delectus ex aut quia.
+                        - logo_url: Debitis nam.
+                          name: Qui temporibus quis iste eaque.
+                          tier: Consequatur dolore dolor corporis consequatur voluptatem voluptates.
+                          url: Delectus ex aut quia.
                 stage_name:
                     type: string
                     description: Resolved stage name
-                    example: Deleniti et eveniet.
+                    example: Est accusantium ea hic sint ratione.
                 subject:
                     type: string
                     description: Subject line
-                    example: Ipsa dolore.
+                    example: Magni minima est.
                 template_key:
                     type: string
                     description: Stage template that produced this variant
-                    example: Sint ratione ullam ullam non et accusantium.
+                    example: Consequatur omnis aperiam facere sit consequatur aliquam.
             example:
-                banner_url: Occaecati nemo beatae.
-                body_html: Ipsam officiis dolor repudiandae.
-                error: Corporis non libero omnis fugiat.
-                html: Quam non dolorem quod.
-                mode: ai-generated
-                preview_text: Nihil necessitatibus.
+                banner_url: Nisi illum facere earum voluptatibus soluta.
+                body_html: Quam non dolorem quod.
+                error: Commodi sint iusto corporis.
+                html: Nihil necessitatibus.
+                mode: failed
+                preview_text: Tempora eius.
                 sections:
-                    - Consequatur voluptatibus eum rerum facilis.
-                    - Incidunt est itaque nihil alias vel saepe.
-                    - Non nisi.
-                    - Facere earum voluptatibus soluta quia quidem eius.
+                    - Officiis dolor repudiandae qui accusamus.
+                    - Voluptatibus eum rerum facilis distinctio incidunt.
+                    - Itaque nihil.
+                    - Vel saepe.
                 sponsors:
-                    - logo_url: Dolor corporis consequatur voluptatem voluptates sed.
-                      name: Ex aut quia distinctio consequatur.
-                      tier: Magnam quisquam et consequuntur ut sunt.
-                      url: Provident repudiandae sit qui aut aut.
-                    - logo_url: Dolor corporis consequatur voluptatem voluptates sed.
-                      name: Ex aut quia distinctio consequatur.
-                      tier: Magnam quisquam et consequuntur ut sunt.
-                      url: Provident repudiandae sit qui aut aut.
-                    - logo_url: Dolor corporis consequatur voluptatem voluptates sed.
-                      name: Ex aut quia distinctio consequatur.
-                      tier: Magnam quisquam et consequuntur ut sunt.
-                      url: Provident repudiandae sit qui aut aut.
-                stage_name: Quos voluptate commodi.
-                subject: Tempora eius.
-                template_key: Rerum eum rerum quod.
+                    - logo_url: Debitis nam.
+                      name: Qui temporibus quis iste eaque.
+                      tier: Consequatur dolore dolor corporis consequatur voluptatem voluptates.
+                      url: Delectus ex aut quia.
+                    - logo_url: Debitis nam.
+                      name: Qui temporibus quis iste eaque.
+                      tier: Consequatur dolore dolor corporis consequatur voluptatem voluptates.
+                      url: Delectus ex aut quia.
+                    - logo_url: Debitis nam.
+                      name: Qui temporibus quis iste eaque.
+                      tier: Consequatur dolore dolor corporis consequatur voluptatem voluptates.
+                      url: Delectus ex aut quia.
+                stage_name: Et rerum eum rerum quod cupiditate.
+                subject: Sit laudantium perferendis autem.
+                template_key: Quidem eius quam nisi occaecati nemo.
             required:
                 - subject
                 - preview_text
@@ -25640,7 +25641,7 @@ components:
                 message:
                     type: string
                     description: Human-readable summary of the plan, rendered directly in the wizard's chat transcript
-                    example: Eum reiciendis exercitationem eius est est quis.
+                    example: Id aut magni sint.
                 mode:
                     type: string
                     description: How content will be produced for this session
@@ -25648,7 +25649,7 @@ components:
                 phase:
                     type: string
                     description: Session lifecycle phase
-                    example: planning
+                    example: complete
                     enum:
                         - planning
                         - content
@@ -25657,26 +25658,26 @@ components:
                 session_id:
                     type: string
                     description: Wizard session UUID
-                    example: 9077a087-00af-4b9a-b3bb-83114509dd37
+                    example: c02c7796-4772-4804-85c9-c0ff560be0f9
                     format: uuid
                 source_email:
                     $ref: '#/components/schemas/WizardSourceEmail'
                 stage:
                     description: Resolved event-lifecycle stage template (name, purpose, tone, CTA strategy)
-                    example: Tempore consequuntur explicabo.
+                    example: Placeat voluptatem voluptatem eum reiciendis.
                 utm:
                     description: UTM parameters that will be applied to the draft's links
-                    example: Eum nihil.
+                    example: Eius est est.
             example:
-                message: Sint ullam.
+                message: Aut ut rerum quidem.
                 mode: reference
-                phase: cloned
-                session_id: 43646c31-ffa6-4f94-b7ff-96dacb85a651
+                phase: content
+                session_id: 2babc6dc-739f-4b10-80cf-7d2c31527966
                 source_email:
-                    id: Dicta qui aut quas.
-                    name: Eos nam ipsa rerum.
-                stage: Voluptatem id ratione placeat.
-                utm: Aut sapiente iure.
+                    id: Dolorem repellendus porro et distinctio.
+                    name: Aut assumenda fugiat quia eaque dolor porro.
+                stage: Tempora aliquam.
+                utm: Ullam optio sed voluptatem.
             required:
                 - session_id
                 - message
@@ -25688,15 +25689,15 @@ components:
                 session_id:
                     type: string
                     description: Wizard session UUID to pass to every subsequent turn
-                    example: d126a8e9-cb13-4628-b0cd-13ed2e6b6807
+                    example: 9e83b08d-888d-4e04-a2df-fb052af85b40
                     format: uuid
                 token:
                     type: string
                     description: Opaque progress token for the SSE stream at /projects/{project_id}/briefs/{brief_id}/wizard/progress/{token}
-                    example: Accusantium vitae est sed qui sint deserunt.
+                    example: Fugit consequatur et quibusdam quibusdam deserunt rem.
             example:
-                session_id: faceee08-8940-4855-85ad-78d5557f7271
-                token: Et nesciunt.
+                session_id: 37ce1816-8ee7-400f-a31e-b0e837523466
+                token: Qui deleniti quibusdam quo quaerat.
             required:
                 - session_id
                 - token
@@ -25799,14 +25800,14 @@ components:
                 id:
                     type: string
                     description: HubSpot marketing email id
-                    example: Perspiciatis doloribus libero quia.
+                    example: Veritatis et modi ipsa.
                 name:
                     type: string
                     description: HubSpot marketing email name
-                    example: Nulla optio impedit sit.
+                    example: Ea eveniet architecto molestias eum sit aut.
             example:
-                id: Ducimus quam.
-                name: Qui aut consectetur.
+                id: Ab rerum cupiditate est rerum error.
+                name: Doloribus libero.
             required:
                 - id
                 - name
@@ -25816,24 +25817,24 @@ components:
                 logo_url:
                     type: string
                     description: Sponsor logo image URL
-                    example: Rerum quia dolores ullam natus aut.
+                    example: Aut sapiente iure.
                 name:
                     type: string
                     description: Sponsor name
-                    example: Velit aut ullam illum beatae unde eveniet.
+                    example: Ratione placeat.
                 tier:
                     type: string
                     description: Sponsorship tier as the page expresses it; free text, not a normalised vocabulary
-                    example: Qui vero quis.
+                    example: Rerum quia dolores ullam natus aut.
                 url:
                     type: string
                     description: Sponsor link target
-                    example: Recusandae asperiores animi ut.
+                    example: Velit aut ullam illum beatae unde eveniet.
             example:
-                logo_url: Sit omnis cumque minima.
-                name: Aut aut quaerat voluptas sunt et officia.
-                tier: Aliquid doloremque dolorum doloremque repudiandae aliquid possimus.
-                url: Magni minima est.
+                logo_url: Qui vero quis.
+                name: Recusandae asperiores animi ut.
+                tier: Sit omnis cumque minima.
+                url: Aut aut quaerat voluptas sunt et officia.
             required:
                 - name
                 - logo_url

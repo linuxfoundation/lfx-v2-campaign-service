@@ -2350,8 +2350,12 @@ var schemelessScreenRunRe = regexp.MustCompile(
 // copy walks into constantly: a clock. `keynote 14:00@events.example` and
 // `session 9:30@main.stage` are the userinfo production byte for byte, and an events
 // platform writes that sentence every day. See userinfoRunIsClockShaped.
+//
+// The username class before the colon is RFC 3986's userinfo alphabet (unreserved,
+// pct-encoded and the sub-delims `!$&'()*+,;=`), kept in step with pkg/redact's
+// schemelessUserinfoSnapshotRunRe: a narrower class let `admin!:pw@events.example` through.
 var schemelessUserinfoRunRe = regexp.MustCompile(
-	`(?i)[a-z0-9._~%+-]+:[^\s<>@。、！？，：；]*@` +
+	`(?i)[a-z0-9._~%+!$&'()*,;=-]+:[^\s<>@。、！？，：；]*@` +
 		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>。、！？，：；]*)?`,
 )

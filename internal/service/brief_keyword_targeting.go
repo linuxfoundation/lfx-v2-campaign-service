@@ -174,8 +174,9 @@ func (s *BriefService) classifyKeywordTargetingError(ctx context.Context, verb, 
 			"project_id", projectID, "platform", platform, "reason", unusableConnectionReason(aerr))
 		return &briefs.InternalServerError{Code: "500", Message: failed}
 	case errors.Is(aerr, domain.ErrCredentialDecryptionFailed):
+		// Attributed to the row that failed (credentialOwnerProject), not to the requester.
 		slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; keyword targeting cannot proceed",
-			"project_id", projectID, "platform", platform)
+			"project_id", credentialOwnerProject(aerr, projectID), "requested_by_project_id", projectID, "platform", platform)
 		return &briefs.InternalServerError{Code: "500", Message: failed}
 	case errors.Is(aerr, domain.ErrNotFound):
 		return &briefs.NotFoundError{Code: "404", Message: "no " + keywordTargetingPlatformLabel(platform) + " connection is configured for this project"}

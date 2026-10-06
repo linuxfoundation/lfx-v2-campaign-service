@@ -274,6 +274,9 @@ func keywordReportKey(p model.Provider) model.KeywordReportKey {
 	return model.KeywordReportKey{ProjectID: "p1", Platform: p, AccountID: "acct-1", Window: model.MetricsWindowLast30Days}
 }
 
+// KeywordReportEnabled is local, so it never fails here.
+func (d upstreamCapableDispatcher) KeywordReportEnabled(model.MetricsWindow) error { return nil }
+
 // KeywordReportAccount makes no upstream call, so it never fails here: the keyword cases
 // below drive submit and check directly.
 func (d upstreamCapableDispatcher) KeywordReportAccount(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (string, error) {

@@ -23,6 +23,8 @@ type fakeKeywordReader struct {
 	mu         sync.Mutex
 	account    string
 	accountErr error
+	enabledErr error
+	enabled    int
 	submitID   string
 	submitErr  error
 	check      *model.KeywordReportCheck
@@ -35,6 +37,13 @@ type fakeKeywordReader struct {
 
 func (f *fakeKeywordReader) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
 	return nil, errors.New("unused")
+}
+
+func (f *fakeKeywordReader) KeywordReportEnabled(model.MetricsWindow) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.enabled++
+	return f.enabledErr
 }
 
 func (f *fakeKeywordReader) KeywordReportAccount(_ context.Context, _ string, _ model.Provider, _ model.MetricsWindow, scope []model.ProjectCampaignScope) (string, error) {
@@ -148,6 +157,20 @@ func TestReadKeywords_EmptyScopeMakesNoCalls(t *testing.T) {
 	}
 	if r.accounts+r.submits+r.checks != 0 || len(store.keys) != 0 {
 		t.Errorf("an empty scope must touch neither the dispatcher nor the store")
+	}
+}
+
+// The rollout gate is a property of the platform, not of the project: a project with no
+// campaigns must get the same refusal as one with many, not an empty 200 (PR #263 review).
+func TestReadKeywords_GateIsCheckedBeforeTheEmptyScopeSuccess(t *testing.T) {
+	r := &fakeKeywordReader{account: "123", enabledErr: fmt.Errorf("disabled: %w", domain.ErrKeywordInsightsUnsupported)}
+	store := &fakeKeywordStore{}
+	_, err := keywordOrch([]string{}, r, store).ReadReportedKeywordPerformance(context.Background(), "cncf", model.ProviderMicrosoftAds, model.MetricsWindowLast30Days)
+	if !errors.Is(err, domain.ErrKeywordInsightsUnsupported) {
+		t.Fatalf("err = %v, want ErrKeywordInsightsUnsupported", err)
+	}
+	if r.accounts+r.submits+r.checks != 0 || len(store.keys) != 0 {
+		t.Errorf("a gated-off read must touch neither the dispatcher's account path nor the store")
 	}
 }
 

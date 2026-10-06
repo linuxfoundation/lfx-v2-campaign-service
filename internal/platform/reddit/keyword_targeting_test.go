@@ -252,15 +252,17 @@ func TestSameKeywords(t *testing.T) {
 	}
 }
 
-// A refusal answering a PATCH retried after a 429 cannot speak for the 429'd attempt.
-func TestRemoveAdGroupKeywords_RefusalAfterARetried429IsUnconfirmed(t *testing.T) {
+// The whole-targeting PATCH is sent once: a 429 is UNCONFIRMED immediately and never retried,
+// because a retry from the stale pre-read could overwrite a change made after a committed first
+// attempt (PR #274 review).
+func TestRemoveAdGroupKeywords_429IsUnconfirmedAndNotRetried(t *testing.T) {
 	base := readTargeting(t)
-	c, calls := throttledThenClient(t, http.StatusBadRequest, `{"error":{}}`)
+	c, calls := throttledThenClient(t, http.StatusOK, `{"data":{}}`)
 	_, err := c.RemoveAdGroupKeywords(context.Background(), "t5_ag", base, []string{"a"})
 	if !IsOutcomeUnconfirmed(err) {
 		t.Fatalf("want UNCONFIRMED, got %v", err)
 	}
-	if n := calls.Load(); n != 2 {
-		t.Errorf("want the 429 retried once (2 attempts), got %d", n)
+	if n := calls.Load(); n != 1 {
+		t.Errorf("want exactly one PATCH (no retry after a 429), got %d", n)
 	}
 }

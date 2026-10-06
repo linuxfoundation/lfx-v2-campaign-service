@@ -180,7 +180,9 @@ func (c *Client) ListLineItemTargetingCriteria(ctx context.Context, lineItemID s
 
 // DeleteTargetingCriterion deletes one targeting criterion via
 // DELETE accounts/:account_id/targeting_criteria/:id. It takes a slot on the client's shared
-// WRITE PACER first, like every other X mutation; a pacer wait cut short is ErrWriteNotSent.
+// WRITE PACER first, like every other X mutation; a pacer wait cut short is ErrWriteNotSent, and
+// so is a request doRequest proves never left the process (ProbeNotSent: a DNS or connect-time
+// failure, or a context already done when the request was about to be built).
 //
 // THE 429 IS NOT RETRIED IN-CALL, for UpdateLineItemBid's reason: a throttle may be reported
 // after X applied the write, so every 429 comes back as itself and createOutcomeAmbiguous
@@ -203,6 +205,12 @@ func (c *Client) DeleteTargetingCriterion(ctx context.Context, criterionID strin
 	resp, err := c.doRequest(ctx, http.MethodDelete, "targeting_criteria/"+url.PathEscape(criterionID), nil,
 		false /* a 429 is unconfirmed, never retried: see above */)
 	if err != nil {
+		// Checked before any API classification: doRequest marks a DNS or connect-time failure,
+		// and a context already done at entry, as a request PROVEN never to have left the
+		// process. That is NOT_SENT, not a platform refusal.
+		if ProbeNotSent(err) {
+			return fmt.Errorf("twitter: delete targeting criterion %s was not sent: %w: %w", criterionID, ErrWriteNotSent, err)
+		}
 		var ae *apiError
 		if errors.As(err, &ae) && ae.StatusCode == http.StatusNotFound {
 			return fmt.Errorf("twitter: delete targeting criterion %s: %w", criterionID, ErrTargetingCriterionNotFound)

@@ -1303,7 +1303,8 @@ classified. Nothing is written until every guard has passed.
   an absent campaign → `ErrPlatformCampaignAbsent`, a campaign reported under another account →
   `ErrCampaignAccountMismatch`. Then reads the ad group and requires: it belongs to this campaign
   (an UNREPORTED `campaign_id` is refused like a different one), `bid_strategy == MANUAL_BIDDING`,
-  `bid_type == CPC`, a legible `bid_value`; else `ErrBidUnwritable`. **Every Reddit campaign this service creates is `BIDLESS`** on both the
+  `bid_type == CPC`, a legible `bid_value` (an absent or null one is refused like an
+  unparseable one — a manual-CPC ad group always carries a bid); else `ErrBidUnwritable`. **Every Reddit campaign this service creates is `BIDLESS`** on both the
   campaign and its ad group, so this leg refuses them until an operator switches BOTH the campaign's bid strategy (Campaign Budget Optimization is on for every campaign this service creates, so the ad group must match it) AND the ad group to `MANUAL_BIDDING` in Reddit Ads Manager — the adapter checks the campaign first, then the ad group. A 404 on the ad group is
   `ErrBidUnwritable`, NOT `ErrPlatformCampaignAbsent` — the campaign may still exist. Amount via
   `reddit.BidMicros` (positive, ≤ 1,000,000, ≥ one micro). PATCH outcomes as the budget write's,

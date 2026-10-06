@@ -145,4 +145,16 @@ func TestDeleteTargetingCriterion_Classification(t *testing.T) {
 			t.Errorf("an unsent request is ErrWriteNotSent, never unconfirmed: %v", err)
 		}
 	})
+	// A connect-time failure proves the DELETE never left the process: NOT_SENT, not a refusal
+	// (PR #274 review).
+	t.Run("a refused connection is not sent", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		base := srv.URL
+		srv.Close() // nothing listens there now: the dial is refused
+		c := testClient(base)
+		err := c.DeleteTargetingCriterion(context.Background(), "k1")
+		if !errors.Is(err, ErrWriteNotSent) || IsOutcomeUnconfirmed(err) {
+			t.Fatalf("want ErrWriteNotSent and not unconfirmed, got %v", err)
+		}
+	})
 }
