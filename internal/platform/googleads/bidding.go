@@ -560,13 +560,14 @@ func validateTargetROAS(roas float64) (float64, error) {
 // account that owns it, and silently re-pointing one at this account would attach a
 // conversion that does not exist and fail after the budget mutate.
 //
-// Refused on Demand Gen. Not because conversions are meaningless there, but because
-// selective_optimization is the only create-time mechanism this client implements and
-// DEMAND_GEN does not take it — that channel carries its goals through
-// conversion_goal_campaign_config instead. Accepting the list here would validate every name
-// and then drop the lot, leaving the operator believing the campaign bids toward the
-// conversions they chose. This is the same refuse-don't-drop rule every other Search-only
-// input in this preflight follows.
+// Admitted on Search, Video and Display; refused on Demand Gen and Performance Max. Not
+// because conversions are meaningless on those two, but because selective_optimization is
+// the only create-time mechanism this client implements and neither takes it — Demand Gen
+// carries its goals through conversion_goal_campaign_config, and Performance Max through
+// campaign conversion goals, a resource that cannot be addressed until the campaign exists.
+// Accepting the list there would validate every name and then drop the lot, leaving the
+// operator believing the campaign bids toward the conversions they chose. This is the same
+// refuse-don't-drop rule every other channel-incapable input in this preflight follows.
 func validateConversionActions(kind, customerID string, actions []string) ([]string, error) {
 	if len(actions) == 0 {
 		return nil, nil

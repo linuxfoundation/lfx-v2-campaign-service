@@ -251,7 +251,7 @@ func validateCallExtensions(calls []CallExtension) ([]assetCreate, error) {
 			return nil, fmt.Errorf("google-ads call extension %d has no country code; Google cannot interpret a phone number without one", i)
 		}
 		if len(country) != 2 || !isASCIILetters(country) {
-			return nil, fmt.Errorf("google-ads call extension %d country code %q must be an ISO alpha-2 code such as US or DE", i, c.CountryCode)
+			return nil, fmt.Errorf("google-ads call extension %d country code %q must be an ISO alpha-2 code such as US or DE", i, capForError(country))
 		}
 		number := strings.TrimSpace(c.PhoneNumber)
 		if number == "" {
@@ -295,7 +295,7 @@ func validatePromotionExtensions(in CampaignInput) ([]assetCreate, error) {
 			return nil, fmt.Errorf("google-ads promotion extension %d has no promotion target; Google needs to know what is on sale", i)
 		}
 		if n := utf8.RuneCountInString(target); n > maxPromotionTargetRunes {
-			return nil, fmt.Errorf("google-ads promotion extension %q target is %d characters, exceeding the %d limit", target, n, maxPromotionTargetRunes)
+			return nil, fmt.Errorf("google-ads promotion extension %d target is %d characters, exceeding the %d limit", i, n, maxPromotionTargetRunes)
 		}
 		key := strings.ToLower(target)
 		if _, dup := seen[key]; dup {
@@ -352,13 +352,13 @@ func validatePromotionExtensions(in CampaignInput) ([]assetCreate, error) {
 
 		if occ := strings.TrimSpace(p.Occasion); occ != "" {
 			if !enumShapeRE.MatchString(occ) {
-				return nil, fmt.Errorf("google-ads promotion extension %q occasion %q is not an occasion name; Google spells these in upper case with underscores, such as BLACK_FRIDAY", target, p.Occasion)
+				return nil, fmt.Errorf("google-ads promotion extension %q occasion %q is not an occasion name; Google spells these in upper case with underscores, such as BLACK_FRIDAY", target, capForError(occ))
 			}
 			asset.Occasion = occ
 		}
 		if lang := strings.TrimSpace(p.LanguageCode); lang != "" {
 			if !languageCodeRE.MatchString(lang) {
-				return nil, fmt.Errorf("google-ads promotion extension %q language code %q is not a language tag such as en or pt-BR", target, p.LanguageCode)
+				return nil, fmt.Errorf("google-ads promotion extension %q language code %q is not a language tag such as en or pt-BR", target, capForError(lang))
 			}
 			asset.LanguageCode = lang
 		}
@@ -400,13 +400,13 @@ func validatePriceExtensions(in CampaignInput) ([]assetCreate, error) {
 			return nil, fmt.Errorf("google-ads price extension %d has no type; Google needs to know what kind of table this is, such as EVENTS or SERVICES", i)
 		}
 		if !enumShapeRE.MatchString(kind) {
-			return nil, fmt.Errorf("google-ads price extension %d type %q is not a type name; Google spells these in upper case with underscores, such as PRODUCT_TIERS", i, p.Type)
+			return nil, fmt.Errorf("google-ads price extension %d type %q is not a type name; Google spells these in upper case with underscores, such as PRODUCT_TIERS", i, capForError(kind))
 		}
 		asset := &priceAsset{Type: kind}
 
 		if q := strings.TrimSpace(p.PriceQualifier); q != "" {
 			if !enumShapeRE.MatchString(q) {
-				return nil, fmt.Errorf("google-ads price extension %d price qualifier %q is not a qualifier name; Google spells these in upper case, such as FROM or UP_TO", i, p.PriceQualifier)
+				return nil, fmt.Errorf("google-ads price extension %d price qualifier %q is not a qualifier name; Google spells these in upper case, such as FROM or UP_TO", i, capForError(q))
 			}
 			asset.PriceQualifier = q
 		}
@@ -416,7 +416,7 @@ func validatePriceExtensions(in CampaignInput) ([]assetCreate, error) {
 			return nil, fmt.Errorf("google-ads price extension %d has no language code; Google refuses a price asset without one and this client will not pick a language for you", i)
 		}
 		if !languageCodeRE.MatchString(lang) {
-			return nil, fmt.Errorf("google-ads price extension %d language code %q is not a language tag such as en or pt-BR", i, p.LanguageCode)
+			return nil, fmt.Errorf("google-ads price extension %d language code %q is not a language tag such as en or pt-BR", i, capForError(lang))
 		}
 		asset.LanguageCode = lang
 
@@ -457,7 +457,7 @@ func validatePriceExtensions(in CampaignInput) ([]assetCreate, error) {
 			row := priceOfferingPayload{Header: header, Description: desc, Price: amount}
 			if u := strings.TrimSpace(o.Unit); u != "" {
 				if !enumShapeRE.MatchString(u) {
-					return nil, fmt.Errorf("google-ads %s unit %q is not a unit name; Google spells these in upper case, such as PER_DAY", label, o.Unit)
+					return nil, fmt.Errorf("google-ads %s unit %q is not a unit name; Google spells these in upper case, such as PER_DAY", label, capForError(u))
 				}
 				row.Unit = u
 			}

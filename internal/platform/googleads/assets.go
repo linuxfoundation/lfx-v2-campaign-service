@@ -330,7 +330,7 @@ func validateCallouts(callouts []string) ([]assetCreate, error) {
 			return nil, fmt.Errorf("google-ads callout %d is empty", i)
 		}
 		if n := utf8.RuneCountInString(text); n > maxCalloutTextRunes {
-			return nil, fmt.Errorf("google-ads callout %q is %d characters, exceeding the %d limit", text, n, maxCalloutTextRunes)
+			return nil, fmt.Errorf("google-ads callout %d is %d characters, exceeding the %d limit", i, n, maxCalloutTextRunes)
 		}
 		key := strings.ToLower(text)
 		if _, dup := seen[key]; dup {

@@ -170,8 +170,9 @@ type CampaignInput struct {
 	// names. Empty means the campaign inherits the ACCOUNT's conversion goals, which
 	// is what every campaign created before this field existed does.
 	//
-	// SEARCH only, and REFUSED on Demand Gen rather than dropped — that channel does
-	// not take campaign.selective_optimization. See validateConversionActions.
+	// SEARCH, VIDEO and DISPLAY, and REFUSED rather than dropped on Demand Gen and
+	// Performance Max — neither takes campaign.selective_optimization. See
+	// validateConversionActions.
 	ConversionActions []string
 	// StartDate / EndDate are the campaign's flight window as YYYY-MM-DD, matching
 	// the vocabulary the meta and reddit dispatch configs already use. Each is

@@ -321,11 +321,11 @@ type googleAdsConfig struct {
 	// resource names. Absent means the campaign inherits the ACCOUNT's conversion
 	// goals, which is what every Google campaign this service has created does.
 	//
-	// Search only — campaign.selective_optimization is the create-time conversion
-	// selection field and only Search takes it here; the other channels select
-	// conversions through a campaign-conversion-goal resource this client does not yet
-	// write, so the list is REFUSED there rather than dropped. The ids come from the
-	// client's ListConversionActions read.
+	// Search, Video and Display — campaign.selective_optimization is the create-time
+	// conversion selection field and those three accept it. Demand Gen and Performance
+	// Max select conversions through a campaign-conversion-goal resource this client
+	// does not yet write, so the list is REFUSED there rather than dropped. The ids come
+	// from the client's ListConversionActions read.
 	ConversionActions []string `json:"conversionActions"`
 	// StartDate/EndDate are the campaign's flight window as YYYY-MM-DD, spelled exactly
 	// as the meta and reddit configs spell them. Each is independently optional: an

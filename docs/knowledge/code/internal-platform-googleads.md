@@ -457,7 +457,9 @@ ESTABLISHED about the value:
   is exactly what must not be written to the database, and the host alone already tells the
   caller what they pasted.
 - `capForError` everywhere else: business names, asset-group names, display paths,
-  headlines, descriptions, calls to action, bidding strategies and conversion actions. These
+  headlines, descriptions, calls to action, bidding strategies, conversion actions, and the
+  extension fields in `assets.go` / `assets_extended.go` / `assets_leadform.go` — country
+  codes, language tags, occasion names, price types, price qualifiers and unit names. These
   arms have established the value is NOT a URL, but nothing bounds its LENGTH — and a
   length-limit error is emitted in precisely the case where the value exceeds the limit, so
   echoing it raw is unbounded by construction. `capForError` cuts on a rune boundary rather
@@ -465,7 +467,10 @@ ESTABLISHED about the value:
   multibyte copy is expected in them.
 
 `validateEntityName` shows the third option, which remains available and is stricter still:
-report the measured width and the limit and do not echo the value at all.
+report the measured width and the limit and do not echo the value at all. The LENGTH-LIMIT
+arms in the extension validators take that option rather than `capForError`: they already
+carry the extension's INDEX in the message, the index locates the offending entry on its own,
+and a capped echo of an over-long value adds nothing the caller does not already have.
 
 ## Ad group + responsive search ad creation (GA-3b)
 

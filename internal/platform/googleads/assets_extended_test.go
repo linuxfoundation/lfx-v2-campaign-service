@@ -541,3 +541,99 @@ func TestValidateAssetPlan_EachNewTypeAloneIsPlanned(t *testing.T) {
 		})
 	}
 }
+
+// Every extension validation arm that interpolates a caller string must bound it.
+// These errors persist unencrypted as `Steps` entries, and the arms below fire in
+// precisely the case where the value is not what the validator expected — so an
+// unbounded echo is unbounded by construction. The property is pinned at two sizes
+// an order of magnitude apart: ten times the input must not buy a materially longer
+// message, and no long run of the value may appear in it. (The two LENGTH-limit arms
+// do report the measured count, so the message grows by a digit — bounded, unlike the
+// value itself, which is why this asserts a budget rather than exact equality.)
+func TestExtensionErrors_BoundTheCallerString(t *testing.T) {
+	cases := map[string]func(v string) error{
+		"call extension country code": func(v string) error {
+			c := sampleCallExtension()
+			c.CountryCode = v
+			_, err := validateCallExtensions([]CallExtension{c})
+			return err
+		},
+		"promotion target length": func(v string) error {
+			in := sampleInput()
+			p := samplePromotion()
+			p.PromotionTarget = v
+			in.Promotions = []PromotionExtension{p}
+			_, err := validatePromotionExtensions(in)
+			return err
+		},
+		"promotion occasion": func(v string) error {
+			in := sampleInput()
+			p := samplePromotion()
+			p.Occasion = v
+			in.Promotions = []PromotionExtension{p}
+			_, err := validatePromotionExtensions(in)
+			return err
+		},
+		"promotion language code": func(v string) error {
+			in := sampleInput()
+			p := samplePromotion()
+			p.LanguageCode = v
+			in.Promotions = []PromotionExtension{p}
+			_, err := validatePromotionExtensions(in)
+			return err
+		},
+		"price type": func(v string) error {
+			in := sampleInput()
+			p := samplePrice()
+			p.Type = v
+			in.Prices = []PriceExtension{p}
+			_, err := validatePriceExtensions(in)
+			return err
+		},
+		"price qualifier": func(v string) error {
+			in := sampleInput()
+			p := samplePrice()
+			p.PriceQualifier = v
+			in.Prices = []PriceExtension{p}
+			_, err := validatePriceExtensions(in)
+			return err
+		},
+		"price language code": func(v string) error {
+			in := sampleInput()
+			p := samplePrice()
+			p.LanguageCode = v
+			in.Prices = []PriceExtension{p}
+			_, err := validatePriceExtensions(in)
+			return err
+		},
+		"price offering unit": func(v string) error {
+			in := sampleInput()
+			p := samplePrice()
+			p.Offerings[0].Unit = v
+			in.Prices = []PriceExtension{p}
+			_, err := validatePriceExtensions(in)
+			return err
+		},
+		"callout text length": func(v string) error {
+			_, err := validateCallouts([]string{v})
+			return err
+		},
+	}
+
+	for name, run := range cases {
+		t.Run(name, func(t *testing.T) {
+			for _, size := range []int{5_000, 50_000} {
+				err := run(strings.Repeat("x", size))
+				if err == nil {
+					t.Fatalf("a %d-character value must be refused", size)
+				}
+				if n := len(err.Error()); n > 4*maxErrorComponentLen {
+					t.Errorf("a %d-character value produced a %d-byte message: %q", size, n, err)
+				}
+				if strings.Contains(err.Error(), strings.Repeat("x", maxErrorComponentLen+1)) {
+					t.Errorf("message echoes the value past the cap: %q", err)
+				}
+			}
+		})
+	}
+}
