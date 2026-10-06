@@ -307,7 +307,7 @@ var schemelessSnapshotRunRe = regexp.MustCompile(
 // Kept in step with the twitter screen's class. The FIRST character must be unreserved, so a
 // clock opened by prose punctuation (`(14:00@main.stage)`) is matched from its first digit. A
 // username made ONLY of sub-delims (`!:pw@host`) is the second alternative, held to a colon
-// directly after it by the pattern itself (RE2 has no lookahead). See usernameIsClock for the
+// directly after it by the pattern itself (RE2 has no lookahead). See UsernameIsClock for the
 // exact clock exemption.
 //
 // It is not the only discriminator needed, and the second one is kept in step too: a time
@@ -339,30 +339,33 @@ func sanitizeUserinfoSnapshotRun(run string) string {
 	}
 	userinfo := run[:at]
 	colon := strings.IndexByte(userinfo, ':')
-	if colon >= 0 && usernameIsClock(userinfo[:colon], userinfo[colon+1:]) {
+	if colon >= 0 && UsernameIsClock(userinfo[:colon], userinfo[colon+1:]) {
 		return run
 	}
 	return ""
 }
 
-// usernameIsClock reports whether a userinfo run's username:password pair is a time of day
-// rather than a credential. Two shapes qualify, and nothing else:
+// UsernameIsClock reports whether a userinfo run's username:password pair is a time of day,
+// score or ratio rather than a credential. Two shapes qualify, and nothing else:
 //
-//   - an ALL-DIGIT username and an all-digit password (`14:00`, `3:4`) — the original
-//     digits-both-sides rule, unchanged;
+//   - an ALL-DIGIT pair of at most two digits a side (`14:00`, `9:30`, `3:4`). Longer digit
+//     runs (`2024:1234`, `12345:67890`) are a numeric user ID and PIN, not prose, and are
+//     caught. Two short digit pairs stay exempt on purpose: "finals 3:4@events.example" is
+//     ordinary event copy, and refusing it on the X screen blocks a working brief;
 //   - prose punctuation hard against a REAL clock (`Mon,9:30`): the username's segment after
 //     its last `,` `(` `*` or `'` must be a 1–2 digit hour <= 23 and the password exactly two
 //     digits <= 59. A longer number after the punctuation (`a,2024:1234`) is not a clock.
 //
-// Kept in step with internal/platform/twitter.
+// This is the single copy: internal/platform/twitter's tweet screen calls it, so the snapshot
+// redactor and the X screen cannot drift apart.
 //
 // `+` (and every other sub-delim) is deliberately NOT a qualifying prefix: `+` is unreserved in
 // a username and common in real ones, so `alice+9:30@ops.example` and `alice+2024:1234@…` are
 // credentials. The first-character rule on the run pattern already makes `(14:00@`, `*9:30@`
 // and `'14:00@` start at the digit, so the punctuation path exists for the `Mon,9:30@` shape.
-func usernameIsClock(username, password string) bool {
+func UsernameIsClock(username, password string) bool {
 	if isAllASCIIDigits(username) {
-		return isAllASCIIDigits(password)
+		return len(username) <= 2 && len(password) <= 2 && isAllASCIIDigits(password)
 	}
 	i := strings.LastIndexAny(username, ",(*'")
 	if i < 0 {

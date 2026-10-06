@@ -586,8 +586,9 @@ colon is RFC 3986's userinfo alphabet, sub-delims `!$&'()*+,;=` included, kept i
 `pkg/redact`'s snapshot pattern: a narrower class let `admin!:pw@events.example` through both.
 Its first character must be unreserved, so `Keynote (14:00@main.stage)` starts at the digit;
 a username made only of sub-delims (`!:pw@host`) is a second alternative held to a colon right
-after it. The clock exemption (`usernameIsClock`, identical in `pkg/redact`) is exactly: an
-all-digit username with an all-digit password, OR a `,` `(` `*` or `'` followed by a real clock
+after it. The clock exemption is `redact.UsernameIsClock` — one copy, shared with the snapshot
+redactor — and is exactly: an all-digit pair of at most two digits a side (`14:00`, `3:4`), so
+`2024:1234@ops.example` is refused, OR a `,` `(` `*` or `'` followed by a real clock
 — hour 1–2 digits ≤ 23, password exactly two digits ≤ 59 (`Mon,9:30@main.stage`). A `+` prefix
 never qualifies, so `alice+9:30@ops.example` and `alice+2024:1234@ops.example` are refused.
 

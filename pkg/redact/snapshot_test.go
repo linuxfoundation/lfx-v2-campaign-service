@@ -58,9 +58,35 @@ func TestSnapshotText(t *testing.T) {
 		{"plus-suffixed numeric pair", "x alice+2024:" + "1234@ops.example y", "x  y"},
 		{"plus clock is not exempt", "x alice+9:" + "30@ops.example y", "x  y"},
 		{"comma then a non-clock number", "x a,2024:" + "1234@h.example y", "x  y"},
+		{"hour 24 is not a clock", "x Mon,24:" + "00@main.stage y", "x  y"},
+		{"minute 60 is not a clock", "x Mon,9:" + "60@main.stage y", "x  y"},
+		{"one-digit minute after punctuation is not a clock", "x Mon,9:" + "5@main.stage y", "x  y"},
+		{"last minute of the day is a clock", "Mon,23:59@main.stage", "Mon,23:59@main.stage"},
+		{"two-digit score is exempt", "finals 3:4@events.example", "finals 3:4@events.example"},
+		{"numeric user id and pin", "x 2024:" + "1234@ops.example y", "x  y"},
+		{"long numeric pair", "x 12345:" + "67890@host.example y", "x  y"},
 	} {
 		if got := SnapshotText(tc.in); got != tc.want {
 			t.Errorf("%s: SnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestUsernameIsClock pins the exemption's edges directly: these are the exact line between
+// "clock" and "credential persisted in config_snapshot / published on X".
+func TestUsernameIsClock(t *testing.T) {
+	for _, tc := range []struct {
+		user, pass string
+		want       bool
+	}{
+		{"14", "00", true}, {"9", "30", true}, {"3", "4", true}, {"99", "99", true},
+		{"2024", "1234", false}, {"12345", "67890", false}, {"123", "4", false}, {"1", "234", false},
+		{"Mon,23", "59", true}, {"Mon,0", "00", true},
+		{"Mon,24", "00", false}, {"Mon,9", "60", false}, {"Mon,9", "5", false}, {"Mon,123", "00", false},
+		{"alice+9", "30", false}, {"a!9", "30", false}, {"", "00", false}, {"14", "", false},
+	} {
+		if got := UsernameIsClock(tc.user, tc.pass); got != tc.want {
+			t.Errorf("UsernameIsClock(%q, %q) = %v, want %v", tc.user, tc.pass, got, tc.want)
 		}
 	}
 }

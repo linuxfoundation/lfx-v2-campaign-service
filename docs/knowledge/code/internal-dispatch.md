@@ -240,8 +240,8 @@ back out of agreement, which is the exact defect this third pass was added to fi
 COST direction differs and this side is the milder one — over-redacting loses a line of
 the operator's own copy from a diagnostic snapshot, where over-refusing on the twitter
 side blocks a brief before anything is created. Milder is not free, since the snapshot
-exists to be read by a human, and the digits-both-sides test gives up no credential shape
-to buy it.
+exists to be read by a human, and the clock test (`redact.UsernameIsClock`: two digits a side at most, or a real clock
+behind prose punctuation) gives up only a two-digit pair to buy it.
 
 A FOURTH pass covers the last shape that reached the snapshot with its path intact: a
 scheme-less link whose secret is in the PATH and which carries no query, fragment or
