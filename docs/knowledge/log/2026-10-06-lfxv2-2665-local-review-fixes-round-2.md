@@ -25,8 +25,27 @@ same as *being bounded*, and only a length check establishes the second.
 group name with `strings.TrimSpace(in.EventName)`. A control character inside `EventName`
 survives a trim, passes the whole preflight, and is rejected by Google at
 `adGroups:mutate` — which runs AFTER the budget and campaign are created. That is a
-stranded PAID campaign, precisely the orphan the preflight exists to prevent. All three now
-use `sanitizeNamePart`, the helper the campaign name has always used.
+stranded PAID campaign, precisely the orphan the preflight exists to prevent. All three
+DERIVED names now use `sanitizeNamePart`, the helper the campaign name has always used.
+
+**Where the name is the operator's, the arm is refusal, not sanitization.** Performance Max
+is the one path that takes a caller-supplied `AssetGroupName`, and running that through
+`sanitizeNamePart` would return a different name than the operator typed — it also maps `|`
+to a space and collapses whitespace runs, neither of which Google objects to in an asset
+group name. So the supplied branch refuses exactly what the field cannot hold — NUL, LF and
+CR, the same three runes `returnedCampaignName` names — and passes TAB, `|` and format
+characters through untouched. Refusing more would be over-refusal: a create Google would
+have accepted, stopped locally. The general shape: sanitize a value this code DERIVED,
+refuse a value the caller CHOSE.
+
+**Demand Gen stays on `TrimSpace`, and that is a gap rather than an exemption.** Its ad
+group name is attached to live campaigns, and `sanitizeNamePart`'s whitespace-run collapse
+would rename them out from under the name-based reconciliation the name exists for. So the
+control-character stranding described above remains OPEN on Demand Gen. Closing it needs a
+migration of the live names, not an edit to the line. The composition moved into
+`demandGenAdGroupName` so the Display collision test can call BOTH productions rather than
+re-derive this one as a literal — a literal keeps passing when the code it mirrors moves,
+which is the half of a collision a test cannot see from the other side.
 
 **Display's ad group collided with Demand Gen's, byte for byte.** Both composed
 `"<event> - Display"`, Demand Gen because it once WAS the Display channel. The collision

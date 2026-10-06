@@ -321,4 +321,14 @@ func TestVideoAdGroupName_IsChannelSuffixed(t *testing.T) {
 	if got != "KubeCon Europe 2026 - Video" {
 		t.Errorf("videoAdGroupName = %q", got)
 	}
+
+	// Sanitized, not merely trimmed — and this case is the only one that can tell the two
+	// apart. A clean EventName passes identically under strings.TrimSpace, so reverting
+	// sanitizeNamePart here would leave the assertion above green while re-opening the
+	// stranding: a control character survives a trim, passes the whole preflight, and is
+	// rejected by Google at `adGroups:mutate`, which runs AFTER the budget and campaign are
+	// created and paid for.
+	if got := videoAdGroupName(CampaignInput{EventName: "Kube\x00Con\tEU | Berlin"}); got != "Kube Con EU Berlin - Video" {
+		t.Errorf("videoAdGroupName with control characters and a pipe = %q, want them folded to single spaces", got)
+	}
 }

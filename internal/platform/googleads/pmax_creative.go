@@ -335,6 +335,22 @@ func validatePerformanceMaxCreative(kind string, in CampaignInput) (performanceM
 	groupName := strings.TrimSpace(p.AssetGroupName)
 	if groupName == "" {
 		groupName = sanitizeNamePart(in.EventName) + performanceMaxAssetGroupSuffix
+	} else if strings.ContainsAny(groupName, "\x00\n\r") {
+		// The caller-supplied branch REFUSES where the derived branch above SANITIZES, and
+		// the asymmetry is the point: sanitizeNamePart also maps `|` to a space and collapses
+		// whitespace runs, which Google accepts in an asset group name. Running an operator's
+		// own typed name through it would silently return a different name than they asked
+		// for; running a name THIS code derived through it rewrites nothing anyone chose.
+		//
+		// What is refused is exactly what the upstream field cannot hold — NUL, LF and CR,
+		// the same three runes returnedCampaignName names — and nothing more. TAB,
+		// U+2028/U+2029 and format characters are legal here, so refusing them would be
+		// over-refusal: a create Google would have accepted, stopped locally.
+		//
+		// Refusing rather than passing it through matters because assetGroups:mutate runs
+		// AFTER the budget and campaign are created and paid for. An unusable name there
+		// strands a PAID campaign; the same name caught here costs one corrected request.
+		return performanceMaxPlan{}, fmt.Errorf("google-ads Performance Max asset group name %q contains NUL, LF or CR, which Google cannot store; remove the control character or omit the name to have one composed from the event", capForError(groupName))
 	}
 	if n := utf8.RuneCountInString(groupName); n > maxAssetGroupNameRunes {
 		return performanceMaxPlan{}, fmt.Errorf("google-ads Performance Max asset group name %q is %d characters, exceeding the %d limit", capForError(groupName), n, maxAssetGroupNameRunes)

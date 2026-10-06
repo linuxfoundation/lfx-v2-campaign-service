@@ -1815,7 +1815,19 @@ Gen's suffix is the one already attached to live campaigns, so the new channel i
 that moves. All three new channels compose their group name through `sanitizeNamePart`
 rather than a bare `TrimSpace`, for the reason `campaign.go` gives: a control character
 inside `EventName` survives a trim and is rejected at `adGroups:mutate`, which runs after
-the budget and campaign are committed and paid for.
+the budget and campaign are committed and paid for. Demand Gen is deliberately NOT
+converted — its names are on live campaigns and the whitespace-run collapse would rename
+them — so that stranding stays open on that one channel as a recorded gap, and
+`demandGenAdGroupName` exists so the Display collision test asserts against the real
+composition instead of a literal that goes stale silently.
+
+**Derived names are sanitized; caller-supplied names are refused.** Performance Max is the
+only path taking an operator's own `AssetGroupName`, and `sanitizeNamePart` would hand back
+a different name than they typed — it also maps `|` to a space and collapses whitespace
+runs, neither of which Google rejects in an asset group name. That branch therefore refuses
+exactly NUL, LF and CR (the three runes `returnedCampaignName` names) and passes TAB, `|`
+and format characters through unchanged. Widening it to `unicode.IsControl` or to
+`sanitizeNamePart`'s rule would be over-refusal — a create upstream accepts, stopped here.
 
 **Display has its own adoption slot**, keyed on `advertising_channel_type` alone like every
 other: ANY `DISPLAY` campaign fills the `display` slot. One slot per channel TYPE is the

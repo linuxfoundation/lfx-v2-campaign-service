@@ -16,6 +16,24 @@ const (
 	advertisingChannelDemandGen = "DEMAND_GEN"
 )
 
+// demandGenAdGroupName composes this channel's single ad group name.
+//
+// It exists as a function rather than an inline expression so the Display channel's test
+// can assert the two names DIFFER by calling both compositions, instead of re-deriving
+// this one as a literal that no later edit here would invalidate. Changing the suffix
+// below must fail displayAdGroupName's collision test, not production.
+//
+// Deliberately still strings.TrimSpace where the three newer creative paths use
+// sanitizeNamePart: Demand Gen is the one shipped channel, and sanitizeNamePart's
+// whitespace-run collapse would rename ad groups already attached to live campaigns,
+// defeating the name-based reconciliation this name exists for. The cost of that choice
+// is that the control-character stranding at `adGroups:mutate` which sanitizeNamePart
+// closes for Display, Video and PMax stays OPEN here — a known, accepted gap, not an
+// oversight. Closing it needs a migration of the live names, not an edit to this line.
+func demandGenAdGroupName(in CampaignInput) string {
+	return strings.TrimSpace(in.EventName) + " - Display"
+}
+
 // demandGenCampaignCreate is a SEPARATE payload from campaignCreate rather than a
 // widened version of it, because the two channels disagree on required fields:
 // campaignCreate always sends `networkSettings` and `manualCpc`, and Demand Gen
@@ -235,7 +253,7 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	}
 
 	// Step 3: the ad group. Demand Gen ad groups take no explicit type.
-	adGroupName := strings.TrimSpace(in.EventName) + " - Display"
+	adGroupName := demandGenAdGroupName(in)
 	adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: demandGenAdGroupCreate{
 		Name:     adGroupName,
 		Campaign: campaignResource,

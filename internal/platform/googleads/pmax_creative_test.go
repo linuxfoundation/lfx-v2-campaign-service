@@ -281,6 +281,42 @@ func TestValidatePerformanceMaxCreative_AssetGroupNameDefaultsToTheEvent(t *test
 	}
 }
 
+// The two branches of the asset-group name treat a control character DIFFERENTLY, and the
+// difference is deliberate — so both halves are pinned here. A derived name is sanitized
+// because nothing anyone typed is being rewritten; a caller-supplied name is refused
+// because silently returning a different name than the operator asked for is the worse
+// trade. Either way the name never reaches `assetGroups:mutate`, which runs after the
+// budget and campaign are created and paid for.
+func TestValidatePerformanceMaxCreative_AssetGroupNameControlCharacters(t *testing.T) {
+	in := pmaxInput(fullPMaxCreative())
+	in.EventName = "Kube\x00Con\tEU | Berlin"
+	plan, err := validatePerformanceMaxCreative(campaignKindPerformanceMax, in)
+	if err != nil {
+		t.Fatalf("a derived name must be sanitized, not refused: %v", err)
+	}
+	if want := "Kube Con EU Berlin" + performanceMaxAssetGroupSuffix; plan.assetGroupName != want {
+		t.Errorf("assetGroupName = %q, want %q", plan.assetGroupName, want)
+	}
+
+	c := fullPMaxCreative()
+	c.AssetGroupName = "Hand\x00named"
+	if _, err := validatePerformanceMaxCreative(campaignKindPerformanceMax, pmaxInput(c)); err == nil {
+		t.Error("a caller-supplied name carrying NUL must be refused before the paid mutate")
+	}
+
+	// TAB and `|` are LEGAL in an asset group name. Refusing them would be over-refusal —
+	// a create Google would have accepted, stopped locally — so the caller-supplied branch
+	// must pass them through unchanged rather than borrow sanitizeNamePart's wider rule.
+	c.AssetGroupName = "Hand\tnamed | group"
+	plan, err = validatePerformanceMaxCreative(campaignKindPerformanceMax, pmaxInput(c))
+	if err != nil {
+		t.Fatalf("TAB and pipe are legal upstream and must not be refused: %v", err)
+	}
+	if plan.assetGroupName != "Hand\tnamed | group" {
+		t.Errorf("assetGroupName = %q, want the supplied name unchanged", plan.assetGroupName)
+	}
+}
+
 // A YouTube id's LENGTH is deliberately not pinned to 11: that is the length every
 // id has had, not a documented guarantee, and refusing a longer one would refuse a
 // video Google would have accepted. Over-refusal is the failure mode these guards

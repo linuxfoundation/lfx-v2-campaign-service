@@ -325,7 +325,10 @@ func TestDisplayAdGroupName(t *testing.T) {
 	// can now sit under one brief. Equal names defeat the name-based reconciliation
 	// each relies on, so this inequality is the assertion that matters — a later
 	// "simplify the suffix" edit has to fail here rather than in production.
-	if demandGenName := strings.TrimSpace(in.EventName) + " - Display"; got == demandGenName {
+	// Both sides come from the PRODUCTION compositions. A local literal for the Demand Gen
+	// half would keep passing if demandgen.go's own suffix moved, which is the half of the
+	// collision this test cannot see from here.
+	if demandGenName := demandGenAdGroupName(in); got == demandGenName {
 		t.Errorf("displayAdGroupName = %q collides with the Demand Gen ad group name", got)
 	}
 
