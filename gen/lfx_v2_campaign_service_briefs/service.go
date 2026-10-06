@@ -205,24 +205,29 @@ type Service interface {
 	// BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX) the platform would ignore it or,
 	// worse, the write would be read as a request to switch strategy — and this
 	// endpoint NEVER switches strategy. An unreported strategy is refused the same
-	// way rather than assumed manual. NOTE: every Reddit campaign this service
-	// creates is BIDLESS, so the Reddit leg applies only after an operator has
-	// moved the ad group to manual bidding in Reddit Ads Manager. The amount is in
-	// the AD ACCOUNT's own currency, not USD, and this service neither knows nor
-	// converts it. Microsoft Advertising and Reddit today: a campaign on any other
-	// platform is refused with 400. **409** when the change is refused BEFORE the
-	// platform is written, so nothing has changed: the campaign is unprovisioned;
-	// it belongs to a different ad account than the project's connection now
-	// resolves to, or does not record which ad account it was created under; its
-	// bid strategy is automated or unreported; or the bid could not be addressed
-	// (no recorded ad group, an ad group reporting another campaign, or one
-	// bidding in a unit other than `bid_type`). None is retryable. **400** for a
-	// request fault: a non-positive, non-finite or out-of-range bid, an unknown
-	// bid type, a platform with no bid-write capability wired, or a bid the
-	// campaign's platform refuses on its own minimum or maximum — the response
-	// names what it was. **503** when the platform could not be reached or did not
-	// confirm; the row is unchanged. Setting the same bid twice converges, but
-	// verify the bid in the ad platform before retrying.
+	// way rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked
+	// first and then the ad group's: with Campaign Budget Optimization on (as on
+	// every campaign this service creates) the ad group's strategy must match the
+	// campaign's, so both must be MANUAL_BIDDING. NOTE: every Reddit campaign this
+	// service creates is BIDLESS on both the campaign and its ad group, so the
+	// Reddit leg applies only after an operator has switched BOTH the campaign's
+	// bid strategy and the ad group to MANUAL_BIDDING in Reddit Ads Manager. The
+	// amount is in the AD ACCOUNT's own currency, not USD, and this service
+	// neither knows nor converts it. Microsoft Advertising and Reddit today: a
+	// campaign on any other platform is refused with 400. **409** when the change
+	// is refused BEFORE the platform is written, so nothing has changed: the
+	// campaign is unprovisioned; it belongs to a different ad account than the
+	// project's connection now resolves to, or does not record which ad account it
+	// was created under; its bid strategy is automated or unreported; or the bid
+	// could not be addressed (no recorded ad group, an ad group reporting another
+	// campaign, or one bidding in a unit other than `bid_type`). None is
+	// retryable. **400** for a request fault: a non-positive, non-finite or
+	// out-of-range bid, an unknown bid type, a platform with no bid-write
+	// capability wired, or a bid the campaign's platform refuses on its own
+	// minimum or maximum — the response names what it was. **503** when the
+	// platform could not be reached or did not confirm; the row is unchanged.
+	// Setting the same bid twice converges, but verify the bid in the ad platform
+	// before retrying.
 	UpdateCampaignBid(context.Context, *UpdateCampaignBidPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads or Microsoft Advertising keywords on one
 	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword
@@ -1323,9 +1328,10 @@ type UpdateCampaignBidPayload struct {
 	// New maximum cost-per-click bid, in the AD ACCOUNT's own currency (NOT USD).
 	// Must be strictly positive.
 	Bid float64
-	// The unit the bid is expressed in. Only a max cost-per-click bid is
-	// supported; it MUST match how the ad group bids upstream.
-	BidType string
+	// The unit the bid is expressed in; defaults to cpc when omitted. Only a max
+	// cost-per-click bid is supported; it MUST match how the ad group bids
+	// upstream.
+	BidType *string
 }
 
 // UpdateCampaignBudgetPayload is the payload type of the

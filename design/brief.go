@@ -1705,9 +1705,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"MaxConversionValue, TargetImpressionShare, a portfolio strategy the read cannot name; Reddit " +
 			"BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX) the platform would ignore it or, worse, the write would " +
 			"be read as a request to switch strategy — and this endpoint NEVER switches strategy. An " +
-			"unreported strategy is refused the same way rather than assumed manual. NOTE: every Reddit " +
-			"campaign this service creates is BIDLESS, so the Reddit leg applies only after an operator has " +
-			"moved the ad group to manual bidding in Reddit Ads Manager. " +
+			"unreported strategy is refused the same way rather than assumed manual. On Reddit the CAMPAIGN's " +
+			"strategy is checked first and then the ad group's: with Campaign Budget Optimization on (as on " +
+			"every campaign this service creates) the ad group's strategy must match the campaign's, so both " +
+			"must be MANUAL_BIDDING. NOTE: every Reddit campaign this service creates is BIDLESS on both the " +
+			"campaign and its ad group, so the Reddit leg applies only after an operator has switched BOTH the " +
+			"campaign's bid strategy and the ad group to MANUAL_BIDDING in Reddit Ads Manager. " +
 			"The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor " +
 			"converts it. " +
 			"Microsoft Advertising and Reddit today: a campaign on any other platform is refused with 400. " +
@@ -1739,13 +1742,17 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				Maximum(1000000)
 				Example(2.50)
 			})
-			// Optional and defaulted, unlike budget_type: there is only one value today, and it
-			// exists so the contract names the unit the amount is in. An ad group bidding in
-			// another unit (a Reddit CPM ad group) is refused 409 rather than re-bid in a unit the
-			// caller never named — the same "never translate" rule budget_type follows.
-			Attribute("bid_type", String, "The unit the bid is expressed in. Only a max cost-per-click bid is supported; it MUST match how the ad group bids upstream.", func() {
+			// Optional, unlike budget_type: there is only one value today, and it exists so the
+			// contract names the unit the amount is in. An ad group bidding in another unit (a
+			// Reddit CPM ad group) is refused 409 rather than re-bid in a unit the caller never
+			// named — the same "never translate" rule budget_type follows.
+			//
+			// NO Goa Default: with Default plus Enum, the generated CLI validates the empty value
+			// before applying the default, so a body without bid_type fails there. Without a
+			// Default the field is an optional pointer, validated only when present, and the
+			// service applies the cpc default (nil or empty → cpc).
+			Attribute("bid_type", String, "The unit the bid is expressed in; defaults to cpc when omitted. Only a max cost-per-click bid is supported; it MUST match how the ad group bids upstream.", func() {
 				Enum("cpc")
-				Default("cpc")
 				Example("cpc")
 			})
 			Required("project_id", "brief_id", "campaign_id", "bid")

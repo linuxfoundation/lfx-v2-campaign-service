@@ -914,8 +914,10 @@ func BuildUpdateCampaignBidPayload(lfxV2CampaignServiceBriefsUpdateCampaignBidBo
 		if body.Bid > 1e+06 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.bid", body.Bid, 1e+06, false))
 		}
-		if !(body.BidType == "cpc") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.bid_type", body.BidType, []any{"cpc"}))
+		if body.BidType != nil {
+			if !(*body.BidType == "cpc") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.bid_type", *body.BidType, []any{"cpc"}))
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -956,12 +958,6 @@ func BuildUpdateCampaignBidPayload(lfxV2CampaignServiceBriefsUpdateCampaignBidBo
 	v := &lfxv2campaignservicebriefs.UpdateCampaignBidPayload{
 		Bid:     body.Bid,
 		BidType: body.BidType,
-	}
-	{
-		var zero string
-		if v.BidType == zero {
-			v.BidType = "cpc"
-		}
 	}
 	v.ProjectID = projectID
 	v.BriefID = briefID

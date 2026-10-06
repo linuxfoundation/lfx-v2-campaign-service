@@ -310,6 +310,19 @@ guess, so it keeps nothing.
   field (the registration URL comes from the brief), but variant `introText`/`headline` are
   caller free text stored verbatim. Not changed here; LinkedIn is owned by another engineer.
 
+**The redactors live in `pkg/redact`, and the update path uses them generically.** The pure
+string sanitizers (`SnapshotURL`, `SnapshotText` and the run patterns behind them) moved
+unchanged to `pkg/redact/snapshot.go`; `creds.go` keeps `sanitizeSnapshotURL` /
+`sanitizeSnapshotText` as one-line wrappers, so every adapter above and `creds_test.go` are
+untouched and behaviour is byte-identical. The move exists because `internal/dispatch`
+imports `internal/service`, so the service cannot import this package without a cycle, and
+the service needs the same rules: `UpdateCampaign` (`PUT .../campaigns/{id}`) accepts
+`config` as Goa `Any` with no adapter in the loop, and it used to persist that JSON straight
+into `config_snapshot`, bypassing every per-adapter scrub listed above. It now walks the
+value and runs EVERY string value and object key through `SnapshotText` before persisting (see
+[internal/service](internal-service.md), "Campaign config update"). The per-adapter list
+above is the CREATE/adoption path only; the LinkedIn create-path gap is unchanged.
+
 **Microsoft scrubs `timeZone` and the links inside keywords.** `campaignFromMicrosoft` persists
 `microsoftSnapshotConfig(cfg)`, never the caller's raw `microsoftConfig`. The struct carries no
 URL field: the ad's `FinalUrls` is the BRIEF's registration URL plus the client's `utm_*`
@@ -1290,16 +1303,17 @@ classified. Nothing is written until every guard has passed.
   an absent campaign → `ErrPlatformCampaignAbsent`, a campaign reported under another account →
   `ErrCampaignAccountMismatch`. Then reads the ad group and requires: it belongs to this campaign
   (an UNREPORTED `campaign_id` is refused like a different one), `bid_strategy == MANUAL_BIDDING`,
-  `bid_type == CPC`, a legible `bid_value`; else `ErrBidUnwritable`. **Every Reddit campaign this service creates is `BIDLESS`**, so this leg
-  refuses them until an operator moves the ad group to manual bidding. A 404 on the ad group is
+  `bid_type == CPC`, a legible `bid_value`; else `ErrBidUnwritable`. **Every Reddit campaign this service creates is `BIDLESS`** on both the
+  campaign and its ad group, so this leg refuses them until an operator switches BOTH the campaign's bid strategy (Campaign Budget Optimization is on for every campaign this service creates, so the ad group must match it) AND the ad group to `MANUAL_BIDDING` in Reddit Ads Manager — the adapter checks the campaign first, then the ad group. A 404 on the ad group is
   `ErrBidUnwritable`, NOT `ErrPlatformCampaignAbsent` — the campaign may still exist. Amount via
   `reddit.BidMicros` (positive, ≤ 1,000,000, ≥ one micro). PATCH outcomes as the budget write's,
   plus a definite 400 carrying a STRUCTURED field error on `bid_value`
   (`error.fields[].field == "bid_value"`) → `ErrBidAmountRejected` with this service's own
   sentence (never Reddit's text); a 400 that merely mentions `bid_value` elsewhere stays a
-  definite refusal. **Known gap, inherited from the Reddit budget write:** a definite 4xx that
-  follows a retried 429 is classified DEFINITE, not unconfirmed (Microsoft's `putUpdate` treats
-  it as unconfirmed); the 429'd attempt may have applied.
+  definite refusal. **Any failure after a retried 429 is UNCONFIRMED** (503) — the client counts
+  retries (`requestCounted`) and wraps it as `retriedUnconfirmedError`, as Microsoft's
+  `putUpdate` does. **Known gap, the Reddit BUDGET write only:** it still classifies a definite
+  4xx after a retried 429 as DEFINITE.
 
 ## Metrics read (optional capability)
 

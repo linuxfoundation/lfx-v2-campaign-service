@@ -296,6 +296,36 @@ binds it in the same step as the brief repos, and BOTH startup paths bind throug
 forces it to be CALLED, and the handler's 503 is deliberately indistinguishable from the
 no-database mode's, so a mis-wired live container cannot be detected from the outside.
 
+## Campaign config update: the caller's config is redacted before `config_snapshot`
+
+`BriefService.UpdateCampaign` (backing `PUT .../campaigns/{id}`) is DB-only and overlays the
+caller's name and, when supplied, `config`. `config` is Goa `Any` (`CampaignUpdateInput`), so
+any JSON value is accepted, and no dispatch adapter sees it on this path — the per-adapter
+create-time scrubbing in [internal/dispatch](internal-dispatch.md) never runs. It used to be
+persisted verbatim into `campaigns.config_snapshot`, which is stored UNENCRYPTED and carried
+into the campaign's index document, so a token in a link's query, fragment, userinfo or path
+landed in the clear.
+
+`redactedConfigSnapshot` (`campaign_config_redact.go`) now sits between the payload and the
+column. It is provider-agnostic: it marshals the value, decodes it with `UseNumber`, walks it
+recursively and runs every STRING value AND every object KEY through `redact.SnapshotText` —
+the same full redactor the adapters use for free text (scheme-ful URL → scheme+host;
+scheme-less link with a query/fragment or a path → host; `user:password@` runs and URLs with
+userinfo dropped). Keys are caller-typed too (a map keyed by landing-page URL carries its links
+in the keys). Numbers, booleans and null pass through untouched; structure is preserved. A nil
+`config` still leaves the stored snapshot unchanged.
+
+Two keys can redact to the same string (`https://a.example/x?t=1` and `https://a.example/y`).
+Nothing is silently merged or dropped: original keys are processed in sorted order, the first
+keeps the redacted key and each later one is stored as `<redacted>#2`, `#3`, … (lowest free
+suffix), so the output is stable across runs. The only reader of `config_snapshot`
+(`googleAdsRecordedChannelType`) reads the literal key `channel`, which redaction leaves alone.
+
+The contract is deliberately NOT tightened: a non-object config (a bare string or array) is
+still accepted and is redacted the same way. No caller in `lfx-v2-ui` was found sending this
+PUT, so the shape a client sends is not pinned down well enough to justify refusing anything.
+Rows written before this redaction are not backfilled.
+
 ## Campaign status toggle
 
 `BriefService.ToggleCampaignStatus` (backing `PATCH .../campaigns/{id}/status`
@@ -1592,8 +1622,9 @@ unchanged and is not repeated.
 What differs:
 
 - **Body**: `bid` (Float64, account currency, contract `Minimum` one micro / `Maximum` 1,000,000)
-  and an OPTIONAL `bid_type` (enum `cpc`, default `cpc`; an empty value from a direct caller takes
-  the default). One unit exists today; it is named so an ad group bidding in another unit is
+  and an OPTIONAL `bid_type` (enum `cpc`, NO Goa default — with `Default` plus `Enum` the
+  generated CLI validated the empty value before defaulting and rejected `{"bid":2.5}` — so the
+  service defaults it: omitted (nil) or empty → `cpc`). One unit exists today; it is named so an ad group bidding in another unit is
   refused rather than re-bid in a unit nobody asked for.
 - **Persisted to `max_cpc_bid`** (migration `000039`, `model.Campaign.MaxCPCBid`), the bid
   lever's twin of `budget_amount`: a REQUEST the platform confirmed, never an observation. NULL
