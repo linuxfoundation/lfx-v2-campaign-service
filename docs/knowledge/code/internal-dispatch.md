@@ -1270,14 +1270,14 @@ wrong write. See [internal/platform/twitter](internal-platform-twitter.md).
 
 ## Bid write (optional capability, LFXV2-2665)
 
-`service.BidWriter` (`WriteBid`) sets a campaign's manual max CPC bid. **Microsoft Advertising and
-Reddit only**; every other dispatcher is not a `BidWriter` (pinned by
-`TestBidWriter_OnlyMicrosoftAndRedditImplementIt`), so the orchestrator answers
+`service.BidWriter` (`WriteBid`) sets a campaign's manual max CPC bid. **Microsoft Advertising,
+Reddit, Meta and X**; Google Ads, LinkedIn and HubSpot are not `BidWriter`s (pinned by
+`TestBidWriter_OnlyMicrosoftRedditMetaAndXImplementIt`), so the orchestrator answers
 `ErrBidUnsupported` (400). Shared outcome types live in `bid.go`: `unconfirmedBidWriteError`
 (`Unconfirmed()`) and `rejectedBidAmountError` (`BidAmountReason()`), the bid lever's
 counterparts of the budget types. No env gate, matching the budget writers.
 
-Both adapters follow the budget writers' order: provenance FAILED CLOSED first (absent creating
+Every adapter follows the budget writers' order: provenance FAILED CLOSED first (absent creating
 account → `ErrCampaignProvenanceUnknown` + `ErrCampaignAccountMismatch`, before any token or
 request), then the row/request facts (bid type, recorded ad group id, amount), then credential
 resolution and the account-match guard, then a READ, then the guards, then the one mutate,
@@ -1314,6 +1314,39 @@ classified. Nothing is written until every guard has passed.
   retries (`requestCounted`) and wraps it as `retriedUnconfirmedError`, as Microsoft's
   `putUpdate` does. **Known gap, the Reddit BUDGET write only:** it still classifies a definite
   4xx after a retried 429 as DEFINITE.
+- **Meta** (`meta_bid.go`): writes `bid_amount` (minor units of the account currency) on the ad set
+  recorded in the result blob (`metaAdSetID`) — the object `WriteBudget` writes. Reads the ad set
+  (`GetAdSetBid`) and requires: it belongs to this campaign (an UNREPORTED owner is refused too),
+  `bid_strategy == LOWEST_COST_WITH_BID_CAP`, `billing_event == LINK_CLICKS` AND
+  `optimization_goal == LINK_CLICKS`, a legible `bid_amount`; else `ErrBidUnwritable`. A Meta bid
+  cap is per optimization event and, billed on impressions, per 1,000 impressions, so only that
+  pairing is a max cost per click; `CLICKS` billing (any click) is refused too. **Every Meta
+  campaign this service creates is `LOWEST_COST_WITHOUT_CAP` billed on `IMPRESSIONS`**, so this
+  leg refuses them until an operator moves the ad set to a link-click bid cap. The amount is
+  encoded AFTER the read by `ResolveBidMinorUnits` against the account's own currency (an
+  unknown currency → `ErrBidUnwritable`; under one minor unit or over 1,000,000 →
+  `ErrBidAmountRejected`); a missing account selection is `ErrAccountNotSelected` before any
+  request, and a stored account id that is not `act_<digits>` (`meta.ValidateAccountID`) is
+  `ErrConnectionNotUsable` + `ErrProviderConfigInvalid` (409, system-scoped) before any request —
+  `verifyMetaAccountMatch` would otherwise read a malformed id as "unknown" and the id would be
+  spliced into the currency preflight's Graph path. POST outcomes: the throttle is NOT retried in-call, so a 429 or HTTP-400 rate-limit
+  code is UNCONFIRMED; transport/3xx/5xx UNCONFIRMED; a definite 4xx whose `error_data.blame_field_specs`
+  names `bid_amount` → `ErrBidAmountRejected` with this service's own sentence (the message is
+  never consulted); else definite.
+- **X** (`twitter_bid.go`): writes `bid_amount_local_micro` on the line item recorded in the
+  result blob (`twitterChildIDs`). Provenance is stricter than the toggle's: a row recording no
+  creating account is refused first. A stored account id the client cannot put in a path is
+  `twitter.ErrInvalidAccountID`, mapped exactly as `WriteBudget` maps it: `ErrConnectionNotUsable`
+  + `ErrProviderConfigInvalid` (409, system-scoped). Reads the line item (`GetLineItemBid`, `with_deleted=true`)
+  and requires: it belongs to this campaign (unreported refused), not deleted,
+  `bid_strategy == MAX`, `pay_by == LINK_CLICK`, a legible bid; else `ErrBidUnwritable`. A 404 or
+  deleted line item is `ErrBidUnwritable`, not `ErrPlatformCampaignAbsent`. **Every X campaign
+  this service creates is `AUTO`**, so this leg refuses them until an operator moves the line
+  item to a manual max bid charged per link click. Amount via `twitter.BidMicros` before any call.
+  PUT outcomes: the 429 is NOT retried in-call (UNCONFIRMED); transport/3xx/5xx and a 2xx echo of
+  another line item or amount UNCONFIRMED; a definite 400 carrying `INVALID_PARAMETER` with
+  `parameter == bid_amount_local_micro` → `ErrBidAmountRejected`; else definite (a code merely
+  containing "BID" is not an amount refusal).
 
 ## Metrics read (optional capability)
 

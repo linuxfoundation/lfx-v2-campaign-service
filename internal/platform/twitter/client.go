@@ -658,6 +658,10 @@ type apiError struct {
 	// for the bounds applied at parse time. Empty when the body wasn't a
 	// recognizable X error envelope.
 	ErrorCodes []string
+	// errorParams carries the (code, parameter) pairs of the envelope's errors, bounded like
+	// ErrorCodes and, like them, never rendered by Error(): read only to classify which request
+	// parameter X refused. Unexported so reflection- or JSON-based logging cannot walk it.
+	errorParams []xErrorParam
 	// err optionally carries an underlying cause, set when the status is inferred
 	// rather than read straight off a final response — today only when a 429's
 	// retry backoff is cut short by context cancellation. Keeping the cause
@@ -699,13 +703,47 @@ func (e *apiError) hasErrorCode(code string) bool {
 // promoted (possibly by a different line item). See isDuplicatePromotedTweetErr.
 const errCodeDuplicatePromotableEntity = "DUPLICATE_PROMOTABLE_ENTITY"
 
-// xErrorEnvelope is the X Ads error body shape: {"errors":[{"code":"...", ...}]}.
-// message is intentionally NOT captured — only the machine-readable codes are
-// retained (see apiError.ErrorCodes).
+// xErrorEnvelope is the X Ads error body shape: {"errors":[{"code":"...", "parameter":"...",
+// ...}]}. message is intentionally NOT captured — only the machine-readable code and the
+// parameter it names are retained (see apiError.ErrorCodes and apiError.errorParams).
 type xErrorEnvelope struct {
 	Errors []struct {
-		Code string `json:"code"`
+		Code      string `json:"code"`
+		Parameter string `json:"parameter"`
 	} `json:"errors"`
+}
+
+// xErrorParam is one error's (code, parameter) pair, kept so a caller can classify WHICH
+// request parameter X refused rather than inferring it from a code alone. The X Ads error
+// reference (https://docs.x.com/x-ads-api/fundamentals/error-codes-and-responses) documents
+// "parameter" alongside "code" on an INVALID_PARAMETER error.
+type xErrorParam struct {
+	Code      string
+	Parameter string
+}
+
+// parseErrorParams extracts the (code, parameter) pairs of a non-2xx body under the same
+// bounds as parseErrorCodes: an entry with an empty or over-long code or parameter is dropped,
+// and at most maxRetainedErrorCodes are kept.
+func parseErrorParams(body []byte) []xErrorParam {
+	if len(body) == 0 {
+		return nil
+	}
+	var env xErrorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil
+	}
+	var out []xErrorParam
+	for _, e := range env.Errors {
+		if e.Code == "" || len(e.Code) > maxErrorCodeCodeLength || e.Parameter == "" || len(e.Parameter) > maxErrorCodeCodeLength {
+			continue
+		}
+		out = append(out, xErrorParam{Code: e.Code, Parameter: e.Parameter})
+		if len(out) >= maxRetainedErrorCodes {
+			break
+		}
+	}
+	return out
 }
 
 // Bounds on the internally-retained error codes. Even though codes are never
@@ -1272,7 +1310,7 @@ func (c *Client) doRequestAbsCounted(ctx context.Context, method, reqURL, logPat
 			// A read error just means no codes are available. createOutcomeAmbiguous
 			// uses the type to treat a mutating 3xx/5xx as "may exist" while a definite
 			// 4xx is a clean failure.
-			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, ErrorCodes: parseErrorCodes(respBody)}
+			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, ErrorCodes: parseErrorCodes(respBody), errorParams: parseErrorParams(respBody)}
 		}
 		if readErr != nil {
 			// A 2xx with a body we couldn't fully/cleanly read is AMBIGUOUS on a
