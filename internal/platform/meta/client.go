@@ -879,6 +879,19 @@ func currencyOffsetFor(currency string) (int64, bool) {
 	return off, ok
 }
 
+// copyEnvelope carries a parsed Graph error's structured fields onto e. It is the ONE place every
+// non-2xx path does this — the normal one, the truncated-body one (a complete envelope followed by
+// a connection closed on a mismatched Content-Length) and the Retry-After-over-cap abort — so none
+// can drop a field another keeps: a bid refusal blaming bid_amount must classify the same whether or not the read ended
+// cleanly. Message is deliberately not copied; each path sets it.
+func (e *APIError) copyEnvelope(g *graphError) {
+	e.Type = g.Type
+	e.Code = g.Code
+	e.FBTraceID = g.FBTraceID
+	e.ErrorSubcode = g.ErrorSubcode
+	e.blameFields = g.blameFieldSpecs()
+}
+
 // graphErrorEnvelope models the Graph API error body: {"error": {...}}.
 type graphErrorEnvelope struct {
 	Error *graphError `json:"error"`
@@ -1711,9 +1724,7 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 				Message: fmt.Sprintf("read response body: %v", readErr),
 			}
 			if env.Error != nil {
-				readErrAPI.Type = env.Error.Type
-				readErrAPI.Code = env.Error.Code
-				readErrAPI.FBTraceID = env.Error.FBTraceID
+				readErrAPI.copyEnvelope(env.Error)
 			} else {
 				// The truncated body did NOT parse, so there is no code to carry and the
 				// paragraph above does not apply. A missing code here means "we never read
@@ -1748,9 +1759,7 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 						Message: fmt.Sprintf("rate-limit reset (Retry-After: %q) exceeds max wait %s; aborting", rawRetryAfter, maxRetryWait),
 					}
 					if env.Error != nil {
-						abortErr.Type = env.Error.Type
-						abortErr.Code = env.Error.Code
-						abortErr.FBTraceID = env.Error.FBTraceID
+						abortErr.copyEnvelope(env.Error)
 						if env.Error.Message != "" {
 							abortErr.Message = fmt.Sprintf("%s (Graph: %s)", abortErr.Message, env.Error.Message)
 						}
@@ -1795,11 +1804,7 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 			if env.Error != nil {
 				// Preserve the Graph envelope's diagnostic fields so callers can
 				// distinguish invalid-params vs auth failures and quote the trace id.
-				apiErr.Type = env.Error.Type
-				apiErr.Code = env.Error.Code
-				apiErr.FBTraceID = env.Error.FBTraceID
-				apiErr.ErrorSubcode = env.Error.ErrorSubcode
-				apiErr.blameFields = env.Error.blameFieldSpecs()
+				apiErr.copyEnvelope(env.Error)
 			}
 			if env.Error != nil && env.Error.Message != "" {
 				apiErr.Message = env.Error.Message
