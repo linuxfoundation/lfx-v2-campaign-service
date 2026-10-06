@@ -98,6 +98,10 @@ type Client struct {
 	// apply-keyword-actions endpoint.
 	ApplyKeywordActionsDoer goahttp.Doer
 
+	// AddNegativeKeywords Doer is the HTTP client used to make requests to the
+	// add-negative-keywords endpoint.
+	AddNegativeKeywordsDoer goahttp.Doer
+
 	// DeleteCampaign Doer is the HTTP client used to make requests to the
 	// delete-campaign endpoint.
 	DeleteCampaignDoer goahttp.Doer
@@ -178,6 +182,7 @@ func NewClient(
 		UpdateCampaignBudgetDoer:  doer,
 		UpdateCampaignBidDoer:     doer,
 		ApplyKeywordActionsDoer:   doer,
+		AddNegativeKeywordsDoer:   doer,
 		DeleteCampaignDoer:        doer,
 		GetJobDoer:                doer,
 		StartEmailWizardPlanDoer:  doer,
@@ -671,6 +676,30 @@ func (c *Client) ApplyKeywordActions() goa.Endpoint {
 		resp, err := c.ApplyKeywordActionsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "apply-keyword-actions", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// AddNegativeKeywords returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service add-negative-keywords server.
+func (c *Client) AddNegativeKeywords() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeAddNegativeKeywordsRequest(c.encoder)
+		decodeResponse = DecodeAddNegativeKeywordsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildAddNegativeKeywordsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.AddNegativeKeywordsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "add-negative-keywords", err)
 		}
 		return decodeResponse(resp)
 	}

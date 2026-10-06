@@ -105,8 +105,18 @@ type UpdateCampaignBidRequestBody struct {
 // "lfx-v2-campaign-service-briefs" service "apply-keyword-actions" endpoint
 // HTTP request body.
 type ApplyKeywordActionsRequestBody struct {
-	// The keyword mutations to apply, all-or-nothing.
+	// The keyword mutations to apply. Google Ads applies them all-or-nothing;
+	// Microsoft Advertising applies each independently and reports a per-action
+	// outcome.
 	Actions []*KeywordActionInputRequestBody `form:"actions" json:"actions" xml:"actions"`
+}
+
+// AddNegativeKeywordsRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
+// HTTP request body.
+type AddNegativeKeywordsRequestBody struct {
+	// The negative keywords to add, at campaign level.
+	NegativeKeywords []*NegativeKeywordInputRequestBody `form:"negative_keywords" json:"negative_keywords" xml:"negative_keywords"`
 }
 
 // StartEmailWizardPlanRequestBody is the type of the
@@ -747,11 +757,27 @@ type UpdateCampaignBidResponseBody struct {
 type ApplyKeywordActionsResponseBody struct {
 	// The campaign whose keywords were acted on
 	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
-	// One entry per requested action, in request order. All applied, or the
-	// request failed and none were.
+	// Exactly one entry per requested action, in request order, so results[i]
+	// answers actions[i]. Google Ads: all applied, or the request failed and none
+	// were. Microsoft Advertising: each entry carries its own outcome.
 	Results []*KeywordActionResultResponseBody `form:"results,omitempty" json:"results,omitempty" xml:"results,omitempty"`
-	// How many actions were applied. Always equal to the number requested — a
-	// partial application is not a possible outcome.
+	// How many actions were applied. Google Ads: always equal to the number
+	// requested — its batch is atomic. Microsoft Advertising: the number of
+	// results whose outcome is APPLIED, which can be fewer.
+	AppliedCount *int `form:"applied_count,omitempty" json:"applied_count,omitempty" xml:"applied_count,omitempty"`
+}
+
+// AddNegativeKeywordsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
+// HTTP response body.
+type AddNegativeKeywordsResponseBody struct {
+	// The campaign the negative keywords were added to
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// Exactly one entry per requested negative keyword, in request order, so
+	// results[i] answers negative_keywords[i].
+	Results []*NegativeKeywordResultResponseBody `form:"results,omitempty" json:"results,omitempty" xml:"results,omitempty"`
+	// How many requested negative keywords are now on the campaign: results whose
+	// outcome is APPLIED or ALREADY_PRESENT.
 	AppliedCount *int `form:"applied_count,omitempty" json:"applied_count,omitempty" xml:"applied_count,omitempty"`
 }
 
@@ -2505,6 +2531,79 @@ type ApplyKeywordActionsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// AddNegativeKeywordsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
+// HTTP response body for the "BadRequest" error.
+type AddNegativeKeywordsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AddNegativeKeywordsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
+// HTTP response body for the "Conflict" error.
+type AddNegativeKeywordsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// AddNegativeKeywordsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type AddNegativeKeywordsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AddNegativeKeywordsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
+// HTTP response body for the "InternalServerError" error.
+type AddNegativeKeywordsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AddNegativeKeywordsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
+// HTTP response body for the "NotFound" error.
+type AddNegativeKeywordsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AddNegativeKeywordsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type AddNegativeKeywordsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AddNegativeKeywordsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
+// HTTP response body for the "Unauthorized" error.
+type AddNegativeKeywordsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -3497,12 +3596,56 @@ type KeywordActionInputRequestBody struct {
 type KeywordActionResultResponseBody struct {
 	// The ad group that was addressed
 	AdGroupID *string `form:"ad_group_id,omitempty" json:"ad_group_id,omitempty" xml:"ad_group_id,omitempty"`
-	// The criterion that was addressed
+	// The criterion (Google Ads) or keyword id (Microsoft Advertising) that was
+	// addressed
 	CriterionID *string `form:"criterion_id,omitempty" json:"criterion_id,omitempty" xml:"criterion_id,omitempty"`
-	// The action that was applied
+	// The action that was requested
 	Action *string `form:"action,omitempty" json:"action,omitempty" xml:"action,omitempty"`
-	// The criterion resource name Google returned for the applied mutation
+	// Google Ads only: the criterion resource name Google returned for the applied
+	// mutation. Present on every Google Ads result; absent on Microsoft
+	// Advertising, which has no resource names.
 	ResourceName *string `form:"resource_name,omitempty" json:"resource_name,omitempty" xml:"resource_name,omitempty"`
+	// Microsoft Advertising only: this action's own outcome, because a Microsoft
+	// batch is applied item by item. APPLIED — Microsoft did not reject it; FAILED
+	// — definitely not applied (see error_code); UNCONFIRMED — may have been
+	// applied, verify in Microsoft Advertising before retrying. ABSENT on Google
+	// Ads, whose batch is atomic: there every result on a 200 was applied.
+	Outcome *string `form:"outcome,omitempty" json:"outcome,omitempty" xml:"outcome,omitempty"`
+	// Microsoft Advertising only: the platform's machine-readable error code for a
+	// FAILED or UNCONFIRMED action, when it named one. NOT_SENT means the request
+	// carrying this action was never sent.
+	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
+}
+
+// NegativeKeywordInputRequestBody is used to define fields on request body
+// types.
+type NegativeKeywordInputRequestBody struct {
+	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
+	// 100 characters.
+	Text string `form:"text" json:"text" xml:"text"`
+	// How the negative keyword is compared with a search query. Exact or Phrase.
+	MatchType string `form:"match_type" json:"match_type" xml:"match_type"`
+}
+
+// NegativeKeywordResultResponseBody is used to define fields on response body
+// types.
+type NegativeKeywordResultResponseBody struct {
+	// The negative keyword text as sent to the platform (trimmed, whitespace
+	// collapsed)
+	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// The match type as sent to the platform
+	MatchType *string `form:"match_type,omitempty" json:"match_type,omitempty" xml:"match_type,omitempty"`
+	// APPLIED — added by this request; ALREADY_PRESENT — the campaign already had
+	// it, so the requested state holds; FAILED — definitely not added (see
+	// error_code); UNCONFIRMED — may have been added, verify in the ad platform
+	// before retrying.
+	Outcome *string `form:"outcome,omitempty" json:"outcome,omitempty" xml:"outcome,omitempty"`
+	// The platform's id for a negative keyword this request added. Absent for
+	// every other outcome.
+	NegativeKeywordID *string `form:"negative_keyword_id,omitempty" json:"negative_keyword_id,omitempty" xml:"negative_keyword_id,omitempty"`
+	// The platform's machine-readable error code for a FAILED keyword, when it
+	// named one.
+	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
 }
 
 // PlatformResultResponseBody is used to define fields on response body types.
@@ -3667,6 +3810,26 @@ func NewApplyKeywordActionsRequestBody(p *lfxv2campaignservicebriefs.ApplyKeywor
 		}
 	} else {
 		body.Actions = []*KeywordActionInputRequestBody{}
+	}
+	return body
+}
+
+// NewAddNegativeKeywordsRequestBody builds the HTTP request body from the
+// payload of the "add-negative-keywords" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewAddNegativeKeywordsRequestBody(p *lfxv2campaignservicebriefs.AddNegativeKeywordsPayload) *AddNegativeKeywordsRequestBody {
+	body := &AddNegativeKeywordsRequestBody{}
+	if p.NegativeKeywords != nil {
+		body.NegativeKeywords = make([]*NegativeKeywordInputRequestBody, len(p.NegativeKeywords))
+		for i, val := range p.NegativeKeywords {
+			if val == nil {
+				body.NegativeKeywords[i] = nil
+				continue
+			}
+			body.NegativeKeywords[i] = marshalLfxv2campaignservicebriefsNegativeKeywordInputToNegativeKeywordInputRequestBody(val)
+		}
+	} else {
+		body.NegativeKeywords = []*NegativeKeywordInputRequestBody{}
 	}
 	return body
 }
@@ -5957,6 +6120,108 @@ func NewApplyKeywordActionsUnauthorized(body *ApplyKeywordActionsUnauthorizedRes
 	return v
 }
 
+// NewAddNegativeKeywordsNegativeKeywordsOK builds a
+// "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
+// result from a HTTP "OK" response.
+func NewAddNegativeKeywordsNegativeKeywordsOK(body *AddNegativeKeywordsResponseBody) *lfxv2campaignservicebriefs.NegativeKeywords {
+	v := &lfxv2campaignservicebriefs.NegativeKeywords{
+		CampaignID:   *body.CampaignID,
+		AppliedCount: *body.AppliedCount,
+	}
+	v.Results = make([]*lfxv2campaignservicebriefs.NegativeKeywordResult, len(body.Results))
+	for i, val := range body.Results {
+		if val == nil {
+			v.Results[i] = nil
+			continue
+		}
+		v.Results[i] = unmarshalNegativeKeywordResultResponseBodyToLfxv2campaignservicebriefsNegativeKeywordResult(val)
+	}
+
+	return v
+}
+
+// NewAddNegativeKeywordsBadRequest builds a lfx-v2-campaign-service-briefs
+// service add-negative-keywords endpoint BadRequest error.
+func NewAddNegativeKeywordsBadRequest(body *AddNegativeKeywordsBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAddNegativeKeywordsConflict builds a lfx-v2-campaign-service-briefs
+// service add-negative-keywords endpoint Conflict error.
+func NewAddNegativeKeywordsConflict(body *AddNegativeKeywordsConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewAddNegativeKeywordsServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service add-negative-keywords endpoint
+// ServiceUnavailable error.
+func NewAddNegativeKeywordsServiceUnavailable(body *AddNegativeKeywordsServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAddNegativeKeywordsInternalServerError builds a
+// lfx-v2-campaign-service-briefs service add-negative-keywords endpoint
+// InternalServerError error.
+func NewAddNegativeKeywordsInternalServerError(body *AddNegativeKeywordsInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAddNegativeKeywordsNotFound builds a lfx-v2-campaign-service-briefs
+// service add-negative-keywords endpoint NotFound error.
+func NewAddNegativeKeywordsNotFound(body *AddNegativeKeywordsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAddNegativeKeywordsPayloadTooLarge builds a
+// lfx-v2-campaign-service-briefs service add-negative-keywords endpoint
+// PayloadTooLarge error.
+func NewAddNegativeKeywordsPayloadTooLarge(body *AddNegativeKeywordsPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAddNegativeKeywordsUnauthorized builds a lfx-v2-campaign-service-briefs
+// service add-negative-keywords endpoint Unauthorized error.
+func NewAddNegativeKeywordsUnauthorized(body *AddNegativeKeywordsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewDeleteCampaignBadRequest builds a lfx-v2-campaign-service-briefs service
 // delete-campaign endpoint BadRequest error.
 func NewDeleteCampaignBadRequest(body *DeleteCampaignBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
@@ -7689,6 +7954,28 @@ func ValidateApplyKeywordActionsResponseBody(body *ApplyKeywordActionsResponseBo
 	for _, e := range body.Results {
 		if e != nil {
 			if err2 := ValidateKeywordActionResultResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateAddNegativeKeywordsResponseBody runs the validations defined on
+// Add-Negative-KeywordsResponseBody
+func ValidateAddNegativeKeywordsResponseBody(body *AddNegativeKeywordsResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.Results == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("results", "body"))
+	}
+	if body.AppliedCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("applied_count", "body"))
+	}
+	for _, e := range body.Results {
+		if e != nil {
+			if err2 := ValidateNegativeKeywordResultResponseBody(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -9860,6 +10147,96 @@ func ValidateApplyKeywordActionsUnauthorizedResponseBody(body *ApplyKeywordActio
 	return
 }
 
+// ValidateAddNegativeKeywordsBadRequestResponseBody runs the validations
+// defined on add-negative-keywords_BadRequest_response_body
+func ValidateAddNegativeKeywordsBadRequestResponseBody(body *AddNegativeKeywordsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAddNegativeKeywordsConflictResponseBody runs the validations defined
+// on add-negative-keywords_Conflict_response_body
+func ValidateAddNegativeKeywordsConflictResponseBody(body *AddNegativeKeywordsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		}
+	}
+	return
+}
+
+// ValidateAddNegativeKeywordsServiceUnavailableResponseBody runs the
+// validations defined on add-negative-keywords_ServiceUnavailable_response_body
+func ValidateAddNegativeKeywordsServiceUnavailableResponseBody(body *AddNegativeKeywordsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAddNegativeKeywordsInternalServerErrorResponseBody runs the
+// validations defined on
+// add-negative-keywords_InternalServerError_response_body
+func ValidateAddNegativeKeywordsInternalServerErrorResponseBody(body *AddNegativeKeywordsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAddNegativeKeywordsNotFoundResponseBody runs the validations defined
+// on add-negative-keywords_NotFound_response_body
+func ValidateAddNegativeKeywordsNotFoundResponseBody(body *AddNegativeKeywordsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAddNegativeKeywordsPayloadTooLargeResponseBody runs the validations
+// defined on add-negative-keywords_PayloadTooLarge_response_body
+func ValidateAddNegativeKeywordsPayloadTooLargeResponseBody(body *AddNegativeKeywordsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAddNegativeKeywordsUnauthorizedResponseBody runs the validations
+// defined on add-negative-keywords_Unauthorized_response_body
+func ValidateAddNegativeKeywordsUnauthorizedResponseBody(body *AddNegativeKeywordsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteCampaignBadRequestResponseBody runs the validations defined on
 // delete-campaign_BadRequest_response_body
 func ValidateDeleteCampaignBadRequestResponseBody(body *DeleteCampaignBadRequestResponseBody) (err error) {
@@ -11033,12 +11410,55 @@ func ValidateKeywordActionResultResponseBody(body *KeywordActionResultResponseBo
 	if body.Action == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("action", "body"))
 	}
-	if body.ResourceName == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("resource_name", "body"))
-	}
 	if body.Action != nil {
 		if !(*body.Action == "PAUSE" || *body.Action == "REMOVE") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.action", *body.Action, []any{"PAUSE", "REMOVE"}))
+		}
+	}
+	if body.Outcome != nil {
+		if !(*body.Outcome == "APPLIED" || *body.Outcome == "FAILED" || *body.Outcome == "UNCONFIRMED") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.outcome", *body.Outcome, []any{"APPLIED", "FAILED", "UNCONFIRMED"}))
+		}
+	}
+	return
+}
+
+// ValidateNegativeKeywordInputRequestBody runs the validations defined on
+// negative-keyword-inputRequestBody
+func ValidateNegativeKeywordInputRequestBody(body *NegativeKeywordInputRequestBody) (err error) {
+	err = goa.MergeErrors(err, goa.ValidatePattern("body.text", body.Text, "^[\\p{L}\\p{M}\\p{N} &'.\\-]+$"))
+	if utf8.RuneCountInString(body.Text) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", body.Text, utf8.RuneCountInString(body.Text), 1, true))
+	}
+	if utf8.RuneCountInString(body.Text) > 100 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", body.Text, utf8.RuneCountInString(body.Text), 100, false))
+	}
+	if !(body.MatchType == "Exact" || body.MatchType == "Phrase") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.match_type", body.MatchType, []any{"Exact", "Phrase"}))
+	}
+	return
+}
+
+// ValidateNegativeKeywordResultResponseBody runs the validations defined on
+// negative-keyword-resultResponseBody
+func ValidateNegativeKeywordResultResponseBody(body *NegativeKeywordResultResponseBody) (err error) {
+	if body.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	if body.MatchType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("match_type", "body"))
+	}
+	if body.Outcome == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", "body"))
+	}
+	if body.MatchType != nil {
+		if !(*body.MatchType == "Exact" || *body.MatchType == "Phrase") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.match_type", *body.MatchType, []any{"Exact", "Phrase"}))
+		}
+	}
+	if body.Outcome != nil {
+		if !(*body.Outcome == "APPLIED" || *body.Outcome == "ALREADY_PRESENT" || *body.Outcome == "FAILED" || *body.Outcome == "UNCONFIRMED") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.outcome", *body.Outcome, []any{"APPLIED", "ALREADY_PRESENT", "FAILED", "UNCONFIRMED"}))
 		}
 	}
 	return
