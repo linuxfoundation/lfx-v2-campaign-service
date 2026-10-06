@@ -459,7 +459,11 @@ ESTABLISHED about the value:
 - `capForError` everywhere else: business names, asset-group names, display paths,
   headlines, descriptions, calls to action, bidding strategies, conversion actions, and the
   extension fields in `assets.go` / `assets_extended.go` / `assets_leadform.go` — country
-  codes, language tags, occasion names, price types, price qualifiers and unit names. These
+  codes, language tags, occasion names, price types, price qualifiers, unit names, currency
+  codes (`validateMoney`) and the asset date window (`validateAssetDateWindow`). A
+  SHAPE-anchored regex is not a length bound and does not exempt an arm: `enumShapeRE` in
+  `assets_leadform.go` matches `A` followed by any number of underscores, and
+  `currencyCodeRE` is checked on a value the error then echoes. These
   arms have established the value is NOT a URL, but nothing bounds its LENGTH — and a
   length-limit error is emitted in precisely the case where the value exceeds the limit, so
   echoing it raw is unbounded by construction. `capForError` cuts on a rune boundary rather
@@ -1802,6 +1806,16 @@ with the only reachable account a production one where a `validateOnly` mutate i
 POST. The comment names the closing procedure rather than leaving the next reader to
 rediscover it. `youtubeVideos` on a responsive display ad and the `pricePrefix`/`promoText`
 fields are not sent at all.
+
+**Display's ad group is named `"<event> - Display Network"`, not `"<event> - Display"`.**
+Demand Gen has composed `"<event> - Display"` off the same `EventName` since it *was* the
+Display channel, so once both can sit under one brief the two names are equal byte for
+byte and the name-based reconciliation each relies on stops distinguishing them. Demand
+Gen's suffix is the one already attached to live campaigns, so the new channel is the side
+that moves. All three new channels compose their group name through `sanitizeNamePart`
+rather than a bare `TrimSpace`, for the reason `campaign.go` gives: a control character
+inside `EventName` survives a trim and is rejected at `adGroups:mutate`, which runs after
+the budget and campaign are committed and paid for.
 
 **Display has its own adoption slot**, keyed on `advertising_channel_type` alone like every
 other: ANY `DISPLAY` campaign fills the `display` slot. One slot per channel TYPE is the

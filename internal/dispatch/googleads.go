@@ -396,10 +396,12 @@ type googleAdsConfig struct {
 	// exclude a device outright with a modifier of 0. Left empty, every device bids the
 	// campaign's own bid.
 	//
-	// There is no TV-screen entry: Google supports that device only on Display and Video
-	// campaigns, and these criteria are refused on both Demand Gen and Performance Max,
-	// so Search is the only channel that reaches them. See deviceTypes in the googleads
-	// package.
+	// There is no TV-screen entry: CONNECTED_TV is a device Google supports only on
+	// Display and Video campaigns, and `deviceTypes` in the googleads package does not
+	// list it, so a caller cannot ask for it on any channel. Search, Video and Display
+	// all reach these criteria; Demand Gen and Performance Max refuse them outright.
+	// Admitting CONNECTED_TV on the two channels that support it is a known gap, not a
+	// deliberate exclusion. See deviceTypes in the googleads package.
 	//
 	// bidModifier is REQUIRED on every entry — it is a *float64 so that an OMITTED one
 	// is refused rather than decoded as 0, which is the -100% opt-out and would switch

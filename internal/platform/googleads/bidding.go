@@ -586,7 +586,7 @@ func validateConversionActions(kind, customerID string, actions []string) ([]str
 	// account's default goals while the operator believed it was bidding toward the ones
 	// they named is worse than one that would not create.
 	if kind != campaignKindSearch && kind != campaignKindVideo && kind != campaignKindDisplay {
-		return nil, fmt.Errorf("google-ads: conversion actions are not supported on %s (this client attaches them through campaign.selective_optimization, which %s does not accept); omit ConversionActions, or create a Search campaign to optimize toward specific conversions", kind, kind)
+		return nil, fmt.Errorf("google-ads: conversion actions are not supported on %s (this client attaches them through campaign.selective_optimization, which %s does not accept); omit ConversionActions, or create a Search, Video or Display campaign to optimize toward specific conversions", kind, kind)
 	}
 	if len(actions) > maxConversionActions {
 		return nil, fmt.Errorf("google-ads: %d conversion actions exceeds the maximum %d", len(actions), maxConversionActions)
