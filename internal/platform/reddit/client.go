@@ -1204,7 +1204,11 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 	// Marshal the body once; a fresh reader is created per attempt below since
 	// bytes.NewReader is consumed by the first send.
 	var encoded []byte
-	if body != nil {
+	if pre, ok := body.(preEncodedBody); ok {
+		// Already-encoded JSON, sent byte for byte: json.Marshal would HTML-escape strings
+		// inside it (see preEncodedBody).
+		encoded = []byte(pre)
+	} else if body != nil {
 		var err error
 		encoded, err = json.Marshal(body)
 		if err != nil {

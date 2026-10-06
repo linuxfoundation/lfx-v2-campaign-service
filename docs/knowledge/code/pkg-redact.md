@@ -205,10 +205,19 @@ elsewhere because they are a URL's diagnostic value, and an opaque URI has neith
 `campaigns.config_snapshot`, which is stored UNENCRYPTED and indexed. They are a different
 contract from the log-safe entry points above: a snapshot keeps only SCHEME AND HOST of a
 link (the path, query and fragment go, and a run carrying userinfo is dropped whole), and
-`SnapshotText` applies that to every link found inside free text — scheme-ful runs,
-scheme-less runs with a query or fragment, `user:password@host` runs, and scheme-less
-path-only runs, in that order. The rationale for each pass is on the code, and the history in
-[internal/dispatch](internal-dispatch.md).
+`SnapshotText` applies that to every link found inside free text — http(s) runs, then runs of
+ANY other `scheme://` (`ftp://host/…` → `ftp://host`; `file:///private/TOKEN`, which has no
+host to keep, is dropped), scheme-less runs with a query or fragment, `user:password@host`
+runs, and scheme-less path-only runs, in that order. `SnapshotURL` fails closed on any value
+opening with `scheme://` that will not reduce to scheme+host, not only on http(s). The http
+run's bracketed-IPv6 branch consumes an optional userinfo before the `[`
+(`https://bob:pw@[2001:db8::1]/…` is dropped whole rather than leaving `]/…` behind), and the
+`user:password@` username class is RFC 3986's userinfo alphabet including the sub-delims
+`!$&'()*+,;=` (kept in step with the X screen), so `admin!:pw@host/…` is dropped too. Its
+FIRST character must still be unreserved, and the digits-both-sides clock test reads the
+username's segment after its last sub-delim, so a clock opened by prose punctuation —
+`Keynote (14:00@main.stage)`, `*9:30@…*`, `Mon,9:30@…` — is still left alone. The
+rationale for each pass is on the code, and the history in [internal/dispatch](internal-dispatch.md).
 
 They moved here unchanged from `internal/dispatch` (which keeps thin wrappers) so that
 `internal/service` — which cannot import `internal/dispatch` without an import cycle — redacts

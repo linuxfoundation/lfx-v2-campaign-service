@@ -119,6 +119,9 @@ func TestMicrosoftKeywords_DisabledByDefault(t *testing.T) {
 	d := msKeywordDispatcher(opts)
 	scope := []model.ProjectCampaignScope{msScope("111", "1234567")}
 	for name, call := range map[string]func() error{
+		"enabled": func() error {
+			return d.KeywordReportEnabled(model.MetricsWindowLast30Days)
+		},
 		"account": func() error {
 			_, err := d.KeywordReportAccount(context.Background(), "cncf", model.ProviderMicrosoftAds, model.MetricsWindowLast30Days, scope)
 			return err
@@ -138,6 +141,21 @@ func TestMicrosoftKeywords_DisabledByDefault(t *testing.T) {
 	}
 	if n := m.calls.Load(); n != 0 {
 		t.Errorf("%d upstream calls with the gate off, want none", n)
+	}
+}
+
+// KeywordReportEnabled is the scope-free precheck the orchestrator runs before an empty-scope
+// success: on with a servable window it passes, and a window Microsoft cannot report on is
+// refused as ErrMetricsWindowUnsupported.
+func TestMicrosoftKeywords_EnabledChecksGateAndWindow(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftMetricsEnabled, "true")
+	_, opts := newMSKeywordServer(t)
+	d := msKeywordDispatcher(opts)
+	if err := d.KeywordReportEnabled(model.MetricsWindowLast30Days); err != nil {
+		t.Errorf("last_30_days with the gate on: err = %v, want nil", err)
+	}
+	if err := d.KeywordReportEnabled(model.MetricsWindowYesterday); !errors.Is(err, domain.ErrMetricsWindowUnsupported) {
+		t.Errorf("yesterday: err = %v, want ErrMetricsWindowUnsupported", err)
 	}
 }
 

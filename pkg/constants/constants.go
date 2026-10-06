@@ -94,6 +94,20 @@ const (
 	// default flips and this constant goes away.
 	EnvMicrosoftMetricsEnabled = "MICROSOFT_METRICS_ENABLED"
 
+	// EnvRedditKeywordTargetingWritesEnabled opts a deployment IN to REMOVING keywords from a
+	// Reddit ad group's targeting (remove-keyword-targeting, LFXV2-2665). Only the exact value
+	// "true" enables it; unset or any other value fails closed and the endpoint answers 400 "not
+	// supported", the shape the metrics gates above use. The keyword-targeting READ is not gated.
+	//
+	// Reddit has no per-keyword write: the ad group's targeting object is replaced as a whole on
+	// PATCH (per secondary references to the v3 OpenAPI document, which could not be fetched from
+	// the authoring environment), so the write sends back every targeting dimension it read. That
+	// round trip has NOT been exercised against a live ad account, and a read representation the
+	// write interprets differently would change geo, community or interest targeting on a live,
+	// spending ad group. Default-off until one live write confirms it, at which point the default
+	// flips and this constant goes away.
+	EnvRedditKeywordTargetingWritesEnabled = "REDDIT_KEYWORD_TARGETING_WRITES_ENABLED"
+
 	// EnvTwitterMetricsEnabled opts a deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
 	// (GET /projects/{project_id}/connection-twitter-ads/account-monitor). Only the exact value "true" enables it;
 	// unset or any other value fails closed and the endpoint answers 400 "not supported", the

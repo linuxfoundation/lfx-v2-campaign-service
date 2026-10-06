@@ -638,3 +638,20 @@ this package's own path guard before anything is sent, so Reddit never evaluated
 claiming a rejection would send an operator to re-authorise a connection whose credential is
 fine, and the inconclusive default would blame an unreachable platform for an id no Reddit
 request can address. The dispatcher settles it instead, with `accountIDNotUsable`.
+
+## Ad-group keyword targeting (`keyword_targeting.go`, LFXV2-2665)
+
+`GetAdGroupTargeting` reads the ad group's `targeting` object (the GET `GetAdGroupBid` makes),
+keeping every member as raw bytes, returning `targeting.keywords` and a `Revision` — `sha256:` of
+the object's canonical JSON. An absent, null or non-object targeting, or a `keywords` that is not
+a string array (null elements are kept, not keywords), is `ErrTargetingUnreadable`.
+`RemoveAdGroupKeywords` PATCHes `targeting` back with every read member — and every keyword element
+it does not remove — unchanged, matching keywords exactly and sending the body pre-encoded with
+HTML escaping off (`preEncodedBody`, honoured by the request loop), because Reddit replaces the
+targeting object as a whole (secondary sources; the OpenAPI document cannot be fetched from the
+authoring environment). The PATCH is sent ONCE (`requestNoThrottleRetry`): unlike a bid write it
+replaces the WHOLE targeting from a pre-read snapshot, so a retry after a committed-but-throttled
+first attempt could overwrite an operator's later change to another dimension and still pass the
+final comparison against that stale snapshot. A 429 is therefore UNCONFIRMED at once; otherwise
+the classification is `UpdateAdGroupBid`'s (transport, 3xx, 5xx UNCONFIRMED; any other 4xx
+definite), plus an UNCONFIRMED echo naming another keyword list. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).

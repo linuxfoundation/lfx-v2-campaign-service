@@ -107,6 +107,8 @@ func TestReddit_WriteBid_AutomatedOrUnaddressableRefusedWithZeroWrites(t *testin
 		{"ad group of another campaign", `{"data":{"id":"t5_ag","campaign_id":"t3_other","bid_strategy":"MANUAL_BIDDING","bid_type":"CPC"}}`},
 		// An unreported owner is refused like a different one — never assumed to be this campaign.
 		{"campaign_id not reported", `{"data":{"id":"t5_ag","bid_strategy":"MANUAL_BIDDING","bid_type":"CPC","bid_value":1500000}}`},
+		{"bid_value not reported", `{"data":{"id":"t5_ag","campaign_id":"t3_c","bid_strategy":"MANUAL_BIDDING","bid_type":"CPC"}}`},
+		{"null bid_value", `{"data":{"id":"t5_ag","campaign_id":"t3_c","bid_strategy":"MANUAL_BIDDING","bid_type":"CPC","bid_value":null}}`},
 		{"unreadable bid_value", `{"data":{"id":"t5_ag","campaign_id":"t3_c","bid_strategy":"MANUAL_BIDDING","bid_type":"CPC","bid_value":"1.5"}}`},
 	}
 	for _, tc := range cases {

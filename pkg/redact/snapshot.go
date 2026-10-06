@@ -18,8 +18,9 @@ import (
 
 // SnapshotURL strips the PATH, query and fragment from a URL before it is stored
 // in config_snapshot (which is persisted UNENCRYPTED). The snapshot keeps only
-// scheme+host. An absolute URL is reduced to that; an http(s)-scheme value that will not
-// reduce — it does not parse, has no host, or carries userinfo — is dropped entirely. A
+// scheme+host. An absolute URL is reduced to that; an http(s)-scheme value, or any value
+// opening with `scheme://`, that will not reduce — it does not parse, has no host, or
+// carries userinfo — is dropped entirely. A
 // value that never claimed to be a URL is truncated at the first '?'/'#' and dropped if
 // it still contains a credential delimiter '@', mirroring the reddit client's redactURL
 // fail-closed behavior. An empty input stays empty.
@@ -68,7 +69,7 @@ func SnapshotURL(raw string) string {
 	// will not reduce is malformed input, not data with another meaning. The branch
 	// below still exists for a value that never claimed to be a URL — a reddit thing
 	// id, say — where truncating and dropping on '@' is the conservative answer.
-	if isHTTPScheme(trimmed) {
+	if isHTTPScheme(trimmed) || hasAuthorityScheme(trimmed) {
 		return ""
 	}
 	if i := strings.IndexAny(trimmed, "?#"); i >= 0 {
@@ -113,6 +114,28 @@ func isHTTPScheme(raw string) bool {
 	return strings.HasPrefix(lower, "http:") || strings.HasPrefix(lower, "https:")
 }
 
+// authoritySchemePrefixRe matches a value that opens with ANY RFC 3986 scheme followed by
+// `//` — `ftp://`, `file://`, `s3://`.
+var authoritySchemePrefixRe = regexp.MustCompile(`(?i)^[a-z][a-z0-9+.-]*://`)
+
+// hasAuthorityScheme reports whether raw announces a scheme with an authority, of any kind.
+// It extends isHTTPScheme's fail-closed rule to every such scheme: a value that announced
+// `ftp://` or `file://` and did not reduce to scheme+host above has no host to keep
+// (`file:///private/RESET_TOKEN`) or will not parse, and the truncating branch below would
+// keep its path — the same exposure, reached by a scheme the http check does not name.
+func hasAuthorityScheme(raw string) bool {
+	return authoritySchemePrefixRe.MatchString(raw)
+}
+
+// schemeAuthorityRunRe matches a NON-http link run in free text: any scheme, then `//`,
+// then the run up to snapshotURLRunRe's stop set, with the same bracketed-host branch (and
+// optional userinfo before it) for an IPv6 literal. The body may be empty after `//`, so
+// `file:///private/TOKEN` is matched whole. It runs AFTER the http pass, so an http(s) run
+// it meets has already been reduced to scheme+host, which SnapshotURL returns unchanged.
+var schemeAuthorityRunRe = regexp.MustCompile(
+	`(?i)[a-z][a-z0-9+.-]*://(?:(?:[^\s<>"\x60\[\]}|\\^/?#@]*@)?\[[^\]\s]+\][^\s<>"\x60\]}|\\^]*|[^\s<>"\x60\]}|\\^]*)`,
+)
+
 // snapshotURLRunRe matches an http/https URL run inside free text: everything from the
 // scheme up to the first character that cannot continue a URL. Whitespace ends a run, and
 // so do the characters that in prose almost always belong to the sentence rather than the
@@ -147,6 +170,12 @@ func isHTTPScheme(raw string) bool {
 // direction that fails safe here: over-matching a bracketed run that is not a host costs
 // a sanitized fragment of prose, while under-matching costs a token.
 //
+// The bracketed branch admits an optional USERINFO before the bracket. Requiring `[` hard
+// against `//` sent `https://bob:pw@[2001:db8::1]/reset/SECRET?token=…` to the general
+// alternative, which stopped at the `]`, so SnapshotURL dropped only the prefix and
+// `]/reset/SECRET?token=…` stayed behind as bare text. Consumed whole, the run reaches
+// SnapshotURL with its userinfo intact and is dropped entirely, as any userinfo run is.
+//
 // There is NO `\b` before the scheme, and deliberately no replacement for it. Go's `\b`
 // is defined over `\w`, and `\w` includes `_`, so `_https://…` had no boundary between the
 // underscore and the `h` and the whole run went unmatched — `_https://events.example/cb?
@@ -169,7 +198,7 @@ func isHTTPScheme(raw string) bool {
 // follow the colon with no space between, and a sentence-final `http:` is not matched at
 // all.
 var snapshotURLRunRe = regexp.MustCompile(
-	`(?i)https?:(?://(?:\[[^\]\s]+\][^\s<>"\x60\]}|\\^]*|[^\s<>"\x60\]}|\\^]+)` +
+	`(?i)https?:(?://(?:(?:[^\s<>"\x60\[\]}|\\^/?#@]*@)?\[[^\]\s]+\][^\s<>"\x60\]}|\\^]*|[^\s<>"\x60\]}|\\^]+)` +
 		`|/?[^\s<>"\x60\]}|\\^/][^\s<>"\x60\]}|\\^]*)`,
 )
 
@@ -211,7 +240,13 @@ func SnapshotText(raw string) string {
 	// `a.example/r?token=S` down to `a.example` by the pass that is not responsible for
 	// queries. Placed last it sees neither: every earlier pass rewrites its runs to a bare
 	// authority or to nothing, and a bare authority has no path for this one to match.
+	// The non-http pass runs second, over what the http pass left: `ftp://`, `file://` and
+	// every other `scheme://` run goes through SnapshotURL too, which reduces it to
+	// scheme+host or drops it when it has no host to keep. Before it existed such a run was
+	// matched by nothing that understood it, and `file:///private/RESET_TOKEN` or
+	// `ftp://[2001:db8::1]/reset/SECRET?token=SECRET` was persisted whole.
 	out := snapshotURLRunRe.ReplaceAllStringFunc(raw, SnapshotURL)
+	out = schemeAuthorityRunRe.ReplaceAllStringFunc(out, SnapshotURL)
 	out = schemelessSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeSchemelessSnapshotRun)
 	out = schemelessUserinfoSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeUserinfoSnapshotRun)
 	return schemelessPathSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeSchemelessPathSnapshotRun)
@@ -264,11 +299,20 @@ var schemelessSnapshotRunRe = regexp.MustCompile(
 // internal/platform/twitter/client.go: without it this matches every email address an
 // operator writes in their copy. Keep the two in step.
 //
+// The USERNAME class is RFC 3986's userinfo alphabet before the colon — unreserved,
+// pct-encoded and the sub-delims `!$&'()*+,;=`. It used to stop at the unreserved set, so
+// `admin!:pw@events.example/reset/TOKEN` was not matched here, and the path-only pass below
+// then left it whole because it contains an `@`: password and path token both persisted.
+// Kept in step with the twitter screen's class. The FIRST character must be unreserved, so a
+// clock opened by prose punctuation (`(14:00@main.stage)`) is matched from its first digit;
+// sanitizeUserinfoSnapshotRun judges the username's segment after its last sub-delim, for
+// `Mon,9:30@main.stage`, whose leftmost match starts on the letter.
+//
 // It is not the only discriminator needed, and the second one is kept in step too: a time
 // of day written hard against a host — `keynote 14:00@events.example` — is the userinfo
 // production byte for byte. See sanitizeUserinfoSnapshotRun.
 var schemelessUserinfoSnapshotRunRe = regexp.MustCompile(
-	`(?i)[a-z0-9._~%+-]+:[^\s<>"\x60\]}|\\^@]*@` +
+	`(?i)[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*:[^\s<>"\x60\]}|\\^@]*@` +
 		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>"\x60\]}|\\^]*)?`,
 )
@@ -293,10 +337,20 @@ func sanitizeUserinfoSnapshotRun(run string) string {
 	}
 	userinfo := run[:at]
 	colon := strings.IndexByte(userinfo, ':')
-	if colon >= 0 && isAllASCIIDigits(userinfo[:colon]) && isAllASCIIDigits(userinfo[colon+1:]) {
+	if colon >= 0 && isAllASCIIDigits(afterLastSubDelim(userinfo[:colon])) && isAllASCIIDigits(userinfo[colon+1:]) {
 		return run
 	}
 	return ""
+}
+
+// afterLastSubDelim returns the part of a username after its last RFC 3986 sub-delim: prose
+// punctuation hard against a clock (`Mon,9:30@`) is admitted into the username by the run
+// pattern, and the clock is the segment after it. Kept in step with internal/platform/twitter.
+func afterLastSubDelim(username string) string {
+	if i := strings.LastIndexAny(username, "!$&'()*+,;="); i >= 0 {
+		return username[i+1:]
+	}
+	return username
 }
 
 // schemelessPathSnapshotRunRe matches a scheme-less link whose secret is in the PATH and

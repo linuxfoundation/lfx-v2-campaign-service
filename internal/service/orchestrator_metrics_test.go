@@ -274,6 +274,9 @@ func keywordReportKey(p model.Provider) model.KeywordReportKey {
 	return model.KeywordReportKey{ProjectID: "p1", Platform: p, AccountID: "acct-1", Window: model.MetricsWindowLast30Days}
 }
 
+// KeywordReportEnabled is local, so it never fails here.
+func (d upstreamCapableDispatcher) KeywordReportEnabled(model.MetricsWindow) error { return nil }
+
 // KeywordReportAccount makes no upstream call, so it never fails here: the keyword cases
 // below drive submit and check directly.
 func (d upstreamCapableDispatcher) KeywordReportAccount(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (string, error) {
@@ -376,6 +379,26 @@ func (d upstreamCapableDispatcher) AddNegativeKeywords(_ context.Context, _ stri
 	out := make([]model.NegativeKeywordOutcome, 0, len(keywords))
 	for _, k := range keywords {
 		out = append(out, model.NegativeKeywordOutcome{Text: k.Text, MatchType: k.MatchType, Outcome: model.KeywordOutcomeApplied})
+	}
+	return out, nil
+}
+
+// ReadKeywordTargeting and RemoveKeywordTargeting (LFXV2-2665): the removal returns ONE outcome
+// per requested removal, for ApplyKeywordActions' reason below.
+func (d upstreamCapableDispatcher) ReadKeywordTargeting(context.Context, string, model.Provider, *model.Campaign) (*model.KeywordTargeting, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.KeywordTargeting{EntityID: "ag"}, nil
+}
+
+func (d upstreamCapableDispatcher) RemoveKeywordTargeting(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, removals []model.KeywordTargetingRemoval, _ string) ([]model.KeywordTargetingOutcome, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	out := make([]model.KeywordTargetingOutcome, 0, len(removals))
+	for _, r := range removals {
+		out = append(out, model.KeywordTargetingOutcome{Keyword: r.Keyword, Outcome: model.KeywordOutcomeApplied})
 	}
 	return out, nil
 }
@@ -541,6 +564,22 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opNegativeKeywords,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.AddNegativeKeywords(ctx, "p1", platform, campaign, []model.NegativeKeyword{{Text: "free", MatchType: "Exact"}})
+				return err
+			},
+		},
+		{
+			name: "read keyword targeting",
+			op:   opReadKeywordTargeting,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadKeywordTargeting(ctx, "p1", platform, campaign)
+				return err
+			},
+		},
+		{
+			name: "remove keyword targeting",
+			op:   opRemoveKeywordTargeting,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.RemoveKeywordTargeting(ctx, "p1", platform, campaign, []model.KeywordTargetingRemoval{{Keyword: "k"}}, "rev")
 				return err
 			},
 		},

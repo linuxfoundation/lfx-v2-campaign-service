@@ -1844,6 +1844,18 @@ type UpdateTwitterAdsPayload struct {
 	Config  *TwitterAdsConnectionConfig
 }
 
+type AccountMonitorConflictError struct {
+	// HTTP status code
+	Code string
+	// Error message
+	Message string
+	// Why the account cannot be monitored as it stands:
+	// account_too_many_active_campaigns (more campaigns active in the window than
+	// one report covers) or account_timezone_unsupported (the account's timezone
+	// does not start its days on a whole UTC hour).
+	Reason string
+}
+
 type BadRequestError struct {
 	// HTTP status code
 	Code string
@@ -1910,6 +1922,23 @@ type UnauthorizedError struct {
 	Message string
 	// Authentication challenge (RFC 9110 §15.5.2)
 	WwwAuthenticate string
+}
+
+// Error returns an error description.
+func (e *AccountMonitorConflictError) Error() string {
+	return ""
+}
+
+// ErrorName returns "account-monitor-conflict-error".
+//
+// Deprecated: Use GoaErrorName - https://github.com/goadesign/goa/issues/3105
+func (e *AccountMonitorConflictError) ErrorName() string {
+	return e.GoaErrorName()
+}
+
+// GoaErrorName returns "account-monitor-conflict-error".
+func (e *AccountMonitorConflictError) GoaErrorName() string {
+	return "Conflict"
 }
 
 // Error returns an error description.

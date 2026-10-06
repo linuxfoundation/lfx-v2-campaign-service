@@ -4,10 +4,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -240,6 +242,33 @@ func TestAddNegativeKeywords_ErrorMapping(t *testing.T) {
 				t.Errorf("message = %q, want it to contain %q and no adapter text", msg, tc.msg)
 			}
 		})
+	}
+}
+
+// A decrypt failure on credentials that came from the LF system row is logged against that row,
+// with the requester beside it, as the bid and budget handlers log it (PR #265 review).
+func TestAddNegativeKeywords_SystemRowDecryptFailureIsAttributedToTheSystemRow(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	err := fmt.Errorf("%w: %w", domain.ErrSystemConnectionOrigin, domain.ErrCredentialDecryptionFailed)
+	s := keywordActionService(t, model.ProviderMicrosoftAds, &msLeverDispatcher{err: err})
+	if _, aerr := s.AddNegativeKeywords(context.Background(), negativePayload(&briefs.NegativeKeywordInput{Text: "free", MatchType: "Exact"})); aerr == nil {
+		t.Fatal("expected an error")
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "project_id="+model.SystemProjectID) {
+		t.Errorf("the failing row is the LF system row, but the log blames the requester.\nlog: %s", logged)
+	}
+	if !strings.Contains(logged, "requested_by_project_id=cncf") {
+		t.Errorf("the requester must stay visible alongside the failing row.\nlog: %s", logged)
+	}
+
+	// A project-owned row is still attributed to the project.
+	if got := credentialOwnerProject(domain.ErrCredentialDecryptionFailed, "cncf"); got != "cncf" {
+		t.Errorf("credentialOwnerProject(own row) = %q, want cncf", got)
 	}
 }
 

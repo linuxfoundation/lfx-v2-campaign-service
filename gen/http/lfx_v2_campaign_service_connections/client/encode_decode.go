@@ -11936,8 +11936,8 @@ func EncodeMonitorTwitterAdsAccountRequest(encoder func(*http.Request) goahttp.E
 // monitor-twitter-ads-account endpoint. restoreBody controls whether the
 // response body should be restored after having been read.
 // DecodeMonitorTwitterAdsAccountResponse may return the following errors:
+//   - "Conflict" (type *lfxv2campaignserviceconnections.AccountMonitorConflictError): http.StatusConflict
 //   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
-//   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -11974,20 +11974,6 @@ func DecodeMonitorTwitterAdsAccountResponse(decoder func(*http.Response) goahttp
 			}
 			res := NewMonitorTwitterAdsAccountAccountMonitorOK(&body)
 			return res, nil
-		case http.StatusBadRequest:
-			var (
-				body MonitorTwitterAdsAccountBadRequestResponseBody
-				err  error
-			)
-			err = decoder(resp).Decode(&body)
-			if err != nil {
-				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
-			}
-			err = ValidateMonitorTwitterAdsAccountBadRequestResponseBody(&body)
-			if err != nil {
-				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
-			}
-			return nil, NewMonitorTwitterAdsAccountBadRequest(&body)
 		case http.StatusConflict:
 			var (
 				body MonitorTwitterAdsAccountConflictResponseBody
@@ -12002,6 +11988,20 @@ func DecodeMonitorTwitterAdsAccountResponse(decoder func(*http.Response) goahttp
 				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
 			}
 			return nil, NewMonitorTwitterAdsAccountConflict(&body)
+		case http.StatusBadRequest:
+			var (
+				body MonitorTwitterAdsAccountBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			err = ValidateMonitorTwitterAdsAccountBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+			}
+			return nil, NewMonitorTwitterAdsAccountBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body MonitorTwitterAdsAccountServiceUnavailableResponseBody

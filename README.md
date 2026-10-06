@@ -220,6 +220,16 @@ openssl rand -base64 32
   to the 180-day default rather than to a short window, so a typo cannot
   cause early deletion — the rejected value is logged at startup.
 
+- `REDDIT_KEYWORD_TARGETING_WRITES_ENABLED` (default unset, i.e. OFF) —
+  opts a deployment IN to removing keywords from a Reddit ad group's
+  targeting (`POST .../campaigns/{campaign_id}/keyword-targeting/removals`).
+  Only the exact value `true` enables it; anything else fails closed and
+  the endpoint answers 400 for a Reddit campaign. Off by default because
+  Reddit replaces an ad group's targeting as a whole, so the write sends
+  back every dimension it read, and that round trip has not been
+  exercised against a live ad account. The read
+  (`GET .../keyword-targeting`) is not gated. The chart sets it to
+  `"false"`.
 - `MICROSOFT_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to Microsoft Advertising (Bing Ads) metrics reads.
   Only the exact value `true` enables them; unset or any other value

@@ -118,8 +118,11 @@ func (s *BriefService) classifyNegativeKeywordError(ctx context.Context, p *brie
 			"project_id", p.ProjectID, "platform", platform, "reason", unusableConnectionReason(aerr))
 		return &briefs.InternalServerError{Code: "500", Message: "the negative keywords could not be added"}
 	case errors.Is(aerr, domain.ErrCredentialDecryptionFailed):
+		// Attributed to the row that FAILED, as the bid and budget handlers do: a project with no
+		// connection of its own falls back to the LF system row, and blaming the requester would
+		// make one corrupt system row look like many unrelated project failures.
 		slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; negative keywords cannot be added",
-			"project_id", p.ProjectID, "platform", platform)
+			"project_id", credentialOwnerProject(aerr, p.ProjectID), "requested_by_project_id", p.ProjectID, "platform", platform)
 		return &briefs.InternalServerError{Code: "500", Message: "the negative keywords could not be added"}
 	case errors.Is(aerr, domain.ErrNotFound):
 		slog.WarnContext(ctx, "negative keywords blocked: no connection configured for this project and provider",
@@ -141,4 +144,16 @@ func (s *BriefService) classifyNegativeKeywordError(ctx context.Context, p *brie
 			append(logFields, "error", safeErrSummary(aerr))...)
 		return &briefs.ConnServiceUnavailableError{Code: "503", Message: "the negative keywords could not be added"}
 	}
+}
+
+// credentialOwnerProject names the project whose credential row produced err: the LF system row
+// when the resolver marked the error with domain.ErrSystemConnectionOrigin (the requester had no
+// connection of its own and fell back), otherwise the requesting project. A decrypt failure is
+// logged against this, beside requested_by_project_id, so one corrupt system row reads as one
+// incident rather than as failures scattered across every project that fell back to it.
+func credentialOwnerProject(err error, requestingProject string) string {
+	if errors.Is(err, domain.ErrSystemConnectionOrigin) {
+		return model.SystemProjectID
+	}
+	return requestingProject
 }

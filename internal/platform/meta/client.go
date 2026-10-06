@@ -880,10 +880,12 @@ func currencyOffsetFor(currency string) (int64, bool) {
 }
 
 // copyEnvelope carries a parsed Graph error's structured fields onto e. It is the ONE place every
-// non-2xx path does this — the normal one, the truncated-body one (a complete envelope followed by
-// a connection closed on a mismatched Content-Length) and the Retry-After-over-cap abort — so none
-// can drop a field another keeps: a bid refusal blaming bid_amount must classify the same whether or not the read ended
-// cleanly. Message is deliberately not copied; each path sets it.
+// non-2xx path does this — do()'s normal one, its truncated-body one (a complete envelope followed
+// by a connection closed on a mismatched Content-Length) and its Retry-After-over-cap abort, and
+// the /adimages upload's non-2xx parse — so none can drop a field another keeps (the upload's
+// over-cap abort in throttleWait copies the same fields from the APIError it was handed): a bid
+// refusal blaming bid_amount must classify the same whether or not the read ended cleanly.
+// Message is deliberately not copied; each path sets it.
 func (e *APIError) copyEnvelope(g *graphError) {
 	e.Type = g.Type
 	e.Code = g.Code
@@ -3717,9 +3719,12 @@ func (c *Client) throttleWait(ctx context.Context, resp *http.Response, apiErr *
 			// sentinel used only to trip this comparison, so the raw value is what needs
 			// debugging against upstream.
 			rawRetryAfter := strings.TrimSpace(resp.Header.Get("Retry-After"))
+			// Every structured field apiErr carries — the same set copyEnvelope copies — so
+			// the abort classifies exactly as the throttled response it reports would have.
 			abortErr := &APIError{
 				StatusCode: status, Method: http.MethodPost, Path: path,
 				Type: apiErr.Type, Code: apiErr.Code, FBTraceID: apiErr.FBTraceID,
+				ErrorSubcode: apiErr.ErrorSubcode, blameFields: apiErr.blameFields,
 				Message: fmt.Sprintf("rate-limit reset (Retry-After: %q) exceeds max wait %s; aborting", rawRetryAfter, maxRetryWait),
 			}
 			if apiErr.Message != "" {
@@ -4070,9 +4075,9 @@ func (c *Client) uploadImageAttempt(ctx context.Context, path string, prefix, im
 		// created_degraded campaign no re-dispatch repairs. The status-only 429 arm below
 		// cannot cover it: a code-4 throttle arrives as a 400.
 		case json.Unmarshal(raw, &env) == nil && env.Error != nil:
-			apiErr.Type = env.Error.Type
-			apiErr.Code = env.Error.Code
-			apiErr.FBTraceID = env.Error.FBTraceID
+			// Through copyEnvelope like every do() path, so ErrorSubcode and the blamed
+			// fields survive the upload path too.
+			apiErr.copyEnvelope(env.Error)
 			apiErr.Message = env.Error.Message
 			// What parsed is trusted to DESCRIBE the failure, but the body was still short:
 			// flag it so a caller does not read this as a complete rejection, and keep the

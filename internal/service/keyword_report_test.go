@@ -23,6 +23,8 @@ type fakeKeywordReader struct {
 	mu         sync.Mutex
 	account    string
 	accountErr error
+	enabledErr error
+	enabled    int
 	submitID   string
 	submitErr  error
 	check      *model.KeywordReportCheck
@@ -35,6 +37,13 @@ type fakeKeywordReader struct {
 
 func (f *fakeKeywordReader) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
 	return nil, errors.New("unused")
+}
+
+func (f *fakeKeywordReader) KeywordReportEnabled(model.MetricsWindow) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.enabled++
+	return f.enabledErr
 }
 
 func (f *fakeKeywordReader) KeywordReportAccount(_ context.Context, _ string, _ model.Provider, _ model.MetricsWindow, scope []model.ProjectCampaignScope) (string, error) {
@@ -148,6 +157,20 @@ func TestReadKeywords_EmptyScopeMakesNoCalls(t *testing.T) {
 	}
 	if r.accounts+r.submits+r.checks != 0 || len(store.keys) != 0 {
 		t.Errorf("an empty scope must touch neither the dispatcher nor the store")
+	}
+}
+
+// The rollout gate is a property of the platform, not of the project: a project with no
+// campaigns must get the same refusal as one with many, not an empty 200 (PR #263 review).
+func TestReadKeywords_GateIsCheckedBeforeTheEmptyScopeSuccess(t *testing.T) {
+	r := &fakeKeywordReader{account: "123", enabledErr: fmt.Errorf("disabled: %w", domain.ErrKeywordInsightsUnsupported)}
+	store := &fakeKeywordStore{}
+	_, err := keywordOrch([]string{}, r, store).ReadReportedKeywordPerformance(context.Background(), "cncf", model.ProviderMicrosoftAds, model.MetricsWindowLast30Days)
+	if !errors.Is(err, domain.ErrKeywordInsightsUnsupported) {
+		t.Fatalf("err = %v, want ErrKeywordInsightsUnsupported", err)
+	}
+	if r.accounts+r.submits+r.checks != 0 || len(store.keys) != 0 {
+		t.Errorf("a gated-off read must touch neither the dispatcher's account path nor the store")
 	}
 }
 
@@ -441,6 +464,37 @@ func TestGetMicrosoftAdsKeywords_ClassifiesErrors(t *testing.T) {
 		}
 		if !ok {
 			t.Errorf("%v: got %T (%v), want %s", tc.err, err, err, tc.want)
+		}
+	}
+}
+
+// TestGetMicrosoftAdsKeywords_PinsTheNotConnectedMessages pins the exact wording of the two
+// refusals lfx-self-serve's Microsoft keyword table reads as "not connected" rather than as a
+// read failure (microsoft-keywords-table.component.ts, isNotConnectedError). Those messages
+// carry no other discriminator, so rewording either one here changes what operators see on
+// every project without a Microsoft connection — update that matcher in the same change.
+func TestGetMicrosoftAdsKeywords_PinsTheNotConnectedMessages(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{domain.ErrKeywordInsightsUnsupported, "keyword and audience insights are not supported for this platform"},
+		{domain.ErrNotFound, "no microsoft ads connection configured for this project"},
+	} {
+		_, err := microsoftKeywordService([]string{"111"}, &fakeKeywordReader{accountErr: fmt.Errorf("x: %w", tc.err)}, &fakeKeywordStore{}).
+			GetMicrosoftAdsKeywords(context.Background(), &conn.GetMicrosoftAdsKeywordsPayload{ProjectID: "p"})
+		var got string
+		switch e := err.(type) {
+		case *conn.BadRequestError:
+			got = e.Message
+		case *conn.NotFoundError:
+			got = e.Message
+		default:
+			t.Errorf("%v: got %T (%v), want a 400 or 404", tc.err, err, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%v: message = %q, want %q", tc.err, got, tc.want)
 		}
 	}
 }

@@ -839,6 +839,8 @@ const (
 	opReadAudience               = "read_audience"
 	opKeywordActions             = "keyword_actions"
 	opNegativeKeywords           = "negative_keywords"
+	opReadKeywordTargeting       = "read_keyword_targeting"
+	opRemoveKeywordTargeting     = "remove_keyword_targeting"
 	opVerifyAccountOrg           = "verify_account_org"
 	opProbeConnection            = "probe_connection"
 	opListAccountCampaigns       = "list_account_campaigns"
@@ -2892,6 +2894,25 @@ type NegativeKeywordAdder interface {
 	AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error)
 }
 
+// KeywordTargetingReader is an OPTIONAL dispatcher capability (LFXV2-2665, Reddit and X): read the
+// POSITIVE keyword targeting of the one ad group / line item this service created for a campaign.
+// Type-asserted, so a dispatcher without it yields ErrKeywordTargetingUnsupported → 400.
+//
+// Separate from KeywordActioner for the reason NegativeKeywordAdder is: on these platforms a
+// keyword is an entry in the targeting, not a criterion with a status, and the two shapes must
+// not be routed to each other's adapters.
+type KeywordTargetingReader interface {
+	ReadKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.KeywordTargeting, error)
+}
+
+// KeywordTargetingRemover is an OPTIONAL dispatcher capability (LFXV2-2665, Reddit and X): take
+// keywords out of that targeting. It returns exactly one outcome per removal, in request order,
+// or an error when no removal got a definite answer. revision is Reddit's compare-and-set token
+// and must be empty for X; each adapter validates it.
+type KeywordTargetingRemover interface {
+	RemoveKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, removals []model.KeywordTargetingRemoval, revision string) ([]model.KeywordTargetingOutcome, error)
+}
+
 // keywordInsightsFor resolves the dispatcher's keyword-insight capability, or returns the
 // "not supported" sentinel. Shared by the two read paths so both answer identically for an
 // unregistered or non-capable platform.
@@ -3136,6 +3157,68 @@ func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string
 	}
 	if len(outcomes) != len(keywords) {
 		return nil, &unconfirmedOutcomeCountError{platform: string(platform), got: len(outcomes), want: len(keywords)}
+	}
+	return outcomes, nil
+}
+
+// ReadKeywordTargeting reads a campaign's keyword targeting through its dispatcher's
+// KeywordTargetingReader. A nil campaign is refused here, as for every keyword lever; every other
+// guard is the adapter's. A read, so it gets the metrics timeout.
+func (o *Orchestrator) ReadKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.KeywordTargeting, error) {
+	if campaign == nil {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	reader, ok := d.(KeywordTargetingReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	kt, rerr := reader.ReadKeywordTargeting(callCtx, projectID, platform, campaign)
+	o.recordUpstream(ctx, platform, opReadKeywordTargeting, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if kt == nil {
+		return nil, fmt.Errorf("%s keyword targeting reader returned a nil result with no error", platform)
+	}
+	if kt.Keywords == nil {
+		kt.Keywords = []model.KeywordTargetingEntry{}
+	}
+	return kt, nil
+}
+
+// RemoveKeywordTargeting removes keywords from a campaign's keyword targeting. Shaped like
+// AddNegativeKeywords: a nil campaign is refused here, every other guard is the adapter's, the
+// call gets the mutation timeout, and a short outcome slice is UNCONFIRMED because the removal
+// was already issued when it is detected.
+func (o *Orchestrator) RemoveKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, removals []model.KeywordTargetingRemoval, revision string) ([]model.KeywordTargetingOutcome, error) {
+	if campaign == nil {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	remover, ok := d.(KeywordTargetingRemover)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
+	defer cancel()
+	start := time.Now()
+	outcomes, rerr := remover.RemoveKeywordTargeting(callCtx, projectID, platform, campaign, removals, revision)
+	o.recordUpstream(ctx, platform, opRemoveKeywordTargeting, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if len(outcomes) != len(removals) {
+		return nil, &unconfirmedOutcomeCountError{platform: string(platform), got: len(outcomes), want: len(removals)}
 	}
 	return outcomes, nil
 }

@@ -915,7 +915,10 @@ request layer, checked against Microsoft's reference on 2026-10-05:
 - **Update/Delete are IDEMPOTENT (429 retried); a refusal after a retry is UNCONFIRMED** — the
   `putUpdate` rule (PR #255): a whole-call refusal becomes `retriedUnconfirmedError`, and a
   per-item `FAILED` becomes `UNCONFIRMED`, because the earlier rate-limited attempt may have
-  applied it. A 200 that omits `PartialErrors` or will not decode is UNCONFIRMED.
+  applied it. A 200 that omits `PartialErrors` or will not decode is UNCONFIRMED, and so is a
+  NON-empty `PartialErrors` naming no rejection (`[null]`, `[{}]`): it is not the `[]`/null that
+  affirms none, and read leniently it would report every item APPLIED — the same fail-closed
+  answer `UpdateCampaignStatus` gives that shape.
 - **The negative add is NOT retried on 429** (`idempotent=false`, the create rule): a 429, 5xx,
   transport failure or unreadable 200 is UNCONFIRMED. Per item: an id → `APPLIED` (with
   `NegativeKeywordID`); an already-exists as the item's ONLY error → `ALREADY_PRESENT` (the
@@ -936,8 +939,9 @@ request layer, checked against Microsoft's reference on 2026-10-05:
   `Exact`/`Phrase` in any casing (Broad is not a negative match type upstream and is refused, not
   mapped); the same (match type, case-folded text) twice is REFUSED, not de-duplicated, because
   de-duplication would shift every later positional result.
-- **`GetAdGroupKeywords` refuses a body without `Keywords`** — Microsoft documents an empty array
-  for an empty ad group, so absence is an unanswered read, not "no keywords". Entries carry `Id`
+- **`GetAdGroupKeywords` refuses a body without `Keywords`, or with `"Keywords": null`** —
+  Microsoft documents an empty array for an empty ad group, so absence (or null) is an
+  unanswered read, not "no keywords"; only `[]` confirms emptiness. Entries carry `Id`
   and `Status`; `IsDeleted()` reads `Status == "Deleted"`.
 
 None of the four has been exercised against a live Microsoft Advertising account; the transport

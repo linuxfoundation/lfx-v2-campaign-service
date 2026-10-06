@@ -5075,16 +5075,6 @@ type MonitorMicrosoftAdsAccountUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
-// MonitorTwitterAdsAccountBadRequestResponseBody is the type of the
-// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
-// endpoint HTTP response body for the "BadRequest" error.
-type MonitorTwitterAdsAccountBadRequestResponseBody struct {
-	// HTTP status code
-	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
-	// Error message
-	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-}
-
 // MonitorTwitterAdsAccountConflictResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
 // endpoint HTTP response body for the "Conflict" error.
@@ -5093,9 +5083,21 @@ type MonitorTwitterAdsAccountConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
-	// Stable machine-readable discriminator, present only where an endpoint
-	// returns more than one kind of conflict. Absent means unspecified.
+	// Why the account cannot be monitored as it stands:
+	// account_too_many_active_campaigns (more campaigns active in the window than
+	// one report covers) or account_timezone_unsupported (the account's timezone
+	// does not start its days on a whole UTC hour).
 	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// MonitorTwitterAdsAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body for the "BadRequest" error.
+type MonitorTwitterAdsAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
 // MonitorTwitterAdsAccountServiceUnavailableResponseBody is the type of the
@@ -11218,6 +11220,19 @@ func NewMonitorTwitterAdsAccountAccountMonitorOK(body *MonitorTwitterAdsAccountR
 	return v
 }
 
+// NewMonitorTwitterAdsAccountConflict builds a
+// lfx-v2-campaign-service-connections service monitor-twitter-ads-account
+// endpoint Conflict error.
+func NewMonitorTwitterAdsAccountConflict(body *MonitorTwitterAdsAccountConflictResponseBody) *lfxv2campaignserviceconnections.AccountMonitorConflictError {
+	v := &lfxv2campaignserviceconnections.AccountMonitorConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  *body.Reason,
+	}
+
+	return v
+}
+
 // NewMonitorTwitterAdsAccountBadRequest builds a
 // lfx-v2-campaign-service-connections service monitor-twitter-ads-account
 // endpoint BadRequest error.
@@ -11225,19 +11240,6 @@ func NewMonitorTwitterAdsAccountBadRequest(body *MonitorTwitterAdsAccountBadRequ
 	v := &lfxv2campaignserviceconnections.BadRequestError{
 		Code:    *body.Code,
 		Message: *body.Message,
-	}
-
-	return v
-}
-
-// NewMonitorTwitterAdsAccountConflict builds a
-// lfx-v2-campaign-service-connections service monitor-twitter-ads-account
-// endpoint Conflict error.
-func NewMonitorTwitterAdsAccountConflict(body *MonitorTwitterAdsAccountConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
-	v := &lfxv2campaignserviceconnections.ConflictError{
-		Code:    *body.Code,
-		Message: *body.Message,
-		Reason:  body.Reason,
 	}
 
 	return v
@@ -12074,8 +12076,8 @@ func ValidateGetMicrosoftAdsKeywordsResponseBody(body *GetMicrosoftAdsKeywordsRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("data_incomplete", "body"))
 	}
 	if body.Window != nil {
-		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		if !(*body.Window == "today" || *body.Window == "last_7_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
 		}
 	}
 	for _, e := range body.Rows {
@@ -12562,8 +12564,8 @@ func ValidateCreateGoogleAdsConflictResponseBody(body *CreateGoogleAdsConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -13026,8 +13028,8 @@ func ValidateCreateLinkedinAdsConflictResponseBody(body *CreateLinkedinAdsConfli
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -13490,8 +13492,8 @@ func ValidateCreateMetaAdsConflictResponseBody(body *CreateMetaAdsConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -13953,8 +13955,8 @@ func ValidateCreateRedditAdsConflictResponseBody(body *CreateRedditAdsConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -14417,8 +14419,8 @@ func ValidateCreateTwitterAdsConflictResponseBody(body *CreateTwitterAdsConflict
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -14881,8 +14883,8 @@ func ValidateCreateMicrosoftAdsConflictResponseBody(body *CreateMicrosoftAdsConf
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -15347,8 +15349,8 @@ func ValidateCreateHubspotConflictResponseBody(body *CreateHubspotConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -15884,8 +15886,8 @@ func ValidateGetGoogleAdsKeywordsConflictResponseBody(body *GetGoogleAdsKeywords
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -15975,8 +15977,8 @@ func ValidateGetGoogleAdsAudienceConflictResponseBody(body *GetGoogleAdsAudience
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -16066,8 +16068,8 @@ func ValidateGetMicrosoftAdsKeywordsConflictResponseBody(body *GetMicrosoftAdsKe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -17183,18 +17185,6 @@ func ValidateMonitorMicrosoftAdsAccountUnauthorizedResponseBody(body *MonitorMic
 	return
 }
 
-// ValidateMonitorTwitterAdsAccountBadRequestResponseBody runs the validations
-// defined on monitor-twitter-ads-account_BadRequest_response_body
-func ValidateMonitorTwitterAdsAccountBadRequestResponseBody(body *MonitorTwitterAdsAccountBadRequestResponseBody) (err error) {
-	if body.Code == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
-	}
-	if body.Message == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
-	}
-	return
-}
-
 // ValidateMonitorTwitterAdsAccountConflictResponseBody runs the validations
 // defined on monitor-twitter-ads-account_Conflict_response_body
 func ValidateMonitorTwitterAdsAccountConflictResponseBody(body *MonitorTwitterAdsAccountConflictResponseBody) (err error) {
@@ -17204,10 +17194,25 @@ func ValidateMonitorTwitterAdsAccountConflictResponseBody(body *MonitorTwitterAd
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
+	if body.Reason == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("reason", "body"))
+	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"account_too_many_active_campaigns", "account_timezone_unsupported"}))
 		}
+	}
+	return
+}
+
+// ValidateMonitorTwitterAdsAccountBadRequestResponseBody runs the validations
+// defined on monitor-twitter-ads-account_BadRequest_response_body
+func ValidateMonitorTwitterAdsAccountBadRequestResponseBody(body *MonitorTwitterAdsAccountBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	return
 }

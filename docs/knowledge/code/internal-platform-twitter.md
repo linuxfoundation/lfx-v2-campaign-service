@@ -581,7 +581,12 @@ screened by nothing while the scheme-ful `https://bob:pw@events.example` beside 
 refused. The bytes are published either way; whether X renders the run as a link does not
 change what goes out in the tweet. The COLON is the entire discriminator and cannot be
 dropped — without it the pattern matches `bob@events.example`, an ordinary email address,
-and a screen that refuses those is worse than the hole it closes.
+and a screen that refuses those is worse than the hole it closes. The username before the
+colon is RFC 3986's userinfo alphabet, sub-delims `!$&'()*+,;=` included, kept in step with
+`pkg/redact`'s snapshot pattern: a narrower class let `admin!:pw@events.example` through both.
+Its first character must be unreserved and `userinfoRunIsClockShaped` judges the username's
+segment after its last sub-delim, so `Keynote (14:00@main.stage)` or `Mon,9:30@main.stage`
+is still a clock and never refuses a brief.
 
 The colon is not QUITE the whole discriminator, and the round that shipped believing it
 was put a false REFUSAL into the pre-create path. `keynote 14:00@events.example` and
@@ -893,7 +898,9 @@ The platform half of `TwitterDispatcher.WriteBudget` (see
   never state on the shared client), and a definite failure AFTER a retried 429 is returned as
   `retriedUnconfirmedError` (Unconfirmed), mirroring the Microsoft client's PR #255 fix — a
   pre-send dial failure on the retry included, since it proves only that the RETRY never left. The 2xx
-  echo is checked: another campaign id or another amount is an UNCONFIRMED `transportError`.
+  echo is checked: another campaign id, another amount, or a PRESENT `null` amount (X reporting no
+  daily budget right after one was written) is an UNCONFIRMED `transportError`; an echo that
+  omits the field is accepted, the 2xx being the confirmation.
 - `BudgetMicros` shares the create path's bound (`maxBudgetUsd`) and rounding
   (`toMicroCurrency`); its refusals wrap `ErrBudgetAmountInvalid` with a client-safe sentence
   (`BudgetAmountReason`). X publishes no per-currency minimum or maximum for these fields — only
@@ -1242,3 +1249,17 @@ discovered one), and the dispatcher answers the sentinel as `accountIDNotUsable`
 pre-send verdict, not a credential rejection and not the inconclusive default.
 `TestVerifyAccountRejectsAnUnusableAccountIDBeforeAnyRequest` asserts the CALL COUNT, because a
 test that only checked the error would still pass if the request were made and discarded.
+
+## Line-item keyword targeting (`keyword_targeting.go`, LFXV2-2665)
+
+`ListLineItemTargetingCriteria` lists a line item's targeting criteria
+(`targeting_criteria?line_item_ids=…&with_deleted=false&count=1000`, cursor-walked through
+`cursorVerdict` like `findByName`) and is all-or-error: no result set, a criterion without a
+usable id or under another line item, an unusable cursor on a full page, or the page cap is
+`ErrTargetingUnreadable`. `DeleteTargetingCriterion` takes a write-pacer slot (a wait cut short is
+`ErrWriteNotSent`, and so is a request `ProbeNotSent` proves never left the process — a DNS or
+connect-time failure, or a context already done at entry — checked before any API
+classification, so the dispatcher reports `NOT_SENT` rather than `REJECTED`), sends one DELETE with the 429 never retried, maps 404 to
+`ErrTargetingCriterionNotFound`, and accepts a 2xx only when it names the criterion with
+`deleted: true` — anything else is an UNCONFIRMED `transportError`. The create path sets no
+targeting criteria. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).

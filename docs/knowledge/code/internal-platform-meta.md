@@ -475,9 +475,11 @@ An impression-billed cap is a CPM, `CLICKS` billing is any click rather than a l
   bid-AMOUNT subcode (its one bid subcode, 1885204, is a strategy refusal). To support this,
   `graphError` now parses `error_subcode` and `error_data`, and `APIError` carries
   `ErrorSubcode` plus an unexported, bounded `blameFields` (at most 16 specs, depth 8, names of
-  at most 128 bytes) that `Error()` never renders. Every non-2xx path (normal, truncated-body, Retry-After-over-cap abort) copies these through
-  the one helper `(*APIError).copyEnvelope`, so a truncated envelope blaming `bid_amount` still
-  classifies.
+  at most 128 bytes) that `Error()` never renders. Every non-2xx path (normal, truncated-body,
+  Retry-After-over-cap abort) copies these through the one helper `(*APIError).copyEnvelope`, so a
+  truncated envelope blaming `bid_amount` still classifies. That includes the `/adimages` upload
+  loop: its non-2xx parse goes through `copyEnvelope`, and its own over-cap abort
+  (`throttleWait`) carries `ErrorSubcode` and `blameFields` as well as type, code and trace id.
 
 ## Campaign status toggle
 

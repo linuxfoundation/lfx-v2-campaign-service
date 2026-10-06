@@ -689,18 +689,25 @@ func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectI
 		// and monitor-twitter-ads-account the only method that declares this 409): the account
 		// is too busy for one report, retrying cannot help, and neither the connection nor the
 		// request is at fault — so neither 503 nor 400. The reason is the discriminator a
-		// caller keys on; the message is the sentinel's fixed text plus the limit.
-		return &conn.ConflictError{
+		// caller keys on; the message is the sentinel's fixed text plus the limit. The body is
+		// that method's own AccountMonitorConflictError, not the shared ConflictError, so the
+		// published 409 example is one this method can actually return.
+		//
+		// INVARIANT: only a method that declares AccountMonitorConflictError as its Conflict
+		// (today monitor-twitter-ads-account alone) may receive these two sentinels. A method
+		// declaring the shared ConflictError instead would not encode this type as its 409.
+		// Before letting another producer return them, declare this type on its method.
+		return &conn.AccountMonitorConflictError{
 			Code:    "409",
-			Reason:  conflictReason("account_too_many_active_campaigns"),
+			Reason:  "account_too_many_active_campaigns",
 			Message: domain.ErrAccountTooManyActiveCampaigns.Error() + " (at most " + strconv.Itoa(twitter.MaxMonitorActiveCampaigns) + " campaigns active in the window for " + d.displayName + ")",
 		}
 	case errors.Is(aerr, domain.ErrAccountTimezoneUnsupported):
 		// Same shape as the arm above: permanent for the account's timezone, not a fault of the
 		// connection or the request. See domain.ErrAccountTimezoneUnsupported.
-		return &conn.ConflictError{
+		return &conn.AccountMonitorConflictError{
 			Code:    "409",
-			Reason:  conflictReason("account_timezone_unsupported"),
+			Reason:  "account_timezone_unsupported",
 			Message: domain.ErrAccountTimezoneUnsupported.Error(),
 		}
 	case errors.Is(aerr, domain.ErrMonitorDaysInvalid):
