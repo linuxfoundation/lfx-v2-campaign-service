@@ -6,6 +6,8 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
+	"strconv"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
@@ -21,9 +23,10 @@ import (
 // This is therefore provider-agnostic: the value is walked recursively and every STRING
 // value goes through redact.SnapshotText, the same full redactor the adapters use for free
 // text (scheme-ful URLs → scheme+host, scheme-less links with a query/fragment or a path →
-// host, userinfo runs dropped). Object keys are not rewritten — they are the shape of the
-// config, not caller content worth a credential — and numbers, booleans and null pass
-// through untouched.
+// host, userinfo runs dropped). Object KEYS go through the same redactor: `config` is
+// caller-typed all the way down, so a map keyed by, say, landing-page URL carries its links
+// in the keys. Numbers, booleans and null pass through untouched. See redactSnapshotObject
+// for what happens when two keys redact to the same string.
 //
 // Numbers are decoded with UseNumber so the redaction round trip writes back exactly the
 // digits marshalAny produced and adds no float64 reformatting of its own (Goa's `Any` decode
@@ -46,18 +49,14 @@ func redactedConfigSnapshot(config any) json.RawMessage {
 	return marshalAny(redactSnapshotValue(decoded))
 }
 
-// redactSnapshotValue returns v with every string value run through redact.SnapshotText.
-// It rebuilds containers rather than mutating them in place.
+// redactSnapshotValue returns v with every string value and every object key run through
+// redact.SnapshotText. It rebuilds containers rather than mutating them in place.
 func redactSnapshotValue(v any) any {
 	switch t := v.(type) {
 	case string:
 		return redact.SnapshotText(t)
 	case map[string]any:
-		out := make(map[string]any, len(t))
-		for k, val := range t {
-			out[k] = redactSnapshotValue(val)
-		}
-		return out
+		return redactSnapshotObject(t)
 	case []any:
 		out := make([]any, len(t))
 		for i, val := range t {
@@ -68,4 +67,35 @@ func redactSnapshotValue(v any) any {
 		// json.Number, bool, nil.
 		return v
 	}
+}
+
+// redactSnapshotObject redacts an object's keys and values.
+//
+// Redacting keys can make two of them equal — `https://a.example/x?t=1` and
+// `https://a.example/y` both become `https://a.example` — and a map cannot hold both. Values
+// are never silently merged or dropped on a collision: the original keys are processed in
+// sorted order, the first to produce a redacted key keeps it, and each later one is stored
+// under `<redacted>#2`, `#3`, … (the lowest suffix not already taken). Sorting first makes the
+// output stable across runs regardless of Go's map iteration order.
+func redactSnapshotObject(in map[string]any) map[string]any {
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make(map[string]any, len(in))
+	for _, k := range keys {
+		rk := redact.SnapshotText(k)
+		if _, taken := out[rk]; taken {
+			for n := 2; ; n++ {
+				candidate := rk + "#" + strconv.Itoa(n)
+				if _, taken := out[candidate]; !taken {
+					rk = candidate
+					break
+				}
+			}
+		}
+		out[rk] = redactSnapshotValue(in[k])
+	}
+	return out
 }

@@ -308,11 +308,18 @@ landed in the clear.
 
 `redactedConfigSnapshot` (`campaign_config_redact.go`) now sits between the payload and the
 column. It is provider-agnostic: it marshals the value, decodes it with `UseNumber`, walks it
-recursively and runs every STRING value through `redact.SnapshotText` — the same full redactor
-the adapters use for free text (scheme-ful URL → scheme+host; scheme-less link with a
-query/fragment or a path → host; `user:password@` runs and URLs with userinfo dropped). Object
-KEYS are left as written, and numbers, booleans and null pass through untouched; structure is
-preserved. A nil `config` still leaves the stored snapshot unchanged.
+recursively and runs every STRING value AND every object KEY through `redact.SnapshotText` —
+the same full redactor the adapters use for free text (scheme-ful URL → scheme+host;
+scheme-less link with a query/fragment or a path → host; `user:password@` runs and URLs with
+userinfo dropped). Keys are caller-typed too (a map keyed by landing-page URL carries its links
+in the keys). Numbers, booleans and null pass through untouched; structure is preserved. A nil
+`config` still leaves the stored snapshot unchanged.
+
+Two keys can redact to the same string (`https://a.example/x?t=1` and `https://a.example/y`).
+Nothing is silently merged or dropped: original keys are processed in sorted order, the first
+keeps the redacted key and each later one is stored as `<redacted>#2`, `#3`, … (lowest free
+suffix), so the output is stable across runs. The only reader of `config_snapshot`
+(`googleAdsRecordedChannelType`) reads the literal key `channel`, which redaction leaves alone.
 
 The contract is deliberately NOT tightened: a non-object config (a bare string or array) is
 still accepted and is redacted the same way. No caller in `lfx-v2-ui` was found sending this

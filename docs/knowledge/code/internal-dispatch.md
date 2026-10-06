@@ -319,7 +319,7 @@ imports `internal/service`, so the service cannot import this package without a 
 the service needs the same rules: `UpdateCampaign` (`PUT .../campaigns/{id}`) accepts
 `config` as Goa `Any` with no adapter in the loop, and it used to persist that JSON straight
 into `config_snapshot`, bypassing every per-adapter scrub listed above. It now walks the
-value and runs EVERY string through `SnapshotText` before persisting (see
+value and runs EVERY string value and object key through `SnapshotText` before persisting (see
 [internal/service](internal-service.md), "Campaign config update"). The per-adapter list
 above is the CREATE/adoption path only; the LinkedIn create-path gap is unchanged.
 

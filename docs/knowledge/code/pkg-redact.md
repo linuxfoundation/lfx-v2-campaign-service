@@ -212,7 +212,9 @@ path-only runs, in that order. The rationale for each pass is on the code, and t
 
 They moved here unchanged from `internal/dispatch` (which keeps thin wrappers) so that
 `internal/service` — which cannot import `internal/dispatch` without an import cycle — redacts
-the caller config on the update-campaign path with the same rules rather than a second copy.
+the caller config on the update-campaign path — every string value and every object key —
+with the same rules rather than a second copy. `snapshot_test.go` pins a representative set of
+cases here; the exhaustive ones stay in `internal/dispatch/creds_test.go`.
 
 ## Callers
 

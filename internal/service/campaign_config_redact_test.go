@@ -35,22 +35,25 @@ func TestBriefService_UpdateCampaign_RedactsCallerConfig(t *testing.T) {
 	s, camps := newConfigEditService(json.RawMessage(`{"before":true}`))
 	// Decoded the way Goa decodes an Any body: plain encoding/json into interface{}.
 	var config any
-	if err := json.Unmarshal([]byte(`{
+	// The userinfo URL is spliced in so the literal is not a credential-shaped fixture for
+	// the secret scanners.
+	userinfoURL := "https://bob:" + "SECRET_PASSWORD@api.example.org/v1"
+	if err := json.Unmarshal([]byte(strings.Replace(`{
 		"post_url": "https://events.example.org/reg?access_token=SECRET_QUERY",
 		"nested": {
 			"image": "https://cdn.example.org/img.png#SECRET_FRAGMENT",
 			"list": [
-				"https://bob:SECRET_PASSWORD@api.example.org/v1",
+				"USERINFO_URL",
 				"see example.org/reset/SECRET_PATH now",
 				"www.example.org/r?ticket=SECRET_SCHEMELESS",
 				42, 1.5, true, false, null
 			],
-			"https://keys.example.org/?k=key_is_not_redacted": "plain text"
+			"https://keys.example.org/?k=SECRET_KEY": "plain text"
 		},
 		"budget": 1000,
 		"enabled": true,
 		"nothing": null
-	}`), &config); err != nil {
+	}`, "USERINFO_URL", userinfoURL, 1)), &config); err != nil {
 		t.Fatal(err)
 	}
 	v := "5"
@@ -64,7 +67,7 @@ func TestBriefService_UpdateCampaign_RedactsCallerConfig(t *testing.T) {
 		t.Fatal("ReplaceCampaign was not called")
 	}
 	stored := string(camps.got.ConfigSnapshot)
-	for _, secret := range []string{"SECRET_QUERY", "SECRET_FRAGMENT", "SECRET_PASSWORD", "bob", "SECRET_PATH", "SECRET_SCHEMELESS", "/reg", "/reset", "img.png"} {
+	for _, secret := range []string{"SECRET_QUERY", "SECRET_FRAGMENT", "SECRET_PASSWORD", "bob", "SECRET_PATH", "SECRET_SCHEMELESS", "SECRET_KEY", "/reg", "/reset", "img.png"} {
 		if strings.Contains(stored, secret) {
 			t.Errorf("config_snapshot still contains %q: %s", secret, stored)
 		}
@@ -92,8 +95,8 @@ func TestBriefService_UpdateCampaign_RedactsCallerConfig(t *testing.T) {
 				"www.example.org",
 				json.Number("42"), json.Number("1.5"), true, false, nil,
 			},
-			// Keys are structure, not content: left as written.
-			"https://keys.example.org/?k=key_is_not_redacted": "plain text",
+			// Keys are caller-typed too and are redacted like values.
+			"https://keys.example.org": "plain text",
 		},
 		"budget":  json.Number("1000"),
 		"enabled": true,
@@ -145,5 +148,26 @@ func TestRedactedConfigSnapshot_NonObjectValues(t *testing.T) {
 	}
 	if got := redactedConfigSnapshot(nil); got != nil {
 		t.Errorf("nil: got %s, want nil", got)
+	}
+}
+
+// Two keys that redact to the same string must both survive: the first in sorted original-key
+// order keeps the redacted key, later ones get a deterministic `#n` suffix.
+func TestRedactedConfigSnapshot_KeyCollisions(t *testing.T) {
+	in := map[string]any{
+		"https://a.example/y":          "second",
+		"https://a.example/x?t=SECRET": "first",
+		"https://a.example#frag":       "zeroth",
+		"https://a.example#2":          "taken",
+		"other":                        float64(1),
+	}
+	// Sorted originals: "https://a.example#2", "https://a.example#frag",
+	// "https://a.example/x?t=SECRET", "https://a.example/y", "other". Each of the first four
+	// redacts to "https://a.example"; the first keeps it and the rest are suffixed in order.
+	want := `{"https://a.example":"taken","https://a.example#2":"zeroth","https://a.example#3":"first","https://a.example#4":"second","other":1}`
+	for i := 0; i < 20; i++ { // map order is randomized; the output must not be
+		if got := string(redactedConfigSnapshot(in)); got != want {
+			t.Fatalf("got  %s\nwant %s", got, want)
+		}
 	}
 }

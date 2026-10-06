@@ -11,7 +11,9 @@ clear.
   without a cycle. Dispatch keeps one-line wrappers, so adapter behaviour is byte-identical and
   `creds_test.go` passes unchanged.
 - `UpdateCampaign` now persists `redactedConfigSnapshot(config)`: the value is walked
-  recursively and every string value goes through `redact.SnapshotText`. Keys, numbers,
+  recursively and every string value AND every object key goes through `redact.SnapshotText`
+  (keys are caller-typed too). Keys that collide after redaction are never merged: in sorted
+  original-key order the first keeps the key and later ones get `#2`, `#3`, …. Numbers,
   booleans, null and structure are preserved; a nil config still leaves the snapshot as it was.
   The API contract is unchanged (any JSON value is still accepted).
 - Other paths writing caller JSON into `config_snapshot` were checked: the only other writer is
