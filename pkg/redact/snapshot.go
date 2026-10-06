@@ -345,6 +345,10 @@ func sanitizeUserinfoSnapshotRun(run string) string {
 	return ""
 }
 
+// clockPrefixDelims are the RFC 3986 sub-delims that may sit hard against a clock in prose:
+// every sub-delim except `+`.
+const clockPrefixDelims = "!$&'()*,;="
+
 // UsernameIsClock reports whether a userinfo run's username:password pair is a time of day,
 // score or ratio rather than a credential. Two shapes qualify, and nothing else:
 //
@@ -366,10 +370,6 @@ func sanitizeUserinfoSnapshotRun(run string) string {
 //
 // `+` is deliberately NOT a qualifying prefix: it is unreserved in a username and common in
 // real ones, so `alice+9:30@ops.example` and `alice+2024:1234@…` are credentials.
-// clockPrefixDelims are the RFC 3986 sub-delims that may sit hard against a clock in prose:
-// every sub-delim except `+`.
-const clockPrefixDelims = "!$&'()*,;="
-
 func UsernameIsClock(username, password string) bool {
 	if isAllASCIIDigits(username) {
 		return len(username) <= 2 && len(password) <= 2 && isAllASCIIDigits(password)
