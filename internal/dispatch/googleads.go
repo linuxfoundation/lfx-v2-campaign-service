@@ -118,6 +118,59 @@ type googleAdsStructuredSnippetConfig struct {
 	Values []string `json:"values"`
 }
 
+// googleAdsCallExtensionConfig is one call extension. countryCode is required
+// because Google interprets the number against it — the same number means
+// different things in different countries, and there is no default to pick.
+type googleAdsCallExtensionConfig struct {
+	CountryCode string `json:"countryCode"`
+	PhoneNumber string `json:"phoneNumber"`
+}
+
+// googleAdsPromotionConfig is one promotion extension.
+//
+// discountPercent and discountAmount are two arms of a Google oneof: exactly one
+// is set, and the client refuses both and neither. promotionCode and
+// ordersOverAmount are the other oneof, where BOTH absent is fine. currencyCode
+// is required whenever either money field is used. occasion is Google's own
+// enum name, checked for shape and not for membership — Google extends that
+// enum without this client's involvement, so a hardcoded list would refuse a
+// create Google would accept, the same reasoning as the snippet header above.
+type googleAdsPromotionConfig struct {
+	PromotionTarget     string  `json:"promotionTarget"`
+	DiscountPercent     float64 `json:"discountPercent"`
+	DiscountAmount      float64 `json:"discountAmount"`
+	OrdersOverAmount    float64 `json:"ordersOverAmount"`
+	CurrencyCode        string  `json:"currencyCode"`
+	PromotionCode       string  `json:"promotionCode"`
+	Occasion            string  `json:"occasion"`
+	LanguageCode        string  `json:"languageCode"`
+	StartDate           string  `json:"startDate"`
+	EndDate             string  `json:"endDate"`
+	RedemptionStartDate string  `json:"redemptionStartDate"`
+	RedemptionEndDate   string  `json:"redemptionEndDate"`
+	FinalURL            string  `json:"finalUrl"`
+}
+
+// googleAdsPriceOfferingConfig is one row of a price extension. Each row carries
+// its OWN destination — Google serves them as separate clickable entries.
+type googleAdsPriceOfferingConfig struct {
+	Header       string  `json:"header"`
+	Description  string  `json:"description"`
+	Amount       float64 `json:"amount"`
+	CurrencyCode string  `json:"currencyCode"`
+	Unit         string  `json:"unit"`
+	FinalURL     string  `json:"finalUrl"`
+}
+
+// googleAdsPriceConfig is one price extension: a typed table of 3-8 offerings.
+// type and priceQualifier are enum names checked for shape, as occasion is.
+type googleAdsPriceConfig struct {
+	Type           string                         `json:"type"`
+	PriceQualifier string                         `json:"priceQualifier"`
+	LanguageCode   string                         `json:"languageCode"`
+	Offerings      []googleAdsPriceOfferingConfig `json:"offerings"`
+}
+
 // googleAdsAdConfig is one responsive search ad inside an ad group. Both lists are
 // optional in exactly the way the campaign-level headlines/descriptions are — the
 // client pads missing slots to Google's minimums.
@@ -349,6 +402,14 @@ type googleAdsConfig struct {
 	Sitelinks          []googleAdsSitelinkConfig          `json:"sitelinks"`
 	Callouts           []string                           `json:"callouts"`
 	StructuredSnippets []googleAdsStructuredSnippetConfig `json:"structuredSnippets"`
+	// CallExtensions, Promotions and Prices are the other three extension types,
+	// under exactly the same rules: optional, Search only, account-level assets
+	// linked to the campaign. Image and location extensions are NOT here — see
+	// internal/platform/googleads/assets_extended.go for why each is a gap rather
+	// than an omission.
+	CallExtensions []googleAdsCallExtensionConfig `json:"callExtensions"`
+	Promotions     []googleAdsPromotionConfig     `json:"promotions"`
+	Prices         []googleAdsPriceConfig         `json:"prices"`
 	// AdGroups splits the campaign into one ad group per theme, each with its own
 	// keywords and up to three responsive search ads. Search only.
 	//
@@ -524,6 +585,9 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		Sitelinks:              googleAdsSitelinks(cfg.Sitelinks),
 		Callouts:               cfg.Callouts,
 		StructuredSnippets:     googleAdsStructuredSnippets(cfg.StructuredSnippets),
+		CallExtensions:         googleAdsCallExtensions(cfg.CallExtensions),
+		Promotions:             googleAdsPromotions(cfg.Promotions),
+		Prices:                 googleAdsPrices(cfg.Prices),
 		AdGroups:               googleAdsAdGroups(cfg.AdGroups),
 		DemandGenCreative:      googleAdsDemandGenCreative(cfg.DemandGenCreative),
 		PerformanceMaxCreative: googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
@@ -816,6 +880,74 @@ func googleAdsStructuredSnippets(in []googleAdsStructuredSnippetConfig) []google
 	return out
 }
 
+func googleAdsCallExtensions(in []googleAdsCallExtensionConfig) []googleads.CallExtension {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.CallExtension, len(in))
+	for i, c := range in {
+		out[i] = googleads.CallExtension{CountryCode: c.CountryCode, PhoneNumber: c.PhoneNumber}
+	}
+	return out
+}
+
+func googleAdsPromotions(in []googleAdsPromotionConfig) []googleads.PromotionExtension {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.PromotionExtension, len(in))
+	for i, p := range in {
+		out[i] = googleads.PromotionExtension{
+			PromotionTarget:     p.PromotionTarget,
+			DiscountPercent:     p.DiscountPercent,
+			DiscountAmount:      p.DiscountAmount,
+			OrdersOverAmount:    p.OrdersOverAmount,
+			CurrencyCode:        p.CurrencyCode,
+			PromotionCode:       p.PromotionCode,
+			Occasion:            p.Occasion,
+			LanguageCode:        p.LanguageCode,
+			StartDate:           p.StartDate,
+			EndDate:             p.EndDate,
+			RedemptionStartDate: p.RedemptionStartDate,
+			RedemptionEndDate:   p.RedemptionEndDate,
+			FinalURL:            p.FinalURL,
+		}
+	}
+	return out
+}
+
+func googleAdsPrices(in []googleAdsPriceConfig) []googleads.PriceExtension {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.PriceExtension, len(in))
+	for i, p := range in {
+		price := googleads.PriceExtension{
+			Type:           p.Type,
+			PriceQualifier: p.PriceQualifier,
+			LanguageCode:   p.LanguageCode,
+		}
+		// Built even when empty so the client, not this mapper, decides what an
+		// offering-less price extension means — it refuses it by count, with a
+		// message naming Google's 3-8 range.
+		if len(p.Offerings) > 0 {
+			price.Offerings = make([]googleads.PriceOffering, len(p.Offerings))
+			for j, o := range p.Offerings {
+				price.Offerings[j] = googleads.PriceOffering{
+					Header:       o.Header,
+					Description:  o.Description,
+					Amount:       o.Amount,
+					CurrencyCode: o.CurrencyCode,
+					Unit:         o.Unit,
+					FinalURL:     o.FinalURL,
+				}
+			}
+		}
+		out[i] = price
+	}
+	return out
+}
+
 // googleAdsDemandGenCreativeConfig is the wire shape of the Demand Gen creative.
 //
 // Images are URLs, matching reddit's and meta's imageUrl: a caller already hosts the
@@ -1050,11 +1182,14 @@ func googleAdsDisplayCreative(in *googleAdsDisplayCreativeConfig) googleads.Disp
 // campaignFromReddit's PostURL: a caller-supplied URL can carry a credential in its
 // path, query or fragment, and the snapshot is the copy that persists.
 //
-// The URLs this config carries are a sitelink's finalUrl and the image URLs of the
-// Demand Gen creative, the Performance Max asset group and the Display creative. The
-// Video creative is the one creative with nothing to sanitize: it references a YouTube
-// video by bare id and carries no URL field at all, which is why it is the only one
-// absent from the early return below.
+// The URLs this config carries are the clickable destinations of three extension
+// types — a sitelink's finalUrl, a promotion's finalUrl and the finalUrl of EVERY
+// price offering, each row of a price table carrying its own — and the image URLs of
+// the Demand Gen creative, the Performance Max asset group and the Display creative.
+// The Video creative is the one creative with nothing to sanitize: it references a
+// YouTube video by bare id and carries no URL field at all, which is why it is the
+// only one absent from the early return below. Call extensions carry a phone number
+// and no URL, so they are absent for the same kind of reason.
 // The ad copy beside them — headlines, descriptions, callouts, snippet values,
 // sitelink text — is deliberately
 // NOT run through sanitizeSnapshotText: that helper exists for operator-authored prose
@@ -1062,7 +1197,8 @@ func googleAdsDisplayCreative(in *googleAdsDisplayCreativeConfig) googleads.Disp
 // destination in its own finalUrl field and the copy fields are short ad text. If a
 // link-bearing free-text field is ever added here, it needs that helper.
 func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
-	if len(cfg.Sitelinks) == 0 && cfg.DemandGenCreative == nil && cfg.PerformanceMaxCreative == nil && cfg.DisplayCreative == nil {
+	if len(cfg.Sitelinks) == 0 && len(cfg.Promotions) == 0 && len(cfg.Prices) == 0 &&
+		cfg.DemandGenCreative == nil && cfg.PerformanceMaxCreative == nil && cfg.DisplayCreative == nil {
 		return cfg
 	}
 	snapshot := cfg
@@ -1073,6 +1209,34 @@ func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
 		copy(snapshot.Sitelinks, cfg.Sitelinks)
 		for i := range snapshot.Sitelinks {
 			snapshot.Sitelinks[i].FinalURL = sanitizeSnapshotURL(snapshot.Sitelinks[i].FinalURL)
+		}
+	}
+	// A promotion's destination is a clickable ad destination exactly as a sitelink's
+	// is, and is copied and reduced the same way.
+	if len(cfg.Promotions) > 0 {
+		snapshot.Promotions = make([]googleAdsPromotionConfig, len(cfg.Promotions))
+		copy(snapshot.Promotions, cfg.Promotions)
+		for i := range snapshot.Promotions {
+			snapshot.Promotions[i].FinalURL = sanitizeSnapshotURL(snapshot.Promotions[i].FinalURL)
+		}
+	}
+	// A price extension needs a DEEP copy: the top-level copy shares the Offerings
+	// backing array with the caller's config, and it is the offerings that carry the
+	// URLs. Reducing them in place would strip the path off the config the client is
+	// about to send, which is the bug this whole function is written around.
+	if len(cfg.Prices) > 0 {
+		snapshot.Prices = make([]googleAdsPriceConfig, len(cfg.Prices))
+		copy(snapshot.Prices, cfg.Prices)
+		for i := range snapshot.Prices {
+			if len(cfg.Prices[i].Offerings) == 0 {
+				continue
+			}
+			offerings := make([]googleAdsPriceOfferingConfig, len(cfg.Prices[i].Offerings))
+			copy(offerings, cfg.Prices[i].Offerings)
+			for j := range offerings {
+				offerings[j].FinalURL = sanitizeSnapshotURL(offerings[j].FinalURL)
+			}
+			snapshot.Prices[i].Offerings = offerings
 		}
 	}
 	// Every creative image URL is sanitized for the same reason the sitelink URL and

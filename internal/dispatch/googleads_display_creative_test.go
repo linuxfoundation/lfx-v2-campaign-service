@@ -74,7 +74,7 @@ func TestGoogleAdsSnapshotConfig_DoesNotMutateTheCallersDisplayCreative(t *testi
 	}
 }
 
-// The early return in googleAdsSnapshotConfig names FOUR fields. A config carrying ONLY
+// The early return in googleAdsSnapshotConfig names SIX fields. A config carrying ONLY
 // the display creative must not take it — the same bug the Performance Max condition was
 // added to prevent, one channel later.
 func TestGoogleAdsSnapshotConfig_SanitizesTheDisplayCreativeAlone(t *testing.T) {

@@ -261,6 +261,14 @@ type CampaignInput struct {
 	Sitelinks          []Sitelink
 	Callouts           []string
 	StructuredSnippets []StructuredSnippet
+	// CallExtensions, Promotions and Prices are the other three extension types
+	// this client creates, under exactly the same rules as the three above:
+	// optional, SEARCH ONLY, and account-level assets linked to the campaign.
+	// Their shapes and validators live in assets_extended.go, which also says
+	// why image and location extensions are not here.
+	CallExtensions []CallExtension
+	Promotions     []PromotionExtension
+	Prices         []PriceExtension
 	// AdGroups splits the campaign into one ad group per theme, each with its own
 	// keywords, bid and up to three responsive search ads. Optional and SEARCH
 	// ONLY (refused at preflight on Demand Gen, which builds its own ad group and

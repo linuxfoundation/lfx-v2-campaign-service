@@ -75,8 +75,8 @@ func TestGoogleAdsSnapshotConfig_DoesNotMutateTheCallersAssetGroup(t *testing.T)
 	}
 }
 
-// The early return in googleAdsSnapshotConfig names three fields. A config carrying
-// ONLY the asset group must not take it — that is precisely the bug the third
+// The early return in googleAdsSnapshotConfig names six fields. A config carrying
+// ONLY the asset group must not take it — that is precisely the bug the asset-group
 // condition was added to prevent.
 func TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone(t *testing.T) {
 	cfg := googleAdsConfig{PerformanceMaxCreative: &googleAdsPerformanceMaxCreativeConfig{

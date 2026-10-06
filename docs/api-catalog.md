@@ -1050,9 +1050,60 @@ structuredSnippets?:            — OPTIONAL structured-snippet extensions (LFXV
                                   revises it, so a local list would refuse headers Google accepts. An
                                   unrecognised header is rejected upstream, after the campaign exists.
 
-                                  All three extension fields are SEARCH ONLY and are REFUSED, not
-                                  ignored, on Demand Gen. Omitted/empty, no assets are created and the
-                                  ad serves with no extensions — the pre-LFXV2-2665 behaviour.
+callExtensions?:                — OPTIONAL call extensions (LFXV2-2665): a phone number shown with the
+  {countryCode, phoneNumber}[]    ad. `countryCode` is an ISO-3166-1 alpha-2 code (upper-cased before
+                                  sending). `phoneNumber` may carry digits, spaces and `+-().` only —
+                                  LETTERS are refused, because Google rejects vanity numbers such as
+                                  1-800-FLOWERS — and must hold at least 4 digits and be ≤35 runes.
+                                  De-duplicated on country plus digits-only number. At most 20.
+promotions?:                    — OPTIONAL promotion extensions (LFXV2-2665): a discount shown with the
+  {promotionTarget,               ad. `promotionTarget` (the thing discounted) is required, ≤25 runes
+   discountPercent?,              and unique case-insensitively within the list.
+   discountAmount?,
+   ordersOverAmount?,             EXACTLY ONE discount arm is required — `discountPercent` (0 < p ≤ 100)
+   currencyCode?,                 or `discountAmount`; supplying both or neither is refused, because
+   promotionCode?, occasion?,     Google models them as a oneof and would pick for you. A percentage is
+   languageCode?,                 sent as micros of a FRACTION (Google's 1,000,000 = 100%), so 25 becomes
+   startDate?, endDate?,          250,000. `discountAmount` and `ordersOverAmount` each require
+   redemptionStartDate?,          `currencyCode` (ISO-4217, three upper-case letters).
+   redemptionEndDate?,
+   finalUrl}[]                    At most ONE eligibility arm: `promotionCode` (≤20 runes) or
+                                  `ordersOverAmount` — a promotion cannot be both code-gated and
+                                  spend-gated.
+
+                                  `occasion` is checked for SHAPE only (`^[A-Z][A-Z0-9_]*$`), not
+                                  against Google's published occasion list, for the same reason
+                                  structured-snippet headers are: the list is revised upstream and a
+                                  local copy would refuse values Google accepts.
+
+                                  The two date windows are ordered INDEPENDENTLY: an offer may be
+                                  redeemable after the ad stops running, so `redemptionEndDate` is not
+                                  required to fall inside `startDate`..`endDate`. Each window is
+                                  `YYYY-MM-DD` and each requires its own start before its own end.
+
+                                  `finalUrl` is required, UTM-tagged by the same builder as the ad's
+                                  destination, and ≤2084 bytes after tagging. At most 20.
+prices?:                        — OPTIONAL price extensions (LFXV2-2665): a table of offerings shown
+  {type, priceQualifier?,         with the ad. `type` (e.g. `EVENTS`), `priceQualifier` (e.g. `FROM`)
+   languageCode,                  and each offering's `unit` (e.g. `PER_DAY`) are SHAPE-checked only,
+   offerings: {header,            like `occasion` above. `languageCode` is required.
+     description, amount,
+     currencyCode, unit?,         3..8 `offerings` — fewer than 3 is refused because Google will not
+     finalUrl}[]}[]               serve the table. Per offering: `header` and `description` ≤25 runes
+                                  each, `amount` with an ISO-4217 `currencyCode`, and a required
+                                  `finalUrl` tagged and bounded exactly as above — EVERY row is its own
+                                  clickable destination. Headers are de-duplicated case-insensitively;
+                                  Google serves one row per header. At most 10 price extensions.
+
+                                  All six extension fields are SEARCH ONLY and are REFUSED, not
+                                  ignored, on every other channel. Omitted/empty, no assets are created
+                                  and the ad serves with no extensions — the pre-LFXV2-2665 behaviour.
+
+                                  IMAGE and LOCATION extensions are NOT supported. An image extension
+                                  carries bytes, which would give the Search create path a network
+                                  fetch phase it does not have today; a location extension cannot be
+                                  created through this API at all — it is derived from a Business
+                                  Profile linked to the account.
 adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-2665), each with its own
   {name, cpcBid?, keywords?,      keywords and up to 3 Responsive Search Ads. SEARCH ONLY and REFUSED on
    audienceSegments?,             every other `channel`: Demand Gen creates its own single ad group,

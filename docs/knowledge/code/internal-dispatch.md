@@ -316,14 +316,25 @@ sibling, so `googleAdsSnapshotConfig` sanitizes a third block of its own and
 `TestGoogleAdsSnapshotConfig_SanitizesEveryDisplayURLList` asserts all four individually,
 one more time for the same reason.
 
-The early return that skips the whole copy names FOUR fields now — sitelinks, the Demand
-Gen creative, the asset group and the Display creative, and deliberately NOT
-`videoCreative`, which carries YouTube video ids and text and no URL of any kind, so a
-config holding only a video creative has nothing to sanitize — and
-`TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone` and
-`..._SanitizesTheDisplayCreativeAlone` pin the third and fourth, because a config carrying
-only one of them taking that return is precisely the bug each condition was added to
-prevent.
+**Promotion and price extensions carry destinations too.** A promotion has one
+`finalUrl`; a price extension has one per OFFERING, which is where its deep copy has to
+reach. `googleAdsPriceConfig` copied at the top level still shares its `Offerings`
+backing array with the caller's config, so sanitizing a row in place would strip the
+path off a URL the create path is about to send — the sitelink trap one level deeper.
+`TestGoogleAdsSnapshotConfig_DoesNotMutateTheCallersPriceOfferings` pins that, and
+`..._SanitizesEveryPriceOfferingURL` asserts every row rather than the first, for the
+reason the creative-list tests give. Call extensions are NOT sanitized and NOT part of
+the early return's condition set: a phone number is not a URL and carries no query to
+strip.
+
+The early return that skips the whole copy names SIX fields now — sitelinks, promotions,
+prices, the Demand Gen creative, the asset group and the Display creative, and
+deliberately NOT `videoCreative`, which carries YouTube video ids and text and no URL of
+any kind, so a config holding only a video creative has nothing to sanitize — and
+`TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone`,
+`..._SanitizesTheDisplayCreativeAlone` and `..._SanitizesEachNewExtensionAlone` pin the
+last four, because a config carrying only one of them taking that return is precisely the
+bug each condition was added to prevent.
 
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a
 credential-SHAPED parameter because the text is about to be PUBLISHED, and it is a
