@@ -2599,9 +2599,24 @@ type, so the only evidence is what the platform reports: the lookup selects
 `PlatformCampaignRef.Variant`, which the adopt path persists. Before this, every adopted Google
 campaign was stored as `default` whatever it was — so adopting a Demand Gen campaign left the
 `demand-gen` slot free and the next Demand Gen dispatch created a SECOND paid campaign for the
-same brief. The mapping fails CLOSED: only the types this service can create are mappable, and
-`PERFORMANCE_MAX`, `VIDEO`, an unrecognised future value or an absent field are refused rather
-than defaulted, since defaulting is what produces the duplicate. An adapter that returns an empty
+same brief. The mapping fails CLOSED: only the types this service can create are mappable — `SEARCH`,
+`DEMAND_GEN` and, since Performance Max creation landed, `PERFORMANCE_MAX` — while `VIDEO`, an
+unrecognised future value or an absent field are refused rather than defaulted, since defaulting
+is what produces the duplicate. The mappable set is one of the SIX places the channel list is
+duplicated and has to grow together; see `googleAdsChannelIsSupported`, `AdoptableVariants`,
+`googleAdsRecordedChannelType`, the dispatch create switch and the monitor GAQL's
+`advertising_channel_type IN (...)` list.
+
+Adoption establishes the slot and nothing else. `campaignFromGoogleAdsAdoption` writes
+provenance only — customer id, campaign id and name — and no ad group, ad or asset group ids,
+because the service did not create them and the lookup does not read them. The status toggle
+therefore REFUSES to activate an adopted campaign on every channel: `googleAdsActivationGate`
+asks what the `Result` blob recorded, and for an adopted row that set is empty whichever arm
+the variant selects. That is the correct answer — a cascade can only flip resources it has ids
+for — so each arm's message names adoption explicitly and points the operator at the Google Ads
+UI, rather than describing a provisioning failure in records this service never wrote. PAUSE is
+unaffected: the gate runs only on ACTIVATE, and pausing the campaign resource alone always
+stops delivery. An adapter that returns an empty
 variant is refused by the service layer too, so a contract violation cannot fall back to `default`.
 
 The Google dispatcher resolves the CHANNEL before it composes the campaign name, before adoption

@@ -1710,11 +1710,13 @@ func (d *GoogleAdsDispatcher) ListAccounts(ctx context.Context, projectID string
 // Result blob.
 //
 // ACTIVATE is refused with ErrCampaignNotProvisioned (→409, raised locally without calling
-// Google) unless the Result blob shows the ad group/ad were fully provisioned AND at least one
-// keyword criterion was persisted by GA-4's targeting step. A campaign without targeting cannot
-// deliver, so activating it would report false success — the exact lie ErrCampaignNotProvisioned
-// exists to prevent. When the guard passes, ACTIVATE cascades children-first (children activated
-// before campaign) so a campaign never reports ENABLED before its children do.
+// Google) unless the Result blob shows this CHANNEL's own serving resources were fully
+// provisioned. What those are differs per channel and lives in googleAdsActivationGate — the
+// ad group/ad plus a keyword criterion on Search, the ad group/ad alone on Demand Gen, the
+// asset group on Performance Max, which has neither. A campaign that cannot deliver would
+// report false success, the exact lie ErrCampaignNotProvisioned exists to prevent. When the
+// gate passes, ACTIVATE cascades children-first (children activated before campaign) so a
+// campaign never reports ENABLED before its children do.
 func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	gaStatus, err := googleAdsRunStatus(status)
 	if err != nil {
@@ -2168,6 +2170,14 @@ func googleAdsCampaignAdGroupIDs(campaign *model.Campaign) map[string]bool {
 // Keyed on the campaign's Variant, which is part of its identity rather than its config, so
 // a row cannot drift into the wrong arm through a config edit. A row written before variants
 // existed normalises to VariantDefault and keeps the Search rules it was created under.
+//
+// Every arm names ADOPTION in its refusal, on every channel. campaignFromGoogleAdsAdoption
+// writes provenance and nothing else — no ad group id, no ad id, no asset group id — so an
+// adopted row fails whichever gate its variant selects, permanently, no matter how completely
+// the campaign is provisioned upstream. Without that clause the message sends an operator
+// hunting a provisioning failure in this service's records for a campaign this service never
+// created. The refusal itself is right: a cascade can only act on resources the blob recorded,
+// and for an adopted row that set is empty, so un-pausing happens in Google Ads.
 func googleAdsActivationGate(campaign *model.Campaign, targets []googleads.AdGroupStatusTarget, keywordsProvisioned bool, assetGroupID string) error {
 	switch model.NormalizeVariant(campaign.Variant) {
 	case googleAdsChannelPerformanceMax:
@@ -2175,12 +2185,12 @@ func googleAdsActivationGate(campaign *model.Campaign, targets []googleads.AdGro
 		// an operator looking for a provisioning failure in a resource this channel never
 		// creates.
 		if assetGroupID == "" {
-			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its Performance Max asset group was not fully provisioned (a Performance Max campaign has no ad groups; the asset group is what serves)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because this service has no record of its Performance Max asset group (a Performance Max campaign has no ad groups; the asset group is what serves) — either the creative never completed, or the campaign was ADOPTED, which records no serving resources at all and leaves un-pausing to the Google Ads UI", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
 		return nil
 	case googleAdsChannelDemandGen:
 		if len(targets) == 0 {
-			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its ad group/ad were not fully provisioned", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because this service has no record of its ad group/ad — either they were never fully provisioned, or the campaign was ADOPTED, which records no serving resources at all and leaves un-pausing to the Google Ads UI", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
 		// Deliberately no keyword gate — see the doc comment above.
 		return nil
@@ -2189,7 +2199,7 @@ func googleAdsActivationGate(campaign *model.Campaign, targets []googleads.AdGro
 		// unconfirmed create (see createAdGroupAndAd) leaves no id to cascade to, so
 		// enabling just the campaign would report success while nothing can serve.
 		if len(targets) == 0 {
-			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its ad group/ad were not fully provisioned", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because this service has no record of its ad group/ad — either they were never fully provisioned, or the campaign was ADOPTED, which records no serving resources at all and leaves un-pausing to the Google Ads UI", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
 		if !keywordsProvisioned {
 			return fmt.Errorf("%w: google ads campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword criterion is required)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
@@ -2219,16 +2229,31 @@ func googleAdsHasToggleChildren(targets []googleads.AdGroupStatusTarget, assetGr
 	return assetGroupID != "" || len(targets) > 0
 }
 
-// googleAdsToggleChildren flips whichever serving resources this campaign actually has.
+// googleAdsToggleChildren flips whichever serving resources this campaign actually has —
+// ALL of them, not the first kind it finds.
 //
-// The asset group is checked FIRST and returns on its own: a Performance Max campaign has an
-// asset group and no ad groups, and every other channel has ad groups and no asset group, so
-// the two are mutually exclusive by construction. Keying on what the Result blob recorded
-// rather than on the variant keeps this consistent with googleAdsToggleTargets, which has
-// always derived the cascade from what was created rather than from what was asked for.
+// The asset group goes first: on ACTIVATE every child must be enabled before the campaign
+// is, and the Performance Max asset group is the one that serves. Today a campaign carries
+// an asset group or ad groups and never both, because a Performance Max campaign has no ad
+// groups and every other channel has no asset group. That is an invariant of what the create
+// paths WRITE, though, and this function reads two values parsed independently out of an
+// operator-visible Result blob — a hand-repaired row, a future channel with both, or a change
+// to what adoption records could present both at once. Returning on the asset group alone
+// would then enable it, silently skip every ad group and ad, and still flip the campaign to
+// ENABLED: the "reports running and mostly is not" failure googleAdsToggleTargets' own cascade
+// exists to prevent. So both are acted on, and the contradiction is logged rather than
+// absorbed. Keying on what the blob RECORDED rather than on the variant keeps this consistent
+// with googleAdsToggleTargets, which has always derived the cascade from what was created
+// rather than from what was asked for.
 func googleAdsToggleChildren(ctx context.Context, client *googleads.Client, targets []googleads.AdGroupStatusTarget, assetGroupID, gaStatus string) error {
 	if assetGroupID != "" {
-		return client.UpdateAssetGroupStatus(ctx, assetGroupID, gaStatus)
+		if err := client.UpdateAssetGroupStatus(ctx, assetGroupID, gaStatus); err != nil {
+			return err
+		}
+		if len(targets) > 0 {
+			slog.WarnContext(ctx, "google ads campaign records both an asset group and ad groups; cascading to both",
+				"asset_group_id", assetGroupID, "ad_group_count", len(targets))
+		}
 	}
 	if len(targets) == 0 {
 		return nil

@@ -698,9 +698,11 @@ func TestPreflight_CPCBidIsRefusedOnDemandGen(t *testing.T) {
 // CreateCampaign's cascade, and CreateDemandGenCampaign never reads
 // pf.negativeKeywords — so accepting the list there would validate every term and
 // then discard the lot, while the operator reads "campaign created" and believes
-// the exclusions are live. Deliberately NOT modelled on Keywords, which IS ignored
-// on that channel: a positive keyword has nothing to attach to there, whereas an
-// exclusion exists to stop spend.
+// the exclusions are live. Keywords reach the same refusal by the wider Search-only
+// fence in campaign.go; this check predates that fence and survives it, because the
+// reason differs — a positive keyword has nothing to attach to off Search, whereas a
+// campaign-level exclusion exists to stop spend and is simply never read on the
+// Demand Gen cascade.
 func TestPreflight_NegativeKeywordsAreRefusedOnDemandGen(t *testing.T) {
 	in := CampaignInput{
 		Project:          "tlf",

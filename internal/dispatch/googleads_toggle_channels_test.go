@@ -263,3 +263,45 @@ func TestToggleStatus_NonNumericAssetGroupIDIsRefused(t *testing.T) {
 		t.Errorf("the refusal is local and must contact nothing, got %v", paths)
 	}
 }
+
+// TestToggleStatus_BothAssetGroupAndAdGroupsCascadeToBoth pins the defence the asset-group
+// arm needs because it reads two values out of one operator-visible blob. No create path
+// writes both today — Performance Max has no ad groups and no other channel has an asset
+// group — so this shape can only arrive from a hand-repaired row, a future channel, or a
+// change to what adoption records. Returning on the asset group alone would enable it, skip
+// every ad group and ad, and still flip the campaign to ENABLED: a campaign reporting ENABLED
+// while most of it stays PAUSED, which is exactly what the multi-group cascade exists to stop.
+func TestToggleStatus_BothAssetGroupAndAdGroupsCascadeToBoth(t *testing.T) {
+	d, rec := toggleDispatcher(t)
+	campaign := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "777",
+		Variant:            googleAdsChannelPerformanceMax,
+		Result: []byte(`{"assetGroupId":"4242","adGroupId":"333","adId":"777",` +
+			`"adGroups":[{"name":"LFX | Group 1","id":"333","adIds":["777"]}],"googleAdsUrl":"https://ads.google.com/"}`),
+	}
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, campaign, model.CampaignRunActive); err != nil {
+		t.Fatalf("a campaign carrying both kinds of child must activate: %v", err)
+	}
+	paths, _ := rec.seen()
+	var sawAssetGroup, sawAdGroup bool
+	for _, p := range paths {
+		if strings.Contains(p, "assetGroups:mutate") {
+			sawAssetGroup = true
+		}
+		if strings.Contains(p, "adGroups:mutate") {
+			sawAdGroup = true
+		}
+	}
+	if !sawAssetGroup {
+		t.Errorf("the asset group must still be flipped, got %v", paths)
+	}
+	if !sawAdGroup {
+		t.Errorf("the ad groups must NOT be dropped when an asset group is also present, got %v", paths)
+	}
+	// Campaign last, as on every other activate: no child may be left PAUSED behind an
+	// ENABLED campaign.
+	if !strings.Contains(paths[len(paths)-1], "campaigns:mutate") {
+		t.Errorf("the campaign must be flipped LAST on activate, got %v", paths)
+	}
+}

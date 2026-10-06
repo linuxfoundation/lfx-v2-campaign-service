@@ -230,10 +230,11 @@ type CampaignInput struct {
 	// ProximityTargets are radius targets — "within N miles of this point" —
 	// expressed as decimal degrees plus a radius and an explicit unit. Optional.
 	//
-	// SEARCH ONLY: refused at preflight on the Demand Gen path, because that channel
-	// attaches location criteria at the ad group level and this client has not
-	// verified a proximity criterion there. Refusing locally is free; discovering it
-	// after the campaign exists is not. See validateGeoPlan.
+	// Refused at preflight on DEMAND GEN only, because that channel attaches location
+	// criteria at the ad group level and this client has not verified a proximity
+	// criterion there. Accepted on Search and on Performance Max, both of which attach
+	// location at the campaign level. Refusing locally is free; discovering it after the
+	// campaign exists is not. See validateGeoPlan.
 	ProximityTargets []ProximityTarget
 	// Languages are the languages a Search campaign serves in, as ISO 639-1 codes
 	// (EN, DE, JA) or raw numeric language constant ids. Optional; left empty the
@@ -942,10 +943,15 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 //
 // The kind is load-bearing now in a way it was not when this entry point was written.
 // preflightCampaignKind used to take kind only to compose the name, so validating as
-// Search was harmless for every channel. It now GATES refusals — proximity targeting,
-// the four campaign criteria kinds, the extension assets, the ad-group list and the
-// CPC bid are all Search-only — so a Demand Gen request carrying one of those validates
-// clean as Search and is then refused by CreateDemandGenCampaign. On the create path
+// Search was harmless for every channel. It now GATES refusals, and those refusals are
+// PER CHANNEL rather than Search-versus-everything. Demand Gen refuses the widest set:
+// proximity targeting, all five campaign criteria kinds, the extension assets, the
+// ad-group list, the CPC bid, keywords and audience segments. Performance Max refuses
+// only the half it genuinely cannot carry — device bid modifiers and campaign-level
+// demographic exclusions, plus the Search-only targeting fields — and accepts proximity,
+// languages and ad schedules at the campaign level like Search. So a Demand Gen request
+// carrying one of those validates clean as Search and is then refused by
+// CreateDemandGenCampaign. On the create path
 // that is merely a late error; on the ADOPTION path, which returns before any create
 // runs, it is the exact defect this function exists to prevent: the same request
 // accepted when a campaign happens to exist and refused when it does not.
