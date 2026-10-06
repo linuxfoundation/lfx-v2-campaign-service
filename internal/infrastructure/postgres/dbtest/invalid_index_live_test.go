@@ -135,7 +135,7 @@ func TestMigrateRefusesADroppedRequiredIndex(t *testing.T) {
 // and it is the one with money attached.
 //
 // Migration 000014 dropped campaigns_brief_id_platform_key, 000024 dropped the two-column
-// index that replaced it, and 000038 dropped 000022's three-column one, so
+// index that replaced it, and 000040 dropped 000022's three-column one, so
 // uq_campaigns_brief_platform_variant_slot_version_live is the sole arbiter of slot
 // uniqueness and the thing ClaimCampaignDispatch rests on. A migration-time guard checks an
 // index's definition only once, while that migration is running. An index
@@ -277,7 +277,7 @@ func restoreLeaseIndex(t *testing.T, pool interface {
 			" ON campaign_audiences (brief_id, platform) WHERE status = 'building'")
 }
 
-// restoreDispatchIndex rebuilds the campaigns slot index (migration 000037). Since 000038
+// restoreDispatchIndex rebuilds the campaigns slot index (migration 000037). Since 000040
 // dropped 000022's three-column index this is the ONLY thing standing between two concurrent
 // claims and two paid campaigns for one slot version, so a
 // test that leaves it dropped does not merely dirty the database — it makes every later

@@ -271,6 +271,16 @@ app:
     MICROSOFT_METRICS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to removing keywords from a Reddit ad group's
+    # targeting (remove-keyword-targeting, LFXV2-2665). Default off: Reddit
+    # replaces an ad group's targeting object as a whole, so the write sends
+    # back every dimension it read, and that round trip has not been exercised
+    # against a live Reddit ad account. While off, the endpoint answers 400 for
+    # Reddit campaigns; the keyword-targeting READ is not gated. Any value other
+    # than "true" is treated as off, so a typo fails closed.
+    REDDIT_KEYWORD_TARGETING_WRITES_ENABLED:
+      value: "false"
+
     # Opts this deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
     # (/projects/{project_id}/connection-twitter-ads/account-monitor). Default
     # off for the same reason as MICROSOFT_METRICS_ENABLED above: the monitor

@@ -18,10 +18,11 @@ import (
 )
 
 // config_snapshot is persisted UNENCRYPTED and indexed. microsoftConfig has no URL field of
-// its own; the one caller free-text field reduced in the snapshot is TimeZone (forwarded
-// unvalidated). Keyword text is kept VERBATIM, matching googleAdsSnapshotConfig: the prose
-// redactor would rewrite legitimate keywords. These tests pin both halves, and that the
-// platform still receives every value exactly as the caller wrote it.
+// its own; the caller free text reduced in the snapshot is TimeZone (forwarded unvalidated) and
+// every keyword's text, which is REDACTED in the stored copy (a link's path can carry a token as
+// readily as its query). What the platform receives is NOT snapshot-redacted: keywords reach
+// Microsoft through the client's own validateKeywords (trim, canonical match type,
+// case-insensitive de-duplication) and nothing else. These tests pin both halves.
 
 // msSnapshotCapture records the raw bodies the fake Microsoft API received.
 type msSnapshotCapture struct {
@@ -77,8 +78,8 @@ func msSnapshotServers(t *testing.T) ([]microsoft.Option, *msSnapshotCapture) {
 	return []microsoft.Option{microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL)}, cap
 }
 
-// msSnapKeywords are legitimate keywords the prose redactor's path-only pass WOULD rewrite
-// (or that look link-ish); the snapshot must keep every one byte for byte.
+// msSnapKeywords look link-ish. The snapshot stores each through sanitizeSnapshotText (a redacted
+// record); what the platform receives is not snapshot-redacted.
 var msSnapKeywords = []microsoftKeywordConfig{
 	{Text: "k8s.io/docs tutorial", MatchType: "Exact"},
 	{Text: "node.js/express", MatchType: "Phrase"},
@@ -104,7 +105,7 @@ func msSnapshotConfig(t *testing.T) json.RawMessage {
 	return raw
 }
 
-func TestMicrosoft_ConfigSnapshotScrubsTimeZoneKeepsKeywordsVerbatim(t *testing.T) {
+func TestMicrosoft_ConfigSnapshotScrubsTimeZoneAndKeywords(t *testing.T) {
 	opts, cap := msSnapshotServers(t)
 	d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{}, opts...)
 	brief := testBrief()
@@ -138,9 +139,10 @@ func TestMicrosoft_ConfigSnapshotScrubsTimeZoneKeepsKeywordsVerbatim(t *testing.
 	if len(snap.Keywords) != len(msSnapKeywords) {
 		t.Fatalf("snapshot keywords = %+v, want %+v", snap.Keywords, msSnapKeywords)
 	}
-	for i := range msSnapKeywords {
-		if snap.Keywords[i] != msSnapKeywords[i] {
-			t.Errorf("snapshot keyword[%d] = %+v, want it stored verbatim as %+v", i, snap.Keywords[i], msSnapKeywords[i])
+	for i, kw := range msSnapKeywords {
+		want := microsoftKeywordConfig{Text: sanitizeSnapshotText(kw.Text), MatchType: kw.MatchType}
+		if snap.Keywords[i] != want {
+			t.Errorf("snapshot keyword[%d] = %+v, want the redacted %+v", i, snap.Keywords[i], want)
 		}
 	}
 	if snap.TimeZone != "https://tz.example.net" {
@@ -150,7 +152,7 @@ func TestMicrosoft_ConfigSnapshotScrubsTimeZoneKeepsKeywordsVerbatim(t *testing.
 		t.Errorf("snapshot budget = %v, want 50 (non-text fields are kept verbatim)", snap.Budget)
 	}
 
-	// The platform still receives every value exactly as written: only the STORED copy is
+	// The platform still receives every value un-redacted: only the STORED copy is
 	// scrubbed. Bodies are decoded rather than substring-matched, since encoding/json escapes
 	// '+' nowhere but does escape '&', '<' and '>'.
 	cap.mu.Lock()
@@ -193,8 +195,9 @@ func TestMicrosoftSnapshotConfig_DoesNotMutateDispatchConfig(t *testing.T) {
 		t.Fatalf("microsoftSnapshotConfig mutated the dispatch timeZone: %q", cfg.TimeZone)
 	}
 	for i, kw := range msSnapKeywords {
-		if cfg.Keywords[i] != kw || snap.Keywords[i] != kw {
-			t.Errorf("keyword[%d]: dispatch %+v, snapshot %+v, want both %+v", i, cfg.Keywords[i], snap.Keywords[i], kw)
+		redacted := microsoftKeywordConfig{Text: sanitizeSnapshotText(kw.Text), MatchType: kw.MatchType}
+		if cfg.Keywords[i] != kw || snap.Keywords[i] != redacted {
+			t.Errorf("keyword[%d]: dispatch %+v (want %+v), snapshot %+v (want %+v)", i, cfg.Keywords[i], kw, snap.Keywords[i], redacted)
 		}
 	}
 	if snap.TimeZone != "https://tz.example.net" {
@@ -211,5 +214,56 @@ func TestMicrosoftSnapshotConfig_DoesNotMutateDispatchConfig(t *testing.T) {
 	empty := microsoftSnapshotConfig(microsoftConfig{Budget: 5})
 	if empty.Keywords != nil || empty.TimeZone != "" {
 		t.Errorf("zero-valued fields must stay zero, got %+v", empty)
+	}
+}
+
+// A keyword is caller text: any link in it — including one whose secret is in the PATH — is
+// redacted before the unencrypted snapshot, and the dispatch config is not mutated.
+func TestMicrosoftSnapshotConfig_KeywordLinksRedacted(t *testing.T) {
+	in := []string{
+		"https://example.test/reset/SECRET?token=VALUE",
+		"buy https://shop.example/p#SECRETFRAG now",
+		"a.example/r?token=SECRET",
+		"example.org/reset/SECRET",
+		"www.example.org/reset/SECRET",
+		"a.example/r/s/t/SECRET",
+		"host.example:8443/reset/SECRET",
+		"10.0.0.5/reset/SECRET",
+		"bob:SECRET@a.example",
+		"kubernetes.io",
+		"c++ jobs",
+	}
+	kws := make([]microsoftKeywordConfig, len(in))
+	for i, s := range in {
+		kws[i] = microsoftKeywordConfig{Text: s, MatchType: "Exact"}
+	}
+	orig := append([]string(nil), in...)
+	cfg := microsoftConfig{Keywords: kws}
+	snap := microsoftSnapshotConfig(cfg)
+	if len(snap.Keywords) != len(orig) {
+		t.Fatalf("snapshot has %d keywords, want %d", len(snap.Keywords), len(orig))
+	}
+	for i, k := range snap.Keywords {
+		if strings.Contains(k.Text, "SECRET") || strings.Contains(k.Text, "VALUE") {
+			t.Errorf("snapshot keyword for %q = %q still carries the secret", orig[i], k.Text)
+		}
+		if k.Text != sanitizeSnapshotText(orig[i]) {
+			t.Errorf("snapshot keyword for %q = %q, want sanitizeSnapshotText's %q", orig[i], k.Text, sanitizeSnapshotText(orig[i]))
+		}
+		if cfg.Keywords[i].Text != orig[i] {
+			t.Errorf("dispatch keyword %d mutated: %q, want %q", i, cfg.Keywords[i].Text, orig[i])
+		}
+	}
+	for _, plain := range []string{"kubernetes.io", "c++ jobs"} {
+		found := false
+		for _, k := range snap.Keywords {
+			found = found || k.Text == plain
+		}
+		if !found {
+			t.Errorf("plain keyword %q was not stored as written", plain)
+		}
+	}
+	if &cfg.Keywords[0] == &snap.Keywords[0] {
+		t.Error("snapshot keywords alias the dispatch slice")
 	}
 }

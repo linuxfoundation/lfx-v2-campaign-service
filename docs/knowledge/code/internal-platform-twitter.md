@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/twitter"
-description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, the campaign -> line_item -> promoted_tweet creation flow, per-client write pacing toward X's 1-write/sec account limit, and the account monitor's asynchronous stats-job primitives."
+description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, the campaign -> line_item -> promoted_tweet creation flow, per-client write pacing toward X's 1-write/sec account limit, the account monitor's asynchronous stats-job primitives, a campaign budget read+write (GET then one paced, classified PUT of the daily *_local_micro amount) for the budget writer (LFXV2-2665), and a line-item bid_amount_local_micro write made only when the line item bids MAX per link click (which no campaign this service creates does)."
 resource: "internal/platform/twitter"
 tags:
   - platform-client
@@ -581,7 +581,12 @@ screened by nothing while the scheme-ful `https://bob:pw@events.example` beside 
 refused. The bytes are published either way; whether X renders the run as a link does not
 change what goes out in the tweet. The COLON is the entire discriminator and cannot be
 dropped — without it the pattern matches `bob@events.example`, an ordinary email address,
-and a screen that refuses those is worse than the hole it closes.
+and a screen that refuses those is worse than the hole it closes. The username before the
+colon is RFC 3986's userinfo alphabet, sub-delims `!$&'()*+,;=` included, kept in step with
+`pkg/redact`'s snapshot pattern: a narrower class let `admin!:pw@events.example` through both.
+Its first character must be unreserved and `userinfoRunIsClockShaped` judges the username's
+segment after its last sub-delim, so `Keynote (14:00@main.stage)` or `Mon,9:30@main.stage`
+is still a clock and never refuses a brief.
 
 The colon is not QUITE the whole discriminator, and the round that shipped believing it
 was put a false REFUSAL into the pre-create path. `keynote 14:00@events.example` and
@@ -804,6 +809,46 @@ chunked-upload call to a different host this client does not implement, so image
 tweets are out of scope for this path — the manual workflow remains the only way
 to attach a tweet with media, for now.
 
+## Line-item bid write (`bid_update.go`, LFXV2-2665)
+
+Backs `TwitterDispatcher.WriteBid`. Source: the X Ads API v12 Campaign Management reference,
+<https://docs.x.com/x-ads-api/campaign-management/reference> (line items: `POST` and
+`PUT accounts/:account_id/line_items/:line_item_id`), and the guide
+<https://docs.x.com/x-ads-api/campaign-management>, consulted 2026-10-05: `bid_strategy` is `AUTO`,
+`MAX` or `TARGET`; `bid_amount_local_micro` is in micro-units of the funding instrument's
+currency; `pay_by` includes `LINK_CLICK` and `IMPRESSION` (the LINK_CLICKS goal supports both,
+IMPRESSION by default); `WEBSITE_CLICKS` prices as CPLC. The reference page is too long to fetch
+whole from the authoring environment, so the enum spellings were confirmed against its search
+index and example line-item response rather than quoted in full; the guards fail closed on
+anything unrecognized.
+
+**Decision**: `bid_amount_local_micro` is a max CPC only when `bid_strategy == MAX` AND
+`pay_by == LINK_CLICK` (`LineItemBid.ManualCPC`). **The create path sends `bid_strategy: AUTO`**
+(objective `WEBSITE_CLICKS`, no bid, no `pay_by`), so every X campaign this service creates is
+refused (409) until an operator moves the line item to a manual max bid charged per link click.
+
+- `BidMicros(amount)` — positive, finite, at most 1,000,000, rounded like `toMicroCurrency`,
+  refused if it rounds to zero; refusals are `ErrBidAmountInvalid` (`BidAmountReason`).
+- `GetLineItemBid(ctx, lineItemID)` — `GET line_items/{id}?with_deleted=true`; a pure read; 404 →
+  `(nil, nil)`; reports `deleted`; an answer for another id is an error; an id failing the path
+  guard is `ErrInvalidLineItemID`, and a connection account id failing it (empty, outside
+  `accountIDRe`, or longer than `maxAccountIDLen`) is `ErrInvalidAccountID` — the sentinel
+  `campaignBudgetPath` uses — both before any request.
+- `UpdateLineItemBid(ctx, lineItemID, micros)` — takes a write-pacer slot, then `PUT` with ONLY
+  `bid_amount_local_micro` in the OAuth-signed query string (never `bid_strategy`/`pay_by`).
+  `idempotent=false`, so a 429 is NOT retried in-call and comes back UNCONFIRMED — no refusal
+  from a retry can be reported as "nothing changed". Transport/3xx/5xx and a 2xx echo of another
+  line item or amount are UNCONFIRMED; a definite 400 is an amount refusal (`bidAmountError`,
+  this package's own sentence) ONLY when an error is `INVALID_PARAMETER` with `"parameter":
+  "bid_amount_local_micro"` — the shape the X Ads error reference
+  (<https://docs.x.com/x-ads-api/fundamentals/error-codes-and-responses>) documents. That
+  reference lists no bid-specific code, so there is no code allow-list; a code substring match
+  would also catch `FORBIDDEN` or a bid-unit mismatch. `apiError` now carries an unexported
+  `errorParams` — the envelope's (code, parameter) pairs, bounded like `ErrorCodes` and never
+  rendered by `Error()`. The budget write
+  (`UpdateCampaignBudget`) takes the other route — it retries the 429 and marks a later definite
+  failure `retriedUnconfirmedError`; the bid write does not retry, so it needs neither.
+
 ## Status toggle
 
 `UpdateCampaignAndChildrenStatus(ctx, campaignID, lineItemID, status)` toggles an existing
@@ -834,6 +879,44 @@ the caller is told to verify rather than "not modified". A failure on the FIRST 
 nothing, so a definite 4xx stays definite. The exported `IsOutcomeUnconfirmed` folds this
 together with `createOutcomeAmbiguous` for callers across the package boundary (the
 dispatcher), mirroring the reddit client's helper of the same name.
+
+## Campaign budget read + write (`budget.go`, LFXV2-2665)
+
+The platform half of `TwitterDispatcher.WriteBudget` (see
+[internal/dispatch](internal-dispatch.md#x--the-campaigns-daily-_local_micro-only-under-a-reported-campaign-budget-optimization)).
+
+- `GetCampaignBudget(ctx, campaignID)` — `GET accounts/:account_id/campaigns/:campaign_id`
+  ([reference](https://docs.x.com/x-ads-api/campaign-management/reference), "Campaigns"). A pure
+  read returning `budget_optimization` and the two amounts as integer micro-units, each with an
+  "unparseable" flag (string, fraction, negative, overflow — never read as "not set"). A 404 or
+  `deleted: true` is `(nil, nil)`; an answer about another campaign id is an error. X's campaign
+  object carries no `account_id`, so the account-scoped path is the account check.
+- `UpdateCampaignBudget(ctx, campaignID, micros)` — `PUT` of exactly
+  `daily_budget_amount_local_micro` (the total is read, never written), in the query string and
+  OAuth-signed like every v12 write, after a slot on the shared write pacer. Idempotent, so a 429
+  is retried; the retry loop now counts retries (`doRequestAbsCounted`, a caller-owned counter —
+  never state on the shared client), and a definite failure AFTER a retried 429 is returned as
+  `retriedUnconfirmedError` (Unconfirmed), mirroring the Microsoft client's PR #255 fix — a
+  pre-send dial failure on the retry included, since it proves only that the RETRY never left. The 2xx
+  echo is checked: another campaign id, another amount, or a PRESENT `null` amount (X reporting no
+  daily budget right after one was written) is an UNCONFIRMED `transportError`; an echo that
+  omits the field is accepted, the 2xx being the confirmation.
+- `BudgetMicros` shares the create path's bound (`maxBudgetUsd`) and rounding
+  (`toMicroCurrency`); its refusals wrap `ErrBudgetAmountInvalid` with a client-safe sentence
+  (`BudgetAmountReason`). X publishes no per-currency minimum or maximum for these fields — only
+  that the daily amount should not exceed the total.
+- Ids are validated before any request: the connection's account id with `accountIDRe` and
+  `maxAccountIDLen` (`ErrInvalidAccountID`), the row's campaign id with `campaignIDRe`
+  (`ErrInvalidCampaignID`).
+
+**Budget model.** `BudgetOptimizationCampaign` (`CAMPAIGN`) is the shape `CreateCampaign` is
+INFERRED to produce — inferred from its sending no `budget_optimization` and putting the daily
+amount on the campaign, not observed on a live account. X's v11
+announcement makes `CAMPAIGN` the default and the two models exclusive (under `LINE_ITEM` the
+daily budget must be on the line item and absent from the campaign); the current reference page
+instead lists `LINE_ITEM` as the only value and default. The dispatcher therefore writes only on a
+reported `CAMPAIGN` and refuses a campaign reporting `LINE_ITEM` or omitting the field (409)
+before any write.
 
 ## Metrics reads
 
@@ -1166,3 +1249,17 @@ discovered one), and the dispatcher answers the sentinel as `accountIDNotUsable`
 pre-send verdict, not a credential rejection and not the inconclusive default.
 `TestVerifyAccountRejectsAnUnusableAccountIDBeforeAnyRequest` asserts the CALL COUNT, because a
 test that only checked the error would still pass if the request were made and discarded.
+
+## Line-item keyword targeting (`keyword_targeting.go`, LFXV2-2665)
+
+`ListLineItemTargetingCriteria` lists a line item's targeting criteria
+(`targeting_criteria?line_item_ids=…&with_deleted=false&count=1000`, cursor-walked through
+`cursorVerdict` like `findByName`) and is all-or-error: no result set, a criterion without a
+usable id or under another line item, an unusable cursor on a full page, or the page cap is
+`ErrTargetingUnreadable`. `DeleteTargetingCriterion` takes a write-pacer slot (a wait cut short is
+`ErrWriteNotSent`, and so is a request `ProbeNotSent` proves never left the process — a DNS or
+connect-time failure, or a context already done at entry — checked before any API
+classification, so the dispatcher reports `NOT_SENT` rather than `REJECTED`), sends one DELETE with the 429 never retried, maps 404 to
+`ErrTargetingCriterionNotFound`, and accepts a 2xx only when it names the criterion with
+`deleted: true` — anything else is an UNCONFIRMED `transportError`. The create path sets no
+targeting criteria. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).

@@ -171,6 +171,11 @@ const settingsCallTimeout = 20 * time.Second
 // applied twice is money.
 const budgetWriteCallTimeout = 45 * time.Second
 
+// bidWriteCallTimeout bounds the SYNCHRONOUS bid-write platform call. It IS the budget write's
+// ceiling, for the budget write's reasons: a read of the governing bid strategy and ad group
+// precedes the mutate, so the call is a sequence, and a timeout surfaces as UNCONFIRMED.
+const bidWriteCallTimeout = budgetWriteCallTimeout
+
 // accountsCallTimeout bounds the SYNCHRONOUS account-listing platform call, which — like
 // metrics and toggle — runs on the HTTP request goroutine. Account discovery is a pure read
 // with no cascade, so it can use the same ceiling as metrics reads.
@@ -323,6 +328,41 @@ type BudgetWriter interface {
 	// Returns nil ONLY when the platform confirmed the change. The caller persists the new
 	// budget onto the row on nil and on nothing else.
 	WriteBudget(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, budget model.BudgetChange) error
+}
+
+// BidWriter is an OPTIONAL dispatcher capability: change an existing campaign's MANUAL max
+// cost-per-click bid ON THE AD PLATFORM. Type-asserted like BudgetWriter, so a dispatcher
+// without it yields a clean ErrBidUnsupported -> 400.
+//
+// BudgetWriter's sibling, and bound by the same three non-negotiable rules — confirm before
+// persisting, never report an unconfirmed write as success, and enforce the account-identity
+// invariant at least as strictly as ReadSettings (a missing creating account is refused, not
+// waved through). A bid moves money per click rather than per day, but it moves money.
+//
+// One rule is its own, and it is what makes the capability honest rather than merely
+// successful:
+//
+//   - NEVER WRITE A BID THE PLATFORM WILL IGNORE, AND NEVER SWITCH STRATEGY. A manual bid
+//     only means something under a bid strategy that reads it. Under an AUTOMATED strategy the
+//     platform either ignores the value (a 200 that changed nothing a caller can observe) or —
+//     on some platforms — treats the write as a request to move the campaign to manual
+//     bidding. Both are wrong answers to "set my max CPC to X". An implementation must READ
+//     the strategy that governs the bid first and refuse with ErrBidUnwritable when it is
+//     automated or unreported; it must never send a strategy field itself.
+//
+// The bid is written AT THE LEVEL THE CREATE PATH PUT IT — for the platforms wired today, the
+// one ad group (Microsoft, Reddit), ad set (Meta) or line item (X) this service created for the
+// campaign, named by the row's recorded result. A row recording none is refused rather than
+// resolved by listing children upstream: choosing which of several to re-bid is a decision this
+// endpoint does not make.
+type BidWriter interface {
+	// WriteBid sets the campaign's manual max CPC bid on the platform. campaign is the
+	// persisted row, supplied so the adapter can reach PlatformCampaignID, the creation
+	// provenance and the recorded ad group id.
+	//
+	// Returns nil ONLY when the platform confirmed the change. The caller persists the new
+	// bid onto the row on nil and on nothing else.
+	WriteBid(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, bid model.BidChange) error
 }
 
 // AccountLister is an OPTIONAL dispatcher capability: enumerate accessible ad accounts for a
@@ -617,6 +657,15 @@ var (
 	// unconfirmed outcome is never this sentinel.
 	ErrBudgetAmountRejected = domain.ErrBudgetAmountRejected
 
+	// ErrBidUnsupported: the campaign's platform has no bid-write capability wired.
+	ErrBidUnsupported = domain.ErrBidUnsupported
+	// ErrBidUnwritable: the bid cannot be written as a manual bid (automated or unreported
+	// strategy, or an unaddressable ad group); the platform confirmed NO change.
+	ErrBidUnwritable = domain.ErrBidUnwritable
+	// ErrBidAmountRejected: the requested bid was refused and the platform confirmed NO
+	// change. A permanent request fault, answered 400.
+	ErrBidAmountRejected = domain.ErrBidAmountRejected
+
 	// ErrAccountsUnsupported: the platform has no account-listing capability wired.
 	ErrAccountsUnsupported = domain.ErrAccountsUnsupported
 
@@ -705,6 +754,11 @@ type Orchestrator struct {
 	// monitor read refuses rather than running without one.
 	accountReportsMu sync.RWMutex
 	accountReports   domain.AccountReportRepository
+	// keywordReportsMu guards keywordReports, the saved-report store behind the report-backed
+	// keyword read (SetKeywordReportStore), late-bound for the same reason. nil means no store
+	// is wired, and that read refuses rather than running without one.
+	keywordReportsMu sync.RWMutex
+	keywordReports   domain.KeywordReportRepository
 	// indexingDisabled is a CONFIGURATION fact (NATS_URL empty), not an observation of the
 	// publisher — a Noop also appears when the broker is unreachable. See DisableIndexing.
 	indexingDisabled bool
@@ -774,6 +828,7 @@ const (
 	opLookupCampaign             = "lookup_campaign"
 	opReadSettings               = "read_settings"
 	opWriteBudget                = "write_budget"
+	opWriteBid                   = "write_bid"
 	opListAccounts               = "list_accounts"
 	opListAccountCampaignMetrics = "list_account_campaign_metrics"
 	opSearchEmails               = "search_emails"
@@ -783,6 +838,9 @@ const (
 	opReadKeywords               = "read_keywords"
 	opReadAudience               = "read_audience"
 	opKeywordActions             = "keyword_actions"
+	opNegativeKeywords           = "negative_keywords"
+	opReadKeywordTargeting       = "read_keyword_targeting"
+	opRemoveKeywordTargeting     = "remove_keyword_targeting"
 	opVerifyAccountOrg           = "verify_account_org"
 	opProbeConnection            = "probe_connection"
 	opListAccountCampaigns       = "list_account_campaigns"
@@ -2200,6 +2258,31 @@ func (o *Orchestrator) WriteCampaignBudget(ctx context.Context, projectID string
 	return werr
 }
 
+// WriteCampaignBid changes an already-created campaign's manual max CPC bid on its ad
+// platform. WriteCampaignBudget's twin in every respect — the same pre-platform guards, the
+// same classification of what the returned error can mean, the same confirm-then-persist split
+// — with ErrBidUnsupported, ErrBidUnwritable and ErrBidAmountRejected in place of the budget
+// sentinels. Request validation is the service layer's job, as there.
+func (o *Orchestrator) WriteCampaignBid(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, bid model.BidChange) error {
+	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
+		return ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return fmt.Errorf("%w: no dispatcher registered for platform %s", ErrBidUnsupported, platform)
+	}
+	writer, ok := d.(BidWriter)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrBidUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, bidWriteCallTimeout)
+	defer cancel()
+	start := time.Now()
+	werr := writer.WriteBid(callCtx, projectID, platform, campaign, bid)
+	o.recordUpstream(ctx, platform, opWriteBid, start, werr)
+	return werr
+}
+
 // ReadCampaignMetrics fetches live performance metrics for one campaign from its ad
 // platform. It never mutates the platform or the DB — a pure read, not persisted here.
 func (o *Orchestrator) ReadCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
@@ -2766,6 +2849,41 @@ type KeywordActioner interface {
 	ApplyKeywordActions(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, actions []model.KeywordAction) ([]model.KeywordActionOutcome, error)
 }
 
+// NegativeKeywordAdder is an OPTIONAL dispatcher capability: add campaign-level negative
+// keywords to an existing campaign. Type-asserted like KeywordActioner, so a dispatcher without
+// it yields a clean ErrNegativeKeywordsUnsupported → 400.
+//
+// Deliberately NOT a kind on KeywordAction. Every KeywordActioner would then receive it —
+// including adapters that predate it and have never been taught what a negative keyword is —
+// and an adapter that validates only the actions it knows would forward the rest. A separate
+// interface means only a platform that implements the add can be asked to perform it.
+type NegativeKeywordAdder interface {
+	// AddNegativeKeywords returns exactly one outcome per requested keyword, in request
+	// order, or an error when the platform answered nothing per keyword. campaign is the
+	// persisted row, so the adapter can enforce provisioning and the account-identity
+	// invariant BEFORE the platform is contacted.
+	AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error)
+}
+
+// KeywordTargetingReader is an OPTIONAL dispatcher capability (LFXV2-2665, Reddit and X): read the
+// POSITIVE keyword targeting of the one ad group / line item this service created for a campaign.
+// Type-asserted, so a dispatcher without it yields ErrKeywordTargetingUnsupported → 400.
+//
+// Separate from KeywordActioner for the reason NegativeKeywordAdder is: on these platforms a
+// keyword is an entry in the targeting, not a criterion with a status, and the two shapes must
+// not be routed to each other's adapters.
+type KeywordTargetingReader interface {
+	ReadKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.KeywordTargeting, error)
+}
+
+// KeywordTargetingRemover is an OPTIONAL dispatcher capability (LFXV2-2665, Reddit and X): take
+// keywords out of that targeting. It returns exactly one outcome per removal, in request order,
+// or an error when no removal got a definite answer. revision is Reddit's compare-and-set token
+// and must be empty for X; each adapter validates it.
+type KeywordTargetingRemover interface {
+	RemoveKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, removals []model.KeywordTargetingRemoval, revision string) ([]model.KeywordTargetingOutcome, error)
+}
+
 // keywordInsightsFor resolves the dispatcher's keyword-insight capability, or returns the
 // "not supported" sentinel. Shared by the two read paths so both answer identically for an
 // unregistered or non-capable platform.
@@ -2974,9 +3092,104 @@ type unconfirmedOutcomeCountError struct {
 }
 
 func (e *unconfirmedOutcomeCountError) Error() string {
-	return fmt.Sprintf("%s keyword actioner returned %d outcomes for %d requested actions; the batch is atomic, so a partial result cannot be reported as success, and the mutation may already have been applied",
+	return fmt.Sprintf("%s keyword adapter returned %d outcomes for %d requested items; the response must answer every item in request order, so it cannot be reported as success, and the mutation may already have been applied",
 		e.platform, e.got, e.want)
 }
 
 // Unconfirmed marks the outcome as ambiguous-applied for the service's verify-before-retry arm.
 func (e *unconfirmedOutcomeCountError) Unconfirmed() bool { return true }
+
+// AddNegativeKeywords adds campaign-level negative keywords to one campaign.
+//
+// Shaped like ApplyKeywordActions for the same reasons: a nil campaign is refused here, every
+// other guard — batch validation first, then provisioning — is the adapter's, in the adapter's
+// order, and the call gets the mutation timeout. The outcome-count check is the same contract:
+// one outcome per requested keyword, or the response cannot be zipped back onto the request.
+// A short slice is UNCONFIRMED, because the add was already issued when it is detected.
+func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error) {
+	if campaign == nil {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrNegativeKeywordsUnsupported, platform)
+	}
+	adder, ok := d.(NegativeKeywordAdder)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrNegativeKeywordsUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
+	defer cancel()
+	start := time.Now()
+	outcomes, aerr := adder.AddNegativeKeywords(callCtx, projectID, platform, campaign, keywords)
+	o.recordUpstream(ctx, platform, opNegativeKeywords, start, aerr)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if len(outcomes) != len(keywords) {
+		return nil, &unconfirmedOutcomeCountError{platform: string(platform), got: len(outcomes), want: len(keywords)}
+	}
+	return outcomes, nil
+}
+
+// ReadKeywordTargeting reads a campaign's keyword targeting through its dispatcher's
+// KeywordTargetingReader. A nil campaign is refused here, as for every keyword lever; every other
+// guard is the adapter's. A read, so it gets the metrics timeout.
+func (o *Orchestrator) ReadKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.KeywordTargeting, error) {
+	if campaign == nil {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	reader, ok := d.(KeywordTargetingReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	kt, rerr := reader.ReadKeywordTargeting(callCtx, projectID, platform, campaign)
+	o.recordUpstream(ctx, platform, opReadKeywordTargeting, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if kt == nil {
+		return nil, fmt.Errorf("%s keyword targeting reader returned a nil result with no error", platform)
+	}
+	if kt.Keywords == nil {
+		kt.Keywords = []model.KeywordTargetingEntry{}
+	}
+	return kt, nil
+}
+
+// RemoveKeywordTargeting removes keywords from a campaign's keyword targeting. Shaped like
+// AddNegativeKeywords: a nil campaign is refused here, every other guard is the adapter's, the
+// call gets the mutation timeout, and a short outcome slice is UNCONFIRMED because the removal
+// was already issued when it is detected.
+func (o *Orchestrator) RemoveKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, removals []model.KeywordTargetingRemoval, revision string) ([]model.KeywordTargetingOutcome, error) {
+	if campaign == nil {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	remover, ok := d.(KeywordTargetingRemover)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
+	defer cancel()
+	start := time.Now()
+	outcomes, rerr := remover.RemoveKeywordTargeting(callCtx, projectID, platform, campaign, removals, revision)
+	o.recordUpstream(ctx, platform, opRemoveKeywordTargeting, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if len(outcomes) != len(removals) {
+		return nil, &unconfirmedOutcomeCountError{platform: string(platform), got: len(outcomes), want: len(removals)}
+	}
+	return outcomes, nil
+}

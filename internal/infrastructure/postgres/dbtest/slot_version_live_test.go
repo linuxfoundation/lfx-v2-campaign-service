@@ -76,7 +76,7 @@ func adoptInto(ctx context.Context, t *testing.T, repo *postgres.CampaignRepo, p
 }
 
 // TestLiveNewVersionCreatesSlotVersion2 drives the real claim/upsert/read methods against the
-// contracted schema: 000037's four-column index, and no 000022 three-column one (000038).
+// contracted schema: 000037's four-column index, and no 000022 three-column one (000040).
 //
 // It pins what the contract step promises:
 //   - a retry of slot 1 still conflicts on the four-column arbiter and is swallowed, exactly
@@ -131,7 +131,7 @@ func TestLiveNewVersionCreatesSlotVersion2(t *testing.T) {
 // double-submitted first create is a skip or a reuse, never an error: exactly one claim wins
 // and every other one gets the winner's row. With the claims serialized by the slot lock, the
 // losers see the winner's committed row and conflict on the arbiter (DO NOTHING); before
-// 000038 a loser could instead hit 23505 on 000022's index, which had to be special-cased.
+// 000040 a loser could instead hit 23505 on 000022's index, which had to be special-cased.
 func TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.Pool(t)
@@ -314,7 +314,7 @@ func TestLiveConcurrentClaimAndAdoptLeaveOneLiveRow(t *testing.T) {
 	}
 }
 
-// TestLiveAdoptRefusesASlotWhoseOnlyLiveCampaignIsALaterVersion is the hole 000038 would
+// TestLiveAdoptRefusesASlotWhoseOnlyLiveCampaignIsALaterVersion is the hole 000040 would
 // open without the adopt's occupancy check. Adopt always writes slot_version 1, so its
 // ON CONFLICT arm only sees a live slot-1 row; once 000022's index is gone, a slot whose
 // slot-1 campaign was deleted but whose slot-2 campaign is live would accept the adopt BESIDE

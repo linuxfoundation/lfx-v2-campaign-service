@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/reddit"
-description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), the campaign status toggle and campaign-level budget (goal_value) write, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
+description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), the campaign status toggle, campaign-level budget (goal_value) write and ad-group manual bid (bid_value) write, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
 resource: "internal/platform/reddit"
 tags:
   - platform-client
@@ -377,6 +377,39 @@ single-campaign GET on that path, whether it reports `is_campaign_budget_optimiz
 `ad_account_id`, the `DAILY_SPEND` token, and the PATCH response's echo shape. Each fails closed
 — an unreported CBO flag or `goal_type` is refused 409, a mismatched echo is UNCONFIRMED.
 
+## Ad-group bid write (LFXV2-2665)
+
+`bid_update.go` backs `RedditDispatcher.WriteBid`. A Reddit ad group bids through `bid_strategy`
+(BIDLESS, MANUAL_BIDDING, MAXIMIZE_VOLUME, TARGET_CPX), `bid_type` (CPC, CPM, CPV, ...) and
+`bid_value` in micro-units; only MANUAL_BIDDING pays the `bid_value` given. **The create path
+sends `bid_strategy: "BIDLESS"` on the campaign and the ad group**, so every campaign this
+service creates is refused by the dispatcher until an operator switches BOTH the campaign's bid strategy (Campaign Budget Optimization is on for every campaign this service creates, so the ad group must match it) AND the ad group to `MANUAL_BIDDING` in Reddit Ads Manager — the adapter checks the campaign first, then the ad group.
+The field names and enum follow the OpenAPI document this package already cites
+(`https://ads-api.reddit.com/api/v3/openapi.json`); it could not be re-fetched when this was
+written (the host refuses automated fetches), so the guards fail closed on anything they do not
+recognize.
+
+- `BidMicros(amount)` — positive, finite, at most `redditMaxBid` (1,000,000), rounded like
+  `BudgetMicros`, refused if it rounds to zero; refusals are `ErrBidAmountInvalid` with a sentence
+  (`BidAmountReason`).
+- `GetAdGroupBid(ctx, adGroupID)` — `GET /ad_accounts/{account}/ad_groups/{id}`; a pure read; 404
+  → `(nil, nil)`; an answer for another ad group is an error; an id that cannot address a path is
+  `ErrInvalidAdGroupID` before any request.
+- `UpdateAdGroupBid(ctx, adGroupID, micros)` — PATCH of the same path naming ONLY `bid_value`
+  (never `bid_strategy`/`bid_type`), with `UpdateCampaignBudget`'s 429-retry and echo checks
+  (another ad group or another `bid_value` in a 2xx → UNCONFIRMED). Only a definite 400 carrying
+  a STRUCTURED field error, `{"error":{"fields":[{"field":"bid_value"}]}}`
+  (`bidValueFieldError`), is a `bidAmountError` with this package's own sentence; a body that
+  mentions `bid_value` anywhere else (a strategy race, an echoed payload) stays a definite
+  refusal. The PATCH goes through `requestCounted` (`request()` plus the number of 429s retried;
+  every other caller keeps `request()` unchanged), and ANY failure after a retried 429 is a
+  `retriedUnconfirmedError` (UNCONFIRMED) before any amount mapping — the 429'd attempt may have
+  applied. Known gap, the budget write only: `UpdateCampaignBudget` still classifies a definite
+  4xx after a retried 429 as definite.
+- `CheckAdGroupID(id)` — the path guard alone, so the dispatcher refuses a corrupt recorded id
+  before its first request. `GetCampaignBudget` now also reports the campaign's `bid_strategy`
+  (`CampaignBudget.BidStrategy`), which the bid write needs under CBO.
+
 ## Metrics reads — contract from Reddit's public OpenAPI spec (LFXV2-3282)
 
 `GetCampaignMetrics(ctx, campaignID, window)` reads impressions, clicks, and spend for a
@@ -605,3 +638,20 @@ this package's own path guard before anything is sent, so Reddit never evaluated
 claiming a rejection would send an operator to re-authorise a connection whose credential is
 fine, and the inconclusive default would blame an unreachable platform for an id no Reddit
 request can address. The dispatcher settles it instead, with `accountIDNotUsable`.
+
+## Ad-group keyword targeting (`keyword_targeting.go`, LFXV2-2665)
+
+`GetAdGroupTargeting` reads the ad group's `targeting` object (the GET `GetAdGroupBid` makes),
+keeping every member as raw bytes, returning `targeting.keywords` and a `Revision` — `sha256:` of
+the object's canonical JSON. An absent, null or non-object targeting, or a `keywords` that is not
+a string array (null elements are kept, not keywords), is `ErrTargetingUnreadable`.
+`RemoveAdGroupKeywords` PATCHes `targeting` back with every read member — and every keyword element
+it does not remove — unchanged, matching keywords exactly and sending the body pre-encoded with
+HTML escaping off (`preEncodedBody`, honoured by the request loop), because Reddit replaces the
+targeting object as a whole (secondary sources; the OpenAPI document cannot be fetched from the
+authoring environment). The PATCH is sent ONCE (`requestNoThrottleRetry`): unlike a bid write it
+replaces the WHOLE targeting from a pre-read snapshot, so a retry after a committed-but-throttled
+first attempt could overwrite an operator's later change to another dimension and still pass the
+final comparison against that stale snapshot. A 429 is therefore UNCONFIRMED at once; otherwise
+the classification is `UpdateAdGroupBid`'s (transport, 3xx, 5xx UNCONFIRMED; any other 4xx
+definite), plus an UNCONFIRMED echo naming another keyword list. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).

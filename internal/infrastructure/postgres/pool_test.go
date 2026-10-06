@@ -233,7 +233,7 @@ func TestMigrationIndexOwners_FindsEveryCreatedIndex(t *testing.T) {
 // TestRequiredIndexes_CoversTheDispatchUniqueIndex pins the membership, not the message.
 //
 // uq_campaigns_brief_platform_variant_slot_version_live is the sole arbiter of
-// (brief_id, platform, variant, slot_version) uniqueness since 000038 dropped 000022's
+// (brief_id, platform, variant, slot_version) uniqueness since 000040 dropped 000022's
 // three-column index (and 000014 / 000024 the constraint and index before that), and a
 // migration-time guard checks an index exactly once — while that migration runs. An index lost any time afterwards left a schema that booted
 // clean with concurrent claims free to double-create paid campaigns. Membership in
@@ -252,13 +252,13 @@ func TestRequiredIndexes_CoversTheDispatchUniqueIndex(t *testing.T) {
 		}
 	}
 	require.NotNilf(t, got, "%s is not in requiredIndexes: nothing re-checks the only "+
-		"index enforcing dispatch uniqueness after 000038 drops the three-column one", dispatchUnique)
-	// And the index 000038 drops must be GONE from the list: requiredIndexes fails boot when a
+		"index enforcing dispatch uniqueness after 000040 drops the three-column one", dispatchUnique)
+	// And the index 000040 drops must be GONE from the list: requiredIndexes fails boot when a
 	// member is missing, so leaving it here would turn the contract migration into a
 	// service that cannot start.
 	for _, ri := range requiredIndexes {
 		assert.NotEqualf(t, "uq_campaigns_brief_platform_variant_live", ri.name,
-			"000038 drops %s, so requiring it would fail every boot after that migration", ri.name)
+			"000040 drops %s, so requiring it would fail every boot after that migration", ri.name)
 	}
 
 	assert.Equal(t, "campaigns", got.table)

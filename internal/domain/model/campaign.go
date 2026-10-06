@@ -45,6 +45,28 @@ type BudgetChange struct {
 	Type BudgetType
 }
 
+// BidType is the unit a campaign's bid is expressed in.
+type BidType string
+
+// Bid types. Only a max cost-per-click bid exists today; the type is still named so the
+// request states its unit and an ad group bidding in another one (a Reddit CPM ad group)
+// is refused rather than re-bid in a unit nobody asked for.
+const (
+	BidTypeCPC BidType = "cpc"
+)
+
+// BidChange is a request to set an existing campaign's MANUAL max CPC bid on its ad
+// platform: the payload of the BidWriter capability. A REQUEST, never an observation, in
+// the same sense as BudgetChange.
+type BidChange struct {
+	// Amount is the new maximum cost-per-click in the AD ACCOUNT's own currency, not USD.
+	// Strictly positive; the service has already checked it is finite and within the
+	// contract's bounds.
+	Amount float64
+	// Type is the unit Amount is in. Always BidTypeCPC today.
+	Type BidType
+}
+
 // Campaign is one platform's campaign, subordinate to a brief. A brief drives
 // many campaigns (one per platform), discriminated by Platform and sharing
 // BriefID. The row is updated in place (not recreated) when a brief changes
@@ -204,11 +226,18 @@ type Campaign struct {
 	Status             string
 	BudgetAmount       *float64
 	BudgetType         *BudgetType
-	StartDate          *time.Time
-	EndDate            *time.Time
-	ConfigSnapshot     json.RawMessage
-	Result             json.RawMessage
-	Version            int64
+	// MaxCPCBid is the manual max cost-per-click bid most recently SET through the
+	// update-campaign-bid endpoint, in the ad account's own currency (migration 000039). Like
+	// BudgetAmount it records a REQUEST the platform confirmed, never an observation. nil means
+	// "never set through that endpoint" — NOT "no bid": a bid given at creation lives in the
+	// dispatch config (ConfigSnapshot), and a bid changed in the platform's own UI is not
+	// recorded anywhere here.
+	MaxCPCBid      *float64
+	StartDate      *time.Time
+	EndDate        *time.Time
+	ConfigSnapshot json.RawMessage
+	Result         json.RawMessage
+	Version        int64
 	// CreatedBy / UpdatedBy name the human behind the write, with the same three
 	// causes for nil as CampaignBrief.CreatedBy — read that doc first, it is the
 	// canonical statement and is not repeated here.

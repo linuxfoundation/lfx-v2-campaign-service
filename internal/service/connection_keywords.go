@@ -31,8 +31,11 @@ var googleAdsKeywordInsights = accountDiscovery{
 // resolveInsightsWindow maps the optional caller-supplied window onto the closed
 // platform-agnostic vocabulary, defaulting to last_30_days.
 //
-// Unlike the campaign-scoped metrics read there is no platform-aware default to apply: this
-// surface is Google Ads only, and Google serves every window in the vocabulary.
+// Used by the GOOGLE keyword and audience reads only, which is why its error lists all seven
+// windows: Google serves every window in the vocabulary. The Microsoft keyword read serves a
+// subset and does NOT call this — it validates against microsoftKeywordWindows
+// (resolveMicrosoftKeywordWindow), so a Microsoft caller is never told a window it cannot use
+// is acceptable.
 //
 // The design layer already constrains this parameter with the same Enum, so an HTTP caller
 // cannot reach the error arm. It is enforced here anyway for non-HTTP callers, and because a
@@ -58,6 +61,13 @@ func resolveInsightsWindow(window *string) (model.MetricsWindow, error) {
 // identical, and a second copy is where one of those judgements quietly diverges. Only the
 // two sentinels discovery has no notion of are handled here first.
 func (s *ConnectionService) classifyInsightsError(ctx context.Context, projectID string, err error) error {
+	return s.classifyInsightsErrorFor(ctx, projectID, googleAdsKeywordInsights, err)
+}
+
+// classifyInsightsErrorFor is classifyInsightsError for any provider: d names the provider in
+// the connection-state arms it delegates to classifyDiscoveryError. The Microsoft keyword read
+// (connection_keyword_report.go) passes its own descriptor; every arm is otherwise shared.
+func (s *ConnectionService) classifyInsightsErrorFor(ctx context.Context, projectID string, d accountDiscovery, err error) error {
 	switch {
 	case errors.Is(err, domain.ErrKeywordInsightsUnsupported):
 		return &conn.BadRequestError{Code: "400", Message: "keyword and audience insights are not supported for this platform"}
@@ -88,8 +98,19 @@ func (s *ConnectionService) classifyInsightsError(ctx context.Context, projectID
 		slog.WarnContext(ctx, "keyword insights blocked: at least one campaign in scope belongs to a different ad account than the current connection",
 			"project_id", projectID, "error", safeErrSummary(err))
 		return &conn.ConflictError{Code: "409", Message: "some of this project's campaigns were created under a different ad account than its current connection — re-dispatch or reconcile those campaigns onto the connected account to read their keywords, or reconnect the account that owns all of them"}
+	case errors.Is(err, domain.ErrKeywordReportScopeTooLarge):
+		// Report-backed platforms only (Microsoft): refused before any upstream call, and
+		// permanent while the project owns that many campaigns, so a 409 rather than the 503
+		// default. The sentinel's text is fixed and client-safe.
+		return &conn.ConflictError{Code: "409", Message: domain.ErrKeywordReportScopeTooLarge.Error()}
+	case errors.Is(err, domain.ErrKeywordReportScopeInvalid):
+		// Same shape: refused locally, permanent until the stored row is corrected. The
+		// offending id stays in the log, never the body.
+		slog.WarnContext(ctx, "keyword insights blocked: a campaign in scope has a malformed platform id",
+			"project_id", projectID, "error", safeErrSummary(err))
+		return &conn.ConflictError{Code: "409", Message: domain.ErrKeywordReportScopeInvalid.Error()}
 	default:
-		return s.classifyDiscoveryError(ctx, projectID, googleAdsKeywordInsights, err)
+		return s.classifyDiscoveryError(ctx, projectID, d, err)
 	}
 }
 
@@ -182,20 +203,22 @@ func (s *ConnectionService) GetGoogleAdsKeywords(ctx context.Context, p *conn.Ge
 // is the difference between a caller reporting "not your campaign" and one retrying a request
 // that will never work.
 
-// validateGoogleAdsCampaignID mirrors the DSL constraint on `platform_campaign_id`.
+// validatePlatformCampaignID mirrors the DSL constraint on `platform_campaign_id`, which the
+// Google Ads and Microsoft Advertising campaign-ref methods declare identically: both platforms'
+// campaign ids are positive int64s.
 //
 // Kept as a named helper rather than inlined so the two cannot drift silently: if the design
 // bound changes, this is the one other place that has to move, and it says so.
 //
-// 19 is len(math.MaxInt64), the widest a Google Ads numeric id can be. Digits-only matters
+// 19 is len(math.MaxInt64), the widest a Google Ads or Microsoft Advertising numeric id can be. Digits-only matters
 // beyond tidiness: the id is compared as a STRING against stored platform ids, so a value that
 // is not a canonical decimal integer can never match a real row — it can only produce a
 // confident "no such campaign".
-func validateGoogleAdsCampaignID(id string) error {
-	const maxGoogleAdsCampaignIDLen = 19
+func validatePlatformCampaignID(id string) error {
+	const maxPlatformCampaignIDLen = 19
 	const badID = "the campaign id must be 1-19 digits, without a leading zero, and within int64"
 
-	if id == "" || len(id) > maxGoogleAdsCampaignIDLen {
+	if id == "" || len(id) > maxPlatformCampaignIDLen {
 		return &conn.BadRequestError{Code: "400", Message: badID}
 	}
 	for _, r := range id {
@@ -206,7 +229,7 @@ func validateGoogleAdsCampaignID(id string) error {
 	// Canonical decimal only. The doc comment above is the reason: the id is compared as a
 	// STRING against stored platform ids, so "007" is a different row from "7" and simply
 	// matches nothing — the caller gets a confident 200 "not your campaign" for an id that is
-	// really just misspelled. "0" is not a Google Ads id at all.
+	// really just misspelled. "0" is not a campaign id on either platform.
 	if id[0] == '0' {
 		return &conn.BadRequestError{Code: "400", Message: badID}
 	}
@@ -220,9 +243,36 @@ func validateGoogleAdsCampaignID(id string) error {
 }
 
 func (s *ConnectionService) ResolveGoogleAdsCampaign(ctx context.Context, p *conn.ResolveGoogleAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
+	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderGoogleAds, p.PlatformCampaignID)
+}
+
+// ResolveMicrosoftAdsCampaign is ResolveGoogleAdsCampaign for Microsoft Advertising: it maps one
+// Microsoft CampaignId — the `campaign_id` a get-microsoft-ads-keywords row carries — to this
+// service's own campaign and brief, so the Microsoft keyword levers (apply-keyword-actions,
+// add-negative-keywords) can be addressed from a keyword row.
+//
+// Everything above ResolveGoogleAdsCampaign holds here unchanged — a read of this service's own
+// tables, project-scoped in SQL, 200 with no matches for an unowned id, 500 for a storage fault,
+// 503 while the backend is not wired — with ONE difference a caller must handle: more than one
+// match is REACHABLE. Migration 000020's unique index covers Google Ads only, because Microsoft
+// mints campaign ids per ad account, so a project whose connection was re-pointed between accounts
+// can hold two live rows for the same id. Every match is returned and the caller refuses; this
+// layer never picks one.
+//
+// Not gated on MICROSOFT_METRICS_ENABLED: that flag governs reads that contact Microsoft, and this
+// one never does. The lever it addresses carries its own guards (ad account provenance, connection
+// usability) before anything reaches the platform.
+func (s *ConnectionService) ResolveMicrosoftAdsCampaign(ctx context.Context, p *conn.ResolveMicrosoftAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
+	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderMicrosoftAds, p.PlatformCampaignID)
+}
+
+// resolvePlatformCampaignRef is the shared body of the per-platform campaign-ref lookups. The
+// platform is fixed by the calling method, never by the request, so a caller of one route can
+// only ever resolve that route's platform.
+func (s *ConnectionService) resolvePlatformCampaignRef(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*conn.PlatformCampaignResolution, error) {
 	// Same reserved-scope refusal as the reads above: left open, this would report whether the
 	// Linux Foundation's own scope holds a given campaign to any caller.
-	if err := rejectSystemScope(p.ProjectID); err != nil {
+	if err := rejectSystemScope(projectID); err != nil {
 		return nil, err
 	}
 	// The DSL's `^[1-9][0-9]{0,18}$` / MaxLength(19) is enforced by the generated HTTP DECODER
@@ -233,26 +283,26 @@ func (s *ConnectionService) ResolveGoogleAdsCampaign(ctx context.Context, p *con
 	// caller then refuses an action for the wrong reason and cannot tell a typo from an
 	// unowned campaign. Mirrored here so the answer is the declared 400 whichever door the
 	// request came in by.
-	if err := validateGoogleAdsCampaignID(p.PlatformCampaignID); err != nil {
+	if err := validatePlatformCampaignID(platformCampaignID); err != nil {
 		return nil, err
 	}
 	_, _, orch, err := s.resolveBackendWithOrch("resolve campaign reference")
 	if err != nil {
 		return nil, err
 	}
-	refs, rerr := orch.ResolvePlatformCampaign(ctx, p.ProjectID, model.ProviderGoogleAds, p.PlatformCampaignID)
+	refs, rerr := orch.ResolvePlatformCampaign(ctx, projectID, platform, platformCampaignID)
 	if rerr != nil {
 		// NOT classifyInsightsError. Every arm of that classifier describes a PLATFORM failure —
 		// an unsupported window, an ad-account mismatch, a connection that cannot be used — and
-		// its default reports an upstream Google Ads outage. This lookup contacts no platform at
+		// its default reports an upstream ad-platform outage. This lookup contacts no platform at
 		// all: the only thing that can fail is this service's own database.
 		//
-		// Routing it there would advertise a local table fault as a retryable Google Ads problem,
+		// Routing it there would advertise a local table fault as a retryable ad-platform problem,
 		// in a message naming "keyword insights", and would return a 503 this method does not
 		// declare — so the generated server would encode an undeclared error as a 500 anyway.
 		// A storage fault is this service's fault and is reported as one.
 		slog.ErrorContext(ctx, "campaign reference lookup failed",
-			"project_id", p.ProjectID, "error", safeErrSummary(rerr))
+			"project_id", projectID, "platform", platform, "error", safeErrSummary(rerr))
 		return nil, &conn.InternalServerError{Code: "500", Message: "the campaign reference could not be read"}
 	}
 
@@ -265,7 +315,7 @@ func (s *ConnectionService) ResolveGoogleAdsCampaign(ctx context.Context, p *con
 	return &conn.PlatformCampaignResolution{
 		// Echoed from the REQUEST, which is safe here precisely because it is not evidence of
 		// anything: the caller already knows what it asked, and the matches are what answer it.
-		PlatformCampaignID: p.PlatformCampaignID,
+		PlatformCampaignID: platformCampaignID,
 		Matches:            matches,
 		MatchCount:         len(matches),
 	}, nil

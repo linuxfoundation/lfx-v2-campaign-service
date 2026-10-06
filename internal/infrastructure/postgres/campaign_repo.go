@@ -68,7 +68,7 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // columns and the predicate must match the index EXACTLY -- Postgres infers the arbiter
 // by matching both.
 //
-// Since 000038 dropped 000022's three-column index, the four-column one is the ONLY unique
+// Since 000040 dropped 000022's three-column index, the four-column one is the ONLY unique
 // index on the slot, so a claim for the next slot version simply inserts alongside the
 // earlier ones, and a retry of an existing slot version conflicts on the arbiter and is
 // swallowed as before. It runs under lockCampaignSlotQuery — see there for what the lock
@@ -93,7 +93,7 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns
 // (brief, platform, variant) — the slot WITHOUT its slot_version.
 //
 // Why a lock at all. The four-column unique index arbitrates races on ONE slot version, and
-// until 000038 the three-column index also refused a second live row on the slot whatever its
+// until 000040 the three-column index also refused a second live row on the slot whatever its
 // version. With that index gone nothing in the schema says "an adopt binds only an EMPTY
 // slot": an adopt (always slot_version 1) and a claim of slot_version 2 do not conflict on
 // any index, so an adopt racing a new-version claim — or landing on a slot whose only live
@@ -336,7 +336,7 @@ func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, 
 
 const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, variant, slot_version, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
-	created_by, updated_by, ran_on_system_account, created_at, updated_at`
+	created_by, updated_by, ran_on_system_account, created_at, updated_at, max_cpc_bid::float8`
 
 // getCampaignQuery and getCampaignByPlatformQuery both exclude soft-deleted rows;
 // pinned by TestCampaignRepo_ReadsExcludeSoftDeleted.
@@ -475,16 +475,17 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 // the mutation routes are brief- and campaign-scoped, while the keyword rows a caller acts on
 // carry only the platform's numeric id.
 //
-// AT MOST ONE ROW CAN MATCH, and that is enforced by the schema rather than by this query:
+// FOR GOOGLE ADS, AT MOST ONE ROW CAN MATCH, enforced by the schema rather than by this query:
 // migration 000020 creates uq_campaigns_platform_campaign_live, a UNIQUE index on
-// (platform, platform_campaign_id) for every live Google Ads row. The index is GLOBAL — it has
-// no project_id column — so adding project_id here can only narrow one row to zero or one, never
-// widen. A second match is therefore not a state a valid database can hold.
+// (platform, platform_campaign_id) WHERE platform = 'google-ads'. The index is GLOBAL — it has
+// no project_id column — so adding project_id can only narrow one row to zero or one.
 //
-// It is still written without LIMIT and the caller still handles a multi-row answer, because the
-// two are not the same claim: the index is the invariant, and a query that assumed uniqueness
-// would silently act on whichever row sorted first if that invariant were ever dropped or the
-// predicate narrowed. Ordered by id so a repeated call answers identically.
+// FOR MICROSOFT ADVERTISING MORE THAN ONE LIVE ROW CAN MATCH: that index does not cover it, and
+// Microsoft campaign ids are minted per ad account, so a project whose connection was re-pointed
+// to another account can hold two live rows with the same id. The return-every-row shape is
+// therefore LOAD-BEARING there, not merely defensive: no LIMIT and no DISTINCT, so the caller
+// sees every match and refuses rather than acting on whichever row sorted first. Ordered by id so
+// a repeated call answers identically.
 const resolvePlatformCampaignQuery = `SELECT id, brief_id FROM campaigns
 	WHERE project_id=$1 AND platform=$2 AND platform_campaign_id=$3 AND status <> 'deleted'
 	ORDER BY id ASC`
@@ -675,6 +676,9 @@ const claimCampaignExistsQuery = `SELECT EXISTS (
 const replaceCampaignQuery = `UPDATE campaigns SET
 	campaign_name=$1, status=$2, budget_amount=$3, budget_type=$4, start_date=$5, end_date=$6,
 	config_snapshot=$7, result=$8,
+	-- max_cpc_bid (000039) is written from the loaded row, so every caller that does not
+	-- change the bid writes back exactly what it read. Only update-campaign-bid changes it.
+	max_cpc_bid=$14,
 	-- Same COALESCE reasoning as the upsert's conflict arm: an update whose caller had no
 	-- authenticated principal (attributedActor returned nil, having logged it) is an
 	-- ordinary unattributed write, not an instruction to forget the last actor we know.
@@ -985,6 +989,7 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	updated, err := scanCampaign(tx.QueryRow(ctx, q,
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType), c.StartDate, c.EndDate,
 		nullJSON(c.ConfigSnapshot), nullJSON(c.Result), updatedBy, c.ID, c.BriefID, c.ProjectID, expectedVersion,
+		c.MaxCPCBid,
 	))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("replace campaign: %w", err)
@@ -1754,7 +1759,7 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		&c.ID, &c.ProjectID, &c.BriefID, &c.JobID, &platform, &c.Variant, &c.SlotVersion, &pcID, &c.CampaignName,
 		&c.Status, &c.BudgetAmount, &budgetType, &c.StartDate, &c.EndDate,
 		&c.ConfigSnapshot, &c.Result, &c.Version, &createdBy, &updatedBy, &c.RanOnSystemAccount,
-		&c.CreatedAt, &c.UpdatedAt,
+		&c.CreatedAt, &c.UpdatedAt, &c.MaxCPCBid,
 	)
 	if err != nil {
 		return nil, err

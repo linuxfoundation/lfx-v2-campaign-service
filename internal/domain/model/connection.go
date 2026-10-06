@@ -420,10 +420,106 @@ const (
 	KeywordActionRemove = "REMOVE"
 )
 
-// KeywordActionOutcome is one applied keyword mutation.
+// KeywordActionOutcome is one keyword mutation's outcome, positionally aligned with the
+// request.
+//
+// Outcome and ErrorCode are EMPTY for a platform whose batch is atomic (Google Ads): every
+// outcome it returns was applied, and the service renders them exactly as before. A
+// non-atomic platform (Microsoft Advertising) sets Outcome to one of the KeywordOutcome*
+// values on every entry, because there each action can land or fail independently.
+// ResourceName is Google's; it is empty on platforms that have no resource names.
 type KeywordActionOutcome struct {
 	AdGroupID    string
 	CriterionID  string
 	Action       string
 	ResourceName string
+	Outcome      string
+	ErrorCode    string
+}
+
+// Per-item outcomes a NON-atomic keyword lever reports. An empty Outcome means "applied by an
+// atomic batch" and is rendered as no outcome at all.
+const (
+	KeywordOutcomeApplied        = "APPLIED"
+	KeywordOutcomeAlreadyPresent = "ALREADY_PRESENT"
+	KeywordOutcomeFailed         = "FAILED"
+	KeywordOutcomeUnconfirmed    = "UNCONFIRMED"
+)
+
+// KeywordActionApplied reports whether a keyword ACTION outcome was applied: the empty outcome
+// an atomic batch (Google Ads) reports for every applied action, or APPLIED from a non-atomic
+// platform. This is what keyword actions' applied_count counts.
+func KeywordActionApplied(outcome string) bool {
+	return outcome == "" || outcome == KeywordOutcomeApplied
+}
+
+// NegativeKeywordPresent reports whether a NEGATIVE keyword outcome leaves the keyword on the
+// campaign: APPLIED (added now) or ALREADY_PRESENT. Every negative-keyword adapter names each
+// outcome, so the empty outcome is NOT counted. This is what add-negative-keywords'
+// applied_count counts.
+func NegativeKeywordPresent(outcome string) bool {
+	return outcome == KeywordOutcomeApplied || outcome == KeywordOutcomeAlreadyPresent
+}
+
+// KeywordTargeting is the current POSITIVE keyword targeting of a campaign's one ad group
+// (Reddit) or line item (X), read live (LFXV2-2665).
+type KeywordTargeting struct {
+	// EntityID is the ad group (Reddit) or line item (X) the targeting belongs to.
+	EntityID string
+	// Keywords is never nil on success: an empty slice is "targets no keyword".
+	Keywords []KeywordTargetingEntry
+	// Revision is Reddit's fingerprint of the ad group's whole targeting; "" on X.
+	Revision string
+}
+
+// KeywordTargetingEntry is one targeted keyword. CriterionID and MatchType are X's; both are
+// empty on Reddit, where a keyword has no id.
+type KeywordTargetingEntry struct {
+	Keyword     string
+	CriterionID string
+	MatchType   string
+}
+
+// KeywordTargetingRemoval names one keyword to take out of the targeting: Keyword on Reddit,
+// CriterionID on X.
+type KeywordTargetingRemoval struct {
+	Keyword     string
+	CriterionID string
+}
+
+// KeywordTargetingOutcome is one removal's outcome, positionally aligned with the request.
+// Outcome is always one of APPLIED, FAILED or UNCONFIRMED.
+type KeywordTargetingOutcome struct {
+	Keyword     string
+	CriterionID string
+	Outcome     string
+	ErrorCode   string
+}
+
+// Error codes a keyword-targeting removal may carry. Fixed vocabulary: the platform's own text
+// is never returned.
+const (
+	KeywordTargetingErrNotSent  = "NOT_SENT"
+	KeywordTargetingErrNotFound = "NOT_FOUND"
+	KeywordTargetingErrRejected = "REJECTED"
+	// KeywordTargetingErrWouldEmpty: not sent, because a fresh read showed the item is now the
+	// last keyword targeted (another removal landed meanwhile).
+	KeywordTargetingErrWouldEmpty = "WOULD_EMPTY"
+)
+
+// NegativeKeyword is one requested campaign-level negative keyword. MatchType is the
+// platform-neutral "Exact" or "Phrase".
+type NegativeKeyword struct {
+	Text      string
+	MatchType string
+}
+
+// NegativeKeywordOutcome is one negative keyword's outcome, positionally aligned with the
+// request. NegativeKeywordID is set only when the platform created it in this request.
+type NegativeKeywordOutcome struct {
+	Text              string
+	MatchType         string
+	Outcome           string
+	NegativeKeywordID string
+	ErrorCode         string
 }

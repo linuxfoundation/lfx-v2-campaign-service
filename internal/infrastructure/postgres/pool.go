@@ -328,7 +328,7 @@ var requiredIndexes = []requiredIndex{{
 	predicate: "(status = 'building'::text)",
 }, {
 	// at most one live campaign per (brief, platform, variant, slot_version) — 000037. The
-	// arbiter of ClaimCampaignDispatch, UpsertCampaign and AdoptCampaign, and since 000038
+	// arbiter of ClaimCampaignDispatch, UpsertCampaign and AdoptCampaign, and since 000040
 	// dropped 000022's three-column uq_campaigns_brief_platform_variant_live, the ONLY index
 	// standing between two concurrent claims of one slot version and two paid campaigns.
 	// Membership here is what re-checks it at every boot. A migration-time guard (000014's,

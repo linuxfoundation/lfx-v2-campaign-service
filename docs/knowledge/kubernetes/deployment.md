@@ -43,6 +43,11 @@ That reduction is deliberate: `Config.String()` renders at startup before
 would otherwise land in the log. What survives is enough for the thing being
 diagnosed — whether a proxy and key are configured at all.
 
+`REDDIT_KEYWORD_TARGETING_WRITES_ENABLED` is a plain feature gate, defaulting to `"false"`
+(LFXV2-2665): it opts a cluster in to removing keywords from a Reddit ad group's targeting,
+which writes the whole targeting object back and has not been exercised against a live ad
+account. Only exactly `"true"` enables it; the keyword-targeting read is not gated.
+
 `REDDIT_METRICS_ENABLED` is likewise a plain (non-secret) value, defaulting to
 `"false"`. It is a feature gate rather than a credential: the Reddit reporting
 contract this service implements follows Reddit's official public OpenAPI document

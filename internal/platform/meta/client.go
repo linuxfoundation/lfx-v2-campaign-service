@@ -879,6 +879,21 @@ func currencyOffsetFor(currency string) (int64, bool) {
 	return off, ok
 }
 
+// copyEnvelope carries a parsed Graph error's structured fields onto e. It is the ONE place every
+// non-2xx path does this — do()'s normal one, its truncated-body one (a complete envelope followed
+// by a connection closed on a mismatched Content-Length) and its Retry-After-over-cap abort, and
+// the /adimages upload's non-2xx parse — so none can drop a field another keeps (the upload's
+// over-cap abort in throttleWait copies the same fields from the APIError it was handed): a bid
+// refusal blaming bid_amount must classify the same whether or not the read ended cleanly.
+// Message is deliberately not copied; each path sets it.
+func (e *APIError) copyEnvelope(g *graphError) {
+	e.Type = g.Type
+	e.Code = g.Code
+	e.FBTraceID = g.FBTraceID
+	e.ErrorSubcode = g.ErrorSubcode
+	e.blameFields = g.blameFieldSpecs()
+}
+
 // graphErrorEnvelope models the Graph API error body: {"error": {...}}.
 type graphErrorEnvelope struct {
 	Error *graphError `json:"error"`
@@ -889,6 +904,63 @@ type graphError struct {
 	Type      string `json:"type"`
 	Code      int    `json:"code"`
 	FBTraceID string `json:"fbtrace_id"`
+	// ErrorSubcode is the Marketing API's finer-grained error number, 0 when absent.
+	ErrorSubcode int `json:"error_subcode"`
+	// ErrorData carries error_data, whose blame_field_specs names the request field(s) at
+	// fault. Kept raw and read only through blameFieldSpecs, which bounds it.
+	ErrorData json.RawMessage `json:"error_data"`
+}
+
+// Bounds on what blameFieldSpecs retains from an untrusted body: a real spec names one or two
+// short field paths, so anything past these is dropped rather than held.
+const (
+	maxBlameFieldSpecs    = 16
+	maxBlameFieldDepth    = 8
+	maxBlameFieldNameSize = 128
+)
+
+// blameFieldSpecs reads error_data.blame_field_specs — documented in the Marketing API error
+// reference (https://developers.facebook.com/docs/marketing-api/error-reference) as "an array,
+// where each element of the array is a blame_field_spec which indicates a single field from the
+// API spec that is at fault", each spec itself an array naming the field and its location, e.g.
+// [["daily_budget"]]. error_data is documented as an object; a JSON-encoded string carrying the
+// same object is accepted too. Anything else, or anything past the bounds above, yields nothing.
+func (g *graphError) blameFieldSpecs() [][]string {
+	if g == nil || len(g.ErrorData) == 0 {
+		return nil
+	}
+	raw := []byte(g.ErrorData)
+	var encoded string
+	if json.Unmarshal(raw, &encoded) == nil {
+		raw = []byte(encoded)
+	}
+	var data struct {
+		BlameFieldSpecs []json.RawMessage `json:"blame_field_specs"`
+	}
+	if json.Unmarshal(raw, &data) != nil {
+		return nil
+	}
+	var out [][]string
+	for _, specRaw := range data.BlameFieldSpecs {
+		if len(out) >= maxBlameFieldSpecs {
+			break
+		}
+		var spec []string
+		if json.Unmarshal(specRaw, &spec) != nil || len(spec) == 0 || len(spec) > maxBlameFieldDepth {
+			continue
+		}
+		ok := true
+		for _, name := range spec {
+			if name == "" || len(name) > maxBlameFieldNameSize {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			out = append(out, spec)
+		}
+	}
+	return out
 }
 
 // graphRateLimitCodes are Graph/Marketing API error codes that indicate
@@ -913,6 +985,12 @@ type APIError struct {
 	Type      string
 	Code      int
 	FBTraceID string
+	// ErrorSubcode is the envelope's error_subcode, 0 when absent.
+	ErrorSubcode int
+	// blameFields is error_data.blame_field_specs, bounded (see blameFieldSpecs). Unexported and
+	// never rendered by Error(): it is read only to CLASSIFY a refusal — which request field
+	// Meta blamed — never to describe one.
+	blameFields [][]string
 	// EnvelopeUnreadable marks a non-2xx whose Graph error envelope could NOT be read —
 	// the body was oversized or the read failed, so Code is absent because we never got
 	// it, not because Meta omitted it. The two are indistinguishable from the fields
@@ -1092,6 +1170,17 @@ func createOutcomeAmbiguous(err error) bool {
 	// as ambiguous) keeps this helper's contract correct for any caller, not just
 	// the create path — and makes it genuinely identical to the reddit client.
 	return ae.StatusCode >= 300 && ae.StatusCode < 400 && isMutatingMethod(ae.Method)
+}
+
+// blamesField reports whether Meta's error_data.blame_field_specs names field as a top-level
+// request field (a spec whose first element is field).
+func (e *APIError) blamesField(field string) bool {
+	for _, spec := range e.blameFields {
+		if len(spec) > 0 && spec[0] == field {
+			return true
+		}
+	}
+	return false
 }
 
 // ErrCampaignNotServable marks an ACTIVATE refused BEFORE any mutating call because the
@@ -1637,9 +1726,7 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 				Message: fmt.Sprintf("read response body: %v", readErr),
 			}
 			if env.Error != nil {
-				readErrAPI.Type = env.Error.Type
-				readErrAPI.Code = env.Error.Code
-				readErrAPI.FBTraceID = env.Error.FBTraceID
+				readErrAPI.copyEnvelope(env.Error)
 			} else {
 				// The truncated body did NOT parse, so there is no code to carry and the
 				// paragraph above does not apply. A missing code here means "we never read
@@ -1674,9 +1761,7 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 						Message: fmt.Sprintf("rate-limit reset (Retry-After: %q) exceeds max wait %s; aborting", rawRetryAfter, maxRetryWait),
 					}
 					if env.Error != nil {
-						abortErr.Type = env.Error.Type
-						abortErr.Code = env.Error.Code
-						abortErr.FBTraceID = env.Error.FBTraceID
+						abortErr.copyEnvelope(env.Error)
 						if env.Error.Message != "" {
 							abortErr.Message = fmt.Sprintf("%s (Graph: %s)", abortErr.Message, env.Error.Message)
 						}
@@ -1721,9 +1806,7 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 			if env.Error != nil {
 				// Preserve the Graph envelope's diagnostic fields so callers can
 				// distinguish invalid-params vs auth failures and quote the trace id.
-				apiErr.Type = env.Error.Type
-				apiErr.Code = env.Error.Code
-				apiErr.FBTraceID = env.Error.FBTraceID
+				apiErr.copyEnvelope(env.Error)
 			}
 			if env.Error != nil && env.Error.Message != "" {
 				apiErr.Message = env.Error.Message
@@ -3636,9 +3719,12 @@ func (c *Client) throttleWait(ctx context.Context, resp *http.Response, apiErr *
 			// sentinel used only to trip this comparison, so the raw value is what needs
 			// debugging against upstream.
 			rawRetryAfter := strings.TrimSpace(resp.Header.Get("Retry-After"))
+			// Every structured field apiErr carries — the same set copyEnvelope copies — so
+			// the abort classifies exactly as the throttled response it reports would have.
 			abortErr := &APIError{
 				StatusCode: status, Method: http.MethodPost, Path: path,
 				Type: apiErr.Type, Code: apiErr.Code, FBTraceID: apiErr.FBTraceID,
+				ErrorSubcode: apiErr.ErrorSubcode, blameFields: apiErr.blameFields,
 				Message: fmt.Sprintf("rate-limit reset (Retry-After: %q) exceeds max wait %s; aborting", rawRetryAfter, maxRetryWait),
 			}
 			if apiErr.Message != "" {
@@ -3989,9 +4075,9 @@ func (c *Client) uploadImageAttempt(ctx context.Context, path string, prefix, im
 		// created_degraded campaign no re-dispatch repairs. The status-only 429 arm below
 		// cannot cover it: a code-4 throttle arrives as a 400.
 		case json.Unmarshal(raw, &env) == nil && env.Error != nil:
-			apiErr.Type = env.Error.Type
-			apiErr.Code = env.Error.Code
-			apiErr.FBTraceID = env.Error.FBTraceID
+			// Through copyEnvelope like every do() path, so ErrorSubcode and the blamed
+			// fields survive the upload path too.
+			apiErr.copyEnvelope(env.Error)
 			apiErr.Message = env.Error.Message
 			// What parsed is trusted to DESCRIBE the failure, but the body was still short:
 			// flag it so a caller does not read this as a complete rejection, and keep the

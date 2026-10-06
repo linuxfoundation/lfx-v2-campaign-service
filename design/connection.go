@@ -216,9 +216,25 @@ var NotFoundError = Type("not-found-error", func() {
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
 	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
-		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported")
+		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type")
 		Example("already_exists")
 	})
+})
+
+// AccountMonitorConflictError is the 409 body of monitor-twitter-ads-account, the one endpoint
+// that refuses an account as it stands. It has its OWN type rather than reusing ConflictError
+// because ConflictError's published example is a connection collision (`already_exists`, "A
+// connection for this provider already exists") — reusing it advertised, in the generated
+// contract, a response this method can never return. Here the example is one of the method's
+// two real refusals, and `reason` is REQUIRED with exactly those two values: every 409 this
+// method answers sets one, so a client never has to fall back to the message.
+var AccountMonitorConflictError = Type("account-monitor-conflict-error", func() {
+	errorAttrs("409", "the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)")
+	Attribute("reason", String, "Why the account cannot be monitored as it stands: account_too_many_active_campaigns (more campaigns active in the window than one report covers) or account_timezone_unsupported (the account's timezone does not start its days on a whole UTC hour).", func() {
+		Enum("account_too_many_active_campaigns", "account_timezone_unsupported")
+		Example("account_too_many_active_campaigns")
+	})
+	Required("reason")
 })
 
 var PreconditionFailedError = Type("precondition-failed-error", func() {
@@ -1218,7 +1234,7 @@ var AccountMonitor = Type("account-monitor", func() {
 	})
 	Attribute("metrics_window_start", String, "Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report's own window, in the timezone the platform's report is built in — the account's timezone on X; on Microsoft Ads the report's GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.", func() {
 		Format(FormatDate)
-		Example("2026-07-08")
+		Example("2026-09-06")
 	})
 	Attribute("metrics_window_end", String, "Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.", func() {
 		Format(FormatDate)
@@ -1227,6 +1243,39 @@ var AccountMonitor = Type("account-monitor", func() {
 	Attribute("metrics_pending", Boolean, "Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.", func() { Example(false) })
 	Required("account_id", "days", "campaigns", "action_items", "totals")
 })
+
+// MicrosoftAdsKeywords is the Microsoft Advertising keyword read, scoped to the project's OWN
+// campaigns. Its rows are the Google read's row type, GoogleAdsKeyword, unchanged, so one keyword
+// table renders both platforms and acts on both through the same (ad_group_id, criterion_id)
+// handle — for Microsoft, criterion_id is the numeric KeywordId and ad_group_id the numeric
+// AdGroupId. The four envelope fields Google's carries are repeated rather than extended (no
+// other type here uses Extend), and three are added because the rows come from a SAVED
+// asynchronous report rather than a live query: metrics_as_of and metrics_pending exactly as the
+// account monitor publishes them, and conversions_complete.
+var MicrosoftAdsKeywords = Type("microsoft-ads-keywords", func() {
+	// The Microsoft-specific subset, as on the request: the read refuses yesterday and
+	// last_14_days, so the response can never carry them and must not advertise them.
+	Attribute("window", String, "The reporting window these counters cover", microsoftKeywordsWindowEnum)
+	Attribute("rows", ArrayOf(GoogleAdsKeyword), "Keyword rows from the last finished Microsoft keyword report that covers every campaign this project owns, ordered by impressions descending and capped — see `truncated`. criterion_id is the Microsoft KeywordId and ad_group_id its AdGroupId. cost_micros is Microsoft's Spend (account currency, no FX) times 10^6; ctr is clicks/impressions. Empty while no such report has finished (metrics_as_of absent).")
+	Attribute("row_count", Int, "How many rows are in `rows`.", func() { Example(50) })
+	Attribute("truncated", Boolean, "True when this project's campaigns have more keywords than were returned. The rows are the TOP ones by impressions, not the project's full keyword set.", func() { Example(false) })
+	Attribute("metrics_as_of", String, "When the Microsoft report these rows come from was requested (not when it was collected, which can be later). Microsoft builds keyword reports asynchronously in minutes, so the service serves the last finished report and builds the next one between requests. ABSENT when no finished report covers every campaign this project now owns — the first read, or the first after a campaign was added — and `rows` is then empty rather than a partial picture.", func() {
+		Format(FormatDateTime)
+		Example("2026-10-05T14:30:00Z")
+	})
+	Attribute("metrics_pending", Boolean, "True while a newer Microsoft report is building, so a later read will return newer rows (or the first ones, when metrics_as_of is absent).", func() { Example(false) })
+	Attribute("conversions_complete", Boolean, "False when Microsoft reported no conversion count (a blank ConversionsQualified cell — typically an account without Universal Event Tracking) for at least one returned row; those rows carry conversions 0, which then is NOT a measurement. Do not compute CPA from them.", func() { Example(true) })
+	Attribute("data_incomplete", Boolean, "True when Microsoft flagged the served report's data as potentially incomplete (\"Potential Incomplete Data\" — the window's last day, usually today, may still be aggregating): its counters may still rise. False when no report is served.", func() { Example(true) })
+	Required("window", "rows", "row_count", "truncated", "metrics_pending", "conversions_complete", "data_incomplete")
+})
+
+// microsoftKeywordsWindowEnum is the subset of metricsWindowEnum the Microsoft keyword read can
+// serve: the windows the Microsoft client maps to an explicit UTC date range (reportDateRange).
+// `yesterday` and `last_14_days` have no mapping there, so they are refused by the decoder here
+// rather than reaching a runtime 400 the design did not declare.
+func microsoftKeywordsWindowEnum() {
+	Enum("today", "last_7_days", "last_30_days", "this_month", "last_month")
+}
 
 // ─── Connection service ───
 
@@ -1360,6 +1409,41 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
+	Method("get-microsoft-ads-keywords", func() {
+		Description("Read Microsoft Advertising keyword performance for this project's own campaigns, in " +
+			"the same row shape as get-google-ads-keywords. Scoped to the campaigns this service holds for " +
+			"the project, NOT to the connected ad account, and read from the project's OWN connection only " +
+			"(never the LF system account). Microsoft serves keyword performance only through its " +
+			"asynchronous Reporting service, which takes minutes, so rows come from the last finished " +
+			"report — see metrics_as_of and metrics_pending — while the next one builds; the first read " +
+			"returns no rows with metrics_pending=true. A report is served only while it covers every " +
+			"campaign the project owns. Saved reports are cached platform data. Off (400, not supported) " +
+			"unless MICROSOFT_METRICS_ENABLED is true. Audience demographics are not offered for Microsoft.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("window", String, "Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Microsoft.", microsoftKeywordsWindowEnum)
+			Required("project_id")
+		})
+		Result(MicrosoftAdsKeywords)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("Conflict", ConflictError, "Conflict")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/microsoft-ads/keywords")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("window")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
 	Method("resolve-google-ads-campaign", func() {
 		Description("Resolve one Google Ads campaign id to this service's own campaign and brief. " +
 			"A caller holding a keyword row has the PLATFORM's numeric campaign id; every mutation " +
@@ -1411,6 +1495,57 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/google-ads/campaign-ref")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("platform_campaign_id")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	// The Microsoft Advertising twin of resolve-google-ads-campaign, with the same payload, the
+	// same result type and the same error set. A separate method rather than a platform path
+	// parameter on the Google route, so that route — its path, operation id, generated client and
+	// HTTPRoute/RuleSet entries — stays byte-identical for the callers already using it.
+	Method("resolve-microsoft-ads-campaign", func() {
+		Description("Resolve one Microsoft Advertising campaign id to this service's own campaign and brief. " +
+			"The Microsoft twin of resolve-google-ads-campaign: a caller holding a row from " +
+			"get-microsoft-ads-keywords has Microsoft's numeric CampaignId, while apply-keyword-actions " +
+			"and add-negative-keywords are keyed by this service's campaign UUID under its brief. " +
+			"A pure READ of this service's own tables: Microsoft is never contacted, no connection is " +
+			"resolved, and nothing is mutated. Scoped to the project's own campaigns by the same " +
+			"`project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. " +
+			"**An unowned id is 200 with an empty `matches`, not 404.** " +
+			"**`matches` CAN hold more than one entry here, unlike Google:** Microsoft campaign ids are " +
+			"minted per ad account, so migration 000020's unique index deliberately covers Google Ads " +
+			"only, and a project whose connection was re-pointed between accounts can hold two live rows " +
+			"with the same id. A caller receiving more than one must refuse rather than choose. " +
+			"Not a list endpoint under rule 3: a keyed lookup for one supplied id.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			// Same bound as the Google method: a Microsoft CampaignId is a `long`, so the
+			// int64 decimal rule is exactly right, and a non-canonical spelling would only
+			// come back as a confident "not yours".
+			Attribute("platform_campaign_id", String, "The Microsoft Advertising campaign id to resolve. Digits only, no leading zero, and within int64.", func() {
+				Pattern(`^[1-9][0-9]{0,18}$`)
+				MaxLength(19)
+				Example("413296582")
+			})
+			Required("project_id", "platform_campaign_id")
+		})
+		Result(PlatformCampaignResolution)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		// The same 503 as the Google method, for the same reason: resolveBackendWithOrch
+		// refuses while storage and the orchestrator are not wired, which in no-database mode
+		// lasts for the life of the process.
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/microsoft-ads/campaign-ref")
 			Header("bearer_token:Authorization")
 			connectionAuthErrorResponses()
 			Param("platform_campaign_id")
@@ -2042,7 +2177,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("Conflict", ConflictError, "The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)")
+		Error("Conflict", AccountMonitorConflictError, "The account cannot be monitored as it stands: too many active campaigns, or a timezone off the whole UTC hour (see reason)")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")

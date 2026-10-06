@@ -89,10 +89,14 @@ reaches), not project-scoped ones.
   (`pacingLabelFor`), one priority rank (`priorityRank`/`sortByPriority`),
   one unknown-pacing row. Each `EvaluateXMonitor` keeps its own guard for
   whether a campaign has a pacing figure worth placing at all, because the
-  platforms report budget differently. They are still **not** routed onto
-  `pacing.go`/`actions.go`, which run a different ladder (50/100/130) for
-  the single-campaign brief path; merging the two read paths would move
-  operator-facing alerting bands and remains its own decision.
+  platforms report budget differently. The ladder's arithmetic is now one
+  implementation for both read paths, `PacingLadder.Label` in
+  `internal/service/rules/ladder.go`: `pacingLabelFor` places on
+  `AccountMonitorLadder` (50/90/100), while `pacing.go`/`actions.go` place on
+  `BriefViewLadder` (50/100/130) for the single-campaign brief path. Which
+  ladder is correct is open product decision **D2**; switching a caller's
+  ladder would move operator-facing alerting bands and remains its own
+  decision.
 - `internal/service/connection_monitor.go`'s `monitorAccount` is the shared
   handler body: validate → resolve backend → `ReadAccountCampaignMetrics` →
   per-platform `evaluate` closure → `monitorTotals`, which sums the
@@ -679,7 +683,10 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
 - **Permanent refusals fail the read.** Unlike a transient submit failure (logged, retried on
   the next read), those two refusals cannot succeed later, so
   `ReadReportedAccountCampaigns` returns them and `classifyDiscoveryError` maps each to a 409
-  `ConflictError` with its `reason` and fixed text. A fresh saved report is still served,
+  `AccountMonitorConflictError` with its `reason` and fixed text — the method's own body,
+  not the shared `ConflictError`, whose example (`already_exists`, a connection collision) is
+  a response this method can never return; `reason` is required and has exactly these two
+  values. A fresh saved report is still served,
   because no submission is attempted while it is fresh.
 - **Check.** ONE job-status read for every job. Any failed or cancelled job fails the report
   (and so does a finished job whose file is gone); any job still building, or missing from

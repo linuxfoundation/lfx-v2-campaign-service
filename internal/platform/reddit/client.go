@@ -1173,6 +1173,23 @@ func (c *Client) requestNoThrottleRetry(ctx context.Context, method, path string
 }
 
 func (c *Client) requestWithThrottleRetry(ctx context.Context, method, path string, body any, retryThrottle bool) (*apiResponse, error) {
+	return c.requestWithThrottleRetryCounted(ctx, method, path, body, retryThrottle, nil)
+}
+
+// requestCounted is request() that also reports how many attempts were answered with a 429 and
+// retried. A mutation whose final answer follows a retried 429 cannot treat that answer as
+// speaking for the earlier attempt — the 429'd attempt may have applied — so a caller that maps
+// a definite refusal to "platform unchanged" needs the count (UpdateAdGroupBid). Every other
+// caller keeps request() and its behaviour is unchanged.
+func (c *Client) requestCounted(ctx context.Context, method, path string, body any) (*apiResponse, int, error) {
+	var retries int
+	resp, err := c.requestWithThrottleRetryCounted(ctx, method, path, body, true, &retries)
+	return resp, retries, err
+}
+
+// requestWithThrottleRetryCounted is the request loop. retries, when non-nil, is incremented
+// once per 429 that is backed off and retried.
+func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, path string, body any, retryThrottle bool, retries *int) (*apiResponse, error) {
 	// Split any query string off before sanitizing: sanitizePath escapes each
 	// PATH segment (turning a literal '?'/'=' into %3F/%3D), which would corrupt a
 	// query. The query (built by the caller via url.Values.Encode) is already
@@ -1187,7 +1204,11 @@ func (c *Client) requestWithThrottleRetry(ctx context.Context, method, path stri
 	// Marshal the body once; a fresh reader is created per attempt below since
 	// bytes.NewReader is consumed by the first send.
 	var encoded []byte
-	if body != nil {
+	if pre, ok := body.(preEncodedBody); ok {
+		// Already-encoded JSON, sent byte for byte: json.Marshal would HTML-escape strings
+		// inside it (see preEncodedBody).
+		encoded = []byte(pre)
+	} else if body != nil {
 		var err error
 		encoded, err = json.Marshal(body)
 		if err != nil {
@@ -1296,6 +1317,9 @@ func (c *Client) requestWithThrottleRetry(ctx context.Context, method, path stri
 					// describes for the in-flight Do; it applies to the BACKOFF SLEEP too.
 					return nil, &transportError{Method: method, Path: path, Err: err}
 				}
+				if retries != nil {
+					*retries++
+				}
 				continue
 			}
 			// No usable header: exponential backoff clamped to the cap.
@@ -1315,6 +1339,9 @@ func (c *Client) requestWithThrottleRetry(ctx context.Context, method, path stri
 				// campaign that spends real budget. This is the same hazard the doc comment above
 				// describes for the in-flight Do; it applies to the BACKOFF SLEEP too.
 				return nil, &transportError{Method: method, Path: path, Err: err}
+			}
+			if retries != nil {
+				*retries++
 			}
 			continue
 		}

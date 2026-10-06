@@ -59,7 +59,7 @@ func insertBrief(ctx context.Context, t *testing.T, pool *pgxpool.Pool) string {
 // The variant is written explicitly rather than left to the column DEFAULT: the index
 // under test is keyed on (brief_id, platform, VARIANT) since 000022, and a test that
 // relied on the default would still pass if the conflict target silently dropped that
-// column. slot_version (000037) IS left to its default of 1: since 000038 the four-column
+// column. slot_version (000037) IS left to its default of 1: since 000040 the four-column
 // index is the only one on the slot, so the conflict target must name it, and every row
 // here is a slot's first campaign.
 func insertCampaignSQL(predicate string) string {

@@ -418,6 +418,20 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// briefs match/rule must fail here loudly rather than leave a money-moving endpoint
 		// routed-but-unauthorized, or unreachable.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/budget", true},
+		// The campaign bid write (LFXV2-2665) is the third spend-affecting mutation in this
+		// set — it changes what a live campaign pays per click — and is pinned for the budget
+		// row's reason.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/bid", true},
+		// add-negative-keywords (LFXV2-2665) is the fourth spend-affecting campaign mutation in
+		// this set, and the same shape again: it inherits the briefs match and the campaign_manager
+		// rule rather than adding its own, and this row is what fails if a narrowing drops it.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/negative-keywords", true},
+		// The Reddit / X keyword-TARGETING read and its removal (LFXV2-2665), the fifth
+		// spend-affecting campaign mutation in this set — the removal is the only one two segments
+		// below the campaign. Both inherit the briefs match and the campaign_manager rule; these
+		// rows fail if a narrowing drops either.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/keyword-targeting", true},
+		{"/projects/p1/briefs/b-42/campaigns/c-9/keyword-targeting/removals", true},
 		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
 		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
 		// rule — no separate route/rule entry. These rows pin that coverage so a future
@@ -435,6 +449,11 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/google-ads/keywords", true},
 		{"/projects/p1/google-ads/audience", true},
 		{"/projects/p1/google-ads/campaign-ref", true},
+		{"/projects/p1/microsoft-ads/keywords", true},
+		{"/projects/p1/microsoft-ads/audience", false},
+		{"/projects/p1/microsoft-ads/keywords/x", false},
+		{"/projects/p1/microsoft-ads/campaign-ref", true},
+		{"/projects/p1/microsoft-ads/campaign-ref/x", false},
 		// --- accepted: event-page pre-fill (LFXV2-3043) ---
 		// A SIBLING of /briefs, not a descendant, so unlike /status and /metrics above it
 		// inherits nothing: it needs its own alternation branch in the HTTPRoute regex AND

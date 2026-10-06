@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -256,23 +257,33 @@ func microsoftKeywords(in []microsoftKeywordConfig) []microsoft.Keyword {
 // tweetText uses — which reduces any link-shaped run to scheme+host. Every real enum value is
 // a bare identifier and passes through unchanged.
 //
-// Keywords[].Text is deliberately kept VERBATIM, matching googleAdsSnapshotConfig's policy for
-// keyword and ad text. sanitizeSnapshotText is for operator prose that routinely carries a
-// pasted link; a keyword is short targeting text whose exact value is the point of the
-// snapshot, and the prose redactor's path-only pass would rewrite legitimate keywords —
-// `k8s.io/docs tutorial` to `k8s.io tutorial`, `node.js/express` to `node.js`, a CIDR
-// `10.0.0.0/8` to `10.0.0.0` — so the snapshot would no longer say what was targeted.
+// Keywords[].Text goes through sanitizeSnapshotText too. A keyword is caller text bound for the
+// unencrypted snapshot — validateKeywords only trims, length-checks and validates the match
+// type, so `https://example.test/reset/SECRET?token=VALUE` or `example.org/reset/SECRET` is a
+// valid keyword — and a link's PATH can carry a token as readily as its query
+// (knowledge base: caller-url-must-be-redacted-before-errors-steps-and-snapshots). So the
+// snapshot is a REDACTED record, not a verbatim one: a path-like targeting term is reduced too
+// (`k8s.io/docs tutorial` is stored as `k8s.io tutorial`). What Microsoft receives is not
+// snapshot-redacted; it is subject only to the client's own validation (trimmed, match type
+// canonicalized, case-insensitive duplicates dropped).
 //
 // Also kept verbatim, because they cannot carry a URL by construction: Budget and CpcBid
 // (numbers), Keywords[].MatchType (only Exact/Phrase/Broad gets past the client, and a
 // snapshot is only written once it has) and GeoTargets (ISO 3166-1 alpha-2 codes,
 // shape-checked by the client before anything is sent).
 //
-// cfg is passed by value and only a string field is rewritten, so the returned copy shares
-// nothing that is mutated: the config Dispatch sends to Microsoft is untouched.
+// cfg is passed by value and Keywords is REALLOCATED before any element is rewritten, so the
+// returned copy shares nothing that is mutated: the config Dispatch sends is untouched.
 func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 	snapshot := cfg
 	snapshot.TimeZone = sanitizeSnapshotText(cfg.TimeZone)
+	if cfg.Keywords != nil {
+		snapshot.Keywords = make([]microsoftKeywordConfig, len(cfg.Keywords))
+		copy(snapshot.Keywords, cfg.Keywords)
+		for i := range snapshot.Keywords {
+			snapshot.Keywords[i].Text = sanitizeSnapshotText(snapshot.Keywords[i].Text)
+		}
+	}
 	return snapshot
 }
 
@@ -779,6 +790,12 @@ func verifyMicrosoftAccountMatch(op string, campaign *model.Campaign, client *mi
 		op, campaign.PlatformCampaignID, created, client.AccountID(), domain.ErrCampaignAccountMismatch)
 }
 
+// microsoftActivateKeywordReadBudget bounds the live-keyword read ACTIVATE makes before its
+// cascade. It is a slice of toggleCallTimeout (45s, internal/service), deliberately well under
+// half of it, so the read — one attempt plus any 429 retries — can never leave the four status
+// PUTs without time to run.
+var microsoftActivateKeywordReadBudget = 10 * time.Second // a var only so tests can shorten it
+
 // microsoftKeywordIDs pulls the persisted keyword ids out of the result blob, using the same
 // lowerCamel json tags campaignFromMicrosoft marshalled (pinned by a round-trip test). Empty
 // means keyword targeting was never provisioned — either none was supplied or the step failed
@@ -853,7 +870,40 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	// Keyword ids come from the SAME persisted result blob as the child ids. They are passed
 	// on BOTH the activate and pause paths: keywords are created Paused, so an activate that
 	// skipped them would enable a campaign with nothing eligible to match a query.
-	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, microsoftKeywordIDs(campaign), msStatus); uerr != nil {
+	//
+	// On ACTIVATE they are first narrowed to the keywords still LIVE in the ad group
+	// (LFXV2-2665): keyword REMOVE deletes keywords upstream without touching this row, and a
+	// deleted id in the cascade's UpdateKeywords would fail every later activation. The read
+	// runs under its OWN bounded sub-budget (microsoftActivateKeywordReadBudget), so a slow or
+	// throttled read cannot consume the toggle's deadline the mutations need; a failed or
+	// timed-out read REFUSES the activate — definite, because nothing has been changed yet.
+	//
+	// PAUSE NEVER READS. Stopping delivery must not wait on, or be starved by, a read: the
+	// recorded ids are sent as they are, the campaign gate flips FIRST, and a keyword-stage
+	// failure after it (a deleted keyword's rejection among them) is handled below.
+	keywordIDs := microsoftKeywordIDs(campaign)
+	if msStatus == microsoft.StatusActive && len(keywordIDs) > 0 && adGroupID != "" {
+		readCtx, cancel := context.WithTimeout(ctx, microsoftActivateKeywordReadBudget)
+		live, lerr := microsoftLiveKeywordIDs(readCtx, client, adGroupID, keywordIDs)
+		cancel()
+		if lerr != nil {
+			return fmt.Errorf("toggle microsoft campaign status: read the ad group's keywords before activating (nothing was changed): %w", lerr)
+		}
+		if len(live) == 0 {
+			return fmt.Errorf("%w: microsoft campaign %s cannot be activated because every keyword it was created with has since been removed (at least one keyword is required for a search campaign to serve)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		keywordIDs = live
+	}
+	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, keywordIDs, msStatus); uerr != nil {
+		// A PAUSE whose gate (and ad group and ad) Microsoft confirmed Paused, failing only at
+		// the trailing keyword housekeeping, IS a paused campaign: nothing under the gate can
+		// serve. Reported as success, with the keyword failure logged, rather than as an
+		// unconfirmed toggle that would tell the operator it might still be spending.
+		if microsoft.IsPausedBeforeKeywordStage(uerr) {
+			slog.WarnContext(ctx, "microsoft campaign paused; the keyword status update after the campaign gate did not complete (a keyword removed upstream is rejected here) — delivery is stopped by the paused campaign",
+				"project_id", projectID, "platform_campaign_id", campaign.PlatformCampaignID, "error", uerr.Error())
+			return nil
+		}
 		if microsoft.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}

@@ -199,11 +199,39 @@ this function, so the value being rejected is the one logged. Such a URI now ren
 elsewhere because they are a URL's diagnostic value, and an opaque URI has neither as far as
 `net/url` is concerned. For the case that motivates it, the scheme *is* the diagnosis.
 
+## Snapshot redaction (`snapshot.go`)
+
+`SnapshotURL` and `SnapshotText` reduce caller-supplied links before they are persisted in
+`campaigns.config_snapshot`, which is stored UNENCRYPTED and indexed. They are a different
+contract from the log-safe entry points above: a snapshot keeps only SCHEME AND HOST of a
+link (the path, query and fragment go, and a run carrying userinfo is dropped whole), and
+`SnapshotText` applies that to every link found inside free text — http(s) runs, then runs of
+ANY other `scheme://` (`ftp://host/…` → `ftp://host`; `file:///private/TOKEN`, which has no
+host to keep, is dropped), scheme-less runs with a query or fragment, `user:password@host`
+runs, and scheme-less path-only runs, in that order. `SnapshotURL` fails closed on any value
+opening with `scheme://` that will not reduce to scheme+host, not only on http(s). The http
+run's bracketed-IPv6 branch consumes an optional userinfo before the `[`
+(`https://bob:pw@[2001:db8::1]/…` is dropped whole rather than leaving `]/…` behind), and the
+`user:password@` username class is RFC 3986's userinfo alphabet including the sub-delims
+`!$&'()*+,;=` (kept in step with the X screen), so `admin!:pw@host/…` is dropped too. Its
+FIRST character must still be unreserved, and the digits-both-sides clock test reads the
+username's segment after its last sub-delim, so a clock opened by prose punctuation —
+`Keynote (14:00@main.stage)`, `*9:30@…*`, `Mon,9:30@…` — is still left alone. The
+rationale for each pass is on the code, and the history in [internal/dispatch](internal-dispatch.md).
+
+They moved here unchanged from `internal/dispatch` (which keeps thin wrappers) so that
+`internal/service` — which cannot import `internal/dispatch` without an import cycle — redacts
+the caller config on the update-campaign path — every string value and every object key —
+with the same rules rather than a second copy. `snapshot_test.go` pins a representative set of
+cases here; the exhaustive ones stay in `internal/dispatch/creds_test.go`.
+
 ## Callers
 
 `internal/infrastructure/config` (`Config.String`/`GoString`, for `JWKS_URL` and `NATS_URL`)
 and `internal/infrastructure/auth` (the startup URL validation and every `jwksStatusGuard`
-error and debug line). One implementation in one place is the point: the defect that produced
+error and debug line); `internal/dispatch` (the per-adapter `config_snapshot` scrubbing,
+via `SnapshotURL`/`SnapshotText`) and `internal/service` (`UpdateCampaign`'s generic config
+redaction, via `SnapshotText`). One implementation in one place is the point: the defect that produced
 this package was two formatting sites in different packages disagreeing about what "redacted"
 meant.
 

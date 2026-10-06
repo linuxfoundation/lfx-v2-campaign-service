@@ -177,10 +177,10 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `uq_campaigns_brief_platform_variant_slot_version_live` as their `ON CONFLICT` arbiter;
   `GetCampaignByPlatform` returns the slot's LATEST live row (`ORDER BY slot_version DESC
   LIMIT 1`), and the claim reads back its own slot version. `000022`'s three-column index
-  stayed for one release (expand/contract) and refused a second live row per slot; `000038`
+  stayed for one release (expand/contract) and refused a second live row per slot; `000040`
   (the contract step, `DROP INDEX CONCURRENTLY`, alone in its file) drops it and
   `requiredIndexes` lost its entry, so a `new_version` claim for `slot_version` 2 now succeeds
-  and `domain.ErrSlotVersionUnavailable` is gone. `000038`'s down re-creates the index exactly
+  and `domain.ErrSlotVersionUnavailable` is gone. `000040`'s down re-creates the index exactly
   as `000022` did and FAILS once any slot holds two live campaigns — which one stays live is a
   data decision.
 
@@ -202,13 +202,19 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   was just deleted, followed by a `new_version` claim computed from the pre-delete read, leaves
   the adopted version 1 plus version 2 — ordered, distinct versions, which is what
   `new_version` asks for. The N-1 binary takes no lock, so during the rolling deploy that
-  ships `000038` the old guarantee is only the four-column index. `AdoptCampaign` still
+  ships `000040` the old guarantee is only the four-column index. `AdoptCampaign` still
   classifies `23505` by index name: only `uq_campaigns_platform_campaign_live` means
   `ErrPlatformCampaignAlreadyBound`. Pinned live by `TestLiveNewVersionCreatesSlotVersion2`,
   `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`, `TestLiveConcurrentNewVersionClaims`,
   `TestLiveConcurrentClaimAndAdoptLeaveOneLiveRow`,
   `TestLiveAdoptRefusesASlotWhoseOnlyLiveCampaignIsALaterVersion` and
   `TestLiveClaimAndAdoptWaitForTheSlotLock`.
+
+  `max_cpc_bid` (added by `000039`, `NUMERIC(18,6)`, nullable, `CHECK > 0`) records the manual
+  max CPC bid most recently set through `update-campaign-bid` — a confirmed REQUEST, like
+  `budget_amount`, never an observation. It is in `campaignCols`/`scanCampaign` (cast
+  `::float8`) and in `replaceCampaignQuery`'s SET list (every other caller writes back the value
+  it loaded); the dispatch upsert never writes it, so a re-dispatch cannot erase the record.
 
   **Authoring rule — expand/contract, one release apart.** The general form of the
   constraint `000013`/`000014` had to break: *a migration that removes or narrows something
@@ -981,6 +987,21 @@ before the column existed records nothing, and the dispatch guard reads that abs
 wrong destination. A foundation with no HubSpot connection of its own now reaches the probe
 on every audience build and email dispatch, which after the fallback change is the ordinary case
 rather than the exception.
+
+**Migration 000040** creates `keyword_insight_reports`, the saved-report store behind the
+report-backed Microsoft keyword read (see
+[Microsoft keyword insights](../architecture/microsoft-keyword-insights.md)). It is 000035's
+mechanism on a SIBLING table rather than a `kind` column on `account_monitor_reports`, because the
+key differs (a reporting WINDOW, not `days` — and `days` is in 000035's PRIMARY KEY with
+`CHECK (days BETWEEN 7 AND 90)`, so adding a kind means replacing a primary key the N-1 binary's
+`ON CONFLICT` names: a contract change, not an expansion), each half records the campaign scope it
+was built for (`ready_campaign_ids` / `pending_campaign_ids`, `TEXT[]`), and the rows are a
+different type. Key (project_id, platform, account_id, report_window), `report_window` CHECKed to
+the seven-value window vocabulary; halves all-or-nothing by CHECK; `ready_rows` a JSON array.
+A new table, so expand-only; no FK and no `requiredIndexes` entry, for 000035's reasons.
+`KeywordReportRepo` is `AccountReportRepo` statement for statement — first mark wins,
+Complete/Fail compare-and-set on `pending_report_id`, Fail never touches the ready half, empty
+rows stored as `[]` — and reuses its window/date/failure-text helpers.
 
 **Migration 000035** creates `account_monitor_reports`, the saved-report store behind the
 report-backed account monitor (Microsoft; see
