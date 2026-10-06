@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 )
 
 // The Video channel's creative is a RESPONSIVE VIDEO AD: one or more YouTube videos
@@ -333,5 +332,5 @@ func videoCreativeStep(plan videoCreativePlan) string {
 // this channel's suffix. Suffixed rather than bare so two channels' ad groups under
 // one brief are told apart by anyone reconciling them by name.
 func videoAdGroupName(in CampaignInput) string {
-	return strings.TrimSpace(in.EventName) + " - Video"
+	return sanitizeNamePart(in.EventName) + " - Video"
 }

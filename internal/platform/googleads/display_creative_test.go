@@ -315,8 +315,27 @@ func TestDisplayCreativeStep(t *testing.T) {
 
 func TestDisplayAdGroupName(t *testing.T) {
 	in := demandGenInput()
-	if got := displayAdGroupName(in); !strings.HasSuffix(got, " - Display") {
+	got := displayAdGroupName(in)
+	if !strings.HasSuffix(got, " - Display Network") {
 		t.Errorf("displayAdGroupName = %q, want one naming the channel", got)
+	}
+
+	// The reason the suffix is " - Display Network" and not " - Display": Demand Gen
+	// composes its ad group name the same way off the same EventName, and both channels
+	// can now sit under one brief. Equal names defeat the name-based reconciliation
+	// each relies on, so this inequality is the assertion that matters — a later
+	// "simplify the suffix" edit has to fail here rather than in production.
+	if demandGenName := strings.TrimSpace(in.EventName) + " - Display"; got == demandGenName {
+		t.Errorf("displayAdGroupName = %q collides with the Demand Gen ad group name", got)
+	}
+
+	// Sanitized, not merely trimmed. A control character inside EventName survives a
+	// TrimSpace and is rejected by Google at `adGroups:mutate` — which runs AFTER the
+	// budget and campaign are created and paid for.
+	dirty := in
+	dirty.EventName = "Kube\x00Con\tEU"
+	if got := displayAdGroupName(dirty); got != "Kube Con EU - Display Network" {
+		t.Errorf("displayAdGroupName with control characters = %q, want them folded to single spaces", got)
 	}
 }
 

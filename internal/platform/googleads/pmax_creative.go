@@ -334,7 +334,7 @@ func validatePerformanceMaxCreative(kind string, in CampaignInput) (performanceM
 
 	groupName := strings.TrimSpace(p.AssetGroupName)
 	if groupName == "" {
-		groupName = strings.TrimSpace(in.EventName) + performanceMaxAssetGroupSuffix
+		groupName = sanitizeNamePart(in.EventName) + performanceMaxAssetGroupSuffix
 	}
 	if n := utf8.RuneCountInString(groupName); n > maxAssetGroupNameRunes {
 		return performanceMaxPlan{}, fmt.Errorf("google-ads Performance Max asset group name %q is %d characters, exceeding the %d limit", capForError(groupName), n, maxAssetGroupNameRunes)

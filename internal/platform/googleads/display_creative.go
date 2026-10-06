@@ -428,6 +428,17 @@ func displayCreativeStep(plan displayCreativePlan) string {
 // displayAdGroupName composes the single ad group this channel creates, mirroring
 // videoAdGroupName: one group per campaign, named off the event so an operator reading
 // the Google Ads UI sees which brief it came from.
+//
+// The suffix is " - Display Network", not " - Display": Demand Gen's ad group
+// (demandgen.go) has used the bare " - Display" since it was the Display channel, and
+// now that a real Display campaign exists under the same brief the two would compose
+// the SAME name byte for byte — defeating the name-based reconciliation both rely on.
+// Demand Gen's suffix is the one already attached to live campaigns, so this new
+// channel is the side that moves.
+//
+// `sanitizeNamePart`, not a bare TrimSpace, for the reason campaign.go spells out: a
+// control character inside EventName survives a trim and strands a PAID campaign at
+// `adGroups:mutate`, after the budget and campaign are already created.
 func displayAdGroupName(in CampaignInput) string {
-	return strings.TrimSpace(in.EventName) + " - Display"
+	return sanitizeNamePart(in.EventName) + " - Display Network"
 }
