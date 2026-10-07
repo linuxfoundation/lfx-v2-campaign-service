@@ -2073,14 +2073,19 @@ one per dispatcher (so per process), because every read holds stats-job slots on
 that other foundations and the X account monitor share (X: 100 concurrent jobs per account) and
 a timed-out read's jobs keep running until X expires them. Keyed by account + window + sorted
 de-duplicated scope: identical concurrent reads share one call (singleflight; a joiner whose ctx
-ends first gets its own ctx error); a SUCCESSFUL result is reused for 5 minutes (at most 256
+ends first gets its own ctx error; when the LEADER failed only because its own ctx ended — tagged
+`leaderContextError` in the leader's deferred close — a joiner with a live ctx loops and re-leads,
+at most `twitterAudienceMaxReLeads` (2) times, so one disconnecting client no longer 503s every
+concurrent identical read; any other failure is shared, never retried); a SUCCESSFUL result is reused for 5 minutes (at most 256
 entries; failures never cached) while `twitter.AudienceWindowBounds` at the dispatcher clock
 (`audienceNow`) still gives the result's own instants, so "today" is never served across the
 account's midnight; and a per-account slot (`twitterAudienceAccountConcurrency` = 1) runs one read
 at a time, a waiter giving up with its context (503). The scope in the key means a cached result
 is only ever served for exactly the same campaigns. Tests: `TestTwitter_AudienceGuard_*`
 (N callers → one set of jobs, a second account read refused while the first runs, cache hit
-creates no jobs and expires by TTL and by account-local day, failures not cached).
+creates no jobs and expires by TTL and by account-local day, failures not cached) and
+`twitter_audience_guard_test.go` (leader cancelled during fetch or slot wait → joiner re-leads;
+joiner's own cancellation is its own error; an upstream failure is shared, fetched once).
 
 ## Account discovery (optional capability)
 

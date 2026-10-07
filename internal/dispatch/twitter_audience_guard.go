@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -25,7 +26,8 @@ import (
 // seconds. So, keyed by account:
 //
 //   - identical concurrent reads (same account, window and scope) share ONE set of jobs
-//     (singleflight); a joiner whose context ends first gets its own context error;
+//     (singleflight); a joiner whose context ends first gets its own context error, and a joiner
+//     whose LEADER's context ended re-leads rather than inheriting that error (read);
 //   - at most twitterAudienceAccountConcurrency reads run per account at once; a waiter gives up
 //     when its context ends (503 at the service) rather than queueing jobs it cannot collect;
 //   - a SUCCESSFUL result is reused for twitterAudienceCacheTTL, while the window it was computed
@@ -92,15 +94,49 @@ func (c twitterAudienceCached) fresh(now time.Time) bool {
 	return err == nil && start.Equal(c.ai.WindowStart) && end.Equal(c.ai.WindowEnd)
 }
 
+// twitterAudienceMaxReLeads bounds how many times one caller takes over as leader after the
+// read it joined ended with its LEADER's context (see read). Two re-leads is enough for an
+// ordinary run of disconnecting clients and guarantees termination however many arrive.
+const twitterAudienceMaxReLeads = 2
+
+// leaderContextError tags a shared result that failed only because the LEADING caller's own
+// context ended (client disconnect, the leader's deadline) — a fact about that one caller, not
+// about X. Joiners re-lead on it; every other failure (an upstream 5xx, an X-side timeout while
+// the leader's context was still live, a malformed file) is shared as is, never retried.
+type leaderContextError struct{ err error }
+
+func (e *leaderContextError) Error() string { return e.err.Error() }
+func (e *leaderContextError) Unwrap() error { return e.err }
+
 // read serves key from the cache, joins an identical in-flight read, or runs fetch under the
 // account's concurrency slot. The returned result is shared and must be treated as read-only.
+//
+// A joiner shares the leader's outcome, with ONE exception: when the leader failed because ITS
+// context ended (leaderContextError) while the joiner's own context is live, the joiner loops and
+// starts the read again — as the new leader, or by joining whoever did. Without that, one client
+// disconnecting mid-read turned every concurrent identical read into a 503 carrying that client's
+// context.Canceled. At most twitterAudienceMaxReLeads times; a joiner whose own context ends gets
+// its own error.
 func (g *twitterAudienceGuard) read(ctx context.Context, accountID, key string, now func() time.Time,
 	fetch func(context.Context) (*twitter.AudienceInsights, error)) (*twitter.AudienceInsights, error) {
+	for reLeads := 0; ; reLeads++ {
+		ai, joined, err := g.readOnce(ctx, accountID, key, now, fetch)
+		var lce *leaderContextError
+		if joined && errors.As(err, &lce) && ctx.Err() == nil && reLeads < twitterAudienceMaxReLeads {
+			continue
+		}
+		return ai, err
+	}
+}
+
+// readOnce is one pass of read. joined reports whether the outcome is another caller's.
+func (g *twitterAudienceGuard) readOnce(ctx context.Context, accountID, key string, now func() time.Time,
+	fetch func(context.Context) (*twitter.AudienceInsights, error)) (ai *twitter.AudienceInsights, joined bool, err error) {
 	g.mu.Lock()
 	if c, ok := g.cache[key]; ok {
 		if c.fresh(now()) {
 			g.mu.Unlock()
-			return c.ai, nil
+			return c.ai, false, nil
 		}
 		delete(g.cache, key)
 	}
@@ -111,9 +147,9 @@ func (g *twitterAudienceGuard) read(ctx context.Context, accountID, key string, 
 		}
 		select {
 		case <-call.done:
-			return call.ai, call.err
+			return call.ai, true, call.err
 		case <-ctx.Done():
-			return nil, fmt.Errorf("x audience read: waiting for an identical read in flight: %w", ctx.Err())
+			return nil, false, fmt.Errorf("x audience read: waiting for an identical read in flight: %w", ctx.Err())
 		}
 	}
 	call := &twitterAudienceCall{done: make(chan struct{})}
@@ -126,6 +162,10 @@ func (g *twitterAudienceGuard) read(ctx context.Context, accountID, key string, 
 	g.mu.Unlock()
 
 	defer func() {
+		// Tag a failure caused by THIS caller's context, so joiners can tell it from X's.
+		if call.err != nil && ctx.Err() != nil {
+			call.err = &leaderContextError{err: call.err}
+		}
 		g.mu.Lock()
 		delete(g.inflight, key)
 		if call.err == nil && call.ai != nil {
@@ -139,11 +179,13 @@ func (g *twitterAudienceGuard) read(ctx context.Context, accountID, key string, 
 	case slot <- struct{}{}:
 	case <-ctx.Done():
 		call.err = fmt.Errorf("x audience read: another audience read on this x ads account is still running: %w", ctx.Err())
-		return nil, call.err
+		return nil, false, call.err
 	}
 	defer func() { <-slot }()
 	call.ai, call.err = fetch(ctx)
-	return call.ai, call.err
+	// The leader's own error is returned untagged (the tag is added in the deferred close, after
+	// these values are taken), so a caller never sees leaderContextError for its own context.
+	return call.ai, false, call.err
 }
 
 // store caches ai under key, first dropping expired entries and, at the size bound, the oldest.
