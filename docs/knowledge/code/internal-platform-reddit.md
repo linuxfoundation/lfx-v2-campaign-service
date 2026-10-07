@@ -699,3 +699,13 @@ confirming read is made only after a campaign 404; `ACTIVE`/`PAUSED` is a ref; a
 differs, an empty `data`, a 401/403, and a body `identityjson.Check` refuses or that does not decode
 are errors. The read is path-scoped; `ad_account_id` is returned when present for the dispatcher to
 compare, and an unreported one is left to the path scoping.
+
+## Settings readback read (LFXV2-2665)
+
+`GetCampaignSettings` (`campaign_settings.go`) reads the campaign at the same account-scoped
+path the budget read, adoption read and toggle use — name, `configured_status`, `goal_type`,
+`goal_value`, `is_campaign_budget_optimization`, `start_time`, `end_time`, `bid_strategy`,
+`ad_account_id` — with `identityjson.Check` over the RAW body and a strict id echo. No ad group
+is read: the create path puts everything the readback compares on the campaign. A 404 is
+`(nil, nil)`; a non-integer `goal_value` is an error; DELETED/ARCHIVED is returned with its
+status rather than as absent.

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -80,6 +81,9 @@ type TwitterDispatcher struct {
 	// pace). No method stores per-call state on the receiver.
 	clients *clientCache
 	opts    []twitter.Option
+	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
+	// tests can pin it.
+	settingsNow func() time.Time
 }
 
 // NewTwitterDispatcher builds the adapter from the connection repo + encryptor.

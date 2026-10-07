@@ -630,9 +630,10 @@ this shared file too.
 (*model.CampaignSettingsReadback, error)` — reads a campaign's live configuration and
 compares it against what the campaign row recorded. Discovered by the same type assertion
 `MetricsReader` uses; a dispatcher without it yields
-`domain.ErrSettingsReadbackUnsupported` -> 400. **Google Ads is the only implementation**
-today; the capability is wired per platform, and a dispatcher without it is a 400 rather
-than a silent empty readback.
+`domain.ErrSettingsReadbackUnsupported` -> 400. **Google Ads, Microsoft Advertising, Meta,
+Reddit and X implement it** (LFXV2-2665 added the last four; see "Settings readback on
+Microsoft, Meta, Reddit and X" below); LinkedIn and HubSpot do not, and a dispatcher without
+it is a 400 rather than a silent empty readback.
 
 **Read-only in two senses, both load-bearing.** It issues no mutating call upstream, and it
 never writes back onto the campaign row. `budget_amount`/`budget_type`/`config_snapshot`
@@ -979,7 +980,7 @@ It enforces that invariant in TWO arms, and STRICTER than `ReadMetrics`/`ToggleS
 (LFXV2-3067). Absent provenance FAILS CLOSED rather than being waved through: a row recording
 no creating customer is not a row that MATCHES the current connection, it is a row nothing has
 established anything about, and `created != "" && created != current` read that absence as a
-match. Because Google Ads is the ONLY `SettingsReader`, that fallthrough also made the
+match. Because Google Ads was then the ONLY `SettingsReader`, that fallthrough also made the
 handler's documented `ErrCampaignProvenanceUnknown` 409 arm unreachable — a documented error
 nothing could produce. The empty case now returns
 `errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch)`, joined
@@ -993,6 +994,68 @@ The stricter posture is deliberate rather than an inconsistency: this endpoint's
 is to report a comparison, so a confidently wrong report about another account's campaign is
 the precise outcome it exists to prevent, whereas the toggle and metrics paths weigh that risk
 against serving legacy rows at all.
+
+
+## Settings readback on Microsoft, Meta, Reddit and X (LFXV2-2665)
+
+`microsoft_settings.go`, `meta_settings.go`, `reddit_settings.go` and `twitter_settings.go`
+implement `SettingsReader` with the same contract as Google's: strictly read-only (GETs, plus
+Microsoft's `GetCampaignsByIds` POST, which is a read), never written back onto the row, a side
+that was not read is ABSENT and `unknown`. The shared pieces live in `settings_readback.go`
+(`recordedSettings`, `settingsMicrosToUnits`, `parseSettingsTimestamp`, `compareNudgedStart`)
+and reuse Google's renderers (`formatBudgetUnits`, `formatSubCentBudgetUnits`) and field names,
+so all five platforms report in one vocabulary and render amounts one way.
+
+**Each platform reports only what it can answer honestly, in the units its create path
+wrote.** Microsoft: one campaign read; `budget_amount` (DailyBudget, account-currency decimal,
+read only under a daily `BudgetType`), `budget_type`, `campaign_name` compared;
+`status`, `budget_explicitly_shared`, `bidding_strategy_type` upstream-only; no flight dates
+(Microsoft campaigns have none and the create path records none). Meta: campaign + the
+recorded ad set (budget, flight and bid strategy live on the ad set) + the account currency
+when there is an amount; minor units are compared through the account's own offset with the
+recorded side encoded as `round(amount × offset)`, exactly what `budgetToMinorUnits` sent; a
+CBO campaign's ad-set budget is `unknown`, not substituted with the shared campaign budget.
+Reddit: one campaign read (the create path puts goal, flight and bid strategy on the campaign,
+so no ad group is read); the budget is read only when `is_campaign_budget_optimization` is
+true, and that flag is reported upstream-only so an `unknown` budget is explained. X: campaign
+(budget) + the recorded line item (flight, bid strategy); the budget is compared only under
+`budget_optimization` `CAMPAIGN` (a LINE_ITEM campaign's total cap is not the recorded daily
+amount), and `budget_optimization` is reported upstream-only.
+
+**Flight dates compare as UTC calendar dates**, because every create path sends UTC instants
+(Meta's end is `23:59:59+0000`). Meta and Reddit nudge a start whose day has begun to dispatch
+time + a buffer; `compareNudgedStart` reports a LATER upstream day that is the row's
+`CreatedAt` day or the day after (the only days a minutes-long nudge can produce) with both sides and an `unknown` verdict (via `model.UncomparableSettingsField`,
+which can only ever say `unknown`) rather than a false `diverged`. An earlier day, or a later
+one far from dispatch, stays `diverged`.
+
+**Provenance is Google's rule.** No recorded creating account → `ErrCampaignProvenanceUnknown`
+joined with `ErrCampaignAccountMismatch`, BEFORE the connection is resolved (pinned by tests
+whose connection reader fails if consulted). A recorded account that differs → mismatch,
+before the campaign is read. Where the read answers with an account (Meta's `account_id` —
+`GET /{id}` is not account-scoped — Reddit's `ad_account_id`, X's `account_id`) a different
+one, or a recorded ad set / line item that belongs to another campaign upstream
+(`meta.ErrAdSetNotInCampaign`, `twitter.ErrLineItemNotInCampaign`), is NOT the account
+mismatch: the connection already IS the recorded account, so "reconnect the original account"
+would be unactionable. It is `domain.ErrCampaignUpstreamIdentityMismatch` (409, fixed
+re-dispatch message).
+**Adopted rows** read at the campaign level: the child-dependent fields are absent, not errors.
+
+**Definite vs unknown.** A 404 (Reddit, X), Graph 100/33 (Meta — only after one account-scoped
+probe, `GET /{act_id}?fields=id`, proves the same token loads the account; 100/33 alone cannot
+tell a deleted campaign from one a token that lost the account cannot see, so an unloadable
+account makes it 503), `CampaignServiceInvalidCampaignId`
+(Microsoft) or a deleted X campaign is `ErrPlatformCampaignAbsent` → 404. A missing CHILD (ad
+set / line item) only blanks its fields. Every other failure — transport, 5xx, 401/403, an
+exhausted 429, a body `identityjson.Check` refuses, a wrong id echoed, a non-integer or
+contradictory amount (a Meta ad set carrying both budgets) — is an ordinary error, answered 503
+with no upstream text. Unlike adoption, a DELETED/ARCHIVED Meta or Reddit campaign is reported
+with its status rather than as absent: the readback reports what the platform holds.
+
+**Verified only from docs, not live:** each platform's echo of the fields read here (Meta's
+`start_time`/`end_time` layout, Reddit's `goal_value` as a JSON number, X's line-item
+`start_time` as `...Z`, Microsoft's `BiddingScheme.Type` suffix) is taken from the platform
+references and the shapes the sibling budget/bid/adoption reads already parse.
 
 ## Budget write (optional capability, LFXV2-2665)
 

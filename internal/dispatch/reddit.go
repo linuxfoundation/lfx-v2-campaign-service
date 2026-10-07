@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -98,6 +99,9 @@ type RedditDispatcher struct {
 	clients *clientCache
 	// opts are extra reddit.Client options (e.g. WithBaseURL/WithTokenURL in tests).
 	opts []reddit.Option
+	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
+	// tests can pin it.
+	settingsNow func() time.Time
 }
 
 // NewRedditDispatcher builds the adapter from the connection repo + encryptor.

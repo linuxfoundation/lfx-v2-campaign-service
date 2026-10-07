@@ -289,6 +289,20 @@ var (
 	// tracking existed, or under a connection with no tenant id at all, needs.
 	ErrCampaignProvenanceUnknown = errors.New("the campaign does not record which platform tenant it was created under")
 
+	// ErrCampaignUpstreamIdentityMismatch indicates the PLATFORM's own answer contradicts the
+	// identity this service recorded for a campaign, even though the recorded account and the
+	// connection agree: the platform reports the campaign under a different ad account, or a
+	// child entity recorded on the row (a Meta ad set, an X line item) now belongs to a
+	// different campaign upstream. Reading it would report somebody else's configuration as
+	// this campaign's, so it is refused.
+	//
+	// It is deliberately NOT ErrCampaignAccountMismatch: that sentinel's remedy is "reconnect
+	// the original account", and here the connection already IS the original account, so the
+	// instruction would be unactionable. The platform's record no longer matches what this
+	// service created; the remedy is to re-dispatch the campaign. A state error, not a
+	// transport one — a retry fails identically — so it maps to 409.
+	ErrCampaignUpstreamIdentityMismatch = errors.New("the platform's record of the campaign no longer matches the identity this service recorded")
+
 	// ErrCampaignWriteInProgress indicates another writer already holds the claim for this
 	// campaign, so this request did not acquire it. Maps to 409.
 	//
