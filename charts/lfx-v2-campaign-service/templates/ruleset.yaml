@@ -157,6 +157,10 @@ spec:
           # descendants (any number of segments incl. slashes). The bare base paths
           # (POST /briefs, GET /jobs) are kept as their own entries so they're
           # matched regardless of whether ** matches zero segments.
+          # Every per-campaign route nests here and needs no entry of its own — e.g.
+          # /campaigns/{id}/status|metrics|settings|budget|bid|keyword-targeting and the
+          # Meta ad-set read and pause/resume, /campaigns/{id}/meta-ad-sets[/{adSetId}/status]
+          # (LFXV2-2665); parity_test.go pins each so a narrowing of ** fails loudly.
           # Event-page pre-fill (LFXV2-3043). A campaign_manager read that creates
           # nothing, but it is NOT under /briefs/** — it is a sibling of it, so the
           # briefs rules above do not cover it and it needs its own entry.

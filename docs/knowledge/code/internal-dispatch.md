@@ -2039,6 +2039,31 @@ returned unclassified (503 at the service). Tests: `meta_audience_test.go` (mapp
 refusal with zero upstream calls, partial mismatch, unknown provenance proceeds, 403 stays
 unclassified).
 
+## Meta ad sets (`meta_ad_sets.go`, LFXV2-2665)
+
+`MetaDispatcher` implements `service.MetaAdSetReader` (`ReadMetaAdSets`) and
+`service.MetaAdSetStatusToggler` (`ToggleMetaAdSetStatus`); no other dispatcher does, so the
+orchestrator answers `domain.ErrMetaAdSetsUnsupported` (400) for them. Both run
+`metaAdSetScope` first — the settings readback's provenance: `metaCreationAccountID` empty →
+`ErrCampaignProvenanceUnknown` joined with the mismatch sentinel, before any credential is
+resolved; `requireMetaAccountID`; `meta.ValidateAccountID`; `verifyMetaAccountMatch` — so every
+409 there sends zero requests. The read maps `meta.ErrAdSetAccountMismatch` to
+`ErrCampaignUpstreamIdentityMismatch`, renders budgets with `formatMinorUnits` (absent for an
+unmapped currency), marks `Recorded` from `metaAdSetID`, and stamps `ReadAt` from the
+`settingsNow` clock tests pin. The toggle refuses `ACTIVE` with `ErrCampaignNotProvisioned` when
+the row records no ad set (adopted), and `ErrMetaAdSetNotRecorded` for any ad set but the
+recorded one, before any request; a non-canonical stored campaign id is
+`ErrStoredPlatformIDInvalid` on both paths; then it reads the ad set
+(`GetAdSetState`), refuses another campaign's or account's ad set
+(`ErrMetaAdSetNotInCampaign`) and DELETED/ARCHIVED (`ErrMetaAdSetUnwritable`), answers
+`ALREADY_IN_STATE` with no write, and otherwise sends ONE `UpdateAdSetStatusOnce`, classified by
+`meta.ClassifyAdSetWrite`: unconfirmed → `unconfirmedToggleError`; not-sent and rejected →
+ordinary errors. See [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
+Tests: `meta_ad_sets_test.go`.
+
+`noOwnConnection` (`creds.go`) now wraps `domain.ErrConnectionAbsent` alongside `ErrNotFound`, so
+a caller can answer "no connection" precisely; every existing `ErrNotFound` match is unaffected.
+
 ## Account discovery (optional capability)
 
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`
