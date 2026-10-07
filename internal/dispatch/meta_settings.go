@@ -56,6 +56,12 @@ const metaGraphTimeLayout = "2006-01-02T15:04:05-0700"
 // start goes through compareNudgedStart so a nudge across UTC midnight is not reported as a
 // divergence.
 //
+// ABSENCE. This readback never reports the campaign absent (404). Graph code 100 / subcode 33 on
+// the campaign — "does not exist, cannot be loaded due to missing permissions, or does not support
+// this operation" — cannot tell a deleted campaign from one this token cannot see, so it is
+// unverifiable (503) on every HTTP status, as on the adoption read. A campaign Meta has DELETED
+// or ARCHIVED still answers with that status and is reported as status, not as absent.
+//
 // PROVENANCE. Unknown provenance fails closed before any credential is resolved (409); a recorded
 // account that differs from the connection's is a mismatch (409). GET /{id} is NOT account-scoped,
 // so the account Meta reports the campaign under is ALSO compared with the recorded one — the
@@ -91,7 +97,10 @@ func (d *MetaDispatcher) ReadSettings(ctx context.Context, projectID string, pla
 		return nil, fmt.Errorf("read meta campaign settings: %w", err)
 	}
 	if settings == nil {
-		return nil, fmt.Errorf("%w: meta campaign %s", domain.ErrPlatformCampaignAbsent, campaign.PlatformCampaignID)
+		// GetCampaignSettings never reports absence (Graph 100/33 is unverifiable, and a deleted
+		// or archived campaign answers with its status), so a nil here is a contract break, not
+		// a 404: it is unverifiable like every other read failure.
+		return nil, fmt.Errorf("read meta campaign settings: campaign %s: the read returned no campaign and no error", campaign.PlatformCampaignID)
 	}
 	if settings.AccountID != created {
 		return nil, fmt.Errorf("read meta campaign settings: campaign %s is reported under ad account %s, not the account %s it was created under: %w",

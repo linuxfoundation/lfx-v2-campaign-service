@@ -35,8 +35,14 @@ import (
 // An ADOPTED row records no line item, so its flight and bid strategy are ABSENT and `unknown`;
 // the campaign-level fields still read normally.
 //
-// The budget is compared only under budget_optimization CAMPAIGN; otherwise both budget fields
-// are `unknown`.
+// The budget is compared ONLY when X REPORTS budget_optimization CAMPAIGN; LINE_ITEM, an
+// unreported value or anything else leaves both budget fields `unknown`. This is deliberate and
+// not assumed away for campaigns this service created: the create path sends no
+// budget_optimization (X's current reference lists LINE_ITEM as the only POST value, so sending
+// CAMPAIGN would be undocumented), and which value X then reports is unverified — its v11
+// announcement says CAMPAIGN is the default, its current reference says LINE_ITEM. A created
+// campaign whose budget reads `unknown` with budget_optimization absent or LINE_ITEM is therefore
+// the readback declining to guess, not a read failure.
 //
 // UNITS. X budgets are MICRO-units of the ad account's currency, the unit the create path converts
 // the caller's daily budgetAmount into, so they are rendered exactly as Google's micros are. The

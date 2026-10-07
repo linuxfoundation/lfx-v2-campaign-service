@@ -18,6 +18,12 @@ import (
 const (
 	xSettingsCampaignPath = "/12/accounts/acc1/campaigns/cmp1"
 	xSettingsLineItemPath = "/12/accounts/acc1/line_items/li1"
+	// xSettingsCampaignBody is a campaign that REPORTS budget_optimization CAMPAIGN. It is NOT
+	// evidence that a campaign this service creates reads back that way: the create path sends no
+	// budget_optimization, and which value X then reports is unverified (X's v11 announcement
+	// says CAMPAIGN is the default; its current reference lists LINE_ITEM as the only value and
+	// default). TestTwitter_ReadSettings_CreatedCampaignUnderEachReportedOptimization pins the
+	// readback for every answer X could give for a created campaign.
 	xSettingsCampaignBody = `{"data":{"id":"cmp1","name":"KubeCon — Awareness","entity_status":"PAUSED","budget_optimization":"CAMPAIGN","daily_budget_amount_local_micro":50000000,"total_budget_amount_local_micro":null,"deleted":false}}`
 	xSettingsLineItemBody = `{"data":{"id":"li1","campaign_id":"cmp1","start_time":"2026-08-01T00:00:00Z","end_time":"2026-08-31T00:00:00Z","bid_strategy":"AUTO","deleted":false}}`
 )
@@ -78,6 +84,50 @@ func TestTwitter_ReadSettings_MatchWhenBothAgree(t *testing.T) {
 	}
 	assertSettingsReadOnly(t, reqs, "")
 	assertRowUntouched(t, before, row)
+}
+
+// A created row's budget is compared ONLY when X reports budget_optimization CAMPAIGN. The create
+// path sends no budget_optimization and X's own documents disagree about the default, so the
+// readback never assumes one: an unreported value and LINE_ITEM both leave the budget `unknown`
+// (fail safe), whatever amount the campaign carries.
+func TestTwitter_ReadSettings_CreatedCampaignUnderEachReportedOptimization(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		optimization string // the JSON fragment X reports, "" for none
+		budget       fieldWant
+		budgetType   fieldWant
+		reported     string
+	}{
+		{"reported CAMPAIGN is compared", `"budget_optimization":"CAMPAIGN",`,
+			fieldWant{"50.00", "50.00", model.SettingsMatch}, fieldWant{"daily", "daily", model.SettingsMatch}, "CAMPAIGN"},
+		{"unreported is not assumed and stays unknown", ``,
+			fieldWant{"50.00", "", model.SettingsUnknown}, fieldWant{"daily", "", model.SettingsUnknown}, ""},
+		{"reported LINE_ITEM stays unknown", `"budget_optimization":"LINE_ITEM",`,
+			fieldWant{"50.00", "", model.SettingsUnknown}, fieldWant{"daily", "", model.SettingsUnknown}, "LINE_ITEM"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			routes := xSettingsRoutes()
+			// Exactly the campaign the create path makes: the daily budget on the campaign, no
+			// total cap, PAUSED — differing only in what X reports for budget_optimization.
+			routes[xSettingsCampaignPath] = settingsRoute{status: 200, body: `{"data":{"id":"cmp1","name":"KubeCon — Awareness","entity_status":"PAUSED",` +
+				tc.optimization + `"daily_budget_amount_local_micro":50000000,"total_budget_amount_local_micro":null,"deleted":false}}`}
+			d, _ := xSettingsDispatcher(t, routes)
+			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderTwitterAds, xSettingsRow())
+			if err != nil {
+				t.Fatalf("ReadSettings: %v", err)
+			}
+			assertSettingsFields(t, rb, map[string]fieldWant{
+				settingsFieldBudgetAmount:       tc.budget,
+				settingsFieldBudgetType:         tc.budgetType,
+				settingsFieldName:               {"KubeCon — Awareness", "KubeCon — Awareness", model.SettingsMatch},
+				settingsFieldStatus:             {"", "PAUSED", model.SettingsUnknown},
+				settingsFieldStartDate:          {"2026-08-01", "2026-08-01", model.SettingsMatch},
+				settingsFieldEndDate:            {"2026-08-31", "2026-08-31", model.SettingsMatch},
+				settingsFieldBiddingStrategy:    {"", "AUTO", model.SettingsUnknown},
+				settingsFieldBudgetOptimization: {"", tc.reported, model.SettingsUnknown},
+			})
+		})
+	}
 }
 
 func TestTwitter_ReadSettings_Cases(t *testing.T) {
