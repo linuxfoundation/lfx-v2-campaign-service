@@ -473,10 +473,11 @@ func TestGetAudienceInsights_WideRowsAreJudgedCorrectly(t *testing.T) {
 
 // The duplicate-key check must scale LINEARLY with the number of keys. Measured as a RATIO, not
 // an absolute time, so a slow or loaded CI machine slows both sides alike: each size is timed as
-// the fastest of five runs, each after a forced GC, and quadrupling the keys must cost well under the 16x a pairwise
-// scan (n²/2 comparisons) costs — linear is ~4x, the bound is 10x. If the pairwise EqualFold scan
-// came back, 20,000 → 80,000 keys goes from ~2e8 to ~3.2e9 comparisons and this fails on the
-// ratio (it did: the scan this replaced measured ~16x), while correctness alone would still pass.
+// the fastest of five runs, each after a forced GC, and quadrupling the keys must cost well
+// under the 16x a pairwise scan (n²/2 comparisons) costs — linear is ~4x, the bound is 10x. If
+// the pairwise EqualFold scan came back, 20,000 → 80,000 keys goes from ~2e8 to ~3.2e9
+// comparisons and this fails on the ratio (it did: the scan this replaced measured ~16x), while
+// correctness alone would still pass.
 func TestGetAudienceInsights_DuplicateKeyCheckScalesLinearly(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing ratio test")
