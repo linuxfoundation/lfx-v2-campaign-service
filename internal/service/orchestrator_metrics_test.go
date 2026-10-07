@@ -270,6 +270,34 @@ func upstreamKeywordReader(o *Orchestrator, p model.Provider) KeywordReportReade
 	return r
 }
 
+func upstreamAudienceReader(o *Orchestrator, p model.Provider) AudienceReportReader {
+	r, ok := o.dispatchers[p].(AudienceReportReader)
+	if !ok {
+		panic("upstreamCapableDispatcher must implement AudienceReportReader")
+	}
+	return r
+}
+
+func (d upstreamCapableDispatcher) AudienceReportEnabled(model.MetricsWindow) error { return nil }
+
+func (d upstreamCapableDispatcher) AudienceReportAccount(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (string, error) {
+	return "acct-1", nil
+}
+
+func (d upstreamCapableDispatcher) SubmitAudienceReport(context.Context, string, model.Provider, string, model.MetricsWindow, []model.ProjectCampaignScope) (*model.InsightReportSubmission, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.InsightReportSubmission{ReportID: "a1", CampaignIDs: []string{"555"}}, nil
+}
+
+func (d upstreamCapableDispatcher) CheckAudienceReport(context.Context, string, model.Provider, string, string) (*model.AudienceReportCheck, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.AudienceReportCheck{Status: model.AccountReportPending}, nil
+}
+
 func keywordReportKey(p model.Provider) model.KeywordReportKey {
 	return model.KeywordReportKey{ProjectID: "p1", Platform: p, AccountID: "acct-1", Window: model.MetricsWindowLast30Days}
 }
@@ -670,6 +698,23 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opSubmitKeywordReport,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.submitKeywordReport(ctx, ctx, upstreamKeywordReader(o, platform), keywordReportKey(platform), []model.ProjectCampaignScope{{PlatformCampaignID: "555"}})
+				return err
+			},
+		},
+		// The report-backed audience read's two upstream calls, likewise.
+		{
+			name: "check audience report",
+			op:   opCheckAudienceReport,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.checkAudienceReport(ctx, ctx, upstreamAudienceReader(o, platform), keywordReportKey(platform), "a1")
+				return err
+			},
+		},
+		{
+			name: "submit audience report",
+			op:   opSubmitAudienceReport,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.submitAudienceReport(ctx, ctx, upstreamAudienceReader(o, platform), keywordReportKey(platform), []model.ProjectCampaignScope{{PlatformCampaignID: "555"}})
 				return err
 			},
 		},

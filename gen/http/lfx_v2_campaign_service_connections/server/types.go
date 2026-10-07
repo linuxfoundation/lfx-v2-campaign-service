@@ -889,6 +889,34 @@ type GetMicrosoftAdsKeywordsResponseBody struct {
 	DataIncomplete bool `form:"data_incomplete" json:"data_incomplete" xml:"data_incomplete"`
 }
 
+// GetMicrosoftAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body.
+type GetMicrosoftAdsAudienceResponseBody struct {
+	// The reporting window these counters cover
+	Window string `form:"window" json:"window" xml:"window"`
+	// One bucket per (age_group, gender), summed over the campaigns this project
+	// owns, from the last finished Microsoft age/gender report that covers every
+	// one of them; ordered by impressions descending. Every bucket covers a
+	// disjoint slice of the same traffic, so counters may be totalled across
+	// buckets. Empty while no such report has finished (metrics_as_of absent).
+	Buckets []*MicrosoftAdsAudienceBucketResponseBody `form:"buckets" json:"buckets" xml:"buckets"`
+	// How many buckets are in `buckets`.
+	BucketCount int `form:"bucket_count" json:"bucket_count" xml:"bucket_count"`
+	// When the Microsoft report these buckets come from was requested (not when it
+	// was collected). ABSENT when no finished report covers every campaign this
+	// project now owns — the first read, or the first after a campaign was added —
+	// and `buckets` is then empty rather than a partial picture.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// True while a newer Microsoft report is building, so a later read will return
+	// newer buckets (or the first ones, when metrics_as_of is absent).
+	MetricsPending bool `form:"metrics_pending" json:"metrics_pending" xml:"metrics_pending"`
+	// True when Microsoft flagged the served report's data as potentially
+	// incomplete (the window's last day may still be aggregating): its counters
+	// may still rise. False when no report is served.
+	DataIncomplete bool `form:"data_incomplete" json:"data_incomplete" xml:"data_incomplete"`
+}
+
 // ResolveGoogleAdsCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body.
@@ -4419,6 +4447,79 @@ type GetMicrosoftAdsKeywordsUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetMicrosoftAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetMicrosoftAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetMicrosoftAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetMicrosoftAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetMicrosoftAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetMicrosoftAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetMicrosoftAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetMicrosoftAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ResolveGoogleAdsCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -5766,6 +5867,28 @@ type MetaAdsAudienceBucketResponseBody struct {
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
 }
 
+// MicrosoftAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type MicrosoftAdsAudienceBucketResponseBody struct {
+	// Microsoft's AgeGroup, verbatim (documented values 13-17, 18-24, 25-34,
+	// 35-49, 50-64, 65+; any other value Microsoft reports, such as an unknown
+	// bucket, is passed through rather than dropped).
+	AgeGroup string `form:"age_group" json:"age_group" xml:"age_group"`
+	// Microsoft's Gender, verbatim (documented as male or female; any other value
+	// Microsoft reports is passed through rather than dropped).
+	Gender string `form:"gender" json:"gender" xml:"gender"`
+	// Impressions over the window
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks over the window
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Spend over the window in micro-units of the ad account's own currency
+	// (Microsoft's Spend times 10^6). This service performs no FX conversion and
+	// does not know the currency.
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// Clicks/Impressions as a fraction, 0 when Impressions is 0
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+}
+
 // CampaignRefResponseBody is used to define fields on response body types.
 type CampaignRefResponseBody struct {
 	// This service's campaign id, as the mutation routes take it.
@@ -6720,6 +6843,32 @@ func NewGetMicrosoftAdsKeywordsResponseBody(res *lfxv2campaignserviceconnections
 		}
 	} else {
 		body.Rows = []*GoogleAdsKeywordResponseBody{}
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudienceResponseBody builds the HTTP response body from
+// the result of the "get-microsoft-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.MicrosoftAdsAudience) *GetMicrosoftAdsAudienceResponseBody {
+	body := &GetMicrosoftAdsAudienceResponseBody{
+		Window:         res.Window,
+		BucketCount:    res.BucketCount,
+		MetricsAsOf:    res.MetricsAsOf,
+		MetricsPending: res.MetricsPending,
+		DataIncomplete: res.DataIncomplete,
+	}
+	if res.Buckets != nil {
+		body.Buckets = make([]*MicrosoftAdsAudienceBucketResponseBody, len(res.Buckets))
+		for i, val := range res.Buckets {
+			if val == nil {
+				body.Buckets[i] = nil
+				continue
+			}
+			body.Buckets[i] = marshalLfxv2campaignserviceconnectionsMicrosoftAdsAudienceBucketToMicrosoftAdsAudienceBucketResponseBody(val)
+		}
+	} else {
+		body.Buckets = []*MicrosoftAdsAudienceBucketResponseBody{}
 	}
 	return body
 }
@@ -10601,6 +10750,84 @@ func NewGetMicrosoftAdsKeywordsUnauthorizedResponseBody(res *lfxv2campaignservic
 	return body
 }
 
+// NewGetMicrosoftAdsAudienceBadRequestResponseBody builds the HTTP response
+// body from the result of the "get-microsoft-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *GetMicrosoftAdsAudienceBadRequestResponseBody {
+	body := &GetMicrosoftAdsAudienceBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudienceConflictResponseBody builds the HTTP response body
+// from the result of the "get-microsoft-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *GetMicrosoftAdsAudienceConflictResponseBody {
+	body := &GetMicrosoftAdsAudienceConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudienceServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "get-microsoft-ads-audience" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetMicrosoftAdsAudienceServiceUnavailableResponseBody {
+	body := &GetMicrosoftAdsAudienceServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudienceInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "get-microsoft-ads-audience" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetMicrosoftAdsAudienceInternalServerErrorResponseBody {
+	body := &GetMicrosoftAdsAudienceInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudienceNotFoundResponseBody builds the HTTP response body
+// from the result of the "get-microsoft-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetMicrosoftAdsAudienceNotFoundResponseBody {
+	body := &GetMicrosoftAdsAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudiencePayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "get-microsoft-ads-audience" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetMicrosoftAdsAudiencePayloadTooLargeResponseBody {
+	body := &GetMicrosoftAdsAudiencePayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudienceUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "get-microsoft-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetMicrosoftAdsAudienceUnauthorizedResponseBody {
+	body := &GetMicrosoftAdsAudienceUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewResolveGoogleAdsCampaignBadRequestResponseBody builds the HTTP response
 // body from the result of the "resolve-google-ads-campaign" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -12441,6 +12668,18 @@ func NewGetMetaAdsAudiencePayload(projectID string, window *string, bearerToken 
 // endpoint payload.
 func NewGetMicrosoftAdsKeywordsPayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetMicrosoftAdsKeywordsPayload {
 	v := &lfxv2campaignserviceconnections.GetMicrosoftAdsKeywordsPayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudiencePayload builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint payload.
+func NewGetMicrosoftAdsAudiencePayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetMicrosoftAdsAudiencePayload {
+	v := &lfxv2campaignserviceconnections.GetMicrosoftAdsAudiencePayload{}
 	v.ProjectID = projectID
 	v.Window = window
 	v.BearerToken = bearerToken

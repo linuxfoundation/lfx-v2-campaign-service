@@ -2509,15 +2509,14 @@ paths:
                             $ref: '#/components/schemas/CreateAudienceRequestBody'
                         example:
                             audience:
-                                inclusion_summary: Nisi repudiandae.
+                                inclusion_summary: Voluptatibus nihil nisi.
                                 platform: hubspot
-                                platform_master_list_id: Quidem velit.
-                                status: built
+                                platform_master_list_id: Velit sunt molestiae eius.
+                                status: building
                                 suppression_list_ids:
-                                    - Eius in reprehenderit nobis hic eos.
-                                    - Eos voluptatem sint hic.
-                                    - Sapiente harum aliquam sunt eum rerum eaque.
-                                    - Facere voluptatibus.
+                                    - Nobis hic eos magni eos voluptatem.
+                                    - Hic ut sapiente harum aliquam sunt eum.
+                                    - Eaque occaecati.
             responses:
                 "201":
                     description: Created response.
@@ -2534,23 +2533,22 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Audience2'
                             example:
-                                brief_id: Repellendus eveniet veritatis impedit aut iste earum.
-                                id: Et provident illo non quisquam iure doloremque.
+                                brief_id: Quisquam iure doloremque.
+                                id: Vel est et.
                                 include_list_ids:
-                                    - Itaque optio consequatur.
-                                    - Sint qui alias voluptatem ut.
-                                    - Ut recusandae modi.
-                                inclusion_summary: Neque quia.
+                                    - Odio enim nam id.
+                                    - Quia vero alias temporibus.
+                                    - Impedit ullam eaque suscipit harum sint neque.
+                                    - Fuga et veniam itaque optio consequatur nulla.
+                                inclusion_summary: Ab laboriosam sunt quis omnis.
                                 platform: hubspot
-                                platform_master_list_id: Exercitationem accusamus pariatur saepe ab qui.
-                                project_id: Ut aliquid.
-                                status: built
+                                platform_master_list_id: Aliquid distinctio repellendus eveniet veritatis impedit aut.
+                                project_id: Ad et provident illo.
+                                status: failed
                                 suppression_list_ids:
-                                    - Laboriosam sunt quis omnis animi.
-                                    - Quis odio enim nam id voluptatem.
-                                    - Vero alias temporibus illum.
-                                    - Ullam eaque suscipit harum.
-                                version: 3195577109543392757
+                                    - Doloribus quod exercitationem accusamus pariatur.
+                                    - Ab qui.
+                                version: 620169576188683777
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -2678,20 +2676,22 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Audience3'
                             example:
-                                brief_id: Commodi qui.
-                                id: Sunt accusantium totam quia.
+                                brief_id: Sunt accusantium totam quia.
+                                id: Ipsum commodi dolores dolore.
                                 include_list_ids:
-                                    - Voluptatum ab totam laboriosam quos omnis deserunt.
-                                    - Consequatur quisquam explicabo.
-                                inclusion_summary: At fugiat.
-                                platform: hubspot
-                                platform_master_list_id: Ipsam sint autem repudiandae asperiores.
-                                project_id: Accusantium debitis adipisci qui iste explicabo.
-                                status: building
-                                suppression_list_ids:
-                                    - Quia consectetur non nulla dolore quibusdam ducimus.
                                     - Soluta quod.
-                                version: 3757950656345890213
+                                    - At fugiat.
+                                    - Omnis inventore voluptatum ab.
+                                    - Laboriosam quos omnis deserunt libero consequatur quisquam.
+                                inclusion_summary: Dolor quia consectetur non nulla dolore.
+                                platform: hubspot
+                                platform_master_list_id: Debitis adipisci.
+                                project_id: Dolore sed.
+                                status: failed
+                                suppression_list_ids:
+                                    - Explicabo minima commodi qui quia.
+                                    - Ipsam sint autem repudiandae asperiores.
+                                version: 4453255951776331763
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -7278,13 +7278,43 @@ paths:
                                       email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      email_id: "112233445566"
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: LOW
                                 campaigns:
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: underspending
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: underspending
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
                                       clicks: 3110
@@ -7354,7 +7384,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError110'
+                                $ref: '#/components/schemas/UnauthorizedError111'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8248,7 +8278,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError116'
+                                $ref: '#/components/schemas/UnauthorizedError117'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8367,7 +8397,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError108'
+                                $ref: '#/components/schemas/UnauthorizedError109'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8467,7 +8497,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError109'
+                                $ref: '#/components/schemas/UnauthorizedError110'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8571,7 +8601,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError107'
+                                $ref: '#/components/schemas/UnauthorizedError108'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -9381,24 +9411,6 @@ paths:
                                       start_date: "2026-08-01"
                                       status: ENABLED
                                       total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
-                                      fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: underspending
-                                      pacing_pct: 87
-                                      pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
                                 days: 30
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
@@ -9432,7 +9444,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError111'
+                                $ref: '#/components/schemas/UnauthorizedError112'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -9526,7 +9538,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError103'
+                                $ref: '#/components/schemas/UnauthorizedError104'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -10275,7 +10287,31 @@ paths:
                                       email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
+                                    - action: Increase daily budget or check for delivery limits
+                                      campaign_id: "24183781329"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
+                                      issue: 'Underspending: 42% of expected spend'
+                                      priority: LOW
                                 campaigns:
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: underspending
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
                                       clicks: 3110
@@ -10363,7 +10399,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError112'
+                                $ref: '#/components/schemas/UnauthorizedError113'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -10457,7 +10493,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError102'
+                                $ref: '#/components/schemas/UnauthorizedError103'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -11207,12 +11243,6 @@ paths:
                                       email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      email_id: "112233445566"
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: LOW
                                 campaigns:
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -11301,7 +11331,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError114'
+                                $ref: '#/components/schemas/UnauthorizedError115'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -11395,7 +11425,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError104'
+                                $ref: '#/components/schemas/UnauthorizedError105'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -12140,12 +12170,6 @@ paths:
                                       email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      email_id: "112233445566"
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: LOW
                                 campaigns:
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -12216,7 +12240,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError113'
+                                $ref: '#/components/schemas/UnauthorizedError114'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -12310,7 +12334,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError106'
+                                $ref: '#/components/schemas/UnauthorizedError107'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -13060,7 +13084,31 @@ paths:
                                       email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
+                                    - action: Increase daily budget or check for delivery limits
+                                      campaign_id: "24183781329"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
+                                      issue: 'Underspending: 42% of expected spend'
+                                      priority: LOW
                                 campaigns:
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: underspending
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
                                       clicks: 3110
@@ -13148,7 +13196,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError115'
+                                $ref: '#/components/schemas/UnauthorizedError116'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -13252,7 +13300,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError105'
+                                $ref: '#/components/schemas/UnauthorizedError106'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -13809,7 +13857,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError97'
+                                $ref: '#/components/schemas/UnauthorizedError98'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -14348,7 +14396,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError99'
+                                $ref: '#/components/schemas/UnauthorizedError100'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -14361,6 +14409,138 @@ paths:
                             example:
                                 code: "404"
                                 message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/microsoft-ads/audience:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-microsoft-ads-audience lfx-v2-campaign-service-connections
+            description: 'Read Microsoft Advertising audience demographics — one bucket per (age group, gender) — for this project''s own campaigns. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, and read from the project''s OWN connection only (never the LF system account). Microsoft serves demographics only through its asynchronous Reporting service (AgeGenderAudienceReportRequest), so buckets come from the last finished report — see metrics_as_of and metrics_pending — while the next one builds; the first read returns no buckets with metrics_pending=true. A report is served only while it covers every campaign the project owns. A project with no Microsoft campaigns of its own receives an empty `buckets` array and Microsoft is not contacted. There is NO device breakdown: Microsoft''s age/gender report has no device dimension. Spend is in the account''s own currency; no FX conversion is performed. Off (400, not supported) unless MICROSOFT_METRICS_ENABLED is true.'
+            operationId: lfx-v2-campaign-service-connections#get-microsoft-ads-audience
+            parameters:
+                - name: window
+                  in: query
+                  description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Microsoft.
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Microsoft.
+                    example: last_7_days
+                    enum:
+                        - today
+                        - last_7_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+                  example: last_7_days
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MicrosoftAdsAudience'
+                            example:
+                                bucket_count: 2
+                                buckets:
+                                    - age_group: 25-34
+                                      clicks: 742
+                                      cost_micros: 3120000
+                                      ctr: 0.0578
+                                      gender: Female
+                                      impressions: 12840
+                                    - age_group: 35-49
+                                      clicks: 401
+                                      cost_micros: 1985000
+                                      ctr: 0.0431
+                                      gender: Male
+                                      impressions: 9310
+                                data_incomplete: false
+                                metrics_as_of: "2026-10-07T14:30:00Z"
+                                metrics_pending: false
+                                window: last_30_days
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError97'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
                     content:
@@ -14454,7 +14634,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError98'
+                                $ref: '#/components/schemas/UnauthorizedError99'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -14501,7 +14681,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: get-microsoft-ads-keywords lfx-v2-campaign-service-connections
-            description: Read Microsoft Advertising keyword performance for this project's own campaigns, in the same row shape as get-google-ads-keywords. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, and read from the project's OWN connection only (never the LF system account). Microsoft serves keyword performance only through its asynchronous Reporting service, which takes minutes, so rows come from the last finished report — see metrics_as_of and metrics_pending — while the next one builds; the first read returns no rows with metrics_pending=true. A report is served only while it covers every campaign the project owns. Saved reports are cached platform data. Off (400, not supported) unless MICROSOFT_METRICS_ENABLED is true. Audience demographics are not offered for Microsoft.
+            description: Read Microsoft Advertising keyword performance for this project's own campaigns, in the same row shape as get-google-ads-keywords. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, and read from the project's OWN connection only (never the LF system account). Microsoft serves keyword performance only through its asynchronous Reporting service, which takes minutes, so rows come from the last finished report — see metrics_as_of and metrics_pending — while the next one builds; the first read returns no rows with metrics_pending=true. A report is served only while it covers every campaign the project owns. Saved reports are cached platform data. Off (400, not supported) unless MICROSOFT_METRICS_ENABLED is true. Age/gender audience demographics are served by get-microsoft-ads-audience.
             operationId: lfx-v2-campaign-service-connections#get-microsoft-ads-keywords
             parameters:
                 - name: window
@@ -14710,7 +14890,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError100'
+                                $ref: '#/components/schemas/UnauthorizedError101'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -14816,7 +14996,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError101'
+                                $ref: '#/components/schemas/UnauthorizedError102'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -14894,25 +15074,25 @@ components:
                           campaign_name: KubeCon NA 2026 - Search
                           email_id: "112233445566"
                           issue: 'Underspending: 42% of expected spend'
-                          priority: HIGH
+                          priority: LOW
                         - action: Increase daily budget or check for delivery limits
                           campaign_id: "24183781329"
                           campaign_name: KubeCon NA 2026 - Search
                           email_id: "112233445566"
                           issue: 'Underspending: 42% of expected spend'
-                          priority: HIGH
+                          priority: LOW
                         - action: Increase daily budget or check for delivery limits
                           campaign_id: "24183781329"
                           campaign_name: KubeCon NA 2026 - Search
                           email_id: "112233445566"
                           issue: 'Underspending: 42% of expected spend'
-                          priority: HIGH
+                          priority: LOW
                         - action: Increase daily budget or check for delivery limits
                           campaign_id: "24183781329"
                           campaign_name: KubeCon NA 2026 - Search
                           email_id: "112233445566"
                           issue: 'Underspending: 42% of expected spend'
-                          priority: HIGH
+                          priority: LOW
                 campaigns:
                     type: array
                     items:
@@ -14929,7 +15109,7 @@ components:
                           impressions: 48200
                           is_search_channel: true
                           name: KubeCon NA 2026 - Search
-                          pacing_label: constrained
+                          pacing_label: overspending
                           pacing_pct: 87
                           pacing_unknown: false
                           platform_campaign_id: "24183781329"
@@ -14947,7 +15127,7 @@ components:
                           impressions: 48200
                           is_search_channel: true
                           name: KubeCon NA 2026 - Search
-                          pacing_label: constrained
+                          pacing_label: overspending
                           pacing_pct: 87
                           pacing_unknown: false
                           platform_campaign_id: "24183781329"
@@ -14965,7 +15145,7 @@ components:
                           impressions: 48200
                           is_search_channel: true
                           name: KubeCon NA 2026 - Search
-                          pacing_label: constrained
+                          pacing_label: overspending
                           pacing_pct: 87
                           pacing_unknown: false
                           platform_campaign_id: "24183781329"
@@ -14983,7 +15163,7 @@ components:
                           impressions: 48200
                           is_search_channel: true
                           name: KubeCon NA 2026 - Search
-                          pacing_label: constrained
+                          pacing_label: overspending
                           pacing_pct: 87
                           pacing_unknown: false
                           platform_campaign_id: "24183781329"
@@ -15025,25 +15205,25 @@ components:
                       campaign_name: KubeCon NA 2026 - Search
                       email_id: "112233445566"
                       issue: 'Underspending: 42% of expected spend'
-                      priority: HIGH
+                      priority: LOW
                     - action: Increase daily budget or check for delivery limits
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
                       email_id: "112233445566"
                       issue: 'Underspending: 42% of expected spend'
-                      priority: HIGH
+                      priority: LOW
                     - action: Increase daily budget or check for delivery limits
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
                       email_id: "112233445566"
                       issue: 'Underspending: 42% of expected spend'
-                      priority: HIGH
+                      priority: LOW
                     - action: Increase daily budget or check for delivery limits
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
                       email_id: "112233445566"
                       issue: 'Underspending: 42% of expected spend'
-                      priority: HIGH
+                      priority: LOW
                 campaigns:
                     - budget_day: 150
                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -15055,7 +15235,7 @@ components:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: constrained
+                      pacing_label: overspending
                       pacing_pct: 87
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
@@ -15073,7 +15253,7 @@ components:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: constrained
+                      pacing_label: overspending
                       pacing_pct: 87
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
@@ -15091,7 +15271,7 @@ components:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: constrained
+                      pacing_label: overspending
                       pacing_pct: 87
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
@@ -15109,7 +15289,7 @@ components:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: constrained
+                      pacing_label: overspending
                       pacing_pct: 87
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
@@ -15446,30 +15626,30 @@ components:
                 brief_id:
                     type: string
                     description: Owning brief
-                    example: Reiciendis eum possimus non in.
+                    example: Dolores sunt facilis aperiam distinctio unde.
                 etag:
                     type: string
                     description: ETag header value (mirrors version)
-                    example: Eaque veritatis aut quis totam ut fugit.
+                    example: Dolorum ut veniam repudiandae.
                 id:
                     type: string
                     description: Audience UUID
-                    example: Magni repellendus impedit.
+                    example: Temporibus eveniet omnis impedit illo officiis delectus.
                 include_list_ids:
                     type: array
                     items:
                         type: string
-                        example: Et sunt at incidunt ipsam ut ad.
+                        example: Rerum pariatur ut consequatur quos et sunt.
                     description: Existing lists the send goes to directly when the audience was attached to several lists; platform_master_list_id is then the first of them. Absent for a single master list
                     example:
-                        - Deleniti repellat inventore consequuntur aperiam.
+                        - Ipsam ut.
+                        - Sunt perferendis deleniti repellat inventore consequuntur aperiam.
                         - Omnis rem corporis ut quae.
                         - Inventore ullam officiis quia.
-                        - Blanditiis dolorum ut.
                 inclusion_summary:
                     type: string
                     description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                    example: Mollitia tempore rerum pariatur ut.
+                    example: At possimus ullam repellendus.
                 platform:
                     type: string
                     description: Platform the audience is built on
@@ -15479,15 +15659,15 @@ components:
                 platform_master_list_id:
                     type: string
                     description: Pointer to the built master list in the platform (empty until built)
-                    example: Rerum eos.
+                    example: Eum possimus non in dolores.
                 project_id:
                     type: string
                     description: Owning project
-                    example: Dolores sunt facilis aperiam distinctio unde.
+                    example: Reiciendis omnis magni repellendus impedit.
                 status:
                     type: string
                     description: Build lifecycle status
-                    example: failed
+                    example: building
                     enum:
                         - building
                         - built
@@ -15496,36 +15676,34 @@ components:
                     type: array
                     items:
                         type: string
-                        example: Blanditiis qui qui quod.
+                        example: Rerum eos.
                     description: Platform suppression list ids applied to the master
                     example:
-                        - Commodi modi error.
-                        - Dicta commodi.
-                        - Quisquam at possimus ullam.
+                        - Qui qui quod placeat quod commodi modi.
+                        - Laboriosam dicta commodi aut.
                 version:
                     type: integer
                     description: Optimistic-concurrency version
-                    example: 1879937085439896091
+                    example: 1661734852763896468
                     format: int64
             example:
-                brief_id: Beatae exercitationem officia quia qui quidem.
-                etag: Fugit qui et est.
-                id: Pariatur molestias in quo non recusandae voluptas.
+                brief_id: Quo non recusandae voluptas.
+                etag: Amet officia mollitia et vel et.
+                id: Veritatis aut quis totam ut.
                 include_list_ids:
-                    - Officia mollitia et vel et vel.
-                    - Provident modi eius corporis ea.
-                    - Asperiores et est cupiditate quidem laudantium.
-                inclusion_summary: Sit provident cumque sit nihil.
-                platform: hubspot
-                platform_master_list_id: Facere iusto molestiae et.
-                project_id: Omnis non odit voluptas autem quod.
-                status: failed
-                suppression_list_ids:
-                    - Numquam et.
-                    - Sit iusto quidem repudiandae enim.
                     - Voluptas vel est ullam et ducimus.
                     - Nobis et quam deleniti.
-                version: 8276929358631062865
+                    - Sit provident cumque sit nihil.
+                inclusion_summary: Iusto quidem.
+                platform: hubspot
+                platform_master_list_id: Non odit voluptas autem.
+                project_id: Et pariatur molestias.
+                status: failed
+                suppression_list_ids:
+                    - Beatae exercitationem officia quia qui quidem.
+                    - Ut facere iusto molestiae et.
+                    - Quia numquam et voluptas.
+                version: 2481734397979321064
             required:
                 - id
                 - project_id
@@ -15543,7 +15721,7 @@ components:
                 id:
                     type: string
                     description: Audience UUID
-                    example: Odit velit amet ad.
+                    example: Velit amet ad non saepe distinctio dolorem.
                 include_list_ids:
                     type: array
                     items:
@@ -15570,7 +15748,7 @@ components:
                 project_id:
                     type: string
                     description: Owning project
-                    example: Saepe distinctio dolorem vel a animi veniam.
+                    example: A animi veniam.
                 status:
                     type: string
                     description: Build lifecycle status
@@ -16244,27 +16422,27 @@ components:
                 hubspot_url:
                     type: string
                     description: Deep link to the list in the HubSpot UI
-                    example: Et est repellendus.
+                    example: Nesciunt dolores inventore incidunt.
                 list_id:
                     type: string
                     description: HubSpot list id
-                    example: Labore animi nemo aperiam laborum aut velit.
+                    example: Doloremque non earum nostrum.
                 list_type:
                     type: string
                     description: HubSpot processing type (DYNAMIC, MANUAL, SNAPSHOT)
-                    example: Atque dolorem animi quia amet quis quia.
+                    example: Quidem quas ad.
                 name:
                     type: string
                     description: HubSpot list name
-                    example: Quas ad quia quae nesciunt dolores inventore.
+                    example: Esse et non dolores cum quo.
                 reason:
                     type: string
                     description: Human-readable justification for the assigned signal
-                    example: Eum fuga maiores.
+                    example: Nemo aperiam laborum aut.
                 scope:
                     type: string
                     description: Speaker edition scope; set only when signal is event_speakers
-                    example: current
+                    example: past
                     enum:
                         - current
                         - past
@@ -16272,7 +16450,7 @@ components:
                 signal:
                     type: string
                     description: Why this list qualifies for the event's audience
-                    example: added
+                    example: event_speakers
                     enum:
                         - last_sent
                         - event_registration
@@ -16286,17 +16464,17 @@ components:
                 size:
                     type: integer
                     description: Membership size, when HubSpot reported one
-                    example: 8208770064307966956
+                    example: 9142153875141330048
                     format: int64
             example:
-                hubspot_url: Eos id architecto eos.
-                list_id: Assumenda quos deleniti dicta.
-                list_type: Perspiciatis totam voluptatem qui aspernatur.
-                name: Iusto nulla saepe animi quam doloremque.
-                reason: Illum id nemo non.
-                scope: current_past
-                signal: page_view
-                size: 5094351649354642767
+                hubspot_url: Quam doloremque voluptatem pariatur.
+                list_id: Voluptas eum fuga maiores quas atque dolorem.
+                list_type: Dicta temporibus iusto nulla.
+                name: Quia amet quis quia.
+                reason: Est repellendus maxime assumenda quos.
+                scope: past
+                signal: project_opt_in
+                size: 4742968495584133548
             required:
                 - list_id
                 - name
@@ -16312,7 +16490,7 @@ components:
                 inspected:
                     type: integer
                     description: How many candidate lists were inspected before the bound was reached
-                    example: 8894697203365350188
+                    example: 6394616814947229973
                     format: int64
                 lists:
                     type: array
@@ -16336,27 +16514,11 @@ components:
                           scope: past
                           signal: education_enrollment
                           size: 6183587295531086622
-                        - hubspot_url: Aut est nostrum nulla voluptatem similique.
-                          list_id: Qui molestiae deleniti et mollitia in laborum.
-                          list_type: Nam voluptatibus totam ex ut.
-                          name: Aut quis molestias.
-                          reason: Non ut sed iusto deleniti quam quisquam.
-                          scope: past
-                          signal: education_enrollment
-                          size: 6183587295531086622
-                        - hubspot_url: Aut est nostrum nulla voluptatem similique.
-                          list_id: Qui molestiae deleniti et mollitia in laborum.
-                          list_type: Nam voluptatibus totam ex ut.
-                          name: Aut quis molestias.
-                          reason: Non ut sed iusto deleniti quam quisquam.
-                          scope: past
-                          signal: education_enrollment
-                          size: 6183587295531086622
                 missing_signals:
                     type: array
                     items:
                         type: string
-                        example: last_sent
+                        example: education_enrollment
                         enum:
                             - last_sent
                             - event_registration
@@ -16369,9 +16531,10 @@ components:
                             - added
                     description: Signals with no qualifying list in this portal
                     example:
-                        - event_speakers
                         - education_enrollment
-                        - uncertain
+                        - event_registration
+                        - education_enrollment
+                        - added
             example:
                 event:
                     brand_short: KubeCon
@@ -16381,7 +16544,7 @@ components:
                         - Sed adipisci eveniet et aut.
                         - Odit eum commodi autem expedita dolorem.
                     event_name: KubeCon Europe 2026
-                inspected: 3841101250259084673
+                inspected: 6286525032272355182
                 lists:
                     - hubspot_url: Aut est nostrum nulla voluptatem similique.
                       list_id: Qui molestiae deleniti et mollitia in laborum.
@@ -16408,10 +16571,9 @@ components:
                       signal: education_enrollment
                       size: 6183587295531086622
                 missing_signals:
-                    - education_enrollment
                     - event_registration
-                    - added
-                    - education_enrollment
+                    - event_speakers
+                    - lf_newsletter_opt_in
             required:
                 - lists
                 - missing_signals
@@ -16426,11 +16588,13 @@ components:
                     type: array
                     items:
                         type: string
-                        example: Est eligendi nulla sunt molestias ut.
+                        example: Modi eius corporis ea facilis.
                     description: Event dates in ISO form; drives the master list's quarter segment
                     example:
-                        - Quae sapiente et omnis.
-                        - Omnis reprehenderit exercitationem est sequi quidem.
+                        - Est cupiditate quidem laudantium a ut.
+                        - Qui et est aperiam est sed.
+                        - Eligendi nulla.
+                        - Molestias ut non.
                 event_name:
                     type: string
                     description: Event name as the page declares it
@@ -16438,8 +16602,9 @@ components:
             example:
                 brand_short: KubeCon
                 event_dates:
-                    - Delectus officia aut doloremque non earum nostrum.
-                    - Esse et non dolores cum quo.
+                    - Sapiente et omnis ex omnis reprehenderit exercitationem.
+                    - Sequi quidem.
+                    - Aut delectus officia.
                 event_name: KubeCon Europe 2026
             required:
                 - event_name
@@ -16449,7 +16614,7 @@ components:
                 inclusion_summary:
                     type: string
                     description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                    example: Voluptatem repellat laudantium consequatur.
+                    example: Beatae laudantium voluptatem necessitatibus perferendis.
                 platform:
                     type: string
                     description: Platform the audience is built on
@@ -16459,11 +16624,11 @@ components:
                 platform_master_list_id:
                     type: string
                     description: Pointer to the built master list in the platform (empty until built)
-                    example: Libero dolor est.
+                    example: Est vitae sed velit.
                 status:
                     type: string
                     description: Build lifecycle status
-                    example: building
+                    example: failed
                     enum:
                         - building
                         - built
@@ -16472,19 +16637,21 @@ components:
                     type: array
                     items:
                         type: string
-                        example: Sed velit consequatur consequuntur.
+                        example: Consequuntur nemo tenetur itaque voluptas ut.
                     description: Platform suppression list ids applied to the master
                     example:
-                        - Itaque voluptas.
-                        - Doloremque suscipit sequi.
+                        - Sequi autem voluptatem repellat laudantium consequatur hic.
+                        - Iusto officiis omnis autem libero sapiente eos.
+                        - Ea voluptas maxime corporis quis tempore.
+                        - Suscipit quia voluptatibus.
             example:
-                inclusion_summary: Iusto beatae laudantium voluptatem necessitatibus perferendis.
+                inclusion_summary: Autem dolorum veniam.
                 platform: hubspot
-                platform_master_list_id: Officiis omnis.
+                platform_master_list_id: Quia a sed atque.
                 status: failed
                 suppression_list_ids:
-                    - Sapiente eos consequatur ea voluptas maxime.
-                    - Quis tempore voluptatibus suscipit quia.
+                    - Incidunt ut ut est optio accusamus ad.
+                    - Excepturi sit dolores nostrum.
             required:
                 - platform
         AudienceLastSentEmail:
@@ -16493,11 +16660,11 @@ components:
                 email_id:
                     type: string
                     description: HubSpot marketing email id
-                    example: Veniam quos sunt.
+                    example: Officia praesentium nulla quia vel veniam quos.
                 email_name:
                     type: string
                     description: Email name
-                    example: Quo neque.
+                    example: Consequatur quo neque.
                 hubspot_url:
                     type: string
                     description: Deep link to the email in the HubSpot UI
@@ -16562,11 +16729,11 @@ components:
                 hubspot_url:
                     type: string
                     description: Deep link to the list in the HubSpot UI; absent when it no longer resolves
-                    example: Dolor sed recusandae doloribus molestias animi.
+                    example: Maiores qui libero rerum dolor.
                 list_id:
                     type: string
                     description: HubSpot list id
-                    example: Laborum et illo molestiae ut sed modi.
+                    example: Dolore velit et.
                 missing:
                     type: boolean
                     description: True when the referenced list could not be resolved
@@ -16574,23 +16741,23 @@ components:
                 name:
                     type: string
                     description: HubSpot list name; empty when the list no longer resolves
-                    example: Quaerat illum qui.
+                    example: Laborum et illo molestiae ut sed modi.
                 resolved_from_legacy_id:
                     type: string
                     description: Legacy list id this row was translated from
-                    example: Et maiores qui libero.
+                    example: Qui consequatur delectus qui.
                 size:
                     type: integer
                     description: Membership size, when HubSpot reported one
-                    example: 3460314880287234291
+                    example: 7820863349737805745
                     format: int64
             example:
-                hubspot_url: Ad nostrum ut officia praesentium nulla quia.
-                list_id: Enim assumenda quia rem consequatur omnis alias.
-                missing: false
-                name: Odit molestiae omnis.
-                resolved_from_legacy_id: Repudiandae repudiandae soluta expedita numquam est.
-                size: 6540292260469155950
+                hubspot_url: Est sequi ad nostrum.
+                list_id: Recusandae doloribus molestias animi est enim.
+                missing: true
+                name: Quia rem consequatur omnis alias exercitationem odit.
+                resolved_from_legacy_id: Sit omnis repudiandae repudiandae soluta expedita.
+                size: 4076911003900430619
             required:
                 - list_id
                 - name
@@ -16601,25 +16768,25 @@ components:
                 hubspot_url:
                     type: string
                     description: Deep link to the list in the HubSpot UI
-                    example: Aut enim.
+                    example: Soluta deserunt hic officia.
                 list_id:
                     type: string
                     description: HubSpot list id
-                    example: Dolore itaque soluta.
+                    example: Dolorum nostrum fuga voluptatem et optio.
                 name:
                     type: string
                     description: HubSpot list name
-                    example: Hic officia ut et velit.
+                    example: Iusto possimus ipsa repellat necessitatibus voluptatem ut.
                 size:
                     type: integer
                     description: Membership size, when HubSpot reported one
-                    example: 6930053852844917333
+                    example: 3938821161039286773
                     format: int64
             example:
-                hubspot_url: Et dolore velit et.
-                list_id: Id eius.
-                name: Assumenda consequatur repellat vitae laboriosam qui.
-                size: 7999247744496593163
+                hubspot_url: Consequatur repellat vitae laboriosam qui sed aut.
+                list_id: Et velit quod architecto aut enim.
+                name: Id eius.
+                size: 2600252205108256422
             required:
                 - list_id
                 - name
@@ -17085,7 +17252,7 @@ components:
                 category:
                     type: string
                     description: Which group the row belongs to
-                    example: event_specific
+                    example: standard
                     enum:
                         - standard
                         - brand
@@ -17093,36 +17260,36 @@ components:
                 hubspot_url:
                     type: string
                     description: Deep link to the list in the HubSpot UI
-                    example: Eaque impedit omnis.
+                    example: Ipsum rerum et sit.
                 key:
                     type: string
                     description: Stable row key for selection state
-                    example: Corrupti tempore.
+                    example: Architecto eos.
                 label:
                     type: string
                     description: Display label
-                    example: Et accusamus sint at ipsum rerum.
+                    example: Veritatis facilis pariatur illo velit cumque aut.
                 list_id:
                     type: string
                     description: HubSpot list id
-                    example: Sit nam recusandae quidem.
+                    example: In autem occaecati exercitationem doloribus tenetur.
                 name:
                     type: string
                     description: HubSpot list name
-                    example: Quaerat sunt dolore in.
+                    example: Tempore molestiae et.
                 size:
                     type: integer
                     description: Membership size, when HubSpot reported one
-                    example: 3833383442388009302
+                    example: 4963249250449627622
                     format: int64
             example:
-                category: standard
-                hubspot_url: Repellat necessitatibus voluptatem.
-                key: In est est totam hic ut quod.
-                label: Voluptatem omnis.
-                list_id: Illum natus sit dolorum.
-                name: Fuga voluptatem et optio quisquam.
-                size: 5973594802769092834
+                category: event_specific
+                hubspot_url: Labore illum natus.
+                key: Recusandae quidem est quaerat sunt.
+                label: In ex consectetur.
+                list_id: Eaque impedit omnis.
+                name: In est est totam hic ut quod.
+                size: 8316756857540092391
             required:
                 - key
                 - label
@@ -17136,15 +17303,15 @@ components:
                 clear_suppression_lists:
                     type: boolean
                     description: Set true to remove all suppression lists (round-trips where an empty array cannot)
-                    example: false
+                    example: true
                 inclusion_summary:
                     type: string
                     description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                    example: Facere eos ipsa amet.
+                    example: Magnam non occaecati omnis voluptate.
                 platform_master_list_id:
                     type: string
                     description: Pointer to the built master list in the platform (empty until built)
-                    example: Aut quia a sed atque est.
+                    example: Soluta quae dignissimos.
                 status:
                     type: string
                     description: Build lifecycle status
@@ -17157,24 +17324,20 @@ components:
                     type: array
                     items:
                         type: string
-                        example: Incidunt ut ut est optio accusamus ad.
+                        example: Distinctio similique fugit accusamus aperiam.
                     description: Platform suppression list ids applied to the master
                     example:
-                        - Sit dolores nostrum non autem dolorum.
-                        - Expedita velit soluta quae dignissimos repellendus.
-                        - Similique fugit accusamus aperiam.
-                        - Est rerum ea eius voluptatem alias deleniti.
+                        - Rerum ea eius voluptatem alias deleniti.
+                        - Facere eos ipsa amet.
             description: 'Partial update for a campaign audience; only supplied fields change. IMMUTABILITY: once the audience records the HubSpot portal its lists were built in, platform_master_list_id and suppression_list_ids are frozen and a request that would CHANGE either is refused 409 with reason=audience_provenance_immutable; the remedy is to rebuild the audience, which re-creates its lists under the current connection. Re-sending the values a read returned is not a change and is never refused, suppression ids are compared as a set so reordering them is also not a change, and status and inclusion_summary stay editable throughout. The reason it cannot be relaxed: a PATCH carries ids rather than a credential, so the service cannot verify which portal new ids belong to, and dispatch checks the recorded portal against the connection it resolves rather than against the ids -- so an unverified change would be APPROVED at send time. Audiences created before provenance existed record no portal, are not backfilled, and remain fully editable.'
             example:
-                clear_suppression_lists: true
-                inclusion_summary: Eveniet omnis impedit illo officiis delectus.
-                platform_master_list_id: Occaecati omnis voluptate voluptatibus est natus quibusdam.
-                status: failed
+                clear_suppression_lists: false
+                inclusion_summary: Itaque autem sint aut vero.
+                platform_master_list_id: Quibusdam eius dolores.
+                status: built
                 suppression_list_ids:
-                    - Alias est.
-                    - Nihil sint tempora consequatur velit omnis.
-                    - Quo quis et molestiae dignissimos autem.
-                    - Autem sint aut vero vel rerum labore.
+                    - Odio nihil sint tempora consequatur velit.
+                    - Est quo quis et molestiae dignissimos.
             required:
                 - platform
         BadRequestError:
@@ -19234,15 +19397,14 @@ components:
                     $ref: '#/components/schemas/AudienceInput'
             example:
                 audience:
-                    inclusion_summary: Nisi repudiandae.
+                    inclusion_summary: Voluptatibus nihil nisi.
                     platform: hubspot
-                    platform_master_list_id: Quidem velit.
-                    status: built
+                    platform_master_list_id: Velit sunt molestiae eius.
+                    status: building
                     suppression_list_ids:
-                        - Eius in reprehenderit nobis hic eos.
-                        - Eos voluptatem sint hic.
-                        - Sapiente harum aliquam sunt eum rerum eaque.
-                        - Facere voluptatibus.
+                        - Nobis hic eos magni eos voluptatem.
+                        - Hic ut sapiente harum aliquam sunt eum.
+                        - Eaque occaecati.
             required:
                 - audience
         CreateBriefRequestBody:
@@ -22524,6 +22686,125 @@ components:
             required:
                 - access_token
                 - app_secret
+        MicrosoftAdsAudience:
+            type: object
+            properties:
+                bucket_count:
+                    type: integer
+                    description: How many buckets are in `buckets`.
+                    example: 2
+                    format: int64
+                buckets:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/MicrosoftAdsAudienceBucket'
+                    description: One bucket per (age_group, gender), summed over the campaigns this project owns, from the last finished Microsoft age/gender report that covers every one of them; ordered by impressions descending. Every bucket covers a disjoint slice of the same traffic, so counters may be totalled across buckets. Empty while no such report has finished (metrics_as_of absent).
+                    example:
+                        - age_group: 25-34
+                          clicks: 742
+                          cost_micros: 3120000
+                          ctr: 0.0578
+                          gender: Female
+                          impressions: 12840
+                        - age_group: 35-49
+                          clicks: 401
+                          cost_micros: 1985000
+                          ctr: 0.0431
+                          gender: Male
+                          impressions: 9310
+                data_incomplete:
+                    type: boolean
+                    description: 'True when Microsoft flagged the served report''s data as potentially incomplete (the window''s last day may still be aggregating): its counters may still rise. False when no report is served.'
+                    example: false
+                metrics_as_of:
+                    type: string
+                    description: When the Microsoft report these buckets come from was requested (not when it was collected). ABSENT when no finished report covers every campaign this project now owns — the first read, or the first after a campaign was added — and `buckets` is then empty rather than a partial picture.
+                    example: "2026-10-07T14:30:00Z"
+                    format: date-time
+                metrics_pending:
+                    type: boolean
+                    description: True while a newer Microsoft report is building, so a later read will return newer buckets (or the first ones, when metrics_as_of is absent).
+                    example: false
+                window:
+                    type: string
+                    description: The reporting window these counters cover
+                    example: today
+                    enum:
+                        - today
+                        - last_7_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+            example:
+                bucket_count: 2
+                buckets:
+                    - age_group: 25-34
+                      clicks: 742
+                      cost_micros: 3120000
+                      ctr: 0.0578
+                      gender: Female
+                      impressions: 12840
+                    - age_group: 35-49
+                      clicks: 401
+                      cost_micros: 1985000
+                      ctr: 0.0431
+                      gender: Male
+                      impressions: 9310
+                data_incomplete: false
+                metrics_as_of: "2026-10-07T14:30:00Z"
+                metrics_pending: false
+                window: last_30_days
+            required:
+                - window
+                - buckets
+                - bucket_count
+                - metrics_pending
+                - data_incomplete
+        MicrosoftAdsAudienceBucket:
+            type: object
+            properties:
+                age_group:
+                    type: string
+                    description: Microsoft's AgeGroup, verbatim (documented values 13-17, 18-24, 25-34, 35-49, 50-64, 65+; any other value Microsoft reports, such as an unknown bucket, is passed through rather than dropped).
+                    example: 25-34
+                clicks:
+                    type: integer
+                    description: Clicks over the window
+                    example: 742
+                    format: int64
+                cost_micros:
+                    type: integer
+                    description: Spend over the window in micro-units of the ad account's own currency (Microsoft's Spend times 10^6). This service performs no FX conversion and does not know the currency.
+                    example: 3120000
+                    format: int64
+                ctr:
+                    type: number
+                    description: Clicks/Impressions as a fraction, 0 when Impressions is 0
+                    example: 0.0578
+                    format: double
+                gender:
+                    type: string
+                    description: Microsoft's Gender, verbatim (documented as male or female; any other value Microsoft reports is passed through rather than dropped).
+                    example: Female
+                impressions:
+                    type: integer
+                    description: Impressions over the window
+                    example: 12840
+                    format: int64
+            example:
+                age_group: 25-34
+                clicks: 742
+                cost_micros: 3120000
+                ctr: 0.0578
+                gender: Female
+                impressions: 12840
+            required:
+                - age_group
+                - gender
+                - impressions
+                - clicks
+                - cost_micros
+                - ctr
         MicrosoftAdsConnection:
             type: object
             properties:
@@ -26199,6 +26480,24 @@ components:
                 - code
                 - message
         UnauthorizedError116:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "401"
+                message:
+                    type: string
+                    description: Error message
+                    example: Unauthorized.
+            description: Unauthorized
+            example:
+                code: "401"
+                message: Unauthorized.
+            required:
+                - code
+                - message
+        UnauthorizedError117:
             type: object
             properties:
                 code:
