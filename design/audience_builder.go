@@ -296,7 +296,8 @@ var AudienceComposeRecordedAudience = Type("audience-compose-recorded-audience",
 	Attribute("id", String, "Audience id")
 	Attribute("status", String, "Audience status; always built for a recorded compose")
 	Attribute("version", Int64, "Optimistic-concurrency version")
-	Attribute("platform_master_list_id", String, "The master list this audience sends to")
+	Attribute("platform_master_list_id", String, "The master list this audience sends to; for a multi-list attach, the first of include_list_ids")
+	Attribute("include_list_ids", ArrayOf(String), "Existing lists the send goes to directly, when the audience was attached to several lists instead of one master; absent for a single master")
 	Required("id", "status", "version", "platform_master_list_id")
 })
 
@@ -320,24 +321,35 @@ var AudienceComposeMasterResult = Type("audience-compose-master-result", func() 
 // is why the service reads every one of them back from the project's portal before
 // recording anything, and why the portal is still stamped server-side rather than taken
 // from the caller.
+//
+// EXACTLY ONE of master_list_id or a non-empty include_list_ids is required, which the
+// attribute types cannot express, so the service enforces it (400 otherwise).
+// include_list_ids sends to several existing lists directly -- a HubSpot email's recipients
+// are an array -- without composing a master that unions them; an id named in both
+// include_list_ids and suppression_list_ids is refused 400 rather than resolved, because it
+// would exclude that list's whole audience.
 var AudienceAttachExistingInput = Type("audience-attach-existing-input", func() {
 	Attribute("brief_id", String, "The brief to record the audience under", func() {
 		Format(FormatUUID)
 	})
-	Attribute("master_list_id", String, "The existing contact list the send goes to", func() {
+	Attribute("master_list_id", String, "The existing contact list the send goes to. Exactly one of master_list_id or include_list_ids is required", func() {
 		MinLength(1)
+	})
+	Attribute("include_list_ids", ArrayOf(String), "Several existing contact lists the send goes to directly, with no composed master. Exactly one of master_list_id or include_list_ids is required; the first id is recorded as platform_master_list_id", func() {
+		MaxLength(200)
 	})
 	Attribute("suppression_list_ids", ArrayOf(String), "Existing lists the send suppresses", func() {
 		MaxLength(200)
 	})
 	Attribute("inclusion_summary", String, "Operator-visible provenance for the recorded audience; derived from the master list when omitted")
-	Required("brief_id", "master_list_id")
+	Required("brief_id")
 })
 
 // AudienceAttachExistingResult reports the verified lists and the row recorded for them.
 var AudienceAttachExistingResult = Type("audience-attach-existing-result", func() {
 	Attribute("master", AudienceComposedList, "The existing master list, as read back from the portal")
 	Attribute("suppression_list_ids", ArrayOf(String), "The suppression list ids recorded beside it")
+	Attribute("include_list_ids", ArrayOf(String), "Every include list the send goes to, when include_list_ids was supplied; absent for a single master_list_id")
 	Attribute("audience", AudienceComposeRecordedAudience, "The audience row recorded for brief_id")
 	Required("master", "suppression_list_ids", "audience")
 })

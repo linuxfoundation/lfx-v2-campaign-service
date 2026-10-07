@@ -19,13 +19,15 @@ import (
 type attachExplorer struct {
 	AudienceExplorer
 
-	calls   int
-	outcome *audience.ComposeOutcome
-	err     error
+	calls      int
+	includeIDs []string
+	outcome    *audience.ComposeOutcome
+	err        error
 }
 
-func (f *attachExplorer) AttachExisting(_ context.Context, _, masterID string, suppressionIDs []string) (*audience.ComposeOutcome, error) {
+func (f *attachExplorer) AttachExisting(_ context.Context, _ string, includeIDs, _ []string) (*audience.ComposeOutcome, error) {
 	f.calls++
+	f.includeIDs = includeIDs
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -34,7 +36,7 @@ func (f *attachExplorer) AttachExisting(_ context.Context, _, masterID string, s
 
 func attachPayload(briefID string) *explore.AttachExistingAudiencePayload {
 	return &explore.AttachExistingAudiencePayload{ProjectID: "proj-1", Attach: &explore.AudienceAttachExistingInput{
-		BriefID: briefID, MasterListID: "31027", SuppressionListIds: []string{"s1", "s2"},
+		BriefID: briefID, MasterListID: strptr("31027"), SuppressionListIds: []string{"s1", "s2"},
 	}}
 }
 
@@ -91,6 +93,113 @@ func TestAttachExistingAudienceMapsAMissingListTo404(t *testing.T) {
 	svc.SetBriefRepo(briefs)
 
 	_, err := svc.AttachExistingAudience(context.Background(), attachPayload("brief-1"))
+	var nf *explore.NotFoundError
+	require.ErrorAs(t, err, &nf)
+	assert.Zero(t, repo.calls)
+}
+
+func multiAttachPayload(includes, suppression []string) *explore.AttachExistingAudiencePayload {
+	return &explore.AttachExistingAudiencePayload{ProjectID: "proj-1", Attach: &explore.AudienceAttachExistingInput{
+		BriefID: "brief-1", IncludeListIds: includes, SuppressionListIds: suppression,
+	}}
+}
+
+func attachService(t *testing.T, explorer *attachExplorer) (*AudienceExploreService, *countingAudienceRepo) {
+	t.Helper()
+	repo := newCountingAudienceRepo()
+	briefs := newFakeBriefRepo()
+	seedBrief(t, briefs, "proj-1", "brief-1")
+	svc := NewAudienceExploreService(explorer)
+	svc.SetAudienceRepo(repo)
+	svc.SetBriefRepo(briefs)
+	return svc, repo
+}
+
+// Several existing lists attached directly: every one reaches the explorer (trimmed, de-duplicated,
+// in order), the row records them all in include_list_ids with the first as its master, and the
+// response carries them on both the result and its audience.
+func TestAttachExistingAudienceRecordsSeveralIncludeLists(t *testing.T) {
+	explorer := &attachExplorer{outcome: &audience.ComposeOutcome{
+		Master:                 audience.ComposedList{ListRow: audience.ListRow{ListID: "31027", Name: "Past attendees"}},
+		SourceListIDs:          []string{"31027", "31028"},
+		PortalID:               "8112310",
+		AttachedSuppressionIDs: []string{"s1"},
+		Attached:               true,
+	}}
+	svc, repo := attachService(t, explorer)
+
+	res, err := svc.AttachExistingAudience(context.Background(),
+		multiAttachPayload([]string{" 31027 ", "31028", "31027"}, []string{"s1"}))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"31027", "31028"}, explorer.includeIDs, "trimmed and de-duplicated, order kept")
+	assert.Equal(t, []string{"31027", "31028"}, res.IncludeListIds)
+	assert.Equal(t, []string{"31027", "31028"}, res.Audience.IncludeListIds)
+	assert.Equal(t, "31027", res.Audience.PlatformMasterListID)
+
+	rows := repo.rows()
+	require.Len(t, rows, 1)
+	assert.Equal(t, "31027", rows[0].PlatformMasterListID, "the master holds the first include list")
+	send, serr := rows[0].SendListIDs()
+	require.NoError(t, serr)
+	assert.Equal(t, []string{"31027", "31028"}, send)
+	assert.Equal(t, "8112310", rows[0].BuiltInPortalID)
+	assert.Equal(t, "Reused 2 existing lists (first: Past attendees) with 1 suppression list(s)", rows[0].InclusionSummary)
+}
+
+// The single master_list_id form is unchanged: one list to the explorer, no include_list_ids on
+// the row or the response.
+func TestAttachExistingAudienceSingleMasterRecordsNoIncludeList(t *testing.T) {
+	explorer := &attachExplorer{outcome: &audience.ComposeOutcome{
+		Master:        audience.ComposedList{ListRow: audience.ListRow{ListID: "31027", Name: "m"}},
+		SourceListIDs: []string{"31027"}, PortalID: "8112310", Attached: true,
+	}}
+	svc, repo := attachService(t, explorer)
+
+	res, err := svc.AttachExistingAudience(context.Background(), attachPayload("brief-1"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"31027"}, explorer.includeIDs)
+	assert.Nil(t, res.IncludeListIds)
+	assert.Nil(t, res.Audience.IncludeListIds)
+	require.Len(t, repo.rows(), 1)
+	assert.Nil(t, repo.rows()[0].IncludeListIDs)
+}
+
+// The request must name its lists exactly one way, and an include list that is also suppressed is
+// refused: HubSpot applies exclusions after inclusions, so it would silently drop that whole list.
+// Every refusal is a 400 before the portal is read or anything is recorded.
+func TestAttachExistingAudienceRefusesAmbiguousOrContradictoryLists(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   *explore.AudienceAttachExistingInput
+		want string
+	}{
+		{"neither", &explore.AudienceAttachExistingInput{BriefID: "brief-1"}, "required"},
+		{"blank master and no includes", &explore.AudienceAttachExistingInput{BriefID: "brief-1", MasterListID: strptr("  ")}, "required"},
+		{"both", &explore.AudienceAttachExistingInput{BriefID: "brief-1", MasterListID: strptr("31027"), IncludeListIds: []string{"31028"}}, "not both"},
+		{"blank include entry", &explore.AudienceAttachExistingInput{BriefID: "brief-1", IncludeListIds: []string{"31027", " "}}, "blank"},
+		{"include also suppressed", &explore.AudienceAttachExistingInput{BriefID: "brief-1",
+			IncludeListIds: []string{"31027", "31028"}, SuppressionListIds: []string{"s1", " 31028 "}}, "31028"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			explorer := &attachExplorer{}
+			svc, repo := attachService(t, explorer)
+			_, err := svc.AttachExistingAudience(context.Background(),
+				&explore.AttachExistingAudiencePayload{ProjectID: "proj-1", Attach: tc.in})
+			var bad *explore.BadRequestError
+			require.ErrorAs(t, err, &bad)
+			assert.Contains(t, bad.Message, tc.want)
+			assert.Zero(t, explorer.calls, "refused before the portal is read")
+			assert.Zero(t, repo.calls, "nothing recorded")
+		})
+	}
+}
+
+// A missing include list keeps the existing not-found mapping: 404, nothing recorded.
+func TestAttachExistingAudienceMapsAMissingIncludeListTo404(t *testing.T) {
+	explorer := &attachExplorer{err: audience.ErrListNotFound}
+	svc, repo := attachService(t, explorer)
+
+	_, err := svc.AttachExistingAudience(context.Background(), multiAttachPayload([]string{"31027", "404"}, nil))
 	var nf *explore.NotFoundError
 	require.ErrorAs(t, err, &nf)
 	assert.Zero(t, repo.calls)

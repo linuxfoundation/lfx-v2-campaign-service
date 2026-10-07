@@ -159,6 +159,9 @@ type AttachExistingAudienceResponseBody struct {
 	Master *AudienceComposedListResponseBody `form:"master,omitempty" json:"master,omitempty" xml:"master,omitempty"`
 	// The suppression list ids recorded beside it
 	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
+	// Every include list the send goes to, when include_list_ids was supplied;
+	// absent for a single master_list_id
+	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
 	// The audience row recorded for brief_id
 	Audience *AudienceComposeRecordedAudienceResponseBody `form:"audience,omitempty" json:"audience,omitempty" xml:"audience,omitempty"`
 }
@@ -1126,8 +1129,12 @@ type AudienceComposeRecordedAudienceResponseBody struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
-	// The master list this audience sends to
+	// The master list this audience sends to; for a multi-list attach, the first
+	// of include_list_ids
 	PlatformMasterListID *string `form:"platform_master_list_id,omitempty" json:"platform_master_list_id,omitempty" xml:"platform_master_list_id,omitempty"`
+	// Existing lists the send goes to directly, when the audience was attached to
+	// several lists instead of one master; absent for a single master
+	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
 }
 
 // AudienceAttachExistingInputRequestBody is used to define fields on request
@@ -1135,8 +1142,13 @@ type AudienceComposeRecordedAudienceResponseBody struct {
 type AudienceAttachExistingInputRequestBody struct {
 	// The brief to record the audience under
 	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
-	// The existing contact list the send goes to
-	MasterListID string `form:"master_list_id" json:"master_list_id" xml:"master_list_id"`
+	// The existing contact list the send goes to. Exactly one of master_list_id or
+	// include_list_ids is required
+	MasterListID *string `form:"master_list_id,omitempty" json:"master_list_id,omitempty" xml:"master_list_id,omitempty"`
+	// Several existing contact lists the send goes to directly, with no composed
+	// master. Exactly one of master_list_id or include_list_ids is required; the
+	// first id is recorded as platform_master_list_id
+	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
 	// Existing lists the send suppresses
 	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
 	// Operator-visible provenance for the recorded audience; derived from the
@@ -2132,6 +2144,12 @@ func NewAttachExistingAudienceAudienceAttachExistingResultCreated(body *AttachEx
 	v.SuppressionListIds = make([]string, len(body.SuppressionListIds))
 	for i, val := range body.SuppressionListIds {
 		v.SuppressionListIds[i] = val
+	}
+	if body.IncludeListIds != nil {
+		v.IncludeListIds = make([]string, len(body.IncludeListIds))
+		for i, val := range body.IncludeListIds {
+			v.IncludeListIds[i] = val
+		}
 	}
 	v.Audience = unmarshalAudienceComposeRecordedAudienceResponseBodyToLfxv2campaignserviceaudiencebuilderAudienceComposeRecordedAudience(body.Audience)
 
@@ -3705,8 +3723,13 @@ func ValidateAudienceComposeRecordedAudienceResponseBody(body *AudienceComposeRe
 // on audience-attach-existing-inputRequestBody
 func ValidateAudienceAttachExistingInputRequestBody(body *AudienceAttachExistingInputRequestBody) (err error) {
 	err = goa.MergeErrors(err, goa.ValidateFormat("body.brief_id", body.BriefID, goa.FormatUUID))
-	if utf8.RuneCountInString(body.MasterListID) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.master_list_id", body.MasterListID, utf8.RuneCountInString(body.MasterListID), 1, true))
+	if body.MasterListID != nil {
+		if utf8.RuneCountInString(*body.MasterListID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.master_list_id", *body.MasterListID, utf8.RuneCountInString(*body.MasterListID), 1, true))
+		}
+	}
+	if len(body.IncludeListIds) > 200 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.include_list_ids", body.IncludeListIds, len(body.IncludeListIds), 200, false))
 	}
 	if len(body.SuppressionListIds) > 200 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.suppression_list_ids", body.SuppressionListIds, len(body.SuppressionListIds), 200, false))

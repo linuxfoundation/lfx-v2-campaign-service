@@ -2016,7 +2016,7 @@ func TestAttachExisting_VerifiesEveryListAndCreatesNothing(t *testing.T) {
 	defer srv.Close()
 	x := composeExplorer(srv.URL)
 
-	outcome, err := x.AttachExisting(context.Background(), "proj-1", "31027", []string{"s1", "31027", "s1"})
+	outcome, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, []string{"s1", "31027", "s1"})
 	require.NoError(t, err)
 	assert.Equal(t, "31027", outcome.Master.ListID)
 	assert.Equal(t, []string{"s1"}, outcome.AttachedSuppressionIDs,
@@ -2029,6 +2029,29 @@ func TestAttachExisting_VerifiesEveryListAndCreatesNothing(t *testing.T) {
 	}
 	mu.Unlock()
 
-	_, err = x.AttachExisting(context.Background(), "proj-1", "31027", []string{"404"})
+	_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, []string{"404"})
 	assert.ErrorIs(t, err, audience.ErrListNotFound)
+
+	// Several include lists: every one is read back, the first is the Master, all are the
+	// source lists, and a repeated or padded id is recorded once.
+	mu.Lock()
+	seq = nil
+	mu.Unlock()
+	outcome, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027", " 31028 ", "31027", "31029"}, []string{"s1"})
+	require.NoError(t, err)
+	assert.Equal(t, "31027", outcome.Master.ListID)
+	assert.Equal(t, []string{"31027", "31028", "31029"}, outcome.SourceListIDs)
+	assert.Equal(t, []string{"s1"}, outcome.AttachedSuppressionIDs)
+	mu.Lock()
+	for _, id := range []string{"31027", "31028", "31029", "s1"} {
+		assert.Contains(t, seq, "GET /crm/v3/lists/"+id, "every attached list must be verified")
+	}
+	mu.Unlock()
+
+	// A missing include list -- not just a missing master -- is the same not-found refusal.
+	_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027", "404"}, nil)
+	assert.ErrorIs(t, err, audience.ErrListNotFound)
+
+	_, err = x.AttachExisting(context.Background(), "proj-1", []string{" ", ""}, nil)
+	assert.ErrorIs(t, err, audience.ErrNoInclusionLists)
 }

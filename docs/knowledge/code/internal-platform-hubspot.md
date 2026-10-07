@@ -178,7 +178,15 @@ for the legacy `contactLists` recipient field after 2024-10-31 (it's silently
 non-functional now), so this client NEVER emits `contactLists` — callers resolve an
 ILS list id from the Lists v3 API. The client sends a COMPLETE `to` (clearing
 `contactIds` so no clone-source contacts leak) with `contactIlsLists.include` = the
-send list + `.exclude` = suppressions.
+send lists + `.exclude` = suppressions.
+
+`SetSendList(ctx, id, ilsListIDs []string, suppressionListIDs []string)` takes EVERY include list,
+because `contactIlsLists.include` is an array and an audience attached from several existing lists
+(`include_list_ids`) sends to all of them with no composed master. The ids are trimmed and
+de-duplicated in order (`uniqueIDs`, a fresh slice — never an in-place compaction of the
+caller's), at least one must remain, and an include id that is ALSO a suppression is refused for
+every include id, not just the first: HubSpot applies exclusions after inclusions, so that list
+would be sent nothing while the send reports success. Single-list callers pass a one-element slice.
 
 ## CRM contact-list + event-definition operations (LFXV2-2780)
 

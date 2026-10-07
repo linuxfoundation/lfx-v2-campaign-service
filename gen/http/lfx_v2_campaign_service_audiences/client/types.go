@@ -47,6 +47,10 @@ type CreateAudienceResponseBody struct {
 	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
 	// Build lifecycle status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Existing lists the send goes to directly when the audience was attached to
+	// several lists; platform_master_list_id is then the first of them. Absent for
+	// a single master list
+	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -72,6 +76,10 @@ type GetAudienceResponseBody struct {
 	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
 	// Build lifecycle status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Existing lists the send goes to directly when the audience was attached to
+	// several lists; platform_master_list_id is then the first of them. Absent for
+	// a single master list
+	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -104,6 +112,10 @@ type UpdateAudienceResponseBody struct {
 	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
 	// Build lifecycle status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Existing lists the send goes to directly when the audience was attached to
+	// several lists; platform_master_list_id is then the first of them. Absent for
+	// a single master list
+	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -129,6 +141,10 @@ type BuildAudienceResponseBody struct {
 	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
 	// Build lifecycle status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Existing lists the send goes to directly when the audience was attached to
+	// several lists; platform_master_list_id is then the first of them. Absent for
+	// a single master list
+	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -552,6 +568,10 @@ type AudienceResponseBody struct {
 	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
 	// Build lifecycle status
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Existing lists the send goes to directly when the audience was attached to
+	// several lists; platform_master_list_id is then the first of them. Absent for
+	// a single master list
+	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 	// ETag header value (mirrors version)
@@ -615,6 +635,12 @@ func NewCreateAudienceAudienceCreated(body *CreateAudienceResponseBody, etag *st
 		v.SuppressionListIds = make([]string, len(body.SuppressionListIds))
 		for i, val := range body.SuppressionListIds {
 			v.SuppressionListIds[i] = val
+		}
+	}
+	if body.IncludeListIds != nil {
+		v.IncludeListIds = make([]string, len(body.IncludeListIds))
+		for i, val := range body.IncludeListIds {
+			v.IncludeListIds[i] = val
 		}
 	}
 	v.Etag = etag
@@ -720,6 +746,12 @@ func NewGetAudienceAudienceOK(body *GetAudienceResponseBody, etag *string) *lfxv
 		v.SuppressionListIds = make([]string, len(body.SuppressionListIds))
 		for i, val := range body.SuppressionListIds {
 			v.SuppressionListIds[i] = val
+		}
+	}
+	if body.IncludeListIds != nil {
+		v.IncludeListIds = make([]string, len(body.IncludeListIds))
+		for i, val := range body.IncludeListIds {
+			v.IncludeListIds[i] = val
 		}
 	}
 	v.Etag = etag
@@ -922,6 +954,12 @@ func NewUpdateAudienceAudienceOK(body *UpdateAudienceResponseBody, etag *string)
 			v.SuppressionListIds[i] = val
 		}
 	}
+	if body.IncludeListIds != nil {
+		v.IncludeListIds = make([]string, len(body.IncludeListIds))
+		for i, val := range body.IncludeListIds {
+			v.IncludeListIds[i] = val
+		}
+	}
 	v.Etag = etag
 
 	return v
@@ -1050,6 +1088,12 @@ func NewBuildAudienceAudienceAccepted(body *BuildAudienceResponseBody, etag *str
 		v.SuppressionListIds = make([]string, len(body.SuppressionListIds))
 		for i, val := range body.SuppressionListIds {
 			v.SuppressionListIds[i] = val
+		}
+	}
+	if body.IncludeListIds != nil {
+		v.IncludeListIds = make([]string, len(body.IncludeListIds))
+		for i, val := range body.IncludeListIds {
+			v.IncludeListIds[i] = val
 		}
 	}
 	v.Etag = etag
