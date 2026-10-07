@@ -343,6 +343,14 @@ var AudienceAttachExistingInput = Type("audience-attach-existing-input", func() 
 	})
 	Attribute("inclusion_summary", String, "Operator-visible provenance for the recorded audience; derived from the master list when omitted")
 	Required("brief_id")
+	// An explicit example: exactly one of master_list_id / include_list_ids is accepted, and the
+	// generated one filled in both, so the CLI usage it produced was a request the service refuses.
+	Example(map[string]any{
+		"brief_id":             "5b3c1f0e-8d2a-4c6b-9e1f-2a7d4c8b6e10",
+		"include_list_ids":     []string{"31027", "31028"},
+		"suppression_list_ids": []string{"201"},
+		"inclusion_summary":    "2 lists: Prospects, Past attendees",
+	})
 })
 
 // AudienceAttachExistingResult reports the verified lists and the row recorded for them.
