@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -236,5 +237,37 @@ func TestMicrosoftAudience_ScopeRejectionIsPermanent(t *testing.T) {
 		model.MetricsWindowLast7Days, []model.ProjectCampaignScope{msScope("111", "")})
 	if err == nil || errors.Is(err, domain.ErrServiceDefect) {
 		t.Errorf("err = %v, want a non-defect error", err)
+	}
+}
+
+// ReportWindowDates is the period rule the orchestrator compares a saved report against: it must
+// be exactly the dates Submit sends for the same window at the same clock, for both kinds.
+func TestMicrosoftReportWindowDates_MatchSubmission(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftMetricsEnabled, "true")
+	_, opts := newMSKeywordServer(t) // client clock: 2026-10-05 12:00 UTC
+	d := msKeywordDispatcher(opts)
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	scope := []model.ProjectCampaignScope{msScope("111", "")}
+	for _, w := range []model.MetricsWindow{model.MetricsWindowToday, model.MetricsWindowThisMonth, model.MetricsWindowLastMonth, model.MetricsWindowLast7Days} {
+		start, end, err := d.ReportWindowDates(w, now)
+		if err != nil {
+			t.Fatalf("%s: %v", w, err)
+		}
+		kw, err := d.SubmitKeywordReport(context.Background(), "cncf", model.ProviderMicrosoftAds, "1234567", w, scope)
+		if err != nil {
+			t.Fatalf("%s keyword submit: %v", w, err)
+		}
+		au, err := d.SubmitAudienceReport(context.Background(), "cncf", model.ProviderMicrosoftAds, "1234567", w, scope)
+		if err != nil {
+			t.Fatalf("%s audience submit: %v", w, err)
+		}
+		for name, sub := range map[string]*model.InsightReportSubmission{"keyword": kw, "audience": au} {
+			if !sub.WindowStart.Equal(start) || !sub.WindowEnd.Equal(end) {
+				t.Errorf("%s %s: submitted %v..%v, ReportWindowDates %v..%v", name, w, sub.WindowStart, sub.WindowEnd, start, end)
+			}
+		}
+	}
+	if _, _, err := d.ReportWindowDates(model.MetricsWindowYesterday, now); err == nil {
+		t.Errorf("yesterday has no Microsoft date mapping; want an error")
 	}
 }

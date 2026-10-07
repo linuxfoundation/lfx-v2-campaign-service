@@ -83,6 +83,13 @@ func ValidateKeywordReportWindow(window model.MetricsWindow) error {
 	return err
 }
 
+// ReportWindowDates returns the calendar dates a campaign-scoped report submitted at now covers
+// for window — reportDateRange, the rule SubmitKeywordReport and SubmitAgeGenderReport send — so
+// a caller can tell whether a saved report describes the period a window means NOW.
+func ReportWindowDates(window model.MetricsWindow, now time.Time) (start, end time.Time, err error) {
+	return reportDateRange(window, now)
+}
+
 // keywordReportColumns is the column list SubmitKeywordReport requests, in the order the
 // reasoning on SubmitKeywordReport gives. foldKeywordReportRows resolves every column BY NAME,
 // so the order is presentational only.

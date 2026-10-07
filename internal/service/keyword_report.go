@@ -36,6 +36,9 @@ import (
 // it first and keys the saved report by the account it returns. Submit and Check re-run the
 // connection and account checks themselves, so the boundary does not rest on the caller.
 type KeywordReportReader interface {
+	// InsightReportPeriod: the dates a report over a window covers, so a saved report is served
+	// only for its own period.
+	InsightReportPeriod
 	// KeywordReportEnabled refuses a read this platform will not serve AT ALL — its rollout gate
 	// is off, or window is not one it can report on — whatever the project's campaigns are. It
 	// needs neither a connection nor a scope and never contacts the platform, so the orchestrator
@@ -86,6 +89,10 @@ func (o *Orchestrator) keywordReportStore() domain.KeywordReportRepository {
 //  2. KeywordReportAccount: every trust-boundary refusal, before anything upstream;
 //  3. read the saved snapshot; if a report is pending, check it once (store it, drop it if the
 //     platform failed it, or abandon it past accountReportAbandonAfter);
+//     then drop (in memory) a finished report whose saved dates are not the dates window
+//     resolves to NOW (reader.ReportWindowDates) — a this_month or today report does not
+//     describe the new period after a calendar rollover, however young it is
+//     (discardOtherPeriod);
 //  4. if nothing is pending and the last finished report is missing, stale
 //     (accountReportFreshFor) or does not cover every campaign the project NOW owns, submit one;
 //  5. serve the last finished report — only if it covers the current scope — confined to the
@@ -147,7 +154,14 @@ func (o *Orchestrator) ReadReportedKeywordPerformance(ctx context.Context, proje
 	now := o.insightReportNow()
 	scopeIDs := scopeCampaignIDs(scope)
 	driver := o.keywordReportDriver(reader, store)
+	wantStart, wantEnd, perr := resolveInsightPeriod(reader, platform, "keyword read", window, now)
+	if perr != nil {
+		return nil, perr
+	}
 	collectPendingInsightReport(callCtx, ctx, driver, snap, now)
+	// A finished report for another calendar period (the window rolled over since it was
+	// requested) is neither fresh nor servable: see discardOtherPeriod.
+	discardOtherPeriod(snap, wantStart, wantEnd)
 	if rerr := refreshInsightReport(callCtx, ctx, driver, snap, scope, scopeIDs, now); rerr != nil {
 		return nil, rerr
 	}
