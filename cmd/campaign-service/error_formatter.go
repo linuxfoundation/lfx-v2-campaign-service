@@ -62,9 +62,10 @@ var validationErrorNames = map[string]bool{
 const unrecognizedValidationPart = "a field failed validation"
 
 // fieldName is the shape of a design-derived field name in Goa's messages ("platform_campaign_id",
-// "body.platform_campaign_id", "body.items[0].name"). A part whose field does not have this shape
-// is treated as unrecognized.
-const fieldName = `([A-Za-z0-9_.\[\]-]+)`
+// "body.platform_campaign_id", "body.items[0].name", and the per-element "body.platforms[*]" the
+// generated decoders use for array element rules). A part whose field does not have this shape is
+// treated as unrecognized.
+const fieldName = `([A-Za-z0-9_.*\[\]-]+)`
 
 // echoingPartFormats recognizes, by its fixed PREFIX, each of Goa's value-echoing messages
 // (goa.design/goa/v3/pkg/error.go). Only the prefix is matched — it precedes the value — and the

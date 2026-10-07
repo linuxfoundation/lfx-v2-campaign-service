@@ -156,6 +156,11 @@ func TestNonEchoingResponseEncoder(t *testing.T) {
 			"status is not one of the values this field allows"},
 		{"field type", goa.InvalidFieldTypeError("limit", marker, "integer"), goa.InvalidFieldType, http.StatusBadRequest,
 			"limit is not of the type this field requires"},
+		// Generated decoders name per-element rules "body.platforms[*]"; the field must survive.
+		{"array element enum", goa.InvalidEnumValueError("body.platforms[*]", marker, []any{"google-ads", "meta-ads"}), goa.InvalidEnumValue, http.StatusBadRequest,
+			"body.platforms[*] is not one of the values this field allows"},
+		{"array element pattern", goa.InvalidPatternError("body.missing_signals[*]", marker, "^[a-z_]+$"), goa.InvalidPattern, http.StatusBadRequest,
+			"body.missing_signals[*] does not match the pattern this field requires"},
 		{"range", goa.InvalidRangeError("limit", 9000, 100, false), goa.InvalidRange, http.StatusBadRequest,
 			"limit is outside the range this field allows"},
 		{"format", goa.InvalidFormatError("starts_at", marker, goa.FormatDateTime, errors.New(marker)), goa.InvalidFormat, http.StatusBadRequest,
