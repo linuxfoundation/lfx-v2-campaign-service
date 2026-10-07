@@ -30,7 +30,7 @@ import (
 // service method, so platformCampaignIDRule's fixed message is never reached for these — and
 // asserts the 400 body names the field without carrying any part of the rejected value. Goa's
 // own validation errors format the target into their message ("... but got value %q"), so this
-// fails whenever buildMux mounts a server without the non-echoing formatter.
+// fails whenever buildMux mounts a server without nonEchoingResponseEncoder.
 func TestCampaignRefDecoderRejection_DoesNotEchoTheID(t *testing.T) {
 	mux, err := buildMux(context.Background(), &config.Config{},
 		svc.NewEndpoints(service.NewCampaignService(nil)),
@@ -83,11 +83,12 @@ func TestCampaignRefDecoderRejection_DoesNotEchoTheID(t *testing.T) {
 	}
 }
 
-// TestNonEchoingErrorFormatter pins the formatter's own rules: every value-echoing validation
-// part of a merged error is rewritten, a part that does not echo keeps Goa's message, and an
-// error that is not a validation error passes through exactly as goahttp.NewErrorResponse
-// renders it.
-func TestNonEchoingErrorFormatter(t *testing.T) {
+// TestNonEchoingResponseEncoder pins the encoder's own rules on the *goahttp.ErrorResponse Goa's
+// default error path renders: every value-echoing validation part of a merged error is
+// rewritten, a part that does not echo keeps Goa's message, an unrecognized part fails closed,
+// and an error response that is not a validation error is encoded exactly as
+// goahttp.ResponseEncoder encodes it.
+func TestNonEchoingResponseEncoder(t *testing.T) {
 	const marker = "MARKER9"
 	merged := goa.MergeErrors(
 		goa.InvalidPatternError("platform_campaign_id", marker, "^[0-9]+$"),
@@ -103,6 +104,8 @@ func TestNonEchoingErrorFormatter(t *testing.T) {
 	}{
 		{"pattern", goa.InvalidPatternError("platform_campaign_id", marker, "^[0-9]+$"), goa.InvalidPattern, http.StatusBadRequest,
 			"platform_campaign_id does not match the pattern this field requires"},
+		{"length min", goa.InvalidLengthError("body.platform_campaign_id", marker, 7, 64, true), goa.InvalidLength, http.StatusBadRequest,
+			"body.platform_campaign_id is outside the length this field allows"},
 		{"enum", goa.InvalidEnumValueError("status", marker, []any{"a", "b"}), goa.InvalidEnumValue, http.StatusBadRequest,
 			"status is not one of the values this field allows"},
 		{"field type", goa.InvalidFieldTypeError("limit", marker, "integer"), goa.InvalidFieldType, http.StatusBadRequest,
@@ -113,30 +116,61 @@ func TestNonEchoingErrorFormatter(t *testing.T) {
 			"starts_at is not in the format this field requires"},
 		{"merged", merged, goa.InvalidPattern, http.StatusBadRequest,
 			`platform_campaign_id does not match the pattern this field requires; "project_id" is missing from path; platform_campaign_id is outside the length this field allows`},
-		// The order the generated decoders merge in: the first failure is the accumulator, so its
-		// own history entry carries every later part's message, echoing ones included.
+		// The order the generated decoders merge in: the first failure names the merged error,
+		// so a merged error named missing_field still carries the echoing part after it.
 		{"accumulator first", goa.MergeErrors(goa.MissingFieldError("project_id", "path"),
 			goa.InvalidPatternError("platform_campaign_id", marker, "^[0-9]+$")), goa.MissingField, http.StatusBadRequest,
 			`"project_id" is missing from path; platform_campaign_id does not match the pattern this field requires`},
-		{"no field", goa.PermanentError(goa.InvalidPattern, "%s", marker), goa.InvalidPattern, http.StatusBadRequest,
-			"a field does not match the pattern this field requires"},
+		// A value cannot forge a separator or a kept part: Goa quotes it, and the split only
+		// happens outside quotes.
+		{"forged separator", goa.MergeErrors(
+			goa.InvalidPatternError("account_id", marker+`"; "x" is missing from path; `+marker, "^[A-Za-z0-9]+$"),
+			goa.InvalidFieldTypeError("days", marker+"; "+marker, "integer")), goa.InvalidPattern, http.StatusBadRequest,
+			"account_id does not match the pattern this field requires; days is not of the type this field requires"},
+		{"unparseable part fails closed", goa.PermanentError(goa.InvalidPattern, "%s", marker), goa.InvalidPattern, http.StatusBadRequest,
+			"a field failed validation"},
+		{"unterminated quote fails closed", goa.MergeErrors(goa.MissingFieldError("project_id", "path"),
+			goa.PermanentError(goa.InvalidFormat, `"%s; "x" is missing from path`, marker)), goa.MissingField, http.StatusBadRequest,
+			`"project_id" is missing from path; a field failed validation`},
 		{"missing field untouched", goa.MissingFieldError("project_id", "path"), goa.MissingField, http.StatusBadRequest,
 			`"project_id" is missing from path`},
-		{"plain error untouched", errors.New("boom"), "fault", http.StatusInternalServerError, "boom"},
+		{"missing payload untouched", goa.MissingPayloadError(), goa.MissingPayload, http.StatusBadRequest,
+			"missing required payload"},
+		{"plain error untouched", errors.New(marker), "fault", http.StatusInternalServerError, marker},
+		{"decode payload untouched", goa.DecodePayloadError(marker), goa.DecodePayload, http.StatusBadRequest, marker},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, ok := nonEchoingErrorFormatter(context.Background(), tc.err).(*goahttp.ErrorResponse)
-			if !ok {
-				t.Fatalf("formatter returned %T, want *goahttp.ErrorResponse", resp)
+			statuser := goahttp.NewErrorResponse(context.Background(), tc.err)
+			rec := httptest.NewRecorder()
+			if err := nonEchoingResponseEncoder(context.Background(), rec).Encode(statuser); err != nil {
+				t.Fatalf("encode: %v", err)
 			}
-			if resp.Name != tc.wantName || resp.StatusCode() != tc.wantStatus || resp.Message != tc.wantMsg {
+			var resp goahttp.ErrorResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("body is not an error response: %v; body %s", err, rec.Body.String())
+			}
+			if resp.Name != tc.wantName || statuser.StatusCode() != tc.wantStatus || resp.Message != tc.wantMsg {
 				t.Errorf("got name=%q status=%d message=%q; want name=%q status=%d message=%q",
-					resp.Name, resp.StatusCode(), resp.Message, tc.wantName, tc.wantStatus, tc.wantMsg)
+					resp.Name, statuser.StatusCode(), resp.Message, tc.wantName, tc.wantStatus, tc.wantMsg)
 			}
-			if tc.name != "plain error untouched" && strings.Contains(resp.Message, marker) {
-				t.Errorf("message echoes the rejected value: %q", resp.Message)
+			if validationErrorNames[tc.wantName] && strings.Contains(rec.Body.String(), marker) {
+				t.Errorf("body echoes the rejected value: %s", rec.Body.String())
 			}
 		})
+	}
+
+	// Anything that is not a *goahttp.ErrorResponse — a result, a generated named-error body —
+	// is encoded exactly as goahttp.ResponseEncoder encodes it, even when it carries the text.
+	body := map[string]string{"code": "400", "message": "platform_campaign_id must match the regexp \"^[0-9]+$\" but got value \"" + marker + "\""}
+	got, want := httptest.NewRecorder(), httptest.NewRecorder()
+	if err := nonEchoingResponseEncoder(context.Background(), got).Encode(body); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if err := goahttp.ResponseEncoder(context.Background(), want).Encode(body); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if got.Body.String() != want.Body.String() {
+		t.Errorf("non-ErrorResponse value was altered\n got: %s\nwant: %s", got.Body.String(), want.Body.String())
 	}
 }

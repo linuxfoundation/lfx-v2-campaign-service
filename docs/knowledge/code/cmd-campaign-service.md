@@ -72,22 +72,45 @@ presence is invisible to any test that exercises the mux directly. See
 
 ## Decoder validation errors do not echo the rejected value (LFXV2-2665)
 
-Every generated server `buildMux` mounts is built with `nonEchoingErrorFormatter`
-(`error_formatter.go`) instead of a nil formatter. Goa's generated decoder applies a method's
-Pattern/MaxLength/Enum/range/format rules BEFORE the service method runs, and Goa's default
-formatter (`goahttp.NewErrorResponse`) puts the rejected value into the 400's message
+Every generated server `buildMux` mounts is built with `nonEchoingResponseEncoder`
+(`error_formatter.go`) and a **nil** formatter. Goa's generated decoder applies a method's
+Pattern/MaxLength/Enum/range/format rules BEFORE the service method runs, and Goa's default error
+response (`goahttp.NewErrorResponse`) puts the rejected value into the 400's message
 (`... but got value "..."`). A method's own fixed, non-echoing 400 — `platformCampaignIDRule` on
 the campaign-ref lookups, for one — is therefore never reached for those inputs, and the raw input
-came back in the body. The formatter keeps `NewErrorResponse`'s status, name, id and flags and
-rewrites only the messages of the value-echoing validation errors (`invalid_pattern`,
-`invalid_length`, `invalid_range`, `invalid_enum_value`, `invalid_format`, `invalid_field_type`)
-to a fixed sentence naming the FIELD — a design constant — never the value. The rules themselves
-are in the OpenAPI documents. A merged error is rewritten part by part from its history, and a
-non-echoing part keeps only its own text: `goa.MergeErrors` mutates the accumulating error in place
-and keeps it as the first entry of its own history, so that entry's message already carries every
-later part, echoing ones included. `missing_field`, `decode_payload` and every error a service
-method returns keep Goa's message. `validation_echo_test.go` drives a marker-bearing id through the
-real mux to all five `campaign-ref` routes and asserts no 400 body contains it.
+came back in the body.
+
+**The formatter must stay nil.** Every generated `Encode<Method>Error` hands a NAMED error
+(`BadRequest`, `Conflict`, `NotFound`, `ServiceUnavailable`, ...) to a non-nil formatter INSTEAD
+of building its generated `New<Method><Error>ResponseBody`, and the named error types' `Error()`
+returns `""` — so a formatter turns every named error into a generic
+`{name,id,message,temporary,timeout,fault}` body with an empty message, no `code` and no
+`reason`. That shipped briefly (d206a88ba) and is pinned against by
+`named_error_body_test.go`, which drives named errors from the connections, briefs, audiences
+and health servers through the real mux and requires the body to be byte for byte the generated
+body encoded by `goahttp.ResponseEncoder`.
+
+The encoder is `goahttp.ResponseEncoder` except for one type: a `*goahttp.ErrorResponse` — what
+Goa's default error path renders for every non-named error, and a type no named error or result
+ever encodes as — whose `name` is a decoder-validation name (the six value-echoing ones,
+`invalid_pattern`, `invalid_length`, `invalid_range`, `invalid_enum_value`, `invalid_format`,
+`invalid_field_type`, plus `missing_field` and `missing_payload`, because `goa.MergeErrors` keeps
+the FIRST part's name). Its message is split on `"; "` only OUTSIDE Go-quoted strings — Goa
+formats every echoed value with `%q`/`%#v`, so a value cannot forge a separator — and each part is
+rewritten on its own: a value-echoing part, recognized by the fixed prefix of Goa's format that
+precedes the value, becomes `<field> <fixed sentence>` (the field is a design constant); a
+`missing_field`/`missing_payload` part is kept verbatim only when the whole part has exactly that
+shape; anything else, including a part after an unterminated quote, becomes
+`a field failed validation`. Status, name, id and flags are unchanged. Nothing is buffered and the
+`ResponseWriter` is not wrapped, so streaming, headers, Content-Length and content negotiation are
+Goa's own. `decode_payload` and every error a service method returns keep Goa's message.
+`validation_echo_test.go` drives a marker-bearing id through the real mux to all five
+`campaign-ref` routes and asserts no 400 body contains it; `TestNonEchoingResponseEncoder` pins the
+per-part rules.
+
+The nil formatter brings back goa v3.25.3's benign upstream race in `goahttp.ErrorEncoder`
+(it writes the shared default into its closure on each non-named error); see
+`upload_admission_wiring_test.go`.
 
 ## Mounting the audience-builder service (LFXV2-2770)
 

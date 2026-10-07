@@ -114,14 +114,18 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 	}
 	koHTTPDir := http.Dir(koDataPath)
 
+	// Every generated server is built with a nil formatter and nonEchoingResponseEncoder. The
+	// formatter MUST stay nil: each generated Encode<Method>Error hands a named error to a non-nil
+	// formatter instead of building its generated code/message/reason body. Validation 400s are
+	// kept from echoing the rejected value by the encoder instead (see error_formatter.go).
 	eh := errorHandler(ctx)
 	server := svcsvr.New(
 		endpoints,
 		mux,
 		goahttp.RequestDecoder,
-		goahttp.ResponseEncoder,
+		nonEchoingResponseEncoder,
 		eh,
-		nonEchoingErrorFormatter,
+		nil,
 		koHTTPDir,
 		koHTTPDir,
 		koHTTPDir,
@@ -138,25 +142,25 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 	if connEndpoints == nil {
 		return nil, fmt.Errorf("buildMux: connEndpoints is nil (connection routes would be unmounted)")
 	}
-	connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nonEchoingErrorFormatter)
+	connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, nonEchoingResponseEncoder, eh, nil)
 	connsvcsvr.Mount(mux, connServer)
 
 	if briefEndpoints == nil {
 		return nil, fmt.Errorf("buildMux: briefEndpoints is nil (brief routes would be unmounted)")
 	}
-	briefServer := briefsvcsvr.New(briefEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nonEchoingErrorFormatter)
+	briefServer := briefsvcsvr.New(briefEndpoints, mux, goahttp.RequestDecoder, nonEchoingResponseEncoder, eh, nil)
 	briefsvcsvr.Mount(mux, briefServer)
 
 	if audienceEndpoints == nil {
 		return nil, fmt.Errorf("buildMux: audienceEndpoints is nil (audience routes would be unmounted)")
 	}
-	audienceServer := audiencesvcsvr.New(audienceEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nonEchoingErrorFormatter)
+	audienceServer := audiencesvcsvr.New(audienceEndpoints, mux, goahttp.RequestDecoder, nonEchoingResponseEncoder, eh, nil)
 	audiencesvcsvr.Mount(mux, audienceServer)
 
 	if exploreEndpoints == nil {
 		return nil, fmt.Errorf("buildMux: exploreEndpoints is nil (audience-builder routes would be unmounted)")
 	}
-	exploreServer := exploresvcsvr.New(exploreEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nonEchoingErrorFormatter)
+	exploreServer := exploresvcsvr.New(exploreEndpoints, mux, goahttp.RequestDecoder, nonEchoingResponseEncoder, eh, nil)
 	exploresvcsvr.Mount(mux, exploreServer)
 
 	// The email wizard's progress stream is the one route in this service that is not a Goa
