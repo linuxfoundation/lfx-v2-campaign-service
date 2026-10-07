@@ -2399,6 +2399,9 @@ func TestRejectCredentialQueryParamsInText_SchemelessUserinfo(t *testing.T) {
 		"a(b:PLAINTEXT@host.example",
 		// Sub-delims only, and numbers that are not a real clock behind punctuation or `+`.
 		"!:PLAINTEXT@host.example",
+		// A blank username is never a clock, whatever the password.
+		":PLAINTEXT@host.example",
+		":30@host.example",
 		"$$:PLAINTEXT@host.example",
 		"alice+2024:1234@ops.example",
 		"alice+9:30@ops.example",

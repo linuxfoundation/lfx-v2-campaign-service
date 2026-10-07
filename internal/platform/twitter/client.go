@@ -2358,12 +2358,13 @@ var schemelessScreenRunRe = regexp.MustCompile(
 // schemelessUserinfoSnapshotRunRe: a narrower class let `admin!:pw@events.example` through.
 // The FIRST character must be unreserved, so a clock opened by prose punctuation —
 // `Keynote (14:00@main.stage)`, `*9:30@main.stage*` — is matched from its first digit and
-// still reads as a clock. A username made ONLY of sub-delims (`!:pw@host`) is the second
-// alternative, which must be followed directly by the colon — RE2 has no lookahead, so the
-// required `:` after the group is what stops `(` in `(14:00@` from starting a match there.
+// still reads as a clock. A username made ONLY of sub-delims (`!:pw@host`), or a BLANK one
+// (`:pw@host`), is the second alternative — zero or more sub-delims — which must be followed
+// directly by the colon. RE2 has no lookahead, so the required `:` after the group is what
+// stops `(` in `(14:00@` from starting a match there.
 // See redact.UsernameIsClock for the exact clock exemption.
 var schemelessUserinfoRunRe = regexp.MustCompile(
-	`(?i)(?:[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*|[!$&'()*,;=]+):[^\s<>@。、！？，：；]*@` +
+	`(?i)(?:[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*|[!$&'()*,;=]*):[^\s<>@。、！？，：；]*@` +
 		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>。、！？，：；]*)?`,
 )

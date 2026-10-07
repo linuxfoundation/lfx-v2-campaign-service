@@ -306,15 +306,17 @@ var schemelessSnapshotRunRe = regexp.MustCompile(
 // then left it whole because it contains an `@`: password and path token both persisted.
 // Kept in step with the twitter screen's class. The FIRST character must be unreserved, so a
 // clock opened by prose punctuation (`(14:00@main.stage)`) is matched from its first digit. A
-// username made ONLY of sub-delims (`!:pw@host`) is the second alternative, held to a colon
-// directly after it by the pattern itself (RE2 has no lookahead). See UsernameIsClock for the
+// username made ONLY of sub-delims (`!:pw@host`), or a BLANK one (`:pw@host`), is the second
+// alternative — zero or more sub-delims — held to a colon directly after it by the pattern
+// itself (RE2 has no lookahead). A blank username is never a clock (UsernameIsClock needs
+// digits before the colon), so `:pw@host` is always a credential. See UsernameIsClock for the
 // exact clock exemption.
 //
 // It is not the only discriminator needed, and the second one is kept in step too: a time
 // of day written hard against a host — `keynote 14:00@events.example` — is the userinfo
 // production byte for byte. See sanitizeUserinfoSnapshotRun.
 var schemelessUserinfoSnapshotRunRe = regexp.MustCompile(
-	`(?i)(?:[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*|[!$&'()*,;=]+):[^\s<>"\x60\]}|\\^@]*@` +
+	`(?i)(?:[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*|[!$&'()*,;=]*):[^\s<>"\x60\]}|\\^@]*@` +
 		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>"\x60\]}|\\^]*)?`,
 )
