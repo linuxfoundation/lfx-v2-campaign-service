@@ -274,3 +274,35 @@ so Goa does not repeat an item. `TestPublishedHubSpotMonitorExamplesArePossible`
 generated specs. No cost attribute exists on any of the three types.
 
 See [design](../../../design).
+
+## Meta audience examples are type-level (LFXV2-2665)
+
+`MetaAdsAudienceBucket` and `MetaAdsAudience` (`design/brief.go`) carry TYPE-LEVEL `Example()`s,
+built from the shared `metaAudienceAgeGenderExample` / `metaAudiencePlacementExample` maps. With
+attribute examples alone Goa composed an impossible object: a bucket carrying age, gender AND
+placement values at once, beside an envelope whose `bucket_count` (24) disagreed with its two-item
+`buckets`. Each bucket example now carries only its own dimension's value fields, and the envelope's
+`bucket_count` equals `len(buckets)`.
+
+Type-level examples are not enough on their own: an ARRAY property gets its own generated
+example, which Goa fills by repeating the element type's single example. So the `buckets`
+attribute carries its own `Example()` too (#285): one age_gender bucket then one placement bucket.
+Three identical placement buckets cannot occur, because rows are merged per segment and age_gender
+buckets are listed first.
+
+The same fix applies to `AudienceLastSentEmail` (`design/audience_builder.go`, #285). Its composed
+example published populated `included_lists`/`suppression_lists` beside `lists_unavailable: true`,
+which the type defines as "both arrays empty because unknown". It now has a type-level example
+(a readable selection, `lists_unavailable: false`), and both list attributes carry resolved-list
+examples (`missing: false`) via the shared `audienceIncludedListsExample` /
+`audienceSuppressionListsExample`. This is an example-only change, with no behaviour change.
+
+`internal/service/meta_audience_wire_example_test.go` walks EVERY `example` in all four GENERATED
+specs (v2 and v3, `gen/` and the kodata copy), where the defects lived. It checks the following:
+
+- every Meta bucket carries only its own dimension's fields;
+- every buckets array lists age_gender before placement and never repeats a segment;
+- every envelope's `bucket_count` equals `len(buckets)`;
+- no `lists_unavailable: true` appears beside a populated list.
+
+It fails if the walk finds no such example, so a renamed field cannot pass it vacuously.
