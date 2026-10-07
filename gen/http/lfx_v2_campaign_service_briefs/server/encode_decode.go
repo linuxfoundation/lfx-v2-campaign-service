@@ -4181,6 +4181,394 @@ func EncodeRemoveKeywordTargetingError(encoder func(context.Context, http.Respon
 	}
 }
 
+// EncodeListMetaAdSetsResponse returns an encoder for responses returned by
+// the lfx-v2-campaign-service-briefs list-meta-ad-sets endpoint.
+func EncodeListMetaAdSetsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.MetaAdSets)
+		enc := encoder(ctx, w)
+		body := NewListMetaAdSetsResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeListMetaAdSetsRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs list-meta-ad-sets endpoint.
+func DecodeListMetaAdSetsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.ListMetaAdSetsPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.ListMetaAdSetsPayload, error) {
+		var payload *lfxv2campaignservicebriefs.ListMetaAdSetsPayload
+		var (
+			projectID   string
+			briefID     string
+			campaignID  string
+			window      *string
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		campaignID = params["campaign_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("campaign_id", campaignID, goa.FormatUUID))
+		windowRaw := r.URL.Query().Get("window")
+		if windowRaw != "" {
+			window = &windowRaw
+		}
+		if window != nil {
+			if !(*window == "today" || *window == "yesterday" || *window == "last_7_days" || *window == "last_14_days" || *window == "last_30_days" || *window == "this_month" || *window == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+			}
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewListMetaAdSetsPayload(projectID, briefID, campaignID, window, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeListMetaAdSetsError returns an encoder for errors returned by the
+// list-meta-ad-sets lfx-v2-campaign-service-briefs endpoint.
+func EncodeListMetaAdSetsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaAdSetsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaAdSetsConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaAdSetsServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaAdSetsInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaAdSetsNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaAdSetsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListMetaAdSetsUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeToggleMetaAdSetStatusResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-briefs toggle-meta-ad-set-status
+// endpoint.
+func EncodeToggleMetaAdSetStatusResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.MetaAdSetStatusChange)
+		enc := encoder(ctx, w)
+		body := NewToggleMetaAdSetStatusResponseBody(res)
+		if res.Etag != nil {
+			w.Header().Set("Etag", *res.Etag)
+		}
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeToggleMetaAdSetStatusRequest returns a decoder for requests sent to
+// the lfx-v2-campaign-service-briefs toggle-meta-ad-set-status endpoint.
+func DecodeToggleMetaAdSetStatusRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.ToggleMetaAdSetStatusPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.ToggleMetaAdSetStatusPayload, error) {
+		var payload *lfxv2campaignservicebriefs.ToggleMetaAdSetStatusPayload
+		var (
+			body ToggleMetaAdSetStatusRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateToggleMetaAdSetStatusRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			briefID     string
+			campaignID  string
+			adSetID     string
+			bearerToken *string
+			ifMatch     *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		campaignID = params["campaign_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("campaign_id", campaignID, goa.FormatUUID))
+		adSetID = params["ad_set_id"]
+		err = goa.MergeErrors(err, goa.ValidatePattern("ad_set_id", adSetID, "^[1-9][0-9]*$"))
+		if utf8.RuneCountInString(adSetID) > 32 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("ad_set_id", adSetID, utf8.RuneCountInString(adSetID), 32, false))
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		ifMatchRaw := r.Header.Get("If-Match")
+		if ifMatchRaw != "" {
+			ifMatch = &ifMatchRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewToggleMetaAdSetStatusPayload(&body, projectID, briefID, campaignID, adSetID, bearerToken, ifMatch)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeToggleMetaAdSetStatusError returns an encoder for errors returned by
+// the toggle-meta-ad-set-status lfx-v2-campaign-service-briefs endpoint.
+func EncodeToggleMetaAdSetStatusError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewToggleMetaAdSetStatusBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewToggleMetaAdSetStatusConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewToggleMetaAdSetStatusServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewToggleMetaAdSetStatusInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewToggleMetaAdSetStatusNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignservicebriefs.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewToggleMetaAdSetStatusPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "PreconditionFailed":
+			var res *lfxv2campaignservicebriefs.PreconditionFailedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewToggleMetaAdSetStatusPreconditionFailedResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return enc.Encode(body)
+		case "PreconditionRequired":
+			var res *lfxv2campaignservicebriefs.PreconditionRequiredError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewToggleMetaAdSetStatusPreconditionRequiredResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusPreconditionRequired)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignservicebriefs.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewToggleMetaAdSetStatusUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeDeleteCampaignResponse returns an encoder for responses returned by
 // the lfx-v2-campaign-service-briefs delete-campaign endpoint.
 func EncodeDeleteCampaignResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
@@ -6177,6 +6565,29 @@ func marshalLfxv2campaignservicebriefsKeywordTargetingRemovalResultToKeywordTarg
 		CriterionID: v.CriterionID,
 		Outcome:     v.Outcome,
 		ErrorCode:   v.ErrorCode,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsMetaAdSetToMetaAdSetResponseBody builds a
+// value of type *MetaAdSetResponseBody from a value of type
+// *lfxv2campaignservicebriefs.MetaAdSet.
+func marshalLfxv2campaignservicebriefsMetaAdSetToMetaAdSetResponseBody(v *lfxv2campaignservicebriefs.MetaAdSet) *MetaAdSetResponseBody {
+	res := &MetaAdSetResponseBody{
+		ID:              v.ID,
+		Listed:          v.Listed,
+		Name:            v.Name,
+		Status:          v.Status,
+		EffectiveStatus: v.EffectiveStatus,
+		BidStrategy:     v.BidStrategy,
+		BudgetType:      v.BudgetType,
+		BudgetAmount:    v.BudgetAmount,
+		Impressions:     v.Impressions,
+		Clicks:          v.Clicks,
+		CostMicros:      v.CostMicros,
+		Ctr:             v.Ctr,
+		Recorded:        v.Recorded,
 	}
 
 	return res

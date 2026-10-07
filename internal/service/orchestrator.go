@@ -850,6 +850,8 @@ const (
 	opNegativeKeywords           = "negative_keywords"
 	opReadKeywordTargeting       = "read_keyword_targeting"
 	opRemoveKeywordTargeting     = "remove_keyword_targeting"
+	opReadMetaAdSets             = "read_meta_ad_sets"
+	opToggleMetaAdSetStatus      = "toggle_meta_ad_set_status"
 	opVerifyAccountOrg           = "verify_account_org"
 	opProbeConnection            = "probe_connection"
 	opListAccountCampaigns       = "list_account_campaigns"
