@@ -364,6 +364,10 @@ func TestLiveClaimAndAdoptWaitForTheSlotLock(t *testing.T) {
 	if _, err := tx.Exec(ctx, liveSlotLockSQL, briefID, string(p), model.VariantDefault); err != nil {
 		t.Fatalf("take the slot lock: %v", err)
 	}
+	var holderPID int
+	if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&holderPID); err != nil {
+		t.Fatalf("read the lock holder's backend pid: %v", err)
+	}
 
 	adoptDone := make(chan error, 1)
 	go func() {
@@ -380,13 +384,19 @@ func TestLiveClaimAndAdoptWaitForTheSlotLock(t *testing.T) {
 		claimDone <- claimResult{c, cerr}
 	}()
 
-	select {
-	case aerr := <-adoptDone:
-		t.Fatalf("adopt finished (%v) while the slot lock was held; it must wait for it", aerr)
-	case r := <-claimDone:
-		t.Fatalf("claim finished (%+v) while the slot lock was held; it must wait for it", r)
-	case <-time.After(500 * time.Millisecond):
-	}
+	// Positive evidence, not a timeout: PostgreSQL must show BOTH workers waiting on the lock
+	// holder's backend. A timeout alone passes when a goroutine is merely slow to reach the
+	// database — and once the holder commits, the remaining assertions pass without any lock.
+	waitForBackendsBlockedBy(ctx, t, pool, holderPID, 2, func() string {
+		select {
+		case aerr := <-adoptDone:
+			return fmt.Sprintf("adopt finished (%v) while the slot lock was held; it must wait for it", aerr)
+		case r := <-claimDone:
+			return fmt.Sprintf("claim finished (%+v) while the slot lock was held; it must wait for it", r)
+		default:
+			return ""
+		}
+	})
 
 	// Only now does the "claim" write its row — the adopt and the real claim are parked on the
 	// slot lock, so this INSERT's FK lock on the brief contends with nobody.
@@ -443,6 +453,10 @@ func TestLiveUpsertWaitsForTheSlotLock(t *testing.T) {
 	if _, err := tx.Exec(ctx, liveSlotLockSQL, briefID, string(p), model.VariantDefault); err != nil {
 		t.Fatalf("take the slot lock: %v", err)
 	}
+	var holderPID int
+	if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&holderPID); err != nil {
+		t.Fatalf("read the lock holder's backend pid: %v", err)
+	}
 
 	upsertDone := make(chan error, 1)
 	go func() {
@@ -455,11 +469,14 @@ func TestLiveUpsertWaitsForTheSlotLock(t *testing.T) {
 		upsertDone <- uerr
 	}()
 
-	select {
-	case uerr := <-upsertDone:
-		t.Fatalf("upsert finished (%v) while the slot lock was held; it must wait for it", uerr)
-	case <-time.After(500 * time.Millisecond):
-	}
+	waitForBackendsBlockedBy(ctx, t, pool, holderPID, 1, func() string {
+		select {
+		case uerr := <-upsertDone:
+			return fmt.Sprintf("upsert finished (%v) while the slot lock was held; it must wait for it", uerr)
+		default:
+			return ""
+		}
+	})
 
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatalf("release the slot lock: %v", err)
@@ -474,5 +491,33 @@ func TestLiveUpsertWaitsForTheSlotLock(t *testing.T) {
 	}
 	if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 1 {
 		t.Fatalf("live rows on the slot = %d, want 1 (the upserted row)", live)
+	}
+}
+
+// waitForBackendsBlockedBy blocks until PostgreSQL reports at least want backends waiting on the
+// lock holder's backend (pg_blocking_pids), the positive evidence that the calls under test reached
+// the database and are parked on the lock. finished reports a call that returned while the lock was
+// held — the specific defect, reported as such rather than as a timeout — or "" while none has.
+func waitForBackendsBlockedBy(ctx context.Context, t *testing.T, pool *pgxpool.Pool, holderPID, want int, finished func() string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if msg := finished(); msg != "" {
+			t.Fatal(msg)
+		}
+		var blocked int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity
+			WHERE $1 = ANY(pg_blocking_pids(pid))`, holderPID).Scan(&blocked); err != nil {
+			t.Fatalf("inspect pg_stat_activity for backends blocked on the slot lock: %v", err)
+		}
+		if blocked >= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d backend(s) blocked on the slot-lock holder, want %d: the calls under test "+
+				"are not waiting on the per-slot advisory lock", blocked, want)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
