@@ -658,7 +658,24 @@ var MetaAdsAudienceBucket = Type("meta-ads-audience-bucket", func() {
 	Attribute("cost_micros", Int64, "Spend over the window in micro-units of the ad account's native currency (see account_currency). This service performs no FX conversion.", func() { Example(3120000) })
 	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0", func() { Example(0.0578) })
 	Required("dimension", "impressions", "clicks", "cost_micros", "ctr")
+	// TYPE-LEVEL examples, one per dimension. Without them Goa composes the object from the
+	// attribute examples above and publishes an impossible bucket carrying age, gender AND
+	// placement values at once; each real bucket carries only its own dimension's fields.
+	Example("age_gender bucket", metaAudienceAgeGenderExample)
+	Example("placement bucket", metaAudiencePlacementExample)
 })
+
+// metaAudienceAgeGenderExample / metaAudiencePlacementExample are the two bucket shapes, shared by
+// the bucket type's examples and the envelope's so the two cannot disagree.
+var metaAudienceAgeGenderExample = map[string]any{
+	"dimension": "age_gender", "age": "25-34", "gender": "female",
+	"impressions": 12840, "clicks": 742, "cost_micros": 3120000, "ctr": 0.0578,
+}
+
+var metaAudiencePlacementExample = map[string]any{
+	"dimension": "placement", "publisher_platform": "instagram", "platform_position": "feed",
+	"impressions": 9100, "clicks": 182, "cost_micros": 1450000, "ctr": 0.02,
+}
 
 // MetaAdsAudience is the project-scoped Meta demographic/placement read. Its envelope fields are
 // the Google audience read's (window, buckets, bucket_count) plus account_currency, which Meta
@@ -678,6 +695,14 @@ var MetaAdsAudience = Type("meta-ads-audience", func() {
 		Example("USD")
 	})
 	Required("window", "buckets", "bucket_count")
+	// Type-level so bucket_count equals len(buckets) — attribute examples alone published a
+	// two-item array beside bucket_count 24.
+	Example(map[string]any{
+		"window":           "last_30_days",
+		"buckets":          []map[string]any{metaAudienceAgeGenderExample, metaAudiencePlacementExample},
+		"bucket_count":     2,
+		"account_currency": "USD",
+	})
 })
 
 // HubSpotCampaign is one LF HubSpot marketing campaign.

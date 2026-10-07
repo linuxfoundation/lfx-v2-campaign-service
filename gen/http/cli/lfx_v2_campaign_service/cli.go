@@ -37,7 +37,7 @@ func UsageCommands() []string {
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Delectus veniam vel est et magni.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Incidunt voluptatem ipsa fugiat assumenda.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Tempora est eveniet sequi ea.\",\n            \"Vero consequatur possimus aut assumenda.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"60c2796b-438f-4589-b7a1-bc0c814788a2\" --bearer-token \"eyJhbGci...\"" + "\n" +
+	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Assumenda sit delectus veniam.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Labore non ut dolores et.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Ipsa fugiat assumenda.\",\n            \"Ipsam tempora est.\",\n            \"Sequi ea ut vero consequatur possimus.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"79e93e18-a35d-465b-a40e-0aa5dfae4b78\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-audience-builder get-audience-builder-capabilities --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-briefs create-brief --body '{\n      \"brief\": {\n         \"copy\": \"Dolores aut quia.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Doloribus omnis et excepturi.\",\n         \"event_slug\": \"s47\",\n         \"keywords\": \"Voluptates nisi nihil aut molestias aut.\",\n         \"platforms\": [\n            \"Fugit ratione consectetur exercitationem sed fuga facilis.\",\n            \"Enim nisi consequatur perspiciatis optio aperiam.\"\n         ],\n         \"program_type\": \"membership\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Cumque ullam esse voluptate non autem.\",\n         \"url\": \"Beatae sed commodi voluptatibus cupiditate.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Iste accusamus eaque laborum deserunt.\",\n         \"client_secret\": \"Nulla unde deserunt et voluptatibus sunt distinctio.\",\n         \"developer_token\": \"Harum et qui modi natus laboriosam.\",\n         \"refresh_token\": \"Unde id qui cupiditate qui illo.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
@@ -1643,7 +1643,7 @@ func lfxV2CampaignServiceAudiencesCreateAudienceUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Delectus veniam vel est et magni.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Incidunt voluptatem ipsa fugiat assumenda.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Tempora est eveniet sequi ea.\",\n            \"Vero consequatur possimus aut assumenda.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"60c2796b-438f-4589-b7a1-bc0c814788a2\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Assumenda sit delectus veniam.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Labore non ut dolores et.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Ipsa fugiat assumenda.\",\n            \"Ipsam tempora est.\",\n            \"Sequi ea ut vero consequatur possimus.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"79e93e18-a35d-465b-a40e-0aa5dfae4b78\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudiencesGetAudienceUsage() {
@@ -3924,7 +3924,7 @@ func lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-microsoft-ads-keywords --project-id \"cncf\" --window \"last_30_days\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-microsoft-ads-keywords --project-id \"cncf\" --window \"last_7_days\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsResolveGoogleAdsCampaignUsage() {

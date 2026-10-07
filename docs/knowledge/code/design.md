@@ -265,3 +265,13 @@ deliberate half: the alternative changes six probes' behaviour to satisfy a sent
 "suspended account" is not something re-testing a connection repairs.
 
 See [design](../../../design).
+
+## Meta audience examples are type-level (LFXV2-2665)
+
+`MetaAdsAudienceBucket` and `MetaAdsAudience` (`design/brief.go`) carry TYPE-LEVEL `Example()`s,
+built from the shared `metaAudienceAgeGenderExample` / `metaAudiencePlacementExample` maps. With
+attribute examples alone Goa composed an impossible object: a bucket carrying age, gender AND
+placement values at once, beside an envelope whose `bucket_count` (24) disagreed with its two-item
+`buckets`. Each bucket example now carries only its own dimension's value fields, and the envelope's
+`bucket_count` equals `len(buckets)`. `internal/service/meta_audience_wire_example_test.go` pins both
+against the GENERATED `openapi3.json` (and its kodata copy), where the defect lived.

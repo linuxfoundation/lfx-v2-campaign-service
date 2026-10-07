@@ -552,21 +552,26 @@ request: `ValidateAccountID`, a non-empty scope of canonical ids (`ErrAudienceSc
 de-duplicated, at most `MaxAudienceCampaigns` (250, a local URL bound — not a documented Meta
 limit; `ErrAudienceScopeTooLarge`). Paging follows `paging.cursors.after` (never the `next` URL),
 at most `audienceMaxPages` (20) pages per breakdown; a `next` on the last page, a missing or
-repeated cursor all fail the read. Every row is checked: no duplicate top-level JSON keys
-(`rejectDuplicateKeys`), `campaign_id` in the requested scope, `account_currency` a consistent
+repeated cursor all fail the read. Each page is fetched RAW and passed through
+`identityjson.Check` before it is decoded: one linear, map-based pass that refuses a key repeated
+at ANY level under the decoder's own folding (case, KELVIN SIGN → `k`, LONG S → `s`), plus
+malformed UTF-8 and unpaired surrogates — so `{"data":[…],"data":[]}` or `"Data":[]` cannot read as
+Meta's authoritative empty answer, and a repeated `paging` cannot end the walk early. Every row is
+then checked: `campaign_id` in the requested scope, `account_currency` a consistent
 ISO 4217 code, each breakdown value present and matching `^[A-Za-z0-9][A-Za-z0-9_+\-]{0,63}$`
 (kept verbatim, else the read fails — values never echoed), no repeated (campaign, segment),
 counters via `parseMetricInt`/`parseSpendMicros` (spend → micros, the helper the metrics read
-now shares). Rows are summed per segment across campaigns with an overflow check; CTR is computed
+now shares). The counters are decoded RAW: an ABSENT `impressions`/`clicks`/`spend` is a measured
+0, as in the metrics read (Meta omits zero counters), but an explicit JSON `null` or a non-string
+value fails the read rather than publishing an authoritative zero. Rows are summed per segment across campaigns with an overflow check; CTR is computed
 after aggregation; order is impressions descending then values. Any failure — including either
 breakdown's — returns no rows. No conversions: Meta has no scalar conversions metric.
 
 The whole call runs under the orchestrator's `metricsCallTimeout` (20s) — both breakdowns, up to
 2×20 sequential pages and any 429 backoff — the same budget as the Google audience read, so a very
-large project can 503 consistently on timeout. Row keys are compared for duplicates with
-`strings.EqualFold`, because encoding/json matches keys to struct fields case-insensitively
-(KELVIN SIGN → `k`, LONG S → `s` included) and keeps the last match: `{"Campaign_ID":…,"campaign_id":…}`
-is as ambiguous as an exact repeat.
+large project can 503 consistently on timeout. The earlier row-only `rejectDuplicateKeys`
+(a pairwise `strings.EqualFold` scan, quadratic in keys and blind to the page envelope) was
+replaced by the page-level `identityjson.Check` above (#283 review).
 
 ## Credential scrubbing on error bodies
 
