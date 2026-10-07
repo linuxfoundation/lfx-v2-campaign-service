@@ -10834,6 +10834,100 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/twitter-ads/audience:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-twitter-ads-audience lfx-v2-campaign-service-connections
+            description: 'Read X (Twitter) Ads audience insights — age, gender and device platform — for this project''s own campaigns, live from the X Ads API on the connected ad account. Scoped to the campaigns this service holds for the project, NOT to the ad account: the stats requests name those campaign ids and every returned row is checked against them, because the account is shared across foundations. X serves segmented stats ONLY through its asynchronous stats-jobs API, so one read creates one job per segmentation per 20 campaigns (at most 40 campaigns), waits for them inside the request and downloads the results; nothing is persisted. A project with no X campaigns of its own receives an empty `buckets` array and X is not contacted. The window NAMES are the X metrics read''s — today, yesterday or the last 7 days including today — but the days are taken on the ad ACCOUNT''s calendar (its timezone), whereas the metrics read uses UTC days, so on a non-UTC account the two cover different instants and their totals are not directly comparable; longer windows are refused (400). Identical reads are shared and successful results reused for a few minutes, and at most one read per ad account runs at a time, because each read holds stats-job slots on an account shared across foundations. `all_counters_null` flags segment rows that carried no measurement. All three segmentations must load or the request fails (503). Billed charge is in the account''s own currency (`account_currency`); no FX conversion is performed. There is no conversions counter. Disabled (400 not supported) unless TWITTER_METRICS_ENABLED is "true", like the X account monitor that shares the stats-jobs contract.'
+            operationId: lfx-v2-campaign-service-connections#get-twitter-ads-audience
+            parameters:
+                - name: window
+                  in: query
+                  description: 'Reporting window; defaults to last_7_days when omitted. X windows only: longer ones are refused.'
+                  required: false
+                  type: string
+                  enum:
+                    - today
+                    - yesterday
+                    - last_7_days
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/TwitterAdsAudience'
+                        required:
+                            - window
+                            - buckets
+                            - bucket_count
+                            - all_counters_null
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "409":
+                    description: Conflict response.
+                    schema:
+                        $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/twitter-ads/campaign-ref:
         get:
             tags:
@@ -10954,22 +11048,12 @@ definitions:
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
                       issue: 'Underspending: 42% of expected spend'
-                      priority: LOW
+                      priority: HIGH
                     - action: Increase daily budget or check for delivery limits
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
                       issue: 'Underspending: 42% of expected spend'
-                      priority: LOW
-                    - action: Increase daily budget or check for delivery limits
-                      campaign_id: "24183781329"
-                      campaign_name: KubeCon NA 2026 - Search
-                      issue: 'Underspending: 42% of expected spend'
-                      priority: LOW
-                    - action: Increase daily budget or check for delivery limits
-                      campaign_id: "24183781329"
-                      campaign_name: KubeCon NA 2026 - Search
-                      issue: 'Underspending: 42% of expected spend'
-                      priority: LOW
+                      priority: HIGH
             campaigns:
                 type: array
                 items:
@@ -10986,7 +11070,7 @@ definitions:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: overspending
+                      pacing_label: underspending
                       pacing_pct: 87
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
@@ -11004,7 +11088,7 @@ definitions:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: overspending
+                      pacing_label: underspending
                       pacing_pct: 87
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
@@ -11022,25 +11106,7 @@ definitions:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: overspending
-                      pacing_pct: 87
-                      pacing_unknown: false
-                      platform_campaign_id: "24183781329"
-                      spend: 482.13
-                      start_date: "2026-08-01"
-                      status: ENABLED
-                      total_budget: 5000
-                    - budget_day: 150
-                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                      clicks: 3110
-                      conversions: 12.5
-                      ctr: 6.45
-                      end_date: "2026-11-30"
-                      fetch_failed: false
-                      impressions: 48200
-                      is_search_channel: true
-                      name: KubeCon NA 2026 - Search
-                      pacing_label: overspending
+                      pacing_label: underspending
                       pacing_pct: 87
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
@@ -11081,17 +11147,22 @@ definitions:
                   campaign_id: "24183781329"
                   campaign_name: KubeCon NA 2026 - Search
                   issue: 'Underspending: 42% of expected spend'
-                  priority: LOW
+                  priority: HIGH
                 - action: Increase daily budget or check for delivery limits
                   campaign_id: "24183781329"
                   campaign_name: KubeCon NA 2026 - Search
                   issue: 'Underspending: 42% of expected spend'
-                  priority: LOW
+                  priority: HIGH
                 - action: Increase daily budget or check for delivery limits
                   campaign_id: "24183781329"
                   campaign_name: KubeCon NA 2026 - Search
                   issue: 'Underspending: 42% of expected spend'
-                  priority: LOW
+                  priority: HIGH
+                - action: Increase daily budget or check for delivery limits
+                  campaign_id: "24183781329"
+                  campaign_name: KubeCon NA 2026 - Search
+                  issue: 'Underspending: 42% of expected spend'
+                  priority: HIGH
             campaigns:
                 - budget_day: 150
                   campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -11103,7 +11174,7 @@ definitions:
                   impressions: 48200
                   is_search_channel: true
                   name: KubeCon NA 2026 - Search
-                  pacing_label: overspending
+                  pacing_label: underspending
                   pacing_pct: 87
                   pacing_unknown: false
                   platform_campaign_id: "24183781329"
@@ -11121,7 +11192,7 @@ definitions:
                   impressions: 48200
                   is_search_channel: true
                   name: KubeCon NA 2026 - Search
-                  pacing_label: overspending
+                  pacing_label: underspending
                   pacing_pct: 87
                   pacing_unknown: false
                   platform_campaign_id: "24183781329"
@@ -11236,7 +11307,7 @@ definitions:
             pacing_label:
                 type: string
                 description: The pacing classification derived from pacing_pct. Meaningless when pacing_unknown is true — a fetch-failed row keeps the placeholder value "normal" rather than carrying no label at all, since the enum has no unknown member.
-                example: overspending
+                example: normal
                 enum:
                     - normal
                     - underspending
@@ -11284,7 +11355,7 @@ definitions:
             impressions: 48200
             is_search_channel: true
             name: KubeCon NA 2026 - Search
-            pacing_label: overspending
+            pacing_label: normal
             pacing_pct: 87
             pacing_unknown: false
             platform_campaign_id: "24183781329"
@@ -11384,11 +11455,11 @@ definitions:
             brief_id:
                 type: string
                 description: Owning brief
-                example: Consequatur voluptate ipsam beatae non.
+                example: Beatae non.
             id:
                 type: string
                 description: Audience UUID
-                example: Cum aut debitis.
+                example: Placeat et nemo eius.
             include_list_ids:
                 type: array
                 items:
@@ -11415,7 +11486,7 @@ definitions:
             project_id:
                 type: string
                 description: Owning project
-                example: Et nemo eius dolorem facilis.
+                example: Facilis minima consequatur voluptate.
             status:
                 type: string
                 description: Build lifecycle status
@@ -16466,7 +16537,15 @@ definitions:
                   name: KubeCon NA 2026
                   start_date: "2026-11-01"
                   utm: kubecon-na-2026
-            capped: true
+                - id: "112233445566"
+                  name: KubeCon NA 2026
+                  start_date: "2026-11-01"
+                  utm: kubecon-na-2026
+                - id: "112233445566"
+                  name: KubeCon NA 2026
+                  start_date: "2026-11-01"
+                  utm: kubecon-na-2026
+            capped: false
         required:
             - campaigns
             - capped
@@ -16782,25 +16861,25 @@ definitions:
             name:
                 type: string
                 description: Internal email name, as it appears in the HubSpot email list
-                example: Tempore ad libero.
+                example: Libero omnis ea ut consequatur nulla quod.
             state:
                 type: string
                 description: HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED). Archived emails are not returned at all — archival is a separate flag in HubSpot, not a state.
-                example: Iste quam.
+                example: Aspernatur molestiae ab vel delectus.
             subject:
                 type: string
                 description: Subject line
-                example: Ea ut consequatur nulla quod quisquam voluptatem.
+                example: Voluptatem molestias iste quam consequuntur error eligendi.
             updated_at:
                 type: string
                 description: Last-modified timestamp (ISO-8601)
-                example: Error eligendi eius aspernatur molestiae ab.
+                example: Deserunt et voluptas.
         example:
             id: "112233445566"
-            name: Delectus voluptatem deserunt.
-            state: Veritatis praesentium architecto molestiae commodi ut nam.
-            subject: Voluptas dolor.
-            updated_at: Blanditiis ipsum voluptatem architecto.
+            name: Quis veritatis praesentium architecto.
+            state: Architecto commodi ipsa dolor.
+            subject: Commodi ut nam debitis blanditiis ipsum.
+            updated_at: Quod accusantium.
         required:
             - id
     MetaAdSet:
@@ -17327,7 +17406,7 @@ definitions:
             window:
                 type: string
                 description: The reporting window these counters cover
-                example: this_month
+                example: last_30_days
                 enum:
                     - today
                     - last_7_days
@@ -17580,6 +17659,34 @@ definitions:
                       quality_score: 7
                       status: UNKNOWN
                       text: kubernetes training
+                    - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
+                      campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
+                      clicks: 311
+                      conversions: 12.5
+                      cost_micros: 1284000
+                      criterion_id: "305729261"
+                      ctr: 0.0645
+                      impressions: 4820
+                      match_type: PHRASE
+                      quality_score: 7
+                      status: UNKNOWN
+                      text: kubernetes training
+                    - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
+                      campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
+                      clicks: 311
+                      conversions: 12.5
+                      cost_micros: 1284000
+                      criterion_id: "305729261"
+                      ctr: 0.0645
+                      impressions: 4820
+                      match_type: PHRASE
+                      quality_score: 7
+                      status: UNKNOWN
+                      text: kubernetes training
             truncated:
                 type: boolean
                 description: True when this project's campaigns have more keywords than were returned. The rows are the TOP ones by impressions, not the project's full keyword set.
@@ -17658,7 +17765,7 @@ definitions:
                   status: UNKNOWN
                   text: kubernetes training
             truncated: false
-            window: last_month
+            window: this_month
         required:
             - window
             - rows
@@ -18029,6 +18136,136 @@ definitions:
             - client_id
             - client_secret
             - refresh_token
+    TwitterAdsAudience:
+        title: TwitterAdsAudience
+        type: object
+        properties:
+            account_currency:
+                type: string
+                description: ISO 4217 currency of the ad account that cost_micros is denominated in, as X reports it on the account. ABSENT when X was not contacted (the project has no X campaigns of its own) or the account carries no currency.
+                example: USD
+                pattern: ^[A-Z]{3}$
+            all_counters_null:
+                type: boolean
+                description: 'True when, for at least one dimension, X returned segment rows whose every counter was null or absent. The zeros in that dimension are then NOT a measurement: it is either no delivery in the window or X''s reported defect where segmented stats jobs succeed with all-null metrics, and the two cannot be told apart.'
+                example: false
+            bucket_count:
+                type: integer
+                description: How many buckets are in `buckets`, across all three dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions triple-counts it — total within one dimension only.
+                example: 3
+                format: int64
+            buckets:
+                type: array
+                items:
+                    $ref: '#/definitions/TwitterAdsAudienceBucket'
+                description: Every bucket across the three segmentations, discriminated by `dimension`. Ordered by dimension (age, gender, platform), then impressions descending, then value.
+                example:
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: age
+                      impressions: 9000
+                      value: 25-34
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: gender
+                      impressions: 9000
+                      value: Female
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: platform
+                      impressions: 9000
+                      value: iOS
+            window:
+                type: string
+                description: The reporting window these counters cover, as days on the ad ACCOUNT's calendar (its timezone) — not the UTC days the X campaign metrics read uses for the same window name
+                example: yesterday
+                enum:
+                    - today
+                    - yesterday
+                    - last_7_days
+        example:
+            account_currency: USD
+            all_counters_null: false
+            bucket_count: 3
+            buckets:
+                - clicks: 270
+                  cost_micros: 2700000
+                  ctr: 0.03
+                  dimension: age
+                  impressions: 9000
+                  value: 25-34
+                - clicks: 270
+                  cost_micros: 2700000
+                  ctr: 0.03
+                  dimension: gender
+                  impressions: 9000
+                  value: Female
+                - clicks: 270
+                  cost_micros: 2700000
+                  ctr: 0.03
+                  dimension: platform
+                  impressions: 9000
+                  value: iOS
+            window: last_7_days
+        required:
+            - window
+            - buckets
+            - bucket_count
+            - all_counters_null
+    TwitterAdsAudienceBucket:
+        title: TwitterAdsAudienceBucket
+        type: object
+        properties:
+            clicks:
+                type: integer
+                description: Clicks over the window
+                example: 742
+                format: int64
+            cost_micros:
+                type: integer
+                description: Billed charge over the window (X's billed_charge_local_micro) in micro-units of the ad account's currency (see account_currency). This service performs no FX conversion.
+                example: 3120000
+                format: int64
+            ctr:
+                type: number
+                description: Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+                example: 0.0578
+                format: double
+            dimension:
+                type: string
+                description: 'Which segmentation this bucket belongs to: age (X segmentation_type AGE), gender (GENDER) or platform (PLATFORMS)'
+                example: age
+                enum:
+                    - age
+                    - gender
+                    - platform
+            impressions:
+                type: integer
+                description: Impressions over the window
+                example: 12840
+                format: int64
+            value:
+                type: string
+                description: X's segment name for this bucket, verbatim (for example an age range, a gender or a device platform). A value outside a conservative charset fails the read rather than being returned.
+                example: iOS
+                pattern: ^[A-Za-z0-9](?:[A-Za-z0-9 _+.\-]{0,62}[A-Za-z0-9+])?$
+        example:
+            clicks: 270
+            cost_micros: 2700000
+            ctr: 0.03
+            dimension: platform
+            impressions: 9000
+            value: iOS
+        required:
+            - dimension
+            - value
+            - impressions
+            - clicks
+            - cost_micros
+            - ctr
     TwitterAdsConnection:
         title: TwitterAdsConnection
         type: object

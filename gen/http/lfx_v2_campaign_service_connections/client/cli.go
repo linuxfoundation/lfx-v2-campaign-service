@@ -1565,6 +1565,41 @@ func BuildGetMetaAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetMetaAdsAud
 	return v, nil
 }
 
+// BuildGetTwitterAdsAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-connections get-twitter-ads-audience endpoint from
+// CLI flags.
+func BuildGetTwitterAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceProjectID string, lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceWindow string, lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceBearerToken string) (*lfxv2campaignserviceconnections.GetTwitterAdsAudiencePayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceProjectID
+	}
+	var window *string
+	{
+		if lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceWindow != "" {
+			window = &lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceWindow
+			if !(*window == "today" || *window == "yesterday" || *window == "last_7_days") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *window, []any{"today", "yesterday", "last_7_days"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.GetTwitterAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMicrosoftAdsKeywordsPayload builds the payload for the
 // lfx-v2-campaign-service-connections get-microsoft-ads-keywords endpoint from
 // CLI flags.

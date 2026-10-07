@@ -64,7 +64,8 @@ import (
 // GATING. This is a live-money write, and it is not behind a flag: X campaign WRITES (create,
 // pause/activate) are already ungated in this service, and the budget PUT goes through the same
 // signed client, the same write pacer and the same outcome classification. TWITTER_METRICS_ENABLED
-// gates only the report-backed account monitor, whose stats-jobs contract is the unverified one.
+// gates only the two stats-job features (the account monitor and the audience read), whose
+// contract is the unverified one.
 func (d *TwitterDispatcher) WriteBudget(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, budget model.BudgetChange) error {
 	// PROVENANCE, FAILED CLOSED, BEFORE ANYTHING ELSE.
 	//

@@ -710,6 +710,86 @@ var MetaAdsAudience = Type("meta-ads-audience", func() {
 	})
 })
 
+// twitterAudienceWindowEnum is the subset of metricsWindowEnum the X audience read serves: the
+// three window NAMES the X campaign metrics read serves (twitterMetricsWindow). The names match;
+// the instants do not on a non-UTC account — the audience read takes the days on the account's
+// calendar, the metrics read as UTC days. Longer windows are refused by the decoder here rather
+// than reaching a runtime 400 the design did not declare.
+func twitterAudienceWindowEnum() {
+	Enum("today", "yesterday", "last_7_days")
+}
+
+// TwitterAdsAudienceBucket is one X Ads stats segment's counters, summed across the project's
+// own campaigns.
+//
+// An X-named type rather than GoogleAdsAudienceBucket: X's dimensions (AGE, GENDER, PLATFORMS
+// segmentations) are not Google's, its values are X's own segment names rather than Google enum
+// literals, and X reports no scalar conversions metric. Unlike Meta, each X segmentation carries
+// ONE value, so a single `value` fits without inventing a joined vocabulary.
+var TwitterAdsAudienceBucket = Type("twitter-ads-audience-bucket", func() {
+	Attribute("dimension", String, "Which segmentation this bucket belongs to: age (X segmentation_type AGE), gender (GENDER) or platform (PLATFORMS)", func() { Enum("age", "gender", "platform") })
+	Attribute("value", String, "X's segment name for this bucket, verbatim (for example an age range, a gender or a device platform). A value outside a conservative charset fails the read rather than being returned.", func() {
+		Pattern(`^[A-Za-z0-9](?:[A-Za-z0-9 _+.\-]{0,62}[A-Za-z0-9+])?$`)
+		Example("iOS")
+	})
+	Attribute("impressions", Int64, "Impressions over the window", func() { Example(12840) })
+	Attribute("clicks", Int64, "Clicks over the window", func() { Example(742) })
+	Attribute("cost_micros", Int64, "Billed charge over the window (X's billed_charge_local_micro) in micro-units of the ad account's currency (see account_currency). This service performs no FX conversion.", func() { Example(3120000) })
+	Attribute("ctr", Float64, "Clicks/Impressions after summing across campaigns, 0 when Impressions is 0", func() { Example(0.0578) })
+	Required("dimension", "value", "impressions", "clicks", "cost_micros", "ctr")
+	// TYPE-LEVEL examples so the published bucket is one a response can contain: the attribute
+	// examples alone compose a platform value under whatever dimension Goa picks.
+	Example("age bucket", twitterAudienceAgeExample)
+	Example("platform bucket", twitterAudiencePlatformExample)
+})
+
+// twitterAudienceAgeExample / twitterAudienceGenderExample / twitterAudiencePlatformExample are
+// possible bucket shapes (ctr = clicks/impressions), shared by the bucket type's examples and the
+// envelope's so the two cannot disagree. Each dimension totals the same traffic: 9000 impressions
+// and 270 clicks in every one.
+var (
+	twitterAudienceAgeExample = map[string]any{
+		"dimension": "age", "value": "25-34",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+	twitterAudienceGenderExample = map[string]any{
+		"dimension": "gender", "value": "Female",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+	twitterAudiencePlatformExample = map[string]any{
+		"dimension": "platform", "value": "iOS",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+)
+
+// TwitterAdsAudience is the project-scoped X demographic/platform read: the Google audience
+// read's envelope (window, buckets, bucket_count) plus account_currency, read from the ad
+// account itself because X's stats carry no currency.
+//
+// There is deliberately NO conversions field: X splits conversions across per-event-type metric
+// objects under metric groups this read does not request (see TwitterDispatcher.ReadMetrics).
+var TwitterAdsAudience = Type("twitter-ads-audience", func() {
+	Attribute("window", String, "The reporting window these counters cover, as days on the ad ACCOUNT's calendar (its timezone) — not the UTC days the X campaign metrics read uses for the same window name", twitterAudienceWindowEnum)
+	Attribute("buckets", ArrayOf(TwitterAdsAudienceBucket), "Every bucket across the three segmentations, discriminated by `dimension`. Ordered by dimension (age, gender, platform), then impressions descending, then value.", func() {
+		Example([]map[string]any{twitterAudienceAgeExample, twitterAudienceGenderExample, twitterAudiencePlatformExample})
+	})
+	Attribute("bucket_count", Int, "How many buckets are in `buckets`, across all three dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions triple-counts it — total within one dimension only.", func() { Example(3) })
+	Attribute("account_currency", String, "ISO 4217 currency of the ad account that cost_micros is denominated in, as X reports it on the account. ABSENT when X was not contacted (the project has no X campaigns of its own) or the account carries no currency.", func() {
+		Pattern("^[A-Z]{3}$")
+		Example("USD")
+	})
+	Attribute("all_counters_null", Boolean, "True when, for at least one dimension, X returned segment rows whose every counter was null or absent. The zeros in that dimension are then NOT a measurement: it is either no delivery in the window or X's reported defect where segmented stats jobs succeed with all-null metrics, and the two cannot be told apart.", func() { Example(false) })
+	Required("window", "buckets", "bucket_count", "all_counters_null")
+	// Type-level so bucket_count equals len(buckets) and the dimensions appear in order.
+	Example(map[string]any{
+		"window":            "last_7_days",
+		"all_counters_null": false,
+		"buckets":           []map[string]any{twitterAudienceAgeExample, twitterAudienceGenderExample, twitterAudiencePlatformExample},
+		"bucket_count":      3,
+		"account_currency":  "USD",
+	})
+})
+
 // HubSpotCampaign is one LF HubSpot marketing campaign.
 //
 // The `hs_utm` token is the point of this type: it is what makes a send attributable to a

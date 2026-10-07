@@ -2034,6 +2034,27 @@ Both audience reads share `readScopedAudience`, a small generic helper holding t
 (others absent via `optionalString`), and the envelope adds `account_currency`. Tests:
 `meta_audience_test.go`.
 
+## X audience read (`connection_twitter_audience.go`, LFXV2-2665)
+
+`GetTwitterAdsAudience` (`GET .../twitter-ads/audience`) is the X sibling: system scope refused
+(404); `resolveTwitterAudienceWindow` accepts only `today`, `yesterday` and `last_7_days` — the X
+metrics read's windows — defaults to `last_7_days`, and answers anything else with the fixed 400
+`twitterAudienceWindowMessage` (the design enum declares the same subset); then
+`Orchestrator.ReadTwitterAudienceInsights`, which type-asserts `TwitterAudienceReader` and runs
+the shared `readScopedAudience` (empty scope → 200 empty, X not contacted; `metricsCallTimeout`;
+`read_audience`). Errors go through `classifyInsightsErrorFor` with the
+`twitterAdsAudienceInsights` descriptor; an arm was added there for
+`domain.ErrAccountTimezoneUnsupported` (409, the sentinel's fixed text, shared `ConflictError`)
+alongside the audience-scope arms. Buckets are `dimension` (`age` | `gender` | `platform`) +
+`value` (X's segment name, verbatim); the envelope adds `account_currency` (absent when X was not
+contacted or the account carries none) and `all_counters_null`. The orchestrator asks the
+reader's `AudienceEnabled()` BEFORE the scope lookup, so `TWITTER_METRICS_ENABLED` off is 400 even
+for a project with no X campaigns (`TestGetTwitterAdsAudience_DisabledIs400EvenWithEmptyScope`).
+Window NAMES match the X metrics read's; the instants do not on a non-UTC account (account-local
+days here, UTC days there), so the two reads' totals are not directly comparable. Tests: `twitter_audience_test.go`;
+`twitter_audience_wire_example_test.go` (`TestPublishedTwitterAudienceExamplesArePossible`) walks
+every generated OpenAPI document and fails on an X audience example no response could contain.
+
 ## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X)
 
 `ResolveGoogleAdsCampaign`, `ResolveMicrosoftAdsCampaign`, `ResolveMetaAdsCampaign`,

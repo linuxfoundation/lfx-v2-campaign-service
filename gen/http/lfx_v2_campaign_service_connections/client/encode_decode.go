@@ -9177,6 +9177,216 @@ func DecodeGetMetaAdsAudienceResponse(decoder func(*http.Response) goahttp.Decod
 	}
 }
 
+// BuildGetTwitterAdsAudienceRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "get-twitter-ads-audience" endpoint
+func (c *Client) BuildGetTwitterAdsAudienceRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.GetTwitterAdsAudiencePayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", "*lfxv2campaignserviceconnections.GetTwitterAdsAudiencePayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetTwitterAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGetTwitterAdsAudienceRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections get-twitter-ads-audience server.
+func EncodeGetTwitterAdsAudienceRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.GetTwitterAdsAudiencePayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", "*lfxv2campaignserviceconnections.GetTwitterAdsAudiencePayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		if p.Window != nil {
+			values.Add("window", *p.Window)
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeGetTwitterAdsAudienceResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-connections get-twitter-ads-audience
+// endpoint. restoreBody controls whether the response body should be restored
+// after having been read.
+// DecodeGetTwitterAdsAudienceResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeGetTwitterAdsAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GetTwitterAdsAudienceResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			err = ValidateGetTwitterAdsAudienceResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			res := NewGetTwitterAdsAudienceTwitterAdsAudienceOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetTwitterAdsAudienceBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			err = ValidateGetTwitterAdsAudienceBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			return nil, NewGetTwitterAdsAudienceBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GetTwitterAdsAudienceConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			err = ValidateGetTwitterAdsAudienceConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			return nil, NewGetTwitterAdsAudienceConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GetTwitterAdsAudienceServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			err = ValidateGetTwitterAdsAudienceServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			return nil, NewGetTwitterAdsAudienceServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GetTwitterAdsAudienceInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			err = ValidateGetTwitterAdsAudienceInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			return nil, NewGetTwitterAdsAudienceInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GetTwitterAdsAudienceNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			err = ValidateGetTwitterAdsAudienceNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			return nil, NewGetTwitterAdsAudienceNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetTwitterAdsAudiencePayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			err = ValidateGetTwitterAdsAudiencePayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			return nil, NewGetTwitterAdsAudiencePayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetTwitterAdsAudienceUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			err = ValidateGetTwitterAdsAudienceUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+			}
+			return nil, NewGetTwitterAdsAudienceUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildGetMicrosoftAdsKeywordsRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-connections"
 // service "get-microsoft-ads-keywords" endpoint
@@ -13736,6 +13946,23 @@ func unmarshalMetaAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnections
 		Clicks:            *v.Clicks,
 		CostMicros:        *v.CostMicros,
 		Ctr:               *v.Ctr,
+	}
+
+	return res
+}
+
+// unmarshalTwitterAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsTwitterAdsAudienceBucket
+// builds a value of type
+// *lfxv2campaignserviceconnections.TwitterAdsAudienceBucket from a value of
+// type *TwitterAdsAudienceBucketResponseBody.
+func unmarshalTwitterAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsTwitterAdsAudienceBucket(v *TwitterAdsAudienceBucketResponseBody) *lfxv2campaignserviceconnections.TwitterAdsAudienceBucket {
+	res := &lfxv2campaignserviceconnections.TwitterAdsAudienceBucket{
+		Dimension:   *v.Dimension,
+		Value:       *v.Value,
+		Impressions: *v.Impressions,
+		Clicks:      *v.Clicks,
+		CostMicros:  *v.CostMicros,
+		Ctr:         *v.Ctr,
 	}
 
 	return res

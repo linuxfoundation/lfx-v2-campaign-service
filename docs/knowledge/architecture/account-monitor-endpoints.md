@@ -725,7 +725,8 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
 - **Gate.** Behind `TWITTER_METRICS_ENABLED` (chart default `"false"`), on the same terms as
   Microsoft's and Reddit's gates: only exactly `"true"` enables it, and disabled, all three
   `AccountReportReader` methods answer `ErrAccountMetricsUnsupported` — the same 400 as a
-  platform with no monitor — before any credential is resolved. It gates only the monitor; X's
+  platform with no monitor — before any credential is resolved. The same flag also gates
+  the X audience read (`twitter-ads/audience`), the other feature on X's stats-jobs contract; X's
   per-campaign metrics read is a different endpoint and is not affected.
 - **Unverified.** The whole X contract here follows docs.x.com and has not been exercised
   against a live X account; the specific open points (the queued and failed status spellings,

@@ -108,15 +108,17 @@ const (
 	// flips and this constant goes away.
 	EnvRedditKeywordTargetingWritesEnabled = "REDDIT_KEYWORD_TARGETING_WRITES_ENABLED"
 
-	// EnvTwitterMetricsEnabled opts a deployment IN to the X (Twitter) Ads ACCOUNT MONITOR
-	// (GET /projects/{project_id}/connection-twitter-ads/account-monitor). Only the exact value "true" enables it;
-	// unset or any other value fails closed and the endpoint answers 400 "not supported", the
+	// EnvTwitterMetricsEnabled opts a deployment IN to the two X (Twitter) Ads features built on
+	// X's asynchronous stats-jobs API: the ACCOUNT MONITOR
+	// (GET /projects/{project_id}/connection-twitter-ads/account-monitor) and the AUDIENCE READ
+	// (GET /projects/{project_id}/twitter-ads/audience). Only the exact value "true" enables them;
+	// unset or any other value fails closed and both endpoints answer 400 "not supported", the
 	// same shape as Reddit and Microsoft above.
 	//
 	// The monitor reads X's asynchronous stats-jobs API (active_entities, job create, job
 	// status, a downloaded gzip results file), implemented from X's published documentation
 	// and NOT exercised against a live X Ads account: no credentials were available. It gates
-	// only the monitor — X's per-campaign metrics read is a different, synchronous endpoint and
+	// only these two stats-job features — X's per-campaign metrics read is a different, synchronous endpoint and
 	// is not affected. Once the contract is verified the default flips and this constant goes
 	// away.
 	EnvTwitterMetricsEnabled = "TWITTER_METRICS_ENABLED"

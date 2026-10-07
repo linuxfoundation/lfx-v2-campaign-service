@@ -1563,6 +1563,53 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
+	Method("get-twitter-ads-audience", func() {
+		Description("Read X (Twitter) Ads audience insights — age, gender and device platform — for this " +
+			"project's own campaigns, live from the X Ads API on the connected ad account. Scoped to the " +
+			"campaigns this service holds for the project, NOT to the ad account: the stats requests name " +
+			"those campaign ids and every returned row is checked against them, because the account is " +
+			"shared across foundations. X serves segmented stats ONLY through its asynchronous stats-jobs " +
+			"API, so one read creates one job per segmentation per 20 campaigns (at most 40 campaigns), " +
+			"waits for them inside the request and downloads the results; nothing is persisted. A project " +
+			"with no X campaigns of its own receives an empty `buckets` array and X is not contacted. The " +
+			"window NAMES are the X metrics read's — today, yesterday or the last 7 days including today — " +
+			"but the days are taken on the ad ACCOUNT's calendar (its timezone), whereas the metrics read " +
+			"uses UTC days, so on a non-UTC account the two cover different instants and their totals are " +
+			"not directly comparable; longer windows are refused (400). Identical reads are shared and " +
+			"successful results reused for a few minutes, and at most one read per ad account runs at a " +
+			"time, because each read holds stats-job slots on an account shared across foundations. " +
+			"`all_counters_null` flags segment rows that carried no measurement. All three segmentations must load or " +
+			"the request fails (503). Billed charge is in the account's own currency (`account_currency`); " +
+			"no FX conversion is performed. There is no conversions counter. Disabled (400 not supported) " +
+			"unless TWITTER_METRICS_ENABLED is \"true\", like the X account monitor that shares the " +
+			"stats-jobs contract.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("window", String, "Reporting window; defaults to last_7_days when omitted. X windows only: longer ones are refused.", twitterAudienceWindowEnum)
+			Required("project_id")
+		})
+		Result(TwitterAdsAudience)
+		Error("NotFound", NotFoundError, "Resource not found")
+		// authErrors() rather than a hand-listed BadRequest: it also declares Unauthorized,
+		// which every bearerToken() method must carry or a refused token encodes as a 500.
+		authErrors()
+		Error("Conflict", ConflictError, "Conflict")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/twitter-ads/audience")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("window")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
 	Method("get-microsoft-ads-keywords", func() {
 		Description("Read Microsoft Advertising keyword performance for this project's own campaigns, in " +
 			"the same row shape as get-google-ads-keywords. Scoped to the campaigns this service holds for " +

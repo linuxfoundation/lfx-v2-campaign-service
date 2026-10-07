@@ -443,6 +443,41 @@ type MetaAudienceInsights struct {
 	Buckets  []MetaAudienceBucket
 }
 
+// X audience segmentation dimensions (the X audience read's own vocabulary; see
+// TwitterAudienceBucket).
+const (
+	TwitterAudienceDimensionAge      = "age"
+	TwitterAudienceDimensionGender   = "gender"
+	TwitterAudienceDimensionPlatform = "platform"
+)
+
+// TwitterAudienceBucket is one X stats segment's counters (AGE, GENDER or PLATFORMS
+// segmentation), summed across the calling project's own campaigns. Value is X's segment name,
+// verbatim. No Conversions field, for the reason TwitterDispatcher.ReadMetrics leaves them nil.
+type TwitterAudienceBucket struct {
+	Dimension   string
+	Value       string
+	Impressions int64
+	Clicks      int64
+	// CostMicros is billed charge in micros of TwitterAudienceInsights.Currency; no FX.
+	CostMicros int64
+	Ctr        float64
+}
+
+// TwitterAudienceInsights is the X audience read over the CALLING PROJECT'S OWN CAMPAIGNS — not
+// the connected ad account, which is shared across foundations. Each dimension independently
+// covers the same traffic, so counters total within a dimension, never across them.
+type TwitterAudienceInsights struct {
+	Window MetricsWindow
+	// Currency is the ad account's ISO 4217 code as X reports it on the account; "" when X was
+	// not contacted or the account carries none.
+	Currency string
+	// AllCountersNull: at least one dimension returned rows with no measured counter (see
+	// twitter.AudienceInsights.AllCountersNull) — its zeros are not a measurement.
+	AllCountersNull bool
+	Buckets         []TwitterAudienceBucket
+}
+
 // KeywordAction is one requested keyword mutation on a live campaign.
 type KeywordAction struct {
 	AdGroupID   string
