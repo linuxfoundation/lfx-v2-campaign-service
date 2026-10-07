@@ -1688,15 +1688,21 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 		// below), so only unmarshal it then — a 2xx success body never populates it.
 		var env graphErrorEnvelope
 		if status < 200 || status >= 300 {
-			_ = json.Unmarshal(raw, &env)
+			decodeErr := json.Unmarshal(raw, &env)
 			if env.Error != nil {
-				// Whether the decoded envelope can be TRUSTED as what Meta said: encoding/json
-				// keeps the last of a duplicated (or case-folded) key and substitutes U+FFFD
-				// silently, so a body carrying two codes decodes to one of them. Only a body the
-				// identity check accepts may mark the APIError EnvelopeParsed — the gate a
-				// definite "nothing was changed" (ClassifyAdSetWrite) requires. Every other field
-				// is copied exactly as before, so throttle detection and logging are unchanged.
-				env.Error.trusted = identityjson.Check(raw) == nil
+				// Whether the decoded envelope can be TRUSTED as what Meta said. Two conditions,
+				// both required:
+				//   - the schema decode SUCCEEDED. encoding/json keeps decoding past a type
+				//     mismatch and leaves the mismatched field at its zero value, so
+				//     {"code":100,"is_transient":"true"} yields Code=100, IsTransient=false and an
+				//     error — a half-read envelope that would otherwise read as a definite refusal;
+				//   - the identity check accepts the raw body: the decoder keeps the last of a
+				//     duplicated (or case-folded) key and substitutes U+FFFD silently, so a body
+				//     carrying two codes decodes to one of them.
+				// Only a trusted envelope may mark the APIError EnvelopeParsed — the gate a definite
+				// "nothing was changed" (ClassifyAdSetWrite) requires. The partially decoded fields
+				// are still copied exactly as before, so throttle detection and logging are unchanged.
+				env.Error.trusted = decodeErr == nil && identityjson.Check(raw) == nil
 			}
 		}
 		// isThrottle is the CLASSIFICATION — "Meta shed this request" — and is deliberately

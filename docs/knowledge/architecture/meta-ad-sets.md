@@ -69,8 +69,10 @@ Order, every refusal before the write:
 
 ### Write-safety classification (`meta.ClassifyAdSetWrite`)
 
-REJECTED is OPT-IN: only a Graph error envelope that was actually read from a body
-`identityjson.Check` accepted (`APIError.EnvelopeParsed`), with a non-zero code other than 1
+REJECTED is OPT-IN: only a Graph error envelope that DECODED CLEANLY (no `json.Unmarshal` error —
+a type mismatch such as `"is_transient":"true"` leaves a half-read envelope) from a body
+`identityjson.Check` accepted (`APIError.EnvelopeParsed`); unknown extra fields are fine, the
+decoder does not disallow them; with a non-zero code other than 1
 (unknown error) or 2 (service temporarily unavailable), `is_transient` false, a 4xx status other
 than 408, and not a throttle, says "nothing was changed". Every other `*APIError` — including a
 missing, zero or non-numeric code and a duplicated or case-folded key — is UNCONFIRMED. APPLIED
