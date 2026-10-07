@@ -63,10 +63,14 @@ type Client struct {
 	GetMicrosoftAdsKeywordsEndpoint     goa.Endpoint
 	ResolveGoogleAdsCampaignEndpoint    goa.Endpoint
 	ResolveMicrosoftAdsCampaignEndpoint goa.Endpoint
+	ResolveMetaAdsCampaignEndpoint      goa.Endpoint
+	ResolveRedditAdsCampaignEndpoint    goa.Endpoint
+	ResolveTwitterAdsCampaignEndpoint   goa.Endpoint
 	ListMetaAdsAccountsEndpoint         goa.Endpoint
 	ListLinkedinAdsAccountsEndpoint     goa.Endpoint
 	ListMicrosoftAdsAccountsEndpoint    goa.Endpoint
 	ListTwitterAdsAccountsEndpoint      goa.Endpoint
+	ListRedditAdsAccountsEndpoint       goa.Endpoint
 	ListHubspotEmailsEndpoint           goa.Endpoint
 	SearchHubspotCampaignsEndpoint      goa.Endpoint
 	CreateHubspotCampaignEndpoint       goa.Endpoint
@@ -80,7 +84,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-connections" service client
 // given the endpoints.
-func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, getMicrosoftAdsKeywords, resolveGoogleAdsCampaign, resolveMicrosoftAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listHubspotEmails, searchHubspotCampaigns, createHubspotCampaign, monitorGoogleAdsAccount, monitorLinkedinAdsAccount, monitorMetaAdsAccount, monitorRedditAdsAccount, monitorMicrosoftAdsAccount, monitorTwitterAdsAccount goa.Endpoint) *Client {
+func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, getMicrosoftAdsKeywords, resolveGoogleAdsCampaign, resolveMicrosoftAdsCampaign, resolveMetaAdsCampaign, resolveRedditAdsCampaign, resolveTwitterAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listRedditAdsAccounts, listHubspotEmails, searchHubspotCampaigns, createHubspotCampaign, monitorGoogleAdsAccount, monitorLinkedinAdsAccount, monitorMetaAdsAccount, monitorRedditAdsAccount, monitorMicrosoftAdsAccount, monitorTwitterAdsAccount goa.Endpoint) *Client {
 	return &Client{
 		CreateGoogleAdsEndpoint:             createGoogleAds,
 		GetGoogleAdsEndpoint:                getGoogleAds,
@@ -130,10 +134,14 @@ func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, 
 		GetMicrosoftAdsKeywordsEndpoint:     getMicrosoftAdsKeywords,
 		ResolveGoogleAdsCampaignEndpoint:    resolveGoogleAdsCampaign,
 		ResolveMicrosoftAdsCampaignEndpoint: resolveMicrosoftAdsCampaign,
+		ResolveMetaAdsCampaignEndpoint:      resolveMetaAdsCampaign,
+		ResolveRedditAdsCampaignEndpoint:    resolveRedditAdsCampaign,
+		ResolveTwitterAdsCampaignEndpoint:   resolveTwitterAdsCampaign,
 		ListMetaAdsAccountsEndpoint:         listMetaAdsAccounts,
 		ListLinkedinAdsAccountsEndpoint:     listLinkedinAdsAccounts,
 		ListMicrosoftAdsAccountsEndpoint:    listMicrosoftAdsAccounts,
 		ListTwitterAdsAccountsEndpoint:      listTwitterAdsAccounts,
+		ListRedditAdsAccountsEndpoint:       listRedditAdsAccounts,
 		ListHubspotEmailsEndpoint:           listHubspotEmails,
 		SearchHubspotCampaignsEndpoint:      searchHubspotCampaigns,
 		CreateHubspotCampaignEndpoint:       createHubspotCampaign,
@@ -1019,6 +1027,63 @@ func (c *Client) ResolveMicrosoftAdsCampaign(ctx context.Context, p *ResolveMicr
 	return ires.(*PlatformCampaignResolution), nil
 }
 
+// ResolveMetaAdsCampaign calls the "resolve-meta-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// ResolveMetaAdsCampaign may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) ResolveMetaAdsCampaign(ctx context.Context, p *ResolveMetaAdsCampaignPayload) (res *PlatformCampaignResolution, err error) {
+	var ires any
+	ires, err = c.ResolveMetaAdsCampaignEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*PlatformCampaignResolution), nil
+}
+
+// ResolveRedditAdsCampaign calls the "resolve-reddit-ads-campaign" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+// ResolveRedditAdsCampaign may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) ResolveRedditAdsCampaign(ctx context.Context, p *ResolveRedditAdsCampaignPayload) (res *PlatformCampaignResolution, err error) {
+	var ires any
+	ires, err = c.ResolveRedditAdsCampaignEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*PlatformCampaignResolution), nil
+}
+
+// ResolveTwitterAdsCampaign calls the "resolve-twitter-ads-campaign" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+// ResolveTwitterAdsCampaign may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) ResolveTwitterAdsCampaign(ctx context.Context, p *ResolveTwitterAdsCampaignPayload) (res *PlatformCampaignResolution, err error) {
+	var ires any
+	ires, err = c.ResolveTwitterAdsCampaignEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*PlatformCampaignResolution), nil
+}
+
 // ListMetaAdsAccounts calls the "list-meta-ads-accounts" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // ListMetaAdsAccounts may return the following errors:
@@ -1093,6 +1158,25 @@ func (c *Client) ListTwitterAdsAccounts(ctx context.Context, p *ListTwitterAdsAc
 		return
 	}
 	return ires.(*ListTwitterAdsAccountsResult), nil
+}
+
+// ListRedditAdsAccounts calls the "list-reddit-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// ListRedditAdsAccounts may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) ListRedditAdsAccounts(ctx context.Context, p *ListRedditAdsAccountsPayload) (res *ListRedditAdsAccountsResult, err error) {
+	var ires any
+	ires, err = c.ListRedditAdsAccountsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ListRedditAdsAccountsResult), nil
 }
 
 // ListHubspotEmails calls the "list-hubspot-emails" endpoint of the

@@ -222,6 +222,13 @@ var errPageCapReached = fmt.Errorf("response still had more pages after %d; refu
 // reading of a next_url that carries its own page token, but like next_url itself it is not
 // verified (see paginationEnvelope).
 func (c *Client) walkPages(ctx context.Context, method, path string, body any, visit func(page int, resp *apiResponse) error) error {
+	return c.walkPagesCapped(ctx, method, path, body, monitorMaxPages, errPageCapReached, visit)
+}
+
+// walkPagesCapped is walkPages with the page cap, and the error returned on reaching it, made
+// the caller's. Account discovery (accounts.go) walks with its own, smaller caps; the monitor
+// reads keep monitorMaxPages through walkPages above, unchanged.
+func (c *Client) walkPagesCapped(ctx context.Context, method, path string, body any, maxPages int, capErr error, visit func(page int, resp *apiResponse) error) error {
 	seen := map[string]struct{}{path: {}}
 	for page := 1; ; page++ {
 		resp, err := c.request(ctx, method, path, body)
@@ -238,8 +245,8 @@ func (c *Client) walkPages(ctx context.Context, method, path string, body any, v
 		if next == "" {
 			return nil
 		}
-		if page >= monitorMaxPages {
-			return errPageCapReached
+		if page >= maxPages {
+			return capErr
 		}
 		if _, dup := seen[next]; dup {
 			return fmt.Errorf("page %d: pagination repeated an earlier page", page)

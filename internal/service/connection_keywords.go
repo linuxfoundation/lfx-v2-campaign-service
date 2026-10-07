@@ -12,6 +12,9 @@ import (
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 )
 
 // googleAdsKeywordInsights reuses the account-discovery descriptor's status mapping under a
@@ -243,7 +246,7 @@ func validatePlatformCampaignID(id string) error {
 }
 
 func (s *ConnectionService) ResolveGoogleAdsCampaign(ctx context.Context, p *conn.ResolveGoogleAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
-	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderGoogleAds, p.PlatformCampaignID)
+	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderGoogleAds, p.PlatformCampaignID, validatePlatformCampaignID)
 }
 
 // ResolveMicrosoftAdsCampaign is ResolveGoogleAdsCampaign for Microsoft Advertising: it maps one
@@ -263,13 +266,53 @@ func (s *ConnectionService) ResolveGoogleAdsCampaign(ctx context.Context, p *con
 // one never does. The lever it addresses carries its own guards (ad account provenance, connection
 // usability) before anything reaches the platform.
 func (s *ConnectionService) ResolveMicrosoftAdsCampaign(ctx context.Context, p *conn.ResolveMicrosoftAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
-	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderMicrosoftAds, p.PlatformCampaignID)
+	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderMicrosoftAds, p.PlatformCampaignID, validatePlatformCampaignID)
+}
+
+// platformCampaignIDRule adapts a platform package's own ValidateCampaignID to the declared
+// 400. The platform's error text is NOT echoed: the message is fixed per platform and states
+// the same rule as the method's design Pattern/MaxLength.
+func platformCampaignIDRule(validate func(string) error, badID string) func(string) error {
+	return func(id string) error {
+		if validate(id) != nil {
+			return &conn.BadRequestError{Code: "400", Message: badID}
+		}
+		return nil
+	}
+}
+
+var (
+	validateMetaCampaignRefID = platformCampaignIDRule(meta.ValidateCampaignID,
+		"the campaign id must be 1-32 digits, without a leading zero")
+	validateRedditCampaignRefID = platformCampaignIDRule(reddit.ValidateCampaignID,
+		"the campaign id must be 1-64 letters, digits or underscores")
+	validateTwitterCampaignRefID = platformCampaignIDRule(twitter.ValidateCampaignID,
+		"the campaign id must be 1-64 letters or digits")
+)
+
+// ResolveMetaAdsCampaign, ResolveRedditAdsCampaign and ResolveTwitterAdsCampaign are
+// ResolveMicrosoftAdsCampaign for Meta, Reddit and X (LFXV2-2665): the same DB-only,
+// project-scoped lookup through resolvePlatformCampaignRef, differing only in the platform the
+// route fixes and the id rule — each platform package's ValidateCampaignID, applied before any
+// lookup. As for Microsoft, more than one match is reachable (000020's unique index covers
+// Google Ads only) and every match is returned for the caller to refuse.
+func (s *ConnectionService) ResolveMetaAdsCampaign(ctx context.Context, p *conn.ResolveMetaAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
+	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderMetaAds, p.PlatformCampaignID, validateMetaCampaignRefID)
+}
+
+func (s *ConnectionService) ResolveRedditAdsCampaign(ctx context.Context, p *conn.ResolveRedditAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
+	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderRedditAds, p.PlatformCampaignID, validateRedditCampaignRefID)
+}
+
+func (s *ConnectionService) ResolveTwitterAdsCampaign(ctx context.Context, p *conn.ResolveTwitterAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
+	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderTwitterAds, p.PlatformCampaignID, validateTwitterCampaignRefID)
 }
 
 // resolvePlatformCampaignRef is the shared body of the per-platform campaign-ref lookups. The
 // platform is fixed by the calling method, never by the request, so a caller of one route can
-// only ever resolve that route's platform.
-func (s *ConnectionService) resolvePlatformCampaignRef(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*conn.PlatformCampaignResolution, error) {
+// only ever resolve that route's platform. So is validateID, the platform's id rule, which must
+// return the declared 400 (*conn.BadRequestError) for an id it refuses.
+func (s *ConnectionService) resolvePlatformCampaignRef(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string, validateID func(string) error) (*conn.PlatformCampaignResolution, error) {
 	// Same reserved-scope refusal as the reads above: left open, this would report whether the
 	// Linux Foundation's own scope holds a given campaign to any caller.
 	if err := rejectSystemScope(projectID); err != nil {
@@ -283,7 +326,7 @@ func (s *ConnectionService) resolvePlatformCampaignRef(ctx context.Context, proj
 	// caller then refuses an action for the wrong reason and cannot tell a typo from an
 	// unowned campaign. Mirrored here so the answer is the declared 400 whichever door the
 	// request came in by.
-	if err := validatePlatformCampaignID(platformCampaignID); err != nil {
+	if err := validateID(platformCampaignID); err != nil {
 		return nil, err
 	}
 	_, _, orch, err := s.resolveBackendWithOrch("resolve campaign reference")

@@ -719,3 +719,10 @@ inconclusive one; the operator was told to reauthorize a credential Meta never l
 `APIError` whose envelope could not be read (`EnvelopeUnreadable`) is inconclusive whatever the
 status — nothing was parsed, so nothing was learned. `APIError.Message` falls back to the raw
 response body, which is why the dispatcher never echoes it.
+
+## Campaign-ref id rule (`campaign_ref.go`, LFXV2-2665)
+
+`ValidateCampaignID` is the id rule `resolve-meta-ads-campaign` applies before any lookup:
+digits only, no leading zero (`numericIDRE` admits one; a stored Meta id never has it, so
+`"0123"` could only come back as a confident "not yours"), at most 32, untrimmed. Returns
+`ErrInvalidCampaignID`. It contacts nothing.
