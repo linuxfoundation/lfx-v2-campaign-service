@@ -1982,6 +1982,22 @@ did not name renders UNCONFIRMED. The orchestrator's `ReadKeywordTargeting` /
 `remove_keyword_targeting`, and treat a short outcome slice as UNCONFIRMED. See
 [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
 
+## Meta audience read (`connection_meta_audience.go`, LFXV2-2665)
+
+`GetMetaAdsAudience` (`GET .../meta-ads/audience`) is `GetGoogleAdsAudience`'s Meta sibling:
+system scope refused (404), `resolveInsightsWindow` (all seven windows, default
+`last_30_days`), backend check, then `Orchestrator.ReadMetaAudienceInsights`, which type-asserts
+`MetaAudienceReader` (absent → `ErrKeywordInsightsUnsupported`, 400), reads the project's scope
+from `ListProjectPlatformCampaignIDs`, answers an EMPTY scope with an empty result and no
+upstream call, times the call under `metricsCallTimeout`/`read_audience`, and rejects a nil
+result / normalises nil buckets. Errors go through `classifyInsightsErrorFor` with the
+`metaAdsAudienceInsights` descriptor; two arms were added there for the Meta-only sentinels
+`domain.ErrAudienceScopeTooLarge` and `ErrAudienceScopeInvalid` (409, fixed text). Upstream
+failures (transport, 5xx, 429 after retry, 401/403, malformed rows) take the default 503 arm.
+Both audience reads share `readScopedAudience`, a small generic helper holding the scope, empty-scope, timeout, metrics, nil-result and normalise steps; only the capability assertion differs. The account-mismatch 409 text is route-neutral ("…to read this data…") since it is reached by the keyword, Google audience and Meta audience reads alike. Upstream calls run under `metricsCallTimeout` (20s). Buckets carry `dimension` (`age_gender` | `placement`) plus only that dimension's value fields
+(others absent via `optionalString`), and the envelope adds `account_currency`. Tests:
+`meta_audience_test.go`.
+
 ## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X)
 
 `ResolveGoogleAdsCampaign`, `ResolveMicrosoftAdsCampaign`, `ResolveMetaAdsCampaign`,
