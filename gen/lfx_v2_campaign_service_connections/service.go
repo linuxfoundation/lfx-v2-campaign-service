@@ -186,9 +186,24 @@ type Service interface {
 	// next one builds; the first read returns no rows with metrics_pending=true. A
 	// report is served only while it covers every campaign the project owns. Saved
 	// reports are cached platform data. Off (400, not supported) unless
-	// MICROSOFT_METRICS_ENABLED is true. Audience demographics are not offered for
-	// Microsoft.
+	// MICROSOFT_METRICS_ENABLED is true. Age/gender audience demographics are
+	// served by get-microsoft-ads-audience.
 	GetMicrosoftAdsKeywords(context.Context, *GetMicrosoftAdsKeywordsPayload) (res *MicrosoftAdsKeywords, err error)
+	// Read Microsoft Advertising audience demographics — one bucket per (age
+	// group, gender) — for this project's own campaigns. Scoped to the campaigns
+	// this service holds for the project, NOT to the connected ad account, and
+	// read from the project's OWN connection only (never the LF system account).
+	// Microsoft serves demographics only through its asynchronous Reporting
+	// service (AgeGenderAudienceReportRequest), so buckets come from the last
+	// finished report — see metrics_as_of and metrics_pending — while the next one
+	// builds; the first read returns no buckets with metrics_pending=true. A
+	// report is served only while it covers every campaign the project owns. A
+	// project with no Microsoft campaigns of its own receives an empty `buckets`
+	// array and Microsoft is not contacted. There is NO device breakdown:
+	// Microsoft's age/gender report has no device dimension. Spend is in the
+	// account's own currency; no FX conversion is performed. Off (400, not
+	// supported) unless MICROSOFT_METRICS_ENABLED is true.
+	GetMicrosoftAdsAudience(context.Context, *GetMicrosoftAdsAudiencePayload) (res *MicrosoftAdsAudience, err error)
 	// Resolve one Google Ads campaign id to this service's own campaign and brief.
 	// A caller holding a keyword row has the PLATFORM's numeric campaign id; every
 	// mutation route here is keyed by this service's campaign UUID under its
@@ -498,7 +513,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [66]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-meta-ads-audience", "get-microsoft-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account"}
+var MethodNames = [67]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-meta-ads-audience", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -892,6 +907,19 @@ type GetMetaAdsPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
+}
+
+// GetMicrosoftAdsAudiencePayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// method.
+type GetMicrosoftAdsAudiencePayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Reporting window; defaults to last_30_days when omitted. yesterday and
+	// last_14_days are not available on Microsoft.
+	Window *string
 }
 
 // GetMicrosoftAdsKeywordsPayload is the payload type of the
@@ -1422,6 +1450,54 @@ type MetaAdsCredentials struct {
 	AccessToken string
 	// Meta app secret
 	AppSecret string
+}
+
+// MicrosoftAdsAudience is the result type of the
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// method.
+type MicrosoftAdsAudience struct {
+	// The reporting window these counters cover
+	Window string
+	// One bucket per (age_group, gender), summed over the campaigns this project
+	// owns, from the last finished Microsoft age/gender report that covers every
+	// one of them; ordered by impressions descending. Every bucket covers a
+	// disjoint slice of the same traffic, so counters may be totalled across
+	// buckets. Empty while no such report has finished (metrics_as_of absent).
+	Buckets []*MicrosoftAdsAudienceBucket
+	// How many buckets are in `buckets`.
+	BucketCount int
+	// When the Microsoft report these buckets come from was requested (not when it
+	// was collected). ABSENT when no finished report covers every campaign this
+	// project now owns — the first read, or the first after a campaign was added —
+	// and `buckets` is then empty rather than a partial picture.
+	MetricsAsOf *string
+	// True while a newer Microsoft report is building, so a later read will return
+	// newer buckets (or the first ones, when metrics_as_of is absent).
+	MetricsPending bool
+	// True when Microsoft flagged the served report's data as potentially
+	// incomplete (the window's last day may still be aggregating): its counters
+	// may still rise. False when no report is served.
+	DataIncomplete bool
+}
+
+type MicrosoftAdsAudienceBucket struct {
+	// Microsoft's AgeGroup, verbatim (documented values 13-17, 18-24, 25-34,
+	// 35-49, 50-64, 65+; any other value Microsoft reports, such as an unknown
+	// bucket, is passed through rather than dropped).
+	AgeGroup string
+	// Microsoft's Gender, verbatim (documented as male or female; any other value
+	// Microsoft reports is passed through rather than dropped).
+	Gender string
+	// Impressions over the window
+	Impressions int64
+	// Clicks over the window
+	Clicks int64
+	// Spend over the window in micro-units of the ad account's own currency
+	// (Microsoft's Spend times 10^6). This service performs no FX conversion and
+	// does not know the currency.
+	CostMicros int64
+	// Clicks/Impressions as a fraction, 0 when Impressions is 0
+	Ctr float64
 }
 
 // MicrosoftAdsConnection is the result type of the
