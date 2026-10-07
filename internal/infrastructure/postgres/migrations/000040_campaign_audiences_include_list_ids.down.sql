@@ -7,9 +7,10 @@
 -- success while omitting those recipients. That is a silent audience change, so the revert REFUSES
 -- while any such row can still be sent (the same guard 000030's down uses for a lossy drop).
 --
--- "Can still be sent" is a BUILT audience on a brief that is not archived: only those are
--- dispatched. An archived brief's audience keeps its history and does not block the revert, so
--- archiving the brief IS a recovery path, as is re-attaching the audience to a single master list.
+-- "Can still be sent" is ANY audience on a brief that is not archived, whatever its status: a
+-- `failed` or `building` row can be patched back to `built` later, and would then dispatch to its
+-- first list only. An archived brief's audience keeps its history and does not block the revert,
+-- so archiving the brief IS a recovery path, as is re-attaching the audience to a single master list.
 -- In one transaction, so a refusal leaves the column and its CHECK in place.
 
 BEGIN;
@@ -19,15 +20,14 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM campaign_audiences a
         JOIN campaign_briefs b ON b.id = a.brief_id
-        WHERE a.status = 'built'
-          AND b.status <> 'archived'
+        WHERE b.status <> 'archived'
           AND a.include_list_ids IS NOT NULL
           AND jsonb_typeof(a.include_list_ids) = 'array'
           AND jsonb_array_length(a.include_list_ids) > 1
     ) THEN
         RAISE EXCEPTION
-            'cannot revert 000040: built audiences on live briefs are attached to several include lists. '
-            'Dropping include_list_ids would narrow each to its first list while it stays built. '
+            'cannot revert 000040: audiences on live briefs are attached to several include lists. '
+            'Dropping include_list_ids would narrow each to its first list, now or once it is built. '
             'Re-attach those audiences to a single master list, or archive their briefs, first.';
     END IF;
 END $$;

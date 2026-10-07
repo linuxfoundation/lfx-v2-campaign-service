@@ -278,7 +278,10 @@ func TestMigration000040_AddsIncludeListIDs(t *testing.T) {
 	// would silently narrow it to its first list while it stays built.
 	require.Regexp(t, regexp.MustCompile(`(?i)jsonb_array_length\(a\.include_list_ids\) > 1 \) THEN RAISE EXCEPTION`), downSQL,
 		"000040's down must refuse to drop include_list_ids while a multi-include audience can still be sent")
-	// Scoped to what can still be dispatched, so archiving a brief -- a documented recovery -- clears it.
-	require.Regexp(t, regexp.MustCompile(`(?i)a\.status = 'built' AND b\.status <> 'archived'`), downSQL,
-		"the guard must ignore archived briefs and unbuilt audiences, or its documented recovery cannot work")
+	// Scoped to live briefs only, so archiving a brief -- a documented recovery -- clears it. NOT scoped
+	// to built audiences: a failed or building row can be patched back to built after the revert.
+	require.Regexp(t, regexp.MustCompile(`(?i)WHERE b\.status <> 'archived' AND a\.include_list_ids IS NOT NULL`), downSQL,
+		"the guard must ignore archived briefs only, whatever the audience status")
+	require.NotRegexp(t, regexp.MustCompile(`(?i)a\.status = 'built'`), downSQL,
+		"an unbuilt multi-include audience can be patched to built later, so it must still block the revert")
 }
