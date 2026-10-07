@@ -3645,9 +3645,22 @@ type CampaignSettingsFieldResponseBody struct {
 	// compared rather than upstream-only because the dispatch config's channel IS
 	// persisted in the campaign's config snapshot; it still reads `unknown` on a
 	// legacy row that carries no snapshot, but for the ordinary reason that
-	// nothing was recorded there — not because the field has no recorded side. The
-	// vocabulary is per-platform and may grow, so a consumer must render an
-	// unrecognised field name rather than dropping it.
+	// nothing was recorded there — not because the field has no recorded side. On
+	// Microsoft Advertising, Meta, Reddit and X the COMPARED settings are
+	// `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and
+	// `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight
+	// dates, so they are not reported there); `status` and `bidding_strategy_type`
+	// are upstream-only on all four (none of their create paths records a
+	// strategy); Microsoft also reports `budget_explicitly_shared` upstream-only,
+	// Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the
+	// last two say where the budget lives, and explain a budget that reads
+	// `unknown` because the campaign-level amount is not the one the row recorded
+	// (Reddit with campaign budget optimization off, X under anything but
+	// `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged
+	// forward past UTC midnight (because the requested day had already begun at
+	// dispatch) is shown with both sides and an `unknown` verdict rather than a
+	// false `diverged`. The vocabulary is per-platform and may grow, so a consumer
+	// must render an unrecognised field name rather than dropping it.
 	Field *string `form:"field,omitempty" json:"field,omitempty" xml:"field,omitempty"`
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.

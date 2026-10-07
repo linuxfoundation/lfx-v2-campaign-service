@@ -921,7 +921,10 @@ announcement makes `CAMPAIGN` the default and the two models exclusive (under `L
 daily budget must be on the line item and absent from the campaign); the current reference page
 instead lists `LINE_ITEM` as the only value and default. The dispatcher therefore writes only on a
 reported `CAMPAIGN` and refuses a campaign reporting `LINE_ITEM` or omitting the field (409)
-before any write.
+before any write. `CreateCampaign` deliberately keeps omitting `budget_optimization` rather than sending
+`CAMPAIGN`: the current reference lists `LINE_ITEM` as the only POST value, so an explicit
+`CAMPAIGN` is undocumented and could fail every create. `TestCreateSendsQueryParams` pins the
+omission; the settings readback likewise compares the budget only on a REPORTED `CAMPAIGN`.
 
 ## Metrics reads
 
@@ -1290,3 +1293,13 @@ any other status, a missing name, an id echo that differs, an empty `data`, a 40
 `identityjson.Check` refuses or that does not decode are errors. The read is path-scoped; X's
 campaign object is not documented to carry `account_id`, and when a response does carry one it is
 returned for the dispatcher to compare.
+
+## Settings readback read (LFXV2-2665)
+
+`GetCampaignSettings(ctx, campaignID, lineItemID)` (`campaign_settings.go`) reads the campaign
+(name, `entity_status`, `budget_optimization`, the daily and total `*_local_micro` amounts,
+`account_id`) and, when the row recorded one, the line item (`start_time`, `end_time`,
+`bid_strategy`, `campaign_id`; `with_deleted=true`). Both bodies pass `identityjson.Check` over
+the RAW body and a strict id echo. A 404 or deleted campaign is `(nil, nil)`; a 404 or deleted
+line item only leaves `LineItem` nil; a line item of another campaign is
+`ErrLineItemNotInCampaign`; an amount that is not a non-negative integer is an error.

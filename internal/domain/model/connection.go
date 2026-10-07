@@ -402,6 +402,47 @@ type AudienceInsights struct {
 	Buckets []AudienceBucket
 }
 
+// Meta audience breakdown dimensions (the Meta audience read's own vocabulary; see
+// MetaAudienceBucket).
+const (
+	MetaAudienceDimensionAgeGender = "age_gender"
+	MetaAudienceDimensionPlacement = "placement"
+)
+
+// MetaAudienceBucket is one Meta Insights breakdown segment's counters, summed across the
+// calling project's own campaigns.
+//
+// Not AudienceBucket: Meta's age and gender arrive as ONE combined breakdown and placement
+// carries two values, so a single Dimension/Value pair cannot hold a segment without inventing a
+// joined-string vocabulary. Only the value fields of the bucket's own Dimension are set.
+//
+// There is no Conversions field, deliberately: Meta exposes conversions only inside the
+// per-action-type `actions` array, and choosing which action types count is a configuration
+// input this service does not have (see MetaDispatcher.ReadMetrics).
+type MetaAudienceBucket struct {
+	Dimension         string
+	Age               string
+	Gender            string
+	PublisherPlatform string
+	PlatformPosition  string
+	Impressions       int64
+	Clicks            int64
+	// CostMicros is in micros of MetaAudienceInsights.Currency; no FX conversion.
+	CostMicros int64
+	Ctr        float64
+}
+
+// MetaAudienceInsights is the Meta audience read over the CALLING PROJECT'S OWN CAMPAIGNS — not
+// the connected ad account, which is shared across foundations. Each dimension independently
+// covers the same traffic, so counters total within a dimension, never across them.
+type MetaAudienceInsights struct {
+	Window MetricsWindow
+	// Currency is the ad account's ISO 4217 code as Meta reported it; "" when no bucket came
+	// back.
+	Currency string
+	Buckets  []MetaAudienceBucket
+}
+
 // KeywordAction is one requested keyword mutation on a live campaign.
 type KeywordAction struct {
 	AdGroupID   string

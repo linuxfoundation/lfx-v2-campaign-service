@@ -289,6 +289,20 @@ var (
 	// tracking existed, or under a connection with no tenant id at all, needs.
 	ErrCampaignProvenanceUnknown = errors.New("the campaign does not record which platform tenant it was created under")
 
+	// ErrCampaignUpstreamIdentityMismatch indicates the PLATFORM's own answer contradicts the
+	// identity this service recorded for a campaign, even though the recorded account and the
+	// connection agree: the platform reports the campaign under a different ad account, or a
+	// child entity recorded on the row (a Meta ad set, an X line item) now belongs to a
+	// different campaign upstream. Reading it would report somebody else's configuration as
+	// this campaign's, so it is refused.
+	//
+	// It is deliberately NOT ErrCampaignAccountMismatch: that sentinel's remedy is "reconnect
+	// the original account", and here the connection already IS the original account, so the
+	// instruction would be unactionable. The platform's record no longer matches what this
+	// service created; the remedy is to re-dispatch the campaign. A state error, not a
+	// transport one — a retry fails identically — so it maps to 409.
+	ErrCampaignUpstreamIdentityMismatch = errors.New("the platform's record of the campaign no longer matches the identity this service recorded")
+
 	// ErrCampaignWriteInProgress indicates another writer already holds the claim for this
 	// campaign, so this request did not acquire it. Maps to 409.
 	//
@@ -436,6 +450,19 @@ var (
 	// sending it would be refused by the platform on every read, and dropping it would present
 	// the rest of the project as all of it. The message is fixed, client-safe text.
 	ErrKeywordReportScopeInvalid = errors.New("a campaign in this project has a stored platform id the keyword report cannot be scoped to")
+
+	// ErrAudienceScopeTooLarge indicates the Meta audience read refused because the project owns
+	// more campaigns on the platform than one Insights campaign-id filter is bounded to
+	// (meta.MaxAudienceCampaigns, a local bound on the request URL). Refused before any upstream
+	// call and PERMANENT while the project stays that large, for ErrKeywordReportScopeTooLarge's
+	// reasons. The message is fixed, client-safe text: it reaches the HTTP body.
+	ErrAudienceScopeTooLarge = errors.New("this project has more campaigns on the platform than one audience read can be scoped to")
+
+	// ErrAudienceScopeInvalid indicates the Meta audience read refused because a campaign in the
+	// project's scope has a stored platform id that is not a valid Meta campaign id. Refused
+	// before any upstream call, PERMANENT until the row is corrected, for
+	// ErrKeywordReportScopeInvalid's reasons. The message is fixed, client-safe text.
+	ErrAudienceScopeInvalid = errors.New("a campaign in this project has a stored platform id the audience read cannot be scoped to")
 
 	// ErrKeywordActionsUnsupported indicates the platform cannot pause or remove keywords.
 	// The platform is never contacted.

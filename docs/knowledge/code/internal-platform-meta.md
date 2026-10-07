@@ -542,6 +542,32 @@ zero). The return type `CampaignMetrics` is distinct from the domain type
 `model.CampaignMetrics` (an application-level platform-agnostic staging area), converted at
 the dispatcher boundary.
 
+## Audience insights read (`audience.go`, LFXV2-2665)
+
+`GetAudienceInsights(ctx, accountID, window, campaignIDs)` issues, per breakdown,
+`GET /act_<id>/insights?level=campaign&fields=campaign_id,impressions,clicks,spend,account_currency&breakdowns=<b>&date_preset=<p>&filtering=[{"field":"campaign.id","operator":"IN","value":[<ids>]}]&limit=500`
+with `<b>` = `age,gender` then `publisher_platform,platform_position`. The window uses the
+metrics read's `datePresetFor` map (Meta resolves it in the account's timezone). Before any
+request: `ValidateAccountID`, a non-empty scope of canonical ids (`ErrAudienceScopeInvalid`),
+de-duplicated, at most `MaxAudienceCampaigns` (250, a local URL bound — not a documented Meta
+limit; `ErrAudienceScopeTooLarge`). Paging follows `paging.cursors.after` (never the `next` URL),
+at most `audienceMaxPages` (20) pages per breakdown; a `next` on the last page, a missing or
+repeated cursor all fail the read. Every row is checked: no duplicate top-level JSON keys
+(`rejectDuplicateKeys`), `campaign_id` in the requested scope, `account_currency` a consistent
+ISO 4217 code, each breakdown value present and matching `^[A-Za-z0-9][A-Za-z0-9_+\-]{0,63}$`
+(kept verbatim, else the read fails — values never echoed), no repeated (campaign, segment),
+counters via `parseMetricInt`/`parseSpendMicros` (spend → micros, the helper the metrics read
+now shares). Rows are summed per segment across campaigns with an overflow check; CTR is computed
+after aggregation; order is impressions descending then values. Any failure — including either
+breakdown's — returns no rows. No conversions: Meta has no scalar conversions metric.
+
+The whole call runs under the orchestrator's `metricsCallTimeout` (20s) — both breakdowns, up to
+2×20 sequential pages and any 429 backoff — the same budget as the Google audience read, so a very
+large project can 503 consistently on timeout. Row keys are compared for duplicates with
+`strings.EqualFold`, because encoding/json matches keys to struct fields case-insensitively
+(KELVIN SIGN → `k`, LONG S → `s` included) and keeps the last match: `{"Campaign_ID":…,"campaign_id":…}`
+is as ambiguous as an exact repeat.
+
 ## Credential scrubbing on error bodies
 
 When an error response is NOT a Graph diagnostic — a proxy page, a WAF block, a
@@ -743,3 +769,22 @@ that does not decode, and — because the node read is NOT account-scoped — a 
 `account_id` are errors. `effective_status` is reported verbatim and never judged: Meta grows that
 set without notice. The ref carries `account_id` normalised to `act_<digits>`; the dispatcher, not
 the client, decides the account matches the connection.
+
+## Settings readback read (LFXV2-2665)
+
+`GetCampaignSettings(ctx, campaignID, adSetID)` (`campaign_settings.go`) reads the campaign node
+(`id,name,status,account_id` plus the campaign-only fields that make Graph refuse a non-campaign
+node) and, when the row recorded one, the ad set (`id,campaign_id,daily_budget,lifetime_budget,
+start_time,end_time,bid_strategy`). Both bodies pass `identityjson.Check` and a strict id echo;
+the campaign must report a readable `account_id` (GET /{id} is not account-scoped, so this is
+the read's provenance proof). Graph 100/33 on the campaign is an ERROR (503) on every HTTP
+status, exactly as on the adoption read: Meta documents it as "does not exist, cannot be loaded
+due to missing permissions, or does not support this operation", and no further read resolves
+which — an account that loads says nothing about whether THIS campaign is hidden from the token
+— so no account probe is sent and the read never returns `(nil, nil)`. On the ad set 100/33 only leaves `AdSet` nil (its fields read `unknown`, a claim of
+nothing). An ad set whose `campaign_id` is another campaign is
+`ErrAdSetNotInCampaign`; both budgets on one ad set, or a non-integer budget, is an error.
+Unlike adoption, DELETED/ARCHIVED is returned with its status, not as absent.
+`AccountCurrencyOffset` is the read half of `ResolveBudgetMinorUnits`: the account currency's
+minor-unit offset, `known=false` for a currency outside the supported map (never a guessed 100),
+and an error when the preflight fails.

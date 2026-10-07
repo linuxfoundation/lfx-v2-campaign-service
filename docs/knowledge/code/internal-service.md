@@ -1434,8 +1434,14 @@ campaign's CURRENT configuration from the ad platform and reports where it diver
 the campaign row recorded. Like the metrics read it is pure — nothing is persisted, so there is
 no `If-Match`/version — and like it, `Orchestrator.ReadCampaignSettings` type-asserts the
 platform's dispatcher for an optional capability at call time, so a platform with no readback
-wired returns `ErrSettingsReadbackUnsupported` (400) without contacting anything. Google Ads is
-the only platform wired today.
+wired returns `ErrSettingsReadbackUnsupported` (400) without contacting anything. Google Ads,
+Microsoft Advertising, Meta, Reddit and X are wired (the last four by LFXV2-2665); LinkedIn and
+HubSpot still answer 400. `TestOrchestrator_ReadCampaignSettings_MicrosoftMetaRedditXAreWired`
+(internal/dispatch) drives the real orchestrator with the four real dispatchers.
+`ErrCampaignUpstreamIdentityMismatch` has its own 409 arm, ahead of the account-mismatch arm,
+with a fixed "re-dispatch the campaign" message: it is raised when the platform's answer
+contradicts the recorded identity while the connection already IS the recorded account, where
+"reconnect the original account" would be unactionable.
 
 **It never writes back onto the row, and that is the point.** The row records what a dispatch
 ASKED FOR; writing an observation into those columns would change their meaning from request to
@@ -1985,6 +1991,22 @@ did not name renders UNCONFIRMED. The orchestrator's `ReadKeywordTargeting` /
 `remove_keyword_targeting`, and treat a short outcome slice as UNCONFIRMED. See
 [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
 
+## Meta audience read (`connection_meta_audience.go`, LFXV2-2665)
+
+`GetMetaAdsAudience` (`GET .../meta-ads/audience`) is `GetGoogleAdsAudience`'s Meta sibling:
+system scope refused (404), `resolveInsightsWindow` (all seven windows, default
+`last_30_days`), backend check, then `Orchestrator.ReadMetaAudienceInsights`, which type-asserts
+`MetaAudienceReader` (absent → `ErrKeywordInsightsUnsupported`, 400), reads the project's scope
+from `ListProjectPlatformCampaignIDs`, answers an EMPTY scope with an empty result and no
+upstream call, times the call under `metricsCallTimeout`/`read_audience`, and rejects a nil
+result / normalises nil buckets. Errors go through `classifyInsightsErrorFor` with the
+`metaAdsAudienceInsights` descriptor; two arms were added there for the Meta-only sentinels
+`domain.ErrAudienceScopeTooLarge` and `ErrAudienceScopeInvalid` (409, fixed text). Upstream
+failures (transport, 5xx, 429 after retry, 401/403, malformed rows) take the default 503 arm.
+Both audience reads share `readScopedAudience`, a small generic helper holding the scope, empty-scope, timeout, metrics, nil-result and normalise steps; only the capability assertion differs. The account-mismatch 409 text is route-neutral ("…to read this data…") since it is reached by the keyword, Google audience and Meta audience reads alike. Upstream calls run under `metricsCallTimeout` (20s). Buckets carry `dimension` (`age_gender` | `placement`) plus only that dimension's value fields
+(others absent via `optionalString`), and the envelope adds `account_currency`. Tests:
+`meta_audience_test.go`.
+
 ## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X)
 
 `ResolveGoogleAdsCampaign`, `ResolveMicrosoftAdsCampaign`, `ResolveMetaAdsCampaign`,
@@ -1999,4 +2021,8 @@ and Microsoft keep `validatePlatformCampaignID` (canonical positive int64); Meta
 (LFXV2-2665) adapt each platform package's `ValidateCampaignID` through
 `platformCampaignIDRule`, which returns a fixed per-platform 400 message and never echoes the
 platform error. `internal/apivalidation/campaign_ref_id_drift_test.go` pins that the Goa
-Pattern/MaxLength and the platform validator accept the same ids.
+Pattern/MaxLength and the platform validator accept the same ids. Over HTTP that fixed message is
+reached only by a caller the decoder lets through: the generated decoder applies the design's
+Pattern/MaxLength FIRST, so a malformed id is answered by Goa's own `invalid_pattern` /
+`invalid_length` 400. That one is non-echoing too, but because of the server-wide response encoder
+in [cmd/campaign-service](cmd-campaign-service.md), not because of `platformCampaignIDRule`.

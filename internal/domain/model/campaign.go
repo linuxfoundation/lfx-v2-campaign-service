@@ -796,6 +796,21 @@ func CompareSettingsField(field string, recorded, upstream *string) CampaignSett
 	return f
 }
 
+// UncomparableSettingsField reports a setting whose two sides were BOTH read but cannot be
+// compared like with like, so its verdict is `unknown` with both values still shown.
+//
+// It is the narrow companion to CompareSettingsField, not an alternative rule: it can only ever
+// produce `unknown`, never a `match` or a `diverged`, so it cannot fabricate agreement or a
+// difference. It exists for the case where a platform's create path deliberately wrote
+// something OTHER than the recorded value — a flight start nudged forward to "now + buffer"
+// because the requested day had already begun — so that a difference is explained by the
+// create path itself and reporting it as `diverged` would send an operator to investigate a
+// campaign that is set exactly as this service made it. Hiding the upstream value instead
+// would withhold an observation that was genuinely made.
+func UncomparableSettingsField(field string, recorded, upstream *string) CampaignSettingsField {
+	return CampaignSettingsField{Field: field, Recorded: recorded, Upstream: upstream, Comparison: SettingsUnknown}
+}
+
 // SummariseSettings fills DivergedCount and UnknownCount from Fields, so the counts cannot
 // disagree with the list they summarise.
 func (r *CampaignSettingsReadback) SummariseSettings() {
