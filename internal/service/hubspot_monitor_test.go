@@ -197,7 +197,8 @@ func TestMonitorHubspotAccount_ClassifiesFailures(t *testing.T) {
 		want string
 	}{
 		{"no connection of its own", domain.ErrNotFound, "404"},
-		{"unusable connection", fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, domain.ErrConnectionInactive), "400"},
+		{"unusable project-owned connection", fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, domain.ErrConnectionInactive), "400"},
+		{"unusable LF system fallback connection", fmt.Errorf("%w: %w: %w", domain.ErrSystemConnectionNotUsable, domain.ErrConnectionNotUsable, domain.ErrConnectionInactive), "500"},
 		{"days re-checked by the dispatcher", domain.ErrMonitorDaysInvalid, "400"},
 		{"decryption failure", domain.ErrCredentialDecryptionFailed, "500"},
 		{"upstream failure", errors.New("hubspot: GET /marketing/v3/emails/statistics/list: 403"), "503"},

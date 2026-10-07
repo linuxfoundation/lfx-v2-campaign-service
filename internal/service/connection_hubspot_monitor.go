@@ -27,8 +27,10 @@ var hubspotMonitorDiscovery = accountDiscovery{
 // the email rule engine's findings. Same guards and error classification as the ad-platform
 // monitors (monitorAccount): the reserved system scope is refused first, days is validated, the
 // orchestrator must be wired, and every read failure goes through classifyDiscoveryError — so no
-// connection is 404, an unusable one 400, a credential that fails decryption 500, and anything
-// upstream 503, with no partial result.
+// connection is 404; an unusable connection is 400 when it is the project's own and 500 when it is
+// the LF system fallback's (ErrSystemConnectionNotUsable — an operator-owned row the caller cannot
+// edit), which also covers a 401/403 HubSpot returns for that token; a credential that fails
+// decryption is 500; anything else upstream is 503 — with no partial result.
 func (s *ConnectionService) MonitorHubspotAccount(ctx context.Context, p *conn.MonitorHubspotAccountPayload) (*conn.HubspotEmailMonitor, error) {
 	if err := rejectSystemScope(p.ProjectID); err != nil {
 		return nil, err

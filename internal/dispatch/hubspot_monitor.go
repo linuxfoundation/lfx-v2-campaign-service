@@ -214,10 +214,14 @@ func hubspotMonitorTargets(campaigns []*model.Campaign, currentPortal string) ([
 		// decode error itself carries nothing more to report.
 		_ = json.Unmarshal(c.Result, &rec)
 		deleted := c.Status == model.CampaignStatusDeleted
-		candidates := []hubspotMonitorTarget{{campaignID: c.ID, emailID: strings.TrimSpace(c.PlatformCampaignID), name: c.CampaignName, deleted: deleted}}
-		if rec.ABTestVariant != nil && strings.TrimSpace(rec.ABTestVariant.ID) != "" {
+		// Ids are taken VERBATIM, never trimmed: ValidateEmailID is what decides whether a stored
+		// id is usable, and a padded " 123 " is a malformed record to count, not one to repair
+		// and request. A PRESENT variant is always a candidate, so one with an empty or blank id
+		// is counted unattributable too; only an absent variant contributes nothing.
+		candidates := []hubspotMonitorTarget{{campaignID: c.ID, emailID: c.PlatformCampaignID, name: c.CampaignName, deleted: deleted}}
+		if rec.ABTestVariant != nil {
 			candidates = append(candidates, hubspotMonitorTarget{
-				campaignID: c.ID, emailID: strings.TrimSpace(rec.ABTestVariant.ID),
+				campaignID: c.ID, emailID: rec.ABTestVariant.ID,
 				name: rec.ABTestVariant.Name, abVariant: true, deleted: deleted,
 			})
 		}

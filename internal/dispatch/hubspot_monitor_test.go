@@ -301,6 +301,38 @@ func TestHubSpotEmailMonitor_DeletedCampaignsAreReadAndMarked(t *testing.T) {
 	}
 }
 
+// Stored ids are validated VERBATIM: a padded id is malformed and counted, never trimmed and
+// requested. A PRESENT A/B variant with an empty or blank id is counted unattributable; an
+// absent variant contributes nothing.
+func TestHubSpotEmailMonitor_StoredIDsAreValidatedVerbatim(t *testing.T) {
+	withRawVariant := func(c *model.Campaign, variantJSON string) *model.Campaign {
+		c.Result = json.RawMessage(`{"id":"` + c.PlatformCampaignID + `","portalId":"` + testPortalID + `","abTestVariant":` + variantJSON + `}`)
+		return c
+	}
+	srv, rec := monitorServer(t, monitorServerOpts{byID: map[string]string{
+		"1201": monitorStats("1201", `{"sent":10,"delivered":10}`),
+		"1203": monitorStats("1203", `{"sent":10,"delivered":10}`),
+		"1204": monitorStats("1204", `{"sent":10,"delivered":10}`),
+	}})
+	d := newMonitorDispatcher(srv, fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)})
+	read, err := d.ReadEmailMonitor(context.Background(), "proj-1", model.ProviderHubSpot, []*model.Campaign{
+		recordedEmail("padded", " 1202 ", testPortalID, nil),
+		withRawVariant(recordedEmail("empty-variant", "1201", testPortalID, nil), `{"id":"","name":"B"}`),
+		withRawVariant(recordedEmail("blank-variant", "1203", testPortalID, nil), `{"id":"  ","name":"B"}`),
+		withRawVariant(recordedEmail("null-variant", "1204", testPortalID, nil), `null`), // null = absent
+	}, 30)
+	if err != nil {
+		t.Fatalf("ReadEmailMonitor: %v", err)
+	}
+	if got := rec.ids(); len(got) != 3 || got[0] != "1201" || got[1] != "1203" || got[2] != "1204" {
+		t.Fatalf("statistics requested for %q, want only the canonical 1201, 1203 and 1204", got)
+	}
+	// padded id + empty variant + blank variant = 3; the null (absent) variant adds nothing.
+	if read.EmailsUnattributable != 3 {
+		t.Errorf("unattributable = %d, want 3", read.EmailsUnattributable)
+	}
+}
+
 // DEFINITE OR NOTHING: one email's failure fails the read, whatever the others returned.
 func TestHubSpotEmailMonitor_AnyUpstreamFailureFailsTheWholeRead(t *testing.T) {
 	for _, tc := range []struct {

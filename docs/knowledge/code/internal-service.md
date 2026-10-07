@@ -2063,7 +2063,8 @@ HubSpot email in place); the dispatcher call inside `accountsCallTimeout`, recor
 `ConnectionService.MonitorHubspotAccount` runs the monitor guards (`rejectSystemScope`,
 `validateMonitorDays`, `resolveBackendWithOrch`) and classifies failures through
 `classifyDiscoveryError` with `hubspotMonitorDiscovery` (operation "account monitor"): 404 no
-connection (own or LF system), 400 unusable connection / days, 500 decryption, 503 anything upstream with fixed
+connection (own or LF system), 400 unusable project-owned connection / days, 500 unusable LF
+system fallback connection, 500 decryption, 503 anything upstream with fixed
 text. `buildHubSpotEmailMonitor` sums the returned emails into the totals and computes the rates
 from the sums; `metrics_as_of` and the window are set together, only when HubSpot was read.
 

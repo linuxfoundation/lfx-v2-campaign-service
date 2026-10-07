@@ -796,8 +796,9 @@ differs, and why:
   The connection resolves like Dispatch and ReadMetrics — the project's own, else the LF system
   row — because, unlike the account-wide ad monitors, this read never widens past the project's
   recorded ids and the per-email portal check is the boundary; refusing the fallback would 404
-  the projects whose emails went out through the LF portal. Neither connection is 404, an
-  unusable one 400, a decryption failure 500.
+  the projects whose emails went out through the LF portal. Neither connection is 404; an
+  unusable connection is 400 when it is the project's own and 500 when it is the LF system
+  fallback's (`ErrSystemConnectionNotUsable`, an operator-owned row); a decryption failure 500.
 - **Counters and rates.** `sent`, `delivered`, `opens`, `clicks`, `bounces`, `unsubscribes`,
   `spam_reports` (`spamreport`, now watched by the rename guard for this read only). An ABSENT
   counter is HubSpot's omitted zero (the existing rule); an explicit `null` is refused. Rates are
