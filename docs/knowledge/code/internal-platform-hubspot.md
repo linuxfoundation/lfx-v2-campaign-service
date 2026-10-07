@@ -385,10 +385,12 @@ oversight.
 `GetEmailCounters(ctx, emailID, start, end)` serves `monitor-hubspot-account`: the same request
 and the same guards as `GetEmailMetrics` — both now go through one `readEmailCounters` — over an
 explicit `[start, end]` from `MonitorSpan(days)` (trailing `days` UTC days including today, from
-the injected clock, end at the last millisecond; `asOf` is the clock's now) rather than a
+the injected clock, end at the last millisecond) rather than a
 `MetricsWindow`. It returns `EmailCounters`, the six mapped counters plus `spamreport`
 (`SpamReports`). `ValidateEmailID` exports the canonical-positive-integer rule so the dispatcher
-can set a malformed stored id aside before contacting HubSpot.
+can set a malformed stored id aside before contacting HubSpot. `MonitorSpan` returns no as-of:
+the dispatcher reads `Client.Now()` after each upstream response and publishes the latest, so
+`metrics_as_of` is an upper bound on when every counter was read, not a single snapshot instant.
 
 Two guards were added to `readEmailCounters`, so they apply to the per-campaign read too:
 

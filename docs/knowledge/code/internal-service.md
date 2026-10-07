@@ -2068,8 +2068,10 @@ HubSpot email in place); the dispatcher call inside `accountsCallTimeout`, recor
 `validateMonitorDays`, `resolveBackendWithOrch`) and classifies failures through
 `classifyDiscoveryError` with `hubspotMonitorDiscovery` (operation "account monitor"): 404 no
 connection (own or LF system), 400 unusable project-owned connection / days, 500 unusable LF
-system fallback connection, 500 decryption, 503 anything upstream with fixed
-text. `buildHubSpotEmailMonitor` sums the returned emails into the totals and computes the rates
+system fallback connection, 500 decryption, 503 anything else upstream with fixed
+text. A HubSpot 401/403 is not in that 503: the dispatcher tags it `ErrConnectionNotUsable`, so it
+is the 400 (project-owned token) or the 500 (LF fallback token) above, and the 400's remedy names
+`private_app_token` and the token's validity and marketing-email scopes. `buildHubSpotEmailMonitor` sums the returned emails into the totals and computes the rates
 from the sums; `metrics_as_of` and the window are set together, only when HubSpot was read.
 
 ## Meta ad sets (`meta_ad_sets.go`, LFXV2-2665)

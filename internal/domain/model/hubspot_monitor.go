@@ -78,7 +78,9 @@ type HubSpotEmailMonitorRead struct {
 	// span the emails were selected by.
 	SpanStart time.Time
 	SpanEnd   time.Time
-	// AsOf is the instant the counters were read; they are totals to that moment.
+	// AsOf is NOT a single snapshot instant: the emails' counters are read at different times
+	// across the fan-out, and AsOf is the client clock when the LAST response arrived — an upper
+	// bound on when every counter was read. Each counter is a total to no later than AsOf.
 	AsOf time.Time
 	// EmailsChecked is how many of the project's recorded emails were asked about.
 	EmailsChecked int

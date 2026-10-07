@@ -215,8 +215,15 @@ func TestMonitorHubspotAccount_ClassifiesFailures(t *testing.T) {
 					t.Fatalf("err = %T %v, want 404", err, err)
 				}
 			case "400":
-				if _, ok := err.(*conn.BadRequestError); !ok {
+				e, ok := err.(*conn.BadRequestError)
+				if !ok {
 					t.Fatalf("err = %T %v, want 400", err, err)
+				}
+				// The remedy names the field a caller can send, and the token's validity and
+				// scopes — what a 401/403 needs fixed.
+				if errors.Is(tc.err, domain.ErrConnectionNotUsable) &&
+					(!strings.Contains(e.Message, "private_app_token") || strings.Contains(e.Message, "privateAppToken") || !strings.Contains(e.Message, "scopes")) {
+					t.Errorf("400 remedy = %q", e.Message)
 				}
 			case "500":
 				if _, ok := err.(*conn.InternalServerError); !ok {

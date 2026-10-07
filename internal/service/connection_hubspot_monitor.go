@@ -14,12 +14,16 @@ import (
 
 // hubspotMonitorDiscovery is monitor-hubspot-account's descriptor for classifyDiscoveryError,
 // named "account monitor" like the six ad-platform monitors' own descriptors. The remedy text is
-// the HubSpot connection's: a private-app token is the whole credential.
+// the HubSpot connection's: a private-app token is the whole credential. It names the PUBLISHED
+// wire field private_app_token (design/connection.go), not the persisted privateAppToken, and it
+// covers the 401/403 path too: there the field is present but the token is revoked or lacks the
+// marketing-email scopes, so "set" alone would not tell the caller what to fix.
 var hubspotMonitorDiscovery = accountDiscovery{
-	provider:        model.ProviderHubSpot,
-	displayName:     "hubspot",
-	notUsableRemedy: "check that it is active and that the stored credential is valid json with privateAppToken set",
-	operation:       "account monitor",
+	provider:    model.ProviderHubSpot,
+	displayName: "hubspot",
+	notUsableRemedy: "check that it is active, that the stored credential is valid json with " +
+		"private_app_token set, and that the token is still valid with the marketing-email scopes",
+	operation: "account monitor",
 }
 
 // MonitorHubspotAccount is the HubSpot email account monitor (LFXV2-2665): the statistics of the
