@@ -1980,6 +1980,10 @@ The collect/refresh steps are now one generic implementation over both saved-rep
 (`insight_report.go`: `insightReportDriver[R]`, `collectPendingInsightReport`,
 `refreshInsightReport`), with the keyword read's log text, permanence rule and ordering unchanged;
 both reads take `now` from `Orchestrator.SetInsightReportClock` (nil = `time.Now`) so tests pin it.
+Both reader interfaces embed `InsightReportPeriod` (`ReportWindowDates(window, now)`), and
+`discardOtherPeriod` drops a finished report whose saved dates are not the window's dates NOW
+before refresh and merge, so a report from before a day or month rollover is resubmitted and
+never served as the new period (#289 review).
 
 ## Report-backed age/gender audience read (`audience_report.go`, LFXV2-2665)
 

@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -174,6 +175,13 @@ func microsoftReportScope(scope []model.ProjectCampaignScope, accountID string, 
 			rules.read, mismatched, len(scope), accountID, domain.ErrCampaignAccountMismatch)
 	}
 	return ids, nil
+}
+
+// ReportWindowDates implements service.InsightReportPeriod for both report-backed Microsoft
+// insight reads: the dates microsoft.SubmitKeywordReport / SubmitAgeGenderReport would cover for
+// window at now (UTC days). Local; no connection.
+func (d *MicrosoftDispatcher) ReportWindowDates(window model.MetricsWindow, now time.Time) (time.Time, time.Time, error) {
+	return microsoft.ReportWindowDates(window, now)
 }
 
 // KeywordReportEnabled implements service.KeywordReportReader: the MICROSOFT_METRICS_ENABLED

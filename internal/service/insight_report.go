@@ -5,10 +5,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
@@ -27,6 +29,47 @@ type insightReportDriver[R any] struct {
 	check     func(callCtx, ctx context.Context, key model.InsightReportKey, reportID string) (*model.InsightReportCheck[R], error)
 	submit    func(callCtx, ctx context.Context, key model.InsightReportKey, scope []model.ProjectCampaignScope) (*model.InsightReportSubmission, error)
 	permanent func(error) bool
+}
+
+// InsightReportPeriod is the part of every report-backed insight reader that maps a window onto
+// the calendar dates a report submitted at now covers — the SAME rule (time zone, day boundary,
+// month boundary) its Submit uses, so the orchestrator can tell whether a saved report describes
+// the period the caller is asking about NOW. It is local: no connection, no upstream call.
+type InsightReportPeriod interface {
+	ReportWindowDates(window model.MetricsWindow, now time.Time) (start, end time.Time, err error)
+}
+
+// sameReportDay reports whether a and b fall on the same UTC calendar day. Saved report dates are
+// DATE columns (UTC midnight) while a freshly resolved end carries the clock time, so dates are
+// compared by day, never by instant.
+func sameReportDay(a, b time.Time) bool {
+	a, b = a.UTC(), b.UTC()
+	return a.Year() == b.Year() && a.YearDay() == b.YearDay()
+}
+
+// discardOtherPeriod drops, from the in-memory snapshot only, a finished report whose saved dates
+// are not the dates the requested window resolves to NOW. Freshness by submission age alone is not
+// enough: a this_month report requested at 23:50 on 31 October is minutes old at 00:10 on
+// 1 November, and serving it would label October's data as November's (likewise `today` across
+// midnight, or any window across a day). With the ready half dropped, the read behaves exactly as
+// when no report has finished: refreshInsightReport submits a replacement (unless one is already
+// pending) and the merge serves nothing, with metrics_as_of absent and metrics_pending set. The
+// stored row is untouched; the replacement overwrites it when it completes.
+func discardOtherPeriod[R any](snap *model.InsightReportSnapshot[R], wantStart, wantEnd time.Time) {
+	if r := snap.Ready; r != nil && (!sameReportDay(r.WindowStart, wantStart) || !sameReportDay(r.WindowEnd, wantEnd)) {
+		snap.Ready = nil
+	}
+}
+
+// resolveInsightPeriod asks the reader for the dates window covers at now. A window the reader
+// cannot date was already refused by its Enabled check, so a failure here is the same permanent
+// unsupported-window refusal.
+func resolveInsightPeriod(reader InsightReportPeriod, platform model.Provider, read string, window model.MetricsWindow, now time.Time) (time.Time, time.Time, error) {
+	start, end, err := reader.ReportWindowDates(window, now)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("%s %s: %w", platform, read, errors.Join(domain.ErrMetricsWindowUnsupported, err))
+	}
+	return start, end, nil
 }
 
 // SetInsightReportClock pins the clock the report-backed insight reads judge freshness and
