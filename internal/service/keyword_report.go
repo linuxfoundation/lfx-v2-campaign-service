@@ -100,9 +100,13 @@ func (o *Orchestrator) keywordReportStore() domain.KeywordReportRepository {
 //  5. serve the last finished report — only if it covers the current scope — confined to the
 //     current scope's campaigns, ranked by impressions and capped.
 //
-// Steps 3–4 are best-effort exactly as in ReadReportedAccountCampaigns (same budget, same
-// detached mark budget, same "log and serve what is saved"), except for a permanent refusal,
-// which fails the read.
+// Collecting a pending report and refreshing (steps 3–4) are best-effort exactly as in
+// ReadReportedAccountCampaigns (same budget, same detached mark budget, same "log and serve what
+// is saved"), except for a permanent refusal, which fails the read. Superseding another period's
+// pending report (the first part of step 3) is NOT best-effort: a store error on its
+// compare-and-set, a failed re-read after losing it, or an exhausted retry bound fails the read,
+// because continuing would poll the obsolete report and claim metrics_pending for a period
+// nothing is building.
 //
 // A finished report that does not cover a campaign the project now owns is NOT served: the
 // response has no partial-coverage field, so serving it would present part of the project as all
