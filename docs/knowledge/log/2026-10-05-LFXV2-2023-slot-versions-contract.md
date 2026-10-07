@@ -30,7 +30,8 @@ keyed by `(brief_id, platform, variant)` — two-int form, its own namespace, br
 canonicalized through `::uuid::text` — and the adopt checks for any live row on the slot under
 it, answering `ErrConflict` (409). Adopt takes the slot lock before the brief's `FOR UPDATE`;
 in the other order the claim's FK `KEY SHARE` on the brief and the adopt's wait on the lock
-deadlock (seen live as `40P01` with the adopt's lock removed).
+deadlock (seen live as `40P01` when the adopt took the slot lock after its `FOR UPDATE`;
+removing the adopt's lock instead removes the wait and with it the cycle).
 
 **Removed as dead.** `domain.ErrSlotVersionUnavailable`, the orchestrator's "not available
 yet" branch, the claim's legacy-index `23505` handling (slot-1 lost race and slot-2 refusal),

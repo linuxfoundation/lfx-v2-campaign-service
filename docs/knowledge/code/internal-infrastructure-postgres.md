@@ -200,7 +200,9 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   COMMIT and READ COMMITTED takes a fresh snapshot per statement, so the adopt's check sees
   everything an earlier holder wrote. Adopt takes the slot lock BEFORE its brief `FOR UPDATE`:
   the claim's INSERT takes `FOR KEY SHARE` on the brief through the FK, and the reverse order
-  deadlocks (Postgres aborts one with `40P01` — observed live with the adopt's lock removed).
+  deadlocks (Postgres aborts one with `40P01` — observed live when the adopt took the slot lock
+  AFTER its brief `FOR UPDATE`; with no adopt lock at all there is no wait edge and no cycle,
+  only the unserialized race the lock exists to close).
   The two-int lock form keeps these keys out of the bigint space `hashCampaignID`'s session
   locks use; a hash collision between two slots only serializes them. Nothing does platform I/O
   under the lock.
