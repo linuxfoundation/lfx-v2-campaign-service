@@ -658,7 +658,24 @@ var MetaAdsAudienceBucket = Type("meta-ads-audience-bucket", func() {
 	Attribute("cost_micros", Int64, "Spend over the window in micro-units of the ad account's native currency (see account_currency). This service performs no FX conversion.", func() { Example(3120000) })
 	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0", func() { Example(0.0578) })
 	Required("dimension", "impressions", "clicks", "cost_micros", "ctr")
+	// TYPE-LEVEL examples, one per dimension. Without them Goa composes the object from the
+	// attribute examples above and publishes an impossible bucket carrying age, gender AND
+	// placement values at once; each real bucket carries only its own dimension's fields.
+	Example("age_gender bucket", metaAudienceAgeGenderExample)
+	Example("placement bucket", metaAudiencePlacementExample)
 })
+
+// metaAudienceAgeGenderExample / metaAudiencePlacementExample are the two bucket shapes, shared by
+// the bucket type's examples and the envelope's so the two cannot disagree.
+var metaAudienceAgeGenderExample = map[string]any{
+	"dimension": "age_gender", "age": "25-34", "gender": "female",
+	"impressions": 12840, "clicks": 742, "cost_micros": 3120000, "ctr": 0.0578,
+}
+
+var metaAudiencePlacementExample = map[string]any{
+	"dimension": "placement", "publisher_platform": "instagram", "platform_position": "feed",
+	"impressions": 9100, "clicks": 182, "cost_micros": 1450000, "ctr": 0.02,
+}
 
 // MetaAdsAudience is the project-scoped Meta demographic/placement read. Its envelope fields are
 // the Google audience read's (window, buckets, bucket_count) plus account_currency, which Meta
@@ -671,13 +688,26 @@ var MetaAdsAudienceBucket = Type("meta-ads-audience-bucket", func() {
 // than reporting a misleading 0.
 var MetaAdsAudience = Type("meta-ads-audience", func() {
 	Attribute("window", String, "The reporting window these counters cover", metricsWindowEnum)
-	Attribute("buckets", ArrayOf(MetaAdsAudienceBucket), "Every bucket across both breakdowns, discriminated by `dimension`. Ordered by dimension (age_gender, then placement) then impressions descending.")
+	// The PROPERTY needs its own example too: left to Goa, the array example repeats the bucket
+	// type's single example (three identical placement buckets), which no response can contain —
+	// rows are merged per segment, and age_gender buckets precede placement ones.
+	Attribute("buckets", ArrayOf(MetaAdsAudienceBucket), "Every bucket across both breakdowns, discriminated by `dimension`. Ordered by dimension (age_gender, then placement) then impressions descending.", func() {
+		Example([]map[string]any{metaAudienceAgeGenderExample, metaAudiencePlacementExample})
+	})
 	Attribute("bucket_count", Int, "How many buckets are in `buckets`, across both dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions double-counts it — total within one dimension only.", func() { Example(24) })
 	Attribute("account_currency", String, "ISO 4217 currency of the ad account that cost_micros is denominated in, as Meta reports it. ABSENT when no bucket was returned.", func() {
 		Pattern("^[A-Z]{3}$")
 		Example("USD")
 	})
 	Required("window", "buckets", "bucket_count")
+	// Type-level so bucket_count equals len(buckets) — attribute examples alone published a
+	// two-item array beside bucket_count 24.
+	Example(map[string]any{
+		"window":           "last_30_days",
+		"buckets":          []map[string]any{metaAudienceAgeGenderExample, metaAudiencePlacementExample},
+		"bucket_count":     2,
+		"account_currency": "USD",
+	})
 })
 
 // twitterAudienceWindowEnum is the subset of metricsWindowEnum the X audience read serves: the
