@@ -198,8 +198,12 @@ var AudienceLastSentEmail = Type("audience-last-sent-email", func() {
 	Attribute("email_name", String, "Email name")
 	Attribute("sent_at", String, "When the email was published/sent, RFC 3339")
 	Attribute("hubspot_url", String, "Deep link to the email in the HubSpot UI")
-	Attribute("included_lists", ArrayOf(AudienceListBrief), "Lists the send included")
-	Attribute("suppression_lists", ArrayOf(AudienceListBrief), "Lists the send suppressed")
+	Attribute("included_lists", ArrayOf(AudienceListBrief), "Lists the send included", func() {
+		Example(audienceIncludedListsExample)
+	})
+	Attribute("suppression_lists", ArrayOf(AudienceListBrief), "Lists the send suppressed", func() {
+		Example(audienceSuppressionListsExample)
+	})
 	// Without this, a failed selection read and a send that genuinely targeted nothing have the
 	// IDENTICAL wire shape — two empty arrays — so a HubSpot 5xx renders as false precedent.
 	// The email's name and link are still worth showing, so the row is kept and marked rather
@@ -208,7 +212,30 @@ var AudienceLastSentEmail = Type("audience-last-sent-email", func() {
 		"True when this email's list selection could not be read. The two list arrays are then "+
 			"empty because they are UNKNOWN, not because the send targeted nothing.")
 	Required("email_id", "email_name", "hubspot_url", "included_lists", "suppression_lists")
+	// TYPE-LEVEL so the published example is a possible one. Composed from the attribute
+	// examples, Goa published populated list arrays beside lists_unavailable=true, which this
+	// type defines as "the arrays are empty because they are unknown". A readable selection
+	// (lists_unavailable false) with populated lists is the ordinary row.
+	Example(map[string]any{
+		"email_id":          "184312345678",
+		"email_name":        "KubeCon NA 2026 - Early Bird",
+		"sent_at":           "2026-09-15T16:00:00Z",
+		"hubspot_url":       "https://app.hubspot.com/email/8675309/details/184312345678",
+		"included_lists":    audienceIncludedListsExample,
+		"suppression_lists": audienceSuppressionListsExample,
+		"lists_unavailable": false,
+	})
 })
+
+// audienceIncludedListsExample / audienceSuppressionListsExample are resolved list rows (missing
+// false, so name and hubspot_url are present), shared by the attribute and type examples above.
+var audienceIncludedListsExample = []map[string]any{
+	{"list_id": "4821", "name": "KubeCon NA 2025 attendees", "size": 18250, "missing": false, "hubspot_url": "https://app.hubspot.com/contacts/8675309/lists/4821"},
+}
+
+var audienceSuppressionListsExample = []map[string]any{
+	{"list_id": "1022", "name": "Global unsubscribes", "size": 3120, "missing": false, "hubspot_url": "https://app.hubspot.com/contacts/8675309/lists/1022"},
+}
 
 // AudienceMasterListBrief is one previously composed master list for this event family.
 var AudienceMasterListBrief = Type("audience-master-list-brief", func() {
