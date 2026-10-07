@@ -137,18 +137,19 @@ func TestReadAudience_ServesASavedReportOnlyForItsOwnPeriod(t *testing.T) {
 					len(got.Buckets), got.MetricsAsOf, got.MetricsPending, r.submits, store.snap.Pending)
 			}
 
-			// Pending across the boundary: collected for the store, not served, replaced.
+			// Pending across the boundary (even one Microsoft has finished): superseded without
+			// being polled, never stored or served as the new period, and replaced at once.
 			pending := &model.AudienceReportSnapshot{Pending: &model.PendingInsightReport{
 				ReportID: "a1", CampaignIDs: []string{"111"}, SubmittedAt: tc.asOf,
 				WindowStart: tc.savedStart, WindowEnd: tc.savedEnd,
 			}}
 			check := &model.AudienceReportCheck{Status: model.AccountReportReady, Rows: []model.AudienceReportRow{agRow("111", "25-34", "Female", 5)}}
 			got, r, store = read(tc.after, pending, check)
-			if store.snap.Ready == nil || store.snap.Ready.ReportID != "a1" {
-				t.Errorf("collected report must still be stored: %+v", store.snap.Ready)
+			if store.snap.Ready != nil || r.checks != 0 {
+				t.Errorf("a report pending for another period must not be polled or stored: ready=%+v checks=%d", store.snap.Ready, r.checks)
 			}
 			if len(got.Buckets) != 0 || got.MetricsAsOf != nil || !got.MetricsPending || r.submits != 1 {
-				t.Errorf("collected across the boundary: buckets=%d as_of=%v pending=%v submits=%d, want nothing served and a replacement",
+				t.Errorf("pending across the boundary: buckets=%d as_of=%v pending=%v submits=%d, want nothing served and a replacement",
 					len(got.Buckets), got.MetricsAsOf, got.MetricsPending, r.submits)
 			}
 		})

@@ -1983,7 +1983,10 @@ both reads take `now` from `Orchestrator.SetInsightReportClock` (nil = `time.Now
 Both reader interfaces embed `InsightReportPeriod` (`ReportWindowDates(window, now)`), and
 `discardOtherPeriod` drops a finished report whose saved dates are not the window's dates NOW
 before refresh and merge, so a report from before a day or month rollover is resubmitted and
-never served as the new period (#289 review).
+never served as the new period (#289 review). `supersedeOtherPeriodPending` (run before the
+collect step) does the same for a report still PENDING for another period: it clears it via the
+`fail` compare-and-set ("superseded: …"), so `refreshInsightReport` submits the current period's
+report on the same read; losing the CAS re-reads and adopts the pending half instead (#292 review).
 
 ## Report-backed age/gender audience read (`audience_report.go`, LFXV2-2665)
 
