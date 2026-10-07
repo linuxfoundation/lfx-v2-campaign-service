@@ -530,6 +530,25 @@ var (
 	// other targeting, which this reduce-only surface never does. Mapped to 409, nothing changed.
 	ErrKeywordTargetingWouldEmpty = errors.New("the removal would leave no keyword targeted")
 
+	// ErrMetaAdSetsUnsupported indicates the campaign's platform has no ad-set read or ad-set
+	// status toggle wired (LFXV2-2665: Meta only — the ad set is Meta's unit). The platform is
+	// never contacted; mapped to 400.
+	ErrMetaAdSetsUnsupported = errors.New("ad-set operations are not supported for this platform")
+
+	// ErrMetaAdSetInvalid indicates an ad set id that cannot name a Meta ad set (not a canonical
+	// numeric id). Refused before any connection work; mapped to 400.
+	ErrMetaAdSetInvalid = errors.New("not a valid meta ad set id")
+
+	// ErrMetaAdSetNotInCampaign indicates the named ad set is not provably one of THIS campaign's
+	// ad sets under the project's connected ad account: Meta reports it under another campaign,
+	// or under another ad account. Decided by a read BEFORE any write, so nothing was changed;
+	// mapped to 409.
+	ErrMetaAdSetNotInCampaign = errors.New("the ad set does not belong to this campaign under the connected ad account")
+
+	// ErrMetaAdSetUnwritable indicates the ad set is in a state a pause/resume cannot address
+	// (Meta reports it DELETED or ARCHIVED). Nothing was changed; mapped to 409.
+	ErrMetaAdSetUnwritable = errors.New("the ad set's status cannot be changed")
+
 	// ErrKeyUnavailable indicates this service could not obtain the JWT signing keys
 	// (Heimdall's JWKS) needed to check a bearer token. It is NOT a verdict on the token:
 	// nothing was learned about it, because it was never checked.

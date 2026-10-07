@@ -2023,3 +2023,20 @@ reached only by a caller the decoder lets through: the generated decoder applies
 Pattern/MaxLength FIRST, so a malformed id is answered by Goa's own `invalid_pattern` /
 `invalid_length` 400. That one is non-echoing too, but because of the server-wide response encoder
 in [cmd/campaign-service](cmd-campaign-service.md), not because of `platformCampaignIDRule`.
+
+## Meta ad sets (`meta_ad_sets.go`, LFXV2-2665)
+
+`ListMetaAdSets` and `ToggleMetaAdSetStatus` serve `list-meta-ad-sets` and
+`toggle-meta-ad-set-status` through the optional `MetaAdSetReader` / `MetaAdSetStatusToggler`
+capabilities (`Orchestrator.ReadMetaAdSets` under `metricsCallTimeout`,
+`Orchestrator.ToggleMetaAdSetStatus` under `toggleCallTimeout`; upstream ops `read_meta_ad_sets`
+and `toggle_meta_ad_set_status`). The orchestrator checks the capability before provisioning, so
+a non-Meta row is 400 whatever its state. The toggle follows `ToggleCampaignStatus`'s
+concurrency contract — If-Match (428/412 against the loaded row), validation and
+`SupportsMetaAdSetToggle` before `ClaimCampaignVersion`, an UNCONFIRMED outcome holding the lock
+for `unconfirmedLockCooldown` — but persists nothing: the ETag returned is the unchanged version,
+checked with `VerifyClaimedVersion` after an APPLIED write. UNCONFIRMED is a 200 outcome, not an
+error. `classifyMetaAdSetError` maps every failure to fixed text and never answers 404 (no
+connection is 409); the only 404 is a missing campaign row. See
+[Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
+

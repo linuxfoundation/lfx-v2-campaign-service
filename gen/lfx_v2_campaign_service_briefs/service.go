@@ -392,6 +392,50 @@ type Service interface {
 	// removed — retry) from an UNCONFIRMED one (read the targeting again before
 	// retrying).
 	RemoveKeywordTargeting(context.Context, *RemoveKeywordTargetingPayload) (res *KeywordTargetingRemovals, err error)
+	// Read the AD SETS of a Meta campaign live (LFXV2-2665): each ad set's name,
+	// configured and effective status, bid strategy and own budget, with its
+	// impressions, clicks, spend and CTR over the window. A pure read — the
+	// platform is only read and nothing is persisted. Upstream: GET
+	// /{campaign_id}/adsets (bounded cursor paging), GET
+	// /act_{id}?fields=currency, and ONE level=adset Insights read on the ad
+	// account filtered to this campaign (bounded cursor paging). Every page is
+	// checked as raw bytes before it is decoded (a duplicated key, malformed UTF-8
+	// or an unpaired surrogate escape refuses the read), every ad set must report
+	// THIS campaign and the connection's ad account, every Insights row must name
+	// this campaign and the account's currency, and an explicit null counter is
+	// refused while an absent one is 0. `recorded` marks the ad set this service
+	// created. Before anything is read the campaign must record which ad account
+	// it was created under and that account must be the connection's (409
+	// otherwise); a campaign with no platform campaign id is 409; any platform but
+	// Meta is 400. **404 only when the campaign row does not exist.** Meta's
+	// 100/33 on the campaign ("does not exist, cannot be loaded due to missing
+	// permissions, or does not support this operation") cannot tell a deleted
+	// campaign from one this token cannot load, so it is a 503 like every other
+	// unverifiable answer — all or nothing, never a partial list.
+	ListMetaAdSets(context.Context, *ListMetaAdSetsPayload) (res *MetaAdSets, err error)
+	// Pause or resume ONE ad set of a Meta campaign (LFXV2-2665). A MUTATION on a
+	// live paid campaign, guarded like toggle-campaign-status: If-Match carries
+	// the campaign row's ETag (428 when missing, 412 when stale) and the
+	// campaign's write lock is held for the call. `ad_set_id` is validated before
+	// any connection work (400). The campaign must record its ad account and that
+	// account must be the connection's (409), and the ad set is then READ (GET
+	// /{ad_set_id}?fields=id,campaign_id,account_id,status) and must report THIS
+	// campaign under THAT account (409 otherwise) — all before anything is
+	// written. ACTIVE on an ADOPTED campaign is refused (409) exactly as the
+	// campaign toggle refuses it: adoption records no ad set and does not verify
+	// targeting, so un-pause it in Meta Ads Manager; PAUSED is always allowed. An
+	// ad set Meta reports DELETED or ARCHIVED is 409. When the read shows the
+	// requested status already, NOTHING is sent and the outcome is
+	// ALREADY_IN_STATE. Otherwise ONE POST /{ad_set_id} {status} is sent, never
+	// retried: APPLIED when Meta confirms it, UNCONFIRMED (still 200) when it was
+	// sent and its outcome is unknown — a throttle, a 5xx, a timeout or an
+	// unconfirmed 2xx — which may or may not have been applied, so read the ad
+	// sets before retrying; the campaign's write lock is then held for a cooldown.
+	// A failure BEFORE the write, or a definite refusal of it, is a 503 whose
+	// message says nothing was changed. The ad set's status is NOT stored on the
+	// campaign row, so the returned ETag is the row's UNCHANGED version (as when a
+	// created_degraded campaign is paused). Any platform but Meta is 400.
+	ToggleMetaAdSetStatus(context.Context, *ToggleMetaAdSetStatusPayload) (res *MetaAdSetStatusChange, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the
 	// brief can be re-dispatched to that platform. It does NOT delete, pause, or
@@ -463,7 +507,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [33]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [35]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AddNegativeKeywordsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service add-negative-keywords method.
@@ -1360,6 +1404,110 @@ type KeywordTargetingRemovals struct {
 	AppliedCount int
 }
 
+// ListMetaAdSetsPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service list-meta-ad-sets method.
+type ListMetaAdSetsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// Platform-agnostic reporting window; defaults to last_30_days when omitted
+	Window *string
+}
+
+type MetaAdSet struct {
+	// The Meta ad set id
+	ID string
+	// false for an ad set that DELIVERED in the window but that Meta's ad-set
+	// listing did not return (typically deleted or archived since): its counters
+	// are this campaign's spend, so they are reported, but every descriptive field
+	// is absent.
+	Listed bool
+	// The ad set's name as Meta holds it. Absent when not reported.
+	Name *string
+	// The ad set's CONFIGURED status as Meta reports it (ACTIVE, PAUSED, DELETED,
+	// ARCHIVED). Absent when not reported.
+	Status *string
+	// The ad set's EFFECTIVE status as Meta reports it (e.g. CAMPAIGN_PAUSED when
+	// the ad set is ACTIVE but its campaign is not). Reported verbatim; Meta grows
+	// this set without notice. Absent when not reported.
+	EffectiveStatus *string
+	// The ad set's bid_strategy as Meta reports it. Absent when not reported.
+	BidStrategy *string
+	// Which budget the ad set holds. ABSENT when it holds none of its own —
+	// Campaign Budget Optimization keeps the budget on the campaign, shared across
+	// its ad sets.
+	BudgetType *string
+	// The ad set's budget in WHOLE units of `currency`, two decimals, converted
+	// from the minor units Meta reports with the account currency's own offset
+	// (100 for most currencies, 1 for zero-decimal ones such as JPY). ABSENT when
+	// there is no ad-set budget, or when the currency's minor-unit scale is not
+	// one this service knows — never rendered at a guessed scale.
+	BudgetAmount *string
+	// Impressions over the window. 0 when Meta reported no delivery for this ad
+	// set.
+	Impressions int64
+	// Clicks over the window.
+	Clicks int64
+	// Spend over the window in micro-units of `currency`.
+	CostMicros int64
+	// clicks/impressions, 0 when impressions is 0.
+	Ctr float64
+	// true for the ONE ad set this service created for the campaign (the id the
+	// campaign row recorded at dispatch). Always false on an adopted campaign,
+	// which records no ad set.
+	Recorded bool
+}
+
+// MetaAdSetStatusChange is the result type of the
+// lfx-v2-campaign-service-briefs service toggle-meta-ad-set-status method.
+type MetaAdSetStatusChange struct {
+	// Campaign UUID
+	CampaignID string
+	// The ad set whose status was addressed
+	AdSetID string
+	// The status requested
+	RequestedStatus string
+	// The configured status the pre-write read observed (APPLIED and
+	// ALREADY_IN_STATE). Absent when the outcome is UNCONFIRMED.
+	PreviousStatus *string
+	// APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read
+	// showed the ad set already at the requested status, so NOTHING WAS SENT.
+	// UNCONFIRMED — the single write was sent and its outcome is unknown (a
+	// timeout, a 5xx, a throttle after send, or a 2xx that did not confirm
+	// success): it MAY OR MAY NOT have been applied — read the ad sets again
+	// before retrying.
+	Outcome string
+	// ETag header value: the campaign row's version, UNCHANGED — an ad set's
+	// status is not stored on the campaign row, so this write does not bump it.
+	Etag *string
+}
+
+// MetaAdSets is the result type of the lfx-v2-campaign-service-briefs service
+// list-meta-ad-sets method.
+type MetaAdSets struct {
+	// Campaign UUID
+	CampaignID string
+	// The Meta campaign id the ad sets were read under.
+	PlatformCampaignID string
+	// The reporting window the counters cover.
+	Window string
+	// The ad account's ISO 4217 currency; `budget_amount` and `cost_micros` are
+	// denominated in it.
+	Currency string
+	// When Meta was read (RFC3339, UTC).
+	ReadAt string
+	// Every ad set the listing returned, in Meta's order, then any unlisted ad set
+	// that delivered in the window, by id. Empty when the campaign has none.
+	AdSets []*MetaAdSet
+	// len(ad_sets).
+	AdSetCount int
+}
+
 type NegativeKeywordInput struct {
 	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
 	// 100 characters.
@@ -1512,6 +1660,25 @@ type ToggleCampaignStatusPayload struct {
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
 	// Desired run state
+	Status string
+}
+
+// ToggleMetaAdSetStatusPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service toggle-meta-ad-set-status method.
+type ToggleMetaAdSetStatusPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// The Meta ad set id: digits, no leading zero, at most 32.
+	AdSetID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	// Desired ad-set status, in Meta's vocabulary
 	Status string
 }
 

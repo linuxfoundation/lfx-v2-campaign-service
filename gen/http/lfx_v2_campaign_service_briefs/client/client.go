@@ -110,6 +110,14 @@ type Client struct {
 	// remove-keyword-targeting endpoint.
 	RemoveKeywordTargetingDoer goahttp.Doer
 
+	// ListMetaAdSets Doer is the HTTP client used to make requests to the
+	// list-meta-ad-sets endpoint.
+	ListMetaAdSetsDoer goahttp.Doer
+
+	// ToggleMetaAdSetStatus Doer is the HTTP client used to make requests to the
+	// toggle-meta-ad-set-status endpoint.
+	ToggleMetaAdSetStatusDoer goahttp.Doer
+
 	// DeleteCampaign Doer is the HTTP client used to make requests to the
 	// delete-campaign endpoint.
 	DeleteCampaignDoer goahttp.Doer
@@ -193,6 +201,8 @@ func NewClient(
 		AddNegativeKeywordsDoer:    doer,
 		GetKeywordTargetingDoer:    doer,
 		RemoveKeywordTargetingDoer: doer,
+		ListMetaAdSetsDoer:         doer,
+		ToggleMetaAdSetStatusDoer:  doer,
 		DeleteCampaignDoer:         doer,
 		GetJobDoer:                 doer,
 		StartEmailWizardPlanDoer:   doer,
@@ -758,6 +768,54 @@ func (c *Client) RemoveKeywordTargeting() goa.Endpoint {
 		resp, err := c.RemoveKeywordTargetingDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "remove-keyword-targeting", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListMetaAdSets returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service list-meta-ad-sets server.
+func (c *Client) ListMetaAdSets() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListMetaAdSetsRequest(c.encoder)
+		decodeResponse = DecodeListMetaAdSetsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListMetaAdSetsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListMetaAdSetsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "list-meta-ad-sets", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ToggleMetaAdSetStatus returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service toggle-meta-ad-set-status server.
+func (c *Client) ToggleMetaAdSetStatus() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeToggleMetaAdSetStatusRequest(c.encoder)
+		decodeResponse = DecodeToggleMetaAdSetStatusResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildToggleMetaAdSetStatusRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ToggleMetaAdSetStatusDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "toggle-meta-ad-set-status", err)
 		}
 		return decodeResponse(resp)
 	}

@@ -453,6 +453,22 @@ func (d upstreamCapableDispatcher) WriteBid(context.Context, string, model.Provi
 	return d.err
 }
 
+// ReadMetaAdSets / ToggleMetaAdSetStatus implement the two Meta ad-set capabilities so this fake
+// drives their instrumented upstream calls.
+func (d upstreamCapableDispatcher) ReadMetaAdSets(context.Context, string, model.Provider, *model.Campaign, model.MetricsWindow) (*model.MetaAdSets, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.MetaAdSets{}, nil
+}
+
+func (d upstreamCapableDispatcher) ToggleMetaAdSetStatus(context.Context, string, model.Provider, *model.Campaign, string, string) (*model.MetaAdSetStatusResult, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.MetaAdSetStatusResult{Outcome: model.MetaAdSetApplied}, nil
+}
+
 func (d upstreamCapableDispatcher) VerifyAccountOrg(context.Context, string, model.Provider) error {
 	return d.err
 }
@@ -580,6 +596,24 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opRemoveKeywordTargeting,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.RemoveKeywordTargeting(ctx, "p1", platform, campaign, []model.KeywordTargetingRemoval{{Keyword: "k"}}, "rev")
+				return err
+			},
+		},
+		{
+			name: "read meta ad sets",
+			op:   opReadMetaAdSets,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadMetaAdSets(ctx, "p1", platform, campaign, model.MetricsWindowLast7Days)
+				return err
+			},
+		},
+		{
+			// A mutation of a live ad set's delivery: its failure rate is what an operator
+			// watches when pauses stop landing.
+			name: "toggle meta ad set status",
+			op:   opToggleMetaAdSetStatus,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ToggleMetaAdSetStatus(ctx, "p1", platform, campaign, "888", model.MetaAdSetStatusPaused)
 				return err
 			},
 		},

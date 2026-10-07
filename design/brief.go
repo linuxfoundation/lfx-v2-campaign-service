@@ -1011,6 +1011,72 @@ var KeywordTargetingRemovals = Type("keyword-targeting-removals", func() {
 	})
 })
 
+// MetaAdSet is one ad set under a Meta campaign, read live (LFXV2-2665). Never persisted.
+var MetaAdSet = Type("meta-ad-set", func() {
+	Attribute("id", String, "The Meta ad set id", func() { Example("120210000000000888") })
+	Attribute("listed", Boolean, "false for an ad set that DELIVERED in the window but that Meta's ad-set listing did not return (typically deleted or archived since): its counters are this campaign's spend, so they are reported, but every descriptive field is absent.", func() { Example(true) })
+	Attribute("name", String, "The ad set's name as Meta holds it. Absent when not reported.", func() { Example("KubeCon NA — Leads — US") })
+	Attribute("status", String, "The ad set's CONFIGURED status as Meta reports it (ACTIVE, PAUSED, DELETED, ARCHIVED). Absent when not reported.", func() { Example("PAUSED") })
+	Attribute("effective_status", String, "The ad set's EFFECTIVE status as Meta reports it (e.g. CAMPAIGN_PAUSED when the ad set is ACTIVE but its campaign is not). Reported verbatim; Meta grows this set without notice. Absent when not reported.", func() { Example("CAMPAIGN_PAUSED") })
+	Attribute("bid_strategy", String, "The ad set's bid_strategy as Meta reports it. Absent when not reported.", func() { Example("LOWEST_COST_WITHOUT_CAP") })
+	Attribute("budget_type", String, "Which budget the ad set holds. ABSENT when it holds none of its own — Campaign Budget Optimization keeps the budget on the campaign, shared across its ad sets.", func() {
+		Enum("daily", "lifetime")
+		Example("daily")
+	})
+	Attribute("budget_amount", String, "The ad set's budget in WHOLE units of `currency`, two decimals, converted from the minor units Meta reports with the account currency's own offset (100 for most currencies, 1 for zero-decimal ones such as JPY). ABSENT when there is no ad-set budget, or when the currency's minor-unit scale is not one this service knows — never rendered at a guessed scale.", func() { Example("50.00") })
+	Attribute("impressions", Int64, "Impressions over the window. 0 when Meta reported no delivery for this ad set.", func() { Example(1840) })
+	Attribute("clicks", Int64, "Clicks over the window.", func() { Example(42) })
+	Attribute("cost_micros", Int64, "Spend over the window in micro-units of `currency`.", func() { Example(12340000) })
+	Attribute("ctr", Float64, "clicks/impressions, 0 when impressions is 0.", func() { Example(0.0228) })
+	Attribute("recorded", Boolean, "true for the ONE ad set this service created for the campaign (the id the campaign row recorded at dispatch). Always false on an adopted campaign, which records no ad set.", func() { Example(true) })
+	Required("id", "listed", "impressions", "clicks", "cost_micros", "ctr", "recorded")
+})
+
+// MetaAdSets is the live ad-set read for one Meta campaign.
+var MetaAdSets = Type("meta-ad-sets", func() {
+	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("platform_campaign_id", String, "The Meta campaign id the ad sets were read under.", func() { Example("120210000000000555") })
+	Attribute("window", String, "The reporting window the counters cover.", metricsWindowEnum)
+	Attribute("currency", String, "The ad account's ISO 4217 currency; `budget_amount` and `cost_micros` are denominated in it.", func() { Example("USD") })
+	Attribute("read_at", String, "When Meta was read (RFC3339, UTC).", func() { Format(FormatDateTime) })
+	Attribute("ad_sets", ArrayOf(MetaAdSet), "Every ad set the listing returned, in Meta's order, then any unlisted ad set that delivered in the window, by id. Empty when the campaign has none.")
+	Attribute("ad_set_count", Int, "len(ad_sets).", func() { Example(1) })
+	Required("campaign_id", "platform_campaign_id", "window", "currency", "read_at", "ad_sets", "ad_set_count")
+	Example(map[string]any{
+		"campaign_id":          "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+		"platform_campaign_id": "120210000000000555",
+		"window":               "last_30_days",
+		"currency":             "USD",
+		"read_at":              "2026-10-08T09:30:00Z",
+		"ad_sets": []map[string]any{
+			{
+				"id": "120210000000000888", "listed": true, "name": "KubeCon NA — Leads — US",
+				"status": "ACTIVE", "effective_status": "ACTIVE", "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+				"budget_type": "daily", "budget_amount": "50.00",
+				"impressions": 1840, "clicks": 42, "cost_micros": 12340000, "ctr": 0.0228, "recorded": true,
+			},
+		},
+		"ad_set_count": 1,
+	})
+})
+
+// MetaAdSetStatusChange is the outcome of toggle-meta-ad-set-status.
+var MetaAdSetStatusChange = Type("meta-ad-set-status-change", func() {
+	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("ad_set_id", String, "The ad set whose status was addressed", func() { Example("120210000000000888") })
+	Attribute("requested_status", String, "The status requested", func() {
+		Enum("ACTIVE", "PAUSED")
+		Example("PAUSED")
+	})
+	Attribute("previous_status", String, "The configured status the pre-write read observed (APPLIED and ALREADY_IN_STATE). Absent when the outcome is UNCONFIRMED.", func() { Example("ACTIVE") })
+	Attribute("outcome", String, "APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read showed the ad set already at the requested status, so NOTHING WAS SENT. UNCONFIRMED — the single write was sent and its outcome is unknown (a timeout, a 5xx, a throttle after send, or a 2xx that did not confirm success): it MAY OR MAY NOT have been applied — read the ad sets again before retrying.", func() {
+		Enum("APPLIED", "ALREADY_IN_STATE", "UNCONFIRMED")
+		Example("APPLIED")
+	})
+	Attribute("etag", String, "ETag header value: the campaign row's version, UNCHANGED — an ad set's status is not stored on the campaign row, so this write does not bump it.")
+	Required("campaign_id", "ad_set_id", "requested_status", "outcome")
+})
+
 // EmailCopySection is one ordered block of AI-generated email copy. Replaces a single flat
 // `body` HTML blob with the same rich_text/button/divider decomposition the reference
 // implementation's prompt already asks the model to produce (see
@@ -2131,6 +2197,66 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()
+		})
+	})
+
+	Method("list-meta-ad-sets", func() {
+		Description("Read the AD SETS of a Meta campaign live (LFXV2-2665): each ad set's name, configured and effective status, bid strategy and own budget, with its impressions, clicks, spend and CTR over the window. A pure read — the platform is only read and nothing is persisted. " +
+			"Upstream: GET /{campaign_id}/adsets (bounded cursor paging), GET /act_{id}?fields=currency, and ONE level=adset Insights read on the ad account filtered to this campaign (bounded cursor paging). Every page is checked as raw bytes before it is decoded (a duplicated key, malformed UTF-8 or an unpaired surrogate escape refuses the read), every ad set must report THIS campaign and the connection's ad account, every Insights row must name this campaign and the account's currency, and an explicit null counter is refused while an absent one is 0. `recorded` marks the ad set this service created. " +
+			"Before anything is read the campaign must record which ad account it was created under and that account must be the connection's (409 otherwise); a campaign with no platform campaign id is 409; any platform but Meta is 400. " +
+			"**404 only when the campaign row does not exist.** Meta's 100/33 on the campaign (\"does not exist, cannot be loaded due to missing permissions, or does not support this operation\") cannot tell a deleted campaign from one this token cannot load, so it is a 503 like every other unverifiable answer — all or nothing, never a partial list.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted", metricsWindowEnum)
+			Required("project_id", "brief_id", "campaign_id")
+		})
+		Result(MetaAdSets)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets")
+			Header("bearer_token:Authorization")
+			Param("window")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("toggle-meta-ad-set-status", func() {
+		Description("Pause or resume ONE ad set of a Meta campaign (LFXV2-2665). A MUTATION on a live paid campaign, guarded like toggle-campaign-status: If-Match carries the campaign row's ETag (428 when missing, 412 when stale) and the campaign's write lock is held for the call. " +
+			"`ad_set_id` is validated before any connection work (400). The campaign must record its ad account and that account must be the connection's (409), and the ad set is then READ (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and must report THIS campaign under THAT account (409 otherwise) — all before anything is written. ACTIVE on an ADOPTED campaign is refused (409) exactly as the campaign toggle refuses it: adoption records no ad set and does not verify targeting, so un-pause it in Meta Ads Manager; PAUSED is always allowed. An ad set Meta reports DELETED or ARCHIVED is 409. " +
+			"When the read shows the requested status already, NOTHING is sent and the outcome is ALREADY_IN_STATE. Otherwise ONE POST /{ad_set_id} {status} is sent, never retried: APPLIED when Meta confirms it, UNCONFIRMED (still 200) when it was sent and its outcome is unknown — a throttle, a 5xx, a timeout or an unconfirmed 2xx — which may or may not have been applied, so read the ad sets before retrying; the campaign's write lock is then held for a cooldown. A failure BEFORE the write, or a definite refusal of it, is a 503 whose message says nothing was changed. " +
+			"The ad set's status is NOT stored on the campaign row, so the returned ETag is the row's UNCHANGED version (as when a created_degraded campaign is paused). Any platform but Meta is 400.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			// Interpolated into the Graph path, so the Pattern is the transport's half of the
+			// path-injection guard meta.ValidateAdSetID repeats (TestMetaAdSetIDPattern_MatchesPlatformValidator).
+			Attribute("ad_set_id", String, "The Meta ad set id: digits, no leading zero, at most 32.", func() {
+				Pattern(`^[1-9][0-9]*$`)
+				MaxLength(32)
+				Example("120210000000000888")
+			})
+			ifMatchAttr()
+			Attribute("status", String, "Desired ad-set status, in Meta's vocabulary", func() { Enum("ACTIVE", "PAUSED") })
+			Required("project_id", "brief_id", "campaign_id", "ad_set_id", "status")
+		})
+		Result(MetaAdSetStatusChange)
+		commonBriefErrors()
+		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
+		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/status")
+			Header("bearer_token:Authorization")
+			Header("if_match:If-Match")
+			Response(StatusOK, func() { Header("etag:ETag") })
+			briefErrorResponses()
+			Response("PreconditionFailed", StatusPreconditionFailed)
+			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
 	})
 

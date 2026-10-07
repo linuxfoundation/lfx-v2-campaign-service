@@ -788,3 +788,20 @@ Unlike adoption, DELETED/ARCHIVED is returned with its status, not as absent.
 `AccountCurrencyOffset` is the read half of `ResolveBudgetMinorUnits`: the account currency's
 minor-unit offset, `known=false` for a currency outside the supported map (never a guessed 100),
 and an error when the preflight fails.
+
+## Ad sets (`ad_sets.go`, LFXV2-2665)
+
+`ListCampaignAdSets(ctx, campaignID, accountID, window)` reads a campaign's ad sets
+(`GET /{campaign}/adsets`, ≤10 pages of 100), the account currency (`GET /act_{id}?fields=currency`)
+and their delivery (`GET /act_{id}/insights?level=adset` filtered `campaign.id EQUAL`, ≤20 pages of
+500). Every page goes through `getChecked` — `identityjson.Check` on the raw bytes BEFORE decoding
+— and paging follows only the opaque `after` cursor. Rows must name the campaign, canonical ids
+appear once, the account currency must agree, an absent counter is 0 and an explicit `null` is
+refused (`rawCounter`). A listed ad set under another account is `ErrAdSetAccountMismatch`; an
+Insights row for an unlisted ad set is returned with `Listed: false`. `GetAdSetState` reads
+`id,campaign_id,account_id,status` for the toggle. `UpdateAdSetStatusOnce` POSTs `{"status": …}`
+through `do(..., retryThrottle=false)` — exactly one request, a throttle never repeated — and
+requires `{"success":true}`; `ClassifyAdSetWrite` maps its error to APPLIED / NOT_SENT / REJECTED /
+UNCONFIRMED using `IsOutcomeUnconfirmed`. `ValidateAdSetID` is `ValidateCampaignID`'s rule and
+returns the existing `ErrInvalidAdSetID`. Tests: `ad_sets_test.go`.
+
