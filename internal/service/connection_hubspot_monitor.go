@@ -60,7 +60,7 @@ func buildHubSpotEmailMonitor(days int, read *model.HubSpotEmailMonitorRead) *co
 			CampaignID: e.CampaignID, EmailID: e.EmailID, Name: e.Name, AbVariant: e.ABVariant,
 			Sent: c.Sent, Delivered: c.Delivered, Opens: c.Opens, Clicks: c.Clicks,
 			Bounces: c.Bounces, Unsubscribes: c.Unsubscribes, SpamReports: c.SpamReports,
-			OpenRate: r.OpenRate, ClickRate: r.ClickRate, BounceRate: r.BounceRate, UnsubscribeRate: r.UnsubscribeRate,
+			OpenRate: r.OpenRate, ClickRate: r.ClickRate, BounceRate: r.BounceRate, UnsubscribeRate: r.UnsubscribeRate, SpamRate: r.SpamRate,
 		})
 	}
 	tr := rules.HubSpotRates(sum)
@@ -72,7 +72,7 @@ func buildHubSpotEmailMonitor(days int, read *model.HubSpotEmailMonitorRead) *co
 			EmailCount: len(read.Emails),
 			Sent:       sum.Sent, Delivered: sum.Delivered, Opens: sum.Opens, Clicks: sum.Clicks,
 			Bounces: sum.Bounces, Unsubscribes: sum.Unsubscribes, SpamReports: sum.SpamReports,
-			OpenRate: tr.OpenRate, ClickRate: tr.ClickRate, BounceRate: tr.BounceRate, UnsubscribeRate: tr.UnsubscribeRate,
+			OpenRate: tr.OpenRate, ClickRate: tr.ClickRate, BounceRate: tr.BounceRate, UnsubscribeRate: tr.UnsubscribeRate, SpamRate: tr.SpamRate,
 		},
 		EmailsChecked:         read.EmailsChecked,
 		EmailsNotSentInWindow: read.EmailsNotSentInWindow,

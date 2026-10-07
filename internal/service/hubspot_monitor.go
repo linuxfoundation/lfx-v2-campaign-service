@@ -24,7 +24,8 @@ import (
 // service's table and hands over: the dispatcher never chooses what is in scope.
 //
 // The contract a dispatcher must honour:
-//   - resolve the project's OWN connection only (no LF system fallback);
+//   - resolve the connection as Dispatch and ReadMetrics do (the project's own, else the LF
+//     system fallback) — the per-email portal check below is the boundary, not the resolver;
 //   - read only the emails of the campaigns passed, and only those whose recorded creating
 //     portal is the portal the token now reaches (count the rest as unattributable);
 //   - fail the whole read on any upstream failure — no partial result — except an email HubSpot
@@ -37,9 +38,9 @@ type EmailMonitorReader interface {
 // hubspotMonitorMaxCampaigns is how many of a project's recorded HubSpot campaigns one monitor
 // read checks — the most recently recorded ones. Each costs one or two statistics requests (its
 // email and any A/B variant), so this bounds the read at 100 requests plus one token-info call,
-// inside the 20s budget and a private app's burst allowance. A project with more is answered with
-// Truncated set rather than refused: the newest emails are the ones a trailing window of at most
-// 90 days is about, and the flag says the rest were not checked.
+// inside the 20s budget. A project with more is answered rather than refused: the newest emails are
+// the ones a trailing window of at most 90 days is about, and Truncated says so when an unchecked
+// row could plausibly have been sent inside the window (see ReadHubSpotEmailMonitor).
 const hubspotMonitorMaxCampaigns = 50
 
 // opReadEmailMonitor is the upstream-operation token for the read (see the main token block in
@@ -88,6 +89,17 @@ func (o *Orchestrator) ReadHubSpotEmailMonitor(ctx context.Context, projectID st
 		// (nil, nil) or a nil slice is a contract violation, not "no emails": the caller could
 		// not tell an authoritative empty answer from an adapter that fell through a branch.
 		return nil, fmt.Errorf("%s email monitor reader returned a nil result with no error", platform)
+	}
+	// Truncation is reported only when it can matter. An email cannot be sent before it was
+	// recorded, and the unchecked rows are all OLDER than the oldest checked one; so if that row
+	// was recorded before the window started, every unchecked row was too, and none of them can
+	// have been sent inside the window unless it was scheduled or sent long after it was created.
+	// That residual (an old draft sent late) is the one case this does not flag — documented on
+	// the emails_truncated attribute. Flagging every read past the cap would make the field
+	// permanently true for any long-lived project and so mean nothing.
+	if truncated && !read.SpanStart.IsZero() {
+		oldest := campaigns[len(campaigns)-1]
+		truncated = !oldest.CreatedAt.Before(read.SpanStart)
 	}
 	read.Truncated = truncated
 	return read, nil

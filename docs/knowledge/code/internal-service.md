@@ -2032,12 +2032,13 @@ the orchestrator, not a raw account. `Orchestrator.ReadHubSpotEmailMonitor`: cap
 (else `ErrAccountMetricsUnsupported` → 400); scope from
 `ListRecentProjectPlatformCampaigns(project, hubspot, hubspotMonitorMaxCampaigns+1)` (50+1);
 EMPTY scope → empty read with no connection lookup or upstream call; more than the cap →
-truncate to 50 and set `Truncated`; the dispatcher call inside `accountsCallTimeout`, recorded as
+truncate to 50, and set `Truncated` only when the oldest checked row's `CreatedAt` is not before
+the read's `SpanStart`; the dispatcher call inside `accountsCallTimeout`, recorded as
 `read_email_monitor`; a nil read or nil `Emails` is a contract violation (503).
 
 `ConnectionService.MonitorHubspotAccount` runs the monitor guards (`rejectSystemScope`,
 `validateMonitorDays`, `resolveBackendWithOrch`) and classifies failures through
 `classifyDiscoveryError` with `hubspotMonitorDiscovery` (operation "account monitor"): 404 no
-own connection, 400 unusable connection / days, 500 decryption, 503 anything upstream with fixed
+connection (own or LF system), 400 unusable connection / days, 500 decryption, 503 anything upstream with fixed
 text. `buildHubSpotEmailMonitor` sums the returned emails into the totals and computes the rates
 from the sums; `metrics_as_of` and the window are set together, only when HubSpot was read.

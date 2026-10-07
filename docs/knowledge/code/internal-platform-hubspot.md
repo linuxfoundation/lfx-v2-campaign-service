@@ -392,9 +392,12 @@ can set a malformed stored id aside before contacting HubSpot.
 
 Two guards were added to `readEmailCounters`, so they apply to the per-campaign read too:
 
-- **Raw-bytes check.** `identityjson.Check` runs before decoding; a duplicate key (including a
-  case-folded one), malformed UTF-8 or an unpaired surrogate escape fails the read rather than
-  letting encoding/json silently keep the last value.
+- **Raw-bytes check.** `checkStatisticsBytes` runs before decoding: `identityjson.CheckExactKeys`
+  over the whole document (exact duplicate keys, malformed UTF-8, unpaired surrogates), then
+  `identityjson.FoldedKeyCollision` on the two levels decoded into STRUCTS (the envelope and
+  `aggregate`). The open maps (`counters`, `ratios`, `deviceBreakdown`, `qualifierStats`,
+  `campaignAggregations`) are keyed exactly by encoding/json, so a case-distinct pair there is
+  two entries and is accepted.
 - **Explicit null.** `counters` decodes into `map[string]*int64`; a `null` value is
   `ErrNullCounter` (the key named only when it is in the static vocabulary). An ABSENT key keeps
   its omitted-zero meaning.

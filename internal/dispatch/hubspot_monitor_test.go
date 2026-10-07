@@ -296,12 +296,12 @@ func TestHubSpotEmailMonitor_ValidatesDaysBeforeResolvingCredentials(t *testing.
 	}
 }
 
-// ownOnlyConnReader serves a connection for the LF system project only, so a resolver that
-// takes the system fallback succeeds and one that refuses it reports ErrNotFound.
+// ownOnlyConnReader serves a connection for the LF system project only (none when system is nil),
+// so a resolver that takes the system fallback succeeds and one that refuses it reports ErrNotFound.
 type ownOnlyConnReader struct{ system *model.Connection }
 
 func (r ownOnlyConnReader) Get(_ context.Context, projectID string, _ model.Provider) (*model.Connection, error) {
-	if projectID == model.SystemProjectID {
+	if projectID == model.SystemProjectID && r.system != nil {
 		return r.system, nil
 	}
 	return nil, domain.ErrNotFound
@@ -310,18 +310,69 @@ func (ownOnlyConnReader) Disconnected(context.Context, string, model.Provider) (
 	return false, nil
 }
 
-// The project's OWN connection only: a project with none gets ErrNotFound (404), never the LF
-// system portal's numbers — and HubSpot is not contacted.
-func TestHubSpotEmailMonitor_RefusesTheSystemFallback(t *testing.T) {
+// The connection resolves like Dispatch and ReadMetrics: a project whose emails went through the LF
+// system connection (it has none of its own) is monitored on the system portal, and the per-email
+// portal check — not the resolver — is the boundary: a row recorded against another portal is
+// still unattributable and never read.
+func TestHubSpotEmailMonitor_SystemFallbackIsMonitoredAndPortalCheckStillApplies(t *testing.T) {
+	for _, forced := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ordinary fallback", true: "forced-system mode"}[forced], func(t *testing.T) {
+			srv, rec := monitorServer(t, monitorServerOpts{byID: map[string]string{
+				"601": monitorStats("601", `{"sent":10,"delivered":10}`),
+			}})
+			d := newMonitorDispatcher(srv, ownOnlyConnReader{system: activeHubSpotConn(goodHubSpotCreds)})
+			d.creds.forceSystemPaidAds = forced
+			read, err := d.ReadEmailMonitor(context.Background(), "proj-1", model.ProviderHubSpot, []*model.Campaign{
+				recordedEmail("c1", "601", testPortalID, nil),
+				recordedEmail("c2", "602", "999999", nil),
+			}, 30)
+			if err != nil {
+				t.Fatalf("ReadEmailMonitor on the LF system connection: %v", err)
+			}
+			if len(read.Emails) != 1 || read.Emails[0].EmailID != "601" || read.EmailsUnattributable != 1 {
+				t.Errorf("emails/unattributable = %+v/%d, want 601 read and the other-portal row counted", read.Emails, read.EmailsUnattributable)
+			}
+			if got := rec.ids(); len(got) != 1 || got[0] != "601" {
+				t.Errorf("statistics requested for %v, want only 601", got)
+			}
+		})
+	}
+}
+
+// With no connection of its own AND no LF system row, the read is ErrNotFound (404) and HubSpot
+// is not contacted.
+func TestHubSpotEmailMonitor_NoConnectionAtAllIsNotFound(t *testing.T) {
 	srv, rec := monitorServer(t, monitorServerOpts{})
-	d := newMonitorDispatcher(srv, ownOnlyConnReader{system: activeHubSpotConn(goodHubSpotCreds)})
+	d := newMonitorDispatcher(srv, ownOnlyConnReader{})
 	_, err := d.ReadEmailMonitor(context.Background(), "proj-1", model.ProviderHubSpot,
 		[]*model.Campaign{recordedEmail("c1", "601", testPortalID, nil)}, 30)
 	if !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound (no connection of its own)", err)
+		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 	if rec.tokens() != 0 || len(rec.ids()) != 0 {
-		t.Error("HubSpot was contacted for a project with no connection of its own")
+		t.Error("HubSpot was contacted with no connection")
+	}
+}
+
+// A portal throttled past the client's retries (shared-app contention) fails the whole read: no
+// partial result, and nothing a classifier would map to anything but the 503 default.
+func TestHubSpotEmailMonitor_ThrottledPastRetriesFailsTheWholeRead(t *testing.T) {
+	srv, _ := monitorServer(t, monitorServerOpts{
+		byID:   map[string]string{"701": monitorStats("701", `{"sent":10,"delivered":10}`)},
+		status: map[string]int{"702": http.StatusTooManyRequests},
+	})
+	d := newMonitorDispatcher(srv, fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)})
+	read, err := d.ReadEmailMonitor(context.Background(), "proj-1", model.ProviderHubSpot, []*model.Campaign{
+		recordedEmail("c1", "701", testPortalID, nil), recordedEmail("c2", "702", testPortalID, nil),
+	}, 30)
+	if err == nil || read != nil {
+		t.Fatalf("read=%+v err=%v; want no result and an error", read, err)
+	}
+	for _, s := range []error{domain.ErrNotFound, domain.ErrConnectionNotUsable, domain.ErrCredentialDecryptionFailed,
+		domain.ErrServiceDefect, domain.ErrMonitorDaysInvalid, domain.ErrSystemConnectionNotUsable} {
+		if errors.Is(err, s) {
+			t.Errorf("a throttled read carries %v, which would not classify as 503", s)
+		}
 	}
 }
 

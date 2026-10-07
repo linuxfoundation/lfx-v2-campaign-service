@@ -44,8 +44,8 @@ func TestEvaluateHubSpotMonitor_SentButNothingDeliveredIsHigh(t *testing.T) {
 	if it.Priority != model.MonitorPriorityHigh || !strings.Contains(it.Issue, "none delivered") {
 		t.Errorf("finding = %+v", it)
 	}
-	if it.CampaignID != "4242" || it.CampaignName != "Newsletter" {
-		t.Errorf("finding must name the HubSpot email: %+v", it)
+	if it.CampaignID != "camp-1" || it.EmailID != "4242" || it.CampaignName != "Newsletter" {
+		t.Errorf("finding must carry the service campaign id AND the HubSpot email id: %+v", it)
 	}
 	// Nothing sent at all is not a delivery failure.
 	if items := EvaluateHubSpotMonitor([]model.HubSpotMonitorEmail{email(model.HubSpotEmailCounters{})}); len(items) != 0 {
@@ -75,20 +75,35 @@ func TestEvaluateHubSpotMonitor_BounceRateBands(t *testing.T) {
 }
 
 func TestEvaluateHubSpotMonitor_SpamComplaintBands(t *testing.T) {
-	c := healthy()
-	c.SpamReports = 1 // 1/990 ≈ 0.101%: above the 0.1% MED target
+	none := func(c model.HubSpotEmailCounters, why string) {
+		t.Helper()
+		if items := EvaluateHubSpotMonitor([]model.HubSpotMonitorEmail{email(c)}); len(items) != 0 {
+			t.Errorf("%s fired: %+v", why, items)
+		}
+	}
+	// ONE complaint on 100 delivered is 1% — far above both rates — and is still no finding:
+	// a single recipient is not a list-quality signal.
+	none(model.HubSpotEmailCounters{Sent: 100, Delivered: 100, Opens: 30, Clicks: 4, SpamReports: 1}, "1 report / 100 delivered")
+	c := healthy()    // 990 delivered
+	c.SpamReports = 2 // 0.2%: above the MED rate, below the MED count
+	none(c, "2 reports")
+	c.SpamReports = 3 // 0.303%: at the HIGH rate, MED count only
 	if it := only(t, c); it.Priority != model.MonitorPriorityMed {
-		t.Errorf("0.1%% spam = %+v, want MED", it)
+		t.Errorf("3 reports at 0.3%% = %+v, want MED (HIGH needs 5)", it)
 	}
-	c.SpamReports = 3 // 3/990 ≈ 0.303%: at or above the 0.3% HIGH line
+	c.SpamReports = 4
+	if it := only(t, c); it.Priority != model.MonitorPriorityMed {
+		t.Errorf("4 reports = %+v, want MED", it)
+	}
+	c.SpamReports = 5 // 0.505%
 	if it := only(t, c); it.Priority != model.MonitorPriorityHigh {
-		t.Errorf("0.3%% spam = %+v, want HIGH", it)
+		t.Errorf("5 reports at 0.5%% = %+v, want HIGH", it)
 	}
-	c = healthy()
-	c.Sent, c.Delivered, c.Opens, c.SpamReports = 2010, 2000, 600, 2 // exactly 0.1%: not above
-	c.Clicks = 80
-	if items := EvaluateHubSpotMonitor([]model.HubSpotMonitorEmail{email(c)}); len(items) != 0 {
-		t.Errorf("exactly 0.1%% spam fired: %+v", items)
+	// Enough reports but the rate is at the MED line, not above it: 3 / 3000 = exactly 0.1%.
+	none(model.HubSpotEmailCounters{Sent: 3010, Delivered: 3000, Opens: 900, Clicks: 120, SpamReports: 3}, "exactly 0.1% with 3 reports")
+	// Five reports but below the HIGH rate: 5 / 2000 = 0.25% → MED.
+	if it := only(t, model.HubSpotEmailCounters{Sent: 2010, Delivered: 2000, Opens: 600, Clicks: 80, SpamReports: 5}); it.Priority != model.MonitorPriorityMed {
+		t.Errorf("5 reports at 0.25%% = %+v, want MED", it)
 	}
 }
 
@@ -121,14 +136,17 @@ func TestEvaluateHubSpotMonitor_SortsHighFirst(t *testing.T) {
 
 func TestHubSpotRates_ZeroDenominatorsAreAbsent(t *testing.T) {
 	r := HubSpotRates(model.HubSpotEmailCounters{})
-	if r.OpenRate != nil || r.ClickRate != nil || r.BounceRate != nil || r.UnsubscribeRate != nil {
+	if r.OpenRate != nil || r.ClickRate != nil || r.BounceRate != nil || r.UnsubscribeRate != nil || r.SpamRate != nil {
 		t.Fatalf("rates over zero = %+v, want all absent", r)
 	}
 	r = HubSpotRates(model.HubSpotEmailCounters{Sent: 10, Bounces: 10})
 	if r.BounceRate == nil || *r.BounceRate != 1 || r.OpenRate != nil {
 		t.Fatalf("sent but nothing delivered = %+v, want bounce 1 and delivered-based rates absent", r)
 	}
-	r = HubSpotRates(model.HubSpotEmailCounters{Sent: 200, Delivered: 100, Opens: 25, Clicks: 5, Bounces: 10, Unsubscribes: 1})
+	r = HubSpotRates(model.HubSpotEmailCounters{Sent: 200, Delivered: 100, Opens: 25, Clicks: 5, Bounces: 10, Unsubscribes: 1, SpamReports: 2})
+	if *r.SpamRate != 0.02 {
+		t.Fatalf("spam rate = %v, want 0.02", *r.SpamRate)
+	}
 	if *r.OpenRate != 0.25 || *r.ClickRate != 0.05 || *r.BounceRate != 0.05 || *r.UnsubscribeRate != 0.01 {
 		t.Fatalf("rates = open %v click %v bounce %v unsub %v", *r.OpenRate, *r.ClickRate, *r.BounceRate, *r.UnsubscribeRate)
 	}

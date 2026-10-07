@@ -18,9 +18,10 @@ Reddit and X clients' `GetCampaign` run it over the raw answer before decoding, 
 binds a brief to an arbitrary upstream campaign on the strength of one read, and the id and name it
 returns are what an operator confirms the binding against.
 
-The HubSpot client runs it too (LFXV2-2665, the email account monitor): on the raw bytes of every
-marketing-email statistics response (`readEmailCounters`, shared by the per-campaign metrics read
-and the monitor) and of the token-info answer (`AuthenticatedPortalID`), whose portal id every
+The HubSpot client uses it too (LFXV2-2665, the email account monitor). Statistics responses are
+mostly open maps that encoding/json keys EXACTLY, so `readEmailCounters` uses `CheckExactKeys`
+(exact duplicates only) plus `FoldedKeyCollision` on the struct-decoded levels; the token-info
+answer (`AuthenticatedPortalID`) gets the full `Check`, whose portal id every
 caller compares against a recorded one. `"sent":1000,"sent":0` or a doubled `hubId` describes two
 answers, and the decoder would pick one silently.
 

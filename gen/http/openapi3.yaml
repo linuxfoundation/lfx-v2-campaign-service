@@ -7269,16 +7269,19 @@ paths:
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                 campaigns:
@@ -8144,7 +8147,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-hubspot-account lfx-v2-campaign-service-connections
-            description: 'Read the statistics of the HubSpot marketing emails THIS SERVICE created for the project and sent within the trailing `days` (today inclusive, UTC), with findings from this service''s email rules (high bounce, spam-complaint or unsubscribe rate, low open or click rate, sent but nothing delivered). The HubSpot sibling of the monitor-*-ads-account reads, with one deliberate difference: it is PROJECT-scoped, not account-scoped. A HubSpot portal is shared across projects and has no per-project account, so there is no account_id; the scope is the email ids this service recorded for the project, each read by itself from HubSpot''s marketing-email statistics endpoint — never a portal-wide read. Resolved from the project''s OWN connection only (no LF system fallback: 404 without one). A project that has recorded no HubSpot email gets an empty 200 without HubSpot being called. Any upstream failure — including a 401/403, a 429 still refused after retries, or a malformed or untrustworthy response — is a 503 with no partial result. There are no cost fields: HubSpot bills nothing per send. A pure read: nothing is persisted.'
+            description: 'Read the statistics of the HubSpot marketing emails THIS SERVICE created for the project and sent within the trailing `days` (today inclusive, UTC), with findings from this service''s email rules (high bounce, spam-complaint or unsubscribe rate, low open or click rate, sent but nothing delivered). The HubSpot sibling of the monitor-*-ads-account reads, with one deliberate difference: it is PROJECT-scoped, not account-scoped. A HubSpot portal is shared across projects and has no per-project account, so there is no account_id; the scope is the email ids this service recorded for the project, each read by itself from HubSpot''s marketing-email statistics endpoint — never a portal-wide read. Resolved like the per-campaign metrics read (the project''s own connection, else the LF system one; 404 with neither), with every email checked against the portal it was created in. A project that has recorded no HubSpot email gets an empty 200 without HubSpot being called. Any upstream failure — including a 401/403, a 429 still refused after retries (a throttled portal, e.g. under shared-app contention), or a malformed or untrustworthy response — is a 503 with no partial result. There are no cost fields: HubSpot bills nothing per send. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#monitor-hubspot-account
             parameters:
                 - name: days
@@ -8179,8 +8182,9 @@ paths:
                             example:
                                 action_items:
                                     - action: Review the send list for stale or unverified contacts
-                                      campaign_id: "112233445566"
+                                      campaign_id: 6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f
                                       campaign_name: KubeCon NA 2026 — registration open
+                                      email_id: "112233445566"
                                       issue: Bounce rate is 3.0% (150 of 5000 sent) — above the 2% healthy-list level
                                       priority: MED
                                 days: 30
@@ -8197,6 +8201,7 @@ paths:
                                       open_rate: 0.3
                                       opens: 1455
                                       sent: 5000
+                                      spam_rate: 0.0002061855670103093
                                       spam_reports: 1
                                       unsubscribe_rate: 0.004948453608247423
                                       unsubscribes: 24
@@ -8217,6 +8222,7 @@ paths:
                                     open_rate: 0.3
                                     opens: 1455
                                     sent: 5000
+                                    spam_rate: 0.0002061855670103093
                                     spam_reports: 1
                                     unsubscribe_rate: 0.004948453608247423
                                     unsubscribes: 24
@@ -9299,21 +9305,25 @@ paths:
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                 campaigns:
@@ -10256,11 +10266,13 @@ paths:
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                 campaigns:
@@ -11180,21 +11192,25 @@ paths:
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                 campaigns:
@@ -12115,16 +12131,19 @@ paths:
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                 campaigns:
@@ -13032,11 +13051,13 @@ paths:
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
+                                      email_id: "112233445566"
                                       issue: 'Underspending: 42% of expected spend'
                                       priority: LOW
                                 campaigns:
@@ -14871,21 +14892,25 @@ components:
                         - action: Increase daily budget or check for delivery limits
                           campaign_id: "24183781329"
                           campaign_name: KubeCon NA 2026 - Search
+                          email_id: "112233445566"
                           issue: 'Underspending: 42% of expected spend'
                           priority: HIGH
                         - action: Increase daily budget or check for delivery limits
                           campaign_id: "24183781329"
                           campaign_name: KubeCon NA 2026 - Search
+                          email_id: "112233445566"
                           issue: 'Underspending: 42% of expected spend'
                           priority: HIGH
                         - action: Increase daily budget or check for delivery limits
                           campaign_id: "24183781329"
                           campaign_name: KubeCon NA 2026 - Search
+                          email_id: "112233445566"
                           issue: 'Underspending: 42% of expected spend'
                           priority: HIGH
                         - action: Increase daily budget or check for delivery limits
                           campaign_id: "24183781329"
                           campaign_name: KubeCon NA 2026 - Search
+                          email_id: "112233445566"
                           issue: 'Underspending: 42% of expected spend'
                           priority: HIGH
                 campaigns:
@@ -14998,21 +15023,25 @@ components:
                     - action: Increase daily budget or check for delivery limits
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
+                      email_id: "112233445566"
                       issue: 'Underspending: 42% of expected spend'
                       priority: HIGH
                     - action: Increase daily budget or check for delivery limits
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
+                      email_id: "112233445566"
                       issue: 'Underspending: 42% of expected spend'
                       priority: HIGH
                     - action: Increase daily budget or check for delivery limits
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
+                      email_id: "112233445566"
                       issue: 'Underspending: 42% of expected spend'
                       priority: HIGH
                     - action: Increase daily budget or check for delivery limits
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
+                      email_id: "112233445566"
                       issue: 'Underspending: 42% of expected spend'
                       priority: HIGH
                 campaigns:
@@ -15114,12 +15143,16 @@ components:
                     example: Increase daily budget or check for delivery limits
                 campaign_id:
                     type: string
-                    description: The platform campaign id this item is about. Empty for an account-wide item.
+                    description: 'The campaign this item is about: the platform campaign id on the ad-platform monitors; this service''s campaign UUID on monitor-hubspot-account (where email_id names the email). Empty for an account-wide item.'
                     example: "24183781329"
                 campaign_name:
                     type: string
                     description: The campaign's platform-side name, carried alongside campaign_id so a renderer never needs to re-join against the row list.
                     example: KubeCon NA 2026 - Search
+                email_id:
+                    type: string
+                    description: 'monitor-hubspot-account only: the HubSpot marketing-email id the item is about — the key that joins a finding to its row in `emails` (an A/B variant shares its parent''s campaign_id). Absent on every ad-platform monitor.'
+                    example: "112233445566"
                 issue:
                     type: string
                     description: What the rule engine flagged.
@@ -15136,6 +15169,7 @@ components:
                 action: Increase daily budget or check for delivery limits
                 campaign_id: "24183781329"
                 campaign_name: KubeCon NA 2026 - Search
+                email_id: "112233445566"
                 issue: 'Underspending: 42% of expected spend'
                 priority: LOW
             required:
@@ -20867,11 +20901,12 @@ components:
                     type: array
                     items:
                         $ref: '#/components/schemas/AccountMonitorActionItem'
-                    description: Findings across the emails, HIGH first. campaign_id is the HubSpot email id the finding is about and campaign_name its name. Every threshold is a deliverability heuristic, not a HubSpot limit.
+                    description: Findings across the emails, HIGH first. campaign_id is this service's campaign UUID (as on the rows), email_id the HubSpot email the finding is about — join to `emails` on email_id — and campaign_name the email's name. Every threshold is a deliverability heuristic, not a HubSpot limit.
                     example:
                         - action: Review the send list for stale or unverified contacts
-                          campaign_id: "112233445566"
+                          campaign_id: 6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f
                           campaign_name: KubeCon NA 2026 — registration open
+                          email_id: "112233445566"
                           issue: Bounce rate is 3.0% (150 of 5000 sent) — above the 2% healthy-list level
                           priority: MED
                 days:
@@ -20897,6 +20932,7 @@ components:
                           open_rate: 0.3
                           opens: 1455
                           sent: 5000
+                          spam_rate: 0.0002061855670103093
                           spam_reports: 1
                           unsubscribe_rate: 0.004948453608247423
                           unsubscribes: 24
@@ -20912,7 +20948,7 @@ components:
                     format: int64
                 emails_truncated:
                     type: boolean
-                    description: 'True when the project has recorded more than 50 HubSpot campaigns: only the 50 most recently recorded (and their A/B variants) were checked, so totals may omit older emails sent inside the window.'
+                    description: 'True when the project has recorded more than 50 HubSpot campaigns AND the oldest one checked was recorded on or after the window''s first day — so an unchecked, older email could have been sent inside the window and the totals may omit it. Only the 50 most recently recorded campaigns (and their A/B variants) are ever checked. Residual: an unchecked email recorded before the window but sent inside it (a draft sent late) is not flagged.'
                     example: false
                 emails_unattributable:
                     type: integer
@@ -20939,8 +20975,9 @@ components:
             example:
                 action_items:
                     - action: Review the send list for stale or unverified contacts
-                      campaign_id: "112233445566"
+                      campaign_id: 6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f
                       campaign_name: KubeCon NA 2026 — registration open
+                      email_id: "112233445566"
                       issue: Bounce rate is 3.0% (150 of 5000 sent) — above the 2% healthy-list level
                       priority: MED
                 days: 30
@@ -20957,6 +20994,7 @@ components:
                       open_rate: 0.3
                       opens: 1455
                       sent: 5000
+                      spam_rate: 0.0002061855670103093
                       spam_reports: 1
                       unsubscribe_rate: 0.004948453608247423
                       unsubscribes: 24
@@ -20977,6 +21015,7 @@ components:
                     open_rate: 0.3
                     opens: 1455
                     sent: 5000
+                    spam_rate: 0.0002061855670103093
                     spam_reports: 1
                     unsubscribe_rate: 0.004948453608247423
                     unsubscribes: 24
@@ -21049,6 +21088,11 @@ components:
                     description: HubSpot's `sent` counter for the email, to date.
                     example: 5000
                     format: int64
+                spam_rate:
+                    type: number
+                    description: spam_reports / delivered, as a fraction. ABSENT when delivered is 0.
+                    example: 0.0002061855670103093
+                    format: double
                 spam_reports:
                     type: integer
                     description: HubSpot's `spamreport` counter, to date.
@@ -21077,6 +21121,7 @@ components:
                 open_rate: 0.3
                 opens: 1455
                 sent: 5000
+                spam_rate: 0.0002061855670103093
                 spam_reports: 1
                 unsubscribe_rate: 0.004948453608247423
                 unsubscribes: 24
@@ -21140,6 +21185,11 @@ components:
                     description: Sum of the emails' sent counters.
                     example: 5000
                     format: int64
+                spam_rate:
+                    type: number
+                    description: Summed spam_reports / summed delivered. ABSENT when that denominator is 0.
+                    example: 0.0002061855670103093
+                    format: double
                 spam_reports:
                     type: integer
                     description: Sum of the emails' spam reports.
@@ -21165,6 +21215,7 @@ components:
                 open_rate: 0.3
                 opens: 1455
                 sent: 5000
+                spam_rate: 0.0002061855670103093
                 spam_reports: 1
                 unsubscribe_rate: 0.004948453608247423
                 unsubscribes: 24

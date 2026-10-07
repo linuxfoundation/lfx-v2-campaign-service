@@ -147,6 +147,10 @@ type AccountMonitorActionItem struct {
 	// item (none of the four ported engines currently emit one, but the field exists so a
 	// future account-wide rule does not need a shape change).
 	CampaignID string
+	// EmailID is set by the HubSpot email monitor only: the HubSpot marketing-email id the item
+	// is about. There CampaignID is this service's campaign UUID (an A/B variant shares its
+	// parent's), so EmailID is what joins a finding to its row. Empty on every ad monitor.
+	EmailID string
 	// CampaignName is the campaign's platform-side name, carried alongside CampaignID so a
 	// renderer never needs to re-join against the row list.
 	CampaignName string

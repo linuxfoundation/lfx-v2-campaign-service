@@ -1187,7 +1187,8 @@ var AccountMonitorCampaign = Type("account-monitor-campaign", func() {
 // AccountMonitorActionItem is one rule-engine finding, produced per platform in
 // internal/service/rules/monitor_*.go — see model.AccountMonitorActionItem.
 var AccountMonitorActionItem = Type("account-monitor-action-item", func() {
-	Attribute("campaign_id", String, "The platform campaign id this item is about. Empty for an account-wide item.", func() { Example("24183781329") })
+	Attribute("campaign_id", String, "The campaign this item is about: the platform campaign id on the ad-platform monitors; this service's campaign UUID on monitor-hubspot-account (where email_id names the email). Empty for an account-wide item.", func() { Example("24183781329") })
+	Attribute("email_id", String, "monitor-hubspot-account only: the HubSpot marketing-email id the item is about — the key that joins a finding to its row in `emails` (an A/B variant shares its parent's campaign_id). Absent on every ad-platform monitor.", func() { Example("112233445566") })
 	Attribute("campaign_name", String, "The campaign's platform-side name, carried alongside campaign_id so a renderer never needs to re-join against the row list.", func() { Example("KubeCon NA 2026 - Search") })
 	Attribute("priority", String, "The rule engine's priority band for this item.", func() { Enum("HIGH", "MED", "LOW") })
 	Attribute("issue", String, "What the rule engine flagged.", func() { Example("Underspending: 42% of expected spend") })
@@ -1271,6 +1272,7 @@ var HubSpotEmailMonitorEmail = Type("hubspot-email-monitor-email", func() {
 	Attribute("click_rate", Float64, "clicks / delivered, as a fraction. ABSENT when delivered is 0.", func() { Example(0.04) })
 	Attribute("bounce_rate", Float64, "bounces / sent, as a fraction. ABSENT when sent is 0.", func() { Example(0.03) })
 	Attribute("unsubscribe_rate", Float64, "unsubscribes / delivered, as a fraction. ABSENT when delivered is 0.", func() { Example(0.004948453608247423) })
+	Attribute("spam_rate", Float64, "spam_reports / delivered, as a fraction. ABSENT when delivered is 0.", func() { Example(0.00020618556701030928) })
 	Required("campaign_id", "email_id", "name", "ab_variant", "sent", "delivered", "opens", "clicks",
 		"bounces", "unsubscribes", "spam_reports")
 	Example(hubspotMonitorEmailExample())
@@ -1286,6 +1288,7 @@ func hubspotMonitorEmailExample() map[string]any {
 		"sent": 5000, "delivered": 4850, "opens": 1455, "clicks": 194, "bounces": 150,
 		"unsubscribes": 24, "spam_reports": 1,
 		"open_rate": 0.3, "click_rate": 0.04, "bounce_rate": 0.03, "unsubscribe_rate": 0.004948453608247423,
+		"spam_rate": 0.00020618556701030928,
 	}
 }
 
@@ -1305,6 +1308,7 @@ var HubSpotEmailMonitorTotals = Type("hubspot-email-monitor-totals", func() {
 	Attribute("click_rate", Float64, "Summed clicks / summed delivered. ABSENT when that denominator is 0.", func() { Example(0.04) })
 	Attribute("bounce_rate", Float64, "Summed bounces / summed sent. ABSENT when that denominator is 0.", func() { Example(0.03) })
 	Attribute("unsubscribe_rate", Float64, "Summed unsubscribes / summed delivered. ABSENT when that denominator is 0.", func() { Example(0.004948453608247423) })
+	Attribute("spam_rate", Float64, "Summed spam_reports / summed delivered. ABSENT when that denominator is 0.", func() { Example(0.00020618556701030928) })
 	Required("email_count", "sent", "delivered", "opens", "clicks", "bounces", "unsubscribes", "spam_reports")
 	Example(hubspotMonitorTotalsExample())
 })
@@ -1324,8 +1328,9 @@ func hubspotMonitorTotalsExample() map[string]any {
 // fires on its counters.
 func hubspotMonitorActionItemsExample() []map[string]any {
 	return []map[string]any{{
-		"campaign_id": "112233445566", "campaign_name": "KubeCon NA 2026 — registration open",
-		"priority": "MED", "issue": "Bounce rate is 3.0% (150 of 5000 sent) — above the 2% healthy-list level",
+		"campaign_id": "6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f", "email_id": "112233445566",
+		"campaign_name": "KubeCon NA 2026 — registration open",
+		"priority":      "MED", "issue": "Bounce rate is 3.0% (150 of 5000 sent) — above the 2% healthy-list level",
 		"action": "Review the send list for stale or unverified contacts",
 	}}
 }
@@ -1338,7 +1343,7 @@ var HubSpotEmailMonitor = Type("hubspot-email-monitor", func() {
 	Attribute("emails", ArrayOf(HubSpotEmailMonitorEmail), "The project's own HubSpot marketing emails that HubSpot reports as SENT inside the window, newest-recorded campaign first. The window selects emails by SEND date; each email's counters are its totals to metrics_as_of, not only the events inside the window.", func() {
 		Example([]map[string]any{hubspotMonitorEmailExample()})
 	})
-	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "Findings across the emails, HIGH first. campaign_id is the HubSpot email id the finding is about and campaign_name its name. Every threshold is a deliverability heuristic, not a HubSpot limit.", func() {
+	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "Findings across the emails, HIGH first. campaign_id is this service's campaign UUID (as on the rows), email_id the HubSpot email the finding is about — join to `emails` on email_id — and campaign_name the email's name. Every threshold is a deliverability heuristic, not a HubSpot limit.", func() {
 		Example(hubspotMonitorActionItemsExample())
 	})
 	Attribute("totals", HubSpotEmailMonitorTotals, "The sum of the emails array, with rates from the summed counters.")
@@ -1357,7 +1362,7 @@ var HubSpotEmailMonitor = Type("hubspot-email-monitor", func() {
 	Attribute("emails_checked", Int, "How many of the project's recorded emails HubSpot was asked about: the emails array plus emails_not_sent_in_window.", func() { Example(3) })
 	Attribute("emails_not_sent_in_window", Int, "How many checked emails HubSpot reported no send of inside the window — sent outside it, never sent (a staged draft), or no longer existing; HubSpot's answer does not tell these apart. Never reported as zeros.", func() { Example(2) })
 	Attribute("emails_unattributable", Int, "How many recorded emails were NOT read because they cannot be read safely: the campaign row does not record which HubSpot portal the email was created in, records a different portal than the one the project's token reaches now, or holds a malformed id. An email id means something only inside its own portal.", func() { Example(0) })
-	Attribute("emails_truncated", Boolean, "True when the project has recorded more than 50 HubSpot campaigns: only the 50 most recently recorded (and their A/B variants) were checked, so totals may omit older emails sent inside the window.", func() { Example(false) })
+	Attribute("emails_truncated", Boolean, "True when the project has recorded more than 50 HubSpot campaigns AND the oldest one checked was recorded on or after the window's first day — so an unchecked, older email could have been sent inside the window and the totals may omit it. Only the 50 most recently recorded campaigns (and their A/B variants) are ever checked. Residual: an unchecked email recorded before the window but sent inside it (a draft sent late) is not flagged.", func() { Example(false) })
 	Required("days", "emails", "action_items", "totals", "emails_checked", "emails_not_sent_in_window",
 		"emails_unattributable", "emails_truncated")
 	Example(map[string]any{
@@ -2473,10 +2478,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"difference: it is PROJECT-scoped, not account-scoped. A HubSpot portal is shared across " +
 			"projects and has no per-project account, so there is no account_id; the scope is the email ids " +
 			"this service recorded for the project, each read by itself from HubSpot's marketing-email " +
-			"statistics endpoint — never a portal-wide read. Resolved from the project's OWN connection only " +
-			"(no LF system fallback: 404 without one). A project that has recorded no HubSpot email gets an " +
+			"statistics endpoint — never a portal-wide read. Resolved like the per-campaign metrics read " +
+			"(the project's own connection, else the LF system one; 404 with neither), with every email checked against the " +
+			"portal it was created in. A project that has recorded no HubSpot email gets an " +
 			"empty 200 without HubSpot being called. Any upstream failure — including a 401/403, a 429 still " +
-			"refused after retries, or a malformed or untrustworthy response — is a 503 with no partial " +
+			"refused after retries (a throttled portal, e.g. under shared-app contention), or a malformed or untrustworthy response — is a 503 with no partial " +
 			"result. There are no cost fields: HubSpot bills nothing per send. A pure read: nothing is persisted.")
 		Payload(func() {
 			bearerToken()

@@ -37,6 +37,12 @@ const (
 	// guidance names 0.3% as the rate never to reach and asks senders to stay under 0.1%.
 	hsSpamRateHigh = 0.003
 	hsSpamRateMed  = 0.001
+	// hsSpamMinReportsHigh / hsSpamMinReportsMed: the complaint COUNT a spam finding also needs.
+	// The rates alone are fragile at the volume floor: one complaint on 100–333 deliveries is
+	// already ≥ 0.3%, and a single recipient pressing "spam" is not a list-quality signal. Five
+	// for HIGH and three for MED are heuristics, like the rates.
+	hsSpamMinReportsHigh = 5
+	hsSpamMinReportsMed  = 3
 	// hsUnsubscribeRateMed: unsubscribes / delivered. Typical marketing sends lose well under
 	// 0.5% of recipients; above 1% the audience or the frequency is a poor fit.
 	hsUnsubscribeRateMed = 0.01
@@ -67,6 +73,7 @@ func HubSpotRates(c model.HubSpotEmailCounters) model.HubSpotEmailRates {
 		ClickRate:       hsRate(c.Clicks, c.Delivered),
 		BounceRate:      hsRate(c.Bounces, c.Sent),
 		UnsubscribeRate: hsRate(c.Unsubscribes, c.Delivered),
+		SpamRate:        hsRate(c.SpamReports, c.Delivered),
 	}
 }
 
@@ -87,7 +94,7 @@ func hubspotEmailItems(e model.HubSpotMonitorEmail) []model.AccountMonitorAction
 	var items []model.AccountMonitorActionItem
 	add := func(priority model.MonitorPriority, issue, action string) {
 		items = append(items, model.AccountMonitorActionItem{
-			CampaignID: e.EmailID, CampaignName: e.Name,
+			CampaignID: e.CampaignID, EmailID: e.EmailID, CampaignName: e.Name,
 			Priority: priority, Issue: issue, Action: action,
 		})
 	}
@@ -116,13 +123,13 @@ func hubspotEmailItems(e model.HubSpotMonitorEmail) []model.AccountMonitorAction
 	}
 
 	if c.Delivered >= hsMinVolume {
-		spam := hsRate(c.SpamReports, c.Delivered)
+		spam := r.SpamRate
 		switch {
-		case spam != nil && *spam >= hsSpamRateHigh:
+		case spam != nil && *spam >= hsSpamRateHigh && c.SpamReports >= hsSpamMinReportsHigh:
 			add(model.MonitorPriorityHigh,
 				fmt.Sprintf("Spam complaint rate is %s (%d reports) — at or above the 0.3%% mailbox providers enforce", hsPct(*spam), c.SpamReports),
 				"Pause similar sends and confirm every recipient opted in; tighten the audience before sending again")
-		case spam != nil && *spam > hsSpamRateMed:
+		case spam != nil && *spam > hsSpamRateMed && c.SpamReports >= hsSpamMinReportsMed:
 			add(model.MonitorPriorityMed,
 				fmt.Sprintf("Spam complaint rate is %s (%d reports) — above the 0.1%% target", hsPct(*spam), c.SpamReports),
 				"Check that recipients expected this email and that the unsubscribe link is prominent")

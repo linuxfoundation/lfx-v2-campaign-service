@@ -63,10 +63,16 @@ func hubspotMonitorService(repo *fakeCampaignRepo, d PlatformDispatcher) *Connec
 	return svc
 }
 
+// recordedCampaigns returns n campaigns newest first, one recorded per hour back from newest.
 func recordedCampaigns(n int) []*model.Campaign {
+	return recordedCampaignsFrom(n, monAsOf)
+}
+
+func recordedCampaignsFrom(n int, newest time.Time) []*model.Campaign {
 	out := make([]*model.Campaign, 0, n)
 	for i := 0; i < n; i++ {
-		out = append(out, &model.Campaign{ID: fmt.Sprintf("c%d", i), Platform: model.ProviderHubSpot, PlatformCampaignID: fmt.Sprintf("%d", 1000+i)})
+		out = append(out, &model.Campaign{ID: fmt.Sprintf("c%d", i), Platform: model.ProviderHubSpot,
+			PlatformCampaignID: fmt.Sprintf("%d", 1000+i), CreatedAt: newest.Add(-time.Duration(i) * time.Hour)})
 	}
 	return out
 }
@@ -111,7 +117,10 @@ func TestMonitorHubspotAccount_TotalsAndRatesAreFromTheSums(t *testing.T) {
 		t.Errorf("completeness = %d/%d/%d/%v", out.EmailsChecked, out.EmailsNotSentInWindow, out.EmailsUnattributable, out.EmailsTruncated)
 	}
 	// The variant sent 100 and delivered none: the HIGH finding, first, naming that email.
-	if len(out.ActionItems) == 0 || out.ActionItems[0].Priority != "HIGH" || out.ActionItems[0].CampaignID == nil || *out.ActionItems[0].CampaignID != "1001" {
+	// campaign_id is the service UUID, as on the rows; email_id is the join key to the row.
+	if len(out.ActionItems) == 0 || out.ActionItems[0].Priority != "HIGH" ||
+		out.ActionItems[0].CampaignID == nil || *out.ActionItems[0].CampaignID != "c0" ||
+		out.ActionItems[0].EmailID == nil || *out.ActionItems[0].EmailID != "1001" {
 		t.Errorf("action items = %+v", out.ActionItems)
 	}
 }
@@ -159,6 +168,20 @@ func TestMonitorHubspotAccount_TruncatesToTheCapAndSaysSo(t *testing.T) {
 	}
 	if d.calls[0][0].ID != "c0" {
 		t.Errorf("first campaign = %s, want the newest (c0)", d.calls[0][0].ID)
+	}
+
+	// More rows than the cap, but the oldest CHECKED one was recorded before the window began, so
+	// every unchecked row was too: not flagged (the documented residual is a draft sent late).
+	repo3 := &fakeCampaignRepo{recent: recordedCampaignsFrom(hubspotMonitorMaxCampaigns+5, monStart.Add(10*time.Hour))}
+	out3, err := hubspotMonitorService(repo3, d).MonitorHubspotAccount(context.Background(), &conn.MonitorHubspotAccountPayload{ProjectID: "p", Days: 30})
+	if err != nil || out3.EmailsTruncated {
+		t.Errorf("oldest checked row before the window: truncated=%v err=%v, want false", out3 != nil && out3.EmailsTruncated, err)
+	}
+	// Boundary: the oldest checked row recorded exactly at the window start IS flagged.
+	repo4 := &fakeCampaignRepo{recent: recordedCampaignsFrom(hubspotMonitorMaxCampaigns+1, monStart.Add(time.Duration(hubspotMonitorMaxCampaigns-1)*time.Hour))}
+	out4, err := hubspotMonitorService(repo4, d).MonitorHubspotAccount(context.Background(), &conn.MonitorHubspotAccountPayload{ProjectID: "p", Days: 30})
+	if err != nil || !out4.EmailsTruncated {
+		t.Errorf("oldest checked row at the window start: truncated=%v err=%v, want true", out4 != nil && out4.EmailsTruncated, err)
 	}
 
 	// Exactly the cap is not truncated.

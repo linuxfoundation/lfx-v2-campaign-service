@@ -127,6 +127,32 @@ func TestStatistics_UntrustworthyBytesAreRefusedBeforeDecoding(t *testing.T) {
 	}
 }
 
+// The raw check is scoped to how each level DECODES. deviceBreakdown, ratios and the other open
+// maps are keyed exactly by encoding/json, so a case-distinct pair there is two entries, not an
+// ambiguity, and must not fail a working read; an EXACT duplicate in the same map still is.
+func TestStatistics_OpenMapsAreCheckedForExactDuplicatesOnly(t *testing.T) {
+	caseDistinct := `{"emails":[4242],"aggregate":{"counters":{"sent":10,"delivered":10},` +
+		`"deviceBreakdown":{"Mobile":{"open":1},"mobile":{"open":2}},"ratios":{"OpenRatio":1,"openratio":1}}}`
+	exactDup := `{"emails":[4242],"aggregate":{"counters":{"sent":10,"delivered":10},` +
+		`"deviceBreakdown":{"mobile":{"open":1},"mobile":{"open":2}}}}`
+	for name, tc := range map[string]struct {
+		body   string
+		refuse bool
+	}{"case-distinct keys in an open map": {caseDistinct, false}, "exact duplicate in an open map": {exactDup, true}} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := monitorClient(t, tc.body)
+			start, end, _, _ := c.MonitorSpan(30)
+			_, err := c.GetEmailCounters(context.Background(), "4242", start, end)
+			if _, merr := c.GetEmailMetrics(context.Background(), "4242", model.MetricsWindowLast30Days); (merr != nil) != (err != nil) {
+				t.Errorf("the two reads disagree: counters %v, metrics %v", err, merr)
+			}
+			if tc.refuse != errors.Is(err, identityjson.ErrUntrustworthy) || (!tc.refuse && err != nil) {
+				t.Fatalf("err = %v, refuse=%v", err, tc.refuse)
+			}
+		})
+	}
+}
+
 // The rename guard watches what the CALLER reads. The monitor reads spamreport, so a response
 // missing it while carrying an unrecognised key is a rename to the monitor — and NOT to the
 // per-campaign read, which never looks spamreport up.

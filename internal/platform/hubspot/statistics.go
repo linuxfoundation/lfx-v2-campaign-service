@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -319,7 +320,7 @@ func (c *Client) readEmailCounters(ctx context.Context, id int64, start, end tim
 	// carrying `"sent":1000,"sent":0`, or an `emails` list declared twice, describes two
 	// answers, and the decoder would pick one without saying so. identityjson's refusal text
 	// is its own sentence and carries no byte of the response.
-	if err := identityjson.Check(raw); err != nil {
+	if err := checkStatisticsBytes(raw); err != nil {
 		return nil, fmt.Errorf("hubspot: email statistics response refused: %w", err)
 	}
 
@@ -423,6 +424,46 @@ func (c *Client) readEmailCounters(ctx context.Context, id int64, start, end tim
 		}
 	}
 	return counters, nil
+}
+
+// checkStatisticsBytes is the raw-bytes trust check for a statistics response, scoped to how the
+// response is DECODED. Most of it is open maps — `counters`, `ratios`, `deviceBreakdown`,
+// `qualifierStats`, `campaignAggregations` — which encoding/json keys exactly, so there a
+// case-distinct pair (`"Mobile"`, `"mobile"`) is two entries, not an ambiguity, and refusing it
+// would fail a working read for nothing. Exact duplicates, malformed UTF-8 and unpaired surrogates
+// are refused everywhere (identityjson.CheckExactKeys); the decoder's case-insensitive fold is
+// checked only on the two levels decoded into STRUCTS — the envelope and `aggregate` — where
+// `"emails"` and `"Emails"` would both land in one field and the decoder would keep the last.
+func checkStatisticsBytes(raw []byte) error {
+	if err := identityjson.CheckExactKeys(raw); err != nil {
+		return err
+	}
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return nil // malformed or not an object: the decode below reports it
+	}
+	if err := identityjson.FoldedKeyCollision(mapKeys(top)); err != nil {
+		return err
+	}
+	for k, v := range top {
+		if !strings.EqualFold(k, "aggregate") {
+			continue
+		}
+		var agg map[string]json.RawMessage
+		if json.Unmarshal(v, &agg) != nil {
+			return nil
+		}
+		return identityjson.FoldedKeyCollision(mapKeys(agg))
+	}
+	return nil
+}
+
+func mapKeys(m map[string]json.RawMessage) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 // nonNullCounters converts the decoded counter map, refusing any key whose value was an

@@ -258,8 +258,8 @@ unambiguously expected — raised nothing.
 `EvaluateHubSpotMonitor(emails)` returns `[]model.AccountMonitorActionItem`, HIGH first via the
 shared `sortByPriority`; there is no pacing (an email has no budget or spend) and so no row
 output. `HubSpotRates(counters)` derives FRACTIONS — open, click and unsubscribe over delivered,
-bounce over sent — each nil on a zero denominator; call it on SUMMED counters for a total.
-`campaign_id` on a finding is the HubSpot email id.
+bounce over sent, spam reports over delivered — each nil on a zero denominator; call it on SUMMED counters for a total.
+A finding carries `CampaignID` (the service campaign UUID) and `EmailID` (the HubSpot email id).
 
 Thresholds are heuristics (named constants with their reasons beside them), not HubSpot limits:
 
@@ -267,7 +267,7 @@ Thresholds are heuristics (named constants with their reasons beside them), not 
 | --- | --- | --- |
 | sent > 0 and delivered = 0 | HIGH | none (text says a send may still be in progress) |
 | bounce rate > 5% / > 2% | HIGH / MED | sent ≥ 100 |
-| spam reports / delivered ≥ 0.3% / > 0.1% | HIGH / MED | delivered ≥ 100 |
+| spam reports / delivered ≥ 0.3% and ≥ 5 reports / > 0.1% and ≥ 3 reports | HIGH / MED | delivered ≥ 100 |
 | unsubscribe rate > 1% | MED | delivered ≥ 100 |
 | open rate < 15% (opens are inflated by image pre-fetch, so this can only under-report) | MED | delivered ≥ 100 |
 | click rate < 1% | LOW | delivered ≥ 100 |

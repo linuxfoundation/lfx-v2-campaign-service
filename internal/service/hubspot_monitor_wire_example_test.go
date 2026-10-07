@@ -84,6 +84,7 @@ var hubspotMonitorRates = map[string][2]string{
 	"click_rate":       {"clicks", "delivered"},
 	"bounce_rate":      {"bounces", "sent"},
 	"unsubscribe_rate": {"unsubscribes", "delivered"},
+	"spam_rate":        {"spam_reports", "delivered"},
 }
 
 // checkHubSpotCounterObject pins one email row or totals object: every counter present, every rate
@@ -143,12 +144,14 @@ func checkHubSpotEnvelope(t *testing.T, path string, n map[string]any) {
 		}
 	}
 	for _, e := range emails {
-		ids[fmt.Sprint(e.(map[string]any)["email_id"])] = true
+		m := e.(map[string]any)
+		ids[fmt.Sprint(m["email_id"])+"|"+fmt.Sprint(m["campaign_id"])] = true
 	}
 	items, _ := n["action_items"].([]any)
 	for i, it := range items {
-		if id := fmt.Sprint(it.(map[string]any)["campaign_id"]); !ids[id] {
-			t.Errorf("%s: action_items[%d] names email %s, which is not in emails", path, i, id)
+		m := it.(map[string]any)
+		if key := fmt.Sprint(m["email_id"]) + "|" + fmt.Sprint(m["campaign_id"]); !ids[key] {
+			t.Errorf("%s: action_items[%d] (email_id|campaign_id %s) joins no row in emails", path, i, key)
 		}
 	}
 	// The published findings must be EXACTLY what the rule engine produces for the published
@@ -158,7 +161,7 @@ func checkHubSpotEnvelope(t *testing.T, path string, n map[string]any) {
 		m := e.(map[string]any)
 		num := func(k string) int64 { f, _ := m[k].(float64); return int64(f) }
 		modelEmails = append(modelEmails, model.HubSpotMonitorEmail{
-			EmailID: fmt.Sprint(m["email_id"]), Name: fmt.Sprint(m["name"]),
+			CampaignID: fmt.Sprint(m["campaign_id"]), EmailID: fmt.Sprint(m["email_id"]), Name: fmt.Sprint(m["name"]),
 			Counters: model.HubSpotEmailCounters{
 				Sent: num("sent"), Delivered: num("delivered"), Opens: num("opens"), Clicks: num("clicks"),
 				Bounces: num("bounces"), Unsubscribes: num("unsubscribes"), SpamReports: num("spam_reports"),
@@ -172,7 +175,7 @@ func checkHubSpotEnvelope(t *testing.T, path string, n map[string]any) {
 		for i, w := range want {
 			got := items[i].(map[string]any)
 			if got["priority"] != string(w.Priority) || got["issue"] != w.Issue || got["action"] != w.Action ||
-				got["campaign_id"] != w.CampaignID || got["campaign_name"] != w.CampaignName {
+				got["campaign_id"] != w.CampaignID || got["email_id"] != w.EmailID || got["campaign_name"] != w.CampaignName {
 				t.Errorf("%s: action_items[%d] = %v, the rules produce %+v", path, i, got, w)
 			}
 		}

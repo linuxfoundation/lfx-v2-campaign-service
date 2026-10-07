@@ -45,6 +45,8 @@ type HubSpotEmailRates struct {
 	BounceRate *float64
 	// UnsubscribeRate is Unsubscribes / Delivered.
 	UnsubscribeRate *float64
+	// SpamRate is SpamReports / Delivered.
+	SpamRate *float64
 }
 
 // HubSpotMonitorEmail is one marketing email the email account monitor read: an email THIS

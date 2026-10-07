@@ -172,6 +172,10 @@ func toConnAccountMonitorActionItems(items []model.AccountMonitorActionItem) []*
 			id := it.CampaignID
 			ci.CampaignID = &id
 		}
+		if it.EmailID != "" {
+			id := it.EmailID
+			ci.EmailID = &id
+		}
 		if it.CampaignName != "" {
 			name := it.CampaignName
 			ci.CampaignName = &name

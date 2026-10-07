@@ -40,3 +40,20 @@ func TestCheck(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckExactKeysAndFoldedCollision(t *testing.T) {
+	if err := CheckExactKeys([]byte(`{"a":{"Mobile":1,"mobile":2}}`)); err != nil {
+		t.Errorf("case-distinct keys refused by the exact check: %v", err)
+	}
+	for _, raw := range []string{`{"a":{"m":1,"m":2}}`, `{"a":{"m":1,"\u006d":2}}`, "{\"m\":\"\xff\"}"} {
+		if err := CheckExactKeys([]byte(raw)); !errors.Is(err, ErrUntrustworthy) {
+			t.Errorf("CheckExactKeys(%q) = %v, want refused", raw, err)
+		}
+	}
+	if err := FoldedKeyCollision([]string{"emails", "Emails"}); !errors.Is(err, ErrUntrustworthy) {
+		t.Errorf("folded collision not refused: %v", err)
+	}
+	if err := FoldedKeyCollision([]string{"emails", "aggregate"}); err != nil {
+		t.Errorf("distinct keys refused: %v", err)
+	}
+}

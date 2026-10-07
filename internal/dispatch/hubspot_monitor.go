@@ -17,11 +17,14 @@ import (
 )
 
 // hubspotMonitorConcurrency bounds how many statistics reads the email account monitor has in
-// flight at once. HubSpot's statistics endpoint answers for one email per request here (the
-// client filters to exactly one id and proves it), so the monitor issues one request per email;
-// four at a time keeps a full read well inside a private app's burst allowance while finishing
-// inside the 20s call budget.
-const hubspotMonitorConcurrency = 4
+// flight at once. The statistics endpoint answers for one email per request here (the client
+// filters to exactly one id and proves it), so a read is bounded at 101 requests (100 emails plus
+// token-info). Nothing here proves that fits a private app's burst allowance: HubSpot's limits
+// are per app and shared with every other caller of the same token (100 requests per 10s on the
+// lowest tiers). Two at a time keeps this read's own share modest; under contention a request can
+// still be throttled past the client's retries, and the read then fails as a whole (503) rather
+// than returning a partial result. The client has no pacer to reuse, so none is added here.
+const hubspotMonitorConcurrency = 2
 
 // hubspotMonitorTarget is one email the monitor will ask HubSpot about.
 type hubspotMonitorTarget struct {
@@ -55,9 +58,13 @@ type hubspotRecordedEmails struct {
 // Order, each refusal before any upstream call it would otherwise waste:
 //
 //  1. days is re-checked (the service layer checks it too; a non-HTTP caller does not pass Goa);
-//  2. the project's OWN connection is resolved — never the LF system fallback, exactly as the
-//     ad-platform monitors and the connection test resolve — so a project with no HubSpot
-//     connection of its own gets ErrNotFound (404), not the LF portal's numbers;
+//  2. the connection is resolved the way Dispatch and ReadMetrics resolve it — the project's own,
+//     else the LF system fallback. Unlike the ad monitors (which refuse the fallback because
+//     their read is ACCOUNT-wide and would expose every project on a shared account), this read
+//     never widens past the project's own recorded email ids, and each is checked against the
+//     portal it was created in (step 3). Refusing the fallback here would 404 exactly the
+//     projects whose emails WERE sent through the LF system portal. Only a project with no
+//     connection and no system row gets ErrNotFound (404);
 //  3. the token's portal is read (token-info): an email id means something only inside the
 //     portal that minted it, so each row's recorded creating portal must equal it. A row that
 //     records none, records another, or carries a malformed id is counted unattributable and NOT
@@ -74,7 +81,7 @@ func (d *HubSpotDispatcher) ReadEmailMonitor(ctx context.Context, projectID stri
 	if err := validateMonitorDays(days); err != nil {
 		return nil, err
 	}
-	client, _, err := d.resolveHubSpotClientVia(ctx, projectID, platform, d.creds.resolveOwned)
+	client, _, err := d.resolveHubSpotClientWithCreds(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}

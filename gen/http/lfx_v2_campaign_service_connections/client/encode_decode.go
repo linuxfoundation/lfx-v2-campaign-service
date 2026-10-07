@@ -13801,6 +13801,7 @@ func unmarshalAccountMonitorCampaignResponseBodyToLfxv2campaignserviceconnection
 func unmarshalAccountMonitorActionItemResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorActionItem(v *AccountMonitorActionItemResponseBody) *lfxv2campaignserviceconnections.AccountMonitorActionItem {
 	res := &lfxv2campaignserviceconnections.AccountMonitorActionItem{
 		CampaignID:   v.CampaignID,
+		EmailID:      v.EmailID,
 		CampaignName: v.CampaignName,
 		Priority:     *v.Priority,
 		Issue:        *v.Issue,
@@ -13846,6 +13847,7 @@ func unmarshalHubspotEmailMonitorEmailResponseBodyToLfxv2campaignserviceconnecti
 		ClickRate:       v.ClickRate,
 		BounceRate:      v.BounceRate,
 		UnsubscribeRate: v.UnsubscribeRate,
+		SpamRate:        v.SpamRate,
 	}
 
 	return res
@@ -13869,6 +13871,7 @@ func unmarshalHubspotEmailMonitorTotalsResponseBodyToLfxv2campaignserviceconnect
 		ClickRate:       v.ClickRate,
 		BounceRate:      v.BounceRate,
 		UnsubscribeRate: v.UnsubscribeRate,
+		SpamRate:        v.SpamRate,
 	}
 
 	return res

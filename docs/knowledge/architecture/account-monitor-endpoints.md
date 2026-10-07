@@ -750,8 +750,10 @@ differs, and why:
   `CampaignReader.ListRecentProjectPlatformCampaigns` (project_id and platform in the SQL,
   live rows with an upstream id, `created_at DESC, id DESC`, `LIMIT` cap+1) — each row's own
   email plus its recorded A/B variant (`Result.abTestVariant`). The cap is
-  `hubspotMonitorMaxCampaigns` = 50 campaigns (≤ 100 emails); an extra row sets
-  `emails_truncated` and the 50 newest are read.
+  `hubspotMonitorMaxCampaigns` = 50 campaigns (≤ 100 emails); the 50 newest are read, and
+  `emails_truncated` is set only when there were more AND the oldest checked row was recorded on
+  or after the window's first day (an email cannot be sent before it is recorded, so otherwise
+  every unchecked row predates the window; the unflagged residual is an old draft sent late).
 - **Empty scope** → 200 with empty `emails`/`action_items`, zero totals, and NO
   `metrics_as_of`/window, without resolving a connection or calling HubSpot — the same early
   return the project-scoped keyword and audience reads make.
@@ -759,8 +761,12 @@ differs, and why:
   token's portal), then per email `GET /marketing/v3/emails/statistics/list?startTimestamp&
   endTimestamp&emailIds=<one id>` — the endpoint the per-campaign metrics read already uses,
   through the same `readEmailCounters` guards (filter must cover exactly that id, recognised
-  counter vocabulary, rename signature, no negative). At most four in flight
-  (`hubspotMonitorConcurrency`), inside `accountsCallTimeout` (20s).
+  counter vocabulary, rename signature, no negative). At most two in flight
+  (`hubspotMonitorConcurrency`), inside `accountsCallTimeout` (20s), bounded at 101 requests.
+  Nothing proves that fits a private app's burst allowance — HubSpot limits are per app and
+  shared with every caller of the token (100 per 10s on the lowest tiers) — so a throttled
+  portal, a 429 outlasting the client's retries, answers 503 with no partial result. The client
+  has no pacer, and none was added.
 - **Window.** `hubspot.Client.MonitorSpan`: the trailing `days` UTC days including today, from
   the client's injected clock. HubSpot's span selects emails by SEND date and the counters are
   each email's totals to the read, so the response states `metrics_as_of` (the read instant) and
@@ -775,20 +781,28 @@ differs, and why:
   retries, 401/403, malformed JSON, a filter-violating response, a null counter, or bytes
   `identityjson.Check` refuses (duplicate keys, bad UTF-8, unpaired surrogates — checked on the
   raw bytes of every statistics AND token-info response before decoding) — fails the whole read:
-  503 via the default arm, fixed text, no partial rows. Own connection only (`resolveOwned`): no
-  connection is 404, an unusable one 400, a decryption failure 500.
+  503 via the default arm, fixed text, no partial rows. The raw check is scoped to how each level
+  decodes: exact duplicates everywhere, case-folded duplicates only on the struct-decoded
+  envelope and `aggregate` (open maps like `deviceBreakdown` are keyed exactly by the decoder).
+  The connection resolves like Dispatch and ReadMetrics — the project's own, else the LF system
+  row — because, unlike the account-wide ad monitors, this read never widens past the project's
+  recorded ids and the per-email portal check is the boundary; refusing the fallback would 404
+  the projects whose emails went out through the LF portal. Neither connection is 404, an
+  unusable one 400, a decryption failure 500.
 - **Counters and rates.** `sent`, `delivered`, `opens`, `clicks`, `bounces`, `unsubscribes`,
   `spam_reports` (`spamreport`, now watched by the rename guard for this read only). An ABSENT
   counter is HubSpot's omitted zero (the existing rule); an explicit `null` is refused. Rates are
   fractions computed after summing — open/click/unsubscribe over delivered, bounce over sent —
-  and ABSENT when the denominator is 0; totals' rates come from the summed counters. No cost
+  plus `spam_rate` (spam reports / delivered) — and ABSENT when the denominator is 0; totals' rates come from the summed counters. No cost
   field: HubSpot bills nothing per send.
 - **Rules.** `rules.EvaluateHubSpotMonitor` (no pacing: an email has no budget), on the shared
   HIGH/MED/LOW `sortByPriority`. Thresholds are heuristics, named constants in
   `internal/service/rules/monitor_hubspot.go`: sent > 0 with 0 delivered HIGH; bounce rate >5%
-  HIGH, >2% MED (≥100 sent); spam rate ≥0.3% HIGH, >0.1% MED; unsubscribe rate >1% MED; open
-  rate <15% MED; click rate <1% LOW (all ≥100 delivered). `campaign_id` on a finding is the
-  HubSpot email id.
+  HIGH, >2% MED (≥100 sent); spam rate ≥0.3% with ≥5 reports HIGH, >0.1% with ≥3 reports MED (the counts keep one
+  complaint on a small send from firing); unsubscribe rate >1% MED; open
+  rate <15% MED; click rate <1% LOW (all ≥100 delivered). A finding's `campaign_id` is the
+  service campaign UUID, as on the rows, and its `email_id` (an optional field on the shared
+  action-item type, absent on the ad monitors) is the HubSpot email id that joins it to its row.
 - **Types.** `HubSpotEmailMonitor`, `HubSpotEmailMonitorEmail`, `HubSpotEmailMonitorTotals`
   (type-level examples; `TestPublishedHubSpotMonitorExamplesArePossible` walks every published
   example in all four specs and requires rates to follow from counters, totals to be the sum,

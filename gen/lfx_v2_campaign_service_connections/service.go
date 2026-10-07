@@ -485,13 +485,15 @@ type Service interface {
 	// shared across projects and has no per-project account, so there is no
 	// account_id; the scope is the email ids this service recorded for the
 	// project, each read by itself from HubSpot's marketing-email statistics
-	// endpoint — never a portal-wide read. Resolved from the project's OWN
-	// connection only (no LF system fallback: 404 without one). A project that has
-	// recorded no HubSpot email gets an empty 200 without HubSpot being called.
-	// Any upstream failure — including a 401/403, a 429 still refused after
-	// retries, or a malformed or untrustworthy response — is a 503 with no partial
-	// result. There are no cost fields: HubSpot bills nothing per send. A pure
-	// read: nothing is persisted.
+	// endpoint — never a portal-wide read. Resolved like the per-campaign metrics
+	// read (the project's own connection, else the LF system one; 404 with
+	// neither), with every email checked against the portal it was created in. A
+	// project that has recorded no HubSpot email gets an empty 200 without HubSpot
+	// being called. Any upstream failure — including a 401/403, a 429 still
+	// refused after retries (a throttled portal, e.g. under shared-app
+	// contention), or a malformed or untrustworthy response — is a 503 with no
+	// partial result. There are no cost fields: HubSpot bills nothing per send. A
+	// pure read: nothing is persisted.
 	MonitorHubspotAccount(context.Context, *MonitorHubspotAccountPayload) (res *HubspotEmailMonitor, err error)
 }
 
@@ -579,8 +581,14 @@ type AccountMonitor struct {
 }
 
 type AccountMonitorActionItem struct {
-	// The platform campaign id this item is about. Empty for an account-wide item.
+	// The campaign this item is about: the platform campaign id on the ad-platform
+	// monitors; this service's campaign UUID on monitor-hubspot-account (where
+	// email_id names the email). Empty for an account-wide item.
 	CampaignID *string
+	// monitor-hubspot-account only: the HubSpot marketing-email id the item is
+	// about — the key that joins a finding to its row in `emails` (an A/B variant
+	// shares its parent's campaign_id). Absent on every ad-platform monitor.
+	EmailID *string
 	// The campaign's platform-side name, carried alongside campaign_id so a
 	// renderer never needs to re-join against the row list.
 	CampaignName *string
@@ -1178,9 +1186,10 @@ type HubspotEmailMonitor struct {
 	// by SEND date; each email's counters are its totals to metrics_as_of, not
 	// only the events inside the window.
 	Emails []*HubspotEmailMonitorEmail
-	// Findings across the emails, HIGH first. campaign_id is the HubSpot email id
-	// the finding is about and campaign_name its name. Every threshold is a
-	// deliverability heuristic, not a HubSpot limit.
+	// Findings across the emails, HIGH first. campaign_id is this service's
+	// campaign UUID (as on the rows), email_id the HubSpot email the finding is
+	// about — join to `emails` on email_id — and campaign_name the email's name.
+	// Every threshold is a deliverability heuristic, not a HubSpot limit.
 	ActionItems []*AccountMonitorActionItem
 	// The sum of the emails array, with rates from the summed counters.
 	Totals *HubspotEmailMonitorTotals
@@ -1207,9 +1216,12 @@ type HubspotEmailMonitor struct {
 	// or holds a malformed id. An email id means something only inside its own
 	// portal.
 	EmailsUnattributable int
-	// True when the project has recorded more than 50 HubSpot campaigns: only the
-	// 50 most recently recorded (and their A/B variants) were checked, so totals
-	// may omit older emails sent inside the window.
+	// True when the project has recorded more than 50 HubSpot campaigns AND the
+	// oldest one checked was recorded on or after the window's first day — so an
+	// unchecked, older email could have been sent inside the window and the totals
+	// may omit it. Only the 50 most recently recorded campaigns (and their A/B
+	// variants) are ever checked. Residual: an unchecked email recorded before the
+	// window but sent inside it (a draft sent late) is not flagged.
 	EmailsTruncated bool
 }
 
@@ -1247,6 +1259,8 @@ type HubspotEmailMonitorEmail struct {
 	BounceRate *float64
 	// unsubscribes / delivered, as a fraction. ABSENT when delivered is 0.
 	UnsubscribeRate *float64
+	// spam_reports / delivered, as a fraction. ABSENT when delivered is 0.
+	SpamRate *float64
 }
 
 type HubspotEmailMonitorTotals struct {
@@ -1274,6 +1288,8 @@ type HubspotEmailMonitorTotals struct {
 	BounceRate *float64
 	// Summed unsubscribes / summed delivered. ABSENT when that denominator is 0.
 	UnsubscribeRate *float64
+	// Summed spam_reports / summed delivered. ABSENT when that denominator is 0.
+	SpamRate *float64
 }
 
 // LinkedinAdsConnection is the result type of the

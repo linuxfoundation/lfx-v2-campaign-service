@@ -1347,9 +1347,10 @@ type MonitorHubspotAccountResponseBody struct {
 	// by SEND date; each email's counters are its totals to metrics_as_of, not
 	// only the events inside the window.
 	Emails []*HubspotEmailMonitorEmailResponseBody `form:"emails" json:"emails" xml:"emails"`
-	// Findings across the emails, HIGH first. campaign_id is the HubSpot email id
-	// the finding is about and campaign_name its name. Every threshold is a
-	// deliverability heuristic, not a HubSpot limit.
+	// Findings across the emails, HIGH first. campaign_id is this service's
+	// campaign UUID (as on the rows), email_id the HubSpot email the finding is
+	// about — join to `emails` on email_id — and campaign_name the email's name.
+	// Every threshold is a deliverability heuristic, not a HubSpot limit.
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
 	// The sum of the emails array, with rates from the summed counters.
 	Totals *HubspotEmailMonitorTotalsResponseBody `form:"totals" json:"totals" xml:"totals"`
@@ -1376,9 +1377,12 @@ type MonitorHubspotAccountResponseBody struct {
 	// or holds a malformed id. An email id means something only inside its own
 	// portal.
 	EmailsUnattributable int `form:"emails_unattributable" json:"emails_unattributable" xml:"emails_unattributable"`
-	// True when the project has recorded more than 50 HubSpot campaigns: only the
-	// 50 most recently recorded (and their A/B variants) were checked, so totals
-	// may omit older emails sent inside the window.
+	// True when the project has recorded more than 50 HubSpot campaigns AND the
+	// oldest one checked was recorded on or after the window's first day — so an
+	// unchecked, older email could have been sent inside the window and the totals
+	// may omit it. Only the 50 most recently recorded campaigns (and their A/B
+	// variants) are ever checked. Residual: an unchecked email recorded before the
+	// window but sent inside it (a draft sent late) is not flagged.
 	EmailsTruncated bool `form:"emails_truncated" json:"emails_truncated" xml:"emails_truncated"`
 }
 
@@ -5870,8 +5874,14 @@ type AccountMonitorCampaignResponseBody struct {
 // AccountMonitorActionItemResponseBody is used to define fields on response
 // body types.
 type AccountMonitorActionItemResponseBody struct {
-	// The platform campaign id this item is about. Empty for an account-wide item.
+	// The campaign this item is about: the platform campaign id on the ad-platform
+	// monitors; this service's campaign UUID on monitor-hubspot-account (where
+	// email_id names the email). Empty for an account-wide item.
 	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// monitor-hubspot-account only: the HubSpot marketing-email id the item is
+	// about — the key that joins a finding to its row in `emails` (an A/B variant
+	// shares its parent's campaign_id). Absent on every ad-platform monitor.
+	EmailID *string `form:"email_id,omitempty" json:"email_id,omitempty" xml:"email_id,omitempty"`
 	// The campaign's platform-side name, carried alongside campaign_id so a
 	// renderer never needs to re-join against the row list.
 	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
@@ -5937,6 +5947,8 @@ type HubspotEmailMonitorEmailResponseBody struct {
 	BounceRate *float64 `form:"bounce_rate,omitempty" json:"bounce_rate,omitempty" xml:"bounce_rate,omitempty"`
 	// unsubscribes / delivered, as a fraction. ABSENT when delivered is 0.
 	UnsubscribeRate *float64 `form:"unsubscribe_rate,omitempty" json:"unsubscribe_rate,omitempty" xml:"unsubscribe_rate,omitempty"`
+	// spam_reports / delivered, as a fraction. ABSENT when delivered is 0.
+	SpamRate *float64 `form:"spam_rate,omitempty" json:"spam_rate,omitempty" xml:"spam_rate,omitempty"`
 }
 
 // HubspotEmailMonitorTotalsResponseBody is used to define fields on response
@@ -5966,6 +5978,8 @@ type HubspotEmailMonitorTotalsResponseBody struct {
 	BounceRate *float64 `form:"bounce_rate,omitempty" json:"bounce_rate,omitempty" xml:"bounce_rate,omitempty"`
 	// Summed unsubscribes / summed delivered. ABSENT when that denominator is 0.
 	UnsubscribeRate *float64 `form:"unsubscribe_rate,omitempty" json:"unsubscribe_rate,omitempty" xml:"unsubscribe_rate,omitempty"`
+	// Summed spam_reports / summed delivered. ABSENT when that denominator is 0.
+	SpamRate *float64 `form:"spam_rate,omitempty" json:"spam_rate,omitempty" xml:"spam_rate,omitempty"`
 }
 
 // GoogleAdsConnectionConfigRequestBody is used to define fields on request

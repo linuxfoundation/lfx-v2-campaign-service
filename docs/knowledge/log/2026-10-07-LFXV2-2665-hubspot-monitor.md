@@ -1,4 +1,4 @@
-# 2026-10-08 — LFXV2-2665 HubSpot email account monitor
+# 2026-10-07 — LFXV2-2665 HubSpot email account monitor
 
 **Update** — New `campaign_manager` read `monitor-hubspot-account`,
 `GET /projects/{project_id}/connection-hubspot/account-monitor?days=`, the HubSpot sibling of the
