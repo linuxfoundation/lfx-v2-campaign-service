@@ -4,6 +4,7 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -213,9 +214,19 @@ func hubspotMonitorTargets(campaigns []*model.Campaign, currentPortal string) ([
 		var rec hubspotRecordedEmails
 		// An undecodable blob records no portal, which is the unattributable case below. A type
 		// error still leaves the fields decoded before it (a portal, but no variant), so the record
-		// is reset on ANY decode error rather than trusted in part.
+		// is reset on ANY decode error rather than trusted in part. The reset must not make a
+		// recorded variant vanish, though: if the blob is still a JSON object with a non-null
+		// abTestVariant, that variant is a second recorded email, counted unattributable with the
+		// row's own. Only a blob that is not even a JSON object records nothing more to count.
+		variantUnreadable := false
 		if err := json.Unmarshal(c.Result, &rec); err != nil {
 			rec = hubspotRecordedEmails{}
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(c.Result, &fields) == nil {
+				if v, ok := fields["abTestVariant"]; ok && string(bytes.TrimSpace(v)) != "null" {
+					variantUnreadable = true
+				}
+			}
 		}
 		deleted := c.Status == model.CampaignStatusDeleted
 		// Ids are taken VERBATIM, never trimmed: ValidateEmailID is what decides whether a stored
@@ -228,6 +239,9 @@ func hubspotMonitorTargets(campaigns []*model.Campaign, currentPortal string) ([
 				campaignID: c.ID, emailID: rec.ABTestVariant.ID,
 				name: rec.ABTestVariant.Name, abVariant: true, deleted: deleted,
 			})
+		} else if variantUnreadable {
+			// No portal was trusted, so this candidate is counted below, never requested.
+			candidates = append(candidates, hubspotMonitorTarget{campaignID: c.ID, abVariant: true, deleted: deleted})
 		}
 		portal := strings.TrimSpace(rec.PortalID)
 		attributable := portal != "" && portal == currentPortal

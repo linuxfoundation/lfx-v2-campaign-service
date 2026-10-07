@@ -322,6 +322,8 @@ func TestHubSpotEmailMonitor_StoredIDsAreValidatedVerbatim(t *testing.T) {
 		withRawVariant(recordedEmail("null-variant", "1204", testPortalID, nil), `null`), // null = absent
 		// A type error after the portal decodes: the portal must not be trusted in part.
 		withRawVariant(recordedEmail("mistyped-variant", "1205", testPortalID, nil), `"oops"`),
+		// A valid variant id beside a mistyped later field: the reset must not drop the variant.
+		withRawVariant(recordedEmail("mistyped-variant-name", "1206", testPortalID, nil), `{"id":"1207","name":123}`),
 	}, 30)
 	if err != nil {
 		t.Fatalf("ReadEmailMonitor: %v", err)
@@ -329,10 +331,11 @@ func TestHubSpotEmailMonitor_StoredIDsAreValidatedVerbatim(t *testing.T) {
 	if got := rec.ids(); len(got) != 3 || got[0] != "1201" || got[1] != "1203" || got[2] != "1204" {
 		t.Fatalf("statistics requested for %q, want only the canonical 1201, 1203 and 1204", got)
 	}
-	// padded id + empty variant + blank variant + the mistyped row's own email = 4; the null
-	// (absent) variant adds nothing.
-	if read.EmailsUnattributable != 4 {
-		t.Errorf("unattributable = %d, want 4", read.EmailsUnattributable)
+	// padded id + empty variant + blank variant + each mistyped row's own email and recorded
+	// variant (2 + 2) = 7; the null (absent) variant adds nothing. A blob of type error with a
+	// non-object variant ("oops") still records a variant, so it is counted.
+	if read.EmailsUnattributable != 7 {
+		t.Errorf("unattributable = %d, want 7", read.EmailsUnattributable)
 	}
 }
 
