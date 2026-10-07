@@ -192,6 +192,58 @@ func TestAdoptCampaign_UnverifiableIsNeverReportedAsAbsent(t *testing.T) {
 	}
 }
 
+// A campaign the platform reports under ANOTHER ad account exists — it is not absent, so a 404
+// would invite a duplicate of a live campaign — and the answer is definite, so it is not a 503
+// either. It is the same 409 refusal the toggle and metrics paths give a foreign-account row
+// (LFXV2-2665: Meta, Reddit and X adopters prove provenance from the answer).
+func TestAdoptCampaign_ForeignAccountIs409NotAbsentAndPersistsNothing(t *testing.T) {
+	for _, platform := range []model.Provider{model.ProviderMetaAds, model.ProviderRedditAds, model.ProviderTwitterAds, model.ProviderMicrosoftAds} {
+		t.Run(string(platform), func(t *testing.T) {
+			disp := &adopterDispatcher{err: fmt.Errorf("adopt %s campaign 1: the platform reports it under ad account act_888, not the connection's account act_777: %w",
+				platform, domain.ErrCampaignAccountMismatch)}
+			s, camps := newAdoptService(t, platform, disp)
+			p := adoptPayload()
+			p.Platform = string(platform)
+
+			_, err := s.AdoptCampaign(context.Background(), p)
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("got %T (%v), want *briefs.ConflictError", err, err)
+			}
+			if !strings.Contains(conflict.Message, "different ad account") {
+				t.Errorf("409 message %q does not say why the campaign was refused", conflict.Message)
+			}
+			if strings.Contains(conflict.Message, "act_888") || strings.Contains(conflict.Message, "act_777") {
+				t.Errorf("409 message %q leaks an account id", conflict.Message)
+			}
+			if len(camps.adopted) != 0 {
+				t.Errorf("persisted a binding for a campaign in another account")
+			}
+		})
+	}
+}
+
+// A live campaign of a type the platform's slot cannot hold is a definite 409 with its own message
+// — never the 404 that would invite a duplicate of a live campaign, never a retryable 503.
+func TestAdoptCampaign_UnsupportedCampaignTypeIs409(t *testing.T) {
+	disp := &adopterDispatcher{err: fmt.Errorf("adopt: %w", domain.ErrAdoptionCampaignTypeUnsupported)}
+	s, camps := newAdoptService(t, model.ProviderMicrosoftAds, disp)
+	p := adoptPayload()
+	p.Platform = string(model.ProviderMicrosoftAds)
+
+	_, err := s.AdoptCampaign(context.Background(), p)
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("got %T (%v), want *briefs.ConflictError", err, err)
+	}
+	if !strings.Contains(conflict.Message, "Microsoft Search campaigns only") {
+		t.Errorf("409 message %q does not name the supported type", conflict.Message)
+	}
+	if len(camps.adopted) != 0 {
+		t.Errorf("persisted a binding for a campaign of an unsupported type")
+	}
+}
+
 // An id-less ref, treated as success, writes a row every reader takes as provisioned.
 func TestAdoptCampaign_RefWithNoIDIsNotSuccess(t *testing.T) {
 	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{ID: "  ", Name: "n"}}

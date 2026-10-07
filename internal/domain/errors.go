@@ -1149,6 +1149,14 @@ var (
 	// campaign of its own to adopt.
 	ErrAdoptionRequiresOwnConnection = errors.New("adoption requires a connection owned by this project")
 
+	// ErrAdoptionCampaignTypeUnsupported indicates the platform answered DEFINITELY that the
+	// campaign exists, live, under the project's own account, but it is a campaign TYPE this
+	// service cannot hold in the platform's slot (a Microsoft Audience, Shopping or Performance
+	// Max campaign, where only Search is created here). Maps to 409. Not 404: the campaign is
+	// there, and "absent" would invite an operator to create a duplicate next to a live one.
+	// Not 503: the answer is definite, and a retry is refused identically.
+	ErrAdoptionCampaignTypeUnsupported = errors.New("the campaign exists but is of a type this service cannot adopt")
+
 	// ErrStaleWizardSession indicates a wizard-session update lost an optimistic-concurrency
 	// race: the row still exists but at a different version than the caller read.
 	//

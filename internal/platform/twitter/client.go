@@ -560,6 +560,12 @@ type apiResponse struct {
 	// whether the page is conclusive on its own evidence — a short page is, under X's
 	// documented rule — not in how they read the cursor itself.
 	NextCursorNull bool `json:"-"`
+	// raw is the undecoded 2xx body the envelope was decoded FROM, set by doRequestAbsCounted.
+	// Unexported, so encoding/json neither fills nor emits it. It exists for the adoption read
+	// (GetCampaign), which must refuse an ENVELOPE that decodes with silent substitution —
+	// `{"data":{A},"data":{B}}` is resolved last-wins into Data, so a guard over Data alone never
+	// sees the duplicate. Every other caller ignores it.
+	raw []byte
 }
 
 // cursorOutcome is what a page's next_cursor field says about whether more pages exist.
@@ -1330,6 +1336,7 @@ func (c *Client) doRequestAbsCounted(ctx context.Context, method, reqURL, logPat
 				return nil, &transportError{Method: method, Path: path, err: fmt.Errorf("decode response: %w", err)}
 			}
 		}
+		out.raw = respBody
 		return &out, nil
 	}
 
